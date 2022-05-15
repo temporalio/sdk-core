@@ -16,6 +16,7 @@ use temporal_sdk_core_protos::temporal::api::{
     history::v1::{History, HistoryEvent},
     workflowservice::v1::GetWorkflowExecutionHistoryResponse,
 };
+use tracing::Instrument;
 
 /// A slimmed down version of a poll workflow task response which includes just the info needed
 /// by [WorkflowManager]. History events are expected to be consumed from it and applied to the
@@ -140,8 +141,11 @@ impl Stream for HistoryPaginator {
             let gw = self.client.clone();
             let wid = self.wf_id.clone();
             let rid = self.run_id.clone();
-            let resp_fut =
-                async move { gw.get_workflow_execution_history(wid, Some(rid), npt).await };
+            let resp_fut = async move {
+                gw.get_workflow_execution_history(wid, Some(rid), npt)
+                    .instrument(span!(tracing::Level::TRACE, "fetch_history_in_paginator"))
+                    .await
+            };
             self.open_history_request.insert(resp_fut.boxed())
         };
 

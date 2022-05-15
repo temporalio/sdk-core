@@ -52,6 +52,7 @@ use tokio_util::sync::CancellationToken;
 
 #[cfg(test)]
 use crate::worker::client::WorkerClient;
+use crate::worker::workflow::WorkflowBasics;
 
 /// A worker polls on a certain task queue
 pub struct Worker {
@@ -97,8 +98,7 @@ impl WorkerTrait for Worker {
         self.complete_workflow_activation(completion).await
     }
 
-    #[instrument(level = "debug", skip(self, completion),
-    fields(completion=%&completion))]
+    #[instrument(level = "debug", skip(self, completion), fields(completion=%&completion))]
     async fn complete_activity_task(
         &self,
         completion: ActivityTaskCompletion,
@@ -250,8 +250,12 @@ impl Worker {
         Self {
             wf_client: client.clone(),
             workflows: Workflows::new(
-                config.max_cached_workflows,
-                config.max_outstanding_workflow_tasks,
+                WorkflowBasics {
+                    max_cached_workflows: config.max_cached_workflows,
+                    max_outstanding_wfts: config.max_outstanding_workflow_tasks,
+                    shutdown_token: shutdown_token.child_token(),
+                    metrics: metrics.clone(),
+                },
                 sticky_queue_name.map(|sq| StickyExecutionAttributes {
                     worker_task_queue: Some(TaskQueue {
                         name: sq,
@@ -264,8 +268,6 @@ impl Worker {
                 client.clone(),
                 wft_stream,
                 local_act_req_sink,
-                shutdown_token.child_token(),
-                metrics.clone(),
             ),
             at_task_mgr: act_poller.map(|ap| {
                 WorkerActivityTasks::new(

@@ -23,7 +23,7 @@ use crate::{
         workflow::{
             managed_run::{ManagedRun, WorkflowManager},
             wft_poller::validate_wft,
-            workflow_stream::{LocalInputs, WFStream, WFStreamBasics},
+            workflow_stream::{LocalInput, LocalInputs, WFStream},
             workflow_tasks::{
                 ActivationAction, FailedActivationOutcome, OutstandingActivation, OutstandingTask,
                 ServerCommandsWithWorkflowInfo,
@@ -66,7 +66,7 @@ use tokio::{
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
-use tracing::Instrument;
+use tracing::Span;
 
 pub(crate) const LEGACY_QUERY_ID: &str = "legacy_query";
 
@@ -76,7 +76,7 @@ type BoxedActivationStream = BoxStream<'static, Result<ActivationOrAuto, PollWfE
 /// Centralizes all state related to workflows and workflow tasks
 pub(crate) struct Workflows {
     new_wft_tx: UnboundedSender<ValidPollWFTQResponse>,
-    local_tx: UnboundedSender<LocalInputs>,
+    local_tx: UnboundedSender<LocalInput>,
     processing_task: tokio::sync::Mutex<Option<JoinHandle<()>>>,
     activation_stream: tokio::sync::Mutex<(
         BoxedActivationStream,
@@ -89,10 +89,16 @@ pub(crate) struct Workflows {
     sticky_attrs: Option<StickyExecutionAttributes>,
 }
 
+pub(super) struct WorkflowBasics {
+    pub max_cached_workflows: usize,
+    pub max_outstanding_wfts: usize,
+    pub shutdown_token: CancellationToken,
+    pub metrics: MetricsContext,
+}
+
 impl Workflows {
-    pub fn new(
-        max_cached_workflows: usize,
-        max_outstanding_wfts: usize,
+    pub(super) fn new(
+        basics: WorkflowBasics,
         sticky_attrs: Option<StickyExecutionAttributes>,
         client: Arc<WorkerClientBag>,
         wft_stream: impl Stream<Item = ValidPollWFTQResponse> + Send + 'static,
@@ -100,18 +106,10 @@ impl Workflows {
             + Send
             + Sync
             + 'static,
-        shutdown_token: CancellationToken,
-        metrics: MetricsContext,
     ) -> Self {
         let (new_wft_tx, new_wft_rx) = unbounded_channel();
         let (local_tx, local_rx) = unbounded_channel();
-        let shutdown_tok = shutdown_token.clone();
-        let basics = WFStreamBasics {
-            max_cached_workflows,
-            max_outstanding_wfts,
-            shutdown_token,
-            metrics,
-        };
+        let shutdown_tok = basics.shutdown_token.clone();
         let mut stream = WFStream::build(
             basics,
             wft_stream,
@@ -167,7 +165,7 @@ impl Workflows {
                 }
                 stream.next().await.unwrap_or(Err(PollWfError::ShutDown))?
             };
-            tracing::Span::current().record("run_id", &r.run_id());
+            Span::current().record("run_id", &r.run_id());
             match r {
                 ActivationOrAuto::LangActivation(act) | ActivationOrAuto::ReadyForQueries(act) => {
                     debug!(activation=%act, "Sending activation to lang");
@@ -240,11 +238,7 @@ impl Workflows {
                     completion.sticky_attributes = sticky_attrs;
 
                     self.handle_wft_reporting_errs(&run_id, || async {
-                        let maybe_wft = self
-                            .client
-                            .complete_workflow_task(completion)
-                            .instrument(span!(tracing::Level::DEBUG, "Complete WFT call"))
-                            .await?;
+                        let maybe_wft = self.client.complete_workflow_task(completion).await?;
                         if let Some(wft) = maybe_wft.workflow_task {
                             self.new_wft(validate_wft(wft)?);
                         }
@@ -378,12 +372,15 @@ impl Workflows {
     fn send_local(&self, msg: impl Into<LocalInputs>) {
         let msg = msg.into();
         let print_err = !matches!(msg, LocalInputs::GetStateInfo(_));
-        if let Err(e) = self.local_tx.send(msg) {
+        if let Err(e) = self.local_tx.send(LocalInput {
+            input: msg,
+            span: Span::current(),
+        }) {
             if print_err {
                 error!(
                 "Tried to interact with workflow state after it shut down. This is not allowed. \
                  A worker cannot be interacted with after shutdown has finished. When sending {:?}",
-                e.0
+                e.0.input
                 )
             }
         }
@@ -497,7 +494,7 @@ struct ManagedRunHandle {
     /// [RunUpdateResponse] for it has been seen.
     last_action_acked: bool,
     /// For sending work to the machines
-    run_actions_tx: UnboundedSender<RunActions>,
+    run_actions_tx: UnboundedSender<RunAction>,
     /// Handle to the task where the actual machines live
     handle: JoinHandle<()>,
     metrics: MetricsContext,
@@ -580,10 +577,13 @@ impl ManagedRunHandle {
         self.activation = Some(act_type);
     }
 
-    fn send_run_action(&mut self, ra: RunActions) {
+    fn send_run_action(&mut self, action: RunActions) {
         self.last_action_acked = false;
         self.run_actions_tx
-            .send(ra)
+            .send(RunAction {
+                action,
+                trace_span: Span::current(),
+            })
             .expect("Receive half of run actions not dropped");
     }
 
@@ -618,7 +618,11 @@ impl ManagedRunHandle {
     }
 }
 
-// TODO: Attach trace context to these somehow?
+#[derive(Debug)]
+struct RunAction {
+    action: RunActions,
+    trace_span: Span,
+}
 #[derive(Debug)]
 enum RunActions {
     NewIncomingWFT(NewIncomingWFT),
@@ -653,7 +657,12 @@ struct RunActivationCompletion {
 }
 
 #[derive(Debug)]
-enum RunUpdateResponse {
+struct RunUpdateResponse {
+    kind: RunUpdateResponseKind,
+    span: Span,
+}
+#[derive(Debug)]
+enum RunUpdateResponseKind {
     Good(GoodRunUpdateResponse),
     Fail(FailRunUpdateResponse),
 }

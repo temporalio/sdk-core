@@ -14,8 +14,8 @@ use crate::{
             ActivationCompleteOutcome, ActivationCompleteResult, ActivationOrAuto,
             EmptyWorkflowCommandErr, FailRunUpdateResponse, GetStateInfoMsg, HistoryPaginator,
             HistoryUpdate, LocalResolutionMsg, PostActivationMsg, RequestEvictMsg,
-            RunActivationCompletion, RunUpdateResponse, RunUpdatedFromWft, ValidatedCompletion,
-            WFActCompleteMsg, WFCommand, WorkflowStateInfo,
+            RunActivationCompletion, RunUpdateResponse, RunUpdateResponseKind, RunUpdatedFromWft,
+            ValidatedCompletion, WFActCompleteMsg, WFCommand, WorkflowBasics, WorkflowStateInfo,
         },
         LocalActRequest, LocalActivityResolution, LEGACY_QUERY_ID,
     },
@@ -42,6 +42,7 @@ use tokio::sync::{
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
+use tracing::{Level, Span};
 
 pub(crate) struct WFStream {
     runs: RunCache,
@@ -57,16 +58,24 @@ pub(crate) struct WFStream {
 
     metrics: MetricsContext,
 }
+#[derive(derive_more::From)]
 enum WFActStreamInput {
     NewWft(ValidPollWFTQResponse),
-    Completion(WFActCompleteMsg),
-    LocalResolution(LocalResolutionMsg),
-    PostActivation(PostActivationMsg),
-    RunUpdateResponse(RunUpdateResponse),
-    RequestEviction(RequestEvictMsg),
-    GetStateInfo(GetStateInfoMsg),
+    Local(LocalInput),
     // The stream given to us which represents the poller (or a mock) terminated.
     PollerDead,
+}
+impl From<RunUpdateResponse> for WFActStreamInput {
+    fn from(r: RunUpdateResponse) -> Self {
+        WFActStreamInput::Local(LocalInput {
+            input: LocalInputs::RunUpdateResponse(r.kind),
+            span: r.span,
+        })
+    }
+}
+pub(super) struct LocalInput {
+    pub input: LocalInputs,
+    pub span: Span,
 }
 /// Everything that _isn't_ a poll which may affect workflow state. Always higher priority than
 /// new polls.
@@ -75,21 +84,9 @@ pub(super) enum LocalInputs {
     Completion(WFActCompleteMsg),
     LocalResolution(LocalResolutionMsg),
     PostActivation(PostActivationMsg),
-    RunUpdateResponse(RunUpdateResponse),
+    RunUpdateResponse(RunUpdateResponseKind),
     RequestEviction(RequestEvictMsg),
     GetStateInfo(GetStateInfoMsg),
-}
-impl From<LocalInputs> for WFActStreamInput {
-    fn from(l: LocalInputs) -> Self {
-        match l {
-            LocalInputs::Completion(c) => WFActStreamInput::Completion(c),
-            LocalInputs::LocalResolution(r) => WFActStreamInput::LocalResolution(r),
-            LocalInputs::PostActivation(p) => WFActStreamInput::PostActivation(p),
-            LocalInputs::RunUpdateResponse(r) => WFActStreamInput::RunUpdateResponse(r),
-            LocalInputs::RequestEviction(e) => WFActStreamInput::RequestEviction(e),
-            LocalInputs::GetStateInfo(g) => WFActStreamInput::GetStateInfo(g),
-        }
-    }
 }
 #[derive(Debug, derive_more::From)]
 #[allow(clippy::large_enum_variant)] // PollerDead only ever gets used once, so not important.
@@ -106,19 +103,12 @@ impl From<ExternalPollerInputs> for WFActStreamInput {
     }
 }
 
-/// Non generic args for [WFStream::build]
-pub(super) struct WFStreamBasics {
-    pub max_cached_workflows: usize,
-    pub max_outstanding_wfts: usize,
-    pub shutdown_token: CancellationToken,
-    pub metrics: MetricsContext,
-}
 impl WFStream {
     pub(super) fn build(
-        basics: WFStreamBasics,
+        basics: WorkflowBasics,
         external_wfts: impl Stream<Item = ValidPollWFTQResponse> + Send + 'static,
         wfts_from_complete: UnboundedReceiver<ValidPollWFTQResponse>,
-        local_rx: impl Stream<Item = LocalInputs> + Send + 'static,
+        local_rx: impl Stream<Item = LocalInput> + Send + 'static,
         client: Arc<WorkerClientBag>,
         local_activity_request_sink: impl Fn(Vec<LocalActRequest>) -> Vec<LocalActivityResolution>
             + Send
@@ -135,12 +125,11 @@ impl WFStream {
         let (run_update_tx, run_update_rx) = unbounded_channel();
         let local_rx = stream::select(
             local_rx.map(Into::into),
-            UnboundedReceiverStream::new(run_update_rx).map(WFActStreamInput::RunUpdateResponse),
+            UnboundedReceiverStream::new(run_update_rx).map(Into::into),
         );
-        let low_pri_streams = stream::select_all([new_wft_rx.map(Into::into).boxed()]);
         let all_inputs = stream::select_with_strategy(
             local_rx,
-            low_pri_streams,
+            new_wft_rx.map(Into::into).boxed(),
             // Priority always goes to the local stream
             |_: &mut ()| PollNext::Left,
         );
@@ -164,80 +153,95 @@ impl WFStream {
         };
         all_inputs
             .map(move |action| {
+                let span = span!(Level::DEBUG, "new_stream_input");
+                let _span_g = span.enter();
+
                 let maybe_activation = match action {
                     WFActStreamInput::NewWft(wft) => {
                         debug!(run_id=%wft.workflow_execution.run_id, "New WFT");
                         state.instantiate_or_update(wft);
                         None
                     }
-                    WFActStreamInput::RunUpdateResponse(resp) => {
-                        match state.process_run_update_response(resp) {
-                            RunUpdateOutcome::IssueActivation(act) => {
-                                Some(ActivationOrAuto::LangActivation(act))
-                            }
-                            RunUpdateOutcome::Autocomplete { run_id } => {
-                                Some(ActivationOrAuto::Autocomplete { run_id })
-                            }
-                            RunUpdateOutcome::Failure(err) => {
-                                if let Some(resp_chan) = err.completion_resp {
-                                    // Automatically fail the workflow task in the event we couldn't
-                                    // update machines
-                                    let fail_cause =
-                                        if matches!(&err.err, WFMachinesError::Nondeterminism(_)) {
-                                            WorkflowTaskFailedCause::NonDeterministicError
+                    WFActStreamInput::Local(local_input) => {
+                        let _span_g = local_input.span.enter();
+                        match local_input.input {
+                            LocalInputs::RunUpdateResponse(resp) => {
+                                // TODO Move this handling inside method
+                                match state.process_run_update_response(resp) {
+                                    RunUpdateOutcome::IssueActivation(act) => {
+                                        Some(ActivationOrAuto::LangActivation(act))
+                                    }
+                                    RunUpdateOutcome::Autocomplete { run_id } => {
+                                        Some(ActivationOrAuto::Autocomplete { run_id })
+                                    }
+                                    RunUpdateOutcome::Failure(err) => {
+                                        if let Some(resp_chan) = err.completion_resp {
+                                            // Automatically fail the workflow task in the event we
+                                            // couldn't update machines
+                                            let fail_cause = if matches!(
+                                                &err.err,
+                                                WFMachinesError::Nondeterminism(_)
+                                            ) {
+                                                WorkflowTaskFailedCause::NonDeterministicError
+                                            } else {
+                                                WorkflowTaskFailedCause::Unspecified
+                                            };
+                                            let wft_fail_str = format!("{:?}", err.err);
+                                            state.failed_completion(
+                                                err.run_id,
+                                                fail_cause,
+                                                err.err.evict_reason(),
+                                                TFailure::application_failure(wft_fail_str, false)
+                                                    .into(),
+                                                resp_chan,
+                                            );
                                         } else {
-                                            WorkflowTaskFailedCause::Unspecified
-                                        };
-                                    let wft_fail_str = format!("{:?}", err.err);
-                                    state.failed_completion(
-                                        err.run_id,
-                                        fail_cause,
-                                        err.err.evict_reason(),
-                                        TFailure::application_failure(wft_fail_str, false).into(),
-                                        resp_chan,
-                                    );
-                                } else {
-                                    // TODO: This should probably also fail workflow tasks, but that
-                                    //  wasn't implemented pre-refactor either.
-                                    warn!(error=?err.err, run_id=%err.run_id,
+                                            // TODO: This should probably also fail workflow tasks,
+                                            // but that wasn't implemented pre-refactor either.
+                                            warn!(error=?err.err, run_id=%err.run_id,
                                           "Error while updating workflow");
-                                    state.request_eviction(RequestEvictMsg {
-                                        run_id: err.run_id,
-                                        message: format!(
-                                            "Error while updating workflow: {:?}",
-                                            err.err
-                                        ),
-                                        reason: err.err.evict_reason(),
-                                    });
+                                            state.request_eviction(RequestEvictMsg {
+                                                run_id: err.run_id,
+                                                message: format!(
+                                                    "Error while updating workflow: {:?}",
+                                                    err.err
+                                                ),
+                                                reason: err.err.evict_reason(),
+                                            });
+                                        }
+                                        None
+                                    }
+                                    RunUpdateOutcome::DoNothing => None,
                                 }
+                            }
+                            LocalInputs::Completion(completion) => {
+                                state.process_completion(completion);
                                 None
                             }
-                            RunUpdateOutcome::DoNothing => None,
+                            LocalInputs::PostActivation(report) => {
+                                state.process_post_activation(report);
+                                None
+                            }
+                            LocalInputs::LocalResolution(res) => {
+                                state.local_resolution(res);
+                                None
+                            }
+                            LocalInputs::RequestEviction(evict) => {
+                                state.request_eviction(evict);
+                                None
+                            }
+                            LocalInputs::GetStateInfo(gsi) => {
+                                let _ = gsi.response_tx.send(WorkflowStateInfo {
+                                    cached_workflows: state.runs.len(),
+                                    outstanding_wft: state.outstanding_wfts(),
+                                    available_wft_permits: state
+                                        .wft_semaphore
+                                        .sem
+                                        .available_permits(),
+                                });
+                                None
+                            }
                         }
-                    }
-                    WFActStreamInput::Completion(completion) => {
-                        state.process_completion(completion);
-                        None
-                    }
-                    WFActStreamInput::PostActivation(report) => {
-                        state.process_post_activation(report);
-                        None
-                    }
-                    WFActStreamInput::LocalResolution(res) => {
-                        state.local_resolution(res);
-                        None
-                    }
-                    WFActStreamInput::RequestEviction(evict) => {
-                        state.request_eviction(evict);
-                        None
-                    }
-                    WFActStreamInput::GetStateInfo(gsi) => {
-                        let _ = gsi.response_tx.send(WorkflowStateInfo {
-                            cached_workflows: state.runs.len(),
-                            outstanding_wft: state.outstanding_wfts(),
-                            available_wft_permits: state.wft_semaphore.sem.available_permits(),
-                        });
-                        None
                     }
                     WFActStreamInput::PollerDead => {
                         error!("Poller died");
@@ -283,10 +287,10 @@ impl WFStream {
             .take_while(|o| future::ready(!matches!(o, Err(PollWfError::ShutDown))))
     }
 
-    fn process_run_update_response(&mut self, resp: RunUpdateResponse) -> RunUpdateOutcome {
+    fn process_run_update_response(&mut self, resp: RunUpdateResponseKind) -> RunUpdateOutcome {
         debug!("Processing run update response from machines, {:?}", resp);
         match resp {
-            RunUpdateResponse::Good(resp) => {
+            RunUpdateResponseKind::Good(resp) => {
                 if let Some(r) = self.runs.get_mut(&resp.run_id) {
                     r.have_seen_terminal_event = resp.have_seen_terminal_event;
                     r.more_pending_work = resp.more_pending_work;
@@ -375,7 +379,7 @@ impl WFStream {
                 }
                 r
             }
-            RunUpdateResponse::Fail(fail) => {
+            RunUpdateResponseKind::Fail(fail) => {
                 if let Some(r) = self.runs.get_mut(&fail.run_id) {
                     r.last_action_acked = true;
                 }
@@ -388,7 +392,7 @@ impl WFStream {
         }
     }
 
-    #[instrument(level = "debug", skip(self, work))]
+    #[instrument(level = "debug", skip(self, work), fields(run_id=%work.workflow_execution.run_id))]
     fn instantiate_or_update(&mut self, work: ValidPollWFTQResponse) {
         let mut work = if let Some(w) = self.buffer_resp_if_outstanding_work(work) {
             w
@@ -491,7 +495,7 @@ impl WFStream {
         })
     }
 
-    #[instrument(level = "debug", skip(self, complete))]
+    #[instrument(level = "debug", skip(self, complete), fields(run_id=%complete.completion.run_id))]
     fn process_completion(&mut self, complete: WFActCompleteMsg) {
         match self.validate_completion(complete.completion) {
             Ok(ValidatedCompletion::Success { run_id, commands }) => {
@@ -736,7 +740,7 @@ impl WFStream {
         if let Some(rh) = self.runs.get_mut(&info.run_id) {
             let attempts = rh.wft.as_ref().map(|wt| wt.info.attempt);
             if !activation_has_eviction && rh.trying_to_evict.is_none() {
-                debug!(run_id=%info.run_id, message=%info.message, "Eviction requested");
+                debug!(run_id=%info.run_id, reason=%info.message, "Eviction requested");
                 rh.trying_to_evict = Some(info);
                 rh.check_more_activations();
                 EvictionRequestResult::EvictionRequested(attempts)

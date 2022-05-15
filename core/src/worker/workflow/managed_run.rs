@@ -34,10 +34,12 @@ use tokio::{
     task::JoinHandle,
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
+use tracing::Span;
 
 use crate::worker::workflow::{
     workflow_tasks::WFT_HEARTBEAT_TIMEOUT_FRACTION, ActivationCompleteResult, ActivationOrAuto,
-    FailRunUpdateResponse, GoodRunUpdateResponse, LocalActivityRequestSink,
+    FailRunUpdateResponse, GoodRunUpdateResponse, LocalActivityRequestSink, RunAction,
+    RunUpdateResponseKind,
 };
 use temporal_sdk_core_protos::TaskToken;
 
@@ -67,7 +69,7 @@ struct WaitingOnLAs {
         CompletionDataForWFT,
         oneshot::Sender<ActivationCompleteResult>,
     )>,
-    hb_chan: UnboundedSender<()>,
+    hb_chan: UnboundedSender<Span>,
     heartbeat_timeout_task: JoinHandle<()>,
 }
 
@@ -94,16 +96,20 @@ impl ManagedRun {
         }
     }
 
-    pub(super) async fn run(self, run_actions_rx: UnboundedReceiver<RunActions>) {
+    pub(super) async fn run(self, run_actions_rx: UnboundedReceiver<RunAction>) {
         let (heartbeat_tx, heartbeat_rx) = unbounded_channel();
         stream::select(
             UnboundedReceiverStream::new(run_actions_rx),
-            UnboundedReceiverStream::new(heartbeat_rx).map(|_| RunActions::HeartbeatTimeout),
+            UnboundedReceiverStream::new(heartbeat_rx).map(|trace_span| RunAction {
+                action: RunActions::HeartbeatTimeout,
+                trace_span,
+            }),
         )
         .fold(
             (self, heartbeat_tx),
-            |(mut me, heartbeat_tx), action| async {
-                let res = match action {
+            |(mut me, heartbeat_tx), action| async move {
+                let _span = action.trace_span.enter();
+                let res = match action.action {
                     RunActions::NewIncomingWFT(wft) => me
                         .incoming_wft(wft)
                         .await
@@ -142,12 +148,16 @@ impl ManagedRun {
                     Err(e) => {
                         error!(error=?e, "Error in run machines");
                         me.am_broken = true;
+                        drop(_span);
                         me.update_tx
-                            .send(RunUpdateResponse::Fail(FailRunUpdateResponse {
-                                run_id: me.wfm.machines.run_id.clone(),
-                                err: e.source,
-                                completion_resp: e.complete_resp_chan,
-                            }))
+                            .send(RunUpdateResponse {
+                                kind: RunUpdateResponseKind::Fail(FailRunUpdateResponse {
+                                    run_id: me.wfm.machines.run_id.clone(),
+                                    err: e.source,
+                                    completion_resp: e.complete_resp_chan,
+                                }),
+                                span: action.trace_span,
+                            })
                             .expect("Machine can send update");
                     }
                 }
@@ -219,7 +229,7 @@ impl ManagedRun {
     async fn completion(
         &mut self,
         mut completion: RunActivationCompletion,
-        heartbeat_tx: &UnboundedSender<()>,
+        heartbeat_tx: &UnboundedSender<Span>,
     ) -> Result<(), RunUpdateErr> {
         let resp_chan = completion
             .resp_chan
@@ -417,21 +427,24 @@ impl ManagedRun {
         from_wft: Option<RunUpdatedFromWft>,
     ) {
         self.update_tx
-            .send(RunUpdateResponse::Good(GoodRunUpdateResponse {
-                run_id: self.wfm.machines.run_id.clone(),
-                outgoing_activation,
-                have_seen_terminal_event: self.wfm.machines.have_seen_terminal_event,
-                more_pending_work: self.wfm.machines.has_pending_jobs(),
-                most_recently_processed_event_number: self.wfm.machines.last_processed_event
-                    as usize,
-                in_response_to_wft: from_wft,
-            }))
+            .send(RunUpdateResponse {
+                kind: RunUpdateResponseKind::Good(GoodRunUpdateResponse {
+                    run_id: self.wfm.machines.run_id.clone(),
+                    outgoing_activation,
+                    have_seen_terminal_event: self.wfm.machines.have_seen_terminal_event,
+                    more_pending_work: self.wfm.machines.has_pending_jobs(),
+                    most_recently_processed_event_number: self.wfm.machines.last_processed_event
+                        as usize,
+                    in_response_to_wft: from_wft,
+                }),
+                span: Span::current(),
+            })
             .expect("Machine can send update");
     }
 }
 
 fn start_heartbeat_timeout_task(
-    chan: UnboundedSender<()>,
+    chan: UnboundedSender<Span>,
     wft_start_time: Instant,
     wft_timeout: Duration,
 ) -> JoinHandle<()> {
@@ -440,7 +453,7 @@ fn start_heartbeat_timeout_task(
         wft_start_time.add(wft_timeout.mul_f32(WFT_HEARTBEAT_TIMEOUT_FRACTION));
     task::spawn(async move {
         tokio::time::sleep_until(wft_heartbeat_deadline.into()).await;
-        let _ = chan.send(());
+        let _ = chan.send(Span::current());
     })
 }
 
