@@ -18,36 +18,26 @@ use crate::{
         new_activity_task_buffer, new_workflow_task_buffer, BoxedActPoller, Poller,
         WorkflowTaskPoller,
     },
-    protosext::{legacy_query_failure, ValidPollWFTQResponse},
-    telemetry::{
-        metrics::{
-            activity_poller, local_activity_worker_type, workflow_poller, workflow_sticky_poller,
-            MetricsContext,
-        },
-        VecDisplayer,
+    protosext::ValidPollWFTQResponse,
+    telemetry::metrics::{
+        activity_poller, local_activity_worker_type, workflow_poller, workflow_sticky_poller,
+        MetricsContext,
     },
     worker::{
         activities::{DispatchOrTimeoutLA, LACompleteAction, LocalActivityManager},
         client::WorkerClientBag,
-        workflow::{
-            workflow_tasks::{
-                ActivationAction, FailedActivationOutcome, ServerCommandsWithWorkflowInfo,
-            },
-            ActivationCompleteOutcome, LocalResolution, PostActivationMsg, Workflows,
-        },
+        workflow::{LocalResolution, Workflows},
     },
     ActivityHeartbeat, CompleteActivityError, PollActivityError, PollWfError, WorkerTrait,
 };
 use activities::{LocalInFlightActInfo, WorkerActivityTasks};
-use futures::{Future, Stream};
+use futures::Stream;
 use std::{convert::TryInto, sync::Arc};
-use temporal_client::WorkflowTaskCompletion;
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::activity_execution_result,
         activity_task::ActivityTask,
         workflow_activation::{remove_from_cache::EvictionReason, WorkflowActivation},
-        workflow_completion,
         workflow_completion::WorkflowActivationCompletion,
         ActivityTaskCompletion,
     },
@@ -59,20 +49,16 @@ use temporal_sdk_core_protos::{
     TaskToken,
 };
 use tokio_util::sync::CancellationToken;
-use tracing_futures::Instrument;
 
 #[cfg(test)]
 use crate::worker::client::WorkerClient;
-use crate::worker::workflow::{wft_poller::validate_wft, ActivationOrAuto};
 
 /// A worker polls on a certain task queue
 pub struct Worker {
     config: WorkerConfig,
     wf_client: Arc<WorkerClientBag>,
 
-    /// Will be populated when this worker should poll on a sticky WFT queue
-    sticky_name: Option<String>,
-
+    /// Manages all workflows and WFT processing
     workflows: Workflows,
     /// Manages activity tasks for this worker/task queue
     at_task_mgr: Option<WorkerActivityTasks>,
@@ -263,10 +249,18 @@ impl Worker {
         let local_act_req_sink = move |requests| lam_clone.enqueue(requests);
         Self {
             wf_client: client.clone(),
-            sticky_name: sticky_queue_name,
             workflows: Workflows::new(
                 config.max_cached_workflows,
                 config.max_outstanding_workflow_tasks,
+                sticky_queue_name.map(|sq| StickyExecutionAttributes {
+                    worker_task_queue: Some(TaskQueue {
+                        name: sq,
+                        kind: TaskQueueKind::Sticky as i32,
+                    }),
+                    schedule_to_start_timeout: Some(
+                        config.sticky_queue_schedule_to_start_timeout.into(),
+                    ),
+                }),
                 client.clone(),
                 wft_stream,
                 local_act_req_sink,
@@ -431,25 +425,7 @@ impl Worker {
 
     #[instrument(level = "debug", skip(self), fields(run_id))]
     pub(crate) async fn next_workflow_activation(&self) -> Result<WorkflowActivation, PollWfError> {
-        loop {
-            let r = self.workflows.next_workflow_activation().await;
-            match r {
-                Ok(
-                    ActivationOrAuto::LangActivation(act) | ActivationOrAuto::ReadyForQueries(act),
-                ) => {
-                    debug!(activation=%act, "Sending activation to lang");
-                    break Ok(act);
-                }
-                Ok(ActivationOrAuto::Autocomplete { run_id }) => {
-                    self.complete_workflow_activation(WorkflowActivationCompletion {
-                        run_id,
-                        status: Some(workflow_completion::Success::from_variants(vec![]).into()),
-                    })
-                    .await?;
-                }
-                Err(e) => break Err(e),
-            }
-        }
+        self.workflows.next_workflow_activation().await
     }
 
     #[instrument(level = "debug", skip(self, completion),
@@ -459,109 +435,10 @@ impl Worker {
         completion: WorkflowActivationCompletion,
     ) -> Result<(), CompleteWfError> {
         let run_id = completion.run_id.clone();
-        // TODO: This can mostly be shoved inside workflows too
-        let completion_outcome = self.workflows.activation_completed(completion).await;
-        let report_outcome = match completion_outcome.outcome {
-            ActivationCompleteOutcome::ReportWFTSuccess(report) => match report {
-                ServerCommandsWithWorkflowInfo {
-                    task_token,
-                    action:
-                        ActivationAction::WftComplete {
-                            commands,
-                            query_responses,
-                            force_new_wft,
-                        },
-                } => {
-                    debug!(commands=%commands.display(), query_responses=%query_responses.display(),
-                           "Sending responses to server");
-                    let mut completion = WorkflowTaskCompletion {
-                        task_token,
-                        commands,
-                        query_responses,
-                        sticky_attributes: None,
-                        return_new_workflow_task: true,
-                        force_create_new_workflow_task: dbg!(force_new_wft),
-                    };
-                    let sticky_attrs = self.get_sticky_attrs();
-                    // Do not return new WFT if we would not cache, because returned new WFTs are always
-                    // partial.
-                    if sticky_attrs.is_none() {
-                        completion.return_new_workflow_task = false;
-                    }
-                    completion.sticky_attributes = sticky_attrs;
-
-                    self.handle_wft_reporting_errs(&run_id, || async {
-                        let maybe_wft = self
-                            .wf_client
-                            .complete_workflow_task(completion)
-                            .instrument(span!(tracing::Level::DEBUG, "Complete WFT call"))
-                            .await?;
-                        if let Some(wft) = maybe_wft.workflow_task {
-                            self.workflows.new_wft(validate_wft(wft)?);
-                        }
-                        Ok(())
-                    })
-                    .await?;
-                    WFTReportOutcome {
-                        reported_to_server: true,
-                    }
-                }
-                ServerCommandsWithWorkflowInfo {
-                    task_token,
-                    action: ActivationAction::RespondLegacyQuery { result },
-                } => {
-                    self.wf_client
-                        .respond_legacy_query(task_token, result)
-                        .await?;
-                    WFTReportOutcome {
-                        reported_to_server: true,
-                    }
-                }
-            },
-            ActivationCompleteOutcome::ReportWFTFail(outcome) => match outcome {
-                FailedActivationOutcome::Report(tt, cause, failure) => {
-                    warn!(run_id=%run_id, failure=?failure, "Failing workflow task");
-                    self.handle_wft_reporting_errs(&run_id, || async {
-                        self.wf_client
-                            .fail_workflow_task(tt, cause, failure.failure.map(Into::into))
-                            .await
-                    })
-                    .await?;
-                    WFTReportOutcome {
-                        reported_to_server: true,
-                    }
-                }
-                FailedActivationOutcome::ReportLegacyQueryFailure(task_token, failure) => {
-                    warn!(run_id=%run_id, failure=?failure, "Failing legacy query request");
-                    self.wf_client
-                        .respond_legacy_query(task_token, legacy_query_failure(failure))
-                        .await?;
-                    WFTReportOutcome {
-                        reported_to_server: true,
-                    }
-                }
-                FailedActivationOutcome::NoReport => WFTReportOutcome {
-                    reported_to_server: false,
-                },
-            },
-            ActivationCompleteOutcome::DoNothing => WFTReportOutcome {
-                reported_to_server: false,
-            },
-        };
-
+        let most_recent_event = self.workflows.activation_completed(completion).await?;
         if let Some(h) = &self.post_activate_hook {
-            h(
-                self,
-                &run_id,
-                completion_outcome.most_recently_processed_event,
-            );
+            h(self, &run_id, most_recent_event);
         }
-
-        self.workflows.post_activation(PostActivationMsg {
-            run_id,
-            reported_wft_to_server: report_outcome.reported_to_server,
-        });
-
         Ok(())
     }
 
@@ -593,43 +470,6 @@ impl Worker {
         });
     }
 
-    /// Handle server errors from either completing or failing a workflow task. Returns any errors
-    /// that can't be automatically handled.
-    async fn handle_wft_reporting_errs<T, Fut>(
-        &self,
-        run_id: &str,
-        completer: impl FnOnce() -> Fut,
-    ) -> Result<(), CompleteWfError>
-    where
-        Fut: Future<Output = Result<T, tonic::Status>>,
-    {
-        let mut should_evict = None;
-        let res = match completer().await {
-            Err(err) => {
-                match err.code() {
-                    // Silence unhandled command errors since the lang SDK cannot do anything about
-                    // them besides poll again, which it will do anyway.
-                    tonic::Code::InvalidArgument if err.message() == "UnhandledCommand" => {
-                        debug!(error = %err, run_id, "Unhandled command response when completing");
-                        should_evict = Some(EvictionReason::UnhandledCommand);
-                        Ok(())
-                    }
-                    tonic::Code::NotFound => {
-                        warn!(error = %err, run_id, "Task not found when completing");
-                        should_evict = Some(EvictionReason::TaskNotFound);
-                        Ok(())
-                    }
-                    _ => Err(err),
-                }
-            }
-            _ => Ok(()),
-        };
-        if let Some(reason) = should_evict {
-            self.request_wf_eviction(run_id, "Error reporting WFT to server", reason);
-        }
-        res.map_err(Into::into)
-    }
-
     fn complete_local_act(
         &self,
         la_res: LocalActivityExecutionResult,
@@ -652,27 +492,6 @@ impl Worker {
     fn notify_local_result(&self, run_id: &str, res: LocalResolution) {
         self.workflows.notify_of_local_result(run_id, res);
     }
-
-    /// Return the sticky execution attributes that should be used to complete workflow tasks
-    /// for this worker (if any).
-    fn get_sticky_attrs(&self) -> Option<StickyExecutionAttributes> {
-        self.sticky_name
-            .as_ref()
-            .map(|sq| StickyExecutionAttributes {
-                worker_task_queue: Some(TaskQueue {
-                    name: sq.clone(),
-                    kind: TaskQueueKind::Sticky as i32,
-                }),
-                schedule_to_start_timeout: Some(
-                    self.config.sticky_queue_schedule_to_start_timeout.into(),
-                ),
-            })
-    }
-}
-
-#[derive(Debug, Copy, Clone)]
-struct WFTReportOutcome {
-    reported_to_server: bool,
 }
 
 #[cfg(test)]

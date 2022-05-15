@@ -380,7 +380,7 @@ impl ManagedRun {
     }
 
     async fn local_resolution(&mut self, res: LocalResolution) -> Result<(), RunUpdateErr> {
-        info!(resolution=?res, "Applying local resolution");
+        debug!(resolution=?res, "Applying local resolution");
         self.wfm.notify_of_local_result(res)?;
         if self.wfm.machines.outstanding_local_activity_count() == 0 {
             if let Some(mut wait_dat) = self.waiting_on_la.take() {
