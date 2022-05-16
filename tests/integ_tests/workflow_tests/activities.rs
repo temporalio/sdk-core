@@ -751,7 +751,7 @@ async fn activity_cancelled_after_heartbeat_times_out() {
 
 #[tokio::test]
 async fn one_activity_abandon_cancelled_after_complete() {
-    let wf_name = "one_activity";
+    let wf_name = "one_activity_abandon_cancelled_after_complete";
     let mut starter = CoreWfStarter::new(wf_name);
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;

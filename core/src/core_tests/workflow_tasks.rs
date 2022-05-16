@@ -3,8 +3,8 @@ use crate::{
     replay::TestHistoryBuilder,
     test_help::{
         build_fake_worker, build_mock_pollers, build_multihist_mock_sg, canned_histories,
-        gen_assert_and_fail, gen_assert_and_reply, hist_to_poll_resp, mock_sdk, mock_worker,
-        poll_and_reply, poll_and_reply_clears_outstanding_evicts, single_hist_mock_sg,
+        gen_assert_and_fail, gen_assert_and_reply, hist_to_poll_resp, mock_sdk, mock_sdk_cfg,
+        mock_worker, poll_and_reply, poll_and_reply_clears_outstanding_evicts, single_hist_mock_sg,
         ExpectationAmount, FakeWfResponses, MockPollCfg, MocksHolder, ResponseType,
         WorkflowCachingPolicy::{self, AfterEveryReply, NonSticky},
         TEST_Q,
@@ -881,8 +881,45 @@ async fn workflow_failures_only_reported_once() {
     .await;
 }
 
-// TODO: Replace this with a unit test for new workflow management
-// async fn max_concurrent_wft_respected() {
+#[tokio::test]
+async fn max_wft_respected() {
+    let total_wfs = 100;
+    let wf_ids: Vec<_> = (0..total_wfs)
+        .into_iter()
+        .map(|i| format!("fake-wf-{}", i))
+        .collect();
+    let hists = wf_ids.iter().map(|wf_id| {
+        let hist = canned_histories::single_timer("1");
+        FakeWfResponses {
+            wf_id: wf_id.to_string(),
+            hist,
+            response_batches: vec![1.into(), 2.into()],
+        }
+    });
+    let mh = MockPollCfg::new(hists.into_iter().collect(), true, ExpectationAmount::Zero);
+    let mut worker = mock_sdk_cfg(mh, |cfg| {
+        cfg.max_cached_workflows = total_wfs as usize;
+        cfg.max_outstanding_workflow_tasks = 1;
+    });
+    let active_count: &'static _ = Box::leak(Box::new(Semaphore::new(1)));
+    worker.register_wf(DEFAULT_WORKFLOW_TYPE, move |ctx: WfContext| async move {
+        drop(
+            active_count
+                .try_acquire()
+                .expect("No multiple concurrent workflow tasks!"),
+        );
+        ctx.timer(Duration::from_secs(1)).await;
+        Ok(().into())
+    });
+
+    for wf_id in wf_ids {
+        worker
+            .submit_wf(wf_id, DEFAULT_WORKFLOW_TYPE, vec![], Default::default())
+            .await
+            .unwrap();
+    }
+    worker.run_until_done().await.unwrap();
+}
 
 #[rstest(hist_batches, case::incremental(&[1, 2]), case::replay(&[3]))]
 #[tokio::test]
