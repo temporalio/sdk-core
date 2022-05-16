@@ -45,7 +45,9 @@ use temporal_sdk_core_protos::{
         },
         workflow_commands::*,
         workflow_completion,
-        workflow_completion::{Failure, WorkflowActivationCompletion},
+        workflow_completion::{
+            workflow_activation_completion, Failure, WorkflowActivationCompletion,
+        },
     },
     temporal::api::{
         command::v1::Command as ProtoCommand, enums::v1::WorkflowTaskFailedCause,
@@ -196,7 +198,8 @@ impl Workflows {
         &self,
         completion: WorkflowActivationCompletion,
     ) -> Result<usize, CompleteWfError> {
-        let run_id = completion.run_id.clone();
+        let completion = validate_completion(completion)?;
+        let run_id = completion.run_id().to_string();
         let (tx, rx) = oneshot::channel();
         self.send_local(WFActCompleteMsg {
             completion,
@@ -224,7 +227,7 @@ impl Workflows {
                         query_responses,
                         sticky_attributes: None,
                         return_new_workflow_task: true,
-                        force_create_new_workflow_task: dbg!(force_new_wft),
+                        force_create_new_workflow_task: force_new_wft,
                     };
                     let sticky_attrs = self.sticky_attrs.clone();
                     // Do not return new WFT if we would not cache, because returned new WFTs are always
@@ -538,7 +541,6 @@ enum ActivationOrAuto {
     /// inserted into the joblist
     ReadyForQueries(WorkflowActivation),
     Autocomplete {
-        // TODO: Can I delete this?
         run_id: String,
     },
 }
@@ -649,7 +651,7 @@ pub(crate) struct WorkflowStateInfo {
 
 #[derive(Debug)]
 struct WFActCompleteMsg {
-    completion: WorkflowActivationCompletion,
+    completion: ValidatedCompletion,
     response_tx: oneshot::Sender<ActivationCompleteResult>,
 }
 #[derive(Debug)]
@@ -691,6 +693,57 @@ enum ActivationCompleteOutcome {
     DoNothing,
 }
 
+fn validate_completion(
+    completion: WorkflowActivationCompletion,
+) -> Result<ValidatedCompletion, CompleteWfError> {
+    match completion.status {
+        Some(workflow_activation_completion::Status::Successful(success)) => {
+            // Convert to wf commands
+            let commands = success
+                .commands
+                .into_iter()
+                .map(|c| c.try_into())
+                .collect::<Result<Vec<_>, EmptyWorkflowCommandErr>>()
+                .map_err(|_| CompleteWfError::MalformedWorkflowCompletion {
+                    reason: "At least one workflow command in the completion contained \
+                                 an empty variant"
+                        .to_owned(),
+                    run_id: completion.run_id.clone(),
+                })?;
+
+            if commands.len() > 1
+                && commands.iter().any(
+                    |c| matches!(c, WFCommand::QueryResponse(q) if q.query_id == LEGACY_QUERY_ID),
+                )
+            {
+                return Err(CompleteWfError::MalformedWorkflowCompletion {
+                    reason: "Workflow completion had a legacy query response along with other \
+                                commands. This is not allowed and constitutes an error in the \
+                                lang SDK"
+                        .to_owned(),
+                    run_id: completion.run_id,
+                });
+            }
+
+            Ok(ValidatedCompletion::Success {
+                run_id: completion.run_id,
+                commands,
+            })
+        }
+        Some(workflow_activation_completion::Status::Failed(failure)) => {
+            Ok(ValidatedCompletion::Fail {
+                run_id: completion.run_id,
+                failure,
+            })
+        }
+        None => Err(CompleteWfError::MalformedWorkflowCompletion {
+            reason: "Workflow completion had empty status field".to_owned(),
+            run_id: completion.run_id,
+        }),
+    }
+}
+
+#[derive(Debug)]
 enum ValidatedCompletion {
     Success {
         run_id: String,
@@ -700,6 +753,15 @@ enum ValidatedCompletion {
         run_id: String,
         failure: Failure,
     },
+}
+
+impl ValidatedCompletion {
+    pub fn run_id(&self) -> &str {
+        match self {
+            ValidatedCompletion::Success { run_id, .. } => run_id,
+            ValidatedCompletion::Fail { run_id, .. } => run_id,
+        }
+    }
 }
 
 #[derive(Debug)]

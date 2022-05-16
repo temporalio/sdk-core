@@ -1,5 +1,5 @@
 use crate::{
-    abstractions::{stream_when_allowed, MeteredSemaphore},
+    abstractions::{dbg_panic, stream_when_allowed, MeteredSemaphore},
     protosext::ValidPollWFTQResponse,
     telemetry::metrics::workflow_worker_type,
     worker::{
@@ -10,16 +10,14 @@ use crate::{
 };
 use futures::{stream, stream::PollNext, Stream, StreamExt};
 use std::{collections::VecDeque, fmt::Debug, future, sync::Arc, time::Instant};
-use temporal_sdk_core_api::errors::{CompleteWfError, PollWfError, WFMachinesError};
+use temporal_sdk_core_api::errors::{PollWfError, WFMachinesError};
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::{
             create_evict_activation, query_to_job, remove_from_cache::EvictionReason,
             workflow_activation_job,
         },
-        workflow_completion::{
-            workflow_activation_completion, Failure, WorkflowActivationCompletion,
-        },
+        workflow_completion::Failure,
     },
     temporal::api::{enums::v1::WorkflowTaskFailedCause, failure::v1::Failure as TFailure},
 };
@@ -199,8 +197,7 @@ impl WFStream {
                     if let Some(run_handle) = state.runs.get_mut(act.run_id()) {
                         run_handle.insert_outstanding_activation(act);
                     } else {
-                        // TODO: Don't panic
-                        panic!("Tried to insert activation for missing run!");
+                        dbg_panic!("Tried to insert activation for missing run!");
                     }
                 }
                 if state.shutdown_done() {
@@ -257,32 +254,23 @@ impl WFStream {
                             // If there are in-poll queries, insert jobs for those queries into the
                             // activation, but only if we hit the cache. If we didn't, those queries
                             // will need to be dealt with once replay is over
-                            // TODO: Probably should be *and replay is finished*??
                             if !wft.pending_queries.is_empty() && wft.hit_cache {
-                                let query_jobs = wft.pending_queries.drain(..).map(|q| {
-                                    workflow_activation_job::Variant::QueryWorkflow(q).into()
-                                });
-                                activation.jobs.extend(query_jobs);
+                                put_queries_in_act(&mut activation, wft);
                             }
                         }
 
                         if activation.jobs.is_empty() {
-                            panic!("Should not send lang activation with no jobs");
-                        } else {
-                            Some(ActivationOrAuto::LangActivation(activation))
+                            dbg_panic!("Should not send lang activation with no jobs");
                         }
+                        Some(ActivationOrAuto::LangActivation(activation))
                     }
                     Some(ActivationOrAuto::ReadyForQueries(mut act)) => {
                         if let Some(wft) = run_handle.wft.as_mut() {
-                            info!("Queries? {:?}", wft.pending_queries);
-                            let query_jobs = wft
-                                .pending_queries
-                                .drain(..)
-                                .map(|q| workflow_activation_job::Variant::QueryWorkflow(q).into());
-                            act.jobs.extend(query_jobs);
+                            put_queries_in_act(&mut act, wft);
                             Some(ActivationOrAuto::LangActivation(act))
                         } else {
-                            panic!("Ready for queries but no WFT!");
+                            dbg_panic!("Ready for queries but no WFT!");
+                            None
                         }
                     }
                     a @ Some(ActivationOrAuto::Autocomplete { .. }) => a,
@@ -449,7 +437,6 @@ impl WFStream {
             hit_cache: !did_miss_cache,
             pending_queries,
             start_time,
-            // TODO: Probably shouldn't/can't be expect
             _permit: self
                 .wft_semaphore
                 .try_acquire_owned()
@@ -457,13 +444,14 @@ impl WFStream {
         })
     }
 
-    #[instrument(level = "debug", skip(self, complete), fields(run_id=%complete.completion.run_id))]
+    #[instrument(level = "debug", skip(self, complete),
+                 fields(run_id=%complete.completion.run_id()))]
     fn process_completion(&mut self, complete: WFActCompleteMsg) {
-        match self.validate_completion(complete.completion) {
-            Ok(ValidatedCompletion::Success { run_id, commands }) => {
+        match complete.completion {
+            ValidatedCompletion::Success { run_id, commands } => {
                 self.successful_completion(run_id, commands, complete.response_tx);
             }
-            Ok(ValidatedCompletion::Fail { run_id, failure }) => {
+            ValidatedCompletion::Fail { run_id, failure } => {
                 self.failed_completion(
                     run_id,
                     WorkflowTaskFailedCause::Unspecified,
@@ -471,9 +459,6 @@ impl WFStream {
                     failure,
                     complete.response_tx,
                 );
-            }
-            Err(_) => {
-                todo!("Immediately reply on complete chan w/ err")
             }
         }
         // Always queue evictions after completion when we have a zero-size cache
@@ -542,10 +527,8 @@ impl WFStream {
             }
 
             let activation_was_eviction = self.activation_has_eviction(&run_id);
-            self.runs
-                .get_mut(&run_id)
-                .expect("TODO: no expect here")
-                .send_completion(RunActivationCompletion {
+            if let Some(rh) = self.runs.get_mut(&run_id) {
+                rh.send_completion(RunActivationCompletion {
                     task_token,
                     start_time,
                     commands,
@@ -555,6 +538,9 @@ impl WFStream {
                     query_responses,
                     resp_chan: Some(resp_chan),
                 });
+            } else {
+                dbg_panic!("Run {} missing during completion", run_id);
+            }
         };
     }
 
@@ -646,54 +632,6 @@ impl WFStream {
         }
     }
 
-    fn validate_completion(
-        &self,
-        completion: WorkflowActivationCompletion,
-    ) -> Result<ValidatedCompletion, CompleteWfError> {
-        match completion.status {
-            Some(workflow_activation_completion::Status::Successful(success)) => {
-                // Convert to wf commands
-                let commands = success
-                    .commands
-                    .into_iter()
-                    .map(|c| c.try_into())
-                    .collect::<Result<Vec<_>, EmptyWorkflowCommandErr>>()
-                    .map_err(|_| CompleteWfError::MalformedWorkflowCompletion {
-                        reason: "At least one workflow command in the completion contained \
-                                 an empty variant"
-                            .to_owned(),
-                        run_id: completion.run_id.clone(),
-                    })?;
-
-                if commands.len() > 1 && commands.iter().any(|c| {
-                    matches!(c, WFCommand::QueryResponse(q) if q.query_id == LEGACY_QUERY_ID)
-                }) {
-                    return Err(CompleteWfError::MalformedWorkflowCompletion {
-                        reason: "Workflow completion had a legacy query response along with other \
-                                commands. This is not allowed and constitutes an error in the \
-                                lang SDK".to_owned(),
-                        run_id: completion.run_id,
-                    });
-                }
-
-                Ok(ValidatedCompletion::Success {
-                    run_id: completion.run_id,
-                    commands,
-                })
-            }
-            Some(workflow_activation_completion::Status::Failed(failure)) => {
-                Ok(ValidatedCompletion::Fail {
-                    run_id: completion.run_id,
-                    failure,
-                })
-            }
-            None => Err(CompleteWfError::MalformedWorkflowCompletion {
-                reason: "Workflow completion had empty status field".to_owned(),
-                run_id: completion.run_id,
-            }),
-        }
-    }
-
     /// Request a workflow eviction. This will (eventually, after replay is done) queue up an
     /// activation to evict the workflow from the lang side. Workflow will not *actually* be evicted
     /// until lang replies to that activation
@@ -775,7 +713,6 @@ impl WFStream {
         }
 
         if let Some(rh) = self.runs.get_mut(run_id) {
-            // TODO: Not right I think
             // Can't mark the WFT complete if there are pending queries, as doing so would destroy
             // them.
             if rh
@@ -946,4 +883,14 @@ impl WFStream {
             info!(run_id, "Run not found");
         }
     }
+}
+
+/// Drains pending queries from the workflow task and appends them to the activation's jobs
+fn put_queries_in_act(act: &mut WorkflowActivation, wft: &mut OutstandingTask) {
+    debug!(queries=?wft.pending_queries, "Dispatching queries");
+    let query_jobs = wft
+        .pending_queries
+        .drain(..)
+        .map(|q| workflow_activation_job::Variant::QueryWorkflow(q).into());
+    act.jobs.extend(query_jobs);
 }

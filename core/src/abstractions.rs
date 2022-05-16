@@ -98,6 +98,14 @@ where
     (handle, stream)
 }
 
+macro_rules! dbg_panic {
+  ($($arg:tt)*) => {
+      error!($($arg)*);
+      debug_assert!(true, $($arg)*);
+  };
+}
+pub(crate) use dbg_panic;
+
 #[cfg(test)]
 mod tests {
     use super::*;
