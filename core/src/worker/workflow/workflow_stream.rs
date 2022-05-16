@@ -189,16 +189,16 @@ impl WFStream {
                     }
                 };
 
-                if state.should_allow_poll() {
-                    external_wft_allow_handle.allow_one();
-                }
-
                 if let Some(ref act) = maybe_activation {
                     if let Some(run_handle) = state.runs.get_mut(act.run_id()) {
                         run_handle.insert_outstanding_activation(act);
                     } else {
                         dbg_panic!("Tried to insert activation for missing run!");
                     }
+                }
+                state.reconcile_buffered();
+                if state.should_allow_poll() {
+                    external_wft_allow_handle.allow_one();
                 }
                 if state.shutdown_done() {
                     return Err(PollWfError::ShutDown);
@@ -779,18 +779,28 @@ impl WFStream {
             // Otherwise push it to the back
             self.buffered_polls_need_cache_slot.push_back(work);
         }
+    }
 
+    /// Makes sure we have enough pending evictions to fulfill the needs of buffered WFTs who are
+    /// waiting on a cache slot
+    fn reconcile_buffered(&mut self) {
         // We must ensure that there are at least as many pending evictions as there are tasks
         // that we might need to un-buffer (skipping runs which already have buffered tasks for
         // themselves)
-        let mut num_in_buff = self.buffered_polls_need_cache_slot.len();
+        let num_in_buff = self.buffered_polls_need_cache_slot.len();
         let mut evict_these = vec![];
+        let num_existing_evictions = self
+            .runs
+            .runs_lru_order()
+            .filter(|(_, h)| h.trying_to_evict.is_some())
+            .count();
+        let mut num_evicts_needed = num_in_buff.saturating_sub(num_existing_evictions);
         for (rid, handle) in self.runs.runs_lru_order() {
-            if num_in_buff == 0 {
+            if num_evicts_needed == 0 {
                 break;
             }
             if handle.buffered_resp.is_none() {
-                num_in_buff -= 1;
+                num_evicts_needed -= 1;
                 evict_these.push(rid.to_string());
             }
         }

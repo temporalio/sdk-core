@@ -241,11 +241,7 @@ impl Worker {
                     if let Some(ref i) = common.worker_interceptor {
                         i.on_workflow_activation_completion(&completion).await;
                     }
-                    common
-                        .worker
-                        .complete_workflow_activation(completion)
-                        .await
-                        .map_err(|e| dbg!(e))
+                    common.worker.complete_workflow_activation(completion).await
                 })
                 .map_err(anyhow::Error::from)
                 .await
@@ -274,7 +270,6 @@ impl Worker {
                         }
                     }
                 }
-                dbg!("Wf poll loop about to hit cancel");
                 // Tell still-alive workflows to evict themselves
                 shutdown_token.cancel();
                 // It's important to drop these so the future and completion processors will
@@ -382,7 +377,6 @@ impl WorkflowHalf {
                     // TODO: This probably shouldn't abort early, as it could cause an in-progress
                     //  complete to abort. Send synthetic remove activation
                     _ = shutdown_token.cancelled() => {
-                        dbg!("Exiting WF b/c shutdown token cancelled");
                         Ok(WfExitValue::Evicted)
                     }
                 }
