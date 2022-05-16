@@ -29,7 +29,7 @@ use crate::{
 };
 use futures::{stream::BoxStream, Stream, StreamExt};
 use std::{
-    fmt::Debug,
+    fmt::{Debug, Display, Formatter},
     future::Future,
     ops::DerefMut,
     result,
@@ -377,10 +377,10 @@ impl Workflows {
             span: Span::current(),
         }) {
             if print_err {
-                error!(
-                "Tried to interact with workflow state after it shut down. This is not allowed. \
-                 A worker cannot be interacted with after shutdown has finished. When sending {:?}",
-                e.0.input
+                warn!(
+                    "Tried to interact with workflow state after it shut down. This may be benign \
+                     when processing evictions during shutdown. When sending {:?}",
+                    e.0.input
                 )
             }
         }
@@ -534,7 +534,7 @@ impl ManagedRunHandle {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, derive_more::Display)]
 enum ActivationOrAuto {
     LangActivation(WorkflowActivation),
     /// This type should only be filled with an empty activation which is ready to have queries
@@ -807,14 +807,14 @@ struct RunUpdateResponse {
     kind: RunUpdateResponseKind,
     span: Span,
 }
-#[derive(Debug)]
+#[derive(Debug, derive_more::Display)]
 enum RunUpdateResponseKind {
-    Good(GoodRunUpdateResponse),
-    Fail(FailRunUpdateResponse),
+    Good(GoodRunUpdate),
+    Fail(FailRunUpdate),
 }
 
 #[derive(Debug)]
-struct GoodRunUpdateResponse {
+struct GoodRunUpdate {
     run_id: String,
     outgoing_activation: Option<ActivationOrAuto>,
     have_seen_terminal_event: bool,
@@ -823,13 +823,37 @@ struct GoodRunUpdateResponse {
     most_recently_processed_event_number: usize,
     in_response_to_wft: Option<RunUpdatedFromWft>,
 }
+impl Display for GoodRunUpdate {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "GoodRunUpdate(run_id: {}, outgoing_activation: {}, more_pending_work: {})",
+            self.run_id,
+            if let Some(og) = self.outgoing_activation.as_ref() {
+                format!("{}", og)
+            } else {
+                "None".to_string()
+            },
+            self.more_pending_work
+        )
+    }
+}
 #[derive(Debug)]
-pub(crate) struct FailRunUpdateResponse {
+pub(crate) struct FailRunUpdate {
     run_id: String,
     err: WFMachinesError,
     /// This is populated if the run update failed while processing a completion - and thus we
     /// must respond down it when handling the failure.
     completion_resp: Option<oneshot::Sender<ActivationCompleteResult>>,
+}
+impl Display for FailRunUpdate {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "FailRunUpdate(run_id: {}, error: {:?})",
+            self.run_id, self.err
+        )
+    }
 }
 #[derive(Debug)]
 struct RunUpdatedFromWft {}

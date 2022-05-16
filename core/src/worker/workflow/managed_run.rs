@@ -34,9 +34,10 @@ use tokio::{
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::Span;
+use tracing_futures::Instrument;
 
 use crate::worker::workflow::{
-    ActivationCompleteResult, ActivationOrAuto, FailRunUpdateResponse, GoodRunUpdateResponse,
+    ActivationCompleteResult, ActivationOrAuto, FailRunUpdate, GoodRunUpdate,
     LocalActivityRequestSink, RunAction, RunUpdateResponseKind,
 };
 use temporal_sdk_core_protos::TaskToken;
@@ -106,11 +107,11 @@ impl ManagedRun {
                 trace_span,
             }),
         )
-        .fold(
-            (self, heartbeat_tx),
-            |(mut me, heartbeat_tx), action| async move {
-                let _span = action.trace_span.enter();
-                let res = match action.action {
+        .fold((self, heartbeat_tx), |(mut me, heartbeat_tx), action| {
+            let span = action.trace_span;
+            let action = action.action;
+            async move {
+                let res = match action {
                     RunActions::NewIncomingWFT(wft) => me
                         .incoming_wft(wft)
                         .await
@@ -149,22 +150,22 @@ impl ManagedRun {
                     Err(e) => {
                         error!(error=?e, "Error in run machines");
                         me.am_broken = true;
-                        drop(_span);
                         me.update_tx
                             .send(RunUpdateResponse {
-                                kind: RunUpdateResponseKind::Fail(FailRunUpdateResponse {
+                                kind: RunUpdateResponseKind::Fail(FailRunUpdate {
                                     run_id: me.wfm.machines.run_id.clone(),
                                     err: e.source,
                                     completion_resp: e.complete_resp_chan,
                                 }),
-                                span: action.trace_span,
+                                span: Span::current(),
                             })
                             .expect("Machine can send update");
                     }
                 }
                 (me, heartbeat_tx)
-            },
-        )
+            }
+            .instrument(span)
+        })
         .await;
     }
 
@@ -429,7 +430,7 @@ impl ManagedRun {
     ) {
         self.update_tx
             .send(RunUpdateResponse {
-                kind: RunUpdateResponseKind::Good(GoodRunUpdateResponse {
+                kind: RunUpdateResponseKind::Good(GoodRunUpdate {
                     run_id: self.wfm.machines.run_id.clone(),
                     outgoing_activation,
                     have_seen_terminal_event: self.wfm.machines.have_seen_terminal_event,

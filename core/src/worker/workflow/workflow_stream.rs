@@ -229,7 +229,7 @@ impl WFStream {
         &mut self,
         resp: RunUpdateResponseKind,
     ) -> Option<ActivationOrAuto> {
-        debug!("Processing run update response from machines, {:?}", resp);
+        debug!(resp=%resp, "Processing run update response from machines");
         match resp {
             RunUpdateResponseKind::Good(resp) => {
                 if let Some(r) = self.runs.get_mut(&resp.run_id) {

@@ -601,9 +601,6 @@ impl WorkflowMachines {
     /// any events that need to be replayed until caught up to the newest WFT. May also fetch
     /// history from server if needed.
     pub(crate) async fn apply_next_wft_from_history(&mut self) -> Result<usize> {
-        // A much higher-up span (ex: poll) may want this field filled
-        tracing::Span::current().record("run_id", &self.run_id.as_str());
-
         // If we have already seen the terminal event for the entire workflow in a previous WFT,
         // then we don't need to do anything here, and in fact we need to avoid re-applying the
         // final WFT.
@@ -698,7 +695,6 @@ impl WorkflowMachines {
     /// Transfer commands from `current_wf_task_commands` to `commands`, so they may be sent off
     /// to the server. While doing so, [TemporalStateMachine::handle_command] is called on the
     /// machine associated with the command.
-    #[instrument(level = "debug", skip(self))]
     fn prepare_commands(&mut self) -> Result<()> {
         while let Some(c) = self.current_wf_task_commands.pop_front() {
             if !self
