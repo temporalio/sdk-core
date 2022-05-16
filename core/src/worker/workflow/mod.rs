@@ -387,6 +387,8 @@ impl Workflows {
     }
 }
 
+/// Manages access to a specific workflow run, and contains various bookkeeping information that the
+/// [WFStream] may need to access quickly.
 #[derive(Debug)]
 struct ManagedRunHandle {
     /// If set, the WFT this run is currently/will be processing.
@@ -505,6 +507,7 @@ impl ManagedRunHandle {
 
     /// Returns true if the managed run has any form of pending work
     /// If `ignore_evicts` is true, pending evictions do not count as pending work.
+    /// If `ignore_buffered` is true, buffered workflow tasks do not count as pending work.
     fn has_any_pending_work(&self, ignore_evicts: bool, ignore_buffered: bool) -> bool {
         let evict_work = if ignore_evicts {
             false
@@ -764,6 +767,7 @@ impl ValidatedCompletion {
     }
 }
 
+/// Input to run tasks, sent to [ManagedRun]s via [ManagedRunHandle]s
 #[derive(Debug)]
 struct RunAction {
     action: RunActions,
@@ -802,6 +806,7 @@ struct RunActivationCompletion {
     resp_chan: Option<oneshot::Sender<ActivationCompleteResult>>,
 }
 
+/// A response from a [ManagedRun] held by a [ManagedRunHandle]
 #[derive(Debug)]
 struct RunUpdateResponse {
     kind: RunUpdateResponseKind,

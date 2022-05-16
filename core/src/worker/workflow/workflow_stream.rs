@@ -29,6 +29,10 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tracing::{Level, Span};
 
+/// This struct holds all the state needed for tracking what workflow runs are currently cached
+/// and how WFTs should be dispatched to them, etc.
+///
+/// See [WFStream::build] for more
 pub(crate) struct WFStream {
     runs: RunCache,
     /// Buffered polls for new runs which need a cache slot to open up before we can handle them
@@ -43,6 +47,7 @@ pub(crate) struct WFStream {
 
     metrics: MetricsContext,
 }
+/// All possible inputs to the [WFStream]
 #[derive(derive_more::From)]
 enum WFActStreamInput {
     NewWft(ValidPollWFTQResponse),
@@ -58,6 +63,7 @@ impl From<RunUpdateResponse> for WFActStreamInput {
         })
     }
 }
+/// A non-poller-received input to the [WFStream]
 pub(super) struct LocalInput {
     pub input: LocalInputs,
     pub span: Span,
@@ -89,6 +95,22 @@ impl From<ExternalPollerInputs> for WFActStreamInput {
 }
 
 impl WFStream {
+    /// Constructs workflow state management and returns a stream which outputs activations.
+    ///
+    /// * `external_wfts` is a stream of validated poll responses as returned by a poller (or mock)
+    /// * `wfts_from_complete` is the recv side of a channel that new WFTs from completions should
+    ///   come down.
+    /// * `local_rx` is a stream of actions that workflow state needs to see. Things like
+    ///   completions, local activities finishing, etc. See [LocalInputs].
+    ///
+    /// These inputs are combined, along with an internal feedback channel for run-specific updates,
+    /// to form the inputs to a stream of [WFActStreamInput]s. The stream processor then takes
+    /// action on those inputs, and then may yield activations.
+    ///
+    /// Updating runs may need to do async work like fetching additional history. In order to
+    /// facilitate this, each run lives in its own task which is communicated with by sending
+    /// [RunAction]s and receiving [RunUpdateResponse]s via its [ManagedRunHandle].
+    ///
     pub(super) fn build(
         basics: WorkflowBasics,
         external_wfts: impl Stream<Item = ValidPollWFTQResponse> + Send + 'static,
