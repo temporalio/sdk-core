@@ -930,7 +930,9 @@ impl WFStream {
     }
 
     fn should_allow_poll(&self) -> bool {
-        self.runs.can_accept_new() && self.wft_semaphore.sem.available_permits() > 0
+        self.runs.can_accept_new()
+            && self.wft_semaphore.sem.available_permits() > 0
+            && self.buffered_polls_need_cache_slot.is_empty()
     }
 
     // Useful when debugging
