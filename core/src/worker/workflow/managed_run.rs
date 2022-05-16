@@ -4,11 +4,10 @@ mod managed_wf_test;
 use crate::{
     worker::{
         workflow::{
-            machines::WorkflowMachines,
-            workflow_tasks::{ActivationAction, ServerCommandsWithWorkflowInfo},
-            ActivationCompleteOutcome, HistoryUpdate, LocalResolution, NewIncomingWFT,
-            OutgoingServerCommands, RequestEvictMsg, RunActions, RunActivationCompletion,
-            RunUpdateResponse, RunUpdatedFromWft, WFCommand, WorkflowBridge,
+            machines::WorkflowMachines, ActivationAction, ActivationCompleteOutcome, HistoryUpdate,
+            LocalResolution, NewIncomingWFT, OutgoingServerCommands, RequestEvictMsg, RunActions,
+            RunActivationCompletion, RunUpdateResponse, RunUpdatedFromWft,
+            ServerCommandsWithWorkflowInfo, WFCommand, WorkflowBridge,
         },
         LocalActRequest,
     },
@@ -37,9 +36,8 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing::Span;
 
 use crate::worker::workflow::{
-    workflow_tasks::WFT_HEARTBEAT_TIMEOUT_FRACTION, ActivationCompleteResult, ActivationOrAuto,
-    FailRunUpdateResponse, GoodRunUpdateResponse, LocalActivityRequestSink, RunAction,
-    RunUpdateResponseKind,
+    ActivationCompleteResult, ActivationOrAuto, FailRunUpdateResponse, GoodRunUpdateResponse,
+    LocalActivityRequestSink, RunAction, RunUpdateResponseKind,
 };
 use temporal_sdk_core_protos::TaskToken;
 
@@ -47,6 +45,9 @@ use temporal_sdk_core_protos::TaskToken;
 pub(crate) use managed_wf_test::ManagedWFFunc;
 
 type Result<T, E = WFMachinesError> = std::result::Result<T, E>;
+/// What percentage of a WFT timeout we are willing to wait before sending a WFT heartbeat when
+/// necessary.
+const WFT_HEARTBEAT_TIMEOUT_FRACTION: f32 = 0.8;
 
 pub(super) struct ManagedRun {
     wfm: WorkflowManager,

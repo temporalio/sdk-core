@@ -3,20 +3,7 @@ use crate::{
     protosext::ValidPollWFTQResponse,
     telemetry::metrics::workflow_worker_type,
     worker::{
-        workflow::{
-            history_update::NextPageToken,
-            run_cache::RunCache,
-            workflow_tasks::{
-                ActivationAction, EvictionRequestResult, FailedActivationOutcome,
-                OutstandingActivation, OutstandingTask, RunUpdateOutcome,
-                ServerCommandsWithWorkflowInfo, WorkflowTaskInfo,
-            },
-            ActivationCompleteOutcome, ActivationCompleteResult, ActivationOrAuto,
-            EmptyWorkflowCommandErr, FailRunUpdateResponse, GetStateInfoMsg, HistoryPaginator,
-            HistoryUpdate, LocalResolutionMsg, PostActivationMsg, RequestEvictMsg,
-            RunActivationCompletion, RunUpdateResponse, RunUpdateResponseKind, RunUpdatedFromWft,
-            ValidatedCompletion, WFActCompleteMsg, WFCommand, WorkflowBasics, WorkflowStateInfo,
-        },
+        workflow::{history_update::NextPageToken, run_cache::RunCache, *},
         LocalActRequest, LocalActivityResolution, LEGACY_QUERY_ID,
     },
     MetricsContext, WorkerClientBag,
@@ -166,53 +153,7 @@ impl WFStream {
                         let _span_g = local_input.span.enter();
                         match local_input.input {
                             LocalInputs::RunUpdateResponse(resp) => {
-                                // TODO Move this handling inside method
-                                match state.process_run_update_response(resp) {
-                                    RunUpdateOutcome::IssueActivation(act) => {
-                                        Some(ActivationOrAuto::LangActivation(act))
-                                    }
-                                    RunUpdateOutcome::Autocomplete { run_id } => {
-                                        Some(ActivationOrAuto::Autocomplete { run_id })
-                                    }
-                                    RunUpdateOutcome::Failure(err) => {
-                                        if let Some(resp_chan) = err.completion_resp {
-                                            // Automatically fail the workflow task in the event we
-                                            // couldn't update machines
-                                            let fail_cause = if matches!(
-                                                &err.err,
-                                                WFMachinesError::Nondeterminism(_)
-                                            ) {
-                                                WorkflowTaskFailedCause::NonDeterministicError
-                                            } else {
-                                                WorkflowTaskFailedCause::Unspecified
-                                            };
-                                            let wft_fail_str = format!("{:?}", err.err);
-                                            state.failed_completion(
-                                                err.run_id,
-                                                fail_cause,
-                                                err.err.evict_reason(),
-                                                TFailure::application_failure(wft_fail_str, false)
-                                                    .into(),
-                                                resp_chan,
-                                            );
-                                        } else {
-                                            // TODO: This should probably also fail workflow tasks,
-                                            // but that wasn't implemented pre-refactor either.
-                                            warn!(error=?err.err, run_id=%err.run_id,
-                                          "Error while updating workflow");
-                                            state.request_eviction(RequestEvictMsg {
-                                                run_id: err.run_id,
-                                                message: format!(
-                                                    "Error while updating workflow: {:?}",
-                                                    err.err
-                                                ),
-                                                reason: err.err.evict_reason(),
-                                            });
-                                        }
-                                        None
-                                    }
-                                    RunUpdateOutcome::DoNothing => None,
-                                }
+                                state.process_run_update_response(resp)
                             }
                             LocalInputs::Completion(completion) => {
                                 state.process_completion(completion);
@@ -287,7 +228,10 @@ impl WFStream {
             .take_while(|o| future::ready(!matches!(o, Err(PollWfError::ShutDown))))
     }
 
-    fn process_run_update_response(&mut self, resp: RunUpdateResponseKind) -> RunUpdateOutcome {
+    fn process_run_update_response(
+        &mut self,
+        resp: RunUpdateResponseKind,
+    ) -> Option<ActivationOrAuto> {
         debug!("Processing run update response from machines, {:?}", resp);
         match resp {
             RunUpdateResponseKind::Good(resp) => {
@@ -325,7 +269,7 @@ impl WFStream {
                         if activation.jobs.is_empty() {
                             panic!("Should not send lang activation with no jobs");
                         } else {
-                            RunUpdateOutcome::IssueActivation(activation)
+                            Some(ActivationOrAuto::LangActivation(activation))
                         }
                     }
                     Some(ActivationOrAuto::ReadyForQueries(mut act)) => {
@@ -336,20 +280,18 @@ impl WFStream {
                                 .drain(..)
                                 .map(|q| workflow_activation_job::Variant::QueryWorkflow(q).into());
                             act.jobs.extend(query_jobs);
-                            RunUpdateOutcome::IssueActivation(act)
+                            Some(ActivationOrAuto::LangActivation(act))
                         } else {
                             panic!("Ready for queries but no WFT!");
                         }
                     }
-                    Some(ActivationOrAuto::Autocomplete { run_id }) => {
-                        RunUpdateOutcome::Autocomplete { run_id }
-                    }
+                    a @ Some(ActivationOrAuto::Autocomplete { .. }) => a,
                     None => {
                         // If the response indicates there is no activation to send yet but there
                         // is more pending work, we should check again.
                         if resp.more_pending_work {
                             run_handle.check_more_activations();
-                            return RunUpdateOutcome::DoNothing;
+                            return None;
                         }
 
                         // If a run update came back and had nothing to do, but we're trying to
@@ -361,17 +303,15 @@ impl WFStream {
                                     reason.message.clone(),
                                     reason.reason,
                                 );
-                                return RunUpdateOutcome::IssueActivation(evict_act);
+                                return Some(ActivationOrAuto::LangActivation(evict_act));
                             }
                         }
-                        RunUpdateOutcome::DoNothing
+                        None
                     }
                 };
                 // After each run update, check if it's ready to handle any buffered poll
-                if matches!(
-                    &r,
-                    RunUpdateOutcome::Autocomplete { .. } | RunUpdateOutcome::DoNothing
-                ) && !run_handle.has_any_pending_work(false, true)
+                if matches!(&r, Some(ActivationOrAuto::Autocomplete { .. }) | None)
+                    && !run_handle.has_any_pending_work(false, true)
                 {
                     if let Some(bufft) = run_handle.buffered_resp.take() {
                         self.instantiate_or_update(bufft);
@@ -383,11 +323,33 @@ impl WFStream {
                 if let Some(r) = self.runs.get_mut(&fail.run_id) {
                     r.last_action_acked = true;
                 }
-                RunUpdateOutcome::Failure(FailRunUpdateResponse {
-                    err: fail.err,
-                    run_id: fail.run_id,
-                    completion_resp: fail.completion_resp,
-                })
+
+                if let Some(resp_chan) = fail.completion_resp {
+                    // Automatically fail the workflow task in the event we couldn't update machines
+                    let fail_cause = if matches!(&fail.err, WFMachinesError::Nondeterminism(_)) {
+                        WorkflowTaskFailedCause::NonDeterministicError
+                    } else {
+                        WorkflowTaskFailedCause::Unspecified
+                    };
+                    let wft_fail_str = format!("{:?}", fail.err);
+                    self.failed_completion(
+                        fail.run_id,
+                        fail_cause,
+                        fail.err.evict_reason(),
+                        TFailure::application_failure(wft_fail_str, false).into(),
+                        resp_chan,
+                    );
+                } else {
+                    // TODO: This should probably also fail workflow tasks, but that wasn't
+                    //  implemented pre-refactor either.
+                    warn!(error=?fail.err, run_id=%fail.run_id, "Error while updating workflow");
+                    self.request_eviction(RequestEvictMsg {
+                        run_id: fail.run_id,
+                        message: format!("Error while updating workflow: {:?}", fail.err),
+                        reason: fail.err.evict_reason(),
+                    });
+                }
+                None
             }
         }
     }

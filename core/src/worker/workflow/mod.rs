@@ -1,5 +1,3 @@
-pub(crate) mod workflow_tasks;
-
 mod bridge;
 mod driven_workflow;
 mod history_update;
@@ -24,10 +22,6 @@ use crate::{
             managed_run::{ManagedRun, WorkflowManager},
             wft_poller::validate_wft,
             workflow_stream::{LocalInput, LocalInputs, WFStream},
-            workflow_tasks::{
-                ActivationAction, FailedActivationOutcome, OutstandingActivation, OutstandingTask,
-                ServerCommandsWithWorkflowInfo,
-            },
         },
         LocalActRequest, LocalActivityResolution,
     },
@@ -46,20 +40,23 @@ use temporal_client::WorkflowTaskCompletion;
 use temporal_sdk_core_api::errors::{CompleteWfError, PollWfError};
 use temporal_sdk_core_protos::{
     coresdk::{
-        workflow_activation::{remove_from_cache::EvictionReason, WorkflowActivation},
+        workflow_activation::{
+            remove_from_cache::EvictionReason, QueryWorkflow, WorkflowActivation,
+        },
         workflow_commands::*,
         workflow_completion,
         workflow_completion::{Failure, WorkflowActivationCompletion},
     },
     temporal::api::{
-        command::v1::Command as ProtoCommand, taskqueue::v1::StickyExecutionAttributes,
+        command::v1::Command as ProtoCommand, enums::v1::WorkflowTaskFailedCause,
+        taskqueue::v1::StickyExecutionAttributes,
     },
     TaskToken,
 };
 use tokio::{
     sync::{
         mpsc::{unbounded_channel, UnboundedSender},
-        oneshot,
+        oneshot, OwnedSemaphorePermit,
     },
     task,
     task::{JoinError, JoinHandle},
@@ -388,90 +385,6 @@ impl Workflows {
 }
 
 #[derive(Debug)]
-enum ActivationOrAuto {
-    LangActivation(WorkflowActivation),
-    /// This type should only be filled with an empty activation which is ready to have queries
-    /// inserted into the joblist
-    ReadyForQueries(WorkflowActivation),
-    Autocomplete {
-        // TODO: Can I delete this?
-        run_id: String,
-    },
-}
-impl ActivationOrAuto {
-    pub fn run_id(&self) -> &str {
-        match self {
-            ActivationOrAuto::LangActivation(act) => &act.run_id,
-            ActivationOrAuto::Autocomplete { run_id, .. } => run_id,
-            ActivationOrAuto::ReadyForQueries(act) => &act.run_id,
-        }
-    }
-}
-
-#[derive(Debug)]
-#[allow(dead_code)] // Not always used in non-test
-pub(crate) struct WorkflowStateInfo {
-    pub cached_workflows: usize,
-    pub outstanding_wft: usize,
-    pub available_wft_permits: usize,
-}
-
-#[derive(Debug)]
-struct WFActCompleteMsg {
-    completion: WorkflowActivationCompletion,
-    response_tx: oneshot::Sender<ActivationCompleteResult>,
-}
-#[derive(Debug)]
-struct LocalResolutionMsg {
-    run_id: String,
-    res: LocalResolution,
-}
-#[derive(Debug)]
-struct PostActivationMsg {
-    run_id: String,
-    reported_wft_to_server: bool,
-}
-#[derive(Debug, Clone)]
-struct RequestEvictMsg {
-    run_id: String,
-    message: String,
-    reason: EvictionReason,
-}
-#[derive(Debug)]
-struct GetStateInfoMsg {
-    response_tx: oneshot::Sender<WorkflowStateInfo>,
-}
-
-/// Each activation completion produces one of these
-#[derive(Debug)]
-struct ActivationCompleteResult {
-    most_recently_processed_event: usize,
-    outcome: ActivationCompleteOutcome,
-}
-
-/// What needs to be done after calling [Workflows::activation_completed]
-#[derive(Debug)]
-enum ActivationCompleteOutcome {
-    /// The WFT must be reported as successful to the server using the contained information.
-    ReportWFTSuccess(ServerCommandsWithWorkflowInfo),
-    /// The WFT must be reported as failed to the server using the contained information.
-    ReportWFTFail(FailedActivationOutcome),
-    /// There's nothing to do right now. EX: The workflow needs to keep replaying.
-    DoNothing,
-}
-
-enum ValidatedCompletion {
-    Success {
-        run_id: String,
-        commands: Vec<WFCommand>,
-    },
-    Fail {
-        run_id: String,
-        failure: Failure,
-    },
-}
-
-#[derive(Debug)]
 struct ManagedRunHandle {
     /// If set, the WFT this run is currently/will be processing.
     wft: Option<OutstandingTask>,
@@ -616,6 +529,177 @@ impl ManagedRunHandle {
             || act_work
             || evict_work
     }
+}
+
+#[derive(Debug)]
+enum ActivationOrAuto {
+    LangActivation(WorkflowActivation),
+    /// This type should only be filled with an empty activation which is ready to have queries
+    /// inserted into the joblist
+    ReadyForQueries(WorkflowActivation),
+    Autocomplete {
+        // TODO: Can I delete this?
+        run_id: String,
+    },
+}
+impl ActivationOrAuto {
+    pub fn run_id(&self) -> &str {
+        match self {
+            ActivationOrAuto::LangActivation(act) => &act.run_id,
+            ActivationOrAuto::Autocomplete { run_id, .. } => run_id,
+            ActivationOrAuto::ReadyForQueries(act) => &act.run_id,
+        }
+    }
+}
+#[derive(Debug)]
+pub(crate) struct OutstandingTask {
+    pub info: WorkflowTaskInfo,
+    pub hit_cache: bool,
+    /// Set if the outstanding task has quer(ies) which must be fulfilled upon finishing replay
+    pub pending_queries: Vec<QueryWorkflow>,
+    pub start_time: Instant,
+    /// The WFT permit owned by this task, ensures we don't exceed max concurrent WFT, and makes
+    /// sure the permit is automatically freed when we delete the task.
+    pub _permit: OwnedSemaphorePermit,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub(crate) enum OutstandingActivation {
+    /// A normal activation with a joblist
+    Normal {
+        /// True if there is an eviction in the joblist
+        contains_eviction: bool,
+        /// Number of jobs in the activation
+        num_jobs: usize,
+    },
+    /// An activation for a legacy query
+    LegacyQuery,
+    /// A fake activation which is never sent to lang, but used internally
+    Autocomplete,
+}
+
+impl OutstandingActivation {
+    pub(crate) const fn has_only_eviction(self) -> bool {
+        matches!(
+            self,
+            OutstandingActivation::Normal {
+                contains_eviction: true,
+                num_jobs: nj
+            }
+        if nj == 1)
+    }
+    pub(crate) const fn has_eviction(self) -> bool {
+        matches!(
+            self,
+            OutstandingActivation::Normal {
+                contains_eviction: true,
+                ..
+            }
+        )
+    }
+}
+
+/// Contains important information about a given workflow task that we need to memorize while
+/// lang handles it.
+#[derive(Clone, Debug)]
+pub struct WorkflowTaskInfo {
+    pub task_token: TaskToken,
+    pub attempt: u32,
+}
+
+#[derive(Debug)]
+pub enum FailedActivationOutcome {
+    NoReport,
+    Report(TaskToken, WorkflowTaskFailedCause, Failure),
+    ReportLegacyQueryFailure(TaskToken, Failure),
+}
+
+#[derive(Debug)]
+pub(crate) struct ServerCommandsWithWorkflowInfo {
+    pub task_token: TaskToken,
+    pub action: ActivationAction,
+}
+
+#[derive(Debug)]
+pub(crate) enum ActivationAction {
+    /// We should respond that the workflow task is complete
+    WftComplete {
+        commands: Vec<ProtoCommand>,
+        query_responses: Vec<QueryResult>,
+        force_new_wft: bool,
+    },
+    /// We should respond to a legacy query request
+    RespondLegacyQuery { result: QueryResult },
+}
+
+#[derive(Debug, Eq, PartialEq, Hash)]
+pub(crate) enum EvictionRequestResult {
+    EvictionRequested(Option<u32>),
+    NotFound,
+    EvictionAlreadyRequested(Option<u32>),
+}
+
+#[derive(Debug)]
+#[allow(dead_code)] // Not always used in non-test
+pub(crate) struct WorkflowStateInfo {
+    pub cached_workflows: usize,
+    pub outstanding_wft: usize,
+    pub available_wft_permits: usize,
+}
+
+#[derive(Debug)]
+struct WFActCompleteMsg {
+    completion: WorkflowActivationCompletion,
+    response_tx: oneshot::Sender<ActivationCompleteResult>,
+}
+#[derive(Debug)]
+struct LocalResolutionMsg {
+    run_id: String,
+    res: LocalResolution,
+}
+#[derive(Debug)]
+struct PostActivationMsg {
+    run_id: String,
+    reported_wft_to_server: bool,
+}
+#[derive(Debug, Clone)]
+struct RequestEvictMsg {
+    run_id: String,
+    message: String,
+    reason: EvictionReason,
+}
+#[derive(Debug)]
+struct GetStateInfoMsg {
+    response_tx: oneshot::Sender<WorkflowStateInfo>,
+}
+
+/// Each activation completion produces one of these
+#[derive(Debug)]
+struct ActivationCompleteResult {
+    most_recently_processed_event: usize,
+    outcome: ActivationCompleteOutcome,
+}
+
+/// What needs to be done after calling [Workflows::activation_completed]
+#[derive(Debug)]
+enum ActivationCompleteOutcome {
+    /// The WFT must be reported as successful to the server using the contained information.
+    ReportWFTSuccess(ServerCommandsWithWorkflowInfo),
+    /// The WFT must be reported as failed to the server using the contained information.
+    ReportWFTFail(FailedActivationOutcome),
+    /// There's nothing to do right now. EX: The workflow needs to keep replaying.
+    DoNothing,
+}
+
+enum ValidatedCompletion {
+    Success {
+        run_id: String,
+        commands: Vec<WFCommand>,
+    },
+    Fail {
+        run_id: String,
+        failure: Failure,
+    },
 }
 
 #[derive(Debug)]
