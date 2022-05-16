@@ -25,6 +25,7 @@ use crate::{
 use backoff::{ExponentialBackoff, SystemClock};
 use http::uri::InvalidUri;
 use opentelemetry::metrics::Meter;
+use parking_lot::RwLock;
 use std::{
     collections::HashMap,
     fmt::{Debug, Formatter},
@@ -79,10 +80,6 @@ pub struct ClientOptions {
     /// The version of the SDK being implemented on top of core. Is set as `client-version` header
     /// in all RPC calls. The server decides if the client is supported based on this.
     pub client_version: String,
-
-    /// Other non-required static headers which should be attached to every request
-    #[builder(default)]
-    pub static_headers: HashMap<String, String>,
 
     /// A human-readable string that can identify this process. Defaults to empty string.
     #[builder(default)]
@@ -252,11 +249,18 @@ impl From<ConfiguredClient<WorkflowServiceClientWithMetrics>> for AnyClient {
 pub struct ConfiguredClient<C> {
     client: C,
     options: ClientOptions,
+    headers: Arc<RwLock<HashMap<String, String>>>,
     /// Capabilities as read from the `get_system_info` RPC call made on client connection
     capabilities: Option<get_system_info_response::Capabilities>,
 }
 
 impl<C> ConfiguredClient<C> {
+    /// Set HTTP request headers overwriting previous headers
+    pub fn set_headers(&self, headers: HashMap<String, String>) {
+        let mut guard = self.headers.write();
+        *guard = headers;
+    }
+
     /// Returns the options the client is configured with
     pub fn options(&self) -> &ClientOptions {
         &self.options
@@ -295,8 +299,12 @@ impl ClientOptions {
         &self,
         namespace: impl Into<String>,
         metrics_meter: Option<&Meter>,
+        headers: Option<Arc<RwLock<HashMap<String, String>>>>,
     ) -> Result<RetryClient<Client>, ClientInitError> {
-        let client = self.connect_no_namespace(metrics_meter).await?.into_inner();
+        let client = self
+            .connect_no_namespace(metrics_meter, headers)
+            .await?
+            .into_inner();
         let client = Client::new(client, namespace.into());
         let retry_client = RetryClient::new(client, self.retry_config.clone());
         Ok(retry_client)
@@ -309,6 +317,7 @@ impl ClientOptions {
     pub async fn connect_no_namespace(
         &self,
         metrics_meter: Option<&Meter>,
+        headers: Option<Arc<RwLock<HashMap<String, String>>>>,
     ) -> Result<RetryClient<ConfiguredClient<WorkflowServiceClientWithMetrics>>, ClientInitError>
     {
         let channel = Channel::from_shared(self.target_url.to_string())?;
@@ -320,9 +329,14 @@ impl ClientOptions {
                 metrics: metrics_meter.map(|mm| MetricsContext::new(vec![], mm)),
             })
             .service(channel);
-        let interceptor = ServiceCallInterceptor { opts: self.clone() };
+        let headers = headers.unwrap_or_default();
+        let interceptor = ServiceCallInterceptor {
+            opts: self.clone(),
+            headers: headers.clone(),
+        };
 
         let mut client = ConfiguredClient {
+            headers,
             client: WorkflowServiceClient::with_interceptor(service, interceptor),
             options: self.clone(),
             capabilities: None,
@@ -394,6 +408,8 @@ pub struct WorkflowTaskCompletion {
 #[derive(Clone)]
 pub struct ServiceCallInterceptor {
     opts: ClientOptions,
+    /// Only accessed as a reader
+    headers: Arc<RwLock<HashMap<String, String>>>,
 }
 
 impl Interceptor for ServiceCallInterceptor {
@@ -415,7 +431,8 @@ impl Interceptor for ServiceCallInterceptor {
                 .parse()
                 .unwrap_or_else(|_| MetadataValue::from_static("")),
         );
-        for (k, v) in &self.opts.static_headers {
+        let headers = &*self.headers.read();
+        for (k, v) in headers {
             if let (Ok(k), Ok(v)) = (MetadataKey::from_str(k), MetadataValue::from_str(v)) {
                 metadata.insert(k, v);
             }

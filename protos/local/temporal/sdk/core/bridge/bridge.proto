@@ -21,10 +21,33 @@ enum LogLevel {
 }
 
 message InitTelemetryRequest {
-  string otel_collector_url = 1;
-  string tracing_filter = 2;
-  LogLevel log_forwarding_level = 3;
-  string prometheus_export_bind_address = 4;
+  string tracing_filter = 1;
+  oneof logging {
+    ConsoleLoggerOptions console = 2;
+    ForwardLoggerOptions forward = 3;
+  };
+
+  oneof tracing {
+    OtelCollectorOptions otel_tracing = 4;
+  }
+
+  oneof metrics {
+    OtelCollectorOptions otel_metrics = 5;
+    PrometheusOptions prometheus = 6;
+  }
+
+  message ConsoleLoggerOptions {}
+  message ForwardLoggerOptions {
+    LogLevel level = 1;
+  }
+
+  message OtelCollectorOptions {
+    string url = 1;
+    map<string, string> headers = 2;
+  }
+  message PrometheusOptions {
+    string export_bind_address = 1;
+  }
 }
 
 message CreateClientRequest {
@@ -32,7 +55,6 @@ message CreateClientRequest {
   string namespace = 2;
   string client_name = 3;
   string client_version = 4;
-  map<string, string> static_headers = 5;
   string identity = 6;
   string worker_binary_id = 7;
   TlsConfig tls_config = 8;

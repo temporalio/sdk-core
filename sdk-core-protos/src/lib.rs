@@ -1172,6 +1172,19 @@ pub mod coresdk {
                 ..Default::default()
             }
         }
+
+        /// Extracts an ApplicationFailureInfo from a Failure instance if it exists
+        pub fn maybe_application_failure(&self) -> Option<&ApplicationFailureInfo> {
+            if let Failure {
+                failure_info: Some(FailureInfo::ApplicationFailureInfo(f)),
+                ..
+            } = self
+            {
+                Some(f)
+            } else {
+                None
+            }
+        }
     }
 
     impl Display for Failure {
