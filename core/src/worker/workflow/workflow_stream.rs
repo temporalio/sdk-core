@@ -183,7 +183,7 @@ impl WFStream {
                         }
                     }
                     WFActStreamInput::PollerDead => {
-                        error!("Poller died");
+                        warn!("WFT poller died, shutting down");
                         state.shutdown_token.cancel();
                         None
                     }

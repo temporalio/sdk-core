@@ -3,9 +3,9 @@ use crate::{
     replay::TestHistoryBuilder,
     test_help::{
         build_fake_worker, build_mock_pollers, build_multihist_mock_sg, canned_histories,
-        gen_assert_and_fail, gen_assert_and_reply, hist_to_poll_resp, mock_worker, poll_and_reply,
-        poll_and_reply_clears_outstanding_evicts, single_hist_mock_sg, ExpectationAmount,
-        FakeWfResponses, MockPollCfg, MocksHolder, ResponseType,
+        gen_assert_and_fail, gen_assert_and_reply, hist_to_poll_resp, mock_sdk, mock_worker,
+        poll_and_reply, poll_and_reply_clears_outstanding_evicts, single_hist_mock_sg,
+        ExpectationAmount, FakeWfResponses, MockPollCfg, MocksHolder, ResponseType,
         WorkflowCachingPolicy::{self, AfterEveryReply, NonSticky},
         TEST_Q,
     },
@@ -22,7 +22,8 @@ use std::{
     },
     time::Duration,
 };
-use temporal_sdk_core_api::Worker as WorkerTrait;
+use temporal_sdk::{ActivityOptions, CancellableFuture, WfContext};
+use temporal_sdk_core_api::{errors::PollWfError, Worker as WorkerTrait};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{self as ar, activity_resolution, ActivityResolution},
@@ -44,6 +45,7 @@ use temporal_sdk_core_protos::{
             GetWorkflowExecutionHistoryResponse, RespondWorkflowTaskCompletedResponse,
         },
     },
+    DEFAULT_WORKFLOW_TYPE,
 };
 use temporal_sdk_core_test_utils::{fanout_tasks, start_timer_cmd};
 use tokio::sync::Semaphore;
@@ -436,6 +438,54 @@ async fn started_activity_cancellation_abandon(hist_batches: &'static [usize]) {
     let core = build_fake_worker(wfid, t, hist_batches);
 
     verify_activity_cancellation(&core, activity_id, ActivityCancellationType::Abandon).await;
+}
+
+#[rstest(hist_batches, case::incremental(&[1, 2, 3, 4]), case::replay(&[4]))]
+#[tokio::test]
+async fn abandoned_activities_ignore_start_and_complete(hist_batches: &'static [usize]) {
+    let wfid = "fake_wf_id";
+    let wf_type = DEFAULT_WORKFLOW_TYPE;
+    let activity_id = "1";
+
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    let act_scheduled_event_id = t.add_activity_task_scheduled(activity_id);
+    let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+    t.add_timer_fired(timer_started_event_id, "1".to_string());
+    t.add_full_wf_task();
+    let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+    let act_started_event_id = t.add_activity_task_started(act_scheduled_event_id);
+    t.add_activity_task_completed(
+        act_scheduled_event_id,
+        act_started_event_id,
+        Default::default(),
+    );
+    t.add_full_wf_task();
+    t.add_timer_fired(timer_started_event_id, "2".to_string());
+    t.add_full_wf_task();
+    t.add_workflow_execution_completed();
+    let mock = mock_workflow_client();
+    let mut worker = mock_sdk(MockPollCfg::from_resp_batches(wfid, t, hist_batches, mock));
+
+    worker.register_wf(wf_type.to_owned(), |ctx: WfContext| async move {
+        let act_fut = ctx.activity(ActivityOptions {
+            activity_type: "echo_activity".to_string(),
+            start_to_close_timeout: Some(Duration::from_secs(5)),
+            cancellation_type: ActivityCancellationType::Abandon,
+            ..Default::default()
+        });
+        ctx.timer(Duration::from_secs(1)).await;
+        act_fut.cancel(&ctx);
+        ctx.timer(Duration::from_secs(3)).await;
+        act_fut.await;
+        Ok(().into())
+    });
+    worker
+        .submit_wf(wfid, wf_type, vec![], Default::default())
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
 }
 
 #[rstest(hist_batches, case::incremental(&[1, 3]), case::replay(&[3]))]
@@ -1827,6 +1877,72 @@ async fn eviction_waits_until_replay_finished() {
         [WorkflowActivationJob {
             variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
         }]
+    );
+
+    core.shutdown().await;
+}
+
+#[tokio::test]
+async fn autocompletes_wft_no_work() {
+    let wfid = "fake_wf_id";
+    let activity_id = "1";
+
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    let scheduled_event_id = t.add_activity_task_scheduled(activity_id);
+    let started_event_id = t.add_activity_task_started(scheduled_event_id);
+    t.add_full_wf_task();
+    t.add_we_signaled("sig1", vec![]);
+    t.add_full_wf_task();
+    t.add_activity_task_completed(scheduled_event_id, started_event_id, Default::default());
+    t.add_full_wf_task();
+    let mock = mock_workflow_client();
+    let mut mock = single_hist_mock_sg(wfid, t, &[1, 2, 3, 4], mock, true);
+    mock.worker_cfg(|w| w.max_cached_workflows = 1);
+    let core = mock_worker(mock);
+
+    let act = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        act.jobs.as_slice(),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::StartWorkflow(_)),
+        }]
+    );
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+        act.run_id,
+        ScheduleActivity {
+            seq: 1,
+            activity_id: activity_id.to_string(),
+            cancellation_type: ActivityCancellationType::Abandon as i32,
+            ..Default::default()
+        }
+        .into(),
+    ))
+    .await
+    .unwrap();
+    let act = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        act.jobs.as_slice(),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::SignalWorkflow(_)),
+        }]
+    );
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+        act.run_id,
+        RequestCancelActivity { seq: 1 }.into(),
+    ))
+    .await
+    .unwrap();
+    let act = core.poll_workflow_activation().await.unwrap();
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(act.run_id))
+        .await
+        .unwrap();
+    // The last task will autocomplete, and thus this will return shutdown since there is no more
+    // work
+    assert_matches!(
+        core.poll_workflow_activation().await.unwrap_err(),
+        PollWfError::ShutDown
     );
 
     core.shutdown().await;
