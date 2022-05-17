@@ -110,7 +110,6 @@ impl WFStream {
     /// Updating runs may need to do async work like fetching additional history. In order to
     /// facilitate this, each run lives in its own task which is communicated with by sending
     /// [RunAction]s and receiving [RunUpdateResponse]s via its [ManagedRunHandle].
-    ///
     pub(super) fn build(
         basics: WorkflowBasics,
         external_wfts: impl Stream<Item = ValidPollWFTQResponse> + Send + 'static,
@@ -268,7 +267,7 @@ impl WFStream {
 
                 let r = match resp.outgoing_activation {
                     Some(ActivationOrAuto::LangActivation(mut activation)) => {
-                        if let Some(RunUpdatedFromWft {}) = resp.in_response_to_wft {
+                        if resp.in_response_to_wft {
                             let wft = run_handle
                                 .wft
                                 .as_mut()

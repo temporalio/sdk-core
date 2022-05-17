@@ -826,7 +826,8 @@ struct GoodRunUpdate {
     /// Is true if there are more jobs that need to be sent to lang
     more_pending_work: bool,
     most_recently_processed_event_number: usize,
-    in_response_to_wft: Option<RunUpdatedFromWft>,
+    /// Is true if this update was in response to a new WFT
+    in_response_to_wft: bool,
 }
 impl Display for GoodRunUpdate {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -860,8 +861,6 @@ impl Display for FailRunUpdate {
         )
     }
 }
-#[derive(Debug)]
-struct RunUpdatedFromWft {}
 #[derive(Debug)]
 pub struct OutgoingServerCommands {
     pub commands: Vec<ProtoCommand>,

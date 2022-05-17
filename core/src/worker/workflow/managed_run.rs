@@ -6,8 +6,8 @@ use crate::{
         workflow::{
             machines::WorkflowMachines, ActivationAction, ActivationCompleteOutcome, HistoryUpdate,
             LocalResolution, NewIncomingWFT, OutgoingServerCommands, RequestEvictMsg, RunActions,
-            RunActivationCompletion, RunUpdateResponse, RunUpdatedFromWft,
-            ServerCommandsWithWorkflowInfo, WFCommand, WorkflowBridge,
+            RunActivationCompletion, RunUpdateResponse, ServerCommandsWithWorkflowInfo, WFCommand,
+            WorkflowBridge,
         },
         LocalActRequest,
     },
@@ -112,23 +112,22 @@ impl ManagedRun {
             let action = action.action;
             async move {
                 let res = match action {
-                    RunActions::NewIncomingWFT(wft) => me
-                        .incoming_wft(wft)
-                        .await
-                        .map(|(act, wft_update)| (act, Some(wft_update))),
+                    RunActions::NewIncomingWFT(wft) => {
+                        me.incoming_wft(wft).await.map(|act| (act, true))
+                    }
                     RunActions::ActivationCompletion(completion) => me
                         .completion(completion, &heartbeat_tx)
                         .await
-                        .map(|_| (None, None)),
+                        .map(|_| (None, false)),
                     RunActions::CheckMoreWork {
                         want_to_evict,
                         has_pending_queries,
                     } => me
                         .check_more_work(want_to_evict, has_pending_queries)
                         .await
-                        .map(|maybe_activation| (maybe_activation, None)),
+                        .map(|maybe_activation| (maybe_activation, false)),
                     RunActions::LocalResolution(r) => {
-                        me.local_resolution(r).await.map(|_| (None, None))
+                        me.local_resolution(r).await.map(|_| (None, false))
                     }
                     RunActions::HeartbeatTimeout => me.heartbeat_timeout().map(|autocomplete| {
                         if autocomplete {
@@ -136,16 +135,16 @@ impl ManagedRun {
                                 Some(ActivationOrAuto::Autocomplete {
                                     run_id: me.wfm.machines.run_id.clone(),
                                 }),
-                                None,
+                                false,
                             )
                         } else {
-                            (None, None)
+                            (None, false)
                         }
                     }),
                 };
                 match res {
-                    Ok((maybe_act, maybe_wft_update)) => {
-                        me.send_update_response(maybe_act, maybe_wft_update);
+                    Ok((maybe_act, in_response_to_wft)) => {
+                        me.send_update_response(maybe_act, in_response_to_wft);
                     }
                     Err(e) => {
                         error!(error=?e, "Error in run machines");
@@ -172,7 +171,7 @@ impl ManagedRun {
     async fn incoming_wft(
         &mut self,
         wft: NewIncomingWFT,
-    ) -> Result<(Option<ActivationOrAuto>, RunUpdatedFromWft), RunUpdateErr> {
+    ) -> Result<Option<ActivationOrAuto>, RunUpdateErr> {
         let activation = if let Some(h) = wft.history_update {
             self.wfm.feed_history_from_server(h).await?
         } else {
@@ -205,7 +204,7 @@ impl ManagedRun {
                     );
                     // No activation needs to be sent to lang. We just need to wait for another
                     // heartbeat timeout or LAs to resolve
-                    return Ok((None, RunUpdatedFromWft {}));
+                    return Ok(None);
                 } else {
                     panic!(
                         "Got a new WFT while there are outstanding local activities, but there \
@@ -213,19 +212,13 @@ impl ManagedRun {
                     )
                 }
             } else {
-                return Ok((
-                    Some(ActivationOrAuto::Autocomplete {
-                        run_id: self.wfm.machines.run_id.clone(),
-                    }),
-                    RunUpdatedFromWft {},
-                ));
+                return Ok(Some(ActivationOrAuto::Autocomplete {
+                    run_id: self.wfm.machines.run_id.clone(),
+                }));
             }
         }
 
-        Ok((
-            Some(ActivationOrAuto::LangActivation(activation)),
-            RunUpdatedFromWft {},
-        ))
+        Ok(Some(ActivationOrAuto::LangActivation(activation)))
     }
 
     async fn completion(
@@ -291,6 +284,9 @@ impl ManagedRun {
                 Ok(())
             }
             Ok((Some((chan, start_t, wft_timeout)), data, me)) => {
+                if let Some(wola) = me.waiting_on_la.as_mut() {
+                    wola.heartbeat_timeout_task.abort();
+                }
                 me.waiting_on_la = Some(WaitingOnLAs {
                     wft_timeout,
                     completion_dat: Some((data, resp_chan)),
@@ -426,7 +422,7 @@ impl ManagedRun {
     fn send_update_response(
         &self,
         outgoing_activation: Option<ActivationOrAuto>,
-        from_wft: Option<RunUpdatedFromWft>,
+        in_response_to_wft: bool,
     ) {
         self.update_tx
             .send(RunUpdateResponse {
@@ -437,7 +433,7 @@ impl ManagedRun {
                     more_pending_work: self.wfm.machines.has_pending_jobs(),
                     most_recently_processed_event_number: self.wfm.machines.last_processed_event
                         as usize,
-                    in_response_to_wft: from_wft,
+                    in_response_to_wft,
                 }),
                 span: Span::current(),
             })
