@@ -504,11 +504,11 @@ impl WFStream {
                 )
             } else {
                 if !activation_was_only_eviction {
-                    // Don't bother warning if this was an eviction, since it's normal to issue
-                    // eviction activations without an associated workflow task in that case.
-                    warn!(
-                        run_id=%run_id,
-                        "Attempted to complete activation for run without associated workflow task"
+                    // Not an error if this was an eviction, since it's normal to issue eviction
+                    // activations without an associated workflow task in that case.
+                    dbg_panic!(
+                    "Attempted to complete activation for run {} without associated workflow task",
+                    run_id
                     );
                 }
                 self.reply_to_complete(&run_id, ActivationCompleteOutcome::DoNothing, resp_chan);
@@ -576,15 +576,11 @@ impl WFStream {
         let tt = if let Some(tt) = self.get_task(&run_id).map(|t| t.info.task_token.clone()) {
             tt
         } else {
-            warn!(
+            dbg_panic!(
                 "No workflow task for run id {} found when trying to fail activation",
                 run_id
             );
-            self.reply_to_complete(
-                &run_id,
-                ActivationCompleteOutcome::ReportWFTFail(FailedActivationOutcome::NoReport),
-                resp_chan,
-            );
+            self.reply_to_complete(&run_id, ActivationCompleteOutcome::DoNothing, resp_chan);
             return;
         };
 
@@ -595,7 +591,9 @@ impl WFStream {
         // If the outstanding activation is a legacy query task, report that we need to fail it
         let outcome = if let Some(OutstandingActivation::LegacyQuery) = self.get_activation(&run_id)
         {
-            FailedActivationOutcome::ReportLegacyQueryFailure(tt, failure)
+            ActivationCompleteOutcome::ReportWFTFail(
+                FailedActivationWFTReport::ReportLegacyQueryFailure(tt, failure),
+            )
         } else {
             // Blow up any cached data associated with the workflow
             let should_report = match self.request_eviction(RequestEvictMsg {
@@ -608,16 +606,14 @@ impl WFStream {
                 _ => false,
             };
             if should_report {
-                FailedActivationOutcome::Report(tt, cause, failure)
+                ActivationCompleteOutcome::ReportWFTFail(FailedActivationWFTReport::Report(
+                    tt, cause, failure,
+                ))
             } else {
-                FailedActivationOutcome::NoReport
+                ActivationCompleteOutcome::DoNothing
             }
         };
-        self.reply_to_complete(
-            &run_id,
-            ActivationCompleteOutcome::ReportWFTFail(outcome),
-            resp_chan,
-        );
+        self.reply_to_complete(&run_id, outcome, resp_chan);
     }
 
     fn process_post_activation(&mut self, report: PostActivationMsg) {

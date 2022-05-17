@@ -5,7 +5,7 @@ use crate::{
         build_fake_worker, build_mock_pollers, build_multihist_mock_sg, canned_histories,
         gen_assert_and_fail, gen_assert_and_reply, hist_to_poll_resp, mock_sdk, mock_sdk_cfg,
         mock_worker, poll_and_reply, poll_and_reply_clears_outstanding_evicts, single_hist_mock_sg,
-        ExpectationAmount, FakeWfResponses, MockPollCfg, MocksHolder, ResponseType,
+        FakeWfResponses, MockPollCfg, MocksHolder, ResponseType,
         WorkflowCachingPolicy::{self, AfterEveryReply, NonSticky},
         TEST_Q,
     },
@@ -739,7 +739,7 @@ async fn complete_activation_with_failure(
             response_batches: batches.iter().map(Into::into).collect(),
         }],
         true,
-        ExpectationAmount::Specific(1),
+        1,
     );
     let core = mock_worker(mock_sg);
 
@@ -847,7 +847,7 @@ async fn workflow_failures_only_reported_once() {
         }],
         true,
         // We should only call the server to say we failed twice (once after each success)
-        ExpectationAmount::Specific(2),
+        2,
     );
     let omap = mocks.outstanding_task_map.clone();
     let core = mock_worker(mocks);
@@ -896,7 +896,7 @@ async fn max_wft_respected() {
             response_batches: vec![1.into(), 2.into()],
         }
     });
-    let mh = MockPollCfg::new(hists.into_iter().collect(), true, ExpectationAmount::Zero);
+    let mh = MockPollCfg::new(hists.into_iter().collect(), true, 0);
     let mut worker = mock_sdk_cfg(mh, |cfg| {
         cfg.max_cached_workflows = total_wfs as usize;
         cfg.max_outstanding_workflow_tasks = 1;
@@ -1024,7 +1024,7 @@ async fn lots_of_workflows() {
             response_batches: vec![1.into(), 2.into()],
         }
     });
-    let mock = build_multihist_mock_sg(hists, false, ExpectationAmount::Zero);
+    let mock = build_multihist_mock_sg(hists, false, 0);
     let worker = &mock_worker(mock);
     let completed_count = Arc::new(Semaphore::new(0));
     let killer = async {
@@ -1294,7 +1294,7 @@ async fn fail_wft_then_recover() {
         [ResponseType::AllHistory, ResponseType::AllHistory],
         mock_workflow_client(),
     );
-    mh.num_expected_fails = ExpectationAmount::Specific(1);
+    mh.num_expected_fails = 1;
     mh.expect_fail_wft_matcher =
         Box::new(|_, cause, _| matches!(cause, WorkflowTaskFailedCause::NonDeterministicError));
     let mut mock = build_mock_pollers(mh);
@@ -1498,7 +1498,7 @@ async fn failing_wft_doesnt_eat_permit_forever() {
 
     let mock = mock_workflow_client();
     let mut mock = MockPollCfg::from_resp_batches("fake_wf_id", t, [1, 1, 1], mock);
-    mock.num_expected_fails = ExpectationAmount::Specific(1);
+    mock.num_expected_fails = 1;
     let mut mock = build_mock_pollers(mock);
     mock.worker_cfg(|cfg| {
         cfg.max_cached_workflows = 2;
@@ -1752,7 +1752,7 @@ async fn poll_faster_than_complete_wont_overflow_cache() {
         .expect_complete_workflow_task()
         .times(3)
         .returning(|_| Ok(Default::default()));
-    let mut mock_cfg = MockPollCfg::new(tasks, true, ExpectationAmount::Zero);
+    let mut mock_cfg = MockPollCfg::new(tasks, true, 0);
     mock_cfg.mock_client = mock_client;
     let mut mock = build_mock_pollers(mock_cfg);
     mock.worker_cfg(|wc| {
@@ -1928,10 +1928,10 @@ async fn autocompletes_wft_no_work() {
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
     let scheduled_event_id = t.add_activity_task_scheduled(activity_id);
-    let started_event_id = t.add_activity_task_started(scheduled_event_id);
     t.add_full_wf_task();
     t.add_we_signaled("sig1", vec![]);
     t.add_full_wf_task();
+    let started_event_id = t.add_activity_task_started(scheduled_event_id);
     t.add_activity_task_completed(scheduled_event_id, started_event_id, Default::default());
     t.add_full_wf_task();
     let mock = mock_workflow_client();

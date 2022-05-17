@@ -114,7 +114,7 @@ pub(crate) fn build_fake_worker(
             response_batches,
         }],
         true,
-        ExpectationAmount::Zero,
+        0,
     );
     mock_worker(mock_holder)
 }
@@ -304,7 +304,7 @@ where
 pub(crate) fn build_multihist_mock_sg(
     hists: impl IntoIterator<Item = FakeWfResponses>,
     enforce_correct_number_of_polls: bool,
-    num_expected_fails: ExpectationAmount,
+    num_expected_fails: usize,
 ) -> MocksHolder {
     let mh = MockPollCfg::new(
         hists.into_iter().collect(),
@@ -330,8 +330,8 @@ pub(crate) fn single_hist_mock_sg(
 pub(crate) struct MockPollCfg {
     pub hists: Vec<FakeWfResponses>,
     pub enforce_correct_number_of_polls: bool,
-    pub num_expected_fails: ExpectationAmount,
-    pub num_expected_legacy_query_resps: ExpectationAmount,
+    pub num_expected_fails: usize,
+    pub num_expected_legacy_query_resps: usize,
     pub mock_client: MockWorkerClient,
     /// All calls to fail WFTs must match this predicate
     pub expect_fail_wft_matcher:
@@ -341,31 +341,18 @@ pub(crate) struct MockPollCfg {
     /// Instead, they will just block forever.
     pub using_rust_sdk: bool,
 }
-#[derive(Copy, Clone)]
-pub(crate) enum ExpectationAmount {
-    Zero,
-    Specific(usize),
-}
-impl From<ExpectationAmount> for TimesRange {
-    fn from(ea: ExpectationAmount) -> Self {
-        match ea {
-            ExpectationAmount::Zero => 0.into(),
-            ExpectationAmount::Specific(n) => n.into(),
-        }
-    }
-}
 
 impl MockPollCfg {
     pub fn new(
         hists: Vec<FakeWfResponses>,
         enforce_correct_number_of_polls: bool,
-        num_expected_fails: ExpectationAmount,
+        num_expected_fails: usize,
     ) -> Self {
         Self {
             hists,
             enforce_correct_number_of_polls,
             num_expected_fails,
-            num_expected_legacy_query_resps: ExpectationAmount::Zero,
+            num_expected_legacy_query_resps: 0,
             mock_client: mock_workflow_client(),
             expect_fail_wft_matcher: Box::new(|_, _, _| true),
             using_rust_sdk: false,
@@ -384,8 +371,8 @@ impl MockPollCfg {
                 response_batches: resps.into_iter().map(Into::into).collect(),
             }],
             enforce_correct_number_of_polls: true,
-            num_expected_fails: ExpectationAmount::Zero,
-            num_expected_legacy_query_resps: ExpectationAmount::Zero,
+            num_expected_fails: 0,
+            num_expected_legacy_query_resps: 0,
             mock_client,
             expect_fail_wft_matcher: Box::new(|_, _, _| true),
             using_rust_sdk: false,

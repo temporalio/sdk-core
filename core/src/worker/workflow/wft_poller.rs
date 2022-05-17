@@ -32,6 +32,8 @@ pub(crate) fn new_wft_poller(
                 Some(Err(e)) => {
                     warn!(error=?e, "Error while polling for workflow tasks");
                 }
+                // If poller returns None, it's dead, thus we also return None to terminate this
+                // stream.
                 None => return None,
             }
         }

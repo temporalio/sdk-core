@@ -42,6 +42,7 @@ use crate::worker::workflow::{
 };
 use temporal_sdk_core_protos::TaskToken;
 
+use crate::abstractions::dbg_panic;
 #[cfg(test)]
 pub(crate) use managed_wf_test::ManagedWFFunc;
 
@@ -129,17 +130,15 @@ impl ManagedRun {
                     RunActions::LocalResolution(r) => {
                         me.local_resolution(r).await.map(|_| (None, false))
                     }
-                    RunActions::HeartbeatTimeout => me.heartbeat_timeout().map(|autocomplete| {
-                        if autocomplete {
-                            (
-                                Some(ActivationOrAuto::Autocomplete {
-                                    run_id: me.wfm.machines.run_id.clone(),
-                                }),
-                                false,
-                            )
-                        } else {
-                            (None, false)
-                        }
+                    RunActions::HeartbeatTimeout => Ok(if me.heartbeat_timeout() {
+                        (
+                            Some(ActivationOrAuto::Autocomplete {
+                                run_id: me.wfm.machines.run_id.clone(),
+                            }),
+                            false,
+                        )
+                    } else {
+                        (None, false)
                     }),
                 };
                 match res {
@@ -402,10 +401,10 @@ impl ManagedRun {
         Ok(())
     }
 
-    /// Returns true if autocompletion should be issued, which will actually cause us to end up
+    /// Returns `true` if autocompletion should be issued, which will actually cause us to end up
     /// in [completion] again, at which point we'll start a new heartbeat timeout, which will
     /// immediately trigger and thus finish the completion, forcing a new task as it should.
-    fn heartbeat_timeout(&mut self) -> Result<bool, RunUpdateErr> {
+    fn heartbeat_timeout(&mut self) -> bool {
         if let Some(ref mut wait_dat) = self.waiting_on_la {
             // Cancel the heartbeat timeout
             wait_dat.heartbeat_timeout_task.abort();
@@ -413,10 +412,13 @@ impl ManagedRun {
                 self.finish_completion(resp_chan, completion_dat, true);
             } else {
                 // Auto-reply WFT complete
-                return Ok(true);
+                return true;
             }
+        } else {
+            // If a heartbeat timeout happened, we should always have been waiting on LAs
+            dbg_panic!("WFT heartbeat timeout fired but we were not waiting on any LAs");
         }
-        Ok(false)
+        false
     }
 
     fn send_update_response(

@@ -1,7 +1,7 @@
 use crate::{
     test_help::{
         build_mock_pollers, canned_histories, hist_to_poll_resp, mock_worker, single_hist_mock_sg,
-        ExpectationAmount, MockPollCfg, ResponseType, TEST_Q,
+        MockPollCfg, ResponseType, TEST_Q,
     },
     worker::client::mocks::mock_workflow_client,
 };
@@ -60,7 +60,7 @@ async fn legacy_query(#[case] include_history: bool) {
         hist_to_poll_resp(&t, wfid.to_owned(), 2.into(), TEST_Q.to_string()),
     ];
     let mut mock = MockPollCfg::from_resp_batches(wfid, t, tasks, mock_workflow_client());
-    mock.num_expected_legacy_query_resps = ExpectationAmount::Specific(1);
+    mock.num_expected_legacy_query_resps = 1;
     let mut mock = build_mock_pollers(mock);
     if !include_history {
         mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
@@ -251,7 +251,7 @@ async fn legacy_query_failure_on_wft_failure() {
         },
     ]);
     let mut mock = MockPollCfg::from_resp_batches(wfid, t, tasks, mock_workflow_client());
-    mock.num_expected_legacy_query_resps = ExpectationAmount::Specific(1);
+    mock.num_expected_legacy_query_resps = 1;
     let mut mock = build_mock_pollers(mock);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
     let core = mock_worker(mock);
@@ -327,7 +327,7 @@ async fn legacy_query_after_complete(#[values(false, true)] full_history: bool) 
     tasks.extend([query_with_hist_task.clone(), query_with_hist_task]);
 
     let mut mock = MockPollCfg::from_resp_batches(wfid, t, tasks, mock_workflow_client());
-    mock.num_expected_legacy_query_resps = ExpectationAmount::Specific(2);
+    mock.num_expected_legacy_query_resps = 2;
     let mut mock = build_mock_pollers(mock);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
     let core = mock_worker(mock);

@@ -2,10 +2,7 @@
 
 use crate::MetricsContext;
 use futures::{stream, Stream, StreamExt};
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
-};
+use std::sync::Arc;
 use tokio::sync::{
     AcquireError, Notify, OwnedSemaphorePermit, Semaphore, SemaphorePermit, TryAcquireError,
 };
@@ -59,12 +56,10 @@ impl MeteredSemaphore {
 
 #[derive(Clone)]
 pub(crate) struct StreamAllowHandle {
-    acceptable_to_get_next: Arc<AtomicBool>,
     acceptable_notify: Arc<Notify>,
 }
 impl StreamAllowHandle {
     pub fn allow_one(&self) {
-        self.acceptable_to_get_next.store(true, Ordering::Release);
         self.acceptable_notify.notify_one();
     }
 }
@@ -77,21 +72,13 @@ pub(crate) fn stream_when_allowed<S>(input: S) -> (StreamAllowHandle, impl Strea
 where
     S: Stream + Send + 'static,
 {
-    let acceptable_to_get_next = Arc::new(AtomicBool::new(true));
     let acceptable_notify = Arc::new(Notify::new());
-    let handle = StreamAllowHandle {
-        acceptable_to_get_next,
-        acceptable_notify,
-    };
+    acceptable_notify.notify_one();
+    let handle = StreamAllowHandle { acceptable_notify };
     let stream = stream::unfold(
         (handle.clone(), input.boxed()),
         |(handle, mut input)| async {
-            if !handle.acceptable_to_get_next.load(Ordering::Acquire) {
-                handle.acceptable_notify.notified().await;
-            }
-            handle
-                .acceptable_to_get_next
-                .store(false, Ordering::Release);
+            handle.acceptable_notify.notified().await;
             input.next().await.map(|i| (i, (handle, input)))
         },
     );

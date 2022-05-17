@@ -256,7 +256,7 @@ impl Workflows {
                 }
             },
             ActivationCompleteOutcome::ReportWFTFail(outcome) => match outcome {
-                FailedActivationOutcome::Report(tt, cause, failure) => {
+                FailedActivationWFTReport::Report(tt, cause, failure) => {
                     warn!(run_id=%run_id, failure=?failure, "Failing workflow task");
                     self.handle_wft_reporting_errs(&run_id, || async {
                         self.client
@@ -266,14 +266,13 @@ impl Workflows {
                     .await?;
                     true
                 }
-                FailedActivationOutcome::ReportLegacyQueryFailure(task_token, failure) => {
+                FailedActivationWFTReport::ReportLegacyQueryFailure(task_token, failure) => {
                     warn!(run_id=%run_id, failure=?failure, "Failing legacy query request");
                     self.client
                         .respond_legacy_query(task_token, legacy_query_failure(failure))
                         .await?;
                     true
                 }
-                FailedActivationOutcome::NoReport => false,
             },
             ActivationCompleteOutcome::DoNothing => false,
         };
@@ -613,8 +612,7 @@ pub struct WorkflowTaskInfo {
 }
 
 #[derive(Debug)]
-pub enum FailedActivationOutcome {
-    NoReport,
+pub enum FailedActivationWFTReport {
     Report(TaskToken, WorkflowTaskFailedCause, Failure),
     ReportLegacyQueryFailure(TaskToken, Failure),
 }
@@ -691,7 +689,7 @@ enum ActivationCompleteOutcome {
     /// The WFT must be reported as successful to the server using the contained information.
     ReportWFTSuccess(ServerCommandsWithWorkflowInfo),
     /// The WFT must be reported as failed to the server using the contained information.
-    ReportWFTFail(FailedActivationOutcome),
+    ReportWFTFail(FailedActivationWFTReport),
     /// There's nothing to do right now. EX: The workflow needs to keep replaying.
     DoNothing,
 }
