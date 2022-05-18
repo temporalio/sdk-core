@@ -1,3 +1,5 @@
+use crate::app_data::AppData;
+
 use prost_types::{Duration, Timestamp};
 use std::{
     collections::HashMap,
@@ -19,6 +21,7 @@ use tokio_util::sync::CancellationToken;
 #[derive(Clone)]
 pub struct ActContext {
     worker: Arc<dyn Worker>,
+    app_data: Arc<AppData>,
     cancellation_token: CancellationToken,
     input: Vec<Payload>,
     heartbeat_details: Vec<Payload>,
@@ -55,6 +58,7 @@ impl ActContext {
     /// (which may be a default [Payload]).
     pub(crate) fn new(
         worker: Arc<dyn Worker>,
+        app_data: Arc<AppData>,
         cancellation_token: CancellationToken,
         task_queue: String,
         task_token: Vec<u8>,
@@ -90,6 +94,7 @@ impl ActContext {
         (
             ActContext {
                 worker,
+                app_data,
                 cancellation_token,
                 input,
                 heartbeat_details,
@@ -156,6 +161,11 @@ impl ActContext {
     /// Get headers attached to this activity
     pub fn headers(&self) -> &HashMap<String, Payload> {
         &self.header_fields
+    }
+
+    /// Get custom Application Data
+    pub fn app_data<T: Send + Sync + 'static>(&self) -> Option<&T> {
+        self.app_data.get::<T>()
     }
 }
 
