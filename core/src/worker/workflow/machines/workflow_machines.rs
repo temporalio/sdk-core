@@ -525,7 +525,7 @@ impl WorkflowMachines {
             }
             _ => {
                 return Err(WFMachinesError::Fatal(format!(
-                    "The event is non a non-stateful event, but we tried to handle it as one: {}",
+                    "The event is not a non-stateful event, but we tried to handle it as one: {}",
                     event
                 )));
             }
