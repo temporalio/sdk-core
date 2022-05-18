@@ -37,8 +37,8 @@ use tracing::Span;
 use tracing_futures::Instrument;
 
 use crate::worker::workflow::{
-    ActivationCompleteResult, ActivationOrAuto, FailRunUpdate, GoodRunUpdate,
-    LocalActivityRequestSink, RunAction, RunUpdateResponseKind,
+    ActivationCompleteResult, ActivationOrAuto, FailRunUpdate, FulfillableActivationComplete,
+    GoodRunUpdate, LocalActivityRequestSink, RunAction, RunUpdateResponseKind,
 };
 use temporal_sdk_core_protos::TaskToken;
 
@@ -113,37 +113,39 @@ impl ManagedRun {
             let action = action.action;
             async move {
                 let res = match action {
-                    RunActions::NewIncomingWFT(wft) => {
-                        me.incoming_wft(wft).await.map(|act| (act, true))
-                    }
+                    RunActions::NewIncomingWFT(wft) => me
+                        .incoming_wft(wft)
+                        .await
+                        .map(RunActionOutcome::AfterNewWFT),
                     RunActions::ActivationCompletion(completion) => me
                         .completion(completion, &heartbeat_tx)
                         .await
-                        .map(|_| (None, false)),
+                        .map(RunActionOutcome::AfterCompletion),
                     RunActions::CheckMoreWork {
                         want_to_evict,
                         has_pending_queries,
                     } => me
                         .check_more_work(want_to_evict, has_pending_queries)
                         .await
-                        .map(|maybe_activation| (maybe_activation, false)),
-                    RunActions::LocalResolution(r) => {
-                        me.local_resolution(r).await.map(|_| (None, false))
-                    }
-                    RunActions::HeartbeatTimeout => Ok(if me.heartbeat_timeout() {
-                        (
+                        .map(RunActionOutcome::AfterCheckWork),
+                    RunActions::LocalResolution(r) => me
+                        .local_resolution(r)
+                        .await
+                        .map(RunActionOutcome::AfterLocalResolution),
+                    RunActions::HeartbeatTimeout => {
+                        let maybe_act = if me.heartbeat_timeout() {
                             Some(ActivationOrAuto::Autocomplete {
                                 run_id: me.wfm.machines.run_id.clone(),
-                            }),
-                            false,
-                        )
-                    } else {
-                        (None, false)
-                    }),
+                            })
+                        } else {
+                            None
+                        };
+                        Ok(RunActionOutcome::AfterHeartbeatTimeout(maybe_act))
+                    }
                 };
                 match res {
-                    Ok((maybe_act, in_response_to_wft)) => {
-                        me.send_update_response(maybe_act, in_response_to_wft);
+                    Ok(outcome) => {
+                        me.send_update_response(outcome);
                     }
                     Err(e) => {
                         error!(error=?e, "Error in run machines");
@@ -224,7 +226,7 @@ impl ManagedRun {
         &mut self,
         mut completion: RunActivationCompletion,
         heartbeat_tx: &UnboundedSender<Span>,
-    ) -> Result<(), RunUpdateErr> {
+    ) -> Result<Option<FulfillableActivationComplete>, RunUpdateErr> {
         let resp_chan = completion
             .resp_chan
             .take()
@@ -278,10 +280,7 @@ impl ManagedRun {
         .await;
 
         match outcome {
-            Ok((None, data, me)) => {
-                me.finish_completion(resp_chan, data, false);
-                Ok(())
-            }
+            Ok((None, data, me)) => Ok(Some(me.prepare_complete_resp(resp_chan, data, false))),
             Ok((Some((chan, start_t, wft_timeout)), data, me)) => {
                 if let Some(wola) = me.waiting_on_la.as_mut() {
                     wola.heartbeat_timeout_task.abort();
@@ -296,7 +295,7 @@ impl ManagedRun {
                         wft_timeout,
                     ),
                 });
-                Ok(())
+                Ok(None)
             }
             Err(e) => Err(RunUpdateErr {
                 source: e,
@@ -337,12 +336,12 @@ impl ManagedRun {
         }
     }
 
-    fn finish_completion(
+    fn prepare_complete_resp(
         &mut self,
         resp_chan: oneshot::Sender<ActivationCompleteResult>,
         data: CompletionDataForWFT,
         due_to_heartbeat_timeout: bool,
-    ) {
+    ) -> FulfillableActivationComplete {
         let outgoing_cmds = self.wfm.get_server_commands();
         let query_responses = data.query_responses;
         let has_query_responses = !query_responses.is_empty();
@@ -374,19 +373,19 @@ impl ManagedRun {
         } else {
             ActivationCompleteOutcome::DoNothing
         };
-        if resp_chan
-            .send(ActivationCompleteResult {
+        FulfillableActivationComplete {
+            result: ActivationCompleteResult {
                 most_recently_processed_event: self.wfm.machines.last_processed_event as usize,
                 outcome,
-            })
-            .is_err()
-        {
-            warn!(run_id=%self.wfm.machines.run_id,
-                  "Activation response channel was missing for completion");
+            },
+            resp_chan,
         }
     }
 
-    async fn local_resolution(&mut self, res: LocalResolution) -> Result<(), RunUpdateErr> {
+    async fn local_resolution(
+        &mut self,
+        res: LocalResolution,
+    ) -> Result<Option<FulfillableActivationComplete>, RunUpdateErr> {
         debug!(resolution=?res, "Applying local resolution");
         self.wfm.notify_of_local_result(res)?;
         if self.wfm.machines.outstanding_local_activity_count() == 0 {
@@ -394,11 +393,15 @@ impl ManagedRun {
                 // Cancel the heartbeat timeout
                 wait_dat.heartbeat_timeout_task.abort();
                 if let Some((completion_dat, resp_chan)) = wait_dat.completion_dat.take() {
-                    self.finish_completion(resp_chan, completion_dat, false);
+                    return Ok(Some(self.prepare_complete_resp(
+                        resp_chan,
+                        completion_dat,
+                        false,
+                    )));
                 }
             }
         }
-        Ok(())
+        Ok(None)
     }
 
     /// Returns `true` if autocompletion should be issued, which will actually cause us to end up
@@ -409,7 +412,10 @@ impl ManagedRun {
             // Cancel the heartbeat timeout
             wait_dat.heartbeat_timeout_task.abort();
             if let Some((completion_dat, resp_chan)) = wait_dat.completion_dat.take() {
-                self.finish_completion(resp_chan, completion_dat, true);
+                let compl = self.prepare_complete_resp(resp_chan, completion_dat, true);
+                // Immediately fulfill the completion since the run update will already have
+                // been replied to
+                compl.fulfill();
             } else {
                 // Auto-reply WFT complete
                 return true;
@@ -421,16 +427,25 @@ impl ManagedRun {
         false
     }
 
-    fn send_update_response(
-        &self,
-        outgoing_activation: Option<ActivationOrAuto>,
-        in_response_to_wft: bool,
-    ) {
+    fn send_update_response(&self, outcome: RunActionOutcome) {
+        let mut in_response_to_wft = false;
+        let (outgoing_activation, fulfillable_complete) = match outcome {
+            RunActionOutcome::AfterNewWFT(a) => {
+                in_response_to_wft = true;
+                (a, None)
+            }
+            RunActionOutcome::AfterCheckWork(a) => (a, None),
+            RunActionOutcome::AfterLocalResolution(f) => (None, f),
+            RunActionOutcome::AfterCompletion(f) => (None, f),
+            RunActionOutcome::AfterHeartbeatTimeout(a) => (a, None),
+        };
+
         self.update_tx
             .send(RunUpdateResponse {
                 kind: RunUpdateResponseKind::Good(GoodRunUpdate {
                     run_id: self.wfm.machines.run_id.clone(),
                     outgoing_activation,
+                    fulfillable_complete,
                     have_seen_terminal_event: self.wfm.machines.have_seen_terminal_event,
                     more_pending_work: self.wfm.machines.has_pending_jobs(),
                     most_recently_processed_event_number: self.wfm.machines.last_processed_event
@@ -455,6 +470,14 @@ fn start_heartbeat_timeout_task(
         tokio::time::sleep_until(wft_heartbeat_deadline.into()).await;
         let _ = chan.send(Span::current());
     })
+}
+
+enum RunActionOutcome {
+    AfterNewWFT(Option<ActivationOrAuto>),
+    AfterCheckWork(Option<ActivationOrAuto>),
+    AfterLocalResolution(Option<FulfillableActivationComplete>),
+    AfterCompletion(Option<FulfillableActivationComplete>),
+    AfterHeartbeatTimeout(Option<ActivationOrAuto>),
 }
 
 #[derive(Debug)]

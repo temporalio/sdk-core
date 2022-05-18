@@ -682,7 +682,6 @@ struct ActivationCompleteResult {
     most_recently_processed_event: usize,
     outcome: ActivationCompleteOutcome,
 }
-
 /// What needs to be done after calling [Workflows::activation_completed]
 #[derive(Debug)]
 enum ActivationCompleteOutcome {
@@ -692,6 +691,16 @@ enum ActivationCompleteOutcome {
     ReportWFTFail(FailedActivationWFTReport),
     /// There's nothing to do right now. EX: The workflow needs to keep replaying.
     DoNothing,
+}
+#[derive(Debug)]
+struct FulfillableActivationComplete {
+    result: ActivationCompleteResult,
+    resp_chan: oneshot::Sender<ActivationCompleteResult>,
+}
+impl FulfillableActivationComplete {
+    fn fulfill(self) {
+        let _ = self.resp_chan.send(self.result);
+    }
 }
 
 fn validate_completion(
@@ -820,6 +829,7 @@ enum RunUpdateResponseKind {
 struct GoodRunUpdate {
     run_id: String,
     outgoing_activation: Option<ActivationOrAuto>,
+    fulfillable_complete: Option<FulfillableActivationComplete>,
     have_seen_terminal_event: bool,
     /// Is true if there are more jobs that need to be sent to lang
     more_pending_work: bool,

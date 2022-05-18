@@ -252,7 +252,7 @@ impl WFStream {
     ) -> Option<ActivationOrAuto> {
         debug!(resp=%resp, "Processing run update response from machines");
         match resp {
-            RunUpdateResponseKind::Good(resp) => {
+            RunUpdateResponseKind::Good(mut resp) => {
                 if let Some(r) = self.runs.get_mut(&resp.run_id) {
                     r.have_seen_terminal_event = resp.have_seen_terminal_event;
                     r.more_pending_work = resp.more_pending_work;
@@ -300,24 +300,29 @@ impl WFStream {
                         // is more pending work, we should check again.
                         if resp.more_pending_work {
                             run_handle.check_more_activations();
-                            return None;
-                        }
-
-                        // If a run update came back and had nothing to do, but we're trying to
-                        // evict, just do that now as long as there's no other outstanding work.
-                        if let Some(reason) = run_handle.trying_to_evict.as_ref() {
+                            None
+                        } else if let Some(reason) = run_handle.trying_to_evict.as_ref() {
+                            // If a run update came back and had nothing to do, but we're trying to
+                            // evict, just do that now as long as there's no other outstanding work.
                             if run_handle.activation.is_none() && !run_handle.more_pending_work {
                                 let evict_act = create_evict_activation(
                                     resp.run_id,
                                     reason.message.clone(),
                                     reason.reason,
                                 );
-                                return Some(ActivationOrAuto::LangActivation(evict_act));
+                                Some(ActivationOrAuto::LangActivation(evict_act))
+                            } else {
+                                None
                             }
+                        } else {
+                            None
                         }
-                        None
                     }
                 };
+                if let Some(f) = resp.fulfillable_complete.take() {
+                    f.fulfill();
+                }
+
                 // After each run update, check if it's ready to handle any buffered poll
                 if matches!(&r, Some(ActivationOrAuto::Autocomplete { .. }) | None)
                     && !run_handle.has_any_pending_work(false, true)
