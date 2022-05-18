@@ -1,3 +1,7 @@
+//! This module and its submodules implement Core's logic for managing workflows (which is the
+//! lion's share of the complexity in Core). See the `ARCHITECTURE.md` file in the repo root for
+//! a diagram of the internals.
+
 mod bridge;
 mod driven_workflow;
 mod history_update;

@@ -49,15 +49,15 @@ pub(crate) struct WFStream {
 }
 /// All possible inputs to the [WFStream]
 #[derive(derive_more::From)]
-enum WFActStreamInput {
+enum WFStreamInput {
     NewWft(ValidPollWFTQResponse),
     Local(LocalInput),
     // The stream given to us which represents the poller (or a mock) terminated.
     PollerDead,
 }
-impl From<RunUpdateResponse> for WFActStreamInput {
+impl From<RunUpdateResponse> for WFStreamInput {
     fn from(r: RunUpdateResponse) -> Self {
-        WFActStreamInput::Local(LocalInput {
+        WFStreamInput::Local(LocalInput {
             input: LocalInputs::RunUpdateResponse(r.kind),
             span: r.span,
         })
@@ -85,11 +85,11 @@ enum ExternalPollerInputs {
     NewWft(ValidPollWFTQResponse),
     PollerDead,
 }
-impl From<ExternalPollerInputs> for WFActStreamInput {
+impl From<ExternalPollerInputs> for WFStreamInput {
     fn from(l: ExternalPollerInputs) -> Self {
         match l {
-            ExternalPollerInputs::NewWft(n) => WFActStreamInput::NewWft(n),
-            ExternalPollerInputs::PollerDead => WFActStreamInput::PollerDead,
+            ExternalPollerInputs::NewWft(n) => WFStreamInput::NewWft(n),
+            ExternalPollerInputs::PollerDead => WFStreamInput::PollerDead,
         }
     }
 }
@@ -163,12 +163,12 @@ impl WFStream {
                 let _span_g = span.enter();
 
                 let maybe_activation = match action {
-                    WFActStreamInput::NewWft(wft) => {
+                    WFStreamInput::NewWft(wft) => {
                         debug!(run_id=%wft.workflow_execution.run_id, "New WFT");
                         state.instantiate_or_update(wft);
                         None
                     }
-                    WFActStreamInput::Local(local_input) => {
+                    WFStreamInput::Local(local_input) => {
                         let _span_g = local_input.span.enter();
                         match local_input.input {
                             LocalInputs::RunUpdateResponse(resp) => {
@@ -203,7 +203,7 @@ impl WFStream {
                             }
                         }
                     }
-                    WFActStreamInput::PollerDead => {
+                    WFStreamInput::PollerDead => {
                         warn!("WFT poller died, shutting down");
                         state.shutdown_token.cancel();
                         None
