@@ -34,6 +34,7 @@
 extern crate tracing;
 
 mod activity_context;
+mod app_data;
 mod conversions;
 pub mod interceptors;
 mod payload_converter;
@@ -52,6 +53,7 @@ use crate::{
     workflow_context::{ChildWfCommon, PendingChildWorkflow},
 };
 use anyhow::{anyhow, bail};
+use app_data::AppData;
 use futures::{future::BoxFuture, FutureExt, StreamExt, TryFutureExt, TryStreamExt};
 use once_cell::sync::OnceCell;
 use std::{
@@ -115,6 +117,7 @@ pub struct Worker {
     common: CommonWorker,
     workflow_half: WorkflowHalf,
     activity_half: ActivityHalf,
+    app_data: Option<AppData>,
 }
 
 struct CommonWorker {
@@ -163,6 +166,7 @@ impl Worker {
                 activity_fns: Default::default(),
                 task_tokens_to_cancels: Default::default(),
             },
+            app_data: Some(Default::default()),
         }
     }
 
@@ -206,11 +210,21 @@ impl Worker {
         );
     }
 
+    /// Insert Custom App Context for Workflows and Activities
+    pub fn insert_app_data<T: Send + Sync + 'static>(&mut self, data: T) {
+        self.app_data.as_mut().map(|a| a.insert(data));
+    }
+
     /// Runs the worker. Eventually resolves after the worker has been explicitly shut down,
     /// or may return early with an error in the event of some unresolvable problem.
     pub async fn run(&mut self) -> Result<(), anyhow::Error> {
         let shutdown_token = CancellationToken::new();
-        let (common, wf_half, act_half) = self.split_apart();
+        let (common, wf_half, act_half, app_data) = self.split_apart();
+        let safe_app_data = Arc::new(
+            app_data
+                .take()
+                .ok_or_else(|| anyhow!("app_data should exist on run"))?,
+        );
         let (wf_future_tx, wf_future_rx) = unbounded_channel();
         let (completions_tx, completions_rx) = unbounded_channel();
         let wf_future_joiner = async {
@@ -287,9 +301,12 @@ impl Worker {
                                 if matches!(activity, Err(PollActivityError::ShutDown)) {
                                     break;
                                 }
-                                act_half.activity_task_handler(common.worker.clone(),
-                                                               common.task_queue.clone(),
-                                                               activity?)?;
+                                act_half.activity_task_handler(
+                                    common.worker.clone(),
+                                    safe_app_data.clone(),
+                                    common.task_queue.clone(),
+                                    activity?
+                                )?;
                             },
                             _ = shutdown_token.cancelled() => { break }
                         }
@@ -306,6 +323,10 @@ impl Worker {
             i.on_shutdown(self);
         }
         self.common.worker.shutdown().await;
+        self.app_data = Some(
+            Arc::try_unwrap(safe_app_data)
+                .map_err(|_| anyhow!("some references of AppData exist on worker shutdown"))?,
+        );
         Ok(())
     }
 
@@ -327,11 +348,19 @@ impl Worker {
         self.workflow_half.workflows.borrow().len()
     }
 
-    fn split_apart(&mut self) -> (&mut CommonWorker, &mut WorkflowHalf, &mut ActivityHalf) {
+    fn split_apart(
+        &mut self,
+    ) -> (
+        &mut CommonWorker,
+        &mut WorkflowHalf,
+        &mut ActivityHalf,
+        &mut Option<AppData>,
+    ) {
         (
             &mut self.common,
             &mut self.workflow_half,
             &mut self.activity_half,
+            &mut self.app_data,
         )
     }
 }
@@ -410,6 +439,7 @@ impl ActivityHalf {
     fn activity_task_handler(
         &mut self,
         worker: Arc<dyn CoreWorker>,
+        app_data: Arc<AppData>,
         task_queue: String,
         activity: ActivityTask,
     ) -> Result<(), anyhow::Error> {
@@ -430,8 +460,14 @@ impl ActivityHalf {
                 self.task_tokens_to_cancels
                     .insert(task_token.clone().into(), ct.clone());
 
-                let (ctx, arg) =
-                    ActContext::new(worker.clone(), ct, task_queue, task_token.clone(), start);
+                let (ctx, arg) = ActContext::new(
+                    worker.clone(),
+                    app_data,
+                    ct,
+                    task_queue,
+                    task_token.clone(),
+                    start,
+                );
                 tokio::spawn(async move {
                     let output = (act_fn.act_func)(ctx, arg).await;
                     let result = match output {
