@@ -34,7 +34,7 @@ async fn test_panic_wf_task_rejected_properly() {
     let mut mh = MockPollCfg::from_resp_batches(wf_id, t, [1, 2, 2], mock);
     // We should see one wft failure which has unspecified cause, since panics don't have a defined
     // type.
-    mh.num_expected_fails = Some(1);
+    mh.num_expected_fails = 1;
     mh.expect_fail_wft_matcher =
         Box::new(|_, cause, _| matches!(cause, WorkflowTaskFailedCause::Unspecified));
     let mut worker = mock_sdk(mh);
@@ -71,7 +71,7 @@ async fn test_wf_task_rejected_properly_due_to_nondeterminism(#[case] use_cache:
         mock,
     );
     // We should see one wft failure which has nondeterminism cause
-    mh.num_expected_fails = Some(1);
+    mh.num_expected_fails = 1;
     mh.expect_fail_wft_matcher =
         Box::new(|_, cause, _| matches!(cause, WorkflowTaskFailedCause::NonDeterministicError));
     let mut worker = mock_sdk_cfg(mh, |cfg| {

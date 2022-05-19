@@ -113,6 +113,7 @@ async fn activity_load() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn workflow_load() {
     const SIGNAME: &str = "signame";
+    let num_workflows = 200;
     let wf_name = "workflow_load";
     let mut starter = CoreWfStarter::new("workflow_load");
     starter
@@ -151,7 +152,7 @@ async fn workflow_load() {
     let client = starter.get_client().await;
 
     let mut workflow_handles = vec![];
-    for i in 0..200 {
+    for i in 0..num_workflows {
         let wfid = format!("{}_{}", wf_name, i);
         let rid = worker
             .submit_wf(
@@ -167,7 +168,7 @@ async fn workflow_load() {
 
     let sig_sender = async {
         loop {
-            let sends: FuturesUnordered<_> = (0..200)
+            let sends: FuturesUnordered<_> = (0..num_workflows)
                 .map(|i| {
                     client.signal_workflow_execution(
                         format!("{}_{}", wf_name, i),
@@ -177,7 +178,11 @@ async fn workflow_load() {
                     )
                 })
                 .collect();
-            sends.map(|_| Ok(())).forward(sink::drain()).await.unwrap();
+            sends
+                .map(|_| Ok(()))
+                .forward(sink::drain())
+                .await
+                .expect("Sending signals works");
             tokio::time::sleep(Duration::from_secs(2)).await;
         }
     };

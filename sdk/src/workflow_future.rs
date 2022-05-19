@@ -238,7 +238,14 @@ impl Future for WorkflowFuture {
         'activations: loop {
             // WF must always receive an activation first before responding with commands
             let activation = match self.incoming_activations.poll_recv(cx) {
-                Poll::Ready(a) => a.expect("activation channel not dropped"),
+                Poll::Ready(a) => match a {
+                    Some(act) => act,
+                    None => {
+                        return Poll::Ready(Err(anyhow!(
+                            "Workflow future's activation channel was lost!"
+                        )))
+                    }
+                },
                 Poll::Pending => return Poll::Pending,
             };
 

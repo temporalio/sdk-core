@@ -1,6 +1,7 @@
 use crate::{
     test_help::{
-        canned_histories, hist_to_poll_resp, mock_worker, MocksHolder, ResponseType, TEST_Q,
+        build_mock_pollers, canned_histories, hist_to_poll_resp, mock_worker, single_hist_mock_sg,
+        MockPollCfg, ResponseType, TEST_Q,
     },
     worker::client::mocks::mock_workflow_client,
 };
@@ -26,8 +27,7 @@ use temporal_sdk_core_protos::{
         history::v1::History,
         query::v1::WorkflowQuery,
         workflowservice::v1::{
-            GetWorkflowExecutionHistoryResponse, RespondQueryTaskCompletedResponse,
-            RespondWorkflowTaskCompletedResponse,
+            GetWorkflowExecutionHistoryResponse, RespondWorkflowTaskCompletedResponse,
         },
     },
 };
@@ -43,7 +43,7 @@ async fn legacy_query(#[case] include_history: bool) {
     let t = canned_histories::single_timer("1");
     let mut header = HashMap::new();
     header.insert("head".to_string(), Payload::from(b"er"));
-    let tasks = VecDeque::from(vec![
+    let tasks = [
         hist_to_poll_resp(&t, wfid.to_owned(), 1.into(), TEST_Q.to_string()),
         {
             let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), 1.into(), TEST_Q.to_string());
@@ -58,17 +58,10 @@ async fn legacy_query(#[case] include_history: bool) {
             pr
         },
         hist_to_poll_resp(&t, wfid.to_owned(), 2.into(), TEST_Q.to_string()),
-    ]);
-    let mut mock_client = mock_workflow_client();
-    mock_client
-        .expect_complete_workflow_task()
-        .returning(|_| Ok(RespondWorkflowTaskCompletedResponse::default()));
-    mock_client
-        .expect_respond_legacy_query()
-        .times(1)
-        .returning(move |_, _| Ok(RespondQueryTaskCompletedResponse::default()));
-
-    let mut mock = MocksHolder::from_client_with_responses(mock_client, tasks, vec![]);
+    ];
+    let mut mock = MockPollCfg::from_resp_batches(wfid, t, tasks, mock_workflow_client());
+    mock.num_expected_legacy_query_resps = 1;
+    let mut mock = build_mock_pollers(mock);
     if !include_history {
         mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
     }
@@ -186,12 +179,8 @@ async fn new_queries(#[case] num_queries: usize) {
         },
     ]);
     let mut mock_client = mock_workflow_client();
-    mock_client
-        .expect_complete_workflow_task()
-        .returning(|_| Ok(RespondWorkflowTaskCompletedResponse::default()));
     mock_client.expect_respond_legacy_query().times(0);
-
-    let mut mock = MocksHolder::from_client_with_responses(mock_client, tasks, vec![]);
+    let mut mock = single_hist_mock_sg(wfid, t, tasks, mock_client, true);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
     let core = mock_worker(mock);
 
@@ -260,18 +249,10 @@ async fn legacy_query_failure_on_wft_failure() {
             pr.history = Some(History { events: vec![] });
             pr
         },
-        hist_to_poll_resp(&t, wfid.to_owned(), 2.into(), TEST_Q.to_string()),
     ]);
-    let mut mock_client = mock_workflow_client();
-    mock_client
-        .expect_complete_workflow_task()
-        .returning(|_| Ok(RespondWorkflowTaskCompletedResponse::default()));
-    mock_client
-        .expect_respond_legacy_query()
-        .times(1)
-        .returning(move |_, _| Ok(RespondQueryTaskCompletedResponse::default()));
-
-    let mut mock = MocksHolder::from_client_with_responses(mock_client, tasks, vec![]);
+    let mut mock = MockPollCfg::from_resp_batches(wfid, t, tasks, mock_workflow_client());
+    mock.num_expected_legacy_query_resps = 1;
+    let mut mock = build_mock_pollers(mock);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
     let core = mock_worker(mock);
 
@@ -330,26 +311,24 @@ async fn legacy_query_after_complete(#[values(false, true)] full_history: bool) 
         });
         pr
     };
-    let tasks = VecDeque::from(vec![
-        hist_to_poll_resp(
+    // Server would never send us a workflow task *without* a query that goes all the way to
+    // execution completed. So, don't do that. It messes with the mock unlocking the next
+    // task since we (appropriately) won't respond to server in that situation.
+    let mut tasks = if full_history {
+        vec![]
+    } else {
+        vec![hist_to_poll_resp(
             &t,
             wfid.to_owned(),
             ResponseType::AllHistory,
             TEST_Q.to_string(),
-        ),
-        query_with_hist_task.clone(),
-        query_with_hist_task,
-    ]);
-    let mut mock_client = mock_workflow_client();
-    mock_client
-        .expect_complete_workflow_task()
-        .returning(|_| Ok(RespondWorkflowTaskCompletedResponse::default()));
-    mock_client
-        .expect_respond_legacy_query()
-        .times(2)
-        .returning(move |_, _| Ok(RespondQueryTaskCompletedResponse::default()));
+        )]
+    };
+    tasks.extend([query_with_hist_task.clone(), query_with_hist_task]);
 
-    let mut mock = MocksHolder::from_client_with_responses(mock_client, tasks, vec![]);
+    let mut mock = MockPollCfg::from_resp_batches(wfid, t, tasks, mock_workflow_client());
+    mock.num_expected_legacy_query_resps = 2;
+    let mut mock = build_mock_pollers(mock);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
     let core = mock_worker(mock);
 
@@ -474,7 +453,7 @@ async fn query_cache_miss_causes_page_fetch_dont_reply_wft_too_early(
             Ok(RespondWorkflowTaskCompletedResponse::default())
         });
 
-    let mut mock = MocksHolder::from_client_with_responses(mock_client, tasks, vec![]);
+    let mut mock = single_hist_mock_sg(wfid, t, tasks, mock_client, true);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
     let core = mock_worker(mock);
     let task = core.poll_workflow_activation().await.unwrap();
@@ -568,7 +547,7 @@ async fn query_replay_with_continue_as_new_doesnt_reply_empty_command() {
             Ok(RespondWorkflowTaskCompletedResponse::default())
         });
 
-    let mut mock = MocksHolder::from_client_with_responses(mock_client, tasks, vec![]);
+    let mut mock = single_hist_mock_sg(wfid, t, tasks, mock_client, true);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
     let core = mock_worker(mock);
 
@@ -633,18 +612,6 @@ async fn query_replay_with_continue_as_new_doesnt_reply_empty_command() {
     ))
     .await
     .unwrap();
-
-    // Need to complete the eviction to finally send commands and finish
-    let task = core.poll_workflow_activation().await.unwrap();
-    assert_matches!(
-        task.jobs.as_slice(),
-        [WorkflowActivationJob {
-            variant: Some(workflow_activation_job::Variant::RemoveFromCache(_))
-        }]
-    );
-    core.complete_workflow_activation(WorkflowActivationCompletion::empty(task.run_id))
-        .await
-        .unwrap();
 
     core.shutdown().await;
 }

@@ -77,6 +77,10 @@ fsm! {
         shared on_activity_task_timed_out) --> TimedOut;
     StartedActivityCancelEventRecorded --(ActivityTaskCanceled(ActivityTaskCanceledEventAttributes),
         shared on_activity_task_canceled) --> Canceled;
+
+    Canceled --(ActivityTaskStarted(i64), shared on_activity_task_started) --> Canceled;
+    Canceled --(ActivityTaskCompleted(ActivityTaskCompletedEventAttributes),
+        shared on_activity_task_completed) --> Canceled;
 }
 
 #[derive(Debug, derive_more::Display)]
@@ -637,6 +641,39 @@ pub(super) struct TimedOut {}
 
 #[derive(Default, Clone)]
 pub(super) struct Canceled {}
+impl Canceled {
+    pub(super) fn on_activity_task_started(
+        self,
+        dat: SharedState,
+        seq_num: i64,
+    ) -> ActivityMachineTransition<Canceled> {
+        // Abandoned activities might start anyway. Ignore the result.
+        if dat.cancellation_type == ActivityCancellationType::Abandon {
+            TransitionResult::default()
+        } else {
+            TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
+                "Non-Abandon cancel mode activities cannot be started after being cancelled. \
+                 Seq: {:?}",
+                seq_num
+            )))
+        }
+    }
+    pub(super) fn on_activity_task_completed(
+        self,
+        dat: SharedState,
+        attrs: ActivityTaskCompletedEventAttributes,
+    ) -> ActivityMachineTransition<Canceled> {
+        // Abandoned activities might complete anyway. Ignore the result.
+        if dat.cancellation_type == ActivityCancellationType::Abandon {
+            TransitionResult::default()
+        } else {
+            TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
+                "Non-Abandon cancel mode activities cannot be completed after being cancelled: {:?}",
+                attrs
+            )))
+        }
+    }
+}
 
 fn create_request_cancel_activity_task_command<S>(
     dat: SharedState,
@@ -747,8 +784,7 @@ fn convert_payloads(
 mod test {
     use super::*;
     use crate::{
-        replay::TestHistoryBuilder, test_help::canned_histories,
-        workflow::managed_wf::ManagedWFFunc,
+        replay::TestHistoryBuilder, test_help::canned_histories, worker::workflow::ManagedWFFunc,
     };
     use rstest::{fixture, rstest};
     use std::mem::discriminant;

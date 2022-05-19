@@ -181,6 +181,7 @@ impl LocalActivityManager {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn num_outstanding(&self) -> usize {
         self.dat.lock().outstanding_activity_tasks.len()
     }

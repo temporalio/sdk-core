@@ -223,7 +223,7 @@ impl TryFrom<HistoryEvent> for PatchMachineEvents {
 mod tests {
     use crate::{
         replay::TestHistoryBuilder,
-        workflow::{machines::WFMachinesError, managed_wf::ManagedWFFunc},
+        worker::workflow::{machines::WFMachinesError, ManagedWFFunc},
     };
     use rstest::rstest;
     use std::time::Duration;

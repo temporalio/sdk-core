@@ -2,8 +2,8 @@ use crate::{
     job_assert,
     test_help::{
         build_fake_worker, canned_histories, gen_assert_and_reply, poll_and_reply, ResponseType,
+        WorkflowCachingPolicy::NonSticky,
     },
-    workflow::WorkflowCachingPolicy::NonSticky,
 };
 use rstest::rstest;
 use std::time::Duration;

@@ -4,7 +4,6 @@ use prost_types::TimestampOutOfSystemRangeError;
 use temporal_sdk_core_protos::coresdk::{
     activity_result::ActivityExecutionResult,
     workflow_activation::remove_from_cache::EvictionReason,
-    workflow_completion::WorkflowActivationCompletion,
 };
 
 /// Errors thrown by [crate::Worker::poll_workflow_activation]
@@ -44,16 +43,13 @@ pub enum PollActivityError {
 #[allow(clippy::large_enum_variant)]
 pub enum CompleteWfError {
     /// Lang SDK sent us a malformed workflow completion. This likely means a bug in the lang sdk.
-    #[error("Lang SDK sent us a malformed workflow completion ({reason}): {completion:?}")]
+    #[error("Lang SDK sent us a malformed workflow completion for run ({run_id}): {reason}")]
     MalformedWorkflowCompletion {
         /// Reason the completion was malformed
         reason: String,
-        /// The completion, which may not be included to avoid unnecessary copies.
-        completion: Option<WorkflowActivationCompletion>,
+        /// The run associated with the completion
+        run_id: String,
     },
-    /// There is no worker registered for the queue being polled
-    #[error("No worker registered for queue: {0}")]
-    NoWorkerForQueue(String),
     /// Unhandled error when calling the temporal server. Core will attempt to retry any non-fatal
     /// errors, so lang should consider this fatal.
     #[error("Unhandled grpc error when completing workflow task: {0:?}")]
@@ -75,9 +71,6 @@ pub enum CompleteActivityError {
     /// errors, so lang should consider this fatal.
     #[error("Unhandled grpc error when completing activity: {0:?}")]
     TonicError(#[from] tonic::Status),
-    /// There is no worker registered or alive for the activity being completed
-    #[error("No worker registered or alive for queue: {0}")]
-    NoWorkerForQueue(String),
 }
 
 /// Errors thrown inside of workflow machines

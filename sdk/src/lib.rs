@@ -63,7 +63,7 @@ use crate::{
     interceptors::WorkerInterceptor,
     workflow_context::{ChildWfCommon, PendingChildWorkflow},
 };
-use anyhow::{anyhow, bail};
+use anyhow::{anyhow, bail, Context};
 use app_data::AppData;
 use futures::{future::BoxFuture, FutureExt, StreamExt, TryFutureExt, TryStreamExt};
 use once_cell::sync::OnceCell;
@@ -250,15 +250,17 @@ impl Worker {
                         let wf_half = &*wf_half;
                         async move {
                             join_handle.await??;
+                            info!(run_id=%run_id, "Removing workflow from cache");
                             wf_half.workflows.borrow_mut().remove(&run_id);
                             Ok(())
                         }
                     },
                 )
                 .await
+                .context("Workflow futures encountered an error")
         };
         let wf_completion_processor = async {
-            let r = UnboundedReceiverStream::new(completions_rx)
+            UnboundedReceiverStream::new(completions_rx)
                 .map(Ok)
                 .try_for_each_concurrent(None, |completion| async {
                     if let Some(ref i) = common.worker_interceptor {
@@ -266,9 +268,9 @@ impl Worker {
                     }
                     common.worker.complete_workflow_activation(completion).await
                 })
-                .map_err(Into::into)
-                .await;
-            r
+                .map_err(anyhow::Error::from)
+                .await
+                .context("Workflow completions processor encountered an error")
         };
         tokio::try_join!(
             // Workflow polling loop
@@ -438,7 +440,11 @@ impl WorkflowHalf {
                 .send(activation)
                 .expect("Workflow should exist if we're sending it an activation");
         } else {
-            bail!("Got activation for unknown workflow");
+            bail!(
+                "Got activation {:?} for unknown workflow {}",
+                activation,
+                run_id
+            );
         };
 
         Ok(res)

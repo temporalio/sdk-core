@@ -1,6 +1,6 @@
 use crate::{
-    worker::LocalActivityExecutionResult, workflow::LEGACY_QUERY_ID, CompleteActivityError,
-    TaskToken,
+    worker::{LocalActivityExecutionResult, LEGACY_QUERY_ID},
+    CompleteActivityError, TaskToken,
 };
 use anyhow::anyhow;
 use std::{

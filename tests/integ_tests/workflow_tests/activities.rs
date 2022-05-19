@@ -1,7 +1,7 @@
 use assert_matches::assert_matches;
 use std::time::Duration;
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowExecutionResult, WorkflowOptions};
-use temporal_sdk::{ActContext, ActivityOptions, WfContext, WorkflowResult};
+use temporal_sdk::{ActContext, ActivityOptions, CancellableFuture, WfContext, WorkflowResult};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{
@@ -747,4 +747,50 @@ async fn activity_cancelled_after_heartbeat_times_out() {
         .terminate_workflow_execution(task_q.clone(), None)
         .await
         .unwrap();
+}
+
+#[tokio::test]
+async fn one_activity_abandon_cancelled_after_complete() {
+    let wf_name = "one_activity_abandon_cancelled_after_complete";
+    let mut starter = CoreWfStarter::new(wf_name);
+    let mut worker = starter.worker().await;
+    let client = starter.get_client().await;
+    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+        let act_fut = ctx.activity(ActivityOptions {
+            activity_type: "echo_activity".to_string(),
+            start_to_close_timeout: Some(Duration::from_secs(5)),
+            input: "hi!".as_json_payload().expect("serializes fine"),
+            cancellation_type: ActivityCancellationType::Abandon,
+            ..Default::default()
+        });
+        ctx.timer(Duration::from_secs(1)).await;
+        act_fut.cancel(&ctx);
+        ctx.timer(Duration::from_secs(3)).await;
+        act_fut.await;
+        Ok(().into())
+    });
+    worker.register_activity(
+        "echo_activity",
+        |_ctx: ActContext, echo_me: String| async move {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            Ok(echo_me)
+        },
+    );
+
+    let run_id = worker
+        .submit_wf(
+            wf_name.to_owned(),
+            wf_name.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+    let handle = client.get_untyped_workflow_handle(wf_name, run_id);
+    let res = handle
+        .get_workflow_result(Default::default())
+        .await
+        .unwrap();
+    assert_matches!(res, WorkflowExecutionResult::Succeeded(_));
 }
