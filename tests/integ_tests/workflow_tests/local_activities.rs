@@ -3,16 +3,17 @@ use futures::future::join_all;
 use std::time::Duration;
 use temporal_client::WorkflowOptions;
 use temporal_sdk::{
-    act_cancelled, act_is_cancelled, ActivityCancelledError, CancellableFuture,
+    interceptors::WorkerInterceptor, ActContext, ActivityCancelledError, CancellableFuture,
     LocalActivityOptions, WfContext, WorkflowResult,
 };
 use temporal_sdk_core_protos::coresdk::{
-    common::RetryPolicy, workflow_commands::ActivityCancellationType, AsJsonPayloadExt,
+    common::RetryPolicy, workflow_commands::ActivityCancellationType,
+    workflow_completion::WorkflowActivationCompletion, AsJsonPayloadExt,
 };
 use temporal_sdk_core_test_utils::CoreWfStarter;
 use tokio_util::sync::CancellationToken;
 
-pub async fn echo(e: String) -> anyhow::Result<String> {
+pub async fn echo(_ctx: ActContext, e: String) -> anyhow::Result<String> {
     Ok(e)
 }
 
@@ -119,7 +120,7 @@ async fn long_running_local_act_with_timer() {
     starter.wft_timeout(Duration::from_secs(1));
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), local_act_then_timer_then_wait);
-    worker.register_activity("echo_activity", |str: String| async {
+    worker.register_activity("echo_activity", |_ctx: ActContext, str: String| async {
         tokio::time::sleep(Duration::from_secs(4)).await;
         Ok(str)
     });
@@ -199,7 +200,7 @@ async fn local_act_retry_timer_backoff() {
         assert!(res.failed());
         Ok(().into())
     });
-    worker.register_activity("echo", |_: String| async {
+    worker.register_activity("echo", |_: ActContext, _: String| async {
         Result::<(), _>::Err(anyhow!("Oh no I failed!"))
     });
 
@@ -245,12 +246,12 @@ async fn cancel_immediate(#[case] cancel_type: ActivityCancellationType) {
     let manual_cancel = CancellationToken::new();
     let manual_cancel_act = manual_cancel.clone();
 
-    worker.register_activity("echo", move |_: String| {
+    worker.register_activity("echo", move |ctx: ActContext, _: String| {
         let manual_cancel_act = manual_cancel_act.clone();
         async move {
             tokio::select! {
                 _ = tokio::time::sleep(Duration::from_secs(10)) => {},
-                _ = act_cancelled() => {
+                _ = ctx.cancelled() => {
                     return Err(anyhow!(ActivityCancelledError::default()))
                 }
                 _ = manual_cancel_act.cancelled() => {}
@@ -269,11 +270,22 @@ async fn cancel_immediate(#[case] cancel_type: ActivityCancellationType) {
         .await
         .unwrap();
     worker
-        .run_until_done_intercepted(move |iceptor| {
-            iceptor.before_shutdown(move || manual_cancel.cancel())
-        })
+        .run_until_done_intercepted(Some(LACancellerInterceptor {
+            token: manual_cancel,
+        }))
         .await
         .unwrap();
+}
+
+struct LACancellerInterceptor {
+    token: CancellationToken,
+}
+#[async_trait::async_trait(?Send)]
+impl WorkerInterceptor for LACancellerInterceptor {
+    async fn on_workflow_activation_completion(&self, _: &WorkflowActivationCompletion) {}
+    fn on_shutdown(&self, _: &temporal_sdk::Worker) {
+        self.token.cancel()
+    }
 }
 
 #[rstest::rstest]
@@ -331,11 +343,11 @@ async fn cancel_after_act_starts(
     let manual_cancel = CancellationToken::new();
     let manual_cancel_act = manual_cancel.clone();
 
-    worker.register_activity("echo", move |_: String| {
+    worker.register_activity("echo", move |ctx: ActContext, _: String| {
         let manual_cancel_act = manual_cancel_act.clone();
         async move {
             if cancel_on_backoff.is_some() {
-                if act_is_cancelled() {
+                if ctx.is_cancelled() {
                     return Err(anyhow!(ActivityCancelledError::default()));
                 }
                 // Just fail constantly so we get stuck on the backoff timer
@@ -343,7 +355,7 @@ async fn cancel_after_act_starts(
             } else {
                 tokio::select! {
                     _ = tokio::time::sleep(Duration::from_secs(100)) => {},
-                    _ = act_cancelled() => {
+                    _ = ctx.cancelled() => {
                         return Err(anyhow!(ActivityCancelledError::default()))
                     }
                     _ = manual_cancel_act.cancelled() => {
@@ -365,9 +377,9 @@ async fn cancel_after_act_starts(
         .await
         .unwrap();
     worker
-        .run_until_done_intercepted(move |iceptor| {
-            iceptor.before_shutdown(move || manual_cancel.cancel())
-        })
+        .run_until_done_intercepted(Some(LACancellerInterceptor {
+            token: manual_cancel,
+        }))
         .await
         .unwrap();
 }
@@ -410,10 +422,10 @@ async fn x_to_close_timeout(#[case] is_schedule: bool) {
         assert!(res.timed_out());
         Ok(().into())
     });
-    worker.register_activity("echo", |_: String| async {
+    worker.register_activity("echo", |ctx: ActContext, _: String| async move {
         tokio::select! {
             _ = tokio::time::sleep(Duration::from_secs(100)) => {},
-            _ = act_cancelled() => {
+            _ = ctx.cancelled() => {
                 return Err(anyhow!(ActivityCancelledError::default()))
             }
         };
@@ -466,7 +478,7 @@ async fn schedule_to_close_timeout_across_timer_backoff(#[case] cached: bool) {
         assert!(res.timed_out());
         Ok(().into())
     });
-    worker.register_activity("echo", |_: String| async {
+    worker.register_activity("echo", |_: ActContext, _: String| async {
         Result::<(), _>::Err(anyhow!("Oh no I failed!"))
     });
 
@@ -482,26 +494,32 @@ async fn schedule_to_close_timeout_across_timer_backoff(#[case] cached: bool) {
     worker.run_until_done().await.unwrap();
 }
 
+#[rstest::rstest]
 #[tokio::test]
-async fn eviction_wont_make_local_act_get_dropped() {
-    let wf_name = "eviction_wont_make_local_act_get_dropped";
-    let mut starter = CoreWfStarter::new(wf_name);
+async fn eviction_wont_make_local_act_get_dropped(#[values(true, false)] short_wft_timeout: bool) {
+    let wf_name = format!(
+        "eviction_wont_make_local_act_get_dropped_{}",
+        short_wft_timeout
+    );
+    let mut starter = CoreWfStarter::new(&wf_name);
     starter.max_cached_workflows(0);
-    starter.wft_timeout(Duration::from_secs(1));
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), local_act_then_timer_then_wait);
-    worker.register_activity("echo_activity", |str: String| async {
+    worker.register_activity("echo_activity", |_ctx: ActContext, str: String| async {
         tokio::time::sleep(Duration::from_secs(4)).await;
         Ok(str)
     });
 
+    let opts = if short_wft_timeout {
+        WorkflowOptions {
+            task_timeout: Some(Duration::from_secs(1)),
+            ..Default::default()
+        }
+    } else {
+        Default::default()
+    };
     worker
-        .submit_wf(
-            wf_name.to_owned(),
-            wf_name.to_owned(),
-            vec![],
-            WorkflowOptions::default(),
-        )
+        .submit_wf(wf_name.to_owned(), wf_name.to_owned(), vec![], opts)
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
@@ -544,7 +562,7 @@ async fn timer_backoff_concurrent_with_non_timer_backoff() {
         assert!(r2.failed());
         Ok(().into())
     });
-    worker.register_activity("echo", |_: String| async {
+    worker.register_activity("echo", |_: ActContext, _: String| async {
         Result::<(), _>::Err(anyhow!("Oh no I failed!"))
     });
 

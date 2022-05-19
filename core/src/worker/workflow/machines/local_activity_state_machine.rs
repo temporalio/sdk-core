@@ -784,8 +784,7 @@ impl From<LocalActivityExecutionResult> for ActivityResolution {
 mod tests {
     use super::*;
     use crate::{
-        replay::TestHistoryBuilder, test_help::canned_histories,
-        workflow::managed_wf::ManagedWFFunc,
+        replay::TestHistoryBuilder, test_help::canned_histories, worker::workflow::ManagedWFFunc,
     };
     use rstest::rstest;
     use std::time::Duration;

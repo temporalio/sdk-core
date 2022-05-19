@@ -1,4 +1,4 @@
-use crate::{test_help::canned_histories, workflow::managed_wf::ManagedWFFunc};
+use crate::{test_help::canned_histories, worker::ManagedWFFunc};
 use rstest::{fixture, rstest};
 use std::time::Duration;
 use temporal_sdk::{WfContext, WorkflowFunction};

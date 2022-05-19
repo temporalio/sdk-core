@@ -1,6 +1,6 @@
 use crate::{
-    worker::LocalActivityExecutionResult, workflow::LEGACY_QUERY_ID, CompleteActivityError,
-    TaskToken,
+    worker::{LocalActivityExecutionResult, LEGACY_QUERY_ID},
+    CompleteActivityError, TaskToken,
 };
 use anyhow::anyhow;
 use std::{
@@ -359,9 +359,7 @@ impl ValidScheduleLA {
                 ))
             }
         };
-        let retry_policy = v
-            .retry_policy
-            .ok_or_else(|| anyhow!("Retry policy must be defined!"))?;
+        let retry_policy = v.retry_policy.unwrap_or_default();
         let local_retry_threshold = v
             .local_retry_threshold
             .clone()

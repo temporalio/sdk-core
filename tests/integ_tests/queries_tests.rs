@@ -156,19 +156,19 @@ async fn query_after_execution_complete(#[case] do_evict: bool) {
                     .unwrap();
                 continue;
             }
-            assert_matches!(
+            if matches!(
                 task.jobs.as_slice(),
                 [WorkflowActivationJob {
                     variant: Some(workflow_activation_job::Variant::StartWorkflow(_)),
                 }]
-            );
-            let run_id = task.run_id.clone();
-            core.complete_timer(&task.run_id, 1, Duration::from_millis(500))
-                .await;
-            let task = core.poll_workflow_activation().await.unwrap();
-            core.complete_execution(&task.run_id).await;
+            ) {
+                core.complete_timer(&task.run_id, 1, Duration::from_millis(500))
+                    .await;
+            } else {
+                core.complete_execution(&task.run_id).await;
+            }
             if !go_until_query {
-                break run_id;
+                break task.run_id;
             }
         }
     };

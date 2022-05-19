@@ -28,7 +28,7 @@ mod integ_tests {
         let opts = get_integ_server_options();
         let telem_d = telemetry_init(&get_integ_telem_options()).unwrap();
         let mut retrying_client = opts
-            .connect_no_namespace(telem_d.get_metric_meter())
+            .connect_no_namespace(telem_d.get_metric_meter(), None)
             .await
             .unwrap();
 
@@ -84,7 +84,10 @@ mod integ_tests {
             })
             .build()
             .unwrap();
-        let con = sgo.connect(NAMESPACE.to_string(), None).await.unwrap();
+        let con = sgo
+            .connect(NAMESPACE.to_string(), None, None)
+            .await
+            .unwrap();
         con.list_namespaces().await.unwrap();
     }
 }

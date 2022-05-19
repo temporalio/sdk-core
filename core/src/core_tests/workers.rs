@@ -1,7 +1,7 @@
 use crate::{
     test_help::{
         build_fake_worker, build_mock_pollers, canned_histories, mock_manual_poller, mock_worker,
-        MockPollCfg, MockWorker, MocksHolder,
+        MockPollCfg, MockWorkerInputs, MocksHolder,
     },
     worker::client::mocks::mock_workflow_client,
     PollActivityError, PollWfError,
@@ -11,7 +11,6 @@ use std::{cell::RefCell, time::Duration};
 use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::{
     coresdk::{
-        workflow_activation::workflow_activation_job,
         workflow_commands::{workflow_command, CompleteWorkflowExecution, StartTimer},
         workflow_completion::WorkflowActivationCompletion,
     },
@@ -19,38 +18,6 @@ use temporal_sdk_core_protos::{
 };
 use temporal_sdk_core_test_utils::start_timer_cmd;
 use tokio::sync::{watch, Barrier};
-
-#[tokio::test]
-async fn multi_workers() {
-    // TODO: Turn this into a test with multiple independent workers
-    // Make histories for 5 different workflows on 5 different task queues
-    // let hists = (0..5).into_iter().map(|i| {
-    //     let wf_id = format!("fake-wf-{}", i);
-    //     let hist = canned_histories::single_timer("1");
-    //     FakeWfResponses {
-    //         wf_id,
-    //         hist,
-    //         response_batches: vec![1.into(), 2.into()],
-    //         task_q: format!("q-{}", i),
-    //     }
-    // });
-    // let mock = build_multihist_mock_sg(hists, false, None);
-    //
-    // let core = &mock_worker(mock);
-    //
-    // for i in 0..5 {
-    //     let tq = format!("q-{}", i);
-    //     let res = core.poll_workflow_activation().await.unwrap();
-    //     assert_matches!(
-    //         res.jobs[0].variant,
-    //         Some(workflow_activation_job::Variant::StartWorkflow(_))
-    //     );
-    //     core.complete_workflow_activation(WorkflowActivationCompletion::empty(res.run_id))
-    //         .await
-    //         .unwrap();
-    // }
-    // core.shutdown().await;
-}
 
 #[tokio::test]
 async fn after_shutdown_of_worker_get_shutdown_err() {
@@ -72,16 +39,8 @@ async fn after_shutdown_of_worker_get_shutdown_err() {
             ))
             .await
             .unwrap();
-        // Since non-sticky, one more activation for eviction
-        let res = worker.poll_workflow_activation().await.unwrap();
-        assert_matches!(
-            res.jobs[0].variant,
-            Some(workflow_activation_job::Variant::RemoveFromCache(_))
-        );
-        worker
-            .complete_workflow_activation(WorkflowActivationCompletion::empty(run_id.clone()))
-            .await
-            .unwrap();
+
+        // Shutdown proceeds if the only outstanding activations are evictions
         assert_matches!(
             worker.poll_workflow_activation().await.unwrap_err(),
             PollWfError::ShutDown
@@ -115,9 +74,7 @@ async fn shutdown_worker_can_complete_pending_activation() {
             ))
             .await
             .unwrap();
-        // Since non-sticky, one more activation for eviction
-        worker.poll_workflow_activation().await.unwrap();
-        // Now it's shut down
+        // Shutdown proceeds if the only outstanding activations are evictions
         assert_matches!(
             worker.poll_workflow_activation().await.unwrap_err(),
             PollWfError::ShutDown
@@ -141,7 +98,7 @@ async fn worker_shutdown_during_poll_doesnt_deadlock() {
         }
         .boxed()
     });
-    let mw = MockWorker::new(Box::new(mock_poller));
+    let mw = MockWorkerInputs::new_from_poller(Box::new(mock_poller));
     let mut mock_client = mock_workflow_client();
     mock_client
         .expect_complete_workflow_task()
@@ -195,7 +152,7 @@ async fn can_shutdown_local_act_only_worker_when_act_polling() {
 }
 
 #[tokio::test]
-async fn complete_with_task_not_found_during_shutdwn() {
+async fn complete_with_task_not_found_during_shutdown() {
     let t = canned_histories::single_timer("1");
     let mut mock = mock_workflow_client();
     mock.expect_complete_workflow_task()
@@ -214,16 +171,11 @@ async fn complete_with_task_not_found_during_shutdwn() {
         complete_order.borrow_mut().push(3);
     };
     let poll_fut = async {
-        // This should *not* return shutdown, but instead should do nothing until the complete
-        // goes through, at which point it will return the eviction.
-        let res = core.poll_workflow_activation().await.unwrap();
+        // This will return shutdown once the completion goes through
         assert_matches!(
-            res.jobs[0].variant,
-            Some(workflow_activation_job::Variant::RemoveFromCache(_))
+            core.poll_workflow_activation().await.unwrap_err(),
+            PollWfError::ShutDown
         );
-        core.complete_workflow_activation(WorkflowActivationCompletion::empty(res.run_id))
-            .await
-            .unwrap();
         complete_order.borrow_mut().push(2);
     };
     let complete_fut = async {
@@ -236,5 +188,7 @@ async fn complete_with_task_not_found_during_shutdwn() {
         complete_order.borrow_mut().push(1);
     };
     tokio::join!(shutdown_fut, poll_fut, complete_fut);
-    assert_eq!(&complete_order.into_inner(), &[1, 2, 3])
+    // Shutdown will currently complete first before the actual eviction reply since the
+    // workflow task is marked complete as soon as we get not found back from the server.
+    assert_eq!(&complete_order.into_inner(), &[1, 3, 2])
 }

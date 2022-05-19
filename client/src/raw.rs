@@ -15,7 +15,7 @@ use tonic::{body::BoxBody, client::GrpcService, metadata::KeyAndValueRef};
 
 pub(super) mod sealed {
     use super::*;
-    use crate::{ConfiguredClient, RetryClient};
+    use crate::{Client, ConfiguredClient, InterceptedMetricsSvc, RetryClient};
     use futures::TryFutureExt;
     use tonic::{Request, Response, Status};
 
@@ -102,6 +102,14 @@ pub(super) mod sealed {
 
         fn client(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
             &mut self.client
+        }
+    }
+
+    impl RawClientLike for Client {
+        type SvcType = InterceptedMetricsSvc;
+
+        fn client(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
+            &mut self.inner
         }
     }
 }
@@ -550,7 +558,7 @@ mod tests {
     #[allow(dead_code)]
     async fn raw_client_retry_compiles() {
         let opts = ClientOptionsBuilder::default().build().unwrap();
-        let raw_client = opts.connect_no_namespace(None).await.unwrap();
+        let raw_client = opts.connect_no_namespace(None, None).await.unwrap();
         let mut retry_client = RetryClient::new(raw_client, opts.retry_config);
 
         let the_request = ListNamespacesRequest::default();

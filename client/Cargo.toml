@@ -11,6 +11,7 @@ keywords = ["temporal", "workflow"]
 categories = ["development-tools"]
 
 [dependencies]
+anyhow = "1.0"
 async-trait = "0.1"
 backoff = "0.4"
 derive_builder = "0.11"
@@ -19,6 +20,7 @@ futures = "0.3"
 futures-retry = "0.6.0"
 http = "0.2"
 opentelemetry = { version = "0.17", features = ["metrics"] }
+parking_lot = "0.12"
 prost-types = "0.9"
 thiserror = "1.0"
 tokio = "1.1"

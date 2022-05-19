@@ -6,12 +6,12 @@ extern crate tracing;
 
 pub mod canned_histories;
 
-use futures::{stream::FuturesUnordered, StreamExt};
-use log::LevelFilter;
+use crate::stream::TryStreamExt;
+use futures::{stream, stream::FuturesUnordered, StreamExt};
+use parking_lot::Mutex;
 use prost::Message;
 use rand::{distributions::Standard, Rng};
 use std::{
-    cell::RefCell,
     convert::TryFrom,
     env,
     future::Future,
@@ -23,11 +23,14 @@ use std::{
     },
     time::Duration,
 };
-use temporal_client::{Client, RetryClient, WorkflowClientTrait, WorkflowOptions};
+use temporal_client::{
+    Client, RetryClient, WorkflowClientTrait, WorkflowExecutionInfo, WorkflowOptions,
+};
 use temporal_sdk::{interceptors::WorkerInterceptor, IntoActivityFunc, Worker, WorkflowFunction};
 use temporal_sdk_core::{
-    init_replay_worker, init_worker, telemetry_init, ClientOptions, ClientOptionsBuilder,
-    TelemetryOptions, TelemetryOptionsBuilder, WorkerConfig, WorkerConfigBuilder,
+    init_replay_worker, init_worker, telemetry_init, ClientOptions, ClientOptionsBuilder, Logger,
+    MetricsExporter, OtelCollectorOptions, TelemetryOptions, TelemetryOptionsBuilder,
+    TraceExporter, WorkerConfig, WorkerConfigBuilder,
 };
 use temporal_sdk_core_api::Worker as CoreWorker;
 use temporal_sdk_core_protos::{
@@ -237,7 +240,7 @@ impl CoreWfStarter {
                 telemetry_init(&self.telemetry_options).expect("Telemetry inits cleanly");
                 let client = Arc::new(
                     get_integ_server_options()
-                        .connect(self.worker_config.namespace.clone(), None)
+                        .connect(self.worker_config.namespace.clone(), None, None)
                         .await
                         .expect("Must connect"),
                 );
@@ -251,10 +254,17 @@ impl CoreWfStarter {
     }
 }
 
-/// Provides conveniences for running integ tests with the SDK
+/// Provides conveniences for running integ tests with the SDK (against real server or mocks)
 pub struct TestWorker {
     inner: Worker,
-    client: Option<Arc<dyn WorkflowClientTrait>>,
+    pub orig_core_worker: Arc<dyn CoreWorker>,
+    client: Option<Arc<RetryClient<Client>>>,
+    /// Defaults true, and if set, auto-shutdown the worker once all workflows started via
+    /// `submit_wf` have completed (as determined by fetching their result with following runs).
+    pub auto_shutdown: bool,
+    started_workflows: Mutex<Vec<WorkflowExecutionInfo>>,
+    /// Used only for mocked testing, where fetching results to determine if a WF is finished is too
+    /// annoying to make work.
     incomplete_workflows: Arc<AtomicUsize>,
     iceptor: Option<TestWorkerCompletionIceptor>,
 }
@@ -262,11 +272,13 @@ impl TestWorker {
     /// Create a new test worker
     pub fn new(core_worker: Arc<dyn CoreWorker>, task_queue: impl Into<String>) -> Self {
         let ct = Arc::new(AtomicUsize::new(0));
-        let inner = Worker::new_from_core(core_worker, task_queue);
-        let iceptor = TestWorkerCompletionIceptor::new(ct.clone(), inner.shutdown_handle());
+        let inner = Worker::new_from_core(core_worker.clone(), task_queue);
         Self {
             inner,
+            orig_core_worker: core_worker,
             client: None,
+            auto_shutdown: true,
+            started_workflows: Mutex::new(vec![]),
             incomplete_workflows: ct,
             iceptor: Some(iceptor),
         }
@@ -274,11 +286,6 @@ impl TestWorker {
 
     pub fn inner_mut(&mut self) -> &mut Worker {
         &mut self.inner
-    }
-
-    pub fn incr_expected_run_count(&self, amount: usize) {
-        self.incomplete_workflows
-            .fetch_add(amount, Ordering::AcqRel);
     }
 
     // TODO: Maybe trait-ify?
@@ -311,7 +318,6 @@ impl TestWorker {
         input: Vec<Payload>,
         options: WorkflowOptions,
     ) -> Result<String, anyhow::Error> {
-        self.incr_expected_run_count(1);
         if let Some(c) = self.client.as_ref() {
             let wfid = workflow_id.into();
             let res = c
@@ -323,6 +329,11 @@ impl TestWorker {
                     options,
                 )
                 .await?;
+            self.started_workflows.lock().push(WorkflowExecutionInfo {
+                namespace: c.namespace().to_string(),
+                workflow_id: wfid,
+                run_id: Some(res.run_id.clone()),
+            });
             Ok(res.run_id)
         } else {
             Ok("fake_run_id".to_string())
@@ -331,24 +342,54 @@ impl TestWorker {
 
     /// Runs until all expected workflows have completed
     pub async fn run_until_done(&mut self) -> Result<(), anyhow::Error> {
-        self.run_until_done_intercepted(|_| {}).await
+        self.run_until_done_intercepted(Option::<TestWorkerInterceptor>::None)
+            .await
     }
 
     /// See [Self::run_until_done], but allows configuration of some low-level interception.
     pub async fn run_until_done_intercepted(
         &mut self,
-        interceptor_config: impl FnOnce(&mut TestWorkerCompletionIceptor) + 'static,
+        interceptor: Option<impl WorkerInterceptor + 'static>,
     ) -> Result<(), anyhow::Error> {
-        interceptor_config(self.iceptor.as_mut().unwrap());
-        self.inner
-            .set_worker_interceptor(Box::new(self.iceptor.take().unwrap()));
-        self.inner.run().await
+        let iceptor = TestWorkerInterceptor {
+            incomplete_workflows: self.incomplete_workflows.clone(),
+            // Only use counting-based shutdown in the interceptor in mocked tests
+            shutdown_handle: if self.auto_shutdown && self.client.is_none() {
+                Some(Box::new(self.inner.shutdown_handle()))
+            } else {
+                None
+            },
+            next: interceptor.map(|i| Box::new(i) as Box<dyn WorkerInterceptor>),
+        };
+        self.inner.set_worker_interceptor(Box::new(iceptor));
+        let workflows_complete_fut = async {
+            if self.auto_shutdown && self.client.is_some() {
+                let wfs = std::mem::take(self.started_workflows.get_mut());
+                let client = self.client.clone().expect("Client must exist when running");
+                stream::iter(
+                    wfs.into_iter()
+                        .map(|info| info.bind_untyped((*client).clone())),
+                )
+                .map(Ok)
+                .try_for_each_concurrent(None, |wh| async move {
+                    wh.get_workflow_result(Default::default()).await?;
+                    Ok::<_, anyhow::Error>(())
+                })
+                .await?;
+                self.orig_core_worker.initiate_shutdown();
+            }
+            Ok::<_, anyhow::Error>(())
+        };
+        tokio::try_join!(self.inner.run(), workflows_complete_fut)?;
+        Ok(())
     }
 }
 
+/// Implements calling the shutdown handle when the expected number of test workflows has completed
 pub struct TestWorkerCompletionIceptor {
     incomplete_workflows: Arc<AtomicUsize>,
-    shutdown_handle: Box<dyn Fn()>,
+    shutdown_handle: Option<Box<dyn Fn()>>,
+    next: Option<Box<dyn WorkerInterceptor>>,
     every_activation: Option<Box<dyn Fn(&WorkflowActivationCompletion)>>,
 }
 impl TestWorkerCompletionIceptor {
@@ -390,9 +431,21 @@ impl WorkerInterceptor for TestWorkerCompletionIceptor {
             info!("Workflow {} says it's finishing", &completion.run_id);
             let prev = self.incomplete_workflows.fetch_sub(1, Ordering::SeqCst);
             if prev <= 1 {
-                // There are now zero, we just subtracted one
-                (self.shutdown_handle)()
+                if let Some(sh) = self.shutdown_handle.as_ref() {
+                    info!("Test worker calling shutdown");
+                    // There are now zero, we just subtracted one
+                    sh()
+                }
             }
+        }
+        if let Some(n) = self.next.as_ref() {
+            n.on_workflow_activation_completion(completion).await;
+        }
+    }
+
+    fn on_shutdown(&self, sdk_worker: &Worker) {
+        if let Some(n) = self.next.as_ref() {
+            n.on_shutdown(sdk_worker);
         }
     }
 }
@@ -419,16 +472,19 @@ pub fn get_integ_telem_options() -> TelemetryOptions {
         .ok()
         .map(|x| x.parse::<Url>().unwrap())
     {
-        ob.otel_collector_url(url);
+        ob.tracing(TraceExporter::Otel(OtelCollectorOptions {
+            url,
+            headers: Default::default(),
+        }));
     }
     if let Some(addr) = env::var(PROM_ENABLE_ENV_VAR)
         .ok()
         .map(|x| SocketAddr::new([127, 0, 0, 1].into(), x.parse().unwrap()))
     {
-        ob.prometheus_export_bind_address(addr);
+        ob.metrics(MetricsExporter::Prometheus(addr));
     }
     ob.tracing_filter(env::var("RUST_LOG").unwrap_or_else(|_| "temporal_sdk_core=INFO".to_string()))
-        .log_forwarding_level(LevelFilter::Off)
+        .logging(Logger::Console)
         .build()
         .unwrap()
 }

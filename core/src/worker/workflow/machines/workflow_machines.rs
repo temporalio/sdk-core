@@ -19,11 +19,11 @@ use crate::{
     protosext::{HistoryEventExt, ValidScheduleLA},
     telemetry::{metrics::MetricsContext, VecDisplayer},
     worker::{
+        workflow::{
+            CommandID, DrivenWorkflow, HistoryUpdate, LocalResolution, WFCommand, WorkflowFetcher,
+            WorkflowStartedInfo,
+        },
         ExecutingLAId, LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
-    },
-    workflow::{
-        CommandID, DrivenWorkflow, HistoryUpdate, LocalResolution, WFCommand, WorkflowFetcher,
-        WorkflowStartedInfo,
     },
 };
 use siphasher::sip::SipHasher13;
@@ -252,7 +252,11 @@ impl WorkflowMachines {
 
     /// Let this workflow know that something we've been waiting locally on has resolved, like a
     /// local activity or side effect
-    pub(crate) fn local_resolution(&mut self, resolution: LocalResolution) -> Result<()> {
+    ///
+    /// Returns true if the resolution did anything. EX: If the activity is already canceled and
+    /// used the TryCancel or Abandon modes, the resolution is uninteresting.
+    pub(crate) fn local_resolution(&mut self, resolution: LocalResolution) -> Result<bool> {
+        let mut result_important = true;
         match resolution {
             LocalResolution::LocalActivity(LocalActivityResolution {
                 seq,
@@ -268,6 +272,9 @@ impl WorkflowMachines {
                 if let Machines::LocalActivityMachine(ref mut lam) = *mach {
                     let resps =
                         lam.try_resolve(result, runtime, attempt, backoff, original_schedule_time)?;
+                    if resps.is_empty() {
+                        result_important = false;
+                    }
                     self.process_machine_responses(mk, resps)?;
                 } else {
                     return Err(WFMachinesError::Nondeterminism(format!(
@@ -279,7 +286,7 @@ impl WorkflowMachines {
                 self.local_activity_data.done_executing(seq);
             }
         }
-        Ok(())
+        Ok(result_important)
     }
 
     /// Drain all queued local activities that need executing or cancellation
@@ -470,6 +477,10 @@ impl WorkflowMachines {
                     if let Some(st) = event.event_time {
                         let as_systime: SystemTime = st.try_into()?;
                         self.workflow_start_time = Some(as_systime);
+                        // Set the workflow time to be the event time of the first event, so that
+                        // if there is a query issued before first WFT started event, there is some
+                        // workflow time set.
+                        self.set_current_time(as_systime);
                     }
                     // Notify the lang sdk that it's time to kick off a workflow
                     self.drive_me.start(
@@ -514,7 +525,7 @@ impl WorkflowMachines {
             }
             _ => {
                 return Err(WFMachinesError::Fatal(format!(
-                    "The event is non a non-stateful event, but we tried to handle it as one: {}",
+                    "The event is not a non-stateful event, but we tried to handle it as one: {}",
                     event
                 )));
             }
@@ -587,11 +598,9 @@ impl WorkflowMachines {
     }
 
     /// Apply the next (unapplied) entire workflow task from history to these machines. Will replay
-    /// any events that need to be replayed until caught up to the newest WFT.
+    /// any events that need to be replayed until caught up to the newest WFT. May also fetch
+    /// history from server if needed.
     pub(crate) async fn apply_next_wft_from_history(&mut self) -> Result<usize> {
-        // A much higher-up span (ex: poll) may want this field filled
-        tracing::Span::current().record("run_id", &self.run_id.as_str());
-
         // If we have already seen the terminal event for the entire workflow in a previous WFT,
         // then we don't need to do anything here, and in fact we need to avoid re-applying the
         // final WFT.
@@ -686,7 +695,6 @@ impl WorkflowMachines {
     /// Transfer commands from `current_wf_task_commands` to `commands`, so they may be sent off
     /// to the server. While doing so, [TemporalStateMachine::handle_command] is called on the
     /// machine associated with the command.
-    #[instrument(level = "debug", skip(self))]
     fn prepare_commands(&mut self) -> Result<()> {
         while let Some(c) = self.current_wf_task_commands.pop_front() {
             if !self

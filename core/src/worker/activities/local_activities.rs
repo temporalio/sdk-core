@@ -14,10 +14,7 @@ use temporal_sdk_core_protos::{
         activity_task::{activity_task, ActivityCancelReason, ActivityTask, Cancel, Start},
         common::WorkflowExecution,
     },
-    temporal::api::{
-        enums::v1::TimeoutType,
-        failure::v1::{failure::FailureInfo, ApplicationFailureInfo},
-    },
+    temporal::api::enums::v1::TimeoutType,
 };
 use tokio::{
     sync::{
@@ -184,6 +181,7 @@ impl LocalActivityManager {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn num_outstanding(&self) -> usize {
         self.dat.lock().outstanding_activity_tasks.len()
     }
@@ -423,13 +421,9 @@ impl LocalActivityManager {
                 LocalActivityExecutionResult::Failed(f) => {
                     if let Some(backoff_dur) = info.la_info.schedule_cmd.retry_policy.should_retry(
                         info.attempt as usize,
-                        f.failure.as_ref().map_or("", |f| match &f.failure_info {
-                            Some(FailureInfo::ApplicationFailureInfo(ApplicationFailureInfo {
-                                r#type,
-                                ..
-                            })) => r#type.as_str(),
-                            _ => "",
-                        }),
+                        f.failure
+                            .as_ref()
+                            .and_then(|f| f.maybe_application_failure()),
                     ) {
                         let will_use_timer =
                             backoff_dur > info.la_info.schedule_cmd.local_retry_threshold;
@@ -644,7 +638,8 @@ mod tests {
     use super::*;
     use crate::protosext::LACloseTimeouts;
     use temporal_sdk_core_protos::{
-        coresdk::common::RetryPolicy, temporal::api::failure::v1::Failure,
+        coresdk::common::RetryPolicy,
+        temporal::api::failure::v1::{failure::FailureInfo, ApplicationFailureInfo, Failure},
     };
     use tokio::{sync::mpsc::error::TryRecvError, task::yield_now};
 

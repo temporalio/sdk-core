@@ -1,13 +1,11 @@
 use crate::{
     job_assert,
     test_help::{
-        build_fake_worker, build_mock_pollers, canned_histories, gen_assert_and_reply,
-        hist_to_poll_resp, mock_manual_poller, mock_poller, mock_poller_from_resps, mock_worker,
-        poll_and_reply, test_worker_cfg, MockPollCfg, MockWorker, MocksHolder, ResponseType,
-        TEST_Q,
+        build_fake_worker, canned_histories, gen_assert_and_reply, mock_manual_poller, mock_poller,
+        mock_worker, poll_and_reply, test_worker_cfg, MockWorkerInputs, MocksHolder,
+        WorkflowCachingPolicy,
     },
     worker::client::mocks::{mock_manual_workflow_client, mock_workflow_client},
-    workflow::WorkflowCachingPolicy::NonSticky,
     ActivityHeartbeat, Worker, WorkerConfigBuilder,
 };
 use futures::FutureExt;
@@ -115,7 +113,7 @@ async fn activity_not_found_returns_ok() {
     // Mock won't even be called, since we weren't tracking activity
     mock_client.expect_complete_activity_task().times(0);
 
-    let core = mock_worker(MocksHolder::from_client_with_responses(mock_client, [], []));
+    let core = mock_worker(MocksHolder::from_client_with_activities(mock_client, []));
 
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: vec![1],
@@ -146,9 +144,8 @@ async fn heartbeats_report_cancels_only_once() {
         .times(1)
         .returning(|_, _| Ok(RespondActivityTaskCanceledResponse::default()));
 
-    let core = mock_worker(MocksHolder::from_client_with_responses(
+    let core = mock_worker(MocksHolder::from_client_with_activities(
         mock_client,
-        [],
         [
             PollActivityTaskQueueResponse {
                 task_token: vec![1],
@@ -263,7 +260,7 @@ async fn activity_cancel_interrupts_poll() {
         .times(1)
         .returning(|_, _| async { Ok(RespondActivityTaskCompletedResponse::default()) }.boxed());
 
-    let mw = MockWorker {
+    let mw = MockWorkerInputs {
         act_poller: Some(Box::from(mock_poller)),
         ..Default::default()
     };
@@ -315,7 +312,7 @@ async fn activity_poll_timeout_retries() {
             }))
         }
     });
-    let mw = MockWorker {
+    let mw = MockWorkerInputs {
         act_poller: Some(Box::from(mock_act_poller)),
         ..Default::default()
     };
@@ -445,7 +442,7 @@ async fn activity_timeout_no_double_resolve() {
 
     poll_and_reply(
         &core,
-        NonSticky,
+        WorkflowCachingPolicy::NonSticky,
         &[
             gen_assert_and_reply(
                 &job_assert!(workflow_activation_job::Variant::StartWorkflow(_)),
@@ -505,9 +502,8 @@ async fn can_heartbeat_acts_during_shutdown() {
         .times(1)
         .returning(|_, _| Ok(RespondActivityTaskCompletedResponse::default()));
 
-    let core = mock_worker(MocksHolder::from_client_with_responses(
+    let core = mock_worker(MocksHolder::from_client_with_activities(
         mock_client,
-        [],
         [PollActivityTaskQueueResponse {
             task_token: vec![1],
             activity_id: "act1".to_string(),
@@ -539,7 +535,7 @@ async fn can_heartbeat_acts_during_shutdown() {
         .unwrap();
         complete_order.borrow_mut().push(2);
     };
-    join!(shutdown_fut, complete_fut);
+    join!(complete_fut, shutdown_fut);
     assert_eq!(&complete_order.into_inner(), &[2, 1])
 }
 
@@ -566,9 +562,8 @@ async fn complete_act_with_fail_flushes_heartbeat() {
         .times(1)
         .returning(|_, _| Ok(RespondActivityTaskFailedResponse::default()));
 
-    let core = mock_worker(MocksHolder::from_client_with_responses(
+    let core = mock_worker(MocksHolder::from_client_with_activities(
         mock_client,
-        [],
         [PollActivityTaskQueueResponse {
             task_token: vec![1],
             activity_id: "act1".to_string(),

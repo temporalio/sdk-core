@@ -1,27 +1,23 @@
 use crate::{
     replay::{default_wes_attribs, TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE},
-    test_help::{build_mock_pollers, mock_worker, MockPollCfg, ResponseType, TEST_Q},
+    test_help::{mock_sdk, mock_sdk_cfg, MockPollCfg, ResponseType},
     worker::client::mocks::mock_workflow_client,
 };
 use anyhow::anyhow;
 use futures::future::join_all;
 use std::{
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
+    sync::atomic::{AtomicUsize, Ordering},
     time::Duration,
 };
 use temporal_client::WorkflowOptions;
-use temporal_sdk::{LocalActivityOptions, WfContext, WorkflowResult};
+use temporal_sdk::{ActContext, LocalActivityOptions, WfContext, WorkflowResult};
 use temporal_sdk_core_protos::{
     coresdk::{common::RetryPolicy, AsJsonPayloadExt},
     temporal::api::{enums::v1::EventType, failure::v1::Failure},
 };
-use temporal_sdk_core_test_utils::TestWorker;
 use tokio::sync::Barrier;
 
-async fn echo(e: String) -> anyhow::Result<String> {
+async fn echo(_ctx: ActContext, e: String) -> anyhow::Result<String> {
     Ok(e)
 }
 
@@ -52,12 +48,11 @@ async fn local_act_two_wfts_before_marker(#[case] replay: bool, #[case] cached: 
         vec![1.into(), 2.into(), ResponseType::AllHistory]
     };
     let mh = MockPollCfg::from_resp_batches(wf_id, t, resps, mock);
-    let mut mock = build_mock_pollers(mh);
-    if cached {
-        mock.worker_cfg(|cfg| cfg.max_cached_workflows = 1);
-    }
-    let core = mock_worker(mock);
-    let mut worker = TestWorker::new(Arc::new(core), TEST_Q.to_string());
+    let mut worker = mock_sdk_cfg(mh, |cfg| {
+        if cached {
+            cfg.max_cached_workflows = 1;
+        }
+    });
 
     worker.register_wf(
         DEFAULT_WORKFLOW_TYPE.to_owned(),
@@ -119,12 +114,13 @@ async fn local_act_many_concurrent() {
     let wf_id = "fakeid";
     let mock = mock_workflow_client();
     let mh = MockPollCfg::from_resp_batches(wf_id, t, [1, 2, 3], mock);
-    let mock = build_mock_pollers(mh);
-    let core = mock_worker(mock);
-    let mut worker = TestWorker::new(Arc::new(core), TEST_Q.to_string());
+    let mut worker = mock_sdk(mh);
 
     worker.register_wf(DEFAULT_WORKFLOW_TYPE.to_owned(), local_act_fanout_wf);
-    worker.register_activity("echo", |str: String| async move { Ok(str) });
+    worker.register_activity(
+        "echo",
+        |_ctx: ActContext, str: String| async move { Ok(str) },
+    );
     worker
         .submit_wf(
             wf_id.to_owned(),
@@ -163,14 +159,11 @@ async fn local_act_heartbeat(#[case] shutdown_middle: bool) {
 
     let wf_id = "fakeid";
     let mock = mock_workflow_client();
-    // Allow returning incomplete history more than once, as the wft timeout can be timing sensitive
-    // and might poll an extra time
-    let mut mh = MockPollCfg::from_resp_batches(wf_id, t, [1, 2, 2, 2, 2], mock);
+    let mut mh = MockPollCfg::from_resp_batches(wf_id, t, [1, 2, 2], mock);
     mh.enforce_correct_number_of_polls = false;
-    let mut mock = build_mock_pollers(mh);
-    mock.worker_cfg(|wc| wc.max_cached_workflows = 1);
-    let core = Arc::new(mock_worker(mock));
-    let mut worker = TestWorker::new(core.clone(), TEST_Q.to_string());
+    let mut worker = mock_sdk_cfg(mh, |wc| wc.max_cached_workflows = 1);
+    let core = worker.orig_core_worker.clone();
+
     let shutdown_barr: &'static Barrier = Box::leak(Box::new(Barrier::new(2)));
 
     worker.register_wf(
@@ -185,7 +178,7 @@ async fn local_act_heartbeat(#[case] shutdown_middle: bool) {
             Ok(().into())
         },
     );
-    worker.register_activity("echo", move |str: String| async move {
+    worker.register_activity("echo", move |_ctx: ActContext, str: String| async move {
         if shutdown_middle {
             shutdown_barr.wait().await;
         }
@@ -226,9 +219,7 @@ async fn local_act_fail_and_retry(#[case] eventually_pass: bool) {
     let wf_id = "fakeid";
     let mock = mock_workflow_client();
     let mh = MockPollCfg::from_resp_batches(wf_id, t, [1], mock);
-    let mock = build_mock_pollers(mh);
-    let core = mock_worker(mock);
-    let mut worker = TestWorker::new(Arc::new(core), TEST_Q.to_string());
+    let mut worker = mock_sdk(mh);
 
     worker.register_wf(
         DEFAULT_WORKFLOW_TYPE.to_owned(),
@@ -256,7 +247,7 @@ async fn local_act_fail_and_retry(#[case] eventually_pass: bool) {
         },
     );
     let attempts: &'static _ = Box::leak(Box::new(AtomicUsize::new(0)));
-    worker.register_activity("echo", move |_: String| async move {
+    worker.register_activity("echo", move |_ctx: ActContext, _: String| async move {
         // Succeed on 3rd attempt (which is ==2 since fetch_add returns prev val)
         if 2 == attempts.fetch_add(1, Ordering::Relaxed) && eventually_pass {
             Ok(())
@@ -309,10 +300,7 @@ async fn local_act_retry_long_backoff_uses_timer() {
         [1.into(), 2.into(), ResponseType::AllHistory],
         mock,
     );
-    let mut mock = build_mock_pollers(mh);
-    mock.worker_cfg(|w| w.max_cached_workflows = 1);
-    let core = mock_worker(mock);
-    let mut worker = TestWorker::new(Arc::new(core), TEST_Q.to_string());
+    let mut worker = mock_sdk_cfg(mh, |w| w.max_cached_workflows = 1);
 
     worker.register_wf(
         DEFAULT_WORKFLOW_TYPE.to_owned(),
@@ -338,7 +326,7 @@ async fn local_act_retry_long_backoff_uses_timer() {
             Ok(().into())
         },
     );
-    worker.register_activity("echo", move |_: String| async move {
+    worker.register_activity("echo", move |_ctx: ActContext, _: String| async move {
         Result::<(), _>::Err(anyhow!("Oh no I failed!"))
     });
     worker

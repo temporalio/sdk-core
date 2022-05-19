@@ -1,5 +1,8 @@
 use std::time::Duration;
-use temporal_sdk_core_protos::{coresdk::common::RetryPolicy, utilities::TryIntoOrNone};
+use temporal_sdk_core_protos::{
+    coresdk::common::RetryPolicy, temporal::api::failure::v1::ApplicationFailureInfo,
+    utilities::TryIntoOrNone,
+};
 
 pub(crate) trait RetryPolicyExt {
     /// Ask this retry policy if a retry should be performed. Caller provides the current attempt
@@ -7,11 +10,31 @@ pub(crate) trait RetryPolicyExt {
     ///
     /// Returns `None` if it should not, otherwise a duration indicating how long to wait before
     /// performing the retry.
-    fn should_retry(&self, attempt_number: usize, err_type_str: &str) -> Option<Duration>;
+    ///
+    /// Applies defaults to missing fields:
+    /// `initial_interval` - 1 second
+    /// `maximum_interval` - 100 x initial_interval
+    /// `backoff_coefficient` - 2.0
+    fn should_retry(
+        &self,
+        attempt_number: usize,
+        application_failure: Option<&ApplicationFailureInfo>,
+    ) -> Option<Duration>;
 }
 
 impl RetryPolicyExt for RetryPolicy {
-    fn should_retry(&self, attempt_number: usize, err_type_str: &str) -> Option<Duration> {
+    fn should_retry(
+        &self,
+        attempt_number: usize,
+        application_failure: Option<&ApplicationFailureInfo>,
+    ) -> Option<Duration> {
+        let non_retryable = application_failure
+            .map(|f| f.non_retryable)
+            .unwrap_or_default();
+        if non_retryable {
+            return None;
+        }
+        let err_type_str = application_failure.map_or("", |f| &f.r#type);
         let realmax = self.maximum_attempts.max(0);
         if realmax > 0 && attempt_number >= realmax as usize {
             return None;
@@ -23,7 +46,11 @@ impl RetryPolicyExt for RetryPolicy {
             }
         }
 
-        let converted_interval = self.initial_interval.clone().try_into_or_none();
+        let converted_interval = self
+            .initial_interval
+            .clone()
+            .try_into_or_none()
+            .or(Some(Duration::from_secs(1)));
         if attempt_number == 1 {
             return converted_interval;
         }
@@ -74,32 +101,32 @@ mod tests {
             maximum_attempts: 10,
             non_retryable_error_types: vec![],
         };
-        let res = rp.should_retry(1, "").unwrap();
+        let res = rp.should_retry(1, None).unwrap();
         assert_eq!(res.as_millis(), 1_000);
-        let res = rp.should_retry(2, "").unwrap();
+        let res = rp.should_retry(2, None).unwrap();
         assert_eq!(res.as_millis(), 2_000);
-        let res = rp.should_retry(3, "").unwrap();
+        let res = rp.should_retry(3, None).unwrap();
         assert_eq!(res.as_millis(), 4_000);
-        let res = rp.should_retry(4, "").unwrap();
+        let res = rp.should_retry(4, None).unwrap();
         assert_eq!(res.as_millis(), 8_000);
-        let res = rp.should_retry(5, "").unwrap();
+        let res = rp.should_retry(5, None).unwrap();
         assert_eq!(res.as_millis(), 10_000);
-        let res = rp.should_retry(6, "").unwrap();
+        let res = rp.should_retry(6, None).unwrap();
         assert_eq!(res.as_millis(), 10_000);
         // Max attempts - no retry
-        assert!(rp.should_retry(10, "").is_none());
+        assert!(rp.should_retry(10, None).is_none());
     }
 
     #[test]
     fn no_interval_no_backoff() {
         let rp = RetryPolicy {
             initial_interval: None,
-            backoff_coefficient: 2.0,
+            backoff_coefficient: 0.,
             maximum_interval: None,
             maximum_attempts: 10,
             non_retryable_error_types: vec![],
         };
-        assert!(rp.should_retry(1, "").is_none());
+        assert!(rp.should_retry(1, None).is_some());
     }
 
     #[test]
@@ -112,7 +139,7 @@ mod tests {
             non_retryable_error_types: vec![],
         };
         for i in 0..50 {
-            assert!(rp.should_retry(i, "").is_some());
+            assert!(rp.should_retry(i, None).is_some());
         }
     }
 
@@ -126,7 +153,7 @@ mod tests {
             non_retryable_error_types: vec![],
         };
         for i in 0..50 {
-            assert!(rp.should_retry(i, "").is_some());
+            assert!(rp.should_retry(i, None).is_some());
         }
     }
 
@@ -139,6 +166,36 @@ mod tests {
             maximum_attempts: 10,
             non_retryable_error_types: vec!["no retry".to_string()],
         };
-        assert!(rp.should_retry(1, "no retry").is_none());
+        assert!(rp
+            .should_retry(
+                1,
+                Some(&ApplicationFailureInfo {
+                    r#type: "no retry".to_string(),
+                    non_retryable: false,
+                    details: None,
+                })
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn no_non_retryable_application_failure() {
+        let rp = RetryPolicy {
+            initial_interval: Some(Duration::from_secs(1).into()),
+            backoff_coefficient: 2.0,
+            maximum_interval: Some(Duration::from_secs(10).into()),
+            maximum_attempts: 10,
+            non_retryable_error_types: vec![],
+        };
+        assert!(rp
+            .should_retry(
+                1,
+                Some(&ApplicationFailureInfo {
+                    r#type: "".to_string(),
+                    non_retryable: true,
+                    details: None,
+                })
+            )
+            .is_none());
     }
 }

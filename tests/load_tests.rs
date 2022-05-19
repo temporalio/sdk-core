@@ -1,18 +1,18 @@
 use assert_matches::assert_matches;
-use futures::future::join_all;
+use futures::{future::join_all, sink, stream::FuturesUnordered, StreamExt};
 use std::time::{Duration, Instant};
-use temporal_client::WorkflowOptions;
-use temporal_sdk::{ActivityOptions, WfContext};
+use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
+use temporal_sdk::{ActContext, ActivityOptions, WfContext};
 use temporal_sdk_core_protos::coresdk::{
     activity_result::ActivityExecutionResult, activity_task::activity_task as act_task,
-    workflow_commands::ActivityCancellationType, ActivityTaskCompletion,
+    workflow_commands::ActivityCancellationType, ActivityTaskCompletion, AsJsonPayloadExt,
 };
 use temporal_sdk_core_test_utils::CoreWfStarter;
 
-const CONCURRENCY: usize = 1000;
-
 #[tokio::test]
 async fn activity_load() {
+    const CONCURRENCY: usize = 1000;
+
     let mut starter = CoreWfStarter::new("activity_load");
     starter
         .max_wft(CONCURRENCY)
@@ -108,4 +108,83 @@ async fn activity_load() {
         all_acts
     };
     dbg!(running.elapsed());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn workflow_load() {
+    const SIGNAME: &str = "signame";
+    let num_workflows = 200;
+    let wf_name = "workflow_load";
+    let mut starter = CoreWfStarter::new("workflow_load");
+    starter
+        .max_wft(5)
+        .max_cached_workflows(5)
+        .max_at_polls(10)
+        .max_at(100);
+    let mut worker = starter.worker().await;
+    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+        let sigchan = ctx.make_signal_channel(SIGNAME).map(Ok);
+        let drained_fut = sigchan.forward(sink::drain());
+
+        let real_stuff = async move {
+            for _ in 0..20 {
+                ctx.activity(ActivityOptions {
+                    activity_type: "echo_activity".to_string(),
+                    start_to_close_timeout: Some(Duration::from_secs(5)),
+                    input: "hi!".as_json_payload().expect("serializes fine"),
+                    ..Default::default()
+                })
+                .await;
+                ctx.timer(Duration::from_secs(1)).await;
+            }
+        };
+        tokio::select! {
+            _ = drained_fut => {}
+            _ = real_stuff => {}
+        }
+
+        Ok(().into())
+    });
+    worker.register_activity(
+        "echo_activity",
+        |_ctx: ActContext, echo_me: String| async move { Ok(echo_me) },
+    );
+    let client = starter.get_client().await;
+
+    let mut workflow_handles = vec![];
+    for i in 0..num_workflows {
+        let wfid = format!("{}_{}", wf_name, i);
+        let rid = worker
+            .submit_wf(
+                wfid.clone(),
+                wf_name.to_owned(),
+                vec![],
+                WorkflowOptions::default(),
+            )
+            .await
+            .unwrap();
+        workflow_handles.push(client.get_untyped_workflow_handle(wfid, rid));
+    }
+
+    let sig_sender = async {
+        loop {
+            let sends: FuturesUnordered<_> = (0..num_workflows)
+                .map(|i| {
+                    client.signal_workflow_execution(
+                        format!("{}_{}", wf_name, i),
+                        "".to_string(),
+                        SIGNAME.to_string(),
+                        None,
+                    )
+                })
+                .collect();
+            sends
+                .map(|_| Ok(()))
+                .forward(sink::drain())
+                .await
+                .expect("Sending signals works");
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        }
+    };
+    tokio::select! { r1 = worker.run_until_done() => {r1.unwrap()}, _ = sig_sender => {}};
 }

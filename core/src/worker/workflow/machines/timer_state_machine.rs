@@ -274,8 +274,7 @@ impl Cancellable for TimerMachine {
 mod test {
     use super::*;
     use crate::{
-        replay::TestHistoryBuilder, test_help::canned_histories,
-        workflow::managed_wf::ManagedWFFunc,
+        replay::TestHistoryBuilder, test_help::canned_histories, worker::workflow::ManagedWFFunc,
     };
     use rstest::{fixture, rstest};
     use std::{mem::discriminant, time::Duration};
@@ -336,7 +335,7 @@ mod test {
         happy_wfm.shutdown().await.unwrap();
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test]
     async fn mismatched_timer_ids_errors() {
         let func = WorkflowFunction::new(|command_sink: WfContext| async move {
             command_sink.timer(Duration::from_secs(5)).await;
@@ -403,7 +402,7 @@ mod test {
         wfm.shutdown().await.unwrap();
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test]
     async fn cancel_before_sent_to_server() {
         let func = WorkflowFunction::new(|ctx: WfContext| async move {
             let cancel_timer_fut = ctx.timer(Duration::from_secs(500));
