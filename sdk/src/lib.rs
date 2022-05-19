@@ -12,31 +12,31 @@
 //! use temporal_sdk::{sdk_client_options, ActContext, Worker};
 //! use temporal_sdk_core::{init_worker, telemetry_init, TelemetryOptionsBuilder, Url};
 //! use temporal_sdk_core_api::worker::WorkerConfigBuilder;
-//! 
+//!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     let server_options = sdk_client_options(Url::from_str("http://localhost:7233")?).build()?;
-//! 
+//!
 //!     let client = server_options.connect("default", None, None).await?;
-//! 
+//!
 //!     let telemetry_options = TelemetryOptionsBuilder::default().build()?;
 //!     telemetry_init(&telemetry_options)?;
-//! 
+//!
 //!     let worker_config = WorkerConfigBuilder::default()
 //!         .namespace("default")
 //!         .task_queue("task_queue")
 //!         .build()?;
-//! 
+//!
 //!     let core_worker = init_worker(worker_config, client);
-//! 
+//!
 //!     let mut worker = Worker::new_from_core(Arc::new(core_worker), "task_queue");
 //!     worker.register_activity(
 //!         "echo_activity",
 //!         |_ctx: ActContext, echo_me: String| async move { Ok(echo_me) },
 //!     );
-//! 
+//!
 //!     worker.run().await?;
-//! 
+//!
 //!     Ok(())
 //! }
 //! ```
