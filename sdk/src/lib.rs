@@ -35,7 +35,6 @@
 //!         |_ctx: ActContext, echo_me: String| async move { Ok(echo_me) },
 //!     );
 //! 
-//!     println!("Running worker");
 //!     worker.run().await?;
 //! 
 //!     Ok(())
