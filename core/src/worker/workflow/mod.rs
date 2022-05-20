@@ -19,6 +19,7 @@ pub(crate) use machines::WFMachinesError;
 pub(crate) use managed_run::ManagedWFFunc;
 
 use crate::{
+    abstractions::OwnedMeteredSemPermit,
     protosext::{legacy_query_failure, ValidPollWFTQResponse, WorkflowActivationExt},
     telemetry::VecDisplayer,
     worker::{
@@ -65,7 +66,7 @@ use temporal_sdk_core_protos::{
 use tokio::{
     sync::{
         mpsc::{unbounded_channel, UnboundedSender},
-        oneshot, OwnedSemaphorePermit,
+        oneshot,
     },
     task,
     task::{JoinError, JoinHandle},
@@ -405,7 +406,7 @@ impl Workflows {
     /// Process eagerly returned activities from WFT completion
     fn handle_eager_activities(
         &self,
-        reserved_act_permits: Vec<OwnedSemaphorePermit>,
+        reserved_act_permits: Vec<OwnedMeteredSemPermit>,
         eager_acts: Vec<PollActivityTaskQueueResponse>,
     ) {
         if let Some(at_handle) = self.activity_tasks_handle.as_ref() {
@@ -449,7 +450,7 @@ impl Workflows {
     fn reserve_activity_slots_for_outgoing_commands(
         &self,
         commands: &mut [Command],
-    ) -> Vec<OwnedSemaphorePermit> {
+    ) -> Vec<OwnedMeteredSemPermit> {
         let mut reserved = vec![];
         if let Some(at_handle) = self.activity_tasks_handle.as_ref() {
             for cmd in commands {
@@ -651,7 +652,7 @@ pub(crate) struct OutstandingTask {
     pub start_time: Instant,
     /// The WFT permit owned by this task, ensures we don't exceed max concurrent WFT, and makes
     /// sure the permit is automatically freed when we delete the task.
-    pub _permit: OwnedSemaphorePermit,
+    pub _permit: OwnedMeteredSemPermit,
 }
 
 #[derive(Copy, Clone, Debug)]

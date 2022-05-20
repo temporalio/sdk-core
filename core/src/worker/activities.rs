@@ -8,7 +8,7 @@ pub(crate) use local_activities::{
 };
 
 use crate::{
-    abstractions::MeteredSemaphore,
+    abstractions::{MeteredSemaphore, OwnedMeteredSemPermit},
     pollers::BoxedActPoller,
     telemetry::metrics::{activity_type, activity_worker_type, workflow_type, MetricsContext},
     worker::{
@@ -35,7 +35,7 @@ use temporal_sdk_core_protos::{
         workflowservice::v1::PollActivityTaskQueueResponse,
     },
 };
-use tokio::sync::{Notify, OwnedSemaphorePermit};
+use tokio::sync::Notify;
 
 #[derive(Debug, derive_more::Constructor)]
 struct PendingActivityCancel {
@@ -52,7 +52,6 @@ struct InFlightActInfo {
 }
 
 /// Augments [InFlightActInfo] with details specific to remote activities
-#[derive(Debug)]
 struct RemoteInFlightActInfo {
     pub base: InFlightActInfo,
     /// Used to calculate aggregation delay between activity heartbeats.
@@ -64,14 +63,14 @@ struct RemoteInFlightActInfo {
     /// discard the reply.
     pub known_not_found: bool,
     /// The permit from the max concurrent semaphore
-    _permit: OwnedSemaphorePermit,
+    _permit: OwnedMeteredSemPermit,
 }
 impl RemoteInFlightActInfo {
     fn new(
         activity_type: String,
         workflow_type: String,
         heartbeat_timeout: Option<prost_types::Duration>,
-        permit: OwnedSemaphorePermit,
+        permit: OwnedMeteredSemPermit,
     ) -> Self {
         Self {
             base: InFlightActInfo {
@@ -391,7 +390,7 @@ pub(crate) struct ActivitiesFromWFTsHandle {
 impl ActivitiesFromWFTsHandle {
     /// Returns a handle that can be used to reserve an activity slot. EX: When requesting eager
     /// dispatch of an activity to this worker upon workflow task completion
-    pub(crate) fn reserve_slot(&self) -> Option<OwnedSemaphorePermit> {
+    pub(crate) fn reserve_slot(&self) -> Option<OwnedMeteredSemPermit> {
         self.sem.try_acquire_owned().ok()
     }
 
@@ -405,6 +404,6 @@ impl ActivitiesFromWFTsHandle {
 }
 
 pub(crate) struct PermittedTqResp {
-    pub permit: OwnedSemaphorePermit,
+    pub permit: OwnedMeteredSemPermit,
     pub resp: PollActivityTaskQueueResponse,
 }
