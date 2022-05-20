@@ -8,7 +8,7 @@ pub(crate) use local_activities::{
 };
 
 use crate::{
-    abstractions::MeteredSemaphore,
+    abstractions::{MeteredSemaphore, OwnedMeteredSemPermit},
     pollers::BoxedActPoller,
     telemetry::metrics::{activity_type, activity_worker_type, workflow_type, MetricsContext},
     worker::{
@@ -52,7 +52,6 @@ struct InFlightActInfo {
 }
 
 /// Augments [InFlightActInfo] with details specific to remote activities
-#[derive(Debug)]
 struct RemoteInFlightActInfo {
     pub base: InFlightActInfo,
     /// Used to calculate aggregation delay between activity heartbeats.
@@ -63,12 +62,15 @@ struct RemoteInFlightActInfo {
     /// we have learned from heartbeating and issued a cancel task, in which case we may simply
     /// discard the reply.
     pub known_not_found: bool,
+    /// The permit from the max concurrent semaphore
+    _permit: OwnedMeteredSemPermit,
 }
 impl RemoteInFlightActInfo {
     fn new(
         activity_type: String,
         workflow_type: String,
         heartbeat_timeout: Option<prost_types::Duration>,
+        permit: OwnedMeteredSemPermit,
     ) -> Self {
         Self {
             base: InFlightActInfo {
@@ -79,7 +81,23 @@ impl RemoteInFlightActInfo {
             heartbeat_timeout,
             issued_cancel_to_lang: false,
             known_not_found: false,
+            _permit: permit,
         }
+    }
+}
+
+struct NonPollActBuffer {
+    tx: async_channel::Sender<PermittedTqResp>,
+    rx: async_channel::Receiver<PermittedTqResp>,
+}
+impl NonPollActBuffer {
+    pub fn new() -> Self {
+        let (tx, rx) = async_channel::unbounded();
+        Self { tx, rx }
+    }
+
+    pub async fn next(&self) -> PermittedTqResp {
+        self.rx.recv().await.expect("Send half cannot be dropped")
     }
 }
 
@@ -91,8 +109,11 @@ pub(crate) struct WorkerActivityTasks {
     /// Buffers activity task polling in the event we need to return a cancellation while a poll is
     /// ongoing.
     poller: BoxedActPoller,
+    /// Holds activity tasks we have received by non-polling means. EX: In direct response to
+    /// workflow task completion.
+    non_poll_tasks: NonPollActBuffer,
     /// Ensures we stay at or below this worker's maximum concurrent activity limit
-    activities_semaphore: MeteredSemaphore,
+    activities_semaphore: Arc<MeteredSemaphore>,
     /// Wakes every time an activity is removed from the outstanding map
     complete_notify: Notify,
 
@@ -115,11 +136,12 @@ impl WorkerActivityTasks {
             heartbeat_manager: ActivityHeartbeatManager::new(client),
             outstanding_activity_tasks: Default::default(),
             poller,
-            activities_semaphore: MeteredSemaphore::new(
+            non_poll_tasks: NonPollActBuffer::new(),
+            activities_semaphore: Arc::new(MeteredSemaphore::new(
                 max_activity_tasks,
                 metrics.with_new_attrs([activity_worker_type()]),
                 MetricsContext::available_task_slots,
-            ),
+            )),
             complete_notify: Notify::new(),
             metrics,
             max_heartbeat_throttle_interval,
@@ -151,12 +173,12 @@ impl WorkerActivityTasks {
             // Acquire and subsequently forget a permit for an outstanding activity. When they are
             // completed, we must add a new permit to the semaphore, since holding the permit the
             // entire time lang does work would be a challenge.
-            let sem = self
+            let perm = self
                 .activities_semaphore
-                .acquire()
+                .acquire_owned()
                 .await
                 .expect("outstanding activity semaphore not closed");
-            (self.poller.poll().await, sem)
+            (self.poller.poll().await, perm)
         };
 
         tokio::select! {
@@ -165,7 +187,10 @@ impl WorkerActivityTasks {
             cancel_task = self.next_pending_cancel_task() => {
                 cancel_task
             }
-            (work, sem) = poll_with_semaphore => {
+            task = self.non_poll_tasks.next() => {
+                Ok(Some(self.about_to_issue_task(task)))
+            }
+            (work, permit) = poll_with_semaphore => {
                 match work {
                     Some(Ok(work)) => {
                         if work == PollActivityTaskQueueResponse::default() {
@@ -173,23 +198,10 @@ impl WorkerActivityTasks {
                             self.metrics.act_poll_timeout();
                             return Ok(None)
                         }
-
-                        if let Some(dur) = work.sched_to_start() {
-                            self.metrics
-                                .act_sched_to_start_latency(dur);
-                        }
-
-                        self.outstanding_activity_tasks.insert(
-                            work.task_token.clone().into(),
-                            RemoteInFlightActInfo::new(
-                                work.activity_type.clone().unwrap_or_default().name,
-                                work.workflow_type.clone().unwrap_or_default().name,
-                                work.heartbeat_timeout.clone()
-                            ),
-                        );
-                        // Only permanently take a permit in the event the poll finished properly
-                        sem.forget();
-                        Ok(Some(ActivityTask::start_from_poll_resp(work)))
+                        let work = self.about_to_issue_task(PermittedTqResp {
+                           resp: work, permit
+                        });
+                        Ok(Some(work))
                     }
                     None => {
                         Err(PollActivityError::ShutDown)
@@ -212,10 +224,9 @@ impl WorkerActivityTasks {
                 workflow_type(act_info.base.workflow_type.clone()),
             ]);
             act_metrics.act_execution_latency(act_info.base.start_time.elapsed());
-            self.activities_semaphore.add_permit();
-            self.heartbeat_manager.evict(task_token.clone()).await;
             let known_not_found = act_info.known_not_found;
             drop(act_info); // TODO: Get rid of dashmap. If we hold ref across await, bad stuff.
+            self.heartbeat_manager.evict(task_token.clone()).await;
             self.complete_notify.notify_waiters();
 
             // No need to report activities which we already know the server doesn't care about
@@ -304,6 +315,14 @@ impl WorkerActivityTasks {
         self.heartbeat_manager.record(details, throttle_interval)
     }
 
+    /// Returns a handle that the workflows management side can use to interact with this manager
+    pub(crate) fn get_handle_for_workflows(&self) -> ActivitiesFromWFTsHandle {
+        ActivitiesFromWFTsHandle {
+            sem: self.activities_semaphore.clone(),
+            tx: self.non_poll_tasks.tx.clone(),
+        }
+    }
+
     async fn next_pending_cancel_task(&self) -> Result<Option<ActivityTask>, PollActivityError> {
         let next_pc = self.heartbeat_manager.next_pending_cancel().await;
         // Issue cancellations for anything we noticed was cancelled during heartbeating
@@ -336,8 +355,55 @@ impl WorkerActivityTasks {
         }
     }
 
+    /// Called when there is a new act task about to be bubbled up out of the manager
+    fn about_to_issue_task(&self, task: PermittedTqResp) -> ActivityTask {
+        if let Some(dur) = task.resp.sched_to_start() {
+            self.metrics.act_sched_to_start_latency(dur);
+        };
+
+        self.outstanding_activity_tasks.insert(
+            task.resp.task_token.clone().into(),
+            RemoteInFlightActInfo::new(
+                task.resp.activity_type.clone().unwrap_or_default().name,
+                task.resp.workflow_type.clone().unwrap_or_default().name,
+                task.resp.heartbeat_timeout.clone(),
+                task.permit,
+            ),
+        );
+
+        ActivityTask::start_from_poll_resp(task.resp)
+    }
+
     #[cfg(test)]
     pub(crate) fn remaining_activity_capacity(&self) -> usize {
-        self.activities_semaphore.sem.available_permits()
+        self.activities_semaphore.available_permits()
     }
+}
+
+/// Provides facilities for the workflow side of things to interact with the activity manager.
+/// Allows for the handling of activities returned by WFT completions.
+pub(crate) struct ActivitiesFromWFTsHandle {
+    sem: Arc<MeteredSemaphore>,
+    tx: async_channel::Sender<PermittedTqResp>,
+}
+
+impl ActivitiesFromWFTsHandle {
+    /// Returns a handle that can be used to reserve an activity slot. EX: When requesting eager
+    /// dispatch of an activity to this worker upon workflow task completion
+    pub(crate) fn reserve_slot(&self) -> Option<OwnedMeteredSemPermit> {
+        self.sem.try_acquire_owned().ok()
+    }
+
+    /// Queue new activity tasks for dispatch received from non-polling sources (ex: eager returns
+    /// from WFT completion)
+    pub(crate) fn add_tasks(&self, tasks: impl IntoIterator<Item = PermittedTqResp>) {
+        for t in tasks.into_iter() {
+            self.tx.try_send(t).expect("Receive half cannot be dropped");
+        }
+    }
+}
+
+pub(crate) struct PermittedTqResp {
+    pub permit: OwnedMeteredSemPermit,
+    pub resp: PollActivityTaskQueueResponse,
 }

@@ -403,12 +403,14 @@ where
         &self,
         workflow_id: String,
         run_id: Option<String>,
+        reason: String,
     ) -> Result<RequestCancelWorkflowExecutionResponse> {
         retry_call!(
             self,
             cancel_workflow_execution,
             workflow_id.clone(),
-            run_id.clone()
+            run_id.clone(),
+            reason.clone()
         )
     }
 

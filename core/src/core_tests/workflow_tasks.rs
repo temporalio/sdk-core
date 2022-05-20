@@ -1222,7 +1222,7 @@ async fn buffered_work_drained_on_shutdown() {
     t.add_workflow_task_scheduled_and_started();
     // Need to build the first response before adding the timeout events b/c otherwise the history
     // builder will include them in the first task
-    let resp_1 = hist_to_poll_resp(&t, wfid.to_owned(), 1.into(), TEST_Q.to_string());
+    let resp_1 = hist_to_poll_resp(&t, wfid.to_owned(), 1.into(), TEST_Q.to_string()).resp;
     t.add_workflow_task_timed_out();
     t.add_full_wf_task();
     let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
@@ -1240,12 +1240,9 @@ async fn buffered_work_drained_on_shutdown() {
     // Extend the task list with the now timeout-included version of the task. We add a bunch of
     // them because the poll loop will spin while new tasks are available and it is buffering them
     tasks.extend(
-        std::iter::repeat(hist_to_poll_resp(
-            &t,
-            wfid.to_owned(),
-            2.into(),
-            TEST_Q.to_string(),
-        ))
+        std::iter::repeat_with(|| {
+            hist_to_poll_resp(&t, wfid.to_owned(), 2.into(), TEST_Q.to_string()).resp
+        })
         .take(50),
     );
     let mut mock = mock_workflow_client();
@@ -1652,12 +1649,10 @@ async fn tasks_from_completion_are_delivered() {
 
     let mut mock = mock_workflow_client();
     let complete_resp = RespondWorkflowTaskCompletedResponse {
-        workflow_task: Some(hist_to_poll_resp(
-            &t,
-            wfid.to_owned(),
-            2.into(),
-            TEST_Q.to_string(),
-        )),
+        workflow_task: Some(
+            hist_to_poll_resp(&t, wfid.to_owned(), 2.into(), TEST_Q.to_string()).resp,
+        ),
+        activity_tasks: vec![],
     };
     mock.expect_complete_workflow_task()
         .times(1)

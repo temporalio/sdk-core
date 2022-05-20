@@ -19,9 +19,11 @@ pub(crate) use machines::WFMachinesError;
 pub(crate) use managed_run::ManagedWFFunc;
 
 use crate::{
+    abstractions::OwnedMeteredSemPermit,
     protosext::{legacy_query_failure, ValidPollWFTQResponse, WorkflowActivationExt},
     telemetry::VecDisplayer,
     worker::{
+        activities::{ActivitiesFromWFTsHandle, PermittedTqResp},
         workflow::{
             managed_run::{ManagedRun, WorkflowManager},
             wft_poller::validate_wft,
@@ -54,15 +56,17 @@ use temporal_sdk_core_protos::{
         },
     },
     temporal::api::{
-        command::v1::Command as ProtoCommand, enums::v1::WorkflowTaskFailedCause,
+        command::v1::{command::Attributes, Command as ProtoCommand, Command},
+        enums::v1::WorkflowTaskFailedCause,
         taskqueue::v1::StickyExecutionAttributes,
+        workflowservice::v1::PollActivityTaskQueueResponse,
     },
     TaskToken,
 };
 use tokio::{
     sync::{
         mpsc::{unbounded_channel, UnboundedSender},
-        oneshot, OwnedSemaphorePermit,
+        oneshot,
     },
     task,
     task::{JoinError, JoinHandle},
@@ -90,6 +94,8 @@ pub(crate) struct Workflows {
     /// Will be populated when this worker is using a cache and should complete WFTs with a sticky
     /// queue.
     sticky_attrs: Option<StickyExecutionAttributes>,
+    /// If set, can be used to reserve activity task slots for eager-return of new activity tasks.
+    activity_tasks_handle: Option<ActivitiesFromWFTsHandle>,
 }
 
 pub(super) struct WorkflowBasics {
@@ -109,6 +115,7 @@ impl Workflows {
             + Send
             + Sync
             + 'static,
+        activity_tasks_handle: Option<ActivitiesFromWFTsHandle>,
     ) -> Self {
         let (new_wft_tx, new_wft_rx) = unbounded_channel();
         let (local_tx, local_rx) = unbounded_channel();
@@ -155,6 +162,7 @@ impl Workflows {
             )),
             client,
             sticky_attrs,
+            activity_tasks_handle,
         }
     }
 
@@ -218,11 +226,13 @@ impl Workflows {
                     task_token,
                     action:
                         ActivationAction::WftComplete {
-                            commands,
+                            mut commands,
                             query_responses,
                             force_new_wft,
                         },
                 } => {
+                    let reserved_act_permits =
+                        self.reserve_activity_slots_for_outgoing_commands(commands.as_mut_slice());
                     debug!(commands=%commands.display(), query_responses=%query_responses.display(),
                            "Sending responses to server");
                     let mut completion = WorkflowTaskCompletion {
@@ -246,6 +256,10 @@ impl Workflows {
                         if let Some(wft) = maybe_wft.workflow_task {
                             self.new_wft(validate_wft(wft)?);
                         }
+                        self.handle_eager_activities(
+                            reserved_act_permits,
+                            maybe_wft.activity_tasks,
+                        );
                         Ok(())
                     })
                     .await?;
@@ -387,6 +401,76 @@ impl Workflows {
                 )
             }
         }
+    }
+
+    /// Process eagerly returned activities from WFT completion
+    fn handle_eager_activities(
+        &self,
+        reserved_act_permits: Vec<OwnedMeteredSemPermit>,
+        eager_acts: Vec<PollActivityTaskQueueResponse>,
+    ) {
+        if let Some(at_handle) = self.activity_tasks_handle.as_ref() {
+            let excess_reserved = reserved_act_permits.len().saturating_sub(eager_acts.len());
+            if excess_reserved > 0 {
+                debug!(
+                    "Server returned {excess_reserved} fewer activities for \
+                     eager execution than we requested"
+                );
+            } else if eager_acts.len() > reserved_act_permits.len() {
+                // If we somehow got more activities from server than we asked for, server did
+                // something wrong.
+                error!(
+                    "Server sent more activities for eager execution than we requested! They will \
+                     be dropped and eventually time out. Please report this, as it is a server bug."
+                )
+            }
+            let with_permits = reserved_act_permits
+                .into_iter()
+                .zip(eager_acts.into_iter())
+                .map(|(permit, resp)| PermittedTqResp { permit, resp });
+            if with_permits.len() > 0 {
+                debug!(
+                    "Adding {} activity tasks received from WFT complete",
+                    with_permits.len()
+                );
+                at_handle.add_tasks(with_permits);
+            }
+        } else if !eager_acts.is_empty() {
+            panic!(
+                "Requested eager activity execution but this worker has no activity task \
+                 manager! This is an internal bug, Core should not have asked for tasks."
+            )
+        }
+    }
+
+    /// Attempt to reserve activity slots for activities we could eagerly execute on
+    /// this worker.
+    ///
+    /// Returns the number of activity slots that were reserved
+    fn reserve_activity_slots_for_outgoing_commands(
+        &self,
+        commands: &mut [Command],
+    ) -> Vec<OwnedMeteredSemPermit> {
+        let mut reserved = vec![];
+        if let Some(at_handle) = self.activity_tasks_handle.as_ref() {
+            for cmd in commands {
+                if let Some(Attributes::ScheduleActivityTaskCommandAttributes(attrs)) =
+                    cmd.attributes.as_mut()
+                {
+                    // If request_eager_execution was already false, that means lang explicitly
+                    // told us it didn't want to eagerly execute for some reason. So, we only
+                    // ever turn *off* eager execution if a slot is not available.
+                    if attrs.request_eager_execution {
+                        if let Some(p) = at_handle.reserve_slot() {
+                            reserved.push(p);
+                        } else {
+                            attrs.request_eager_execution = false;
+                        }
+                    }
+                }
+            }
+        }
+        reserved
     }
 }
 
@@ -568,7 +652,7 @@ pub(crate) struct OutstandingTask {
     pub start_time: Instant,
     /// The WFT permit owned by this task, ensures we don't exceed max concurrent WFT, and makes
     /// sure the permit is automatically freed when we delete the task.
-    pub _permit: OwnedSemaphorePermit,
+    pub _permit: OwnedMeteredSemPermit,
 }
 
 #[derive(Copy, Clone, Debug)]

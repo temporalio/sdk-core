@@ -914,7 +914,12 @@ impl WorkflowMachines {
                         Some(cancel_we::Target::WorkflowExecution(we)) => (we, false),
                     };
                     self.add_cmd_to_wf_task(
-                        new_external_cancel(attrs.seq, we, only_child),
+                        new_external_cancel(
+                            attrs.seq,
+                            we,
+                            only_child,
+                            format!("Cancel requested by workflow with run id {}", self.run_id),
+                        ),
                         Some(CommandID::CancelExternal(attrs.seq)),
                     );
                 }

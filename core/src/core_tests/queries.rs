@@ -309,7 +309,7 @@ async fn legacy_query_after_complete(#[values(false, true)] full_history: bool) 
             query_args: Some(b"hi".into()),
             header: None,
         });
-        pr
+        pr.resp
     };
     // Server would never send us a workflow task *without* a query that goes all the way to
     // execution completed. So, don't do that. It messes with the mock unlocking the next
@@ -317,12 +317,15 @@ async fn legacy_query_after_complete(#[values(false, true)] full_history: bool) 
     let mut tasks = if full_history {
         vec![]
     } else {
-        vec![hist_to_poll_resp(
-            &t,
-            wfid.to_owned(),
-            ResponseType::AllHistory,
-            TEST_Q.to_string(),
-        )]
+        vec![
+            hist_to_poll_resp(
+                &t,
+                wfid.to_owned(),
+                ResponseType::AllHistory,
+                TEST_Q.to_string(),
+            )
+            .resp,
+        ]
     };
     tasks.extend([query_with_hist_task.clone(), query_with_hist_task]);
 

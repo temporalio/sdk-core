@@ -344,7 +344,8 @@ message TimerCanceledEventAttributes {
 
 message WorkflowExecutionCancelRequestedEventAttributes {
     // User provided reason for requesting cancellation
-    string cause = 1;
+    // TODO: shall we create a new field with name "reason" and deprecate this one? 
+    string cause = 1; 
     // TODO: Is this the ID of the event in the workflow which initiated this cancel, if there was one?
     int64 external_initiated_event_id = 2;
     temporal.api.common.v1.WorkflowExecution external_workflow_execution = 3;
@@ -401,6 +402,8 @@ message RequestCancelExternalWorkflowExecutionInitiatedEventAttributes {
     // Workers are expected to set this to true if the workflow they are requesting to cancel is
     // a child of the workflow which issued the request
     bool child_workflow_only = 5;
+    // Reason for requesting the cancellation
+    string reason = 6;
 }
 
 message RequestCancelExternalWorkflowExecutionFailedEventAttributes {

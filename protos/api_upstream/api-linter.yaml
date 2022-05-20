@@ -11,6 +11,7 @@
 
 - included_paths:
     - '**/workflowservice/v1/request_response.proto'
+    - '**/operatorservice/v1/request_response.proto'
   disabled_rules:
     - 'core::0122::name-suffix'
     - 'core::0131::request-name-required'
@@ -27,6 +28,7 @@
 
 - included_paths:
     - '**/workflowservice/v1/service.proto'
+    - '**/operatorservice/v1/service.proto'
   disabled_rules:
     - 'core::0127::http-annotation'
     - 'core::0131::method-signature'

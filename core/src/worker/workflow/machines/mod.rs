@@ -234,7 +234,7 @@ where
 {
     if !commands.is_empty() {
         debug!(commands=%commands.display(), state=%machine.state(),
-               machine_name=%StateMachine::name(machine), "Machine produced commands");
+               machine_name=%TemporalStateMachine::kind(machine), "Machine produced commands");
     }
     let mut machine_responses = vec![];
     for cmd in commands {

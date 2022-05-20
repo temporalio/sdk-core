@@ -247,6 +247,16 @@ impl Worker {
         ));
         let lam_clone = local_act_mgr.clone();
         let local_act_req_sink = move |requests| lam_clone.enqueue(requests);
+        let at_task_mgr = act_poller.map(|ap| {
+            WorkerActivityTasks::new(
+                config.max_outstanding_activities,
+                ap,
+                client.clone(),
+                metrics.clone(),
+                config.max_heartbeat_throttle_interval,
+                config.default_heartbeat_throttle_interval,
+            )
+        });
         Self {
             wf_client: client.clone(),
             workflows: Workflows::new(
@@ -254,7 +264,7 @@ impl Worker {
                     max_cached_workflows: config.max_cached_workflows,
                     max_outstanding_wfts: config.max_outstanding_workflow_tasks,
                     shutdown_token: shutdown_token.child_token(),
-                    metrics: metrics.clone(),
+                    metrics,
                 },
                 sticky_queue_name.map(|sq| StickyExecutionAttributes {
                     worker_task_queue: Some(TaskQueue {
@@ -265,20 +275,14 @@ impl Worker {
                         config.sticky_queue_schedule_to_start_timeout.into(),
                     ),
                 }),
-                client.clone(),
+                client,
                 wft_stream,
                 local_act_req_sink,
+                at_task_mgr
+                    .as_ref()
+                    .map(|mgr| mgr.get_handle_for_workflows()),
             ),
-            at_task_mgr: act_poller.map(|ap| {
-                WorkerActivityTasks::new(
-                    config.max_outstanding_activities,
-                    ap,
-                    client.clone(),
-                    metrics,
-                    config.max_heartbeat_throttle_interval,
-                    config.default_heartbeat_throttle_interval,
-                )
-            }),
+            at_task_mgr,
             local_act_mgr,
             config,
             shutdown_token,
@@ -349,6 +353,7 @@ impl Worker {
             if let Some(ref act_mgr) = self.at_task_mgr {
                 act_mgr.poll().await
             } else {
+                info!("Activity polling is disabled for this worker");
                 self.shutdown_token.cancelled().await;
                 Err(PollActivityError::ShutDown)
             }

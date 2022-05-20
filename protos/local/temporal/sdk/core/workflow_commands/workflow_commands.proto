@@ -77,6 +77,10 @@ message ScheduleActivity {
     common.RetryPolicy retry_policy = 12;
     /// Defines how the workflow will wait (or not) for cancellation of the activity to be confirmed
     ActivityCancellationType cancellation_type = 13;
+    /// If set, the worker will not tell the service that it can immediately start executing this
+    /// activity. When unset/default, workers will always attempt to do so if activity execution
+    /// slots are available.
+    bool do_not_eagerly_execute = 14;
 }
 
 message ScheduleLocalActivity {

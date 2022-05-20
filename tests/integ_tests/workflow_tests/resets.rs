@@ -15,7 +15,7 @@ async fn reset_workflow() {
     let wf_name = "reset_me_wf";
     let mut starter = CoreWfStarter::new(wf_name);
     let mut worker = starter.worker().await;
-    worker.auto_shutdown = false;
+    worker.fetch_results = false;
     let notify = Arc::new(Notify::new());
 
     let wf_notify = notify.clone();

@@ -43,6 +43,9 @@ enum WorkflowIdReusePolicy {
     // Do not permit re-use of the workflow id for this workflow. Future start workflow requests
     // could potentially change the policy, allowing re-use of the workflow id.
     WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE = 3;
+    // If a workflow is running using the same workflow ID, terminate it and start a new one.
+    // If no running workflow, then the behavior is the same as ALLOW_DUPLICATE
+    WORKFLOW_ID_REUSE_POLICY_TERMINATE_IF_RUNNING = 4;
 }
 
 // Defines how child workflows will react to their parent completing

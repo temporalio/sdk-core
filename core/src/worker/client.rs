@@ -118,6 +118,7 @@ pub(crate) trait WorkerClient: Sync + Send {
 #[async_trait::async_trait]
 impl<'a, T> WorkerClient for T
 where
+    // TODO: This should be workflow service... no reason to marry worker trait to sdk client trait
     T: Borrow<dyn WorkflowClientTrait + 'a + Send + Sync> + Send + Sync,
 {
     async fn poll_workflow_task(
