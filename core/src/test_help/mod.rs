@@ -17,6 +17,7 @@ use mockall::TimesRange;
 use parking_lot::RwLock;
 use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    ops::{Deref, DerefMut},
     pin::Pin,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -518,8 +519,15 @@ pub(crate) fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder {
             let no_tasks_for_anyone = resp_iter.next().is_none();
 
             if let Some(resp) = resp {
+                if let Some(d) = resp.delay_until {
+                    d.await;
+                }
                 if wft_tx
-                    .send(resp.try_into().expect("Mock responses must be valid work"))
+                    .send(
+                        resp.resp
+                            .try_into()
+                            .expect("Mock responses must be valid work"),
+                    )
                     .is_err()
                 {
                     dbg!("Exiting mock WFT task because rcv half of stream was dropped");
@@ -599,30 +607,54 @@ impl<T> From<T> for QueueResponse<T> {
         }
     }
 }
+impl From<QueueResponse<PollWorkflowTaskQueueResponse>> for ResponseType {
+    fn from(qr: QueueResponse<PollWorkflowTaskQueueResponse>) -> Self {
+        ResponseType::Raw(qr.resp)
+    }
+}
+impl<T> Deref for QueueResponse<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.resp
+    }
+}
+impl<T> DerefMut for QueueResponse<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.resp
+    }
+}
 
 pub fn hist_to_poll_resp(
     t: &TestHistoryBuilder,
     wf_id: String,
     response_type: ResponseType,
     task_queue: impl Into<String>,
-) -> PollWorkflowTaskQueueResponse {
+) -> QueueResponse<PollWorkflowTaskQueueResponse> {
     let run_id = t.get_orig_run_id();
     let wf = WorkflowExecution {
         workflow_id: wf_id,
         run_id: run_id.to_string(),
     };
+    let mut delay_until = None;
     let hist_info = match response_type {
         ResponseType::ToTaskNum(tn) => t.get_history_info(tn).unwrap(),
         ResponseType::OneTask(tn) => t.get_one_wft(tn).unwrap(),
         ResponseType::AllHistory => t.get_full_history_info().unwrap(),
-        ResponseType::Raw(r) => return r,
+        ResponseType::Raw(r) => {
+            return QueueResponse {
+                resp: r,
+                delay_until: None,
+            }
+        }
         ResponseType::UntilResolved(fut, tn) => {
-            panic!("UntilResolved response type not supported by this fn")
+            delay_until = Some(fut);
+            t.get_history_info(tn).unwrap()
         }
     };
     let mut resp = hist_info.as_poll_wft_response(task_queue);
     resp.workflow_execution = Some(wf);
-    resp
+    QueueResponse { resp, delay_until }
 }
 
 type AsserterWithReply<'a> = (

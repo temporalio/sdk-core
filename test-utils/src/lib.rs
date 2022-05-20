@@ -12,16 +12,7 @@ use parking_lot::Mutex;
 use prost::Message;
 use rand::{distributions::Standard, Rng};
 use std::{
-    cell::RefCell,
-    convert::TryFrom,
-    env,
-    future::Future,
-    net::SocketAddr,
-    path::PathBuf,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
+    convert::TryFrom, env, future::Future, net::SocketAddr, path::PathBuf, sync::Arc,
     time::Duration,
 };
 use temporal_client::{
@@ -261,18 +252,17 @@ pub struct TestWorker {
     pub core_worker: Arc<dyn CoreWorker>,
     client: Option<Arc<RetryClient<Client>>>,
     pub started_workflows: Mutex<Vec<WorkflowExecutionInfo>>,
-    /// Used only for mocked testing, where fetching results to determine if a WF is finished is too
-    /// annoying to make work.
-    incomplete_workflows: Arc<AtomicUsize>,
+    /// If set true (default), and a client is available, we will fetch workflow results to
+    /// determine when they have all completed.
+    pub fetch_results: bool,
     iceptor: Option<TestWorkerCompletionIceptor>,
 }
 impl TestWorker {
     /// Create a new test worker
     pub fn new(core_worker: Arc<dyn CoreWorker>, task_queue: impl Into<String>) -> Self {
-        let ct = Arc::new(AtomicUsize::new(0));
         let inner = Worker::new_from_core(core_worker.clone(), task_queue);
         let iceptor = TestWorkerCompletionIceptor::new(
-            TestWorkerShutdownCond::Count(ct.clone()),
+            TestWorkerShutdownCond::NoAutoShutdown,
             Arc::new(inner.shutdown_handle()),
         );
         Self {
@@ -280,7 +270,7 @@ impl TestWorker {
             core_worker,
             client: None,
             started_workflows: Mutex::new(vec![]),
-            incomplete_workflows: ct,
+            fetch_results: true,
             iceptor: Some(iceptor),
         }
     }
@@ -343,16 +333,26 @@ impl TestWorker {
 
     /// Runs until all expected workflows have completed
     pub async fn run_until_done(&mut self) -> Result<(), anyhow::Error> {
-        self.run_until_done_intercepted(|_| {}).await
+        self.run_until_done_intercepted(Option::<TestWorkerCompletionIceptor>::None)
+            .await
     }
 
     /// See [Self::run_until_done], but allows configuration of some low-level interception.
     pub async fn run_until_done_intercepted(
         &mut self,
-        interceptor_config: impl FnOnce(&mut TestWorkerCompletionIceptor) + 'static,
+        interceptor: Option<impl WorkerInterceptor + 'static>,
     ) -> Result<(), anyhow::Error> {
-        interceptor_config(self.iceptor.as_mut().unwrap());
         let mut iceptor = self.iceptor.take().unwrap();
+        // Automatically use results-based complete detection if we have a client
+        if self.fetch_results {
+            if let Some(c) = self.client.clone() {
+                iceptor.condition = TestWorkerShutdownCond::GetResults(
+                    std::mem::take(&mut self.started_workflows.lock()),
+                    c,
+                );
+            }
+        }
+        iceptor.next = interceptor.map(|i| Box::new(i) as Box<dyn WorkerInterceptor>);
         let get_results_waiter = iceptor.wait_all_wfs();
         self.inner.set_worker_interceptor(Box::new(iceptor));
         tokio::try_join!(self.inner.run(), get_results_waiter)?;
@@ -361,7 +361,6 @@ impl TestWorker {
 }
 
 pub enum TestWorkerShutdownCond {
-    Count(Arc<AtomicUsize>),
     GetResults(Vec<WorkflowExecutionInfo>, Arc<RetryClient<Client>>),
     NoAutoShutdown,
 }
@@ -370,6 +369,7 @@ pub struct TestWorkerCompletionIceptor {
     condition: TestWorkerShutdownCond,
     shutdown_handle: Arc<dyn Fn()>,
     every_activation: Option<Box<dyn Fn(&WorkflowActivationCompletion)>>,
+    next: Option<Box<dyn WorkerInterceptor>>,
 }
 impl TestWorkerCompletionIceptor {
     pub fn new(condition: TestWorkerShutdownCond, shutdown_handle: Arc<dyn Fn()>) -> Self {
@@ -377,26 +377,8 @@ impl TestWorkerCompletionIceptor {
             condition,
             shutdown_handle,
             every_activation: None,
+            next: None,
         }
-    }
-    /// Set a function to run just before worker shutdown
-    pub fn before_shutdown(&mut self, func: impl FnOnce() + 'static) {
-        // Replace shutdown interceptor with one that calls the before hook first
-        let b4shut = RefCell::new(Some(func));
-        let old_handle = std::mem::replace(&mut self.shutdown_handle, Arc::new(|| {}));
-        self.shutdown_handle = Arc::new(move || {
-            if let Some(s) = b4shut.borrow_mut().take() {
-                s();
-            }
-            old_handle();
-        });
-    }
-
-    pub fn on_each_activation_completion(
-        &mut self,
-        func: impl Fn(&WorkflowActivationCompletion) + 'static,
-    ) {
-        self.every_activation = Some(Box::new(func))
     }
 
     fn wait_all_wfs(&mut self) -> impl Future<Output = Result<(), anyhow::Error>> + 'static {
@@ -432,18 +414,17 @@ impl WorkerInterceptor for TestWorkerCompletionIceptor {
         }
         if completion.has_execution_ending() {
             info!("Workflow {} says it's finishing", &completion.run_id);
-            if let TestWorkerShutdownCond::Count(ref ct) = self.condition {
-                let prev = ct.fetch_sub(1, Ordering::SeqCst);
-                if prev <= 1 {
-                    // There are now zero, we just subtracted one
-                    info!("Test worker calling shutdown");
-                    (self.shutdown_handle)()
-                }
-            }
+        }
+        if let Some(n) = self.next.as_ref() {
+            n.on_workflow_activation_completion(completion).await;
         }
     }
 
-    fn on_shutdown(&self, _: &Worker) {}
+    fn on_shutdown(&self, sdk_worker: &Worker) {
+        if let Some(n) = self.next.as_ref() {
+            n.on_shutdown(sdk_worker);
+        }
+    }
 }
 
 pub fn get_integ_server_options() -> ClientOptions {

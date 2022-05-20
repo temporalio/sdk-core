@@ -40,8 +40,8 @@ impl MeteredSemaphore {
         res
     }
 
-    pub fn try_acquire(&self) -> Result<SemaphorePermit<'_>, TryAcquireError> {
-        let res = self.sem.try_acquire();
+    pub async fn acquire_owned(&self) -> Result<OwnedSemaphorePermit, AcquireError> {
+        let res = self.sem.clone().acquire_owned().await;
         self.record();
         res
     }

@@ -42,7 +42,6 @@ use temporal_sdk_core_protos::{
         ActivityTaskCompletion,
     },
     temporal::api::{
-        command::v1::{command::Attributes, Command},
         enums::v1::TaskQueueKind,
         taskqueue::v1::{StickyExecutionAttributes, TaskQueue},
         workflowservice::v1::PollActivityTaskQueueResponse,
@@ -248,6 +247,16 @@ impl Worker {
         ));
         let lam_clone = local_act_mgr.clone();
         let local_act_req_sink = move |requests| lam_clone.enqueue(requests);
+        let at_task_mgr = act_poller.map(|ap| {
+            WorkerActivityTasks::new(
+                config.max_outstanding_activities,
+                ap,
+                client.clone(),
+                metrics.clone(),
+                config.max_heartbeat_throttle_interval,
+                config.default_heartbeat_throttle_interval,
+            )
+        });
         Self {
             wf_client: client.clone(),
             workflows: Workflows::new(
@@ -255,7 +264,7 @@ impl Worker {
                     max_cached_workflows: config.max_cached_workflows,
                     max_outstanding_wfts: config.max_outstanding_workflow_tasks,
                     shutdown_token: shutdown_token.child_token(),
-                    metrics: metrics.clone(),
+                    metrics,
                 },
                 sticky_queue_name.map(|sq| StickyExecutionAttributes {
                     worker_task_queue: Some(TaskQueue {
@@ -266,20 +275,14 @@ impl Worker {
                         config.sticky_queue_schedule_to_start_timeout.into(),
                     ),
                 }),
-                client.clone(),
+                client,
                 wft_stream,
                 local_act_req_sink,
+                at_task_mgr
+                    .as_ref()
+                    .map(|mgr| mgr.get_handle_for_workflows()),
             ),
-            at_task_mgr: act_poller.map(|ap| {
-                WorkerActivityTasks::new(
-                    config.max_outstanding_activities,
-                    ap,
-                    client.clone(),
-                    metrics,
-                    config.max_heartbeat_throttle_interval,
-                    config.default_heartbeat_throttle_interval,
-                )
-            }),
+            at_task_mgr,
             local_act_mgr,
             config,
             shutdown_token,
@@ -495,33 +498,6 @@ impl Worker {
 
     fn notify_local_result(&self, run_id: &str, res: LocalResolution) {
         self.workflows.notify_of_local_result(run_id, res);
-    }
-
-    /// Attempt to reserve activity slots for activities we could eagerly execute on
-    /// this worker.
-    ///
-    /// Returns the number of activity slots that were reserved
-    fn reserve_activity_slots_for_outgoing_commands(&self, commands: &mut [Command]) -> usize {
-        let mut reserved = 0;
-        for cmd in commands {
-            if let Some(Attributes::ScheduleActivityTaskCommandAttributes(attrs)) =
-                cmd.attributes.as_mut()
-            {
-                if let Some(at_mgr) = self.at_task_mgr.as_ref() {
-                    // If request_eager_execution was already false, that means lang explicitly
-                    // told us it didn't want to eagerly execute for some reason. So, we only
-                    // ever turn *off* eager execution if a slot is not available.
-                    if attrs.request_eager_execution {
-                        if at_mgr.reserve_slot() {
-                            reserved += 1;
-                        } else {
-                            attrs.request_eager_execution = false;
-                        }
-                    }
-                }
-            }
-        }
-        reserved
     }
 }
 

@@ -2,9 +2,9 @@ use crate::{
     job_assert,
     test_help::{
         build_fake_worker, build_mock_pollers, canned_histories, gen_assert_and_reply,
-        hist_to_poll_resp, mock_manual_poller, mock_poller, mock_poller_from_resps, mock_worker,
-        poll_and_reply, single_hist_mock_sg, test_worker_cfg, MockPollCfg, MockWorkerInputs,
-        MocksHolder, ResponseType, WorkflowCachingPolicy, TEST_Q,
+        mock_manual_poller, mock_poller, mock_poller_from_resps, mock_worker, poll_and_reply,
+        single_hist_mock_sg, test_worker_cfg, MockPollCfg, MockWorkerInputs, MocksHolder,
+        ResponseType, WorkflowCachingPolicy, TEST_Q,
     },
     worker::client::mocks::{mock_manual_workflow_client, mock_workflow_client},
     ActivityHeartbeat, Worker, WorkerConfigBuilder,
@@ -651,13 +651,27 @@ async fn activity_tasks_from_completion_are_delivered() {
         .times(1)
         .returning(|_, _| Ok(RespondActivityTaskCompletedResponse::default()));
     let mut mock = single_hist_mock_sg(wfid, t, [1], mock, true);
+    let mut mock_poller = mock_manual_poller();
+    mock_poller
+        .expect_poll()
+        .returning(|| futures::future::pending().boxed());
+    mock.set_act_poller(Box::new(mock_poller));
     mock.worker_cfg(|wc| wc.max_cached_workflows = 2);
     let core = mock_worker(mock);
 
     let wf_task = core.poll_workflow_activation().await.unwrap();
-    core.complete_workflow_activation(WorkflowActivationCompletion::empty(wf_task.run_id))
-        .await
-        .unwrap();
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+        wf_task.run_id,
+        ScheduleActivity {
+            seq: 1,
+            activity_id: "act_id".to_string(),
+            cancellation_type: ActivityCancellationType::TryCancel as i32,
+            ..Default::default()
+        }
+        .into(),
+    ))
+    .await
+    .unwrap();
 
     // We should see the activity when we poll now
     let act_task = core.poll_activity_task().await.unwrap();
