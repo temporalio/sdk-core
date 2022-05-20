@@ -772,7 +772,7 @@ async fn one_activity_abandon_cancelled_after_complete() {
     worker.register_activity(
         "echo_activity",
         |_ctx: ActContext, echo_me: String| async move {
-            tokio::time::sleep(Duration::from_secs(2)).await;
+            sleep(Duration::from_secs(2)).await;
             Ok(echo_me)
         },
     );

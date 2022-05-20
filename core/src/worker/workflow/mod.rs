@@ -416,20 +416,24 @@ impl Workflows {
                      eager execution than we requested"
                 );
             } else if eager_acts.len() > reserved_act_permits.len() {
-                // If we somehow got more activities from server than we asked for,
-                // server did something wrong.
+                // If we somehow got more activities from server than we asked for, server did
+                // something wrong.
                 error!(
-                    "Server sent more activities for eager execution than we \
-                     requested! We will attempt to run them, and will temporarily \
-                     exceed the max activity slots. Please report this, as it is a server bug."
+                    "Server sent more activities for eager execution than we requested! They will \
+                     be dropped and eventually time out. Please report this, as it is a server bug."
                 )
             }
-            // TODO: Actually feed excess or drop
             let with_permits = reserved_act_permits
                 .into_iter()
                 .zip(eager_acts.into_iter())
                 .map(|(permit, resp)| PermittedTqResp { permit, resp });
-            at_handle.add_tasks(with_permits);
+            if with_permits.len() > 0 {
+                debug!(
+                    "Adding {} activity tasks received from WFT complete",
+                    with_permits.len()
+                );
+                at_handle.add_tasks(with_permits);
+            }
         } else if !eager_acts.is_empty() {
             panic!(
                 "Requested eager activity execution but this worker has no activity task \

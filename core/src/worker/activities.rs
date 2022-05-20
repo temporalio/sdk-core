@@ -225,9 +225,9 @@ impl WorkerActivityTasks {
                 workflow_type(act_info.base.workflow_type.clone()),
             ]);
             act_metrics.act_execution_latency(act_info.base.start_time.elapsed());
-            self.heartbeat_manager.evict(task_token.clone()).await;
             let known_not_found = act_info.known_not_found;
             drop(act_info); // TODO: Get rid of dashmap. If we hold ref across await, bad stuff.
+            self.heartbeat_manager.evict(task_token.clone()).await;
             self.complete_notify.notify_waiters();
 
             // No need to report activities which we already know the server doesn't care about
