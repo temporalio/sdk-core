@@ -19,6 +19,12 @@ use crate::{
 };
 use activity_heartbeat_manager::ActivityHeartbeatManager;
 use dashmap::DashMap;
+use governor::{
+    clock::DefaultClock,
+    middleware::NoOpMiddleware,
+    state::{InMemoryState, NotKeyed},
+    Quota, RateLimiter,
+};
 use std::{
     convert::TryInto,
     sync::Arc,
@@ -114,6 +120,8 @@ pub(crate) struct WorkerActivityTasks {
     non_poll_tasks: NonPollActBuffer,
     /// Ensures we stay at or below this worker's maximum concurrent activity limit
     activities_semaphore: Arc<MeteredSemaphore>,
+    /// Enables per-worker rate-limiting of activity tasks
+    ratelimiter: Option<RateLimiter<NotKeyed, InMemoryState, DefaultClock, NoOpMiddleware>>,
     /// Wakes every time an activity is removed from the outstanding map
     complete_notify: Notify,
 
@@ -126,6 +134,7 @@ pub(crate) struct WorkerActivityTasks {
 impl WorkerActivityTasks {
     pub(crate) fn new(
         max_activity_tasks: usize,
+        max_worker_act_per_sec: Option<f64>,
         poller: BoxedActPoller,
         client: Arc<WorkerClientBag>,
         metrics: MetricsContext,
@@ -142,6 +151,9 @@ impl WorkerActivityTasks {
                 metrics.with_new_attrs([activity_worker_type()]),
                 MetricsContext::available_task_slots,
             )),
+            ratelimiter: max_worker_act_per_sec.and_then(|ps| {
+                Quota::with_period(Duration::from_secs_f64(ps.recip())).map(RateLimiter::direct)
+            }),
             complete_notify: Notify::new(),
             metrics,
             max_heartbeat_throttle_interval,
@@ -178,6 +190,9 @@ impl WorkerActivityTasks {
                 .acquire_owned()
                 .await
                 .expect("outstanding activity semaphore not closed");
+            if let Some(ref rl) = self.ratelimiter {
+                rl.until_ready().await;
+            }
             (self.poller.poll().await, perm)
         };
 
@@ -406,4 +421,50 @@ impl ActivitiesFromWFTsHandle {
 pub(crate) struct PermittedTqResp {
     pub permit: OwnedMeteredSemPermit,
     pub resp: PollActivityTaskQueueResponse,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        test_help::mock_poller_from_resps, worker::client::mocks::mock_manual_workflow_client,
+    };
+
+    #[tokio::test]
+    async fn per_worker_ratelimit() {
+        let poller = mock_poller_from_resps([
+            PollActivityTaskQueueResponse {
+                task_token: vec![1],
+                activity_id: "act1".to_string(),
+                ..Default::default()
+            }
+            .into(),
+            PollActivityTaskQueueResponse {
+                task_token: vec![2],
+                activity_id: "act2".to_string(),
+                ..Default::default()
+            }
+            .into(),
+        ]);
+        let client = WorkerClientBag::new(
+            Box::new(mock_manual_workflow_client()),
+            "fake_namespace".to_string(),
+        );
+        let atm = WorkerActivityTasks::new(
+            10,
+            Some(2.0),
+            poller,
+            Arc::new(client),
+            MetricsContext::default(),
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+        );
+        let start = Instant::now();
+        atm.poll().await.unwrap().unwrap();
+        atm.poll().await.unwrap().unwrap();
+        // At least half a second will have elapsed since we only allow 2 tasks per second.
+        // With no ratelimit, even on a slow CI server with lots of load, this would typically take
+        // low single digit ms or less.
+        assert!(start.elapsed() > Duration::from_secs_f64(0.5));
+    }
 }
