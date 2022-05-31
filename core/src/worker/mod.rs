@@ -250,6 +250,7 @@ impl Worker {
         let at_task_mgr = act_poller.map(|ap| {
             WorkerActivityTasks::new(
                 config.max_outstanding_activities,
+                config.max_worker_activities_per_second,
                 ap,
                 client.clone(),
                 metrics.clone(),

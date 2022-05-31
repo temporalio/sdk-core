@@ -73,6 +73,13 @@ pub struct WorkerConfig {
     /// winning.
     #[builder(setter(strip_option), default)]
     pub max_task_queue_activities_per_second: Option<f64>,
+
+    /// Limits the number of activities per second that this worker will process. The worker will
+    /// not poll for new activities if by doing so it might receive and execute an activity which
+    /// would cause it to exceed this limit. Negative, zero, or NaN values will be ignored, and is
+    /// equivalent to not setting any value (ie: no rate limit).
+    #[builder(setter(strip_option), default)]
+    pub max_worker_activities_per_second: Option<f64>,
 }
 
 impl WorkerConfig {

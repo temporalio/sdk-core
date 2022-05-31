@@ -112,7 +112,7 @@ async fn simple_query_legacy() {
 async fn query_after_execution_complete(#[case] do_evict: bool) {
     let query_resp = b"response";
     let mut starter =
-        init_core_and_create_wf(&format!("after_done_query_evict-{}", do_evict)).await;
+        init_core_and_create_wf(&format!("query_after_execution_complete-{}", do_evict)).await;
     let core = &starter.get_worker().await;
     let workflow_id = &starter.get_task_queue().to_string();
 
@@ -205,6 +205,7 @@ async fn query_after_execution_complete(#[case] do_evict: bool) {
         query_futs.push(do_workflow(true).map(|_| ()).boxed());
     }
     while query_futs.next().await.is_some() {}
+    core.shutdown().await;
 }
 
 #[ignore]
