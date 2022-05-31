@@ -152,11 +152,7 @@ impl WorkerActivityTasks {
                 MetricsContext::available_task_slots,
             )),
             ratelimiter: max_worker_act_per_sec.and_then(|ps| {
-                if !ps.is_normal() || ps.is_sign_negative() {
-                    None
-                } else {
-                    Quota::with_period(Duration::from_secs_f64(ps.recip())).map(RateLimiter::direct)
-                }
+                Quota::with_period(Duration::from_secs_f64(ps.recip())).map(RateLimiter::direct)
             }),
             complete_notify: Notify::new(),
             metrics,
