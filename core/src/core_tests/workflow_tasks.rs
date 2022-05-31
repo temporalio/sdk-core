@@ -1577,6 +1577,7 @@ async fn cache_miss_will_fetch_history() {
     let worker = mock_worker(mock);
 
     let activation = worker.poll_workflow_activation().await.unwrap();
+    assert_eq!(activation.history_length, 3);
     assert_matches!(
         activation.jobs.as_slice(),
         [WorkflowActivationJob {
@@ -1597,6 +1598,7 @@ async fn cache_miss_will_fetch_history() {
     // Handle the eviction, and the restart
     for i in 1..=2 {
         let activation = worker.poll_workflow_activation().await.unwrap();
+        assert_eq!(activation.history_length, 3);
         if i == 1 {
             assert_matches!(
                 activation.jobs.as_slice(),
@@ -1618,6 +1620,7 @@ async fn cache_miss_will_fetch_history() {
             .unwrap();
     }
     let activation = worker.poll_workflow_activation().await.unwrap();
+    assert_eq!(activation.history_length, 7);
     assert_matches!(
         activation.jobs.as_slice(),
         [WorkflowActivationJob {
@@ -1868,6 +1871,7 @@ async fn eviction_waits_until_replay_finished() {
     let core = mock_worker(mock);
 
     let activation = core.poll_workflow_activation().await.unwrap();
+    assert_eq!(activation.history_length, 3);
     // Immediately request eviction after getting start workflow
     core.request_workflow_eviction(&activation.run_id);
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
@@ -1877,6 +1881,7 @@ async fn eviction_waits_until_replay_finished() {
     .await
     .unwrap();
     let t1_fired = core.poll_workflow_activation().await.unwrap();
+    assert_eq!(t1_fired.history_length, 8);
     assert_matches!(
         t1_fired.jobs.as_slice(),
         [WorkflowActivationJob {
@@ -1890,6 +1895,7 @@ async fn eviction_waits_until_replay_finished() {
     .await
     .unwrap();
     let t2_fired = core.poll_workflow_activation().await.unwrap();
+    assert_eq!(t2_fired.history_length, 13);
     assert_matches!(
         t2_fired.jobs.as_slice(),
         [WorkflowActivationJob {
@@ -1904,6 +1910,7 @@ async fn eviction_waits_until_replay_finished() {
     .unwrap();
     // The first two WFTs were replay, and now that we've caught up, the eviction will be sent
     let eviction = core.poll_workflow_activation().await.unwrap();
+    assert_eq!(eviction.history_length, 13);
     assert_matches!(
         eviction.jobs.as_slice(),
         [WorkflowActivationJob {
