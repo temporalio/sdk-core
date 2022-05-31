@@ -155,8 +155,7 @@ impl WorkerActivityTasks {
                 if !ps.is_normal() || ps.is_sign_negative() {
                     None
                 } else {
-                    Quota::with_period(Duration::from_secs_f64(ps.recip()))
-                        .map(|q| RateLimiter::direct(q))
+                    Quota::with_period(Duration::from_secs_f64(ps.recip())).map(RateLimiter::direct)
                 }
             }),
             complete_notify: Notify::new(),
