@@ -468,27 +468,13 @@ pub mod coresdk {
                 timestamp: None,
                 run_id,
                 is_replaying: false,
+                history_length: 0,
                 jobs: vec![WorkflowActivationJob::from(
                     workflow_activation_job::Variant::RemoveFromCache(RemoveFromCache {
                         message,
                         reason: reason as i32,
                     }),
                 )],
-            }
-        }
-
-        pub fn create_query_activation(
-            run_id: String,
-            queries: impl IntoIterator<Item = QueryWorkflow>,
-        ) -> WorkflowActivation {
-            WorkflowActivation {
-                timestamp: None,
-                run_id,
-                is_replaying: false,
-                jobs: queries
-                    .into_iter()
-                    .map(|qr| workflow_activation_job::Variant::QueryWorkflow(qr).into())
-                    .collect(),
             }
         }
 

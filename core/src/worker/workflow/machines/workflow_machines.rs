@@ -564,6 +564,7 @@ impl WorkflowMachines {
             timestamp: self.current_wf_time.map(Into::into),
             is_replaying: self.replaying,
             run_id: self.run_id.clone(),
+            history_length: self.last_processed_event as u32,
             jobs,
         }
     }

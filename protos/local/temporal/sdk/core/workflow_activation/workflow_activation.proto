@@ -25,8 +25,11 @@ message WorkflowActivation {
     google.protobuf.Timestamp timestamp = 2;
     /// Whether or not the activation is replaying past events
     bool is_replaying = 3;
+    /// Current history length as determined by the event id of the most recently processed event.
+    /// This ensures that the number is always deterministic
+    uint32 history_length = 4;
     /// The things to do upon activating the workflow
-    repeated WorkflowActivationJob jobs = 4;
+    repeated WorkflowActivationJob jobs = 5;
 }
 
 message WorkflowActivationJob {
