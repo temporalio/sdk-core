@@ -71,14 +71,14 @@ pub struct WorkerConfig {
     /// server-side. Note that this only takes effect upon an activity poll request. If multiple
     /// workers on the same queue have different values set, they will thrash with the last poller
     /// winning.
-    #[builder(setter(strip_option), default)]
+    #[builder(default)]
     pub max_task_queue_activities_per_second: Option<f64>,
 
     /// Limits the number of activities per second that this worker will process. The worker will
     /// not poll for new activities if by doing so it might receive and execute an activity which
     /// would cause it to exceed this limit. Negative, zero, or NaN values will cause building
     /// the options to fail.
-    #[builder(setter(strip_option), default)]
+    #[builder(default)]
     pub max_worker_activities_per_second: Option<f64>,
 }
 
