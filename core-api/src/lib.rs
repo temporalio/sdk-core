@@ -90,7 +90,8 @@ pub trait Worker: Send + Sync {
     /// Return this worker's config
     fn get_config(&self) -> &WorkerConfig;
 
-    /// TODO: Will be replaced/fixed/whatever by shutdown refactoring
+    /// Initiate shutdown. See [Worker::shutdown], this is just a sync version that starts the
+    /// process. You can then wait on `shutdown` or [Worker::finalize_shutdown].
     fn initiate_shutdown(&self);
 
     /// Initiates async shutdown procedure, eventually ceases all polling of the server and shuts

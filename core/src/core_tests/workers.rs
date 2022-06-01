@@ -11,6 +11,7 @@ use std::{cell::RefCell, time::Duration};
 use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::{
     coresdk::{
+        workflow_activation::workflow_activation_job,
         workflow_commands::{workflow_command, CompleteWorkflowExecution, StartTimer},
         workflow_completion::WorkflowActivationCompletion,
     },
@@ -191,4 +192,29 @@ async fn complete_with_task_not_found_during_shutdown() {
     // Shutdown will currently complete first before the actual eviction reply since the
     // workflow task is marked complete as soon as we get not found back from the server.
     assert_eq!(&complete_order.into_inner(), &[1, 3, 2])
+}
+
+#[tokio::test]
+async fn complete_eviction_after_shutdown_doesnt_panic() {
+    let t = canned_histories::single_timer("1");
+    let mh = MockPollCfg::from_resp_batches("fakeid", t, [1], mock_workflow_client());
+    let core = mock_worker(build_mock_pollers(mh));
+
+    let res = core.poll_workflow_activation().await.unwrap();
+    assert_eq!(res.jobs.len(), 1);
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
+        res.run_id,
+        vec![start_timer_cmd(1, Duration::from_secs(1))],
+    ))
+    .await
+    .unwrap();
+    let res = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        res.jobs[0].variant,
+        Some(workflow_activation_job::Variant::RemoveFromCache(_))
+    );
+    core.shutdown().await;
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(res.run_id))
+        .await
+        .unwrap();
 }
