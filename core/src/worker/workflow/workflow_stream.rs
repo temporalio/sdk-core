@@ -590,30 +590,32 @@ impl WFStream {
             m.wf_task_failed();
         }
         let message = format!("Workflow activation completion failed: {:?}", &failure);
-        // If the outstanding activation is a legacy query task, report that we need to fail it
-        let outcome = if let Some(OutstandingActivation::LegacyQuery) = self.get_activation(&run_id)
+        // Blow up any cached data associated with the workflow
+        let should_report = match self.request_eviction(RequestEvictMsg {
+            run_id: run_id.clone(),
+            message,
+            reason,
+        }) {
+            EvictionRequestResult::EvictionRequested(Some(attempt))
+            | EvictionRequestResult::EvictionAlreadyRequested(Some(attempt)) => attempt <= 1,
+            _ => false,
+        };
+        // If the outstanding WFT is a legacy query task, report that we need to fail it
+        let outcome = if self
+            .runs
+            .get(&run_id)
+            .map(|rh| rh.pending_work_is_legacy_query())
+            .unwrap_or_default()
         {
             ActivationCompleteOutcome::ReportWFTFail(
                 FailedActivationWFTReport::ReportLegacyQueryFailure(tt, failure),
             )
+        } else if should_report {
+            ActivationCompleteOutcome::ReportWFTFail(FailedActivationWFTReport::Report(
+                tt, cause, failure,
+            ))
         } else {
-            // Blow up any cached data associated with the workflow
-            let should_report = match self.request_eviction(RequestEvictMsg {
-                run_id: run_id.clone(),
-                message,
-                reason,
-            }) {
-                EvictionRequestResult::EvictionRequested(Some(attempt))
-                | EvictionRequestResult::EvictionAlreadyRequested(Some(attempt)) => attempt <= 1,
-                _ => false,
-            };
-            if should_report {
-                ActivationCompleteOutcome::ReportWFTFail(FailedActivationWFTReport::Report(
-                    tt, cause, failure,
-                ))
-            } else {
-                ActivationCompleteOutcome::DoNothing
-            }
+            ActivationCompleteOutcome::DoNothing
         };
         self.reply_to_complete(&run_id, outcome, resp_chan);
     }
