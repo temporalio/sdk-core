@@ -1016,6 +1016,14 @@ pub mod coresdk {
             }
             false
         }
+
+        /// Returns true if the activation completion is a success with no commands
+        pub fn is_empty(&self) -> bool {
+            if let Some(workflow_activation_completion::Status::Successful(s)) = &self.status {
+                return s.commands.is_empty();
+            }
+            false
+        }
     }
 
     /// Makes converting outgoing lang commands into [WorkflowActivationCompletion]s easier

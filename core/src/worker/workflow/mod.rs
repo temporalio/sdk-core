@@ -210,13 +210,25 @@ impl Workflows {
         &self,
         completion: WorkflowActivationCompletion,
     ) -> Result<usize, CompleteWfError> {
+        let is_empty_completion = completion.is_empty();
         let completion = validate_completion(completion)?;
         let run_id = completion.run_id().to_string();
         let (tx, rx) = oneshot::channel();
-        self.send_local(WFActCompleteMsg {
+        let was_sent = self.send_local(WFActCompleteMsg {
             completion,
             response_tx: tx,
         });
+        if !was_sent {
+            if is_empty_completion {
+                // Empty complete which is likely an evict reply, we can just ignore.
+                return Ok(0);
+            }
+            panic!(
+                "A non-empty completion was not processed. Workflow processing may have \
+                 terminated unexpectedly. This is a bug."
+            );
+        }
+
         let completion_outcome = rx
             .await
             .expect("Send half of activation complete response not dropped");
@@ -386,7 +398,9 @@ impl Workflows {
         res.map_err(Into::into)
     }
 
-    fn send_local(&self, msg: impl Into<LocalInputs>) {
+    /// Sends a message to the workflow processing stream. Returns true if the message was sent
+    /// successfully.
+    fn send_local(&self, msg: impl Into<LocalInputs>) -> bool {
         let msg = msg.into();
         let print_err = !matches!(msg, LocalInputs::GetStateInfo(_));
         if let Err(e) = self.local_tx.send(LocalInput {
@@ -400,6 +414,9 @@ impl Workflows {
                     e.0.input
                 )
             }
+            false
+        } else {
+            true
         }
     }
 
