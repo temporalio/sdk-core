@@ -159,7 +159,7 @@ async fn local_act_heartbeat(#[case] shutdown_middle: bool) {
 
     let wf_id = "fakeid";
     let mock = mock_workflow_client();
-    let mut mh = MockPollCfg::from_resp_batches(wf_id, t, [1, 2, 2], mock);
+    let mut mh = MockPollCfg::from_resp_batches(wf_id, t, [1, 2, 2, 2], mock);
     mh.enforce_correct_number_of_polls = false;
     let mut worker = mock_sdk_cfg(mh, |wc| wc.max_cached_workflows = 1);
     let core = worker.core_worker.clone();

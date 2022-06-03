@@ -639,6 +639,18 @@ impl ManagedRunHandle {
             || act_work
             || evict_work
     }
+
+    /// Returns true if the handle is currently processing a WFT which contains a legacy query.
+    fn pending_work_is_legacy_query(&self) -> bool {
+        // Either we know because there is a pending legacy query, or it's already been drained and
+        // sent as an activation.
+        matches!(self.activation, Some(OutstandingActivation::LegacyQuery))
+            || self
+                .wft
+                .as_ref()
+                .map(|t| t.has_pending_legacy_query())
+                .unwrap_or_default()
+    }
 }
 
 #[derive(Debug, derive_more::Display)]
@@ -670,6 +682,14 @@ pub(crate) struct OutstandingTask {
     /// The WFT permit owned by this task, ensures we don't exceed max concurrent WFT, and makes
     /// sure the permit is automatically freed when we delete the task.
     pub _permit: OwnedMeteredSemPermit,
+}
+
+impl OutstandingTask {
+    pub fn has_pending_legacy_query(&self) -> bool {
+        self.pending_queries
+            .iter()
+            .any(|q| q.query_id == LEGACY_QUERY_ID)
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
