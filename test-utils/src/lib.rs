@@ -61,6 +61,7 @@ pub fn init_core_replay_preloaded(
     test_name: &str,
     history: &History,
 ) -> (Arc<dyn CoreWorker>, String) {
+    telemetry_init(&get_integ_telem_options()).expect("Telemetry inits cleanly");
     let worker_cfg = WorkerConfigBuilder::default()
         .namespace(NAMESPACE)
         .task_queue(test_name)

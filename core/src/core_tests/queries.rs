@@ -288,6 +288,64 @@ async fn legacy_query_failure_on_wft_failure() {
 
 #[rstest::rstest]
 #[tokio::test]
+async fn query_failure_because_nondeterminism(#[values(true, false)] legacy: bool) {
+    let wfid = "fake_wf_id";
+    let t = canned_histories::single_timer("1");
+    let tasks = [{
+        let mut pr = hist_to_poll_resp(
+            &t,
+            wfid.to_owned(),
+            ResponseType::AllHistory,
+            TEST_Q.to_string(),
+        );
+        if legacy {
+            pr.query = Some(WorkflowQuery {
+                query_type: "query-type".to_string(),
+                query_args: Some(b"hi".into()),
+                header: None,
+            });
+        } else {
+            pr.queries = HashMap::new();
+            pr.queries.insert(
+                "q1".to_string(),
+                WorkflowQuery {
+                    query_type: "query-type".to_string(),
+                    query_args: Some(b"hi".into()),
+                    header: None,
+                },
+            );
+        }
+        pr
+    }];
+    let mut mock = MockPollCfg::from_resp_batches(wfid, t, tasks, mock_workflow_client());
+    if legacy {
+        mock.num_expected_legacy_query_resps = 1;
+    } else {
+        mock.num_expected_fails = 1;
+    }
+    let mut mock = build_mock_pollers(mock);
+    mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
+    let core = mock_worker(mock);
+
+    let task = core.poll_workflow_activation().await.unwrap();
+    // Nondeterminism, should result in WFT/query being failed
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(task.run_id))
+        .await
+        .unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        task.jobs[0].variant,
+        Some(workflow_activation_job::Variant::RemoveFromCache(_))
+    );
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(task.run_id))
+        .await
+        .unwrap();
+
+    core.shutdown().await;
+}
+
+#[rstest::rstest]
+#[tokio::test]
 async fn legacy_query_after_complete(#[values(false, true)] full_history: bool) {
     let wfid = "fake_wf_id";
     let t = if full_history {
