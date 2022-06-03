@@ -188,8 +188,10 @@ pub fn telemetry_init(opts: &TelemetryOptions) -> Result<&'static GlobalTelemDat
                 .worker_threads(2)
                 .enable_all()
                 .build()?;
-            let mut globaldat = GlobalTelemDat::default();
-            globaldat.no_temporal_prefix_for_metrics = opts.no_temporal_prefix_for_metrics;
+            let mut globaldat = GlobalTelemDat {
+                no_temporal_prefix_for_metrics: opts.no_temporal_prefix_for_metrics,
+                ..Default::default()
+            };
 
             if let Some(ref logger) = opts.logging {
                 match logger {

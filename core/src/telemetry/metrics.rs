@@ -347,7 +347,7 @@ impl AggregatorSelector for SDKAggSelector {
             let dname = descriptor
                 .name()
                 .strip_prefix(metric_prefix())
-                .unwrap_or(descriptor.name());
+                .unwrap_or_else(|| descriptor.name());
             // Some recorders are just gauges
             match dname {
                 STICKY_CACHE_SIZE_NAME | NUM_POLLERS_NAME | TASK_SLOTS_AVAILABLE_NAME => {
