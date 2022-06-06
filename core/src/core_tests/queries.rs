@@ -3,7 +3,7 @@ use crate::{
         build_mock_pollers, canned_histories, hist_to_poll_resp, mock_worker, single_hist_mock_sg,
         MockPollCfg, ResponseType, TEST_Q,
     },
-    worker::client::mocks::mock_workflow_client,
+    worker::{client::mocks::mock_workflow_client, LEGACY_QUERY_ID},
 };
 use std::{
     collections::{HashMap, VecDeque},
@@ -665,6 +665,64 @@ async fn query_replay_with_continue_as_new_doesnt_reply_empty_command() {
             variant: Some(
                 QuerySuccess {
                     response: Some("whatever".into()),
+                }
+                .into(),
+            ),
+        }
+        .into(),
+    ))
+    .await
+    .unwrap();
+
+    core.shutdown().await;
+}
+
+#[tokio::test]
+async fn legacy_query_response_gets_not_found_not_fatal() {
+    let wfid = "fake_wf_id";
+    let t = canned_histories::single_timer("1");
+    let tasks = [{
+        let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), 1.into(), TEST_Q.to_string());
+        pr.query = Some(WorkflowQuery {
+            query_type: "query-type".to_string(),
+            query_args: Some(b"hi".into()),
+            header: None,
+        });
+        pr
+    }];
+    let mut mock = mock_workflow_client();
+    mock.expect_respond_legacy_query()
+        .times(1)
+        .returning(move |_, _| Err(tonic::Status::not_found("Query gone boi")));
+    let mock = MockPollCfg::from_resp_batches(wfid, t, tasks, mock);
+    let mut mock = build_mock_pollers(mock);
+    mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
+    let core = mock_worker(mock);
+
+    let task = core.poll_workflow_activation().await.unwrap();
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+        task.run_id,
+        start_timer_cmd(1, Duration::from_secs(1)),
+    ))
+    .await
+    .unwrap();
+
+    let task = core.poll_workflow_activation().await.unwrap();
+    // Poll again, and we end up getting a `query` field query response
+    assert_matches!(
+        task.jobs.as_slice(),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::QueryWorkflow(q)),
+        }] => q
+    );
+    // Fail wft which should result in query being failed
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+        task.run_id,
+        QueryResult {
+            query_id: LEGACY_QUERY_ID.to_string(),
+            variant: Some(
+                QuerySuccess {
+                    response: Some("hi".into()),
                 }
                 .into(),
             ),
