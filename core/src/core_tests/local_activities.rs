@@ -161,7 +161,10 @@ async fn local_act_heartbeat(#[case] shutdown_middle: bool) {
     let mock = mock_workflow_client();
     let mut mh = MockPollCfg::from_resp_batches(wf_id, t, [1, 2, 2, 2], mock);
     mh.enforce_correct_number_of_polls = false;
-    let mut worker = mock_sdk_cfg(mh, |wc| wc.max_cached_workflows = 1);
+    let mut worker = mock_sdk_cfg(mh, |wc| {
+        wc.max_cached_workflows = 1;
+        wc.max_outstanding_workflow_tasks = 1;
+    });
     let core = worker.core_worker.clone();
 
     let shutdown_barr: &'static Barrier = Box::leak(Box::new(Barrier::new(2)));

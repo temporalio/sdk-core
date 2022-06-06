@@ -43,6 +43,7 @@ pub(crate) struct WFStream {
 
     /// Ensures we stay at or below this worker's maximum concurrent workflow task limit
     wft_semaphore: MeteredSemaphore,
+    saw_last_allowed_wft: bool,
     shutdown_token: CancellationToken,
 
     metrics: MetricsContext,
@@ -154,6 +155,7 @@ impl WFStream {
                 basics.metrics.with_new_attrs([workflow_worker_type()]),
                 MetricsContext::available_task_slots,
             ),
+            saw_last_allowed_wft: false,
             shutdown_token: basics.shutdown_token,
             metrics: basics.metrics,
         };
@@ -166,6 +168,7 @@ impl WFStream {
                     WFStreamInput::NewWft(wft) => {
                         debug!(run_id=%wft.workflow_execution.run_id, "New WFT");
                         state.instantiate_or_update(wft);
+                        state.saw_last_allowed_wft = true;
                         None
                     }
                     WFStreamInput::Local(local_input) => {
@@ -216,6 +219,7 @@ impl WFStream {
                 }
                 state.reconcile_buffered();
                 if state.should_allow_poll() {
+                    state.saw_last_allowed_wft = false;
                     external_wft_allow_handle.allow_one();
                 }
                 if state.shutdown_done() {
@@ -455,15 +459,16 @@ impl WFStream {
             history_update,
             start_time,
         );
+        let _permit = self.wft_semaphore.try_acquire_owned().ok();
+        if _permit.is_none() {
+            dbg_panic!("Permits should always be available when processing a new WFT");
+        }
         run_handle.wft = Some(OutstandingTask {
             info: wft_info,
             hit_cache: !did_miss_cache,
             pending_queries,
             start_time,
-            _permit: self
-                .wft_semaphore
-                .try_acquire_owned()
-                .expect("WFT Permit is available if we allowed poll"),
+            _permit,
         })
     }
 
@@ -898,7 +903,8 @@ impl WFStream {
     }
 
     fn should_allow_poll(&self) -> bool {
-        self.runs.can_accept_new()
+        self.saw_last_allowed_wft
+            && self.runs.can_accept_new()
             && self.wft_semaphore.available_permits() > 0
             && self.buffered_polls_need_cache_slot.is_empty()
     }

@@ -695,8 +695,10 @@ pub(crate) struct OutstandingTask {
     pub pending_queries: Vec<QueryWorkflow>,
     pub start_time: Instant,
     /// The WFT permit owned by this task, ensures we don't exceed max concurrent WFT, and makes
-    /// sure the permit is automatically freed when we delete the task.
-    pub _permit: OwnedMeteredSemPermit,
+    /// sure the permit is automatically freed when we delete the task. Should always be `Some`
+    /// in normal operation, but in the event there is a bug with permit tracking, it's better to
+    /// allow temporarily exceeding the limit than panicking.
+    pub _permit: Option<OwnedMeteredSemPermit>,
 }
 
 impl OutstandingTask {

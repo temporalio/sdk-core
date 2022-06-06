@@ -821,3 +821,20 @@ macro_rules! job_assert {
         }
     };
 }
+
+/// Forcibly drive a future a number of times, enforcing it is always returning Pending. This is
+/// useful for ensuring some future has proceeded "enough" before racing it against another future.
+#[macro_export]
+macro_rules! advance_fut {
+    ($fut:ident) => {
+        ::futures::pin_mut!($fut);
+        {
+            let waker = ::futures::task::noop_waker();
+            let mut cx = core::task::Context::from_waker(&waker);
+            for _ in 0..10 {
+                assert_matches!($fut.poll_unpin(&mut cx), core::task::Poll::Pending);
+                ::tokio::task::yield_now().await;
+            }
+        }
+    };
+}
