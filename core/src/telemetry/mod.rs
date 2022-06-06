@@ -18,9 +18,12 @@ use opentelemetry::{
 };
 use opentelemetry_otlp::WithExportConfig;
 use parking_lot::{const_mutex, Mutex};
-use std::collections::HashMap;
-use std::convert::TryInto;
-use std::{collections::VecDeque, net::SocketAddr, time::Duration};
+use std::{
+    collections::{HashMap, VecDeque},
+    convert::TryInto,
+    net::SocketAddr,
+    time::Duration,
+};
 use temporal_sdk_core_api::CoreTelemetry;
 use tonic::metadata::MetadataMap;
 use tracing_subscriber::{filter::ParseError, layer::SubscriberExt, EnvFilter};
@@ -93,6 +96,11 @@ pub struct TelemetryOptions {
     /// Optional metrics exporter - set as None to disable.
     #[builder(setter(into, strip_option), default)]
     pub metrics: Option<MetricsExporter>,
+
+    /// If set true, do not prefix metrics with `temporal_`. Will be removed eventually as
+    /// the prefix is consistent with other SDKs.
+    #[builder(default)]
+    pub no_temporal_prefix_for_metrics: bool,
 }
 
 impl TelemetryOptions {
@@ -119,6 +127,7 @@ pub struct GlobalTelemDat {
     core_export_logger: Option<CoreExportLogger>,
     runtime: Option<tokio::runtime::Runtime>,
     prom_srv: Option<PromServer>,
+    no_temporal_prefix_for_metrics: bool,
 }
 
 impl GlobalTelemDat {
@@ -179,7 +188,10 @@ pub fn telemetry_init(opts: &TelemetryOptions) -> Result<&'static GlobalTelemDat
                 .worker_threads(2)
                 .enable_all()
                 .build()?;
-            let mut globaldat = GlobalTelemDat::default();
+            let mut globaldat = GlobalTelemDat {
+                no_temporal_prefix_for_metrics: opts.no_temporal_prefix_for_metrics,
+                ..Default::default()
+            };
 
             if let Some(ref logger) = opts.logging {
                 match logger {
@@ -318,6 +330,7 @@ pub(crate) fn test_telem_console() {
         logging: Some(Logger::Console),
         tracing: None,
         metrics: None,
+        no_temporal_prefix_for_metrics: false,
     })
     .unwrap();
 }
@@ -333,6 +346,7 @@ pub(crate) fn test_telem_collector() {
             headers: Default::default(),
         })),
         metrics: None,
+        no_temporal_prefix_for_metrics: false,
     })
     .unwrap();
 }

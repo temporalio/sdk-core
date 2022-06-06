@@ -450,10 +450,12 @@ pub fn get_integ_telem_options() -> TelemetryOptions {
         .ok()
         .map(|x| x.parse::<Url>().unwrap())
     {
-        ob.tracing(TraceExporter::Otel(OtelCollectorOptions {
+        let opts = OtelCollectorOptions {
             url,
             headers: Default::default(),
-        }));
+        };
+        ob.tracing(TraceExporter::Otel(opts.clone()));
+        ob.metrics(MetricsExporter::Otel(opts));
     }
     if let Some(addr) = env::var(PROM_ENABLE_ENV_VAR)
         .ok()

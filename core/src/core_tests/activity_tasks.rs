@@ -9,7 +9,7 @@ use crate::{
     worker::client::mocks::{mock_manual_workflow_client, mock_workflow_client},
     ActivityHeartbeat, Worker, WorkerConfigBuilder,
 };
-use futures::FutureExt;
+use futures::{pin_mut, task::noop_waker, FutureExt};
 use std::{
     cell::RefCell,
     collections::{hash_map::Entry, HashMap, VecDeque},
@@ -18,6 +18,7 @@ use std::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
+    task::{Context, Poll},
     time::Duration,
 };
 use temporal_client::WorkflowOptions;
@@ -47,7 +48,7 @@ use temporal_sdk_core_protos::{
     TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE,
 };
 use temporal_sdk_core_test_utils::{fanout_tasks, start_timer_cmd, TestWorker};
-use tokio::{join, sync::Barrier, time::sleep};
+use tokio::{sync::Barrier, time::sleep};
 
 #[tokio::test]
 async fn max_activities_respected() {
@@ -89,23 +90,23 @@ async fn max_activities_respected() {
     // We allow two outstanding activities, therefore first two polls should return right away
     let r1 = worker.poll_activity_task().await.unwrap();
     let _r2 = worker.poll_activity_task().await.unwrap();
-    // Third should block until we complete one of the first two
-    let last_finisher = AtomicUsize::new(0);
-    tokio::join! {
-        async {
-            worker.complete_activity_task(ActivityTaskCompletion {
-                task_token: r1.task_token,
-                result: Some(ActivityExecutionResult::ok(vec![1].into()))
-            }).await.unwrap();
-            last_finisher.store(1, Ordering::SeqCst);
-        },
-        async {
-            worker.poll_activity_task().await.unwrap();
-            last_finisher.store(2, Ordering::SeqCst);
-        }
-    };
-    // So that we know we blocked
-    assert_eq!(last_finisher.load(Ordering::Acquire), 2);
+    // Third poll should block until we complete one of the first two. To ensure this, manually
+    // poll it a bunch to see it's not resolving.
+    let waker = noop_waker();
+    let mut cx = Context::from_waker(&waker);
+    let poll_fut = worker.poll_activity_task();
+    pin_mut!(poll_fut);
+    for _ in 0..100 {
+        assert_matches!(poll_fut.poll_unpin(&mut cx), Poll::Pending);
+    }
+    worker
+        .complete_activity_task(ActivityTaskCompletion {
+            task_token: r1.task_token,
+            result: Some(ActivityExecutionResult::ok(vec![1].into())),
+        })
+        .await
+        .unwrap();
+    poll_fut.await.unwrap();
 }
 
 #[tokio::test]
@@ -515,29 +516,27 @@ async fn can_heartbeat_acts_during_shutdown() {
     ));
 
     let act = core.poll_activity_task().await.unwrap();
-    let complete_order = RefCell::new(vec![]);
-    // Start shutdown before completing the activity
-    let shutdown_fut = async {
-        core.shutdown().await;
-        complete_order.borrow_mut().push(1);
-    };
-    let complete_fut = async {
-        core.record_activity_heartbeat(ActivityHeartbeat {
-            task_token: act.task_token.clone(),
+    // Make sure shutdown has progressed before trying to record heartbeat / complete
+    let waker = noop_waker();
+    let mut cx = Context::from_waker(&waker);
+    let shutdown_fut = core.shutdown();
+    pin_mut!(shutdown_fut);
+    for _ in 0..100 {
+        assert_matches!(shutdown_fut.poll_unpin(&mut cx), Poll::Pending);
+    }
+    core.record_activity_heartbeat(ActivityHeartbeat {
+        task_token: act.task_token.clone(),
 
-            details: vec![vec![1_u8, 2, 3].into()],
-        });
-        core.complete_activity_task(ActivityTaskCompletion {
-            task_token: act.task_token,
+        details: vec![vec![1_u8, 2, 3].into()],
+    });
+    core.complete_activity_task(ActivityTaskCompletion {
+        task_token: act.task_token,
 
-            result: Some(ActivityExecutionResult::ok(vec![1].into())),
-        })
-        .await
-        .unwrap();
-        complete_order.borrow_mut().push(2);
-    };
-    join!(complete_fut, shutdown_fut);
-    assert_eq!(&complete_order.into_inner(), &[2, 1])
+        result: Some(ActivityExecutionResult::ok(vec![1].into())),
+    })
+    .await
+    .unwrap();
+    shutdown_fut.await;
 }
 
 /// Verifies that if a user has tried to record a heartbeat and then immediately after failed the
