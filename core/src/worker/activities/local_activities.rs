@@ -1,5 +1,7 @@
 use crate::{
-    abstractions::MeteredSemaphore, protosext::ValidScheduleLA, retry_logic::RetryPolicyExt,
+    abstractions::{MeteredSemaphore, OwnedMeteredSemPermit},
+    protosext::ValidScheduleLA,
+    retry_logic::RetryPolicyExt,
     MetricsContext, TaskToken,
 };
 use parking_lot::Mutex;
@@ -44,6 +46,7 @@ pub(crate) struct LocalInFlightActInfo {
     pub la_info: NewLocalAct,
     pub dispatch_time: Instant,
     pub attempt: u32,
+    _permit: OwnedMeteredSemPermit,
 }
 
 #[derive(Debug, Clone)]
@@ -268,7 +271,7 @@ impl LocalActivityManager {
     /// Returns the next pending local-activity related action, or None if shutdown has initiated
     /// and there are no more remaining actions to take.
     pub(crate) async fn next_pending(&self) -> Option<DispatchOrTimeoutLA> {
-        let new_or_retry = match self.rcvs.lock().await.next(&self.semaphore).await? {
+        let (new_or_retry, permit) = match self.rcvs.lock().await.next(&self.semaphore).await? {
             NewOrCancel::Cancel(c) => {
                 return match c {
                     CancelOrTimeout::Cancel(c) => Some(DispatchOrTimeoutLA::Dispatch(c)),
@@ -309,7 +312,7 @@ impl LocalActivityManager {
                     }
                 };
             }
-            NewOrCancel::New(n) => n,
+            NewOrCancel::New(n, perm) => (n, perm),
         };
 
         // It is important that there are no await points after receiving from the channel, as
@@ -364,6 +367,7 @@ impl LocalActivityManager {
                 la_info: orig,
                 dispatch_time: Instant::now(),
                 attempt,
+                _permit: permit,
             },
         );
         if let Some(to) = dat.timeout_tasks.get_mut(&id) {
@@ -408,7 +412,6 @@ impl LocalActivityManager {
                 seq_num: info.la_info.schedule_cmd.seq,
             };
             dlock.id_to_tt.remove(&exec_id);
-            self.semaphore.add_permit();
 
             match status {
                 LocalActivityExecutionResult::Completed(_)
@@ -514,7 +517,7 @@ enum CancelOrTimeout {
 }
 
 enum NewOrCancel {
-    New(NewOrRetry),
+    New(NewOrRetry, OwnedMeteredSemPermit),
     Cancel(CancelOrTimeout),
 }
 
@@ -532,13 +535,13 @@ impl RcvChans {
             cancel = async { self.cancels_req_rx.recv().await } => {
                 Some(NewOrCancel::Cancel(cancel.expect("Send halves of LA manager are not dropped")))
             }
-            maybe_new_or_retry = async {
+            (maybe_new_or_retry, perm) = async {
                 // Wait for a permit to take a task and forget it. Permits are removed until a
                 // completion.
-                new_sem.acquire().await.expect("is never closed").forget();
-                self.act_req_rx.recv().await
+                let perm = new_sem.acquire_owned().await.expect("is never closed");
+                (self.act_req_rx.recv().await, perm)
             } => Some(NewOrCancel::New(
-                maybe_new_or_retry.expect("Send halves of LA manager are not dropped")
+                maybe_new_or_retry.expect("Send halves of LA manager are not dropped"), perm
             )),
             _ = self.shutdown.cancelled() => None
         }

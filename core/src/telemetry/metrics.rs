@@ -1,4 +1,5 @@
 use super::TELEM_SERVICE_NAME;
+use crate::telemetry::GLOBAL_TELEM_DAT;
 use opentelemetry::{
     global,
     metrics::{Counter, Descriptor, InstrumentKind, Meter, ValueRecorder},
@@ -16,9 +17,6 @@ use std::{borrow::Cow, sync::Arc, time::Duration};
 /// appropriate k/vs have already been set.
 #[derive(Default, Clone, Debug)]
 pub(crate) struct MetricsContext {
-    // TODO: Ideally this would hold bound metrics, but using them is basically impossible because
-    //   of lifetime issues: https://github.com/open-telemetry/opentelemetry-rust/issues/629
-    //   Use once fixed.
     kvs: Arc<Vec<KeyValue>>,
 }
 
@@ -159,6 +157,18 @@ lazy_static::lazy_static! {
         global::meter(TELEM_SERVICE_NAME)
     };
 }
+fn metric_prefix() -> &'static str {
+    GLOBAL_TELEM_DAT
+        .get()
+        .map(|gtd| {
+            if gtd.no_temporal_prefix_for_metrics {
+                ""
+            } else {
+                "temporal_"
+            }
+        })
+        .unwrap_or("")
+}
 
 /// Define a temporal metric. All metrics are kept private to this file, and should be accessed
 /// through functions on the [MetricsContext]
@@ -166,14 +176,14 @@ macro_rules! tm {
     (ctr, $ident:ident, $name:expr) => {
         lazy_static::lazy_static! {
             static ref $ident: Counter<u64> = {
-                METRIC_METER.u64_counter($name).init()
+                METRIC_METER.u64_counter(metric_prefix().to_string() + $name).init()
             };
         }
     };
     (vr_u64, $ident:ident, $name:expr) => {
         lazy_static::lazy_static! {
             static ref $ident: ValueRecorder<u64> = {
-                METRIC_METER.u64_value_recorder($name).init()
+                METRIC_METER.u64_value_recorder(metric_prefix().to_string() + $name).init()
             };
         }
     };
@@ -334,8 +344,12 @@ impl AggregatorSelector for SDKAggSelector {
         }
 
         if *descriptor.instrument_kind() == InstrumentKind::ValueRecorder {
+            let dname = descriptor
+                .name()
+                .strip_prefix(metric_prefix())
+                .unwrap_or_else(|| descriptor.name());
             // Some recorders are just gauges
-            match descriptor.name() {
+            match dname {
                 STICKY_CACHE_SIZE_NAME | NUM_POLLERS_NAME | TASK_SLOTS_AVAILABLE_NAME => {
                     return Some(Arc::new(last_value()))
                 }
@@ -343,7 +357,7 @@ impl AggregatorSelector for SDKAggSelector {
             }
 
             // Other recorders will select their appropriate buckets
-            let buckets = match descriptor.name() {
+            let buckets = match dname {
                 WF_E2E_LATENCY_NAME => WF_LATENCY_MS_BUCKETS,
                 WF_TASK_EXECUTION_LATENCY_NAME | WF_TASK_REPLAY_LATENCY_NAME => WF_TASK_MS_BUCKETS,
                 WF_TASK_SCHED_TO_START_LATENCY_NAME | ACT_SCHED_TO_START_LATENCY_NAME => {
