@@ -1,18 +1,18 @@
 use crate::{
-    job_assert,
+    advance_fut, job_assert,
     replay::TestHistoryBuilder,
     test_help::{
         build_fake_worker, build_mock_pollers, build_multihist_mock_sg, canned_histories,
         gen_assert_and_fail, gen_assert_and_reply, hist_to_poll_resp, mock_sdk, mock_sdk_cfg,
         mock_worker, poll_and_reply, poll_and_reply_clears_outstanding_evicts, single_hist_mock_sg,
-        FakeWfResponses, MockPollCfg, MocksHolder, ResponseType,
+        test_worker_cfg, FakeWfResponses, MockPollCfg, MocksHolder, ResponseType,
         WorkflowCachingPolicy::{self, AfterEveryReply, NonSticky},
         TEST_Q,
     },
-    worker::client::mocks::mock_workflow_client,
+    worker::client::mocks::{mock_manual_workflow_client, mock_workflow_client},
     Worker,
 };
-use futures::stream;
+use futures::{stream, FutureExt};
 use rstest::{fixture, rstest};
 use std::{
     collections::VecDeque,
@@ -40,7 +40,7 @@ use temporal_sdk_core_protos::{
     temporal::api::{
         enums::v1::{EventType, WorkflowTaskFailedCause},
         failure::v1::Failure,
-        history::v1::{history_event, History, TimerFiredEventAttributes},
+        history::v1::{history_event, TimerFiredEventAttributes},
         workflowservice::v1::{
             GetWorkflowExecutionHistoryResponse, RespondWorkflowTaskCompletedResponse,
         },
@@ -48,7 +48,10 @@ use temporal_sdk_core_protos::{
     DEFAULT_WORKFLOW_TYPE,
 };
 use temporal_sdk_core_test_utils::{fanout_tasks, start_timer_cmd};
-use tokio::sync::Semaphore;
+use tokio::{
+    join,
+    sync::{Barrier, Semaphore},
+};
 
 #[fixture(hist_batches = &[])]
 fn single_timer_setup(hist_batches: &'static [usize]) -> Worker {
@@ -1063,7 +1066,7 @@ async fn lots_of_workflows() {
             }
         }
     });
-    tokio::join!(killer, poller);
+    join!(killer, poller);
     worker.shutdown().await;
 }
 
@@ -1274,7 +1277,7 @@ async fn buffered_work_drained_on_shutdown() {
         .await
         .unwrap();
     };
-    tokio::join!(poll_fut, complete_first, async {
+    join!(poll_fut, complete_first, async {
         // If the shutdown is sent too too fast, we might not have got a chance to even buffer work
         tokio::time::sleep(Duration::from_millis(5)).await;
         core.shutdown().await;
@@ -1531,7 +1534,8 @@ async fn failing_wft_doesnt_eat_permit_forever() {
             .unwrap();
     }
     assert_eq!(worker.outstanding_workflow_tasks().await, 0);
-    assert_eq!(worker.available_wft_permits().await, 2);
+    // 1 permit is in use because the next task is buffered and has re-used the permit
+    assert_eq!(worker.available_wft_permits().await, 1);
     // We should be "out of work" because the mock service thinks we didn't complete the last task,
     // which we didn't, because we don't spam failures. The real server would eventually time out
     // the task. Mock doesn't understand that, so the WFT permit is released because eventually a
@@ -1539,6 +1543,8 @@ async fn failing_wft_doesnt_eat_permit_forever() {
     // poll will work.
     outstanding_mock_tasks.unwrap().release_run(&run_id);
     let activation = worker.poll_workflow_activation().await.unwrap();
+    // There should be no change in permits, since this just unbuffered the buffered task
+    assert_eq!(worker.available_wft_permits().await, 1);
     worker
         .complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
             activation.run_id,
@@ -1546,6 +1552,7 @@ async fn failing_wft_doesnt_eat_permit_forever() {
         ))
         .await
         .unwrap();
+    assert_eq!(worker.available_wft_permits().await, 2);
 
     worker.shutdown().await;
 }
@@ -1688,54 +1695,6 @@ async fn tasks_from_completion_are_delivered() {
 }
 
 #[tokio::test]
-async fn evict_missing_wf_during_poll_doesnt_eat_permit() {
-    let wfid = "fake_wf_id";
-    let mut t = TestHistoryBuilder::default();
-    t.add_by_type(EventType::WorkflowExecutionStarted);
-    t.add_full_wf_task();
-    t.add_we_signaled("sig", vec![]);
-    t.add_full_wf_task();
-    t.add_workflow_execution_completed();
-
-    let mut mock = mock_workflow_client();
-    mock.expect_get_workflow_execution_history()
-        .times(1)
-        .returning(move |_, _, _| {
-            Ok(GetWorkflowExecutionHistoryResponse {
-                // Empty history so we error applying it (no jobs)
-                history: Some(History { events: vec![] }),
-                raw_history: vec![],
-                next_page_token: vec![],
-                archived: false,
-            })
-        });
-    let mut mock = single_hist_mock_sg(wfid, t, [ResponseType::OneTask(2)], mock, true);
-    mock.worker_cfg(|wc| {
-        wc.max_cached_workflows = 1;
-        wc.max_outstanding_workflow_tasks = 1;
-    });
-    let core = mock_worker(mock);
-
-    // We will get an eviction for the workflow (which lang never saw in the first place, but,
-    // that's fine) since it had an error while being created, and then we will evict it and
-    // the permit shall be restored.
-    let act = core.poll_workflow_activation().await.unwrap();
-    assert_matches!(
-        act.jobs.as_slice(),
-        [WorkflowActivationJob {
-            variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
-        }]
-    );
-    assert_eq!(core.available_wft_permits().await, 0);
-    core.complete_workflow_activation(WorkflowActivationCompletion::empty(act.run_id))
-        .await
-        .unwrap();
-    assert_eq!(core.available_wft_permits().await, 1);
-
-    core.shutdown().await;
-}
-
-#[tokio::test]
 async fn poll_faster_than_complete_wont_overflow_cache() {
     // Make workflow tasks for 5 different runs
     let tasks: Vec<_> = (1..=5)
@@ -1780,8 +1739,12 @@ async fn poll_faster_than_complete_wont_overflow_cache() {
     // an eviction, and buffer the new run task. However, the run we're trying to evict has pending
     // activations! Thus, we must complete them first before this poll will unblock, and then it
     // will unblock with the eviciton.
+    let p4 = core.poll_workflow_activation();
+    // Make sure the task gets buffered before we start the complete, so the LRU list is in the
+    // expected order and what we expect to evict will be evicted.
+    advance_fut!(p4);
     let p4 = async {
-        let p4 = core.poll_workflow_activation().await.unwrap();
+        let p4 = p4.await.unwrap();
         assert_matches!(
             &p4.jobs.as_slice(),
             [WorkflowActivationJob {
@@ -1798,7 +1761,7 @@ async fn poll_faster_than_complete_wont_overflow_cache() {
         .await
         .unwrap();
     };
-    let (p4, _) = tokio::join!(p4, p2_pending_completer);
+    let (p4, _) = join!(p4, p2_pending_completer);
     assert_eq!(core.cached_workflows().await, 3);
 
     // This poll should also block until the eviction is actually completed
@@ -1817,7 +1780,7 @@ async fn poll_faster_than_complete_wont_overflow_cache() {
             .unwrap();
     };
 
-    let (_p5, _) = tokio::join!(blocking_poll, complete_evict);
+    let (_p5, _) = join!(blocking_poll, complete_evict);
     assert_eq!(core.cached_workflows().await, 3);
     // The next poll will get an buffer a task for a new run, and generate an eviction for p3 but
     // that eviction cannot be obtained until we complete the existing outstanding task.
@@ -1839,7 +1802,7 @@ async fn poll_faster_than_complete_wont_overflow_cache() {
         .await
         .unwrap();
     };
-    let (p6, _) = tokio::join!(p6, completer);
+    let (p6, _) = join!(p6, completer);
     let complete_evict = async {
         core.complete_workflow_activation(WorkflowActivationCompletion::empty(p6.run_id))
             .await
@@ -1856,7 +1819,7 @@ async fn poll_faster_than_complete_wont_overflow_cache() {
         );
     };
 
-    tokio::join!(blocking_poll, complete_evict);
+    join!(blocking_poll, complete_evict);
     // p5 outstanding and final poll outstanding -- hence one permit available
     assert_eq!(core.available_wft_permits().await, 1);
     assert_eq!(core.cached_workflows().await, 3);
@@ -1985,4 +1948,69 @@ async fn autocompletes_wft_no_work() {
     );
 
     core.shutdown().await;
+}
+
+#[tokio::test]
+async fn no_race_acquiring_permits() {
+    let wfid = "fake_wf_id";
+    let mut mock_client = mock_manual_workflow_client();
+    // We need to allow two polls to happen by triggering two processing events in the workflow
+    // stream, but then delivering the actual tasks after that
+    let task_barr: &'static Barrier = Box::leak(Box::new(Barrier::new(2)));
+    mock_client
+        .expect_poll_workflow_task()
+        .returning(move |_, _| {
+            let t = canned_histories::single_timer("1");
+            let poll_resp =
+                hist_to_poll_resp(&t, wfid.to_owned(), 2.into(), TEST_Q.to_string()).resp;
+            async move {
+                task_barr.wait().await;
+                Ok(poll_resp.clone())
+            }
+            .boxed()
+        });
+    mock_client
+        .expect_complete_workflow_task()
+        .returning(|_| async move { Ok(Default::default()) }.boxed());
+
+    let worker = Worker::new_test(
+        test_worker_cfg()
+            .max_outstanding_workflow_tasks(1_usize)
+            .max_cached_workflows(10_usize)
+            .build()
+            .unwrap(),
+        mock_client,
+    );
+
+    // Two polls in a row, both of which will get stuck on the barrier and are only allowed to
+    // proceed after a call which will cause the workflow stream to process an event. Without the
+    // fix, this would've meant the stream though it was OK to poll twice, but once the tasks
+    // are received, it would find there was only one permit.
+    let poll_1_f = async {
+        let r = worker.poll_workflow_activation().await.unwrap();
+        worker
+            .complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+                r.run_id,
+                start_timer_cmd(1, Duration::from_secs(1)),
+            ))
+            .await
+            .unwrap();
+    };
+    let poll_2_f = async {
+        let r = worker.poll_workflow_activation().await.unwrap();
+        worker
+            .complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+                r.run_id,
+                start_timer_cmd(1, Duration::from_secs(1)),
+            ))
+            .await
+            .unwrap();
+    };
+    let other_f = async {
+        worker.cached_workflows().await;
+        task_barr.wait().await;
+        worker.cached_workflows().await;
+        task_barr.wait().await;
+    };
+    join!(poll_1_f, poll_2_f, other_f);
 }

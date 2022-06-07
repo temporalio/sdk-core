@@ -4,12 +4,14 @@ use crate::MetricsContext;
 use futures::{stream, Stream, StreamExt};
 use std::{
     fmt::{Debug, Formatter},
+    future::Future,
     sync::Arc,
 };
 use tokio::sync::{AcquireError, Notify, OwnedSemaphorePermit, Semaphore, TryAcquireError};
 
 /// Wraps a [Semaphore] with a function call that is fed the available permits any time a permit is
 /// acquired or restored through the provided methods
+#[derive(Clone)]
 pub(crate) struct MeteredSemaphore {
     sem: Arc<Semaphore>,
     metrics_ctx: MetricsContext,
@@ -93,18 +95,27 @@ impl StreamAllowHandle {
 /// The stream will start allowed, and sets itself to unallowed each time it delivers the next item.
 /// The returned [StreamAllowHandle::allow_one] function can be used to indicate it is OK to deliver
 /// the next item.
-pub(crate) fn stream_when_allowed<S>(input: S) -> (StreamAllowHandle, impl Stream<Item = S::Item>)
+pub(crate) fn stream_when_allowed<S, F, FF>(
+    input: S,
+    proceeder: FF,
+) -> (StreamAllowHandle, impl Stream<Item = (S::Item, F::Output)>)
 where
     S: Stream + Send + 'static,
+    F: Future,
+    FF: FnMut() -> F,
 {
     let acceptable_notify = Arc::new(Notify::new());
     acceptable_notify.notify_one();
     let handle = StreamAllowHandle { acceptable_notify };
     let stream = stream::unfold(
-        (handle.clone(), input.boxed()),
-        |(handle, mut input)| async {
+        ((handle.clone(), proceeder), input.boxed()),
+        |((handle, mut proceeder), mut input)| async {
             handle.acceptable_notify.notified().await;
-            input.next().await.map(|i| (i, (handle, input)))
+            let v = proceeder().await;
+            input
+                .next()
+                .await
+                .map(|i| ((i, v), ((handle, proceeder), input)))
         },
     );
     (handle, stream)
@@ -122,30 +133,56 @@ pub(crate) use dbg_panic;
 mod tests {
     use super::*;
     use futures::pin_mut;
-    use std::task::Poll;
+    use std::{cell::RefCell, task::Poll};
+    use tokio::sync::mpsc::unbounded_channel;
 
+    // This is fine. Test only / guaranteed to happen serially.
+    #[allow(clippy::await_holding_refcell_ref)]
     #[test]
     fn stream_when_allowed_works() {
         let inputs = stream::iter([1, 2, 3]);
-        let (handle, when_allowed) = stream_when_allowed(inputs);
+        let (allow_tx, allow_rx) = unbounded_channel();
+        let allow_rx = RefCell::new(allow_rx);
+        let (handle, when_allowed) = stream_when_allowed(inputs, || async {
+            allow_rx.borrow_mut().recv().await.unwrap()
+        });
 
         let waker = futures::task::noop_waker_ref();
         let mut cx = std::task::Context::from_waker(waker);
         pin_mut!(when_allowed);
 
-        assert_eq!(when_allowed.poll_next_unpin(&mut cx), Poll::Ready(Some(1)));
+        allow_tx.send(()).unwrap();
+        assert_eq!(
+            when_allowed.poll_next_unpin(&mut cx),
+            Poll::Ready(Some((1, ())))
+        );
         // Now, it won't be ready
-        assert_eq!(when_allowed.poll_next_unpin(&mut cx), Poll::Pending);
-        // Still not ready...
-        assert_eq!(when_allowed.poll_next_unpin(&mut cx), Poll::Pending);
+        for _ in 1..10 {
+            assert_eq!(when_allowed.poll_next_unpin(&mut cx), Poll::Pending);
+        }
         handle.allow_one();
-        assert_eq!(when_allowed.poll_next_unpin(&mut cx), Poll::Ready(Some(2)));
-        assert_eq!(when_allowed.poll_next_unpin(&mut cx), Poll::Pending);
-        assert_eq!(when_allowed.poll_next_unpin(&mut cx), Poll::Pending);
+        allow_tx.send(()).unwrap();
+        assert_eq!(
+            when_allowed.poll_next_unpin(&mut cx),
+            Poll::Ready(Some((2, ())))
+        );
+        for _ in 1..10 {
+            assert_eq!(when_allowed.poll_next_unpin(&mut cx), Poll::Pending);
+        }
         handle.allow_one();
-        assert_eq!(when_allowed.poll_next_unpin(&mut cx), Poll::Ready(Some(3)));
-        assert_eq!(when_allowed.poll_next_unpin(&mut cx), Poll::Pending);
+        for _ in 1..10 {
+            assert_eq!(when_allowed.poll_next_unpin(&mut cx), Poll::Pending);
+        }
+        allow_tx.send(()).unwrap();
+        assert_eq!(
+            when_allowed.poll_next_unpin(&mut cx),
+            Poll::Ready(Some((3, ())))
+        );
+        for _ in 1..10 {
+            assert_eq!(when_allowed.poll_next_unpin(&mut cx), Poll::Pending);
+        }
         handle.allow_one();
+        allow_tx.send(()).unwrap();
         assert_eq!(when_allowed.poll_next_unpin(&mut cx), Poll::Ready(None));
     }
 }

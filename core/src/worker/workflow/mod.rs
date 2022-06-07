@@ -82,7 +82,6 @@ type BoxedActivationStream = BoxStream<'static, Result<ActivationOrAuto, PollWfE
 
 /// Centralizes all state related to workflows and workflow tasks
 pub(crate) struct Workflows {
-    new_wft_tx: UnboundedSender<ValidPollWFTQResponse>,
     local_tx: UnboundedSender<LocalInput>,
     processing_task: tokio::sync::Mutex<Option<JoinHandle<()>>>,
     activation_stream: tokio::sync::Mutex<(
@@ -117,13 +116,11 @@ impl Workflows {
             + 'static,
         activity_tasks_handle: Option<ActivitiesFromWFTsHandle>,
     ) -> Self {
-        let (new_wft_tx, new_wft_rx) = unbounded_channel();
         let (local_tx, local_rx) = unbounded_channel();
         let shutdown_tok = basics.shutdown_token.clone();
         let mut stream = WFStream::build(
             basics,
             wft_stream,
-            new_wft_rx,
             UnboundedReceiverStream::new(local_rx),
             client.clone(),
             local_activity_request_sink,
@@ -153,7 +150,6 @@ impl Workflows {
             }
         });
         Self {
-            new_wft_tx,
             local_tx,
             processing_task: tokio::sync::Mutex::new(Some(processing_task)),
             activation_stream: tokio::sync::Mutex::new((
@@ -193,15 +189,6 @@ impl Workflows {
         }
     }
 
-    /// Queue a new WFT received from server for processing (ex: when a new WFT is obtained in
-    /// response to a completion). Most tasks should just come from the stream passed in during
-    /// construction.
-    pub fn new_wft(&self, wft: ValidPollWFTQResponse) {
-        self.new_wft_tx
-            .send(wft)
-            .expect("Rcv half of new WFT channel not closed");
-    }
-
     /// Queue an activation completion for processing, returning a future that will resolve with
     /// the outcome of that completion. See [ActivationCompletedOutcome].
     ///
@@ -232,6 +219,7 @@ impl Workflows {
         let completion_outcome = rx
             .await
             .expect("Send half of activation complete response not dropped");
+        let mut wft_from_complete = None;
         let reported_wft_to_server = match completion_outcome.outcome {
             ActivationCompleteOutcome::ReportWFTSuccess(report) => match report {
                 ServerCommandsWithWorkflowInfo {
@@ -256,8 +244,8 @@ impl Workflows {
                         force_create_new_workflow_task: force_new_wft,
                     };
                     let sticky_attrs = self.sticky_attrs.clone();
-                    // Do not return new WFT if we would not cache, because returned new WFTs are always
-                    // partial.
+                    // Do not return new WFT if we would not cache, because returned new WFTs are
+                    // always partial.
                     if sticky_attrs.is_none() {
                         completion.return_new_workflow_task = false;
                     }
@@ -266,7 +254,7 @@ impl Workflows {
                     self.handle_wft_reporting_errs(&run_id, || async {
                         let maybe_wft = self.client.complete_workflow_task(completion).await?;
                         if let Some(wft) = maybe_wft.workflow_task {
-                            self.new_wft(validate_wft(wft)?);
+                            wft_from_complete = Some(validate_wft(wft)?);
                         }
                         self.handle_eager_activities(
                             reserved_act_permits,
@@ -309,6 +297,7 @@ impl Workflows {
         self.post_activation(PostActivationMsg {
             run_id,
             reported_wft_to_server,
+            wft_from_complete,
         });
 
         Ok(completion_outcome.most_recently_processed_event)
@@ -518,7 +507,7 @@ struct ManagedRunHandle {
     /// run. This can happen when lang takes too long to complete a task and the task times out, for
     /// example. Upon next completion, the buffered response will be removed and can be made ready
     /// to be returned from polling
-    buffered_resp: Option<ValidPollWFTQResponse>,
+    buffered_resp: Option<PermittedWFT>,
     /// True if this machine has seen an event which ends the execution
     have_seen_terminal_event: bool,
     /// The most recently processed event id this machine has seen. 0 means it has seen nothing.
@@ -687,6 +676,13 @@ impl ActivationOrAuto {
         }
     }
 }
+
+#[derive(Debug)]
+pub(crate) struct PermittedWFT {
+    wft: ValidPollWFTQResponse,
+    permit: OwnedMeteredSemPermit,
+}
+
 #[derive(Debug)]
 pub(crate) struct OutstandingTask {
     pub info: WorkflowTaskInfo,
@@ -696,7 +692,7 @@ pub(crate) struct OutstandingTask {
     pub start_time: Instant,
     /// The WFT permit owned by this task, ensures we don't exceed max concurrent WFT, and makes
     /// sure the permit is automatically freed when we delete the task.
-    pub _permit: OwnedMeteredSemPermit,
+    pub permit: OwnedMeteredSemPermit,
 }
 
 impl OutstandingTask {
@@ -804,6 +800,7 @@ struct LocalResolutionMsg {
 struct PostActivationMsg {
     run_id: String,
     reported_wft_to_server: bool,
+    wft_from_complete: Option<ValidPollWFTQResponse>,
 }
 #[derive(Debug, Clone)]
 struct RequestEvictMsg {

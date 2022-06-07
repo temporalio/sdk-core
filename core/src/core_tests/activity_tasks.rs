@@ -1,5 +1,5 @@
 use crate::{
-    job_assert,
+    advance_fut, job_assert,
     test_help::{
         build_fake_worker, build_mock_pollers, canned_histories, gen_assert_and_reply,
         mock_manual_poller, mock_poller, mock_poller_from_resps, mock_worker, poll_and_reply,
@@ -9,7 +9,7 @@ use crate::{
     worker::client::mocks::{mock_manual_workflow_client, mock_workflow_client},
     ActivityHeartbeat, Worker, WorkerConfigBuilder,
 };
-use futures::{pin_mut, task::noop_waker, FutureExt};
+use futures::FutureExt;
 use std::{
     cell::RefCell,
     collections::{hash_map::Entry, HashMap, VecDeque},
@@ -18,7 +18,6 @@ use std::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
-    task::{Context, Poll},
     time::Duration,
 };
 use temporal_client::WorkflowOptions;
@@ -92,13 +91,8 @@ async fn max_activities_respected() {
     let _r2 = worker.poll_activity_task().await.unwrap();
     // Third poll should block until we complete one of the first two. To ensure this, manually
     // poll it a bunch to see it's not resolving.
-    let waker = noop_waker();
-    let mut cx = Context::from_waker(&waker);
     let poll_fut = worker.poll_activity_task();
-    pin_mut!(poll_fut);
-    for _ in 0..100 {
-        assert_matches!(poll_fut.poll_unpin(&mut cx), Poll::Pending);
-    }
+    advance_fut!(poll_fut);
     worker
         .complete_activity_task(ActivityTaskCompletion {
             task_token: r1.task_token,
@@ -517,13 +511,8 @@ async fn can_heartbeat_acts_during_shutdown() {
 
     let act = core.poll_activity_task().await.unwrap();
     // Make sure shutdown has progressed before trying to record heartbeat / complete
-    let waker = noop_waker();
-    let mut cx = Context::from_waker(&waker);
     let shutdown_fut = core.shutdown();
-    pin_mut!(shutdown_fut);
-    for _ in 0..100 {
-        assert_matches!(shutdown_fut.poll_unpin(&mut cx), Poll::Pending);
-    }
+    advance_fut!(shutdown_fut);
     core.record_activity_heartbeat(ActivityHeartbeat {
         task_token: act.task_token.clone(),
 

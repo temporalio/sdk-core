@@ -21,10 +21,7 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::{enums::v1::WorkflowTaskFailedCause, failure::v1::Failure as TFailure},
 };
-use tokio::sync::{
-    mpsc::{unbounded_channel, UnboundedReceiver},
-    oneshot,
-};
+use tokio::sync::{mpsc::unbounded_channel, oneshot};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tracing::{Level, Span};
@@ -36,7 +33,7 @@ use tracing::{Level, Span};
 pub(crate) struct WFStream {
     runs: RunCache,
     /// Buffered polls for new runs which need a cache slot to open up before we can handle them
-    buffered_polls_need_cache_slot: VecDeque<ValidPollWFTQResponse>,
+    buffered_polls_need_cache_slot: VecDeque<PermittedWFT>,
 
     /// Client for accessing server for history pagination etc.
     client: Arc<WorkerClientBag>,
@@ -50,7 +47,7 @@ pub(crate) struct WFStream {
 /// All possible inputs to the [WFStream]
 #[derive(derive_more::From)]
 enum WFStreamInput {
-    NewWft(ValidPollWFTQResponse),
+    NewWft(PermittedWFT),
     Local(LocalInput),
     // The stream given to us which represents the poller (or a mock) terminated.
     PollerDead,
@@ -82,13 +79,13 @@ pub(super) enum LocalInputs {
 #[derive(Debug, derive_more::From)]
 #[allow(clippy::large_enum_variant)] // PollerDead only ever gets used once, so not important.
 enum ExternalPollerInputs {
-    NewWft(ValidPollWFTQResponse),
+    NewWft(PermittedWFT),
     PollerDead,
 }
 impl From<ExternalPollerInputs> for WFStreamInput {
     fn from(l: ExternalPollerInputs) -> Self {
         match l {
-            ExternalPollerInputs::NewWft(n) => WFStreamInput::NewWft(n),
+            ExternalPollerInputs::NewWft(v) => WFStreamInput::NewWft(v),
             ExternalPollerInputs::PollerDead => WFStreamInput::PollerDead,
         }
     }
@@ -113,7 +110,6 @@ impl WFStream {
     pub(super) fn build(
         basics: WorkflowBasics,
         external_wfts: impl Stream<Item = ValidPollWFTQResponse> + Send + 'static,
-        wfts_from_complete: UnboundedReceiver<ValidPollWFTQResponse>,
         local_rx: impl Stream<Item = LocalInput> + Send + 'static,
         client: Arc<WorkerClientBag>,
         local_activity_request_sink: impl Fn(Vec<LocalActRequest>) -> Vec<LocalActivityResolution>
@@ -121,13 +117,18 @@ impl WFStream {
             + Sync
             + 'static,
     ) -> impl Stream<Item = Result<ActivationOrAuto, PollWfError>> {
-        let (external_wft_allow_handle, poller_wfts) = stream_when_allowed(external_wfts);
-        let new_wft_rx = stream::select(
-            poller_wfts
-                .map(ExternalPollerInputs::NewWft)
-                .chain(stream::once(async { ExternalPollerInputs::PollerDead })),
-            UnboundedReceiverStream::new(wfts_from_complete).map(ExternalPollerInputs::NewWft),
+        let wft_semaphore = MeteredSemaphore::new(
+            basics.max_outstanding_wfts,
+            basics.metrics.with_new_attrs([workflow_worker_type()]),
+            MetricsContext::available_task_slots,
         );
+        let wft_sem_clone = wft_semaphore.clone();
+        let proceeder = move || {
+            let wft_sem_clone = wft_sem_clone.clone();
+            async move { wft_sem_clone.acquire_owned().await.unwrap() }
+        };
+        let (external_wft_allow_handle, poller_wfts) =
+            stream_when_allowed(external_wfts, proceeder);
         let (run_update_tx, run_update_rx) = unbounded_channel();
         let local_rx = stream::select(
             local_rx.map(Into::into),
@@ -135,7 +136,11 @@ impl WFStream {
         );
         let all_inputs = stream::select_with_strategy(
             local_rx,
-            new_wft_rx.map(Into::into).boxed(),
+            poller_wfts
+                .map(|(wft, permit)| ExternalPollerInputs::NewWft(PermittedWFT { wft, permit }))
+                .chain(stream::once(async { ExternalPollerInputs::PollerDead }))
+                .map(Into::into)
+                .boxed(),
             // Priority always goes to the local stream
             |_: &mut ()| PollNext::Left,
         );
@@ -149,11 +154,7 @@ impl WFStream {
                 basics.metrics.clone(),
             ),
             client,
-            wft_semaphore: MeteredSemaphore::new(
-                basics.max_outstanding_wfts,
-                basics.metrics.with_new_attrs([workflow_worker_type()]),
-                MetricsContext::available_task_slots,
-            ),
+            wft_semaphore,
             shutdown_token: basics.shutdown_token,
             metrics: basics.metrics,
         };
@@ -163,9 +164,9 @@ impl WFStream {
                 let _span_g = span.enter();
 
                 let maybe_activation = match action {
-                    WFStreamInput::NewWft(wft) => {
-                        debug!(run_id=%wft.workflow_execution.run_id, "New WFT");
-                        state.instantiate_or_update(wft);
+                    WFStreamInput::NewWft(pwft) => {
+                        debug!(run_id=%pwft.wft.workflow_execution.run_id, "New WFT");
+                        state.instantiate_or_update(pwft);
                         None
                     }
                     WFStreamInput::Local(local_input) => {
@@ -365,10 +366,11 @@ impl WFStream {
         }
     }
 
-    #[instrument(level = "debug", skip(self, work), fields(run_id=%work.workflow_execution.run_id))]
-    fn instantiate_or_update(&mut self, work: ValidPollWFTQResponse) {
-        let mut work = if let Some(w) = self.buffer_resp_if_outstanding_work(work) {
-            w
+    #[instrument(level = "debug", skip(self, pwft), 
+                 fields(run_id=%pwft.wft.workflow_execution.run_id))]
+    fn instantiate_or_update(&mut self, pwft: PermittedWFT) {
+        let (mut work, permit) = if let Some(w) = self.buffer_resp_if_outstanding_work(pwft) {
+            (w.wft, w.permit)
         } else {
             return;
         };
@@ -377,7 +379,7 @@ impl WFStream {
         // If our cache is full and this WFT is for an unseen run we must first evict a run before
         // we can deal with this task. So, buffer the task in that case.
         if !self.runs.has_run(&run_id) && self.runs.is_full() {
-            self.buffer_resp_on_full_cache(work);
+            self.buffer_resp_on_full_cache(PermittedWFT { wft: work, permit });
             return;
         }
 
@@ -460,10 +462,7 @@ impl WFStream {
             hit_cache: !did_miss_cache,
             pending_queries,
             start_time,
-            _permit: self
-                .wft_semaphore
-                .try_acquire_owned()
-                .expect("WFT Permit is available if we allowed poll"),
+            permit,
         })
     }
 
@@ -623,6 +622,9 @@ impl WFStream {
     fn process_post_activation(&mut self, report: PostActivationMsg) {
         let run_id = &report.run_id;
 
+        // If we reported to server, we always want to mark it complete.
+        let maybe_t = self.complete_wft(run_id, report.reported_wft_to_server);
+
         if self
             .get_activation(run_id)
             .map(|a| a.has_eviction())
@@ -631,8 +633,16 @@ impl WFStream {
             self.evict_run(run_id);
         };
 
-        // If we reported to server, we always want to mark it complete.
-        self.complete_wft(run_id, report.reported_wft_to_server);
+        if let Some(wft) = report.wft_from_complete {
+            debug!(run_id=%wft.workflow_execution.run_id, "New WFT from completion");
+            if let Some(t) = maybe_t {
+                self.instantiate_or_update(PermittedWFT {
+                    wft,
+                    permit: t.permit,
+                })
+            }
+        }
+
         if let Some(rh) = self.runs.get_mut(run_id) {
             // Delete the activation
             rh.activation.take();
@@ -760,11 +770,8 @@ impl WFStream {
 
     /// Stores some work if there is any outstanding WFT or activation for the run. If there was
     /// not, returns the work back out inside the option.
-    fn buffer_resp_if_outstanding_work(
-        &mut self,
-        work: ValidPollWFTQResponse,
-    ) -> Option<ValidPollWFTQResponse> {
-        let run_id = &work.workflow_execution.run_id;
+    fn buffer_resp_if_outstanding_work(&mut self, work: PermittedWFT) -> Option<PermittedWFT> {
+        let run_id = &work.wft.workflow_execution.run_id;
         if let Some(mut run) = self.runs.get_mut(run_id) {
             let about_to_issue_evict = run.trying_to_evict.is_some() && !run.last_action_acked;
             let has_wft = run.wft.is_some();
@@ -776,7 +783,7 @@ impl WFStream {
                 || !run.last_action_acked
             {
                 debug!(run_id = %run_id, run = ?run,
-                       "Got new WFT for a run with outstanding work");
+                       "Got new WFT for a run with outstanding work, buffering it");
                 run.buffered_resp = Some(work);
                 None
             } else {
@@ -787,13 +794,13 @@ impl WFStream {
         }
     }
 
-    fn buffer_resp_on_full_cache(&mut self, work: ValidPollWFTQResponse) {
-        debug!(run_id=%work.workflow_execution.run_id, "Buffering WFT because cache is full");
+    fn buffer_resp_on_full_cache(&mut self, work: PermittedWFT) {
+        debug!(run_id=%work.wft.workflow_execution.run_id, "Buffering WFT because cache is full");
         // If there's already a buffered poll for the run, replace it.
         if let Some(rh) = self
             .buffered_polls_need_cache_slot
             .iter_mut()
-            .find(|w| w.workflow_execution.run_id == work.workflow_execution.run_id)
+            .find(|w| w.wft.workflow_execution.run_id == work.wft.workflow_execution.run_id)
         {
             *rh = work;
         } else {
@@ -898,9 +905,7 @@ impl WFStream {
     }
 
     fn should_allow_poll(&self) -> bool {
-        self.runs.can_accept_new()
-            && self.wft_semaphore.available_permits() > 0
-            && self.buffered_polls_need_cache_slot.is_empty()
+        self.runs.can_accept_new() && self.buffered_polls_need_cache_slot.is_empty()
     }
 
     // Useful when debugging
