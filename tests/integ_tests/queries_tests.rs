@@ -340,20 +340,21 @@ async fn fail_legacy_query() {
     let core = starter.get_worker().await;
     let workflow_id = starter.get_task_queue().to_string();
     let task = core.poll_workflow_activation().await.unwrap();
+    let t1_resp = vec![
+        StartTimer {
+            seq: 1,
+            start_to_fire_timeout: Some(Duration::from_millis(500).into()),
+        }
+        .into(),
+        StartTimer {
+            seq: 2,
+            start_to_fire_timeout: Some(Duration::from_secs(3).into()),
+        }
+        .into(),
+    ];
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         task.run_id.clone(),
-        vec![
-            StartTimer {
-                seq: 1,
-                start_to_fire_timeout: Some(Duration::from_millis(500).into()),
-            }
-            .into(),
-            StartTimer {
-                seq: 2,
-                start_to_fire_timeout: Some(Duration::from_secs(3).into()),
-            }
-            .into(),
-        ],
+        t1_resp.clone(),
     ))
     .await
     .unwrap();
@@ -411,7 +412,22 @@ async fn fail_legacy_query() {
         ))
         .await
         .unwrap();
-        // Finish the workflow
+        // Finish the workflow (handling cache removal)
+        let task = core.poll_workflow_activation().await.unwrap();
+        core.complete_workflow_activation(WorkflowActivationCompletion::empty(task.run_id))
+            .await
+            .unwrap();
+        let task = core.poll_workflow_activation().await.unwrap();
+        core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
+            task.run_id,
+            t1_resp.clone(),
+        ))
+        .await
+        .unwrap();
+        let task = core.poll_workflow_activation().await.unwrap();
+        core.complete_workflow_activation(WorkflowActivationCompletion::empty(task.run_id))
+            .await
+            .unwrap();
         let task = core.poll_workflow_activation().await.unwrap();
         core.complete_execution(&task.run_id).await;
     };
