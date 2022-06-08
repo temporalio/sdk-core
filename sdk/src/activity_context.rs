@@ -8,11 +8,8 @@ use std::{
 };
 use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::{
-    coresdk::{
-        activity_task,
-        common::{Payload, RetryPolicy, WorkflowExecution},
-        ActivityHeartbeat,
-    },
+    coresdk::{activity_task, ActivityHeartbeat},
+    temporal::api::common::v1::{Payload, RetryPolicy, WorkflowExecution},
     utilities::TryIntoOrNone,
 };
 use tokio_util::sync::CancellationToken;

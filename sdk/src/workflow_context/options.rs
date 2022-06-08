@@ -1,11 +1,13 @@
 use std::{collections::HashMap, time::Duration};
-use temporal_sdk_core_protos::coresdk::{
-    child_workflow::ChildWorkflowCancellationType,
-    common::{Payload, RetryPolicy},
-    workflow_commands::{
-        ActivityCancellationType, ScheduleActivity, ScheduleLocalActivity,
-        StartChildWorkflowExecution,
+use temporal_sdk_core_protos::{
+    coresdk::{
+        child_workflow::ChildWorkflowCancellationType,
+        workflow_commands::{
+            ActivityCancellationType, ScheduleActivity, ScheduleLocalActivity,
+            StartChildWorkflowExecution,
+        },
     },
+    temporal::api::common::v1::{Payload, RetryPolicy},
 };
 
 // TODO: Before release, probably best to avoid using proto types entirely here. They're awkward.

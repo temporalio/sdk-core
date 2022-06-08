@@ -11,11 +11,15 @@ use crate::{
 };
 use std::{convert::TryInto, time::Duration};
 use temporal_sdk::{WorkflowFunction, WorkflowResult};
-use temporal_sdk_core_protos::coresdk::{
-    activity_result::ActivityExecutionResult,
-    common::Payload,
-    workflow_activation::{create_evict_activation, remove_from_cache::EvictionReason},
-    workflow_completion::{workflow_activation_completion::Status, WorkflowActivationCompletion},
+use temporal_sdk_core_protos::{
+    coresdk::{
+        activity_result::ActivityExecutionResult,
+        workflow_activation::{create_evict_activation, remove_from_cache::EvictionReason},
+        workflow_completion::{
+            workflow_activation_completion::Status, WorkflowActivationCompletion,
+        },
+    },
+    temporal::api::common::v1::Payload,
 };
 use tokio::{
     sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},

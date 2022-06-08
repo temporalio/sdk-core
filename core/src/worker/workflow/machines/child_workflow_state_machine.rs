@@ -9,7 +9,6 @@ use temporal_sdk_core_protos::{
         child_workflow::{
             self as wfr, child_workflow_result::Status as ChildWorkflowStatus, ChildWorkflowResult,
         },
-        common::Payload,
         workflow_activation::{
             resolve_child_workflow_execution_start, ResolveChildWorkflowExecution,
             ResolveChildWorkflowExecutionStart, ResolveChildWorkflowExecutionStartCancelled,
@@ -19,7 +18,7 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::{
         command::v1::Command,
-        common::v1::{Payloads, WorkflowExecution, WorkflowType},
+        common::v1::{Payload, Payloads, WorkflowExecution, WorkflowType},
         enums::v1::{
             CommandType, EventType, RetryState, StartChildWorkflowExecutionFailedCause, TimeoutType,
         },

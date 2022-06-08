@@ -161,15 +161,13 @@ impl From<Created> for CommandIssued {
 
 #[cfg(test)]
 mod tests {
+    use super::{super::OnEventWrapper, *};
+    use crate::{replay::TestHistoryBuilder, worker::workflow::ManagedWFFunc};
     use rustfsm::StateMachine;
     use temporal_sdk::{WfContext, WorkflowFunction};
-    use temporal_sdk_core_protos::{
-        coresdk::common::Payload, temporal::api::command::v1::command::Attributes,
+    use temporal_sdk_core_protos::temporal::api::{
+        command::v1::command::Attributes, common::v1::Payload,
     };
-
-    use crate::{replay::TestHistoryBuilder, worker::workflow::ManagedWFFunc};
-
-    use super::{super::OnEventWrapper, *};
 
     #[tokio::test]
     async fn upsert_search_attrs_from_workflow() {

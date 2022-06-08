@@ -3,7 +3,7 @@ use crate::{
     coresdk::{
         common::{
             build_has_change_marker_details, build_local_activity_marker_details,
-            NamespacedWorkflowExecution, Payload as CorePayload,
+            NamespacedWorkflowExecution,
         },
         external_data::LocalActivityMarkerData,
         IntoPayloadsExt,
@@ -170,7 +170,7 @@ impl TestHistoryBuilder {
         &mut self,
         scheduled_event_id: i64,
         started_event_id: i64,
-        payload: CorePayload,
+        payload: Payload,
     ) {
         self.add(
             EventType::ActivityTaskCompleted,
@@ -254,7 +254,7 @@ impl TestHistoryBuilder {
         &mut self,
         seq: u32,
         activity_id: &str,
-        payload: Option<CorePayload>,
+        payload: Option<Payload>,
         failure: Option<Failure>,
         complete_time: Option<Timestamp>,
     ) {
@@ -283,7 +283,7 @@ impl TestHistoryBuilder {
         &mut self,
         seq: u32,
         activity_id: &str,
-        payload: CorePayload,
+        payload: Payload,
     ) {
         self.add_local_activity_marker(seq, activity_id, Some(payload), None, None);
     }
@@ -292,7 +292,7 @@ impl TestHistoryBuilder {
         &mut self,
         seq: u32,
         activity_id: &str,
-        payload: CorePayload,
+        payload: Payload,
         complete_time: Timestamp,
     ) {
         self.add_local_activity_marker(seq, activity_id, Some(payload), None, Some(complete_time));

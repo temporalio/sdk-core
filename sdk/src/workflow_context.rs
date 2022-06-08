@@ -25,17 +25,20 @@ use std::{
     task::Poll,
     time::{Duration, SystemTime},
 };
-use temporal_sdk_core_protos::coresdk::{
-    activity_result::{activity_resolution, ActivityResolution},
-    child_workflow::ChildWorkflowResult,
-    common::{NamespacedWorkflowExecution, Payload},
-    workflow_activation::resolve_child_workflow_execution_start::Status as ChildWorkflowStartStatus,
-    workflow_commands::{
-        request_cancel_external_workflow_execution as cancel_we,
-        signal_external_workflow_execution as sig_we, workflow_command,
-        RequestCancelExternalWorkflowExecution, SetPatchMarker, SignalExternalWorkflowExecution,
-        StartTimer, UpsertWorkflowSearchAttributes,
+use temporal_sdk_core_protos::{
+    coresdk::{
+        activity_result::{activity_resolution, ActivityResolution},
+        child_workflow::ChildWorkflowResult,
+        common::NamespacedWorkflowExecution,
+        workflow_activation::resolve_child_workflow_execution_start::Status as ChildWorkflowStartStatus,
+        workflow_commands::{
+            request_cancel_external_workflow_execution as cancel_we,
+            signal_external_workflow_execution as sig_we, workflow_command,
+            RequestCancelExternalWorkflowExecution, SetPatchMarker,
+            SignalExternalWorkflowExecution, StartTimer, UpsertWorkflowSearchAttributes,
+        },
     },
+    temporal::api::common::v1::Payload,
 };
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio_stream::wrappers::UnboundedReceiverStream;

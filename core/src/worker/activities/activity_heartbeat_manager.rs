@@ -9,8 +9,10 @@ use std::{
     time::{self, Duration, Instant},
 };
 use temporal_sdk_core_protos::{
-    coresdk::{activity_task::ActivityCancelReason, common, ActivityHeartbeat, IntoPayloadsExt},
-    temporal::api::workflowservice::v1::RecordActivityTaskHeartbeatResponse,
+    coresdk::{activity_task::ActivityCancelReason, ActivityHeartbeat, IntoPayloadsExt},
+    temporal::api::{
+        common::v1::Payload, workflowservice::v1::RecordActivityTaskHeartbeatResponse,
+    },
 };
 use tokio::{
     sync::{
@@ -47,7 +49,7 @@ enum HeartbeatAction {
 #[derive(Debug)]
 pub struct ValidActivityHeartbeat {
     pub task_token: TaskToken,
-    pub details: Vec<common::Payload>,
+    pub details: Vec<Payload>,
     pub throttle_interval: time::Duration,
 }
 
@@ -58,7 +60,7 @@ enum HeartbeatExecutorAction {
     /// Report heartbeat to the server
     Report {
         task_token: TaskToken,
-        details: Vec<common::Payload>,
+        details: Vec<Payload>,
     },
 }
 
@@ -140,7 +142,7 @@ impl ActivityHeartbeatManager {
 #[derive(Debug)]
 struct ActivityHeartbeatState {
     /// If None and throttle interval is over, untrack this task token
-    last_recorded_details: Option<Vec<common::Payload>>,
+    last_recorded_details: Option<Vec<Payload>>,
     /// True if we've queued up a request to record against server, but it hasn't yet completed
     is_record_in_flight: bool,
     last_send_requested: Instant,
@@ -401,9 +403,8 @@ mod test {
 
     use crate::worker::client::mocks::mock_workflow_client;
     use std::time::Duration;
-    use temporal_sdk_core_protos::{
-        coresdk::common::Payload,
-        temporal::api::workflowservice::v1::RecordActivityTaskHeartbeatResponse,
+    use temporal_sdk_core_protos::temporal::api::{
+        common::v1::Payload, workflowservice::v1::RecordActivityTaskHeartbeatResponse,
     };
     use tokio::time::sleep;
 

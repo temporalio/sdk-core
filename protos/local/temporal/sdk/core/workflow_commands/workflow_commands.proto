@@ -9,6 +9,8 @@ package coresdk.workflow_commands;
 
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
+import "temporal/api/common/v1/message.proto";
+import "temporal/api/enums/v1/workflow.proto";
 import "temporal/api/failure/v1/message.proto";
 import "temporal/sdk/core/child_workflow/child_workflow.proto";
 import "temporal/sdk/core/common/common.proto";
@@ -55,9 +57,9 @@ message ScheduleActivity {
     string namespace = 4;
     // The name of the task queue to place this activity request in
     string task_queue = 5;
-    map<string, common.Payload> headers = 6;
+    map<string, temporal.api.common.v1.Payload> headers = 6;
     /// Arguments/input to the activity. Called "input" upstream.
-    repeated common.Payload arguments = 7;
+    repeated temporal.api.common.v1.Payload arguments = 7;
     /// Indicates how long the caller is willing to wait for an activity completion. Limits how long
     /// retries will be attempted. Either this or start_to_close_timeout_seconds must be specified.
     /// When not specified defaults to the workflow execution timeout.
@@ -74,7 +76,7 @@ message ScheduleActivity {
     /// Activities are provided by a default retry policy controlled through the service dynamic
     /// configuration. Retries are happening up to schedule_to_close_timeout. To disable retries set
     /// retry_policy.maximum_attempts to 1.
-    common.RetryPolicy retry_policy = 12;
+    temporal.api.common.v1.RetryPolicy retry_policy = 12;
     /// Defines how the workflow will wait (or not) for cancellation of the activity to be confirmed
     ActivityCancellationType cancellation_type = 13;
     /// If set, the worker will not tell the service that it can immediately start executing this
@@ -95,9 +97,9 @@ message ScheduleLocalActivity {
     /// If this local activity is a retry (as per the attempt field) this needs to be the original
     /// scheduling time (as provided in `DoBackoff`)
     google.protobuf.Timestamp original_schedule_time = 5;
-    map<string, common.Payload> headers = 6;
+    map<string, temporal.api.common.v1.Payload> headers = 6;
     /// Arguments/input to the activity.
-    repeated common.Payload arguments = 7;
+    repeated temporal.api.common.v1.Payload arguments = 7;
     /// Indicates how long the caller is willing to wait for local activity completion. Limits how
     /// long retries will be attempted. When not specified defaults to the workflow execution
     /// timeout (which may be unset).
@@ -115,7 +117,7 @@ message ScheduleLocalActivity {
     google.protobuf.Duration start_to_close_timeout = 10;
     /// Specify a retry policy for the local activity. By default local activities will be retried
     /// indefinitely.
-    common.RetryPolicy retry_policy = 11;
+    temporal.api.common.v1.RetryPolicy retry_policy = 11;
     /// If the activity is retrying and backoff would exceed this value, lang will be told to
     /// schedule a timer and retry the activity after. Otherwise, backoff will happen internally in
     /// core. Defaults to 1 minute.
@@ -158,12 +160,12 @@ message QueryResult {
 }
 
 message QuerySuccess {
-    common.Payload response = 1;
+    temporal.api.common.v1.Payload response = 1;
 }
 
 /// Issued when the workflow completes successfully
 message CompleteWorkflowExecution {
-    common.Payload result = 1;
+    temporal.api.common.v1.Payload result = 1;
 }
 
 /// Issued when the workflow errors out
@@ -181,17 +183,17 @@ message ContinueAsNewWorkflowExecution {
     string task_queue = 2;
     /// Inputs to the workflow code. Should be specified. Will not re-use old arguments, as that
     /// typically wouldn't make any sense.
-    repeated common.Payload arguments = 3;
+    repeated temporal.api.common.v1.Payload arguments = 3;
     /// Timeout for a single run of the new workflow.
     google.protobuf.Duration workflow_run_timeout = 4;
     /// Timeout of a single workflow task.
     google.protobuf.Duration workflow_task_timeout = 5;
     /// Memo fields
-    map<string, common.Payload> memo = 6;
+    map<string, temporal.api.common.v1.Payload> memo = 6;
     /// Header fields
-    map<string, common.Payload> headers = 7;
+    map<string, temporal.api.common.v1.Payload> headers = 7;
     /// Search attributes
-    map<string, common.Payload> search_attributes = 8;
+    map<string, temporal.api.common.v1.Payload> search_attributes = 8;
 }
 
 /// Indicate a workflow has completed as cancelled. Generally sent as a response to an activation
@@ -217,7 +219,7 @@ message StartChildWorkflowExecution {
     string workflow_id = 3;
     string workflow_type = 4;
     string task_queue = 5;
-    repeated common.Payload input = 6;
+    repeated temporal.api.common.v1.Payload input = 6;
     /// Total workflow execution timeout including retries and continue as new.
     google.protobuf.Duration workflow_execution_timeout = 7;
     /// Timeout of a single workflow run.
@@ -228,15 +230,15 @@ message StartChildWorkflowExecution {
     child_workflow.ParentClosePolicy parent_close_policy = 10;
     // string control = 11; (unused from StartChildWorkflowExecutionCommandAttributes)
     // Default: WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE.
-    common.WorkflowIdReusePolicy workflow_id_reuse_policy = 12;
-    common.RetryPolicy retry_policy = 13;
+    temporal.api.enums.v1.WorkflowIdReusePolicy workflow_id_reuse_policy = 12;
+    temporal.api.common.v1.RetryPolicy retry_policy = 13;
     string cron_schedule = 14;
     /// Header fields
-    map<string, common.Payload> headers = 15;
+    map<string, temporal.api.common.v1.Payload> headers = 15;
     /// Memo fields
-    map<string, common.Payload> memo = 16;
+    map<string, temporal.api.common.v1.Payload> memo = 16;
     /// Search attributes
-    map<string, common.Payload> search_attributes = 17;
+    map<string, temporal.api.common.v1.Payload> search_attributes = 17;
     /// Defines behaviour of the underlying workflow when child workflow cancellation has been requested.
     child_workflow.ChildWorkflowCancellationType cancellation_type = 18;
 }
@@ -274,9 +276,9 @@ message SignalExternalWorkflowExecution {
     /// Name of the signal handler
     string signal_name = 4;
     /// Arguments for the handler
-    repeated common.Payload args = 5;
+    repeated temporal.api.common.v1.Payload args = 5;
     /// Headers to attach to the signal
-    map<string, common.Payload> headers = 6;
+    map<string, temporal.api.common.v1.Payload> headers = 6;
 }
 
 /// Can be used to cancel not-already-sent `SignalExternalWorkflowExecution` commands
@@ -288,5 +290,5 @@ message CancelSignalWorkflow {
 message UpsertWorkflowSearchAttributes {
     /// SearchAttributes fields - equivalent to indexed_fields on api. Key = search index, Value =
     /// value?
-    map<string, common.Payload> search_attributes = 1;
+    map<string, temporal.api.common.v1.Payload> search_attributes = 1;
 }

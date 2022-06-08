@@ -4,26 +4,6 @@ package coresdk.common;
 
 import "google/protobuf/duration.proto";
 
-// Many of the messages in here are exact or near duplicates of the protobufs defined by the
-// Temporal API. We dupe them here to introduce better ergonomics wherever possible, and to
-// decouple ourselves from upstream changes. Additionally, we have no need for wire compatibility
-// between core and lang sdks, since the lang SDK chooses which version of core it wants to use.
-
-// Used as arguments to activities, signals, queries, etc.
-message Payload {
-    map<string,bytes> metadata = 1;
-    bytes data = 2;
-}
-
-// Identifying information about a particular workflow execution. Namespace is expected to be
-// assumed or included in whatever message is wrapping this one.
-message WorkflowExecution {
-    // Can never be empty
-    string workflow_id = 1;
-    // May be empty if the most recent run of the workflow with the given ID is being targeted
-    string run_id = 2;
-}
-
 // Identifying information about a particular workflow execution, including namespace
 message NamespacedWorkflowExecution {
     // Namespace the workflow run is located in
@@ -32,48 +12,4 @@ message NamespacedWorkflowExecution {
     string workflow_id = 2;
     // May be empty if the most recent run of the workflow with the given ID is being targeted
     string run_id = 3;
-}
-
-
-// Defines how an activity or workflow should be retried in the event of failure, timeout, etc.
-// Defaults may differ depending on what this is being used for. See containing messages.
-message RetryPolicy {
-    // Interval of the first retry. If backoff_coefficient is 1.0 then it is used for all
-    // retries. If this is not specified, there will be *no retrying*. Lang SDKs should require
-    // this to be set.
-    google.protobuf.Duration initial_interval = 1;
-    // Coefficient used to calculate the next retry interval. The next retry interval is previous
-    // interval multiplied by the coefficient. Must be 1 or larger.
-    double backoff_coefficient = 2;
-    // Maximum interval between retries. Exponential backoff leads to interval increase. This value
-    // caps that interval.
-    google.protobuf.Duration maximum_interval = 3;
-    // Maximum number of attempts. When exceeded, retrying will stop. 1 disables retries. 0 means
-    // unlimited retries (until the activity or workflow's total timeout is reached).
-    int32 maximum_attempts = 4;
-    // If a stringified error type matches something in this list, retries will cease.
-    repeated string non_retryable_error_types = 5;
-}
-
-enum WorkflowIdReusePolicy {
-    WORKFLOW_ID_REUSE_POLICY_UNSPECIFIED = 0;
-    // Allow start a workflow execution using the same workflow Id, when workflow not running.
-    WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE = 1;
-    // Allow start a workflow execution using the same workflow Id, when workflow not running, and the last execution close state is in
-    // [terminated, cancelled, timed out, failed].
-    WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE_FAILED_ONLY = 2;
-    // Do not allow start a workflow execution using the same workflow Id at all.
-    WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE = 3;
-}
-
-/** Possible causes of failure to cancel an external workflow */
-enum CancelExternalWorkflowExecutionFailedCause {
-    CANCEL_EXTERNAL_WORKFLOW_EXECUTION_FAILED_CAUSE_UNSPECIFIED = 0;
-    CANCEL_EXTERNAL_WORKFLOW_EXECUTION_FAILED_CAUSE_EXTERNAL_WORKFLOW_EXECUTION_NOT_FOUND = 1;
-}
-
-/** Possible causes of failure to signal an external workflow */
-enum SignalExternalWorkflowExecutionFailedCause {
-    SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_FAILED_CAUSE_UNSPECIFIED = 0;
-    SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_FAILED_CAUSE_EXTERNAL_WORKFLOW_EXECUTION_NOT_FOUND = 1;
 }

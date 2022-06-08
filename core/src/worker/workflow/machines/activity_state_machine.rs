@@ -9,13 +9,12 @@ use std::convert::{TryFrom, TryInto};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{self as ar, activity_resolution, ActivityResolution, Cancellation},
-        common::Payload,
         workflow_activation::ResolveActivity,
         workflow_commands::{ActivityCancellationType, ScheduleActivity},
     },
     temporal::api::{
         command::v1::{command, Command, RequestCancelActivityTaskCommandAttributes},
-        common::v1::{ActivityType, Payloads},
+        common::v1::{ActivityType, Payload, Payloads},
         enums::v1::{CommandType, EventType, RetryState},
         failure::v1::{
             self as failure, failure::FailureInfo, ActivityFailureInfo, CanceledFailureInfo,

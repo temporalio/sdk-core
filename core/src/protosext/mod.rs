@@ -15,7 +15,7 @@ use temporal_sdk_core_protos::{
         activity_result::{activity_execution_result, activity_execution_result::Status},
         common::{
             decode_change_marker_details, extract_local_activity_marker_data,
-            extract_local_activity_marker_details, Payload as SDKPayload, RetryPolicy,
+            extract_local_activity_marker_details,
         },
         external_data::LocalActivityMarkerData,
         workflow_activation::{
@@ -28,7 +28,7 @@ use temporal_sdk_core_protos::{
         workflow_completion,
     },
     temporal::api::{
-        common::v1::{Payload, WorkflowExecution},
+        common::v1::{Payload, RetryPolicy, WorkflowExecution},
         enums::v1::EventType,
         failure::v1::Failure,
         history::v1::{history_event, History, HistoryEvent, MarkerRecordedEventAttributes},
@@ -264,8 +264,8 @@ pub struct ValidScheduleLA {
     pub activity_type: String,
     pub attempt: u32,
     pub original_schedule_time: Option<SystemTime>,
-    pub headers: HashMap<String, SDKPayload>,
-    pub arguments: Vec<SDKPayload>,
+    pub headers: HashMap<String, Payload>,
+    pub arguments: Vec<Payload>,
     pub schedule_to_start_timeout: Option<Duration>,
     pub close_timeouts: LACloseTimeouts,
     pub retry_policy: RetryPolicy,

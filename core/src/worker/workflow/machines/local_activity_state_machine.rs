@@ -106,7 +106,7 @@ impl From<CompleteLocalActivityData> for ResolveDat {
         ResolveDat {
             result: match d.result {
                 Ok(res) => LocalActivityExecutionResult::Completed(Success {
-                    result: Some(res.into()),
+                    result: Some(res),
                 }),
                 Err(fail) => {
                     if matches!(fail.failure_info, Some(FailureInfo::CanceledFailureInfo(_))) {

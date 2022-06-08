@@ -17,7 +17,6 @@ use std::{
 };
 use temporal_sdk_core_protos::{
     coresdk::{
-        common::Payload,
         workflow_activation::{
             workflow_activation_job::Variant, FireTimer, NotifyHasPatch, ResolveActivity,
             ResolveChildWorkflowExecution, ResolveChildWorkflowExecutionStart, WorkflowActivation,
@@ -33,7 +32,7 @@ use temporal_sdk_core_protos::{
         },
         workflow_completion::WorkflowActivationCompletion,
     },
-    temporal::api::failure::v1::Failure,
+    temporal::api::{common::v1::Payload, failure::v1::Failure},
     utilities::TryIntoOrNone,
 };
 use tokio::sync::{

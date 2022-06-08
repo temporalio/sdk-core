@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package coresdk.child_workflow;
 
+import "temporal/api/common/v1/message.proto";
 import "temporal/api/failure/v1/message.proto";
 import "temporal/sdk/core/common/common.proto";
 
@@ -20,7 +21,7 @@ message ChildWorkflowResult {
  * Used in ChildWorkflowResult to report successful completion.
  */
 message Success {
-    common.Payload result = 1;
+    temporal.api.common.v1.Payload result = 1;
 }
 
 /**

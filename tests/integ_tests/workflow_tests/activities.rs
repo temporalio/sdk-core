@@ -9,7 +9,6 @@ use temporal_sdk_core_protos::{
             ActivityResolution,
         },
         activity_task::activity_task as act_task,
-        common::Payload,
         workflow_activation::{
             workflow_activation_job, FireTimer, ResolveActivity, WorkflowActivationJob,
         },
@@ -18,7 +17,7 @@ use temporal_sdk_core_protos::{
         ActivityHeartbeat, ActivityTaskCompletion, AsJsonPayloadExt, IntoCompletion,
     },
     temporal::api::{
-        common::v1::{ActivityType, Payloads},
+        common::v1::{ActivityType, Payload, Payloads},
         enums::v1::RetryState,
         failure::v1::{failure::FailureInfo, ActivityFailureInfo, Failure},
     },
@@ -663,7 +662,7 @@ async fn async_activity_completion_workflow() {
         .complete_activity_task(
             task.task_token.into(),
             Some(Payloads {
-                payloads: vec![response_payload.clone().into()],
+                payloads: vec![response_payload.clone()],
             }),
         )
         .await

@@ -14,9 +14,8 @@ use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{Cancellation, Failure as ActFail, Success},
         activity_task::{activity_task, ActivityCancelReason, ActivityTask, Cancel, Start},
-        common::WorkflowExecution,
     },
-    temporal::api::enums::v1::TimeoutType,
+    temporal::api::{common::v1::WorkflowExecution, enums::v1::TimeoutType},
 };
 use tokio::{
     sync::{
@@ -640,9 +639,9 @@ impl Drop for TimeoutBag {
 mod tests {
     use super::*;
     use crate::protosext::LACloseTimeouts;
-    use temporal_sdk_core_protos::{
-        coresdk::common::RetryPolicy,
-        temporal::api::failure::v1::{failure::FailureInfo, ApplicationFailureInfo, Failure},
+    use temporal_sdk_core_protos::temporal::api::{
+        common::v1::RetryPolicy,
+        failure::v1::{failure::FailureInfo, ApplicationFailureInfo, Failure},
     };
     use tokio::{sync::mpsc::error::TryRecvError, task::yield_now};
 

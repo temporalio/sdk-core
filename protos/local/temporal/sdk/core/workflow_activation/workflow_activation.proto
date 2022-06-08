@@ -76,12 +76,12 @@ message StartWorkflow {
     // The workflow id used on the temporal server
     string workflow_id = 2;
     // Inputs to the workflow code
-    repeated common.Payload arguments = 3;
+    repeated temporal.api.common.v1.Payload arguments = 3;
     // The seed must be used to initialize the random generator used by SDK.
     // RandomSeedUpdatedAttributes are used to deliver seed updates.
     uint64 randomness_seed = 4;
     // Used to add metadata e.g. for tracing and auth, meant to be read and written to by interceptors.
-    map<string, common.Payload> headers = 5;
+    map<string, temporal.api.common.v1.Payload> headers = 5;
     // Identity of the client who requested this execution
     string identity = 6;
     // If this workflow is a child, information about the parent
@@ -186,25 +186,25 @@ message QueryWorkflow {
     string query_id = 1;
     /// The query's function/method/etc name
     string query_type = 2;
-    repeated common.Payload arguments = 3;
+    repeated temporal.api.common.v1.Payload arguments = 3;
     /// Headers attached to the query
-    map<string, common.Payload> headers = 5;
+    map<string, temporal.api.common.v1.Payload> headers = 5;
 }
 
 /// Cancel a running workflow
 message CancelWorkflow {
     /// Information from the cancellation request
-    repeated common.Payload details = 1;
+    repeated temporal.api.common.v1.Payload details = 1;
 }
 
 // Send a signal to a workflow
 message SignalWorkflow {
     string signal_name = 1;
-    repeated common.Payload input = 2;
+    repeated temporal.api.common.v1.Payload input = 2;
     // Identity of the sender of the signal
     string identity = 3;
     // Headers attached to the signal
-    map<string, common.Payload> headers = 5;
+    map<string, temporal.api.common.v1.Payload> headers = 5;
 }
 
 // Inform lang what the result of a call to `patched` or similar API should be -- this is always

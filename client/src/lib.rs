@@ -35,10 +35,10 @@ use std::{
     time::{Duration, Instant},
 };
 use temporal_sdk_core_protos::{
-    coresdk::{common::Payload, workflow_commands::QueryResult, IntoPayloadsExt},
+    coresdk::{workflow_commands::QueryResult, IntoPayloadsExt},
     temporal::api::{
         command::v1::Command,
-        common::v1::{Payloads, WorkflowExecution, WorkflowType},
+        common::v1::{Payload, Payloads, WorkflowExecution, WorkflowType},
         enums::v1::{TaskQueueKind, WorkflowTaskFailedCause},
         failure::v1::Failure,
         query::v1::{WorkflowQuery, WorkflowQueryResult},

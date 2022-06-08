@@ -12,8 +12,8 @@ use std::{
 use temporal_client::WorkflowOptions;
 use temporal_sdk::{ActContext, LocalActivityOptions, WfContext, WorkflowResult};
 use temporal_sdk_core_protos::{
-    coresdk::{common::RetryPolicy, AsJsonPayloadExt},
-    temporal::api::{enums::v1::EventType, failure::v1::Failure},
+    coresdk::AsJsonPayloadExt,
+    temporal::api::{common::v1::RetryPolicy, enums::v1::EventType, failure::v1::Failure},
 };
 use tokio::sync::Barrier;
 

@@ -27,14 +27,13 @@ use temporal_sdk_core::{
 use temporal_sdk_core_api::Worker as CoreWorker;
 use temporal_sdk_core_protos::{
     coresdk::{
-        common::Payload,
         workflow_commands::{
             workflow_command, ActivityCancellationType, CompleteWorkflowExecution,
             ScheduleActivity, StartTimer,
         },
         workflow_completion::WorkflowActivationCompletion,
     },
-    temporal::api::history::v1::History,
+    temporal::api::{common::v1::Payload, history::v1::History},
 };
 use tokio::sync::OnceCell;
 use url::Url;
