@@ -6,9 +6,12 @@ use temporal_sdk::{
     interceptors::WorkerInterceptor, ActContext, ActivityCancelledError, CancellableFuture,
     LocalActivityOptions, WfContext, WorkflowResult,
 };
-use temporal_sdk_core_protos::coresdk::{
-    common::RetryPolicy, workflow_commands::ActivityCancellationType,
-    workflow_completion::WorkflowActivationCompletion, AsJsonPayloadExt,
+use temporal_sdk_core_protos::{
+    coresdk::{
+        workflow_commands::ActivityCancellationType,
+        workflow_completion::WorkflowActivationCompletion, AsJsonPayloadExt,
+    },
+    temporal::api::common::v1::RetryPolicy,
 };
 use temporal_sdk_core_test_utils::CoreWfStarter;
 use tokio_util::sync::CancellationToken;

@@ -6,10 +6,13 @@ use backoff::{backoff::Backoff, ExponentialBackoff};
 use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
 use std::{fmt::Debug, future::Future, time::Duration};
 use temporal_sdk_core_protos::{
-    coresdk::{common::Payload, workflow_commands::QueryResult},
+    coresdk::workflow_commands::QueryResult,
     temporal::api::{
-        common::v1::Payloads, enums::v1::WorkflowTaskFailedCause, failure::v1::Failure,
-        query::v1::WorkflowQuery, workflowservice::v1::*,
+        common::v1::{Payload, Payloads},
+        enums::v1::WorkflowTaskFailedCause,
+        failure::v1::Failure,
+        query::v1::WorkflowQuery,
+        workflowservice::v1::*,
     },
     TaskToken,
 };

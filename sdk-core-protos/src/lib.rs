@@ -26,12 +26,11 @@ pub mod coresdk {
     tonic::include_proto!("coresdk");
 
     use crate::temporal::api::{
-        common::v1::{ActivityType, Payloads, WorkflowExecution},
+        common::v1::{ActivityType, Payload, Payloads, WorkflowExecution},
         failure::v1::{failure::FailureInfo, ApplicationFailureInfo, Failure},
         workflowservice::v1::PollActivityTaskQueueResponse,
     };
     use activity_task::ActivityTask;
-    use common::Payload;
     use serde::{Deserialize, Serialize};
     use std::{
         collections::HashMap,
@@ -79,12 +78,9 @@ pub mod coresdk {
     #[allow(clippy::module_inception)]
     pub mod activity_result {
         tonic::include_proto!("coresdk.activity_result");
-        use super::{
-            super::temporal::api::{
-                common::v1::Payload as APIPayload,
-                failure::v1::{failure, CanceledFailureInfo, Failure as APIFailure},
-            },
-            common::Payload,
+        use super::super::temporal::api::{
+            common::v1::Payload,
+            failure::v1::{failure, CanceledFailureInfo, Failure as APIFailure},
         };
         use crate::temporal::api::{enums::v1::TimeoutType, failure::v1::TimeoutFailureInfo};
         use activity_execution_result as aer;
@@ -175,13 +171,11 @@ pub mod coresdk {
             }
         }
 
-        impl From<Result<APIPayload, APIFailure>> for ActivityExecutionResult {
-            fn from(r: Result<APIPayload, APIFailure>) -> Self {
+        impl From<Result<Payload, APIFailure>> for ActivityExecutionResult {
+            fn from(r: Result<Payload, APIFailure>) -> Self {
                 Self {
                     status: match r {
-                        Ok(p) => Some(aer::Status::Completed(Success {
-                            result: Some(p.into()),
-                        })),
+                        Ok(p) => Some(aer::Status::Completed(Success { result: Some(p) })),
                         Err(f) => Some(aer::Status::Failed(Failure { failure: Some(f) })),
                     },
                 }
@@ -258,51 +252,9 @@ pub mod coresdk {
         use super::external_data::LocalActivityMarkerData;
         use crate::{
             coresdk::{AsJsonPayloadExt, IntoPayloadsExt},
-            temporal::api::common::v1::{Payload as ApiPayload, Payloads},
+            temporal::api::common::v1::{Payload, Payloads},
         };
-        use std::{
-            collections::HashMap,
-            fmt::{Display, Formatter},
-        };
-
-        impl<T> From<T> for Payload
-        where
-            T: AsRef<[u8]>,
-        {
-            fn from(v: T) -> Self {
-                // TODO: Set better encodings, whole data converter deal. Setting anything for now
-                //  at least makes it show up in the web UI.
-                let mut metadata = HashMap::new();
-                metadata.insert("encoding".to_string(), b"binary/plain".to_vec());
-                Self {
-                    metadata,
-                    data: v.as_ref().to_vec(),
-                }
-            }
-        }
-
-        impl Payload {
-            // Is it's own function b/c asref causes implementation conflicts
-            pub fn as_slice(&self) -> &[u8] {
-                self.data.as_slice()
-            }
-        }
-
-        impl Display for Payload {
-            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-                if self.data.len() > 64 {
-                    let mut windows = self.data.as_slice().windows(32);
-                    write!(
-                        f,
-                        "[{}..{}]",
-                        base64::encode(windows.next().unwrap_or_default()),
-                        base64::encode(windows.next_back().unwrap_or_default())
-                    )
-                } else {
-                    write!(f, "[{}]", base64::encode(&self.data))
-                }
-            }
-        }
+        use std::collections::HashMap;
 
         pub fn build_has_change_marker_details(
             patch_id: &str,
@@ -356,7 +308,7 @@ pub mod coresdk {
         /// map.
         pub fn extract_local_activity_marker_details(
             details: &mut HashMap<String, Payloads>,
-        ) -> (Option<LocalActivityMarkerData>, Option<ApiPayload>) {
+        ) -> (Option<LocalActivityMarkerData>, Option<Payload>) {
             let data = extract_local_activity_marker_data(details);
             let result = details.remove("result").and_then(|mut p| p.payloads.pop());
             (data, result)
@@ -438,9 +390,8 @@ pub mod coresdk {
     pub mod workflow_activation {
         use crate::{
             coresdk::{
-                common::{NamespacedWorkflowExecution, Payload},
-                workflow_activation::remove_from_cache::EvictionReason,
-                FromPayloadsExt,
+                common::NamespacedWorkflowExecution,
+                workflow_activation::remove_from_cache::EvictionReason, FromPayloadsExt,
             },
             temporal::api::{
                 common::v1::Header,
@@ -655,10 +606,7 @@ pub mod coresdk {
                 randomness_seed,
                 headers: match attrs.header {
                     None => HashMap::new(),
-                    Some(Header { fields }) => fields
-                        .into_iter()
-                        .map(|(k, v)| (k, Payload::from(v)))
-                        .collect(),
+                    Some(Header { fields }) => fields,
                 },
                 identity: attrs.identity,
                 parent_workflow_info: attrs.parent_workflow_execution.map(|pe| {
@@ -820,7 +768,11 @@ pub mod coresdk {
 
         impl Display for UpsertWorkflowSearchAttributes {
             fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-                write!(f, "UpsertWorkflowSearchAttributes({})", self.seq) // todo: customize this better
+                write!(
+                    f,
+                    "UpsertWorkflowSearchAttributes({:?})",
+                    self.search_attributes.keys()
+                )
             }
         }
 
@@ -1104,7 +1056,7 @@ pub mod coresdk {
                     activity_task::Start {
                         workflow_namespace: r.workflow_namespace,
                         workflow_type: r.workflow_type.map_or_else(|| "".to_string(), |wt| wt.name),
-                        workflow_execution: Some(common::WorkflowExecution {
+                        workflow_execution: Some(WorkflowExecution {
                             workflow_id,
                             run_id,
                         }),
@@ -1137,15 +1089,6 @@ pub mod coresdk {
     impl From<ActivityType> for String {
         fn from(at: ActivityType) -> Self {
             at.name
-        }
-    }
-
-    impl From<common::WorkflowExecution> for WorkflowExecution {
-        fn from(exc: common::WorkflowExecution) -> Self {
-            Self {
-                workflow_id: exc.workflow_id,
-                run_id: exc.run_id,
-            }
         }
     }
 
@@ -1241,30 +1184,12 @@ pub mod coresdk {
         }
     }
 
-    impl From<common::Payload> for super::temporal::api::common::v1::Payload {
-        fn from(p: Payload) -> Self {
-            Self {
-                metadata: p.metadata,
-                data: p.data,
-            }
-        }
-    }
-
-    impl From<super::temporal::api::common::v1::Payload> for common::Payload {
-        fn from(p: super::temporal::api::common::v1::Payload) -> Self {
-            Self {
-                metadata: p.metadata,
-                data: p.data,
-            }
-        }
-    }
-
     pub trait FromPayloadsExt {
         fn from_payloads(p: Option<Payloads>) -> Self;
     }
     impl<T> FromPayloadsExt for T
     where
-        T: FromIterator<common::Payload>,
+        T: FromIterator<Payload>,
     {
         fn from_payloads(p: Option<Payloads>) -> Self {
             match p {
@@ -1279,7 +1204,7 @@ pub mod coresdk {
     }
     impl<T> IntoPayloadsExt for T
     where
-        T: IntoIterator<Item = common::Payload>,
+        T: IntoIterator<Item = Payload>,
     {
         fn into_payloads(self) -> Option<Payloads> {
             let mut iterd = self.into_iter().peekable();
@@ -1293,27 +1218,9 @@ pub mod coresdk {
         }
     }
 
-    impl From<common::Payload> for Payloads {
+    impl From<Payload> for Payloads {
         fn from(p: Payload) -> Self {
-            Self {
-                payloads: vec![p.into()],
-            }
-        }
-    }
-
-    impl<T> From<T> for super::temporal::api::common::v1::Payload
-    where
-        T: AsRef<[u8]>,
-    {
-        fn from(v: T) -> Self {
-            // TODO: Set better encodings, whole data converter deal. Setting anything for now
-            //  at least makes it show up in the web UI.
-            let mut metadata = HashMap::new();
-            metadata.insert("encoding".to_string(), b"binary/plain".to_vec());
-            Self {
-                metadata,
-                data: v.as_ref().to_vec(),
-            }
+            Self { payloads: vec![p] }
         }
     }
 
@@ -1377,13 +1284,13 @@ pub mod coresdk {
         }
     }
 
-    /// Errors when converting from a [Payloads] api proto to our internal [common::Payload]
+    /// Errors when converting from a [Payloads] api proto to our internal [Payload]
     #[derive(derive_more::Display, Debug)]
     pub enum PayloadsToPayloadError {
         MoreThanOnePayload,
         NoPayload,
     }
-    impl TryFrom<Payloads> for common::Payload {
+    impl TryFrom<Payloads> for Payload {
         type Error = PayloadsToPayloadError;
 
         fn try_from(mut v: Payloads) -> Result<Self, Self::Error> {
@@ -1391,7 +1298,7 @@ pub mod coresdk {
                 None => Err(PayloadsToPayloadError::NoPayload),
                 Some(p) => {
                     if v.payloads.is_empty() {
-                        Ok(p.into())
+                        Ok(p)
                     } else {
                         Err(PayloadsToPayloadError::MoreThanOnePayload)
                     }
@@ -1617,25 +1524,48 @@ pub mod temporal {
         }
         pub mod common {
             pub mod v1 {
-                use crate::coresdk::common;
                 use std::{
                     collections::HashMap,
                     fmt::{Display, Formatter},
                 };
                 tonic::include_proto!("temporal.api.common.v1");
 
-                impl From<HashMap<String, common::Payload>> for Header {
-                    fn from(h: HashMap<String, common::Payload>) -> Self {
+                impl<T> From<T> for Payload
+                where
+                    T: AsRef<[u8]>,
+                {
+                    fn from(v: T) -> Self {
+                        // TODO: Set better encodings, whole data converter deal. Setting anything
+                        //  for now at least makes it show up in the web UI.
+                        let mut metadata = HashMap::new();
+                        metadata.insert("encoding".to_string(), b"binary/plain".to_vec());
                         Self {
-                            fields: h.into_iter().map(|(k, v)| (k, v.into())).collect(),
+                            metadata,
+                            data: v.as_ref().to_vec(),
                         }
+                    }
+                }
+
+                impl Payload {
+                    // Is its own function b/c asref causes implementation conflicts
+                    pub fn as_slice(&self) -> &[u8] {
+                        self.data.as_slice()
                     }
                 }
 
                 impl Display for Payload {
                     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-                        // Attempt to render payloads as strings
-                        write!(f, "{}", std::str::from_utf8(&self.data).unwrap_or_default())
+                        if self.data.len() > 64 {
+                            let mut windows = self.data.as_slice().windows(32);
+                            write!(
+                                f,
+                                "[{}..{}]",
+                                base64::encode(windows.next().unwrap_or_default()),
+                                base64::encode(windows.next_back().unwrap_or_default())
+                            )
+                        } else {
+                            write!(f, "[{}]", base64::encode(&self.data))
+                        }
                     }
                 }
 
@@ -1650,48 +1580,16 @@ pub mod temporal {
                     }
                 }
 
-                impl From<Header> for HashMap<String, common::Payload> {
+                impl From<Header> for HashMap<String, Payload> {
                     fn from(h: Header) -> Self {
                         h.fields.into_iter().map(|(k, v)| (k, v.into())).collect()
                     }
                 }
 
-                impl From<HashMap<String, common::Payload>> for Memo {
-                    fn from(h: HashMap<String, common::Payload>) -> Self {
-                        Self {
-                            fields: h.into_iter().map(|(k, v)| (k, v.into())).collect(),
-                        }
-                    }
-                }
-
-                impl From<HashMap<String, common::Payload>> for SearchAttributes {
-                    fn from(h: HashMap<String, common::Payload>) -> Self {
+                impl From<HashMap<String, Payload>> for SearchAttributes {
+                    fn from(h: HashMap<String, Payload>) -> Self {
                         Self {
                             indexed_fields: h.into_iter().map(|(k, v)| (k, v.into())).collect(),
-                        }
-                    }
-                }
-
-                impl From<common::RetryPolicy> for RetryPolicy {
-                    fn from(r: common::RetryPolicy) -> Self {
-                        Self {
-                            initial_interval: r.initial_interval,
-                            backoff_coefficient: r.backoff_coefficient,
-                            maximum_interval: r.maximum_interval,
-                            maximum_attempts: r.maximum_attempts,
-                            non_retryable_error_types: r.non_retryable_error_types,
-                        }
-                    }
-                }
-
-                impl From<RetryPolicy> for common::RetryPolicy {
-                    fn from(r: RetryPolicy) -> Self {
-                        Self {
-                            initial_interval: r.initial_interval,
-                            backoff_coefficient: r.backoff_coefficient,
-                            maximum_interval: r.maximum_interval,
-                            maximum_attempts: r.maximum_attempts,
-                            non_retryable_error_types: r.non_retryable_error_types,
                         }
                     }
                 }

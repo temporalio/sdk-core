@@ -8,6 +8,7 @@ package coresdk;
 import "google/protobuf/duration.proto";
 import "google/protobuf/empty.proto";
 import "google/protobuf/timestamp.proto";
+import "temporal/api/common/v1/message.proto";
 import "temporal/sdk/core/activity_result/activity_result.proto";
 import "temporal/sdk/core/activity_task/activity_task.proto";
 import "temporal/sdk/core/common/common.proto";
@@ -19,7 +20,7 @@ import "temporal/sdk/core/workflow_completion/workflow_completion.proto";
 // A request as given to `record_activity_heartbeat`
 message ActivityHeartbeat {
     bytes task_token = 1;
-    repeated common.Payload details = 2;
+    repeated temporal.api.common.v1.Payload details = 2;
 }
 
 // A request as given to `complete_activity_task`

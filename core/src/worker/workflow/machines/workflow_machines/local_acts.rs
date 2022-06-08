@@ -7,8 +7,8 @@ use std::{
     collections::{HashMap, HashSet},
     time::SystemTime,
 };
-use temporal_sdk_core_protos::{
-    coresdk::common::WorkflowExecution, temporal::api::history::v1::HistoryEvent,
+use temporal_sdk_core_protos::temporal::api::{
+    common::v1::WorkflowExecution, history::v1::HistoryEvent,
 };
 
 #[derive(Default)]

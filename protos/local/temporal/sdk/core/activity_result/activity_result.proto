@@ -4,8 +4,8 @@ package coresdk.activity_result;
 
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
+import "temporal/api/common/v1/message.proto";
 import "temporal/api/failure/v1/message.proto";
-import "temporal/sdk/core/common/common.proto";
 
 /**
  * Used to report activity completions to core
@@ -32,7 +32,7 @@ message ActivityResolution {
 
 /** Used to report successful completion either when executing or resolving */
 message Success {
-    common.Payload result = 1;
+    temporal.api.common.v1.Payload result = 1;
 }
 
 /** Used to report activity failure either when executing or resolving */

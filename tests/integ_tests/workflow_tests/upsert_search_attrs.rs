@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use temporal_client::{WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{WfContext, WorkflowResult};
-use temporal_sdk_core_protos::coresdk::AsJsonPayloadExt;
+use temporal_sdk_core_protos::coresdk::{AsJsonPayloadExt, FromJsonPayloadExt};
 use temporal_sdk_core_test_utils::CoreWfStarter;
 use uuid::Uuid;
 
@@ -61,6 +61,9 @@ async fn sends_upsert() {
             payload.metadata.get("encoding").unwrap()
         );
     }
-    assert_eq!("\"goodbye\"", txt_attr_payload.to_string());
-    assert_eq!("98", int_attr_payload.to_string());
+    assert_eq!(
+        "goodbye",
+        String::from_json_payload(txt_attr_payload).unwrap()
+    );
+    assert_eq!(98, usize::from_json_payload(int_attr_payload).unwrap());
 }

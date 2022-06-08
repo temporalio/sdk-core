@@ -1,6 +1,6 @@
 use std::time::Duration;
 use temporal_sdk_core_protos::{
-    coresdk::common::RetryPolicy, temporal::api::failure::v1::ApplicationFailureInfo,
+    temporal::api::{common::v1::RetryPolicy, failure::v1::ApplicationFailureInfo},
     utilities::TryIntoOrNone,
 };
 

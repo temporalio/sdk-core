@@ -85,7 +85,7 @@ use temporal_sdk_core_protos::{
         activity_result::{ActivityExecutionResult, ActivityResolution},
         activity_task::{activity_task, ActivityTask},
         child_workflow::ChildWorkflowResult,
-        common::{NamespacedWorkflowExecution, Payload},
+        common::NamespacedWorkflowExecution,
         workflow_activation::{
             resolve_child_workflow_execution_start::Status as ChildWorkflowStartStatus,
             workflow_activation_job::Variant, WorkflowActivation, WorkflowActivationJob,
@@ -94,7 +94,7 @@ use temporal_sdk_core_protos::{
         workflow_completion::WorkflowActivationCompletion,
         ActivityTaskCompletion, AsJsonPayloadExt, FromJsonPayloadExt,
     },
-    temporal::api::failure::v1::Failure,
+    temporal::api::{common::v1::Payload, failure::v1::Failure},
     TaskToken,
 };
 use tokio::{

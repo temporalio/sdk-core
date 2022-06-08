@@ -2,9 +2,11 @@ use crate::{InterceptedMetricsSvc, RawClientLike};
 use anyhow::{anyhow, bail};
 use std::marker::PhantomData;
 use temporal_sdk_core_protos::{
-    coresdk::{common::Payload, FromPayloadsExt},
+    coresdk::FromPayloadsExt,
     temporal::api::{
-        common::v1::WorkflowExecution, enums::v1::HistoryEventFilterType, failure::v1::Failure,
+        common::v1::{Payload, WorkflowExecution},
+        enums::v1::HistoryEventFilterType,
+        failure::v1::Failure,
         history::v1::history_event::Attributes,
         workflowservice::v1::GetWorkflowExecutionHistoryRequest,
     },

@@ -25,17 +25,20 @@ use std::{
     task::Poll,
     time::{Duration, SystemTime},
 };
-use temporal_sdk_core_protos::coresdk::{
-    activity_result::{activity_resolution, ActivityResolution},
-    child_workflow::ChildWorkflowResult,
-    common::{NamespacedWorkflowExecution, Payload},
-    workflow_activation::resolve_child_workflow_execution_start::Status as ChildWorkflowStartStatus,
-    workflow_commands::{
-        request_cancel_external_workflow_execution as cancel_we,
-        signal_external_workflow_execution as sig_we, workflow_command,
-        RequestCancelExternalWorkflowExecution, SetPatchMarker, SignalExternalWorkflowExecution,
-        StartTimer, UpsertWorkflowSearchAttributes,
+use temporal_sdk_core_protos::{
+    coresdk::{
+        activity_result::{activity_resolution, ActivityResolution},
+        child_workflow::ChildWorkflowResult,
+        common::NamespacedWorkflowExecution,
+        workflow_activation::resolve_child_workflow_execution_start::Status as ChildWorkflowStartStatus,
+        workflow_commands::{
+            request_cancel_external_workflow_execution as cancel_we,
+            signal_external_workflow_execution as sig_we, workflow_command,
+            RequestCancelExternalWorkflowExecution, SetPatchMarker,
+            SignalExternalWorkflowExecution, StartTimer, UpsertWorkflowSearchAttributes,
+        },
     },
+    temporal::api::common::v1::Payload,
 };
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -59,7 +62,6 @@ struct WfCtxProtectedDat {
     next_child_workflow_sequence_number: u32,
     next_cancel_external_wf_sequence_number: u32,
     next_signal_external_wf_sequence_number: u32,
-    next_upsert_search_attrs_sequence_number: u32,
 }
 
 impl WfCtxProtectedDat {
@@ -86,11 +88,6 @@ impl WfCtxProtectedDat {
     fn next_signal_external_wf_seq(&mut self) -> u32 {
         let seq = self.next_signal_external_wf_sequence_number;
         self.next_signal_external_wf_sequence_number += 1;
-        seq
-    }
-    fn next_upsert_search_attrs_wf_seq(&mut self) -> u32 {
-        let seq = self.next_upsert_search_attrs_sequence_number;
-        self.next_upsert_search_attrs_sequence_number += 1;
         seq
     }
 }
@@ -130,7 +127,6 @@ impl WfContext {
                     next_child_workflow_sequence_number: 1,
                     next_cancel_external_wf_sequence_number: 1,
                     next_signal_external_wf_sequence_number: 1,
-                    next_upsert_search_attrs_sequence_number: 1,
                 }),
             },
             rx,
@@ -289,9 +285,8 @@ impl WfContext {
     /// Add or create a set of search attributes
     pub fn upsert_search_attributes(&self, attr_iter: impl IntoIterator<Item = (String, Payload)>) {
         self.send(RustWfCmd::NewNonblockingCmd(
-            workflow_command::Variant::UpsertWorkflowSearchAttributesCommandAttributes(
+            workflow_command::Variant::UpsertWorkflowSearchAttributes(
                 UpsertWorkflowSearchAttributes {
-                    seq: self.seq_nums.write().next_upsert_search_attrs_wf_seq(),
                     search_attributes: HashMap::from_iter(attr_iter.into_iter()),
                 },
             ),
