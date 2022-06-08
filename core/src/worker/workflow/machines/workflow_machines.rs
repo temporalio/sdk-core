@@ -803,11 +803,7 @@ impl WorkflowMachines {
                     self.add_cmd_to_wf_task(new_timer(attrs), Some(CommandID::Timer(seq)));
                 }
                 WFCommand::UpsertSearchAttributes(attrs) => {
-                    let seq = attrs.seq;
-                    self.add_cmd_to_wf_task(
-                        upsert_search_attrs(attrs),
-                        Some(CommandID::Timer(seq)),
-                    );
+                    self.add_cmd_to_wf_task(upsert_search_attrs(attrs), None);
                 }
                 WFCommand::CancelTimer(attrs) => {
                     jobs.extend(self.process_cancellation(CommandID::Timer(attrs.seq))?);

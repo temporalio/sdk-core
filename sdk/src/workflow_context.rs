@@ -59,7 +59,6 @@ struct WfCtxProtectedDat {
     next_child_workflow_sequence_number: u32,
     next_cancel_external_wf_sequence_number: u32,
     next_signal_external_wf_sequence_number: u32,
-    next_upsert_search_attrs_sequence_number: u32,
 }
 
 impl WfCtxProtectedDat {
@@ -86,11 +85,6 @@ impl WfCtxProtectedDat {
     fn next_signal_external_wf_seq(&mut self) -> u32 {
         let seq = self.next_signal_external_wf_sequence_number;
         self.next_signal_external_wf_sequence_number += 1;
-        seq
-    }
-    fn next_upsert_search_attrs_wf_seq(&mut self) -> u32 {
-        let seq = self.next_upsert_search_attrs_sequence_number;
-        self.next_upsert_search_attrs_sequence_number += 1;
         seq
     }
 }
@@ -130,7 +124,6 @@ impl WfContext {
                     next_child_workflow_sequence_number: 1,
                     next_cancel_external_wf_sequence_number: 1,
                     next_signal_external_wf_sequence_number: 1,
-                    next_upsert_search_attrs_sequence_number: 1,
                 }),
             },
             rx,
@@ -291,7 +284,6 @@ impl WfContext {
         self.send(RustWfCmd::NewNonblockingCmd(
             workflow_command::Variant::UpsertWorkflowSearchAttributes(
                 UpsertWorkflowSearchAttributes {
-                    seq: self.seq_nums.write().next_upsert_search_attrs_wf_seq(),
                     search_attributes: HashMap::from_iter(attr_iter.into_iter()),
                 },
             ),

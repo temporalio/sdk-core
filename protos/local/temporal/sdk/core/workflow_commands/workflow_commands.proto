@@ -286,8 +286,7 @@ message CancelSignalWorkflow {
 }
 
 message UpsertWorkflowSearchAttributes {
-    /// Lang's incremental sequence number as passed to `UpsertWorkflowSearchAttributes`
-    uint32 seq = 1;
-    /// SearchAttributes fields - equivalent to indexed_fields on api. Key = search index, Value = value?
-    map<string, common.Payload> search_attributes = 2;
+    /// SearchAttributes fields - equivalent to indexed_fields on api. Key = search index, Value =
+    /// value?
+    map<string, common.Payload> search_attributes = 1;
 }

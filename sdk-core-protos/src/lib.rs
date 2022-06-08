@@ -820,7 +820,11 @@ pub mod coresdk {
 
         impl Display for UpsertWorkflowSearchAttributes {
             fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-                write!(f, "UpsertWorkflowSearchAttributes({})", self.seq) // todo: customize this better
+                write!(
+                    f,
+                    "UpsertWorkflowSearchAttributes({:?})",
+                    self.search_attributes.keys()
+                )
             }
         }
 
