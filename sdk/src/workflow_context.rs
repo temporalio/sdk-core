@@ -289,7 +289,7 @@ impl WfContext {
     /// Add or create a set of search attributes
     pub fn upsert_search_attributes(&self, attr_iter: impl IntoIterator<Item = (String, Payload)>) {
         self.send(RustWfCmd::NewNonblockingCmd(
-            workflow_command::Variant::UpsertWorkflowSearchAttributesCommandAttributes(
+            workflow_command::Variant::UpsertWorkflowSearchAttributes(
                 UpsertWorkflowSearchAttributes {
                     seq: self.seq_nums.write().next_upsert_search_attrs_wf_seq(),
                     search_attributes: HashMap::from_iter(attr_iter.into_iter()),

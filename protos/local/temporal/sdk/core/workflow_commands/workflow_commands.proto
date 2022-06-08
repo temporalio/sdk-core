@@ -32,7 +32,7 @@ message WorkflowCommand {
         CancelSignalWorkflow cancel_signal_workflow = 15;
         ScheduleLocalActivity schedule_local_activity = 16;
         RequestCancelLocalActivity request_cancel_local_activity = 17;
-        UpsertWorkflowSearchAttributes upsert_workflow_search_attributes_command_attributes = 18;
+        UpsertWorkflowSearchAttributes upsert_workflow_search_attributes = 18;
     }
 }
 
