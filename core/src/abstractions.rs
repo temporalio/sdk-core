@@ -81,24 +81,13 @@ impl Debug for OwnedMeteredSemPermit {
     }
 }
 
-#[derive(Clone)]
-pub(crate) struct StreamAllowHandle {
-    acceptable_notify: Arc<Notify>,
-}
-impl StreamAllowHandle {
-    pub fn allow_one(&self) {
-        self.acceptable_notify.notify_one();
-    }
-}
-
 /// From the input stream, create a new stream which only pulls from the input stream when allowed.
-/// The stream will start allowed, and sets itself to unallowed each time it delivers the next item.
-/// The returned [StreamAllowHandle::allow_one] function can be used to indicate it is OK to deliver
-/// the next item.
+/// When allowed is determined by the passed in `proceeder` which must return a future every time
+/// it's called. The input stream is only pulled from when that future resolves.
 pub(crate) fn stream_when_allowed<S, F, FF>(
     input: S,
     proceeder: FF,
-) -> (StreamAllowHandle, impl Stream<Item = (S::Item, F::Output)>)
+) -> impl Stream<Item = (S::Item, F::Output)>
 where
     S: Stream + Send + 'static,
     F: Future,
@@ -106,19 +95,14 @@ where
 {
     let acceptable_notify = Arc::new(Notify::new());
     acceptable_notify.notify_one();
-    let handle = StreamAllowHandle { acceptable_notify };
     let stream = stream::unfold(
-        ((handle.clone(), proceeder), input.boxed()),
-        |((handle, mut proceeder), mut input)| async {
-            handle.acceptable_notify.notified().await;
+        (proceeder, input.boxed()),
+        |(mut proceeder, mut input)| async {
             let v = proceeder().await;
-            input
-                .next()
-                .await
-                .map(|i| ((i, v), ((handle, proceeder), input)))
+            input.next().await.map(|i| ((i, v), (proceeder, input)))
         },
     );
-    (handle, stream)
+    stream
 }
 
 macro_rules! dbg_panic {
@@ -143,7 +127,7 @@ mod tests {
         let inputs = stream::iter([1, 2, 3]);
         let (allow_tx, allow_rx) = unbounded_channel();
         let allow_rx = RefCell::new(allow_rx);
-        let (handle, when_allowed) = stream_when_allowed(inputs, || async {
+        let when_allowed = stream_when_allowed(inputs, || async {
             allow_rx.borrow_mut().recv().await.unwrap()
         });
 
@@ -160,16 +144,11 @@ mod tests {
         for _ in 1..10 {
             assert_eq!(when_allowed.poll_next_unpin(&mut cx), Poll::Pending);
         }
-        handle.allow_one();
         allow_tx.send(()).unwrap();
         assert_eq!(
             when_allowed.poll_next_unpin(&mut cx),
             Poll::Ready(Some((2, ())))
         );
-        for _ in 1..10 {
-            assert_eq!(when_allowed.poll_next_unpin(&mut cx), Poll::Pending);
-        }
-        handle.allow_one();
         for _ in 1..10 {
             assert_eq!(when_allowed.poll_next_unpin(&mut cx), Poll::Pending);
         }
@@ -181,7 +160,6 @@ mod tests {
         for _ in 1..10 {
             assert_eq!(when_allowed.poll_next_unpin(&mut cx), Poll::Pending);
         }
-        handle.allow_one();
         allow_tx.send(()).unwrap();
         assert_eq!(when_allowed.poll_next_unpin(&mut cx), Poll::Ready(None));
     }

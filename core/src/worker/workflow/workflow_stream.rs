@@ -127,8 +127,7 @@ impl WFStream {
             let wft_sem_clone = wft_sem_clone.clone();
             async move { wft_sem_clone.acquire_owned().await.unwrap() }
         };
-        let (external_wft_allow_handle, poller_wfts) =
-            stream_when_allowed(external_wfts, proceeder);
+        let poller_wfts = stream_when_allowed(external_wfts, proceeder);
         let (run_update_tx, run_update_rx) = unbounded_channel();
         let local_rx = stream::select(
             local_rx.map(Into::into),
@@ -216,9 +215,6 @@ impl WFStream {
                     }
                 }
                 state.reconcile_buffered();
-                if state.should_allow_poll() {
-                    external_wft_allow_handle.allow_one();
-                }
                 if state.shutdown_done() {
                     return Err(PollWfError::ShutDown);
                 }
