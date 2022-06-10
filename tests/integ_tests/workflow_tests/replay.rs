@@ -112,6 +112,21 @@ async fn replay_using_wf_function() {
     worker.run().await.unwrap();
 }
 
+#[tokio::test]
+async fn replay_ok_ending_with_terminated() {
+    telemetry_init(&get_integ_telem_options()).unwrap();
+    let mut t = canned_histories::single_timer("1");
+    t.add_workflow_execution_terminated();
+    let func = timers_wf(1);
+    let (worker, _) = init_core_replay_preloaded(
+        "replay_ok_terminate",
+        &t.get_full_history_info().unwrap().into(),
+    );
+    let mut worker = Worker::new_from_core(worker, "replay_ok_terminate".to_string());
+    worker.register_wf(DEFAULT_WORKFLOW_TYPE, func);
+    worker.run().await.unwrap();
+}
+
 fn timers_wf(num_timers: u32) -> WorkflowFunction {
     WorkflowFunction::new(move |ctx: WfContext| async move {
         for _ in 1..=num_timers {

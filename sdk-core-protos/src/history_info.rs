@@ -60,9 +60,10 @@ impl HistoryInfo {
                 let next_is_completed = next_event.map_or(false, |ne| {
                     ne.event_type == EventType::WorkflowTaskCompleted as i32
                 });
-                let next_is_failed_or_timeout = next_event.map_or(false, |ne| {
+                let next_is_failed_or_timeout_or_term = next_event.map_or(false, |ne| {
                     ne.event_type == EventType::WorkflowTaskFailed as i32
                         || ne.event_type == EventType::WorkflowTaskTimedOut as i32
+                        || ne.event_type == EventType::WorkflowExecutionTerminated as i32
                 });
 
                 if next_event.is_none() || next_is_completed {
@@ -84,10 +85,10 @@ impl HistoryInfo {
                             wf_type,
                         });
                     }
-                } else if next_event.is_some() && !next_is_failed_or_timeout {
+                } else if next_event.is_some() && !next_is_failed_or_timeout_or_term {
                     bail!(
-                        "Invalid history! Event {event:?} should be WFT \
-                           completed, failed, or timed out"
+                        "Invalid history! Event {next_event:?} should be WFT \
+                           completed, failed, or timed out - or WE terminated."
                     );
                 }
             }
