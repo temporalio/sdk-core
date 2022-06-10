@@ -65,4 +65,33 @@ service OperatorService {
     //     aip.dev/not-precedent: DeleteNamespace RPC doesn't follow Google API format. --)
     rpc DeleteNamespace (DeleteNamespaceRequest) returns (DeleteNamespaceResponse) {
     }
+
+    // DeleteWorkflowExecution deletes a closed workflow execution asynchronously (workflow must be completed or terminated before).
+    // This method is EXPERIMENTAL and may be changed or removed in a later release.
+    // (-- api-linter: core::0135::method-signature=disabled
+    //     aip.dev/not-precedent: DeleteNamespace RPC doesn't follow Google API format. --)
+    // (-- api-linter: core::0135::response-message-name=disabled
+    //     aip.dev/not-precedent: DeleteNamespace RPC doesn't follow Google API format. --)
+    rpc DeleteWorkflowExecution (DeleteWorkflowExecutionRequest) returns (DeleteWorkflowExecutionResponse) {
+    }
+
+    // AddOrUpdateRemoteCluster adds or updates remote cluster.
+    rpc AddOrUpdateRemoteCluster(AddOrUpdateRemoteClusterRequest) returns (AddOrUpdateRemoteClusterResponse) {
+    }
+
+    // RemoveRemoteCluster removes remote cluster.
+    rpc RemoveRemoteCluster(RemoveRemoteClusterRequest) returns (RemoveRemoteClusterResponse) {
+    }
+
+    // DescribeCluster returns information about Temporal cluster.
+    rpc DescribeCluster(DescribeClusterRequest) returns (DescribeClusterResponse) {
+    }
+
+    // ListClusters returns information about Temporal clusters.
+    rpc ListClusters(ListClustersRequest) returns (ListClustersResponse) {
+    }
+
+    // ListClusterMembers returns information about Temporal cluster members.
+    rpc ListClusterMembers(ListClusterMembersRequest) returns (ListClusterMembersResponse) {
+    }
 }

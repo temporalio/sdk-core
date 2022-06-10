@@ -47,6 +47,10 @@ message NamespaceInfo {
     // A key-value map for any customized purpose.
     map<string, string> data = 5;
     string id = 6;
+
+    // Whether scheduled workflows are supported on this namespace. This is only needed
+    // temporarily while the feature is experimental, so we can give it a high tag.
+    bool supports_schedules = 100;
 }
 
 message NamespaceConfig {
@@ -74,6 +78,8 @@ message UpdateNamespaceInfo {
     string description = 1;
     string owner_email = 2;
     // A key-value map for any customized purpose.
+    // If data already exists on the namespace, 
+    // this will merge with the existing key values. 
     map<string, string> data = 3;
     // New namespace state, server will reject if transition is not allowed.
     // Allowed transitions are:

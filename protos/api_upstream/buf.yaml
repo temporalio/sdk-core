@@ -1,13 +1,11 @@
-version: v1beta1
-build:
-  roots:
-    - .
-lint:
-  ignore:
-    - dependencies
-  use:
-    - DEFAULT
+version: v1
 breaking:
   ignore:
+    - temporal/api/schedule/v1
   use:
     - PACKAGE
+lint:
+  use:
+    - DEFAULT
+  ignore:
+    - dependencies

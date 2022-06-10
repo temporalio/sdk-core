@@ -117,3 +117,28 @@ message ResetPointInfo {
     // false if the reset point has pending childWFs/reqCancels/signalExternals.
     bool resettable = 6;
 }
+
+// NewWorkflowExecutionInfo is a shared message that encapsulates all the
+// required arguments to starting a workflow in different contexts.
+message NewWorkflowExecutionInfo {
+    string workflow_id = 1;
+    temporal.api.common.v1.WorkflowType workflow_type = 2;
+    temporal.api.taskqueue.v1.TaskQueue task_queue = 3;
+    // Serialized arguments to the workflow.
+    temporal.api.common.v1.Payloads input = 4;
+    // Total workflow execution timeout including retries and continue as new.
+    google.protobuf.Duration workflow_execution_timeout = 5 [(gogoproto.stdduration) = true];
+    // Timeout of a single workflow run.
+    google.protobuf.Duration workflow_run_timeout = 6 [(gogoproto.stdduration) = true];
+    // Timeout of a single workflow task.
+    google.protobuf.Duration workflow_task_timeout = 7 [(gogoproto.stdduration) = true];
+    // Default: WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE.
+    temporal.api.enums.v1.WorkflowIdReusePolicy workflow_id_reuse_policy = 8;
+    // The retry policy for the workflow. Will never exceed `workflow_execution_timeout`.
+    temporal.api.common.v1.RetryPolicy retry_policy = 9;
+    // See https://docs.temporal.io/docs/content/what-is-a-temporal-cron-job/
+    string cron_schedule = 10;
+    temporal.api.common.v1.Memo memo = 11;
+    temporal.api.common.v1.SearchAttributes search_attributes = 12;
+    temporal.api.common.v1.Header header = 13;
+}
