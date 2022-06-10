@@ -61,6 +61,7 @@ The passed in options to initialization can be customized to export to an OTel c
 
 To run integ tests with OTel collection on, you can use `integ-with-otel.sh`. You will want to make
 sure you are running the collector via docker, which can be done like so:
+
 `docker-compose -f .buildkite/docker/docker-compose.yaml -f .buildkite/docker/docker-compose-telem.yaml up`
 
 If you are working on a language SDK, you are expected to initialize tracing early in your `main`
@@ -70,7 +71,10 @@ equivalent.
 
 This repo uses a subtree for upstream protobuf files. The path `protos/api_upstream` is a
 subtree. To update it, use:
-`git subtree pull --prefix protos/api_upstream/ git://github.com/temporalio/api.git master --squash`
+
+`git pull --squash -s subtree ssh://git@github.com/temporalio/api.git master --allow-unrelated-histories`
+
+Do not question why this git command is the way it is. It is not our place to interpret git's ways.
 
 ## Fetching Histories
 Tests which would like to replay stored histories rely on that history being made available in

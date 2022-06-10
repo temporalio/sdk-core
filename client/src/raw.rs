@@ -263,6 +263,15 @@ where
         }
     );
     proxy!(
+        get_workflow_execution_history_reverse,
+        GetWorkflowExecutionHistoryReverseRequest,
+        GetWorkflowExecutionHistoryReverseResponse,
+        |r| {
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            r.extensions_mut().insert(labels);
+        }
+    );
+    proxy!(
         poll_workflow_task_queue,
         PollWorkflowTaskQueueRequest,
         PollWorkflowTaskQueueResponse,
@@ -543,6 +552,69 @@ where
         |r| {
             let mut labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             labels.task_q(r.get_ref().task_queue.clone());
+            r.extensions_mut().insert(labels);
+        }
+    );
+    proxy!(
+        create_schedule,
+        CreateScheduleRequest,
+        CreateScheduleResponse,
+        |r| {
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            r.extensions_mut().insert(labels);
+        }
+    );
+    proxy!(
+        describe_schedule,
+        DescribeScheduleRequest,
+        DescribeScheduleResponse,
+        |r| {
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            r.extensions_mut().insert(labels);
+        }
+    );
+    proxy!(
+        update_schedule,
+        UpdateScheduleRequest,
+        UpdateScheduleResponse,
+        |r| {
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            r.extensions_mut().insert(labels);
+        }
+    );
+    proxy!(
+        patch_schedule,
+        PatchScheduleRequest,
+        PatchScheduleResponse,
+        |r| {
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            r.extensions_mut().insert(labels);
+        }
+    );
+    proxy!(
+        list_schedule_matching_times,
+        ListScheduleMatchingTimesRequest,
+        ListScheduleMatchingTimesResponse,
+        |r| {
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            r.extensions_mut().insert(labels);
+        }
+    );
+    proxy!(
+        delete_schedule,
+        DeleteScheduleRequest,
+        DeleteScheduleResponse,
+        |r| {
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            r.extensions_mut().insert(labels);
+        }
+    );
+    proxy!(
+        list_schedules,
+        ListSchedulesRequest,
+        ListSchedulesResponse,
+        |r| {
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             r.extensions_mut().insert(labels);
         }
     );

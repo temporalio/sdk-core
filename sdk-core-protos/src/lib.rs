@@ -1418,7 +1418,6 @@ pub mod temporal {
                                 activity_type: Some(ActivityType {
                                     name: s.activity_type,
                                 }),
-                                namespace: s.namespace,
                                 task_queue: Some(s.task_queue.into()),
                                 header: Some(s.headers.into()),
                                 input: s.arguments.into_payloads(),
@@ -1726,6 +1725,12 @@ pub mod temporal {
         pub mod replication {
             pub mod v1 {
                 tonic::include_proto!("temporal.api.replication.v1");
+            }
+        }
+
+        pub mod schedule {
+            pub mod v1 {
+                tonic::include_proto!("temporal.api.schedule.v1");
             }
         }
 
