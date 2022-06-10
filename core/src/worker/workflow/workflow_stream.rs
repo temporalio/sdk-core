@@ -900,10 +900,6 @@ impl WFStream {
         self.runs.handles().filter(|r| r.wft.is_some()).count()
     }
 
-    fn should_allow_poll(&self) -> bool {
-        self.runs.can_accept_new() && self.buffered_polls_need_cache_slot.is_empty()
-    }
-
     // Useful when debugging
     #[allow(dead_code)]
     fn info_dump(&self, run_id: &str) {

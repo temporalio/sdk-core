@@ -140,13 +140,4 @@ impl RunCache {
     pub fn cache_capacity(&self) -> usize {
         self.max
     }
-    pub fn can_accept_new(&self) -> bool {
-        if self.len() <= self.cache_capacity() {
-            return true;
-        }
-        // If we are full, but any run has finished all its pending work, then it's also OK to poll
-        // because such a run is acceptable to evict in favor of new work
-        self.handles()
-            .any(|r| !r.has_any_pending_work(false, false))
-    }
 }

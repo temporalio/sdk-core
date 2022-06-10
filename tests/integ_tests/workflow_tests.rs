@@ -421,7 +421,8 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
     let mut wf_starter = CoreWfStarter::new("wft_timeout_doesnt_create_unsolvable_autocomplete");
     wf_starter
         // Test needs eviction on and a short timeout
-        .max_cached_workflows(0usize)
+        .max_cached_workflows(0)
+        .max_wft(1)
         .wft_timeout(Duration::from_secs(1));
     let core = wf_starter.get_worker().await;
     let client = wf_starter.get_client().await;
@@ -446,26 +447,6 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
         .unwrap();
         wf_task
     };
-    let poll_sched_act_poll = || async {
-        poll_sched_act().await;
-        let wf_task = core.poll_workflow_activation().await.unwrap();
-        assert_matches!(
-            wf_task.jobs.as_slice(),
-            [
-                WorkflowActivationJob {
-                    variant: Some(workflow_activation_job::Variant::SignalWorkflow(_)),
-                },
-                WorkflowActivationJob {
-                    variant: Some(workflow_activation_job::Variant::ResolveActivity(_)),
-                },
-                WorkflowActivationJob {
-                    variant: Some(workflow_activation_job::Variant::SignalWorkflow(_)),
-                }
-            ]
-        );
-        wf_task
-    };
-
     wf_starter.start_wf().await;
 
     // Poll and schedule the activity
@@ -504,7 +485,8 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
         .await
         .unwrap();
     // Start from the beginning
-    let wf_task = poll_sched_act_poll().await;
+    poll_sched_act().await;
+    let wf_task = core.poll_workflow_activation().await.unwrap();
     // Time out this time
     sleep(Duration::from_secs(2)).await;
     // Poll again, which should not have any work to do and spin, until the complete goes through.
@@ -527,7 +509,11 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
         .await
         .unwrap();
     // Do it all over again, without timing out this time
-    let wf_task = poll_sched_act_poll().await;
+    poll_sched_act().await;
+    let wf_task = core.poll_workflow_activation().await.unwrap();
+    // Server can sometimes arbitrarily re-order the activity complete to be after the second signal
+    // Seeing 3 jobs is enough info.
+    assert_eq!(wf_task.jobs.len(), 3);
     core.complete_execution(&wf_task.run_id).await;
 }
 

@@ -171,6 +171,10 @@ impl MocksHolder {
     pub fn set_act_poller(&mut self, poller: BoxedActPoller) {
         self.inputs.act_poller = Some(poller);
     }
+    pub fn make_wft_stream_interminable(&mut self) {
+        let old_stream = std::mem::replace(&mut self.inputs.wft_stream, stream::pending().boxed());
+        self.inputs.wft_stream = old_stream.chain(stream::pending()).boxed();
+    }
 }
 
 pub struct MockWorkerInputs {
