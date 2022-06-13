@@ -109,7 +109,7 @@ impl Workflows {
         basics: WorkflowBasics,
         sticky_attrs: Option<StickyExecutionAttributes>,
         client: Arc<WorkerClientBag>,
-        wft_stream: impl Stream<Item = ValidPollWFTQResponse> + Send + 'static,
+        wft_stream: impl Stream<Item = Result<ValidPollWFTQResponse, tonic::Status>> + Send + 'static,
         local_activity_request_sink: impl Fn(Vec<LocalActRequest>) -> Vec<LocalActivityResolution>
             + Send
             + Sync

@@ -178,7 +178,7 @@ impl MocksHolder {
 }
 
 pub struct MockWorkerInputs {
-    pub wft_stream: BoxStream<'static, ValidPollWFTQResponse>,
+    pub wft_stream: BoxStream<'static, Result<ValidPollWFTQResponse, tonic::Status>>,
     pub act_poller: Option<BoxedActPoller>,
     pub config: WorkerConfig,
 }
@@ -190,7 +190,9 @@ impl Default for MockWorkerInputs {
 }
 
 impl MockWorkerInputs {
-    pub fn new(wft_stream: BoxStream<'static, ValidPollWFTQResponse>) -> Self {
+    pub fn new(
+        wft_stream: BoxStream<'static, Result<ValidPollWFTQResponse, tonic::Status>>,
+    ) -> Self {
         Self {
             wft_stream,
             act_poller: None,
@@ -249,7 +251,7 @@ impl MocksHolder {
         stream: impl Stream<Item = PollWorkflowTaskQueueResponse> + Send + 'static,
     ) -> Self {
         let wft_stream = stream
-            .map(|r| r.try_into().expect("Mock responses must be valid work"))
+            .map(|r| Ok(r.try_into().expect("Mock responses must be valid work")))
             .boxed();
         let mock_worker = MockWorkerInputs {
             wft_stream,
@@ -560,6 +562,7 @@ pub(crate) fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder {
             inner: UnboundedReceiverStream::new(wft_rx),
             all_work_was_completed: all_work_delivered,
         }
+        .map(Ok)
         .boxed(),
     );
 

@@ -84,7 +84,7 @@ pub struct CoreWfStarter {
     /// Used for both the task queue and workflow id
     task_queue_name: String,
     telemetry_options: TelemetryOptions,
-    worker_config: WorkerConfig,
+    pub worker_config: WorkerConfig,
     wft_timeout: Option<Duration>,
     initted_worker: OnceCell<InitializedWorker>,
 }
