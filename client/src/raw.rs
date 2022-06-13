@@ -157,7 +157,7 @@ impl AttachMetricLabels {
 impl<RC, T> WorkflowService for RC
 where
     RC: RawClientLike<SvcType = T>,
-    T: tonic::client::GrpcService<tonic::body::BoxBody> + Send + Clone + 'static,
+    T: GrpcService<BoxBody> + Send + Clone + 'static,
     T::ResponseBody: tonic::codegen::Body + Send + 'static,
     T::Error: Into<tonic::codegen::StdError>,
     T::Future: Send,
@@ -183,26 +183,37 @@ macro_rules! proxy {
         }
     };
 }
+macro_rules! proxier {
+    ( $(($method:ident, $req:ident, $resp:ident $(, $closure:expr)?  );)* ) => {
+        #[cfg(test)]
+        const ALL_IMPLEMENTED_RPCS: &'static [&'static str] = &[$(stringify!($method)),*];
+        /// Trait version of the generated workflow service client with modifications to attach appropriate
+        /// metric labels or whatever else to requests
+        pub trait WorkflowService: RawClientLike
+        where
+            // Yo this is wild
+            <Self as RawClientLike>::SvcType: GrpcService<BoxBody> + Send + Clone + 'static,
+            <<Self as RawClientLike>::SvcType as GrpcService<BoxBody>>::ResponseBody:
+                tonic::codegen::Body + Send + 'static,
+            <<Self as RawClientLike>::SvcType as GrpcService<BoxBody>>::Error:
+                Into<tonic::codegen::StdError>,
+            <<Self as RawClientLike>::SvcType as GrpcService<BoxBody>>::Future: Send,
+            <<<Self as RawClientLike>::SvcType as GrpcService<BoxBody>>::ResponseBody
+                as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
+        {
+            $(
+               proxy!($method, $req, $resp $(,$closure)*);
+            )*
+        }
+    };
+}
 // Nice little trick to avoid the callsite asking to type the closure parameter
 fn type_closure_arg<T, R>(arg: T, f: impl FnOnce(T) -> R) -> R {
     f(arg)
 }
 
-/// Trait version of the generated workflow service client with modifications to attach appropriate
-/// metric labels or whatever else to requests
-pub trait WorkflowService: RawClientLike
-where
-    // Yo this is wild
-    <Self as RawClientLike>::SvcType: GrpcService<BoxBody> + Send + Clone + 'static,
-    <<Self as RawClientLike>::SvcType as GrpcService<BoxBody>>::ResponseBody:
-        tonic::codegen::Body + Send + 'static,
-    <<Self as RawClientLike>::SvcType as GrpcService<BoxBody>>::Error:
-        Into<tonic::codegen::StdError>,
-    <<Self as RawClientLike>::SvcType as GrpcService<BoxBody>>::Future: Send,
-    <<<Self as RawClientLike>::SvcType as GrpcService<BoxBody>>::ResponseBody as tonic::codegen::Body>::Error:
-         Into<tonic::codegen::StdError> + Send,
-{
-    proxy!(
+proxier! {
+    (
         register_namespace,
         RegisterNamespaceRequest,
         RegisterNamespaceResponse,
@@ -211,7 +222,7 @@ where
             r.extensions_mut().insert(labels);
         }
     );
-    proxy!(
+    (
         describe_namespace,
         DescribeNamespaceRequest,
         DescribeNamespaceResponse,
@@ -220,12 +231,12 @@ where
             r.extensions_mut().insert(labels);
         }
     );
-    proxy!(
+    (
         list_namespaces,
         ListNamespacesRequest,
         ListNamespacesResponse
     );
-    proxy!(
+    (
         update_namespace,
         UpdateNamespaceRequest,
         UpdateNamespaceResponse,
@@ -234,7 +245,7 @@ where
             r.extensions_mut().insert(labels);
         }
     );
-    proxy!(
+    (
         deprecate_namespace,
         DeprecateNamespaceRequest,
         DeprecateNamespaceResponse,
@@ -243,7 +254,7 @@ where
             r.extensions_mut().insert(labels);
         }
     );
-    proxy!(
+    (
         start_workflow_execution,
         StartWorkflowExecutionRequest,
         StartWorkflowExecutionResponse,
@@ -253,7 +264,7 @@ where
             r.extensions_mut().insert(labels);
         }
     );
-    proxy!(
+    (
         get_workflow_execution_history,
         GetWorkflowExecutionHistoryRequest,
         GetWorkflowExecutionHistoryResponse,
@@ -262,7 +273,7 @@ where
             r.extensions_mut().insert(labels);
         }
     );
-    proxy!(
+    (
         get_workflow_execution_history_reverse,
         GetWorkflowExecutionHistoryReverseRequest,
         GetWorkflowExecutionHistoryReverseResponse,
@@ -271,7 +282,7 @@ where
             r.extensions_mut().insert(labels);
         }
     );
-    proxy!(
+    (
         poll_workflow_task_queue,
         PollWorkflowTaskQueueRequest,
         PollWorkflowTaskQueueResponse,
@@ -282,7 +293,7 @@ where
             r.set_timeout(LONG_POLL_TIMEOUT);
         }
     );
-    proxy!(
+    (
         respond_workflow_task_completed,
         RespondWorkflowTaskCompletedRequest,
         RespondWorkflowTaskCompletedResponse,
@@ -291,7 +302,7 @@ where
             r.extensions_mut().insert(labels);
         }
     );
-    proxy!(
+    (
         respond_workflow_task_failed,
         RespondWorkflowTaskFailedRequest,
         RespondWorkflowTaskFailedResponse,
@@ -300,7 +311,7 @@ where
             r.extensions_mut().insert(labels);
         }
     );
-    proxy!(
+    (
         poll_activity_task_queue,
         PollActivityTaskQueueRequest,
         PollActivityTaskQueueResponse,
@@ -311,7 +322,7 @@ where
             r.set_timeout(LONG_POLL_TIMEOUT);
         }
     );
-    proxy!(
+    (
         record_activity_task_heartbeat,
         RecordActivityTaskHeartbeatRequest,
         RecordActivityTaskHeartbeatResponse,
@@ -320,7 +331,7 @@ where
             r.extensions_mut().insert(labels);
         }
     );
-    proxy!(
+    (
         record_activity_task_heartbeat_by_id,
         RecordActivityTaskHeartbeatByIdRequest,
         RecordActivityTaskHeartbeatByIdResponse,
@@ -329,7 +340,7 @@ where
             r.extensions_mut().insert(labels);
         }
     );
-    proxy!(
+    (
         respond_activity_task_completed,
         RespondActivityTaskCompletedRequest,
         RespondActivityTaskCompletedResponse,
@@ -338,7 +349,7 @@ where
             r.extensions_mut().insert(labels);
         }
     );
-    proxy!(
+    (
         respond_activity_task_completed_by_id,
         RespondActivityTaskCompletedByIdRequest,
         RespondActivityTaskCompletedByIdResponse,
@@ -348,7 +359,7 @@ where
         }
     );
 
-    proxy!(
+    (
         respond_activity_task_failed,
         RespondActivityTaskFailedRequest,
         RespondActivityTaskFailedResponse,
@@ -357,7 +368,7 @@ where
             r.extensions_mut().insert(labels);
         }
     );
-    proxy!(
+    (
         respond_activity_task_failed_by_id,
         RespondActivityTaskFailedByIdRequest,
         RespondActivityTaskFailedByIdResponse,
@@ -366,7 +377,7 @@ where
             r.extensions_mut().insert(labels);
         }
     );
-    proxy!(
+    (
         respond_activity_task_canceled,
         RespondActivityTaskCanceledRequest,
         RespondActivityTaskCanceledResponse,
@@ -375,7 +386,7 @@ where
             r.extensions_mut().insert(labels);
         }
     );
-    proxy!(
+    (
         respond_activity_task_canceled_by_id,
         RespondActivityTaskCanceledByIdRequest,
         RespondActivityTaskCanceledByIdResponse,
@@ -384,7 +395,7 @@ where
             r.extensions_mut().insert(labels);
         }
     );
-    proxy!(
+    (
         request_cancel_workflow_execution,
         RequestCancelWorkflowExecutionRequest,
         RequestCancelWorkflowExecutionResponse,
@@ -393,7 +404,7 @@ where
             r.extensions_mut().insert(labels);
         }
     );
-    proxy!(
+    (
         signal_workflow_execution,
         SignalWorkflowExecutionRequest,
         SignalWorkflowExecutionResponse,
@@ -402,7 +413,7 @@ where
             r.extensions_mut().insert(labels);
         }
     );
-    proxy!(
+    (
         signal_with_start_workflow_execution,
         SignalWithStartWorkflowExecutionRequest,
         SignalWithStartWorkflowExecutionResponse,
@@ -412,7 +423,7 @@ where
             r.extensions_mut().insert(labels);
         }
     );
-    proxy!(
+    (
         reset_workflow_execution,
         ResetWorkflowExecutionRequest,
         ResetWorkflowExecutionResponse,
@@ -421,7 +432,7 @@ where
             r.extensions_mut().insert(labels);
         }
     );
-    proxy!(
+    (
         terminate_workflow_execution,
         TerminateWorkflowExecutionRequest,
         TerminateWorkflowExecutionResponse,
@@ -430,7 +441,7 @@ where
             r.extensions_mut().insert(labels);
         }
     );
-    proxy!(
+    (
         list_open_workflow_executions,
         ListOpenWorkflowExecutionsRequest,
         ListOpenWorkflowExecutionsResponse,
@@ -439,7 +450,7 @@ where
             r.extensions_mut().insert(labels);
         }
     );
-    proxy!(
+    (
         list_closed_workflow_executions,
         ListClosedWorkflowExecutionsRequest,
         ListClosedWorkflowExecutionsResponse,
@@ -448,7 +459,7 @@ where
             r.extensions_mut().insert(labels);
         }
     );
-    proxy!(
+    (
         list_workflow_executions,
         ListWorkflowExecutionsRequest,
         ListWorkflowExecutionsResponse,
@@ -457,7 +468,7 @@ where
             r.extensions_mut().insert(labels);
         }
     );
-    proxy!(
+    (
         list_archived_workflow_executions,
         ListArchivedWorkflowExecutionsRequest,
         ListArchivedWorkflowExecutionsResponse,
@@ -466,7 +477,7 @@ where
             r.extensions_mut().insert(labels);
         }
     );
-    proxy!(
+    (
         scan_workflow_executions,
         ScanWorkflowExecutionsRequest,
         ScanWorkflowExecutionsResponse,
@@ -475,7 +486,7 @@ where
             r.extensions_mut().insert(labels);
         }
     );
-    proxy!(
+    (
         count_workflow_executions,
         CountWorkflowExecutionsRequest,
         CountWorkflowExecutionsResponse,
@@ -484,12 +495,12 @@ where
             r.extensions_mut().insert(labels);
         }
     );
-    proxy!(
+    (
         get_search_attributes,
         GetSearchAttributesRequest,
         GetSearchAttributesResponse
     );
-    proxy!(
+    (
         respond_query_task_completed,
         RespondQueryTaskCompletedRequest,
         RespondQueryTaskCompletedResponse,
@@ -498,7 +509,7 @@ where
             r.extensions_mut().insert(labels);
         }
     );
-    proxy!(
+    (
         reset_sticky_task_queue,
         ResetStickyTaskQueueRequest,
         ResetStickyTaskQueueResponse,
@@ -507,7 +518,7 @@ where
             r.extensions_mut().insert(labels);
         }
     );
-    proxy!(
+    (
         query_workflow,
         QueryWorkflowRequest,
         QueryWorkflowResponse,
@@ -516,7 +527,7 @@ where
             r.extensions_mut().insert(labels);
         }
     );
-    proxy!(
+    (
         describe_workflow_execution,
         DescribeWorkflowExecutionRequest,
         DescribeWorkflowExecutionResponse,
@@ -525,7 +536,7 @@ where
             r.extensions_mut().insert(labels);
         }
     );
-    proxy!(
+    (
         describe_task_queue,
         DescribeTaskQueueRequest,
         DescribeTaskQueueResponse,
@@ -535,17 +546,17 @@ where
             r.extensions_mut().insert(labels);
         }
     );
-    proxy!(
+    (
         get_cluster_info,
         GetClusterInfoRequest,
         GetClusterInfoResponse
     );
-    proxy!(
+    (
         get_system_info,
         GetSystemInfoRequest,
         GetSystemInfoResponse
     );
-    proxy!(
+    (
         list_task_queue_partitions,
         ListTaskQueuePartitionsRequest,
         ListTaskQueuePartitionsResponse,
@@ -555,7 +566,7 @@ where
             r.extensions_mut().insert(labels);
         }
     );
-    proxy!(
+    (
         create_schedule,
         CreateScheduleRequest,
         CreateScheduleResponse,
@@ -564,7 +575,7 @@ where
             r.extensions_mut().insert(labels);
         }
     );
-    proxy!(
+    (
         describe_schedule,
         DescribeScheduleRequest,
         DescribeScheduleResponse,
@@ -573,7 +584,7 @@ where
             r.extensions_mut().insert(labels);
         }
     );
-    proxy!(
+    (
         update_schedule,
         UpdateScheduleRequest,
         UpdateScheduleResponse,
@@ -582,7 +593,7 @@ where
             r.extensions_mut().insert(labels);
         }
     );
-    proxy!(
+    (
         patch_schedule,
         PatchScheduleRequest,
         PatchScheduleResponse,
@@ -591,7 +602,7 @@ where
             r.extensions_mut().insert(labels);
         }
     );
-    proxy!(
+    (
         list_schedule_matching_times,
         ListScheduleMatchingTimesRequest,
         ListScheduleMatchingTimesResponse,
@@ -600,7 +611,7 @@ where
             r.extensions_mut().insert(labels);
         }
     );
-    proxy!(
+    (
         delete_schedule,
         DeleteScheduleRequest,
         DeleteScheduleResponse,
@@ -609,7 +620,7 @@ where
             r.extensions_mut().insert(labels);
         }
     );
-    proxy!(
+    (
         list_schedules,
         ListSchedulesRequest,
         ListSchedulesResponse,
@@ -624,6 +635,7 @@ where
 mod tests {
     use super::*;
     use crate::{ClientOptionsBuilder, RetryClient, WorkflowServiceClientWithMetrics};
+    use std::collections::HashSet;
     use temporal_sdk_core_protos::temporal::api::workflowservice::v1::ListNamespacesRequest;
 
     // Just to help make sure some stuff compiles. Not run.
@@ -642,5 +654,33 @@ mod tests {
             .do_call("whatever", fact, tonic::Request::new(the_request))
             .await
             .unwrap();
+    }
+
+    #[test]
+    fn verify_all_methods_implemented() {
+        // This is less work than trying to hook into the codegen process
+        let proto_def =
+            include_str!("../../protos/api_upstream/temporal/api/workflowservice/v1/service.proto");
+        let methods: Vec<_> = proto_def
+            .lines()
+            .map(|l| l.trim())
+            .filter(|l| l.starts_with("rpc"))
+            .map(|l| {
+                let stripped = l.strip_prefix("rpc ").unwrap();
+                (&stripped[..stripped.find('(').unwrap()]).trim()
+            })
+            .collect();
+        let no_underscores: HashSet<_> = ALL_IMPLEMENTED_RPCS
+            .iter()
+            .map(|x| x.replace('_', ""))
+            .collect();
+        for method in methods {
+            if !no_underscores.contains(&method.to_lowercase()) {
+                panic!(
+                    "WorkflowService RPC method {} is not implemented by raw client",
+                    method
+                )
+            }
+        }
     }
 }
