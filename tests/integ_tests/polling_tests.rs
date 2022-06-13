@@ -3,6 +3,7 @@ use futures::future::join_all;
 use std::time::Duration;
 use temporal_client::WorkflowOptions;
 use temporal_sdk::{WfContext, WorkflowResult};
+use temporal_sdk_core_api::errors::PollWfError;
 use temporal_sdk_core_protos::coresdk::{
     activity_task::activity_task as act_task,
     workflow_activation::{workflow_activation_job, FireTimer, WorkflowActivationJob},
@@ -130,4 +131,15 @@ async fn can_paginate_long_history() {
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
+}
+
+#[tokio::test]
+async fn poll_of_nonexistent_namespace_is_fatal() {
+    let mut starter = CoreWfStarter::new("whatever_yo");
+    starter.worker_config.namespace = "I do not exist".to_string();
+    let worker = starter.get_worker().await;
+    assert_matches!(
+        worker.poll_workflow_activation().await,
+        Err(PollWfError::TonicError(_))
+    );
 }

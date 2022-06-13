@@ -197,8 +197,14 @@ async fn complete_with_task_not_found_during_shutdown() {
 #[tokio::test]
 async fn complete_eviction_after_shutdown_doesnt_panic() {
     let t = canned_histories::single_timer("1");
-    let mh = MockPollCfg::from_resp_batches("fakeid", t, [1], mock_workflow_client());
-    let core = mock_worker(build_mock_pollers(mh));
+    let mut mh = build_mock_pollers(MockPollCfg::from_resp_batches(
+        "fakeid",
+        t,
+        [1],
+        mock_workflow_client(),
+    ));
+    mh.make_wft_stream_interminable();
+    let core = mock_worker(mh);
 
     let res = core.poll_workflow_activation().await.unwrap();
     assert_eq!(res.jobs.len(), 1);

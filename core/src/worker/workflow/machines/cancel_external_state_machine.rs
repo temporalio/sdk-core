@@ -193,7 +193,8 @@ impl WFMachinesAdapter for CancelExternalMachine {
             CancelExternalCommand::Failed(f) => {
                 let reason = match f {
                     CancelExternalWorkflowExecutionFailedCause::Unspecified => "unknown",
-                    CancelExternalWorkflowExecutionFailedCause::ExternalWorkflowExecutionNotFound => "not found"
+                    CancelExternalWorkflowExecutionFailedCause::ExternalWorkflowExecutionNotFound
+                    | CancelExternalWorkflowExecutionFailedCause::NamespaceNotFound  => "not found"
                 };
                 vec![ResolveRequestCancelExternalWorkflow {
                     seq: self.shared_state.seq,

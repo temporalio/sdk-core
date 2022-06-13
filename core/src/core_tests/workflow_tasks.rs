@@ -1027,11 +1027,13 @@ async fn lots_of_workflows() {
             response_batches: vec![1.into(), 2.into()],
         }
     });
-    let mock = build_multihist_mock_sg(hists, false, 0);
+    let mut mock = build_multihist_mock_sg(hists, false, 0);
+    mock.make_wft_stream_interminable();
     let worker = &mock_worker(mock);
     let completed_count = Arc::new(Semaphore::new(0));
     let killer = async {
         let _ = completed_count.acquire_many(total_wfs).await.unwrap();
+        dbg!("Shutdown initted");
         worker.initiate_shutdown();
     };
     let poller = fanout_tasks(5, |_| {
@@ -1142,14 +1144,7 @@ async fn complete_after_eviction() {
     ))
     .await
     .unwrap();
-    // Now replay is done, complete the activation containing the eviction.
-    let eviction = core.poll_workflow_activation().await.unwrap();
-    assert_matches!(
-        eviction.jobs.as_slice(),
-        [WorkflowActivationJob {
-            variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
-        }]
-    );
+
     core.shutdown().await;
 }
 
@@ -1871,15 +1866,6 @@ async fn eviction_waits_until_replay_finished() {
     ))
     .await
     .unwrap();
-    // The first two WFTs were replay, and now that we've caught up, the eviction will be sent
-    let eviction = core.poll_workflow_activation().await.unwrap();
-    assert_eq!(eviction.history_length, 13);
-    assert_matches!(
-        eviction.jobs.as_slice(),
-        [WorkflowActivationJob {
-            variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
-        }]
-    );
 
     core.shutdown().await;
 }

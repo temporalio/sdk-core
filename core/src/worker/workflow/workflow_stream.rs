@@ -49,8 +49,11 @@ pub(crate) struct WFStream {
 enum WFStreamInput {
     NewWft(PermittedWFT),
     Local(LocalInput),
-    // The stream given to us which represents the poller (or a mock) terminated.
+    /// The stream given to us which represents the poller (or a mock) terminated.
     PollerDead,
+    /// The stream given to us which represents the poller (or a mock) encountered a non-retryable
+    /// error while polling
+    PollerError(tonic::Status),
 }
 impl From<RunUpdateResponse> for WFStreamInput {
     fn from(r: RunUpdateResponse) -> Self {
@@ -81,12 +84,14 @@ pub(super) enum LocalInputs {
 enum ExternalPollerInputs {
     NewWft(PermittedWFT),
     PollerDead,
+    PollerError(tonic::Status),
 }
 impl From<ExternalPollerInputs> for WFStreamInput {
     fn from(l: ExternalPollerInputs) -> Self {
         match l {
             ExternalPollerInputs::NewWft(v) => WFStreamInput::NewWft(v),
             ExternalPollerInputs::PollerDead => WFStreamInput::PollerDead,
+            ExternalPollerInputs::PollerError(e) => WFStreamInput::PollerError(e),
         }
     }
 }
@@ -109,7 +114,7 @@ impl WFStream {
     /// [RunAction]s and receiving [RunUpdateResponse]s via its [ManagedRunHandle].
     pub(super) fn build(
         basics: WorkflowBasics,
-        external_wfts: impl Stream<Item = ValidPollWFTQResponse> + Send + 'static,
+        external_wfts: impl Stream<Item = Result<ValidPollWFTQResponse, tonic::Status>> + Send + 'static,
         local_rx: impl Stream<Item = LocalInput> + Send + 'static,
         client: Arc<WorkerClientBag>,
         local_activity_request_sink: impl Fn(Vec<LocalActRequest>) -> Vec<LocalActivityResolution>
@@ -127,8 +132,7 @@ impl WFStream {
             let wft_sem_clone = wft_sem_clone.clone();
             async move { wft_sem_clone.acquire_owned().await.unwrap() }
         };
-        let (external_wft_allow_handle, poller_wfts) =
-            stream_when_allowed(external_wfts, proceeder);
+        let poller_wfts = stream_when_allowed(external_wfts, proceeder);
         let (run_update_tx, run_update_rx) = unbounded_channel();
         let local_rx = stream::select(
             local_rx.map(Into::into),
@@ -137,7 +141,10 @@ impl WFStream {
         let all_inputs = stream::select_with_strategy(
             local_rx,
             poller_wfts
-                .map(|(wft, permit)| ExternalPollerInputs::NewWft(PermittedWFT { wft, permit }))
+                .map(|(wft, permit)| match wft {
+                    Ok(wft) => ExternalPollerInputs::NewWft(PermittedWFT { wft, permit }),
+                    Err(e) => ExternalPollerInputs::PollerError(e),
+                })
                 .chain(stream::once(async { ExternalPollerInputs::PollerDead }))
                 .map(Into::into)
                 .boxed(),
@@ -206,6 +213,10 @@ impl WFStream {
                         state.shutdown_token.cancel();
                         None
                     }
+                    WFStreamInput::PollerError(e) => {
+                        warn!("WFT poller errored, shutting down");
+                        return Err(PollWfError::TonicError(e));
+                    }
                 };
 
                 if let Some(ref act) = maybe_activation {
@@ -216,9 +227,6 @@ impl WFStream {
                     }
                 }
                 state.reconcile_buffered();
-                if state.should_allow_poll() {
-                    external_wft_allow_handle.allow_one();
-                }
                 if state.shutdown_done() {
                     return Err(PollWfError::ShutDown);
                 }
@@ -902,10 +910,6 @@ impl WFStream {
 
     fn outstanding_wfts(&self) -> usize {
         self.runs.handles().filter(|r| r.wft.is_some()).count()
-    }
-
-    fn should_allow_poll(&self) -> bool {
-        self.runs.can_accept_new() && self.buffered_polls_need_cache_slot.is_empty()
     }
 
     // Useful when debugging

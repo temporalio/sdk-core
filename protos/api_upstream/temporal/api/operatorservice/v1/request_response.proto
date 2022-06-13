@@ -31,7 +31,15 @@ option java_outer_classname = "RequestResponseProto";
 option ruby_package = "Temporal::Api::OperatorService::V1";
 option csharp_namespace = "Temporal.Api.OperatorService.V1";
 
+import "dependencies/gogoproto/gogo.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+
+import "temporal/api/cluster/v1/message.proto";
+import "temporal/api/common/v1/message.proto";
+import "temporal/api/enums/v1/cluster.proto";
 import "temporal/api/enums/v1/common.proto";
+import "temporal/api/version/v1/message.proto";
 
 // (-- Search Attribute --)
 
@@ -74,4 +82,82 @@ message DeleteNamespaceRequest {
 message DeleteNamespaceResponse {
     // Temporary namespace name that is used during reclaim resources step.
     string deleted_namespace = 1;
+}
+
+// This message is EXPERIMENTAL and may be changed or removed in a later release.
+// (-- api-linter: core::0135::request-unknown-fields=disabled
+//     aip.dev/not-precedent: DeleteNamespace RPC doesn't follow Google API format. --)
+// (-- api-linter: core::0135::request-name-required=disabled
+//     aip.dev/not-precedent: DeleteNamespace RPC doesn't follow Google API format. --)
+message DeleteWorkflowExecutionRequest {
+    string namespace = 1;
+    // Workflow executions to delete. If run_id is not specified, last one is used.
+    temporal.api.common.v1.WorkflowExecution workflow_execution = 2;
+}
+
+// This message is EXPERIMENTAL and may be changed or removed in a later release.
+message DeleteWorkflowExecutionResponse {
+}
+
+message AddOrUpdateRemoteClusterRequest {
+    string frontend_address = 1;
+    bool enable_remote_cluster_connection = 2;
+}
+
+message AddOrUpdateRemoteClusterResponse {
+}
+
+message RemoveRemoteClusterRequest {
+    string cluster_name = 1;
+}
+
+message RemoveRemoteClusterResponse {
+}
+
+message DescribeClusterRequest {
+    string cluster_name = 1;
+}
+
+message DescribeClusterResponse {
+    map<string,string> supported_clients = 1;
+    string server_version = 2;
+    temporal.api.cluster.v1.MembershipInfo membership_info = 3;
+    string cluster_id = 4;
+    string cluster_name = 5;
+    int32 history_shard_count = 6;
+    string persistence_store = 7;
+    string visibility_store = 8;
+    temporal.api.version.v1.VersionInfo version_info = 9;
+    int64 failover_version_increment = 10;
+    int64 initial_failover_version = 11;
+    bool is_global_namespace_enabled = 12;
+}
+
+message ListClustersRequest {
+    int32 page_size = 1;
+    bytes next_page_token = 2;
+}
+
+message ListClustersResponse {
+    repeated temporal.api.cluster.v1.ClusterMetadata clusters = 1;
+    bytes next_page_token = 2;
+}
+
+message ListClusterMembersRequest {
+    // (-- api-linter: core::0140::prepositions=disabled
+    //     aip.dev/not-precedent: "within" is used to indicate a time range. --)
+    google.protobuf.Duration last_heartbeat_within = 1 [(gogoproto.stdduration) = true];
+    string rpc_address = 2;
+    string host_id = 3;
+    temporal.api.enums.v1.ClusterMemberRole role = 4;
+    // (-- api-linter: core::0140::prepositions=disabled
+    //     aip.dev/not-precedent: "after" is used to indicate a time range. --)
+    google.protobuf.Timestamp session_started_after_time = 5 [(gogoproto.stdtime) = true];
+    int32 page_size = 6;
+    bytes next_page_token = 7;
+}
+
+message ListClusterMembersResponse {
+    repeated temporal.api.cluster.v1.ClusterMember active_members = 1;
+    bytes next_page_token = 2;
 }

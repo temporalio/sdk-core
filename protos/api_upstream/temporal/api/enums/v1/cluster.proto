@@ -1,6 +1,6 @@
 // The MIT License
 //
-// Copyright (c) 2020 Temporal Technologies Inc.  All rights reserved.
+// Copyright (c) 2022 Temporal Technologies Inc.  All rights reserved.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -27,15 +27,14 @@ package temporal.api.enums.v1;
 option go_package = "go.temporal.io/api/enums/v1;enums";
 option java_package = "io.temporal.api.enums.v1";
 option java_multiple_files = true;
-option java_outer_classname = "ResetProto";
+option java_outer_classname = "ClusterProto";
 option ruby_package = "Temporal::Api::Enums::V1";
 option csharp_namespace = "Temporal.Api.Enums.V1";
 
-// Reset reapplay(replay) options
-// * RESET_REAPPLY_TYPE_SIGNAL (default) - Signals are reapplied when workflow is reset
-// * RESET_REAPPLY_TYPE_NONE - nothing is reapplied
-enum ResetReapplyType {
-    RESET_REAPPLY_TYPE_UNSPECIFIED = 0;
-    RESET_REAPPLY_TYPE_SIGNAL = 1;
-    RESET_REAPPLY_TYPE_NONE = 2;
+enum ClusterMemberRole {
+  CLUSTER_MEMBER_ROLE_UNSPECIFIED = 0;
+  CLUSTER_MEMBER_ROLE_FRONTEND = 1;
+  CLUSTER_MEMBER_ROLE_HISTORY = 2;
+  CLUSTER_MEMBER_ROLE_MATCHING = 3;
+  CLUSTER_MEMBER_ROLE_WORKER = 4;
 }

@@ -47,6 +47,7 @@ import "temporal/api/filter/v1/message.proto";
 import "temporal/api/namespace/v1/message.proto";
 import "temporal/api/query/v1/message.proto";
 import "temporal/api/replication/v1/message.proto";
+import "temporal/api/schedule/v1/message.proto";
 import "temporal/api/taskqueue/v1/message.proto";
 import "temporal/api/version/v1/message.proto";
 
@@ -586,7 +587,7 @@ message ResetWorkflowExecutionRequest {
     int64 workflow_task_finish_event_id = 4;
     // Used to de-dupe reset requests
     string request_id = 5;
-    // Should be removed. Appears unused.
+    // Reset reapplay(replay) options.
     temporal.api.enums.v1.ResetReapplyType reset_reapply_type = 6;
 }
 
@@ -796,6 +797,9 @@ message GetSystemInfoResponse {
 
         // True if RespondActivityTaskFailed API supports including heartbeat details
         bool activity_failure_include_heartbeat = 3;
+
+        // Supports scheduled workflow features.
+        bool supports_schedules = 4;
     }
 }
 
@@ -807,4 +811,142 @@ message ListTaskQueuePartitionsRequest {
 message ListTaskQueuePartitionsResponse {
     repeated temporal.api.taskqueue.v1.TaskQueuePartitionMetadata activity_task_queue_partitions = 1;
     repeated temporal.api.taskqueue.v1.TaskQueuePartitionMetadata workflow_task_queue_partitions = 2;
+}
+
+// (-- api-linter: core::0133::request-parent-required=disabled
+//     aip.dev/not-precedent: CreateSchedule doesn't follow Google API format --)
+// (-- api-linter: core::0133::request-unknown-fields=disabled
+//     aip.dev/not-precedent: CreateSchedule doesn't follow Google API format --)
+// (-- api-linter: core::0133::request-resource-behavior=disabled
+//     aip.dev/not-precedent: field_behavior annotation not available in our gogo fork --)
+// (-- api-linter: core::0203::optional=disabled
+//     aip.dev/not-precedent: field_behavior annotation not available in our gogo fork --)
+message CreateScheduleRequest {
+    // The namespace the schedule should be created in.
+    string namespace = 1;
+    // The id of the new schedule.
+    string schedule_id = 2;
+    // The schedule spec, policies, action, and initial state.
+    temporal.api.schedule.v1.Schedule schedule = 3;
+    // Optional initial patch (e.g. to run the action once immediately).
+    temporal.api.schedule.v1.SchedulePatch initial_patch = 4;
+    // The identity of the client who initiated this request.
+    string identity = 5;
+    // A unique identifier for this create request for idempotence. Typically UUIDv4.
+    string request_id = 6;
+    // Memo and search attributes to attach to the schedule itself.
+    temporal.api.common.v1.Memo memo = 7;
+    temporal.api.common.v1.SearchAttributes search_attributes = 8;
+}
+
+message CreateScheduleResponse {
+    bytes conflict_token = 1;
+}
+
+message DescribeScheduleRequest {
+    // The namespace of the schedule to describe.
+    string namespace = 1;
+    // The id of the schedule to describe.
+    string schedule_id = 2;
+}
+
+message DescribeScheduleResponse {
+    // The complete current schedule details. This may not match the schedule as
+    // created because:
+    // - some fields in the state are modified automatically
+    // - the schedule may have been modified by UpdateSchedule or PatchSchedule
+    temporal.api.schedule.v1.Schedule schedule = 1;
+    // Extra schedule state info.
+    temporal.api.schedule.v1.ScheduleInfo info = 2;
+    // The memo and search attributes that the schedule was created with.
+    temporal.api.common.v1.Memo memo = 3;
+    temporal.api.common.v1.SearchAttributes search_attributes = 4;
+
+    // This value can be passed back to UpdateSchedule to ensure that the
+    // schedule was not modified between a Describe and an Update, which could
+    // lead to lost updates and other confusion.
+    bytes conflict_token = 5;
+}
+
+// (-- api-linter: core::0134::request-mask-required=disabled
+//     aip.dev/not-precedent: UpdateSchedule doesn't follow Google API format --)
+message UpdateScheduleRequest {
+    // The namespace of the schedule to update.
+    string namespace = 1;
+    // The id of the schedule to update.
+    string schedule_id = 2;
+    // The new schedule. The four main fields of the schedule (spec, action,
+    // policies, state) are replaced completely by the values in this message.
+    temporal.api.schedule.v1.Schedule schedule = 3;
+    // This can be the value of conflict_token from a DescribeScheduleResponse,
+    // which will cause this request to fail if the schedule has been modified
+    // between the Describe and this Update.
+    // If missing, the schedule will be updated unconditionally.
+    bytes conflict_token = 4;
+    // The identity of the client who initiated this request.
+    string identity = 5;
+    // A unique identifier for this update request for idempotence. Typically UUIDv4.
+    string request_id = 6;
+}
+
+message UpdateScheduleResponse {
+}
+
+message PatchScheduleRequest {
+    // The namespace of the schedule to patch.
+    string namespace = 1;
+    // The id of the schedule to patch.
+    string schedule_id = 2;
+    temporal.api.schedule.v1.SchedulePatch patch = 3;
+    // The identity of the client who initiated this request.
+    string identity = 4;
+    // A unique identifier for this update request for idempotence. Typically UUIDv4.
+    string request_id = 5;
+}
+
+message PatchScheduleResponse {
+}
+
+message ListScheduleMatchingTimesRequest {
+    // The namespace of the schedule to query.
+    string namespace = 1;
+    // The id of the schedule to query.
+    string schedule_id = 2;
+    // Time range to query.
+    google.protobuf.Timestamp start_time = 3 [(gogoproto.stdtime) = true];
+    google.protobuf.Timestamp end_time = 4 [(gogoproto.stdtime) = true];
+}
+
+message ListScheduleMatchingTimesResponse {
+    repeated google.protobuf.Timestamp start_time = 1 [(gogoproto.stdtime) = true];
+}
+
+// (-- api-linter: core::0135::request-name-required=disabled
+//     aip.dev/not-precedent: DeleteSchedule doesn't follow Google API format --)
+// (-- api-linter: core::0135::request-unknown-fields=disabled
+//     aip.dev/not-precedent: DeleteSchedule doesn't follow Google API format --)
+message DeleteScheduleRequest {
+    // The namespace of the schedule to delete.
+    string namespace = 1;
+    // The id of the schedule to delete.
+    string schedule_id = 2;
+    // The identity of the client who initiated this request.
+    string identity = 3;
+}
+
+message DeleteScheduleResponse {
+}
+
+message ListSchedulesRequest {
+    // The namespace to list schedules in.
+    string namespace = 1;
+    // How many to return at once.
+    int32 maximum_page_size = 2;
+    // Token to get the next page of results.
+    bytes next_page_token = 3;
+}
+
+message ListSchedulesResponse {
+    repeated temporal.api.schedule.v1.ScheduleListEntry schedules = 1;
+    bytes next_page_token = 2;
 }

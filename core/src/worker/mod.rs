@@ -235,7 +235,7 @@ impl Worker {
         config: WorkerConfig,
         sticky_queue_name: Option<String>,
         client: Arc<WorkerClientBag>,
-        wft_stream: impl Stream<Item = ValidPollWFTQResponse> + Send + 'static,
+        wft_stream: impl Stream<Item = Result<ValidPollWFTQResponse, tonic::Status>> + Send + 'static,
         act_poller: Option<BoxedActPoller>,
         metrics: MetricsContext,
         shutdown_token: CancellationToken,

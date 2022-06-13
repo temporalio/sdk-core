@@ -44,7 +44,8 @@ import "temporal/api/taskqueue/v1/message.proto";
 message ScheduleActivityTaskCommandAttributes {
     string activity_id = 1;
     temporal.api.common.v1.ActivityType activity_type = 2;
-    string namespace = 3;
+    // This used to be a `namespace` field which allowed to schedule activity in another namespace.
+    reserved 3;
     temporal.api.taskqueue.v1.TaskQueue task_queue = 4;
     temporal.api.common.v1.Header header = 5;
     temporal.api.common.v1.Payloads input = 6;

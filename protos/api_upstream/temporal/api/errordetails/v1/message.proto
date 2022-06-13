@@ -35,7 +35,9 @@ option ruby_package = "Temporal::Api::ErrorDetails::V1";
 option csharp_namespace = "Temporal.Api.ErrorDetails.V1";
 
 import "temporal/api/common/v1/message.proto";
+
 import "temporal/api/enums/v1/failed_cause.proto";
+import "temporal/api/enums/v1/namespace.proto";
 
 message NotFoundFailure {
     string current_cluster = 1;
@@ -53,6 +55,22 @@ message NamespaceNotActiveFailure {
     string active_cluster = 3;
 }
 
+message NamespaceInvalidStateFailure {
+    string namespace = 1;
+    // Current state of the requested namespace.
+    temporal.api.enums.v1.NamespaceState state = 2;
+    // Allowed namespace states for requested operation.
+    // For example NAMESPACE_STATE_DELETED is forbidden for most operations but allowed for DescribeNamespace.
+    repeated temporal.api.enums.v1.NamespaceState allowed_states = 3;
+}
+
+message NamespaceNotFoundFailure {
+    string namespace = 1;
+}
+
+message NamespaceAlreadyExistsFailure {
+}
+
 message ClientVersionNotSupportedFailure {
     string client_version = 1;
     string client_name = 2;
@@ -62,9 +80,6 @@ message ClientVersionNotSupportedFailure {
 message ServerVersionNotSupportedFailure {
     string server_version = 1;
     string client_supported_server_versions = 2;
-}
-
-message NamespaceAlreadyExistsFailure {
 }
 
 message CancellationAlreadyRequestedFailure {
@@ -87,4 +102,7 @@ message SystemWorkflowFailure {
     temporal.api.common.v1.WorkflowExecution workflow_execution = 1;
     // Serialized error returned by the system workflow performing the underlying operation.
     string workflow_error = 2;
+}
+
+message WorkflowNotReadyFailure {
 }

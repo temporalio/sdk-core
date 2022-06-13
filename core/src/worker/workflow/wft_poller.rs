@@ -5,10 +5,10 @@ use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollWorkflowTa
 pub(crate) fn new_wft_poller(
     poller: BoxedWFPoller,
     metrics: MetricsContext,
-) -> impl Stream<Item = ValidPollWFTQResponse> {
+) -> impl Stream<Item = Result<ValidPollWFTQResponse, tonic::Status>> {
     stream::unfold((poller, metrics), |(poller, metrics)| async move {
         loop {
-            match poller.poll().await {
+            return match poller.poll().await {
                 Some(Ok(wft)) => {
                     if wft == PollWorkflowTaskQueueResponse::default() {
                         // We get the default proto in the event that the long poll times out.
@@ -27,15 +27,16 @@ pub(crate) fn new_wft_poller(
                         }
                     };
                     metrics.wf_tq_poll_ok();
-                    return Some((work, (poller, metrics)));
+                    Some((Ok(work), (poller, metrics)))
                 }
                 Some(Err(e)) => {
                     warn!(error=?e, "Error while polling for workflow tasks");
+                    Some((Err(e), (poller, metrics)))
                 }
                 // If poller returns None, it's dead, thus we also return None to terminate this
                 // stream.
-                None => return None,
-            }
+                None => None,
+            };
         }
     })
 }
@@ -70,19 +71,18 @@ mod tests {
         mock_poller.expect_poll().times(1).returning(|| None);
         let stream = new_wft_poller(Box::new(mock_poller), Default::default());
         pin_mut!(stream);
-        assert_eq!(stream.next().await, None);
+        assert_matches!(stream.next().await, None);
     }
 
     #[tokio::test]
-    async fn poll_errors_do_not_produce_responses() {
+    async fn poll_errors_do_produce_responses() {
         let mut mock_poller = mock_poller();
         mock_poller
             .expect_poll()
             .times(1)
             .returning(|| Some(Err(tonic::Status::internal("ahhh"))));
-        mock_poller.expect_poll().times(1).returning(|| None);
         let stream = new_wft_poller(Box::new(mock_poller), Default::default());
         pin_mut!(stream);
-        assert_eq!(stream.next().await, None);
+        assert_matches!(stream.next().await, Some(Err(_)));
     }
 }

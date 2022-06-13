@@ -116,6 +116,20 @@ impl TestHistoryBuilder {
         self.build_and_push_event(EventType::WorkflowExecutionCompleted, attrs.into());
     }
 
+    pub fn add_workflow_execution_terminated(&mut self) {
+        let attrs = WorkflowExecutionTerminatedEventAttributes {
+            ..Default::default()
+        };
+        self.build_and_push_event(EventType::WorkflowExecutionTerminated, attrs.into());
+    }
+
+    pub fn add_workflow_execution_timed_out(&mut self) {
+        let attrs = WorkflowExecutionTimedOutEventAttributes {
+            ..Default::default()
+        };
+        self.build_and_push_event(EventType::WorkflowExecutionTimedOut, attrs.into());
+    }
+
     pub fn add_workflow_execution_failed(&mut self) {
         let attrs = WorkflowExecutionFailedEventAttributes {
             workflow_task_completed_event_id: self.previous_task_completed_id,

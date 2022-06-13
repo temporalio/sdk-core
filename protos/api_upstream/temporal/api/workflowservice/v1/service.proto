@@ -215,9 +215,9 @@ service WorkflowService {
     // RequestCancelWorkflowExecution is called by workers when they want to request cancellation of
     // a workflow execution.
     //
-    // This result in a new `WORKFLOW_EXECUTION_CANCEL_REQUESTED` event being written to the
-    // workflow history and a new workflow task created for the workflow. Fails with `NotFound` if
-    // the workflow is already completed or doesn't exist.
+    // This results in a new `WORKFLOW_EXECUTION_CANCEL_REQUESTED` event being written to the
+    // workflow history and a new workflow task created for the workflow. It returns success if the requested
+    // workflow is already closed. It fails with 'NotFound' if the requested workflow doesn't exist.
     rpc RequestCancelWorkflowExecution (RequestCancelWorkflowExecutionRequest) returns (RequestCancelWorkflowExecutionResponse) {
     }
 
@@ -323,5 +323,49 @@ service WorkflowService {
     }
 
     rpc ListTaskQueuePartitions(ListTaskQueuePartitionsRequest) returns (ListTaskQueuePartitionsResponse) {
+    }
+
+    // Creates a new schedule.
+    // (-- api-linter: core::0133::method-signature=disabled
+    //     aip.dev/not-precedent: CreateSchedule doesn't follow Google API format --)
+    // (-- api-linter: core::0133::response-message-name=disabled
+    //     aip.dev/not-precedent: CreateSchedule doesn't follow Google API format --)
+    // (-- api-linter: core::0133::http-uri-parent=disabled
+    //     aip.dev/not-precedent: CreateSchedule doesn't follow Google API format --)
+    rpc CreateSchedule (CreateScheduleRequest) returns (CreateScheduleResponse) {
+    }
+
+    // Returns the schedule description and current state of an existing schedule.
+    rpc DescribeSchedule (DescribeScheduleRequest) returns (DescribeScheduleResponse) {
+    }
+
+    // Changes the configuration or state of an existing schedule.
+    // (-- api-linter: core::0134::response-message-name=disabled
+    //     aip.dev/not-precedent: UpdateSchedule RPC doesn't follow Google API format. --)
+    // (-- api-linter: core::0134::method-signature=disabled
+    //     aip.dev/not-precedent: UpdateSchedule RPC doesn't follow Google API format. --)
+    rpc UpdateSchedule (UpdateScheduleRequest) returns (UpdateScheduleResponse) {
+    }
+
+    // Makes a specific change to a schedule or triggers an immediate action.
+    // (-- api-linter: core::0134::synonyms=disabled
+    //     aip.dev/not-precedent: we have both patch and update. --)
+    rpc PatchSchedule (PatchScheduleRequest) returns (PatchScheduleResponse) {
+    }
+
+    // Lists matching times within a range.
+    rpc ListScheduleMatchingTimes (ListScheduleMatchingTimesRequest) returns (ListScheduleMatchingTimesResponse) {
+    }
+
+    // Deletes a schedule, removing it from the system.
+    // (-- api-linter: core::0135::method-signature=disabled
+    //     aip.dev/not-precedent: DeleteSchedule doesn't follow Google API format --)
+    // (-- api-linter: core::0135::response-message-name=disabled
+    //     aip.dev/not-precedent: DeleteSchedule doesn't follow Google API format --)
+    rpc DeleteSchedule (DeleteScheduleRequest) returns (DeleteScheduleResponse) {
+    }
+
+    // List all schedules in a namespace.
+    rpc ListSchedules (ListSchedulesRequest) returns (ListSchedulesResponse) {
     }
 }
