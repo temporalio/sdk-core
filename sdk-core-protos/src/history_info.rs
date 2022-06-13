@@ -61,9 +61,13 @@ impl HistoryInfo {
                     ne.event_type == EventType::WorkflowTaskCompleted as i32
                 });
                 let next_is_failed_or_timeout_or_term = next_event.map_or(false, |ne| {
-                    ne.event_type == EventType::WorkflowTaskFailed as i32
-                        || ne.event_type == EventType::WorkflowTaskTimedOut as i32
-                        || ne.event_type == EventType::WorkflowExecutionTerminated as i32
+                    matches!(
+                        ne.event_type(),
+                        EventType::WorkflowTaskFailed
+                            | EventType::WorkflowTaskTimedOut
+                            | EventType::WorkflowExecutionTerminated
+                            | EventType::WorkflowExecutionTimedOut
+                    )
                 });
 
                 if next_event.is_none() || next_is_completed {

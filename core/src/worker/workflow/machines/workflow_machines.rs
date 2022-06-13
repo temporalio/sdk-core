@@ -318,7 +318,10 @@ impl WorkflowMachines {
         if event.is_final_wf_execution_event() {
             self.have_seen_terminal_event = true;
         }
-        if event.event_type() == EventType::WorkflowExecutionTerminated {
+        if matches!(
+            event.event_type(),
+            EventType::WorkflowExecutionTerminated | EventType::WorkflowExecutionTimedOut
+        ) {
             return if has_next_event {
                 Err(WFMachinesError::Fatal(
                     "Machines were fed a history which has an event after workflow execution was \

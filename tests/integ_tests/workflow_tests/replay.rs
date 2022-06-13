@@ -113,18 +113,22 @@ async fn replay_using_wf_function() {
 }
 
 #[tokio::test]
-async fn replay_ok_ending_with_terminated() {
+async fn replay_ok_ending_with_terminated_or_timed_out() {
+    let mut t1 = canned_histories::single_timer("1");
+    t1.add_workflow_execution_terminated();
+    let mut t2 = canned_histories::single_timer("1");
+    t2.add_workflow_execution_timed_out();
     telemetry_init(&get_integ_telem_options()).unwrap();
-    let mut t = canned_histories::single_timer("1");
-    t.add_workflow_execution_terminated();
-    let func = timers_wf(1);
-    let (worker, _) = init_core_replay_preloaded(
-        "replay_ok_terminate",
-        &t.get_full_history_info().unwrap().into(),
-    );
-    let mut worker = Worker::new_from_core(worker, "replay_ok_terminate".to_string());
-    worker.register_wf(DEFAULT_WORKFLOW_TYPE, func);
-    worker.run().await.unwrap();
+    for t in [t1, t2] {
+        let func = timers_wf(1);
+        let (worker, _) = init_core_replay_preloaded(
+            "replay_ok_terminate",
+            &t.get_full_history_info().unwrap().into(),
+        );
+        let mut worker = Worker::new_from_core(worker, "replay_ok_terminate".to_string());
+        worker.register_wf(DEFAULT_WORKFLOW_TYPE, func);
+        worker.run().await.unwrap();
+    }
 }
 
 fn timers_wf(num_timers: u32) -> WorkflowFunction {
