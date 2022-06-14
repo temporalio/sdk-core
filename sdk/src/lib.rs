@@ -66,7 +66,6 @@ use crate::{
 use anyhow::{anyhow, bail, Context};
 use app_data::AppData;
 use futures::{future::BoxFuture, FutureExt, StreamExt, TryFutureExt, TryStreamExt};
-use once_cell::sync::OnceCell;
 use std::{
     cell::RefCell,
     collections::HashMap,
@@ -116,8 +115,7 @@ pub fn sdk_client_options(url: impl Into<Url>) -> ClientOptionsBuilder {
     builder
         .target_url(url)
         .client_name("rust-sdk".to_string())
-        .client_version(VERSION.to_string())
-        .worker_binary_id(binary_id().to_string());
+        .client_version(VERSION.to_string());
 
     builder
 }
@@ -160,8 +158,7 @@ struct ActivityHalf {
 }
 
 impl Worker {
-    #[doc(hidden)]
-    /// Create a new rust worker from a core worker
+    /// Create a new Rust SDK worker from a core worker
     pub fn new_from_core(worker: Arc<dyn CoreWorker>, task_queue: impl Into<String>) -> Self {
         Self {
             common: CommonWorker {
@@ -765,21 +762,4 @@ where
         };
         Arc::new(wrapper)
     }
-}
-
-/// Reads own binary, hashes it, and returns b64 str version of that hash
-fn binary_id() -> &'static str {
-    use sha2::{Digest, Sha256};
-    use std::{env, fs, io};
-
-    static INSTANCE: OnceCell<String> = OnceCell::new();
-    INSTANCE.get_or_init(|| {
-        let exe_path = env::current_exe().expect("Cannot read own binary to determine binary id");
-        let mut exe_file =
-            fs::File::open(exe_path).expect("Cannot read own binary to determine binary id");
-        let mut hasher = Sha256::new();
-        io::copy(&mut exe_file, &mut hasher).expect("Copying data into binary hasher works");
-        let hash = hasher.finalize();
-        base64::encode(hash)
-    })
 }

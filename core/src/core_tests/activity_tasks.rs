@@ -601,6 +601,7 @@ async fn max_tq_acts_set_passed_to_poll_properly() {
         .namespace("enchi")
         .task_queue("cat")
         .max_concurrent_at_polls(1_usize)
+        .worker_build_id("test_bin_id")
         .max_task_queue_activities_per_second(rate)
         .build()
         .unwrap();

@@ -108,6 +108,7 @@ impl CoreWfStarter {
             worker_config: WorkerConfigBuilder::default()
                 .namespace(NAMESPACE)
                 .task_queue(task_queue)
+                .worker_build_id("test_build_id")
                 .max_cached_workflows(1000_usize)
                 .build()
                 .unwrap(),
@@ -435,7 +436,6 @@ pub fn get_integ_server_options() -> ClientOptions {
     let url = Url::try_from(&*temporal_server_address).unwrap();
     ClientOptionsBuilder::default()
         .identity("integ_tester".to_string())
-        .worker_binary_id("fakebinaryid".to_string())
         .target_url(url)
         .client_name("temporal-core".to_string())
         .client_version("0.1.0".to_string())

@@ -56,7 +56,6 @@ message CreateClientRequest {
   string client_name = 3;
   string client_version = 4;
   string identity = 6;
-  string worker_binary_id = 7;
   TlsConfig tls_config = 8;
   RetryConfig retry_config = 9;
 

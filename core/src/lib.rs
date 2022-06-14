@@ -68,11 +68,14 @@ where
     CT: Into<AnyClient>,
 {
     let as_enum = client.into();
-    // TODO: Assert namespaces match
     let client = match as_enum {
         AnyClient::HighLevel(ac) => ac,
         AnyClient::LowLevel(ll) => {
-            let client = Client::new(*ll, worker_config.namespace.clone());
+            let mut client = Client::new(*ll, worker_config.namespace.clone());
+            client.set_worker_build_id(worker_config.worker_build_id.clone());
+            if let Some(ref id_override) = worker_config.client_identity_override {
+                client.options_mut().identity = id_override.clone();
+            }
             let retry_client = RetryClient::new(client, RetryConfig::default());
             Arc::new(retry_client)
         }

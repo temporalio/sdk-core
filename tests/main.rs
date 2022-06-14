@@ -73,7 +73,6 @@ mod integ_tests {
         .unwrap();
         let sgo = ClientOptionsBuilder::default()
             .target_url(Url::from_str("https://localhost:7233").unwrap())
-            .worker_binary_id("binident".to_string())
             .tls_cfg(TlsConfig {
                 server_root_ca_cert: Some(root),
                 domain: Some("tls-sample".to_string()),

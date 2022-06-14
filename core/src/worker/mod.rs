@@ -546,6 +546,7 @@ mod tests {
         let cfg = wcb
             .namespace("default")
             .task_queue("whatever")
+            .worker_build_id("test_bin_id")
             .max_concurrent_wft_polls(5_usize)
             .build()
             .unwrap();
