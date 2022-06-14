@@ -85,9 +85,6 @@ pub struct ClientOptions {
     #[builder(default)]
     pub identity: String,
 
-    /// A string that should be unique to this process' binary
-    pub worker_binary_id: String,
-
     /// If specified, use TLS as configured by the [TlsConfig] struct. If this is set core will
     /// attempt to use TLS when connecting to the Temporal server. Lang SDK is expected to pass any
     /// certs or keys as bytes, loading them from disk itself if needed.
@@ -456,6 +453,8 @@ pub struct Client {
     inner: ConfiguredClient<WorkflowServiceClientWithMetrics>,
     /// The namespace this client interacts with
     namespace: String,
+    /// If set, attach as the worker build id to relevant calls
+    bound_worker_build_id: Option<String>,
 }
 
 impl Client {
@@ -467,6 +466,7 @@ impl Client {
         Client {
             inner: client,
             namespace,
+            bound_worker_build_id: None,
         }
     }
 
@@ -493,6 +493,17 @@ impl Client {
     /// Return the options this client was initialized with
     pub fn options(&self) -> &ClientOptions {
         &self.inner.options
+    }
+
+    /// Return the options this client was initialized with mutably
+    pub fn options_mut(&mut self) -> &mut ClientOptions {
+        &mut self.inner.options
+    }
+
+    /// Set a worker build id to be attached to relevant requests. Unlikely to be useful outside
+    /// of core.
+    pub fn set_worker_build_id(&mut self, id: String) {
+        self.bound_worker_build_id = Some(id)
     }
 }
 
@@ -711,7 +722,7 @@ impl WorkflowClientTrait for Client {
                 } as i32,
             }),
             identity: self.inner.options.identity.clone(),
-            binary_checksum: self.inner.options.worker_binary_id.clone(),
+            binary_checksum: self.bound_worker_build_id.clone().unwrap_or_default(),
         };
 
         Ok(self
@@ -775,7 +786,7 @@ impl WorkflowClientTrait for Client {
             sticky_attributes: request.sticky_attributes,
             return_new_workflow_task: request.return_new_workflow_task,
             force_create_new_workflow_task: request.force_create_new_workflow_task,
-            binary_checksum: self.inner.options.worker_binary_id.clone(),
+            binary_checksum: self.bound_worker_build_id.clone().unwrap_or_default(),
             query_results: request
                 .query_responses
                 .into_iter()
@@ -881,7 +892,7 @@ impl WorkflowClientTrait for Client {
             cause: cause as i32,
             failure,
             identity: self.inner.options.identity.clone(),
-            binary_checksum: self.inner.options.worker_binary_id.clone(),
+            binary_checksum: self.bound_worker_build_id.clone().unwrap_or_default(),
             namespace: self.namespace.clone(),
         };
         Ok(self

@@ -10,6 +10,14 @@ pub struct WorkerConfig {
     /// What task queue will this worker poll from? This task queue name will be used for both
     /// workflow and activity polling.
     pub task_queue: String,
+    /// A string that should be unique to the set of code this worker uses. IE: All the workflow,
+    /// activity, interceptor, and data converter code.
+    pub worker_build_id: String,
+    /// A human-readable string that can identify this worker. Using something like sdk version
+    /// and host name is a good default. If set, overrides the identity set (if any) on the client
+    /// used by this worker.
+    #[builder(default)]
+    pub client_identity_override: Option<String>,
     /// If set nonzero, workflows will be cached and sticky task queues will be used, meaning that
     /// history updates are applied incrementally to suspended instances of workflow execution.
     /// Workflows are evicted according to a least-recently-used policy one the cache maximum is

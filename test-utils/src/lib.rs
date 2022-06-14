@@ -64,6 +64,7 @@ pub fn init_core_replay_preloaded(
     let worker_cfg = WorkerConfigBuilder::default()
         .namespace(NAMESPACE)
         .task_queue(test_name)
+        .worker_build_id("test_bin_id")
         .build()
         .expect("Configuration options construct properly");
     let worker = init_replay_worker(worker_cfg, history).expect("Replay worker must init properly");
@@ -108,6 +109,7 @@ impl CoreWfStarter {
             worker_config: WorkerConfigBuilder::default()
                 .namespace(NAMESPACE)
                 .task_queue(task_queue)
+                .worker_build_id("test_build_id")
                 .max_cached_workflows(1000_usize)
                 .build()
                 .unwrap(),
@@ -435,7 +437,6 @@ pub fn get_integ_server_options() -> ClientOptions {
     let url = Url::try_from(&*temporal_server_address).unwrap();
     ClientOptionsBuilder::default()
         .identity("integ_tester".to_string())
-        .worker_binary_id("fakebinaryid".to_string())
         .target_url(url)
         .client_name("temporal-core".to_string())
         .client_version("0.1.0".to_string())

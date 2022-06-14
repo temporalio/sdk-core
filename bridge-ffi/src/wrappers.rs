@@ -105,9 +105,6 @@ impl TryFrom<ClientOptions> for temporal_sdk_core::ClientOptions {
         if !req.identity.is_empty() {
             client_opts.identity(req.identity);
         }
-        if !req.worker_binary_id.is_empty() {
-            client_opts.worker_binary_id(req.worker_binary_id);
-        }
         if let Some(req_tls_config) = req.tls_config {
             let mut tls_config = temporal_sdk_core::TlsConfig::default();
             if !req_tls_config.server_root_ca_cert.is_empty() {

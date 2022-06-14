@@ -56,6 +56,7 @@ pub fn test_worker_cfg() -> WorkerConfigBuilder {
     let mut wcb = WorkerConfigBuilder::default();
     wcb.namespace("default")
         .task_queue(TEST_Q)
+        .worker_build_id("test_bin_id")
         // Serial polling since it makes mocking much easier.
         .max_concurrent_wft_polls(1_usize);
     wcb
