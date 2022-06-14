@@ -64,6 +64,7 @@ pub fn init_core_replay_preloaded(
     let worker_cfg = WorkerConfigBuilder::default()
         .namespace(NAMESPACE)
         .task_queue(test_name)
+        .worker_build_id("test_bin_id")
         .build()
         .expect("Configuration options construct properly");
     let worker = init_replay_worker(worker_cfg, history).expect("Replay worker must init properly");
