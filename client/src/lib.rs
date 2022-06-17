@@ -75,10 +75,12 @@ pub struct ClientOptions {
 
     /// The name of the SDK being implemented on top of core. Is set as `client-name` header in
     /// all RPC calls
+    #[builder(setter(into))]
     pub client_name: String,
 
     /// The version of the SDK being implemented on top of core. Is set as `client-version` header
     /// in all RPC calls. The server decides if the client is supported based on this.
+    #[builder(setter(into))]
     pub client_version: String,
 
     /// A human-readable string that can identify this process. Defaults to empty string.

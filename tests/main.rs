@@ -73,6 +73,8 @@ mod integ_tests {
         .unwrap();
         let sgo = ClientOptionsBuilder::default()
             .target_url(Url::from_str("https://localhost:7233").unwrap())
+            .client_name("tls_tester")
+            .client_version("clientver")
             .tls_cfg(TlsConfig {
                 server_root_ca_cert: Some(root),
                 domain: Some("tls-sample".to_string()),
