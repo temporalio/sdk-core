@@ -134,7 +134,15 @@ impl ActivityHeartbeatManager {
         let _ = self.shutdown_token.cancel();
         let mut handle = self.join_handle.lock().await;
         if let Some(h) = handle.take() {
-            h.await.expect("shutdown should exit cleanly");
+            let handle_r = h.await;
+            if let Err(e) = handle_r {
+                if !e.is_cancelled() {
+                    error!(
+                        "Unexpected error joining heartbeating tasks during shutdown: {:?}",
+                        e
+                    )
+                }
+            }
         }
     }
 }
