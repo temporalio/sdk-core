@@ -711,6 +711,17 @@ impl WorkflowMachines {
     /// to the server. While doing so, [TemporalStateMachine::handle_command] is called on the
     /// machine associated with the command.
     fn prepare_commands(&mut self) -> Result<()> {
+        // It's possible we might prepare commands more than once before completing a WFT. (Because
+        // of local activities, of course). Some commands might have since been cancelled that we
+        // already prepared. Rip them out of the outgoing command list if so.
+        self.commands.retain(|c| {
+            !self
+                .all_machines
+                .get(c.machine)
+                .expect("Machine must exist")
+                .was_cancelled_before_sent_to_server()
+        });
+
         while let Some(c) = self.current_wf_task_commands.pop_front() {
             if !self
                 .machine(c.machine)

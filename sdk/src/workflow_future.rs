@@ -122,11 +122,10 @@ impl WorkflowFuture {
             UnblockEvent::CancelExternal(seq, _) => CommandID::CancelExternal(seq),
         };
         let unblocker = self.command_status.remove(&cmd_id);
-        unblocker
+        let _ = unblocker
             .ok_or_else(|| anyhow!("Command {:?} not found to unblock!", cmd_id))?
             .unblocker
-            .send(event)
-            .expect("Receive half of unblock channel must exist");
+            .send(event);
         Ok(())
     }
 
