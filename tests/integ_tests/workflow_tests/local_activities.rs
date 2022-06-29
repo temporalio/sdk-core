@@ -580,3 +580,55 @@ async fn timer_backoff_concurrent_with_non_timer_backoff() {
         .unwrap();
     worker.run_until_done().await.unwrap();
 }
+
+#[tokio::test]
+async fn repro_nondeterminism_with_timer_bug() {
+    let wf_name = "repro_nondeterminism_with_timer_bug";
+    let mut starter = CoreWfStarter::new(wf_name);
+    let mut worker = starter.worker().await;
+
+    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+        let t1 = ctx.timer(Duration::from_secs(30));
+        let r1 = ctx.local_activity(LocalActivityOptions {
+            activity_type: "delay".to_string(),
+            input: "hi".as_json_payload().expect("serializes fine"),
+            retry_policy: RetryPolicy {
+                initial_interval: Some(Duration::from_micros(15).into()),
+                backoff_coefficient: 1_000.,
+                maximum_interval: Some(Duration::from_millis(1500).into()),
+                maximum_attempts: 4,
+                non_retryable_error_types: vec![],
+            },
+            timer_backoff_threshold: Some(Duration::from_secs(1)),
+            ..Default::default()
+        });
+        tokio::pin!(t1);
+        tokio::select! {
+            _ = &mut t1 => {},
+            _ = r1 => {
+                t1.cancel(&ctx);
+            },
+        };
+        ctx.timer(Duration::from_secs(1)).await;
+        Ok(().into())
+    });
+    worker.register_activity("delay", |_: ActContext, _: String| async {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        Ok(())
+    });
+
+    let run_id = worker
+        .submit_wf(
+            wf_name.to_owned(),
+            wf_name.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+    starter
+        .fetch_history_and_replay(wf_name, run_id, worker.inner_mut())
+        .await
+        .unwrap();
+}
