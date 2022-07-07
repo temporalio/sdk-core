@@ -138,6 +138,8 @@ pub struct RetryConfig {
     pub max_elapsed_time: Option<Duration>,
     /// maximum number of retry attempts.
     pub max_retries: usize,
+    /// If true, retry deadline exceeded errors
+    pub retry_deadlines: bool,
 }
 
 impl Default for RetryConfig {
@@ -149,6 +151,7 @@ impl Default for RetryConfig {
             max_interval: Duration::from_secs(5), // until it reaches 5 seconds.
             max_elapsed_time: Some(Duration::from_secs(10)), // 10 seconds total allocated time for all retries.
             max_retries: 10,
+            retry_deadlines: false,
         }
     }
 }
@@ -162,6 +165,7 @@ impl RetryConfig {
             max_interval: Duration::from_secs(10),
             max_elapsed_time: None,
             max_retries: 0,
+            retry_deadlines: true,
         }
     }
 }

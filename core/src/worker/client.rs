@@ -6,7 +6,7 @@ use std::{
     borrow::Borrow,
     ops::{Deref, DerefMut},
 };
-use temporal_client::{WorkflowClientTrait, WorkflowTaskCompletion};
+use temporal_client::{RetryConfig, WorkflowClientTrait, WorkflowTaskCompletion};
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::QueryResult,
     temporal::api::{
@@ -17,6 +17,15 @@ use temporal_sdk_core_protos::{
 };
 
 type Result<T, E = tonic::Status> = std::result::Result<T, E>;
+
+/// Workers are willing to retry things forever
+pub(crate) fn worker_retry_config() -> RetryConfig {
+    let mut rc = RetryConfig::default();
+    rc.max_retries = 0;
+    rc.max_elapsed_time = None;
+    rc.retry_deadlines = true;
+    rc
+}
 
 /// Contains everything a worker needs to interact with the server
 pub(crate) struct WorkerClientBag {
