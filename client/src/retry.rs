@@ -633,8 +633,10 @@ mod tests {
             .expect_complete_workflow_task()
             .returning(move |_| Ok(Default::default()))
             .times(1);
-        let mut rc_allow_deadline = RetryConfig::default();
-        rc_allow_deadline.retry_deadlines = true;
+        let rc_allow_deadline = RetryConfig {
+            retry_deadlines: true,
+            ..Default::default()
+        };
         let retry_client = RetryClient::new(mock_client, rc_allow_deadline);
         let result = retry_client
             .complete_workflow_task(WorkflowTaskCompletion {

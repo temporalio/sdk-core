@@ -20,11 +20,12 @@ type Result<T, E = tonic::Status> = std::result::Result<T, E>;
 
 /// Workers are willing to retry things forever
 pub(crate) fn worker_retry_config() -> RetryConfig {
-    let mut rc = RetryConfig::default();
-    rc.max_retries = 0;
-    rc.max_elapsed_time = None;
-    rc.retry_deadlines = true;
-    rc
+    RetryConfig {
+        max_retries: 0,
+        max_elapsed_time: None,
+        retry_deadlines: true,
+        ..Default::default()
+    }
 }
 
 /// Contains everything a worker needs to interact with the server
