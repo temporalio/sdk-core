@@ -12,7 +12,7 @@ mod raw;
 mod retry;
 mod workflow_handle;
 
-pub use crate::retry::{CallType, RetryClient};
+pub use crate::retry::{CallType, RetryClient, RETRYABLE_ERROR_CODES};
 pub use raw::WorkflowService;
 pub use workflow_handle::{WorkflowExecutionInfo, WorkflowExecutionResult};
 
