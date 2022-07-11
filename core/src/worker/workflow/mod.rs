@@ -24,6 +24,7 @@ use crate::{
     telemetry::VecDisplayer,
     worker::{
         activities::{ActivitiesFromWFTsHandle, PermittedTqResp},
+        client::should_swallow_net_error,
         workflow::{
             managed_run::{ManagedRun, WorkflowManager},
             wft_poller::validate_wft,
@@ -362,20 +363,26 @@ impl Workflows {
         let mut should_evict = None;
         let res = match completer().await {
             Err(err) => {
-                match err.code() {
-                    // Silence unhandled command errors since the lang SDK cannot do anything about
-                    // them besides poll again, which it will do anyway.
-                    tonic::Code::InvalidArgument if err.message() == "UnhandledCommand" => {
-                        debug!(error = %err, run_id, "Unhandled command response when completing");
-                        should_evict = Some(EvictionReason::UnhandledCommand);
-                        Ok(())
+                if should_swallow_net_error(&err) {
+                    warn!(error= %err, "Network error while completing workflow activation");
+                    should_evict = Some(EvictionReason::Fatal);
+                    Ok(())
+                } else {
+                    match err.code() {
+                        // Silence unhandled command errors since the lang SDK cannot do anything
+                        // about them besides poll again, which it will do anyway.
+                        tonic::Code::InvalidArgument if err.message() == "UnhandledCommand" => {
+                            debug!(error = %err, run_id, "Unhandled command response when completing");
+                            should_evict = Some(EvictionReason::UnhandledCommand);
+                            Ok(())
+                        }
+                        tonic::Code::NotFound => {
+                            warn!(error = %err, run_id, "Task not found when completing");
+                            should_evict = Some(EvictionReason::TaskNotFound);
+                            Ok(())
+                        }
+                        _ => Err(err),
                     }
-                    tonic::Code::NotFound => {
-                        warn!(error = %err, run_id, "Task not found when completing");
-                        should_evict = Some(EvictionReason::TaskNotFound);
-                        Ok(())
-                    }
-                    _ => Err(err),
                 }
             }
             _ => Ok(()),
@@ -486,8 +493,12 @@ impl Workflows {
     ) -> Result<(), tonic::Status> {
         match self.client.respond_legacy_query(tt, res).await {
             Ok(_) => Ok(()),
+            Err(e) if should_swallow_net_error(&e) => {
+                warn!(error= %e, "Network error while responding to legacy query");
+                Ok(())
+            }
             Err(e) if e.code() == tonic::Code::NotFound => {
-                warn!(error=?e,"Query not found when attempting to respond to it");
+                warn!(error=?e, "Query not found when attempting to respond to it");
                 Ok(())
             }
             Err(e) => Err(e),

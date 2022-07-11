@@ -4,7 +4,7 @@ use crate::{
 };
 use backoff::{backoff::Backoff, ExponentialBackoff};
 use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
-use std::{error::Error, fmt::Debug, future::Future, time::Duration};
+use std::{fmt::Debug, future::Future, time::Duration};
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::QueryResult,
     temporal::api::{
@@ -115,7 +115,6 @@ pub(crate) struct TonicErrorHandler {
     max_retries: usize,
     call_type: CallType,
     call_name: &'static str,
-    retry_deadlines: bool,
 }
 impl TonicErrorHandler {
     fn new(cfg: RetryConfig, call_type: CallType, call_name: &'static str) -> Self {
@@ -123,7 +122,6 @@ impl TonicErrorHandler {
             max_retries: cfg.max_retries,
             call_type,
             call_name,
-            retry_deadlines: cfg.retry_deadlines,
             backoff: cfg.into(),
         }
     }
@@ -161,17 +159,7 @@ impl ErrorHandler<tonic::Status> for TonicErrorHandler {
         let long_poll_allowed = self.call_type == CallType::LongPoll
             && [Code::Cancelled, Code::DeadlineExceeded].contains(&e.code());
 
-        // True if the error is because we timed out clientside (grpc deadline exceeded). Tonic
-        // reports these a bit oddly.
-        let is_weird_clientside_deadline_exceeded = e.code() == Code::Cancelled
-            && e.source()
-                .and_then(|e| e.downcast_ref::<tonic::transport::TimeoutExpired>())
-                .is_some();
-        let allow_deadline_exceeded = self.retry_deadlines
-            && (is_weird_clientside_deadline_exceeded || e.code() == Code::DeadlineExceeded);
-
-        if RETRYABLE_ERROR_CODES.contains(&e.code()) || long_poll_allowed || allow_deadline_exceeded
-        {
+        if RETRYABLE_ERROR_CODES.contains(&e.code()) || long_poll_allowed {
             if current_attempt == 1 {
                 debug!(error=?e, "gRPC call {} failed on first attempt", self.call_name);
             } else if self.should_log_retry_warning(current_attempt) {
@@ -618,36 +606,5 @@ mod tests {
                 .await;
             assert!(result.is_ok());
         }
-    }
-
-    #[tokio::test]
-    async fn retries_deadlines_when_told() {
-        let mut mock_client = MockWorkflowClientTrait::new();
-        // Unfortunately, there is no way to construct tonic errors with a specific source since
-        // that's all private, so we cannot test the Cancelled code w/ timeout source path.
-        mock_client
-            .expect_complete_workflow_task()
-            .returning(move |_| Err(Status::new(Code::DeadlineExceeded, "blamo")))
-            .times(5);
-        mock_client
-            .expect_complete_workflow_task()
-            .returning(move |_| Ok(Default::default()))
-            .times(1);
-        let rc_allow_deadline = RetryConfig {
-            retry_deadlines: true,
-            ..Default::default()
-        };
-        let retry_client = RetryClient::new(mock_client, rc_allow_deadline);
-        let result = retry_client
-            .complete_workflow_task(WorkflowTaskCompletion {
-                task_token: TaskToken(vec![]),
-                commands: vec![],
-                sticky_attributes: None,
-                query_responses: vec![],
-                return_new_workflow_task: false,
-                force_create_new_workflow_task: false,
-            })
-            .await;
-        assert!(result.is_ok());
     }
 }

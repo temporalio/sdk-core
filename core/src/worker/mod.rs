@@ -449,19 +449,11 @@ impl Worker {
         completion: WorkflowActivationCompletion,
     ) -> Result<(), CompleteWfError> {
         let run_id = completion.run_id.clone();
-        match self.workflows.activation_completed(completion).await {
-            Ok(most_recent_event) => {
-                if let Some(h) = &self.post_activate_hook {
-                    h(self, &run_id, most_recent_event);
-                }
-                Ok(())
-            }
-            Err(CompleteWfError::TonicError(e)) if should_swallow_net_error(&e) => {
-                warn!(error=?e, "Network error while completing workflow activation");
-                Ok(())
-            }
-            Err(e) => Err(e),
+        let most_recent_event = self.workflows.activation_completed(completion).await?;
+        if let Some(h) = &self.post_activate_hook {
+            h(self, &run_id, most_recent_event);
         }
+        Ok(())
     }
 
     /// Request a workflow eviction

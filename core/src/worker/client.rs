@@ -6,9 +6,7 @@ use std::{
     borrow::Borrow,
     ops::{Deref, DerefMut},
 };
-use temporal_client::{
-    RetryConfig, WorkflowClientTrait, WorkflowTaskCompletion, RETRYABLE_ERROR_CODES,
-};
+use temporal_client::{WorkflowClientTrait, WorkflowTaskCompletion, RETRYABLE_ERROR_CODES};
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::QueryResult,
     temporal::api::{
@@ -20,16 +18,6 @@ use temporal_sdk_core_protos::{
 use tonic::Code;
 
 type Result<T, E = tonic::Status> = std::result::Result<T, E>;
-
-/// Workers are willing to retry things forever
-pub(crate) fn worker_retry_config() -> RetryConfig {
-    RetryConfig {
-        max_retries: 0,
-        max_elapsed_time: None,
-        retry_deadlines: true,
-        ..Default::default()
-    }
-}
 
 /// Returns true if the network error should not be reported to lang. This can happen if we've
 /// exceeded the max number of retries, and we prefer to just warn rather than blowing up lang.

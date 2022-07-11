@@ -801,3 +801,32 @@ async fn activity_tasks_from_completion_reserve_slots() {
     let run_fut = async { worker.run_until_done().await.unwrap() };
     tokio::join!(run_fut, act_completer);
 }
+
+#[tokio::test]
+async fn retryable_net_error_exhaustion_is_nonfatal() {
+    let mut mock_client = mock_workflow_client();
+    mock_client
+        .expect_complete_activity_task()
+        .times(1)
+        .returning(|_, _| Err(tonic::Status::internal("retryable error")));
+
+    let core = mock_worker(MocksHolder::from_client_with_activities(
+        mock_client,
+        [PollActivityTaskQueueResponse {
+            task_token: vec![1],
+            activity_id: "act1".to_string(),
+            heartbeat_timeout: Some(Duration::from_secs(10).into()),
+            ..Default::default()
+        }
+        .into()],
+    ));
+
+    let act = core.poll_activity_task().await.unwrap();
+    core.complete_activity_task(ActivityTaskCompletion {
+        task_token: act.task_token,
+        result: Some(ActivityExecutionResult::ok(vec![1].into())),
+    })
+    .await
+    .unwrap();
+    core.shutdown().await;
+}

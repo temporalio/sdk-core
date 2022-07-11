@@ -45,7 +45,7 @@ pub use worker::{Worker, WorkerConfig, WorkerConfigBuilder};
 use crate::{
     replay::mock_client_from_history,
     telemetry::metrics::{MetricsContext, METRIC_METER},
-    worker::client::{worker_retry_config, WorkerClientBag},
+    worker::client::WorkerClientBag,
 };
 use std::sync::Arc;
 use temporal_client::AnyClient;
@@ -86,7 +86,7 @@ where
             if let Some(ref id_override) = worker_config.client_identity_override {
                 client.options_mut().identity = id_override.clone();
             }
-            let retry_client = RetryClient::new(client, worker_retry_config());
+            let retry_client = RetryClient::new(client, Default::default());
             Arc::new(retry_client)
         }
     };
