@@ -227,6 +227,22 @@ pub(crate) struct CompleteLocalActivityData {
     pub result: Result<Payload, Failure>,
 }
 
+pub(crate) fn validate_activity_completion(
+    status: &activity_execution_result::Status,
+) -> Result<(), CompleteActivityError> {
+    match status {
+        Status::Completed(c) if c.result.is_none() => {
+            Err(CompleteActivityError::MalformedActivityCompletion {
+                reason: "Activity completions must contain a `result` payload \
+                             (which may be empty)"
+                    .to_string(),
+                completion: None,
+            })
+        }
+        _ => Ok(()),
+    }
+}
+
 impl TryFrom<activity_execution_result::Status> for LocalActivityExecutionResult {
     type Error = CompleteActivityError;
 
