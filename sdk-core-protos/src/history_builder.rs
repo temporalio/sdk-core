@@ -264,7 +264,7 @@ impl TestHistoryBuilder {
         self.build_and_push_event(EventType::MarkerRecorded, attrs.into());
     }
 
-    fn add_local_activity_marker(
+    pub fn add_local_activity_marker(
         &mut self,
         seq: u32,
         activity_id: &str,
