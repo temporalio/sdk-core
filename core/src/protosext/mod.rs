@@ -204,11 +204,10 @@ impl HistoryEventExt for HistoryEvent {
                 )) if marker_name == LOCAL_ACTIVITY_MARKER_NAME => {
                     let (data, ok_res) = extract_local_activity_marker_details(&mut details);
                     let data = data?;
-                    let result = if let Some(r) = ok_res {
-                        Ok(r)
-                    } else {
-                        let fail = failure?;
-                        Err(fail)
+                    let result = match (ok_res, failure) {
+                        (Some(r), None) => Ok(r),
+                        (None | Some(_), Some(f)) => Err(f),
+                        (None, None) => Ok(Default::default()),
                     };
                     Some(CompleteLocalActivityData {
                         marker_dat: data,
