@@ -117,10 +117,7 @@ async fn local_act_many_concurrent() {
     let mut worker = mock_sdk(mh);
 
     worker.register_wf(DEFAULT_WORKFLOW_TYPE.to_owned(), local_act_fanout_wf);
-    worker.register_activity(
-        "echo",
-        |_ctx: ActContext, str: String| async move { Ok(str) },
-    );
+    worker.register_activity("echo", echo);
     worker
         .submit_wf(
             wf_id.to_owned(),
@@ -332,6 +329,44 @@ async fn local_act_retry_long_backoff_uses_timer() {
     worker.register_activity("echo", move |_ctx: ActContext, _: String| async move {
         Result::<(), _>::Err(anyhow!("Oh no I failed!"))
     });
+    worker
+        .submit_wf(
+            wf_id.to_owned(),
+            DEFAULT_WORKFLOW_TYPE.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+}
+
+#[tokio::test]
+async fn local_act_null_result() {
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    t.add_local_activity_marker(1, "1", None, None, None);
+    t.add_workflow_execution_completed();
+
+    let wf_id = "fakeid";
+    let mock = mock_workflow_client();
+    let mh = MockPollCfg::from_resp_batches(wf_id, t, [ResponseType::AllHistory], mock);
+    let mut worker = mock_sdk_cfg(mh, |w| w.max_cached_workflows = 1);
+
+    worker.register_wf(
+        DEFAULT_WORKFLOW_TYPE.to_owned(),
+        |ctx: WfContext| async move {
+            ctx.local_activity(LocalActivityOptions {
+                activity_type: "nullres".to_string(),
+                input: "hi".as_json_payload().expect("serializes fine"),
+                ..Default::default()
+            })
+            .await;
+            Ok(().into())
+        },
+    );
+    worker.register_activity("nullres", |_ctx: ActContext, _: String| async { Ok(()) });
     worker
         .submit_wf(
             wf_id.to_owned(),
