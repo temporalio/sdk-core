@@ -1,7 +1,7 @@
 use crate::{
     test_help::{
         build_fake_worker, build_mock_pollers, canned_histories, mock_manual_poller, mock_worker,
-        MockPollCfg, MockWorkerInputs, MocksHolder,
+        MockPollCfg, MockWorkerInputs, MocksHolder, ResponseType,
     },
     worker::client::mocks::mock_workflow_client,
     PollActivityError, PollWfError,
@@ -223,4 +223,36 @@ async fn complete_eviction_after_shutdown_doesnt_panic() {
     core.complete_workflow_activation(WorkflowActivationCompletion::empty(res.run_id))
         .await
         .unwrap();
+}
+
+#[tokio::test]
+async fn worker_does_not_panic_on_retry_exhaustion_of_nonfatal_net_err() {
+    let t = canned_histories::single_timer("1");
+    let mut mock = mock_workflow_client();
+    // Return a failure that counts as retryable, and hence we want to be swallowed
+    mock.expect_complete_workflow_task()
+        .times(1)
+        .returning(|_| Err(tonic::Status::internal("Some retryable error")));
+    let mut mh =
+        MockPollCfg::from_resp_batches("fakeid", t, [1.into(), ResponseType::AllHistory], mock);
+    mh.enforce_correct_number_of_polls = false;
+    let mut mock = build_mock_pollers(mh);
+    mock.worker_cfg(|w| w.max_cached_workflows = 1);
+    let core = mock_worker(mock);
+
+    let res = core.poll_workflow_activation().await.unwrap();
+    assert_eq!(res.jobs.len(), 1);
+    // This should not return a fatal error
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
+        res.run_id,
+        vec![start_timer_cmd(1, Duration::from_secs(1))],
+    ))
+    .await
+    .unwrap();
+    // We should see an eviction
+    let res = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        res.jobs[0].variant,
+        Some(workflow_activation_job::Variant::RemoveFromCache(_))
+    );
 }

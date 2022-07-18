@@ -25,7 +25,7 @@ use crate::{
     },
     worker::{
         activities::{DispatchOrTimeoutLA, LACompleteAction, LocalActivityManager},
-        client::WorkerClientBag,
+        client::{should_swallow_net_error, WorkerClientBag},
         workflow::{LocalResolution, Workflows},
     },
     ActivityHeartbeat, CompleteActivityError, PollActivityError, PollWfError, WorkerTrait,
@@ -408,7 +408,7 @@ impl Worker {
                     // no other situations where core generates "internal" commands so it is much
                     // simpler for lang to reply with the timer / next LA command than to do it
                     // internally. Plus, this backoff hack we'd like to eliminate eventually.
-                    self.complete_local_act(as_la_res, info, Some(backoff))
+                    self.complete_local_act(as_la_res, info, Some(backoff));
                 }
                 LACompleteAction::WillBeRetried => {
                     // Nothing to do here
@@ -421,7 +421,13 @@ impl Worker {
         }
 
         if let Some(atm) = &self.at_task_mgr {
-            atm.complete(task_token, status, &**self.wf_client).await
+            match atm.complete(task_token, status, &**self.wf_client).await {
+                Err(CompleteActivityError::TonicError(e)) if should_swallow_net_error(&e) => {
+                    warn!(error=?e, "Network error while completing activity");
+                    Ok(())
+                }
+                o => o,
+            }
         } else {
             error!(
                 "Tried to complete activity {} on a worker that does not have an activity manager",

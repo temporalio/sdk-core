@@ -131,7 +131,7 @@ impl ActivityHeartbeatManager {
     /// Initiates shutdown procedure by stopping lifecycle loop and awaiting for all in-flight
     /// heartbeat requests to be flushed to the server.
     pub(super) async fn shutdown(&self) {
-        let _ = self.shutdown_token.cancel();
+        self.shutdown_token.cancel();
         let mut handle = self.join_handle.lock().await;
         if let Some(h) = handle.take() {
             let handle_r = h.await;
@@ -282,7 +282,7 @@ impl HeartbeatStreamState {
     ) -> Option<HeartbeatExecutorAction> {
         if let Some(state) = self.tt_to_state.remove(&tt) {
             if let Some(cancel_tok) = state.throttled_cancellation_token {
-                let _ = cancel_tok.cancel();
+                cancel_tok.cancel();
             }
             if let Some(last_deets) = state.last_recorded_details {
                 self.tt_needs_flush.insert(tt.clone(), on_complete);
