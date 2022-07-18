@@ -62,7 +62,17 @@ lazy_static::lazy_static! {
     };
 }
 
-/// Initialize a worker bound to a task queue
+/// Initialize a worker bound to a task queue.
+///
+/// Lang implementations should pass in a a [temporal_client::ConfiguredClient] directly (or a
+/// [RetryClient] wrapping one). When they do so, this function will always overwrite the client
+/// retry configuration, force the client to use the namespace defined in the worker config, and set
+/// the client identity appropriately. IE: Use [ClientOptions::connect_no_namespace], not
+/// [ClientOptions::connect].
+///
+/// It is also possible to pass in a [WorkflowClientTrait] implementor, but this largely exists to
+/// support testing and mocking. Lang impls should not operate that way, as it may result in
+/// improper retry behavior for a worker.
 pub fn init_worker<CT>(worker_config: WorkerConfig, client: CT) -> Worker
 where
     CT: Into<AnyClient>,
@@ -76,19 +86,18 @@ where
             if let Some(ref id_override) = worker_config.client_identity_override {
                 client.options_mut().identity = id_override.clone();
             }
-            let retry_client = RetryClient::new(client, RetryConfig::default());
+            let retry_client = RetryClient::new(client, Default::default());
             Arc::new(retry_client)
         }
     };
-    let c_opts = client.get_options().clone();
     if client.namespace() != worker_config.namespace {
         panic!("Passed in client is not bound to the same namespace as the worker");
     }
+    let sticky_q = sticky_q_name_for_worker(&client.get_options().identity, &worker_config);
     let client_bag = Arc::new(WorkerClientBag::new(
         Box::new(client),
         worker_config.namespace.clone(),
     ));
-    let sticky_q = sticky_q_name_for_worker(&c_opts.identity, &worker_config);
     let metrics = MetricsContext::top_level(worker_config.namespace.clone())
         .with_task_q(worker_config.task_queue.clone());
     Worker::new(worker_config, sticky_q, client_bag, metrics)

@@ -120,9 +120,9 @@ impl TonicErrorHandler {
     fn new(cfg: RetryConfig, call_type: CallType, call_name: &'static str) -> Self {
         Self {
             max_retries: cfg.max_retries,
-            backoff: cfg.into(),
             call_type,
             call_name,
+            backoff: cfg.into(),
         }
     }
 
@@ -443,6 +443,17 @@ where
     }
 }
 
+impl<C> RawClientLikeUser for RetryClient<C>
+where
+    C: RawClientLikeUser,
+{
+    type RawClientT = C::RawClientT;
+
+    fn wf_svc(&self) -> Self::RawClientT {
+        self.client.wf_svc()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -595,16 +606,5 @@ mod tests {
                 .await;
             assert!(result.is_ok());
         }
-    }
-}
-
-impl<C> RawClientLikeUser for RetryClient<C>
-where
-    C: RawClientLikeUser,
-{
-    type RawClientT = C::RawClientT;
-
-    fn wf_svc(&self) -> Self::RawClientT {
-        self.client.wf_svc()
     }
 }
