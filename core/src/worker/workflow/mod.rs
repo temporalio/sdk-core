@@ -235,7 +235,7 @@ impl Workflows {
                     let reserved_act_permits =
                         self.reserve_activity_slots_for_outgoing_commands(commands.as_mut_slice());
                     debug!(commands=%commands.display(), query_responses=%query_responses.display(),
-                           "Sending responses to server");
+                           force_new_wft, "Sending responses to server");
                     let mut completion = WorkflowTaskCompletion {
                         task_token,
                         commands,

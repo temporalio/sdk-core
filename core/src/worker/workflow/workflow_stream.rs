@@ -45,7 +45,7 @@ pub(crate) struct WFStream {
     metrics: MetricsContext,
 }
 /// All possible inputs to the [WFStream]
-#[derive(derive_more::From)]
+#[derive(derive_more::From, Debug)]
 enum WFStreamInput {
     NewWft(PermittedWFT),
     Local(LocalInput),
@@ -64,6 +64,7 @@ impl From<RunUpdateResponse> for WFStreamInput {
     }
 }
 /// A non-poller-received input to the [WFStream]
+#[derive(Debug)]
 pub(super) struct LocalInput {
     pub input: LocalInputs,
     pub span: Span,
@@ -167,7 +168,8 @@ impl WFStream {
         };
         all_inputs
             .map(move |action| {
-                let span = span!(Level::DEBUG, "new_stream_input");
+                // TODO: readable version of action
+                let span = span!(Level::DEBUG, "new_stream_input", action=?action);
                 let _span_g = span.enter();
 
                 let maybe_activation = match action {
