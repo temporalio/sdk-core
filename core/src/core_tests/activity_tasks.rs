@@ -22,10 +22,13 @@ use std::{
 };
 use temporal_client::WorkflowOptions;
 use temporal_sdk::{ActivityOptions, WfContext};
-use temporal_sdk_core_api::Worker as WorkerTrait;
+use temporal_sdk_core_api::{errors::CompleteActivityError, Worker as WorkerTrait};
 use temporal_sdk_core_protos::{
     coresdk::{
-        activity_result::{activity_resolution, ActivityExecutionResult, ActivityResolution},
+        activity_result::{
+            activity_execution_result, activity_resolution, ActivityExecutionResult,
+            ActivityResolution, Success,
+        },
         activity_task::{activity_task, ActivityTask},
         workflow_activation::{workflow_activation_job, ResolveActivity, WorkflowActivationJob},
         workflow_commands::{
@@ -829,4 +832,40 @@ async fn retryable_net_error_exhaustion_is_nonfatal() {
     .await
     .unwrap();
     core.shutdown().await;
+}
+
+#[tokio::test]
+async fn cant_complete_activity_with_unset_result_payload() {
+    let mut mock_client = mock_workflow_client();
+    mock_client
+        .expect_poll_activity_task()
+        .returning(move |_, _| {
+            Ok(PollActivityTaskQueueResponse {
+                task_token: vec![1],
+                ..Default::default()
+            })
+        });
+
+    let cfg = WorkerConfigBuilder::default()
+        .namespace("enchi")
+        .task_queue("cat")
+        .worker_build_id("enchi_loves_salmon")
+        .build()
+        .unwrap();
+    let worker = Worker::new_test(cfg, mock_client);
+    let t = worker.poll_activity_task().await.unwrap();
+    let res = worker
+        .complete_activity_task(ActivityTaskCompletion {
+            task_token: t.task_token,
+            result: Some(ActivityExecutionResult {
+                status: Some(activity_execution_result::Status::Completed(Success {
+                    result: None,
+                })),
+            }),
+        })
+        .await;
+    assert_matches!(
+        res,
+        Err(CompleteActivityError::MalformedActivityCompletion { .. })
+    )
 }

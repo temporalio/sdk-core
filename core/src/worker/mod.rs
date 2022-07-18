@@ -18,7 +18,7 @@ use crate::{
         new_activity_task_buffer, new_workflow_task_buffer, BoxedActPoller, Poller,
         WorkflowTaskPoller,
     },
-    protosext::ValidPollWFTQResponse,
+    protosext::{validate_activity_completion, ValidPollWFTQResponse},
     telemetry::metrics::{
         activity_poller, local_activity_worker_type, workflow_poller, workflow_sticky_poller,
         MetricsContext,
@@ -398,6 +398,7 @@ impl Worker {
         task_token: TaskToken,
         status: activity_execution_result::Status,
     ) -> Result<(), CompleteActivityError> {
+        validate_activity_completion(&status)?;
         if task_token.is_local_activity_task() {
             let as_la_res: LocalActivityExecutionResult = status.try_into()?;
             match self.local_act_mgr.complete(&task_token, &as_la_res) {
