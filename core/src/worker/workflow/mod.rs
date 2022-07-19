@@ -508,7 +508,20 @@ impl Workflows {
 
 /// Manages access to a specific workflow run, and contains various bookkeeping information that the
 /// [WFStream] may need to access quickly.
-#[derive(Debug)]
+#[derive(derive_more::DebugCustom)]
+#[debug(
+    fmt = "ManagedRunHandle {{ wft: {:?}, activation: {:?}, buffered_resp: {:?} \
+           have_seen_terminal_event: {}, most_recently_processed_event: {}, more_pending_work: {}, \
+           trying_to_evict: {}, last_action_acked: {} }}",
+    wft,
+    activation,
+    buffered_resp,
+    have_seen_terminal_event,
+    most_recently_processed_event_number,
+    more_pending_work,
+    "trying_to_evict.is_some()",
+    last_action_acked
+)]
 struct ManagedRunHandle {
     /// If set, the WFT this run is currently/will be processing.
     wft: Option<OutstandingTask>,
@@ -689,7 +702,8 @@ impl ActivationOrAuto {
     }
 }
 
-#[derive(Debug)]
+#[derive(derive_more::DebugCustom)]
+#[debug(fmt = "PermittedWft {{ {:?} }}", wft)]
 pub(crate) struct PermittedWFT {
     wft: ValidPollWFTQResponse,
     permit: OwnedMeteredSemPermit,

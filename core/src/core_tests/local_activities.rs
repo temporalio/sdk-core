@@ -464,7 +464,6 @@ async fn query_during_wft_heartbeat_doesnt_accidentally_fail_to_continue_heartbe
         ))
         .await
         .unwrap();
-        dbg!("Done complete");
         let task = core.poll_workflow_activation().await.unwrap();
         // Get query, and complete it
         let query = assert_matches!(
@@ -509,7 +508,6 @@ async fn query_during_wft_heartbeat_doesnt_accidentally_fail_to_continue_heartbe
         })
         .await
         .unwrap();
-        dbg!("Act task completed");
         after_la_resolved.wait().await;
     };
 

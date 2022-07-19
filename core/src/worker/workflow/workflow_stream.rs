@@ -64,7 +64,8 @@ impl From<RunUpdateResponse> for WFStreamInput {
     }
 }
 /// A non-poller-received input to the [WFStream]
-#[derive(Debug)]
+#[derive(derive_more::DebugCustom)]
+#[debug(fmt = "LocalInput {{ {:?} }}", input)]
 pub(super) struct LocalInput {
     pub input: LocalInputs,
     pub span: Span,
@@ -168,7 +169,6 @@ impl WFStream {
         };
         all_inputs
             .map(move |action| {
-                // TODO: readable version of action
                 let span = span!(Level::DEBUG, "new_stream_input", action=?action);
                 let _span_g = span.enter();
 
