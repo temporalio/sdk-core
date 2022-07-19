@@ -6,7 +6,7 @@ use anyhow::anyhow;
 use std::{
     collections::HashMap,
     convert::TryFrom,
-    fmt::{Display, Formatter},
+    fmt::{Debug, Display, Formatter},
     time::{Duration, SystemTime},
 };
 use temporal_sdk_core_protos::{
@@ -39,7 +39,7 @@ use temporal_sdk_core_protos::{
 };
 
 /// A validated version of a [PollWorkflowTaskQueueResponse]
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 #[allow(clippy::manual_non_exhaustive)] // Clippy doesn't understand it's only for *in* this crate
 pub struct ValidPollWFTQResponse {
     pub task_token: TaskToken,
@@ -59,6 +59,28 @@ pub struct ValidPollWFTQResponse {
 
     /// Zero-size field to prevent explicit construction
     _cant_construct_me: (),
+}
+
+impl Debug for ValidPollWFTQResponse {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "ValidWFT {{ task_token: {}, task_queue: {}, workflow_execution: {:?}, \
+             workflow_type: {}, attempt: {}, previous_started_event_id: {}, started_event_id {}, \
+             history_length: {}, first_evt_in_hist_id: {:?}, legacy_query: {:?}, queries: {:?} }}",
+            self.task_token,
+            self.task_queue,
+            self.workflow_execution,
+            self.workflow_type,
+            self.attempt,
+            self.previous_started_event_id,
+            self.started_event_id,
+            self.history.events.len(),
+            self.history.events.get(0).map(|e| e.event_id),
+            self.legacy_query,
+            self.query_requests
+        )
+    }
 }
 
 impl TryFrom<PollWorkflowTaskQueueResponse> for ValidPollWFTQResponse {

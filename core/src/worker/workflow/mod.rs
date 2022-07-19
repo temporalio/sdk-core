@@ -235,7 +235,7 @@ impl Workflows {
                     let reserved_act_permits =
                         self.reserve_activity_slots_for_outgoing_commands(commands.as_mut_slice());
                     debug!(commands=%commands.display(), query_responses=%query_responses.display(),
-                           "Sending responses to server");
+                           force_new_wft, "Sending responses to server");
                     let mut completion = WorkflowTaskCompletion {
                         task_token,
                         commands,
@@ -508,7 +508,20 @@ impl Workflows {
 
 /// Manages access to a specific workflow run, and contains various bookkeeping information that the
 /// [WFStream] may need to access quickly.
-#[derive(Debug)]
+#[derive(derive_more::DebugCustom)]
+#[debug(
+    fmt = "ManagedRunHandle {{ wft: {:?}, activation: {:?}, buffered_resp: {:?} \
+           have_seen_terminal_event: {}, most_recently_processed_event: {}, more_pending_work: {}, \
+           trying_to_evict: {}, last_action_acked: {} }}",
+    wft,
+    activation,
+    buffered_resp,
+    have_seen_terminal_event,
+    most_recently_processed_event_number,
+    more_pending_work,
+    "trying_to_evict.is_some()",
+    last_action_acked
+)]
 struct ManagedRunHandle {
     /// If set, the WFT this run is currently/will be processing.
     wft: Option<OutstandingTask>,
@@ -578,6 +591,7 @@ impl ManagedRunHandle {
                     .as_ref()
                     .map(|wft| !wft.pending_queries.is_empty())
                     .unwrap_or_default(),
+                has_wft: self.wft.is_some(),
             });
         }
     }
@@ -688,7 +702,8 @@ impl ActivationOrAuto {
     }
 }
 
-#[derive(Debug)]
+#[derive(derive_more::DebugCustom)]
+#[debug(fmt = "PermittedWft {{ {:?} }}", wft)]
 pub(crate) struct PermittedWFT {
     wft: ValidPollWFTQResponse,
     permit: OwnedMeteredSemPermit,
@@ -935,6 +950,7 @@ enum RunActions {
     CheckMoreWork {
         want_to_evict: Option<RequestEvictMsg>,
         has_pending_queries: bool,
+        has_wft: bool,
     },
     LocalResolution(LocalResolution),
     HeartbeatTimeout,
