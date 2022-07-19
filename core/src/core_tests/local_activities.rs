@@ -32,7 +32,7 @@ use temporal_sdk_core_protos::{
         query::v1::WorkflowQuery,
     },
 };
-use temporal_sdk_core_test_utils::{schedule_local_activity_cmd, start_timer_cmd};
+use temporal_sdk_core_test_utils::{schedule_local_activity_cmd, WorkerTestHelpers};
 use tokio::sync::Barrier;
 
 async fn echo(_ctx: ActContext, e: String) -> anyhow::Result<String> {
@@ -402,15 +402,20 @@ async fn query_during_wft_heartbeat_doesnt_accidentally_fail_to_continue_heartbe
     crate::telemetry::test_telem_console();
     let wfid = "fake_wf_id";
     let mut t = TestHistoryBuilder::default();
-    t.add_by_type(EventType::WorkflowExecutionStarted);
-    t.add_full_wf_task();
+    let mut wes_short_wft_timeout = default_wes_attribs();
+    wes_short_wft_timeout.workflow_task_timeout = Some(Duration::from_millis(200).into());
+    t.add(
+        EventType::WorkflowExecutionStarted,
+        wes_short_wft_timeout.into(),
+    );
     t.add_full_wf_task();
     // get query here
+    t.add_full_wf_task();
     t.add_local_activity_marker(1, "1", None, None, None);
     t.add_workflow_execution_completed();
 
     let query_with_hist_task = {
-        let mut pr = hist_to_poll_resp(&t, wfid, ResponseType::ToTaskNum(2), TEST_Q);
+        let mut pr = hist_to_poll_resp(&t, wfid, ResponseType::ToTaskNum(1), TEST_Q);
         pr.queries = HashMap::new();
         pr.queries.insert(
             "the-query".to_string(),
@@ -422,10 +427,9 @@ async fn query_during_wft_heartbeat_doesnt_accidentally_fail_to_continue_heartbe
         );
         pr
     };
-    let after_la_resolve_activation_compl = Arc::new(Barrier::new(2));
-    let poll_barr = after_la_resolve_activation_compl.clone();
+    let after_la_resolved = Arc::new(Barrier::new(2));
+    let poll_barr = after_la_resolved.clone();
     let tasks = [
-        hist_to_poll_resp(&t, wfid, ResponseType::ToTaskNum(1), TEST_Q),
         query_with_hist_task,
         hist_to_poll_resp(
             &t,
@@ -442,7 +446,7 @@ async fn query_during_wft_heartbeat_doesnt_accidentally_fail_to_continue_heartbe
     ];
     let mock = mock_workflow_client();
     let mut mock = single_hist_mock_sg(wfid, t, tasks, mock, true);
-    mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
+    mock.worker_cfg(|wc| wc.max_cached_workflows = 1);
     let core = mock_worker(mock);
 
     let barrier = Barrier::new(2);
@@ -469,6 +473,8 @@ async fn query_during_wft_heartbeat_doesnt_accidentally_fail_to_continue_heartbe
                 variant: Some(workflow_activation_job::Variant::QueryWorkflow(q)),
             }] => q
         );
+        // Now complete the LA
+        barrier.wait().await;
         core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
             task.run_id,
             QueryResult {
@@ -484,8 +490,6 @@ async fn query_during_wft_heartbeat_doesnt_accidentally_fail_to_continue_heartbe
         ))
         .await
         .unwrap();
-        // Now complete the LA
-        barrier.wait().await;
         // Activation with it resolving:
         let task = core.poll_workflow_activation().await.unwrap();
         assert_matches!(
@@ -494,14 +498,7 @@ async fn query_during_wft_heartbeat_doesnt_accidentally_fail_to_continue_heartbe
                 variant: Some(workflow_activation_job::Variant::ResolveActivity(_)),
             }]
         );
-        core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-            task.run_id,
-            start_timer_cmd(1, Duration::from_secs(1)),
-        ))
-        .await
-        .unwrap();
-        dbg!("double done");
-        after_la_resolve_activation_compl.wait().await;
+        core.complete_execution(&task.run_id).await;
     };
     let act_fut = async {
         let act_task = core.poll_activity_task().await.unwrap();
@@ -513,6 +510,7 @@ async fn query_during_wft_heartbeat_doesnt_accidentally_fail_to_continue_heartbe
         .await
         .unwrap();
         dbg!("Act task completed");
+        after_la_resolved.wait().await;
     };
 
     tokio::join!(wf_fut, act_fut);

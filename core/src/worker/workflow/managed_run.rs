@@ -111,6 +111,7 @@ impl ManagedRun {
         .fold((self, heartbeat_tx), |(mut me, heartbeat_tx), action| {
             let span = action.trace_span;
             let action = action.action;
+            let mut no_wft = false;
             async move {
                 let res = match action {
                     RunActions::NewIncomingWFT(wft) => me
@@ -124,10 +125,15 @@ impl ManagedRun {
                     RunActions::CheckMoreWork {
                         want_to_evict,
                         has_pending_queries,
-                    } => me
-                        .check_more_work(want_to_evict, has_pending_queries)
-                        .await
-                        .map(RunActionOutcome::AfterCheckWork),
+                        has_wft,
+                    } => {
+                        if !has_wft {
+                            no_wft = true;
+                        }
+                        me.check_more_work(want_to_evict, has_pending_queries, has_wft)
+                            .await
+                            .map(RunActionOutcome::AfterCheckWork)
+                    }
                     RunActions::LocalResolution(r) => me
                         .local_resolution(r)
                         .await
@@ -145,7 +151,7 @@ impl ManagedRun {
                 };
                 match res {
                     Ok(outcome) => {
-                        me.send_update_response(outcome);
+                        me.send_update_response(outcome, no_wft);
                     }
                     Err(e) => {
                         error!(error=?e, "Error in run machines");
@@ -308,7 +314,12 @@ impl ManagedRun {
         &mut self,
         want_to_evict: Option<RequestEvictMsg>,
         has_pending_queries: bool,
+        has_wft: bool,
     ) -> Result<Option<ActivationOrAuto>, RunUpdateErr> {
+        if !has_wft {
+            // It doesn't make sense to do work unless we have a WFT
+            return Ok(None);
+        }
         if self.wfm.machines.has_pending_jobs() && !self.am_broken {
             Ok(Some(ActivationOrAuto::LangActivation(
                 self.wfm.get_next_activation().await?,
@@ -427,7 +438,7 @@ impl ManagedRun {
         false
     }
 
-    fn send_update_response(&self, outcome: RunActionOutcome) {
+    fn send_update_response(&self, outcome: RunActionOutcome, no_wft: bool) {
         let mut in_response_to_wft = false;
         let (outgoing_activation, fulfillable_complete) = match outcome {
             RunActionOutcome::AfterNewWFT(a) => {
@@ -439,7 +450,15 @@ impl ManagedRun {
             RunActionOutcome::AfterCompletion(f) => (None, f),
             RunActionOutcome::AfterHeartbeatTimeout(a) => (a, None),
         };
-
+        let mut more_pending_work = self.wfm.machines.has_pending_jobs();
+        // We don't want to consider there to be more local-only work to be done if there is no
+        // workflow task associated with the run right now. This can happen if, ex, we complete
+        // a local activity while waiting for server to send us the next WFT. Activating lang would
+        // be harmful at this stage, as there might be work returned in that next WFT which should
+        // be part of the next activation.
+        if no_wft {
+            more_pending_work = false;
+        }
         self.update_tx
             .send(RunUpdateResponse {
                 kind: RunUpdateResponseKind::Good(GoodRunUpdate {
@@ -447,7 +466,7 @@ impl ManagedRun {
                     outgoing_activation,
                     fulfillable_complete,
                     have_seen_terminal_event: self.wfm.machines.have_seen_terminal_event,
-                    more_pending_work: self.wfm.machines.has_pending_jobs(),
+                    more_pending_work,
                     most_recently_processed_event_number: self.wfm.machines.last_processed_event
                         as usize,
                     in_response_to_wft,

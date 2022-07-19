@@ -261,17 +261,15 @@ impl WFStream {
         debug!(resp=%resp, "Processing run update response from machines");
         match resp {
             RunUpdateResponseKind::Good(mut resp) => {
-                if let Some(r) = self.runs.get_mut(&resp.run_id) {
-                    r.have_seen_terminal_event = resp.have_seen_terminal_event;
-                    r.more_pending_work = resp.more_pending_work;
-                    r.last_action_acked = true;
-                    r.most_recently_processed_event_number =
-                        resp.most_recently_processed_event_number;
-                }
                 let run_handle = self
                     .runs
                     .get_mut(&resp.run_id)
                     .expect("Workflow must exist, it just sent us an update response");
+                run_handle.have_seen_terminal_event = resp.have_seen_terminal_event;
+                run_handle.more_pending_work = resp.more_pending_work;
+                run_handle.last_action_acked = true;
+                run_handle.most_recently_processed_event_number =
+                    resp.most_recently_processed_event_number;
 
                 let r = match resp.outgoing_activation {
                     Some(ActivationOrAuto::LangActivation(mut activation)) => {
@@ -306,18 +304,20 @@ impl WFStream {
                     None => {
                         // If the response indicates there is no activation to send yet but there
                         // is more pending work, we should check again.
-                        if resp.more_pending_work {
+                        if run_handle.more_pending_work {
                             run_handle.check_more_activations();
                             None
                         } else if let Some(reason) = run_handle.trying_to_evict.as_ref() {
                             // If a run update came back and had nothing to do, but we're trying to
                             // evict, just do that now as long as there's no other outstanding work.
                             if run_handle.activation.is_none() && !run_handle.more_pending_work {
-                                let evict_act = create_evict_activation(
+                                let mut evict_act = create_evict_activation(
                                     resp.run_id,
                                     reason.message.clone(),
                                     reason.reason,
                                 );
+                                evict_act.history_length =
+                                    run_handle.most_recently_processed_event_number as u32;
                                 Some(ActivationOrAuto::LangActivation(evict_act))
                             } else {
                                 None

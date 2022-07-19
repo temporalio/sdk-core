@@ -578,6 +578,7 @@ impl ManagedRunHandle {
                     .as_ref()
                     .map(|wft| !wft.pending_queries.is_empty())
                     .unwrap_or_default(),
+                has_wft: self.wft.is_some(),
             });
         }
     }
@@ -935,6 +936,7 @@ enum RunActions {
     CheckMoreWork {
         want_to_evict: Option<RequestEvictMsg>,
         has_pending_queries: bool,
+        has_wft: bool,
     },
     LocalResolution(LocalResolution),
     HeartbeatTimeout,

@@ -1,5 +1,4 @@
 use crate::worker::workflow::{WFCommand, WorkflowStartedInfo};
-use std::collections::VecDeque;
 use temporal_sdk_core_protos::{
     coresdk::workflow_activation::{
         start_workflow_from_attribs, workflow_activation_job, CancelWorkflow, SignalWorkflow,
@@ -15,7 +14,7 @@ pub struct DrivenWorkflow {
     started_attrs: Option<WorkflowStartedInfo>,
     fetcher: Box<dyn WorkflowFetcher>,
     /// Outgoing activation jobs that need to be sent to the lang sdk
-    outgoing_wf_activation_jobs: VecDeque<workflow_activation_job::Variant>,
+    outgoing_wf_activation_jobs: Vec<workflow_activation_job::Variant>,
 }
 
 impl<WF> From<Box<WF>> for DrivenWorkflow
@@ -58,12 +57,12 @@ impl DrivenWorkflow {
 
     /// Enqueue a new job to be sent to the driven workflow
     pub fn send_job(&mut self, job: workflow_activation_job::Variant) {
-        self.outgoing_wf_activation_jobs.push_back(job);
+        self.outgoing_wf_activation_jobs.push(job);
     }
 
-    /// Check if there are pending jobs
-    pub fn has_pending_jobs(&self) -> bool {
-        !self.outgoing_wf_activation_jobs.is_empty()
+    /// Observe pending jobs
+    pub fn peek_pending_jobs(&self) -> &[workflow_activation_job::Variant] {
+        self.outgoing_wf_activation_jobs.as_slice()
     }
 
     /// Drain all pending jobs, so that they may be sent to the driven workflow

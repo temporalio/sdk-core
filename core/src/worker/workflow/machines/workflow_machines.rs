@@ -584,7 +584,7 @@ impl WorkflowMachines {
     }
 
     pub(crate) fn has_pending_jobs(&self) -> bool {
-        self.drive_me.has_pending_jobs()
+        !self.drive_me.peek_pending_jobs().is_empty()
     }
 
     fn set_current_time(&mut self, time: SystemTime) -> SystemTime {
