@@ -107,16 +107,13 @@ async fn sends_signal_with_create_wf() {
             vec![b"tada".into()].into_payloads(),
         )
         .await
-        .unwrap();
+        .expect("request succeeds.qed");
 
     worker.started_workflows.lock().push(WorkflowExecutionInfo {
         namespace: client.namespace().to_string(),
         workflow_id: "sends_signal_with_create_wf".to_owned(),
         run_id: Some(res.run_id.clone()),
     });
-    println!("RESULTS: {:?}", res);
-
-    // tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
 
     worker.run_until_done().await.unwrap();
 }
