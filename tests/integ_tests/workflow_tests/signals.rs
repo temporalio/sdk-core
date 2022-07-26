@@ -1,8 +1,9 @@
 use futures::StreamExt;
-use temporal_client::WorkflowOptions;
+use temporal_client::{WorkflowClientTrait, WorkflowExecutionInfo, WorkflowOptions};
 use temporal_sdk::{
     ChildWorkflowOptions, Signal, SignalWorkflowOptions, WfContext, WorkflowResult,
 };
+use temporal_sdk_core_protos::coresdk::IntoPayloadsExt;
 use temporal_sdk_core_test_utils::CoreWfStarter;
 use uuid::Uuid;
 
@@ -54,6 +55,12 @@ async fn signal_receiver(ctx: WfContext) -> WorkflowResult<()> {
     Ok(().into())
 }
 
+async fn signal_with_create_wf_receiver(ctx: WfContext) -> WorkflowResult<()> {
+    let res = ctx.make_signal_channel(SIGNAME).next().await.unwrap();
+    assert_eq!(&res.input, &[b"tada".into()]);
+    Ok(().into())
+}
+
 #[tokio::test]
 async fn sends_signal_to_other_wf() {
     let mut starter = CoreWfStarter::new("sends_signal_to_other_wf");
@@ -79,6 +86,38 @@ async fn sends_signal_to_other_wf() {
         )
         .await
         .unwrap();
+    worker.run_until_done().await.unwrap();
+}
+
+#[tokio::test]
+async fn sends_signal_with_create_wf() {
+    let mut starter = CoreWfStarter::new("sends_signal_with_create_wf");
+    let mut worker = starter.worker().await;
+    worker.register_wf("receiversignal", signal_with_create_wf_receiver);
+
+    let client = starter.get_client().await;
+    let res = client
+        .signal_with_start_workflow_execution(
+            None,
+            worker.inner_mut().task_queue().to_owned(),
+            "sends_signal_with_create_wf".to_owned(),
+            "receiversignal".to_owned(),
+            WorkflowOptions::default(),
+            SIGNAME.to_owned(),
+            vec![b"tada".into()].into_payloads(),
+        )
+        .await
+        .unwrap();
+
+    worker.started_workflows.lock().push(WorkflowExecutionInfo {
+        namespace: client.namespace().to_string(),
+        workflow_id: "sends_signal_with_create_wf".to_owned(),
+        run_id: Some(res.run_id.clone()),
+    });
+    println!("RESULTS: {:?}", res);
+
+    // tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
+
     worker.run_until_done().await.unwrap();
 }
 

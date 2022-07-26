@@ -609,6 +609,20 @@ pub trait WorkflowClientTrait {
         payloads: Option<Payloads>,
     ) -> Result<SignalWorkflowExecutionResponse>;
 
+    /// Send signal and start workflow transcationally
+    //#TODO maybe lift the Signal type from sdk::workflow_context::options
+    #[allow(clippy::too_many_arguments)]
+    async fn signal_with_start_workflow_execution(
+        &self,
+        input: Option<Payloads>,
+        task_queue: String,
+        workflow_id: String,
+        workflow_type: String,
+        options: WorkflowOptions,
+        signal_name: String,
+        signal_input: Option<Payloads>,
+    ) -> Result<SignalWithStartWorkflowExecutionResponse>;
+
     /// Request a query of a certain workflow instance
     async fn query_workflow_execution(
         &self,
@@ -922,6 +936,44 @@ impl WorkflowClientTrait for Client {
                 signal_name,
                 input: payloads,
                 identity: self.inner.options.identity.clone(),
+                ..Default::default()
+            })
+            .await?
+            .into_inner())
+    }
+
+    async fn signal_with_start_workflow_execution(
+        &self,
+        input: Option<Payloads>,
+        task_queue: String,
+        workflow_id: String,
+        workflow_type: String,
+        options: WorkflowOptions,
+        signal_name: String,
+        signal_input: Option<Payloads>,
+    ) -> Result<SignalWithStartWorkflowExecutionResponse> {
+        let request_id = Uuid::new_v4().to_string();
+        Ok(self
+            .wf_svc()
+            .signal_with_start_workflow_execution(SignalWithStartWorkflowExecutionRequest {
+                namespace: self.namespace.clone(),
+                workflow_id,
+                workflow_type: Some(WorkflowType {
+                    name: workflow_type,
+                }),
+                task_queue: Some(TaskQueue {
+                    name: task_queue,
+                    // #FIXME the go sdk gets this from a proto enum.  Not sure where
+                    // this is available in the rust prost generated stuff is at the moment.
+                    kind: 1,
+                }),
+                request_id,
+                input,
+                signal_name,
+                signal_input,
+                identity: self.inner.options.identity.clone(),
+                workflow_task_timeout: options.task_timeout.map(Into::into),
+                search_attributes: options.search_attributes.map(Into::into),
                 ..Default::default()
             })
             .await?
