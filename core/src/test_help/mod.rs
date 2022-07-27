@@ -73,6 +73,8 @@ pub enum ResponseType {
     OneTask(usize),
     /// Waits until the future resolves before responding as `ToTaskNum` with the provided number
     UntilResolved(BoxFuture<'static, ()>, usize),
+    /// Waits until the future resolves before responding with the provided response
+    UntilResolvedRaw(BoxFuture<'static, ()>, PollWorkflowTaskQueueResponse),
     AllHistory,
     Raw(PollWorkflowTaskQueueResponse),
 }
@@ -81,6 +83,7 @@ pub enum HashableResponseType {
     ToTaskNum(usize),
     OneTask(usize),
     UntilResolved(usize),
+    UntilResolvedRaw(TaskToken),
     AllHistory,
     Raw(TaskToken),
 }
@@ -92,6 +95,9 @@ impl ResponseType {
             ResponseType::AllHistory => HashableResponseType::AllHistory,
             ResponseType::Raw(r) => HashableResponseType::Raw(r.task_token.clone().into()),
             ResponseType::UntilResolved(_, x) => HashableResponseType::UntilResolved(*x),
+            ResponseType::UntilResolvedRaw(_, r) => {
+                HashableResponseType::UntilResolvedRaw(r.task_token.clone().into())
+            }
         }
     }
 }
@@ -618,7 +624,11 @@ impl<T> From<T> for QueueResponse<T> {
 }
 impl From<QueueResponse<PollWorkflowTaskQueueResponse>> for ResponseType {
     fn from(qr: QueueResponse<PollWorkflowTaskQueueResponse>) -> Self {
-        ResponseType::Raw(qr.resp)
+        if let Some(du) = qr.delay_until {
+            ResponseType::UntilResolvedRaw(du, qr.resp)
+        } else {
+            ResponseType::Raw(qr.resp)
+        }
     }
 }
 impl<T> Deref for QueueResponse<T> {
@@ -636,13 +646,13 @@ impl<T> DerefMut for QueueResponse<T> {
 
 pub fn hist_to_poll_resp(
     t: &TestHistoryBuilder,
-    wf_id: String,
+    wf_id: impl Into<String>,
     response_type: ResponseType,
     task_queue: impl Into<String>,
 ) -> QueueResponse<PollWorkflowTaskQueueResponse> {
     let run_id = t.get_orig_run_id();
     let wf = WorkflowExecution {
-        workflow_id: wf_id,
+        workflow_id: wf_id.into(),
         run_id: run_id.to_string(),
     };
     let mut delay_until = None;
@@ -659,6 +669,12 @@ pub fn hist_to_poll_resp(
         ResponseType::UntilResolved(fut, tn) => {
             delay_until = Some(fut);
             t.get_history_info(tn).unwrap()
+        }
+        ResponseType::UntilResolvedRaw(fut, r) => {
+            return QueueResponse {
+                resp: r,
+                delay_until: Some(fut),
+            }
         }
     };
     let mut resp = hist_info.as_poll_wft_response(task_queue);

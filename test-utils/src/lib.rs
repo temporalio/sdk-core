@@ -29,7 +29,7 @@ use temporal_sdk_core_protos::{
     coresdk::{
         workflow_commands::{
             workflow_command, ActivityCancellationType, CompleteWorkflowExecution,
-            ScheduleActivity, StartTimer,
+            ScheduleActivity, ScheduleLocalActivity, StartTimer,
         },
         workflow_completion::WorkflowActivationCompletion,
     },
@@ -487,6 +487,25 @@ pub fn schedule_activity_cmd(
         start_to_close_timeout: Some(activity_timeout.into()),
         schedule_to_close_timeout: Some(activity_timeout.into()),
         heartbeat_timeout: Some(heartbeat_timeout.into()),
+        cancellation_type: cancellation_type as i32,
+        ..Default::default()
+    }
+    .into()
+}
+
+pub fn schedule_local_activity_cmd(
+    seq: u32,
+    activity_id: &str,
+    cancellation_type: ActivityCancellationType,
+    activity_timeout: Duration,
+) -> workflow_command::Variant {
+    ScheduleLocalActivity {
+        seq,
+        activity_id: activity_id.to_string(),
+        activity_type: "test_activity".to_string(),
+        schedule_to_start_timeout: Some(activity_timeout.into()),
+        start_to_close_timeout: Some(activity_timeout.into()),
+        schedule_to_close_timeout: Some(activity_timeout.into()),
         cancellation_type: cancellation_type as i32,
         ..Default::default()
     }
