@@ -488,7 +488,9 @@ impl ActivityHalf {
                         Ok(res) => ActivityExecutionResult::ok(res),
                         Err(err) => match err.downcast::<ActivityCancelledError>() {
                             Ok(ce) => ActivityExecutionResult::cancel_from_details(ce.details),
-                            Err(other_err) if other_err.is::<u64>() => ActivityExecutionResult::will_complete_async(),
+                            Err(other_err) if other_err.is::<ActivityResultPendingError>() => {
+                                ActivityExecutionResult::will_complete_async()
+                            }
                             Err(other_err) => ActivityExecutionResult::fail(other_err.into()),
                         },
                     };
@@ -726,7 +728,7 @@ pub struct ActivityFunction {
     act_func: BoxActFn,
 }
 
-/// Return this error to indicate your activity completes asynchronously 
+/// Return this error to indicate your activity completes asynchronously
 #[derive(Debug, Default)]
 pub struct ActivityResultPendingError;
 impl std::error::Error for ActivityResultPendingError {}
