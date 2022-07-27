@@ -711,7 +711,7 @@ impl WorkflowClientTrait for Client {
                 }),
                 task_queue: Some(TaskQueue {
                     name: task_queue,
-                    kind: 0,
+                    kind: TaskQueueKind::Unspecified as i32,
                 }),
                 request_id,
                 workflow_task_timeout: options.task_timeout.map(Into::into),
@@ -963,9 +963,7 @@ impl WorkflowClientTrait for Client {
                 }),
                 task_queue: Some(TaskQueue {
                     name: task_queue,
-                    // #FIXME the go sdk gets this from a proto enum.  Not sure where
-                    // this is available in the rust prost generated stuff is at the moment.
-                    kind: 1,
+                    kind: TaskQueueKind::Normal as i32,
                 }),
                 request_id,
                 input,
