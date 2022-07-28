@@ -346,6 +346,29 @@ where
         )
     }
 
+    async fn signal_with_start_workflow_execution(
+        &self,
+        input: Option<Payloads>,
+        task_queue: String,
+        workflow_id: String,
+        workflow_type: String,
+        options: WorkflowOptions,
+        signal_name: String,
+        signal_input: Option<Payloads>,
+    ) -> Result<SignalWithStartWorkflowExecutionResponse> {
+        retry_call!(
+            self,
+            signal_with_start_workflow_execution,
+            input.clone(),
+            task_queue.clone(),
+            workflow_id.clone(),
+            workflow_type.clone(),
+            options.clone(),
+            signal_name.clone(),
+            signal_input.clone()
+        )
+    }
+
     async fn query_workflow_execution(
         &self,
         workflow_id: String,
