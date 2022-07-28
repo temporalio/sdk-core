@@ -205,10 +205,10 @@ impl Worker {
 
     /// Register an Activity function to invoke when the Worker is asked to run an activity of
     /// `activity_type`
-    pub fn register_activity<A, R>(
+    pub fn register_activity<A, R, O>(
         &mut self,
         activity_type: impl Into<String>,
-        act_function: impl IntoActivityFunc<A, R>,
+        act_function: impl IntoActivityFunc<A, R, O>,
     ) {
         self.activity_half.activity_fns.insert(
             activity_type.into(),
@@ -485,12 +485,12 @@ impl ActivityHalf {
                 tokio::spawn(async move {
                     let output = (act_fn.act_func)(ctx, arg).await;
                     let result = match output {
-                        Ok(res) => ActivityExecutionResult::ok(res),
+                        Ok(ActExitValue::Normal(p)) => ActivityExecutionResult::ok(p),
+                        Ok(ActExitValue::WillCompleteAsync) => {
+                            ActivityExecutionResult::will_complete_async()
+                        }
                         Err(err) => match err.downcast::<ActivityCancelledError>() {
                             Ok(ce) => ActivityExecutionResult::cancel_from_details(ce.details),
-                            Err(other_err) if other_err.is::<ActivityResultPendingError>() => {
-                                ActivityExecutionResult::will_complete_async()
-                            }
                             Err(other_err) => ActivityExecutionResult::fail(other_err.into()),
                         },
                     };
@@ -500,7 +500,7 @@ impl ActivityHalf {
                             result: Some(result),
                         })
                         .await?;
-                    Result::<_, anyhow::Error>::Ok(())
+                    Ok::<_, anyhow::Error>(())
                 });
             }
             Some(activity_task::Variant::Cancel(_)) => {
@@ -719,23 +719,26 @@ impl<T: Debug> WfExitValue<T> {
     }
 }
 
+/// Activity functions may return these values when exiting
+#[derive(Debug, derive_more::From)]
+pub enum ActExitValue<T: Debug> {
+    /// Completion requires an asynchronous callback
+    #[from(ignore)]
+    WillCompleteAsync,
+    /// Finish with a result
+    Normal(T),
+}
+
 type BoxActFn = Arc<
-    dyn Fn(ActContext, Payload) -> BoxFuture<'static, Result<Payload, anyhow::Error>> + Send + Sync,
+    dyn Fn(ActContext, Payload) -> BoxFuture<'static, Result<ActExitValue<Payload>, anyhow::Error>>
+        + Send
+        + Sync,
 >;
+
 /// Container for user-defined activity functions
 #[derive(Clone)]
 pub struct ActivityFunction {
     act_func: BoxActFn,
-}
-
-/// Return this error to indicate your activity completes asynchronously
-#[derive(Debug, Default)]
-pub struct ActivityResultPendingError;
-impl std::error::Error for ActivityResultPendingError {}
-impl Display for ActivityResultPendingError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Activity result pending")
-    }
 }
 
 /// Return this error to indicate your activity is cancelling
@@ -751,24 +754,35 @@ impl Display for ActivityCancelledError {
 }
 
 /// Closures / functions which can be turned into activity functions implement this trait
-pub trait IntoActivityFunc<Args, Res> {
+pub trait IntoActivityFunc<Args, Res, Out> {
     /// Consume the closure or fn pointer and turned it into a boxed activity function
     fn into_activity_fn(self) -> BoxActFn;
 }
 
-impl<A, Rf, R, F> IntoActivityFunc<A, Rf> for F
+impl<A, Rf, R, O, F> IntoActivityFunc<A, Rf, O> for F
 where
     F: (Fn(ActContext, A) -> Rf) + Sync + Send + 'static,
     A: FromJsonPayloadExt + Send,
     Rf: Future<Output = Result<R, anyhow::Error>> + Send + 'static,
-    R: AsJsonPayloadExt,
+    R: Into<ActExitValue<O>>,
+    O: AsJsonPayloadExt + Debug,
 {
     fn into_activity_fn(self) -> BoxActFn {
         let wrapper = move |ctx: ActContext, input: Payload| {
             // Some minor gymnastics are required to avoid needing to clone the function
             match A::from_json_payload(&input) {
                 Ok(deser) => (self)(ctx, deser)
-                    .map(|r| r.map(|r| r.as_json_payload())?)
+                    .map(|r| {
+                        r.and_then(|r| {
+                            let exit_val: ActExitValue<O> = r.into();
+                            Ok(match exit_val {
+                                ActExitValue::WillCompleteAsync => ActExitValue::WillCompleteAsync,
+                                ActExitValue::Normal(x) => {
+                                    ActExitValue::Normal(x.as_json_payload()?)
+                                }
+                            })
+                        })
+                    })
                     .boxed(),
                 Err(e) => async move { Err(e.into()) }.boxed(),
             }
