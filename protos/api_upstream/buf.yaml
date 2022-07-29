@@ -2,6 +2,7 @@ version: v1
 breaking:
   ignore:
     - temporal/api/schedule/v1
+    - temporal/api/update/v1
   use:
     - PACKAGE
 lint:

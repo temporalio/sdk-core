@@ -37,6 +37,7 @@ import "dependencies/gogoproto/gogo.proto";
 
 import "temporal/api/enums/v1/workflow.proto";
 import "temporal/api/enums/v1/command_type.proto";
+import "temporal/api/enums/v1/update.proto";
 import "temporal/api/common/v1/message.proto";
 import "temporal/api/failure/v1/message.proto";
 import "temporal/api/taskqueue/v1/message.proto";
@@ -213,6 +214,29 @@ message StartChildWorkflowExecutionCommandAttributes {
     temporal.api.common.v1.SearchAttributes search_attributes = 16;
 }
 
+message AcceptWorkflowUpdateCommandAttributes {
+    // A unique identifier for an update within a given workflow context
+    string update_id = 1;
+}
+
+message CompleteWorkflowUpdateCommandAttributes {
+    // A unique identifier for an update within a given workflow context
+    string update_id = 1;
+
+    // Whether the server should attempt to bypass making this update rejection
+    // durable in history. This field is only consulted when the result field
+    // indicates failure. Leaving this field in its default state (i.e.
+    // UPDATE_WORKFLOW_REJECTION_DURABILITY_PREFERENCE_UNSPECIFIED) will result
+    // in making the rejection durable.
+    temporal.api.enums.v1.WorkflowUpdateDurabilityPreference durability_preference = 2;
+
+    // The success or failure output of the update
+    oneof result {
+        temporal.api.common.v1.Payloads success = 3;
+        temporal.api.failure.v1.Failure failure = 4;
+    }
+}
+
 message Command {
     temporal.api.enums.v1.CommandType command_type = 1;
     oneof attributes {
@@ -229,5 +253,7 @@ message Command {
         StartChildWorkflowExecutionCommandAttributes start_child_workflow_execution_command_attributes = 12;
         SignalExternalWorkflowExecutionCommandAttributes signal_external_workflow_execution_command_attributes = 13;
         UpsertWorkflowSearchAttributesCommandAttributes upsert_workflow_search_attributes_command_attributes = 14;
+        AcceptWorkflowUpdateCommandAttributes accept_workflow_update_command_attributes = 15;
+        CompleteWorkflowUpdateCommandAttributes complete_workflow_update_command_attributes = 16;
     }
 }
