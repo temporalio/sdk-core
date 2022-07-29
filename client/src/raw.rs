@@ -146,8 +146,12 @@ impl AttachMetricLabels {
     }
     pub fn task_q(&mut self, tq: Option<TaskQueue>) -> &mut Self {
         if let Some(tq) = tq {
-            self.labels.push(task_queue_kv(tq.name));
+            self.task_q_str(tq.name);
         }
+        self
+    }
+    pub fn task_q_str(&mut self, tq: impl Into<String>) -> &mut Self {
+        self.labels.push(task_queue_kv(tq.into()));
         self
     }
 }
@@ -624,6 +628,35 @@ proxier! {
         list_schedules,
         ListSchedulesRequest,
         ListSchedulesResponse,
+        |r| {
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        update_worker_build_id_ordering,
+        UpdateWorkerBuildIdOrderingRequest,
+        UpdateWorkerBuildIdOrderingResponse,
+        |r| {
+            let mut labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            labels.task_q_str(r.get_ref().task_queue.clone());
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        get_worker_build_id_ordering,
+        GetWorkerBuildIdOrderingRequest,
+        GetWorkerBuildIdOrderingResponse,
+        |r| {
+            let mut labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            labels.task_q_str(r.get_ref().task_queue.clone());
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        update_workflow,
+        UpdateWorkflowRequest,
+        UpdateWorkflowResponse,
         |r| {
             let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             r.extensions_mut().insert(labels);
