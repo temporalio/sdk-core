@@ -334,6 +334,7 @@ impl TestHistoryBuilder {
                 failure_info: Some(failure::FailureInfo::CanceledFailureInfo(
                     CanceledFailureInfo { details: None },
                 )),
+                encoded_attributes: Default::default(),
             }),
             None,
         );
