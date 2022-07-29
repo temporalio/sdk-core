@@ -41,6 +41,7 @@ use temporal_sdk_core_protos::{
         common::v1::{Payload, Payloads, WorkflowExecution, WorkflowType},
         enums::v1::{TaskQueueKind, WorkflowTaskFailedCause},
         failure::v1::Failure,
+        operatorservice::v1::operator_service_client::OperatorServiceClient,
         query::v1::{WorkflowQuery, WorkflowQueryResult},
         taskqueue::v1::{StickyExecutionAttributes, TaskQueue, TaskQueueMetadata},
         workflowservice::v1::{workflow_service_client::WorkflowServiceClient, *},
@@ -243,11 +244,11 @@ impl From<ConfiguredClient<WorkflowServiceClientWithMetrics>> for AnyClient {
 }
 
 /// A client with [ClientOptions] attached, which can be passed to initialize workers,
-/// or can be used directly.
+/// or can be used directly. Is cheap to clone.
 #[derive(Clone, Debug)]
 pub struct ConfiguredClient<C> {
     client: C,
-    options: ClientOptions,
+    options: Arc<ClientOptions>,
     headers: Arc<RwLock<HashMap<String, String>>>,
     /// Capabilities as read from the `get_system_info` RPC call made on client connection
     capabilities: Option<get_system_info_response::Capabilities>,
@@ -269,11 +270,6 @@ impl<C> ConfiguredClient<C> {
     /// connection
     pub fn capabilities(&self) -> Option<&get_system_info_response::Capabilities> {
         self.capabilities.as_ref()
-    }
-
-    /// De-constitute this type
-    pub fn into_parts(self) -> (C, ClientOptions) {
-        (self.client, self.options)
     }
 }
 
@@ -337,7 +333,7 @@ impl ClientOptions {
         let mut client = ConfiguredClient {
             headers,
             client: WorkflowServiceClient::with_interceptor(service, interceptor),
-            options: self.clone(),
+            options: Arc::new(self.clone()),
             capabilities: None,
         };
         match client
@@ -446,6 +442,8 @@ impl Interceptor for ServiceCallInterceptor {
 
 /// A [WorkflowServiceClient] with the default interceptors attached.
 pub type WorkflowServiceClientWithMetrics = WorkflowServiceClient<InterceptedMetricsSvc>;
+/// An [OperatorServiceClient] with the default interceptors attached.
+pub type OperatorServiceClientWithMetrics = OperatorServiceClient<InterceptedMetricsSvc>;
 type InterceptedMetricsSvc = InterceptedService<GrpcMetricSvc, ServiceCallInterceptor>;
 
 /// Contains an instance of a namespace-bound client for interacting with the Temporal server
@@ -499,7 +497,7 @@ impl Client {
 
     /// Return the options this client was initialized with mutably
     pub fn options_mut(&mut self) -> &mut ClientOptions {
-        &mut self.inner.options
+        Arc::make_mut(&mut self.inner.options)
     }
 
     /// Set a worker build id to be attached to relevant requests. Unlikely to be useful outside
