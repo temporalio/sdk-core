@@ -1,5 +1,5 @@
 use crate::{
-    ClientOptions, RawClientLikeUser, Result, RetryConfig, WorkflowClientTrait, WorkflowOptions,
+    ClientOptions, Result, RetryConfig, WorkflowClientTrait, WorkflowOptions,
     WorkflowTaskCompletion,
 };
 use backoff::{backoff::Backoff, ExponentialBackoff};
@@ -466,16 +466,16 @@ where
     }
 }
 
-impl<C> RawClientLikeUser for RetryClient<C>
-where
-    C: RawClientLikeUser,
-{
-    type RawClientT = C::RawClientT;
-
-    fn wf_svc(&self) -> Self::RawClientT {
-        self.client.wf_svc()
-    }
-}
+// impl<C> RawClientLikeUser for RetryClient<C>
+// where
+//     C: RawClientLikeUser,
+// {
+//     type RawClientT = C::RawClientT;
+//
+//     fn wf_svc(&self) -> Self::RawClientT {
+//         self.client.wf_svc()
+//     }
+// }
 
 #[cfg(test)]
 mod tests {

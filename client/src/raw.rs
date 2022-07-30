@@ -9,13 +9,16 @@ use crate::{
 };
 use futures::{future::BoxFuture, FutureExt};
 use temporal_sdk_core_protos::temporal::api::{
-    taskqueue::v1::TaskQueue, workflowservice::v1::workflow_service_client::WorkflowServiceClient,
+    operatorservice::v1::operator_service_client::OperatorServiceClient, taskqueue::v1::TaskQueue,
+    workflowservice::v1::workflow_service_client::WorkflowServiceClient,
 };
 use tonic::{body::BoxBody, client::GrpcService, metadata::KeyAndValueRef};
 
 pub(super) mod sealed {
     use super::*;
-    use crate::{Client, ConfiguredClient, InterceptedMetricsSvc, RetryClient};
+    use crate::{
+        Client, ConfiguredClient, InterceptedMetricsSvc, RetryClient, TemporalServiceClient,
+    };
     use futures::TryFutureExt;
     use tonic::{Request, Response, Status};
 
@@ -24,8 +27,11 @@ pub(super) mod sealed {
     pub trait RawClientLike: Send {
         type SvcType: Send + Sync + Clone + 'static;
 
-        /// Return the actual client instance
+        /// Return the actual workflow service client instance
         fn client(&mut self) -> &mut WorkflowServiceClient<Self::SvcType>;
+
+        /// Return the actual operator service client instance
+        fn operator_client(&mut self) -> &mut OperatorServiceClient<Self::SvcType>;
 
         async fn do_call<F, Req, Resp>(
             &mut self,
@@ -58,6 +64,10 @@ pub(super) mod sealed {
             self.get_client_mut().client()
         }
 
+        fn operator_client(&mut self) -> &mut OperatorServiceClient<Self::SvcType> {
+            self.get_client_mut().operator_client()
+        }
+
         async fn do_call<F, Req, Resp>(
             &mut self,
             call_name: &'static str,
@@ -83,25 +93,41 @@ pub(super) mod sealed {
         }
     }
 
-    impl<T> RawClientLike for WorkflowServiceClient<T>
+    impl<T> RawClientLike for TemporalServiceClient<T>
     where
         T: Send + Sync + Clone + 'static,
+        T: GrpcService<BoxBody> + Send + Clone + 'static,
+        T::ResponseBody: tonic::codegen::Body + Send + 'static,
+        T::Error: Into<tonic::codegen::StdError>,
+        <T::ResponseBody as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
     {
         type SvcType = T;
 
         fn client(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
-            self
+            self.workflow_svc_mut()
+        }
+
+        fn operator_client(&mut self) -> &mut OperatorServiceClient<Self::SvcType> {
+            self.operator_svc_mut()
         }
     }
 
-    impl<T> RawClientLike for ConfiguredClient<WorkflowServiceClient<T>>
+    impl<T> RawClientLike for ConfiguredClient<TemporalServiceClient<T>>
     where
         T: Send + Sync + Clone + 'static,
+        T: GrpcService<BoxBody> + Send + Clone + 'static,
+        T::ResponseBody: tonic::codegen::Body + Send + 'static,
+        T::Error: Into<tonic::codegen::StdError>,
+        <T::ResponseBody as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
     {
         type SvcType = T;
 
         fn client(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
-            &mut self.client
+            self.client.client()
+        }
+
+        fn operator_client(&mut self) -> &mut OperatorServiceClient<Self::SvcType> {
+            self.client.operator_client()
         }
     }
 
@@ -109,7 +135,11 @@ pub(super) mod sealed {
         type SvcType = InterceptedMetricsSvc;
 
         fn client(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
-            &mut self.inner
+            self.inner.client()
+        }
+
+        fn operator_client(&mut self) -> &mut OperatorServiceClient<Self::SvcType> {
+            self.inner.operator_client()
         }
     }
 }
