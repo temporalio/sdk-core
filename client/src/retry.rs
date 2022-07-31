@@ -335,6 +335,7 @@ where
         run_id: String,
         signal_name: String,
         payloads: Option<Payloads>,
+        request_id: Option<String>,
     ) -> Result<SignalWorkflowExecutionResponse> {
         retry_call!(
             self,
@@ -342,7 +343,8 @@ where
             workflow_id.clone(),
             run_id.clone(),
             signal_name.clone(),
-            payloads.clone()
+            payloads.clone(),
+            request_id.clone()
         )
     }
 
@@ -430,13 +432,15 @@ where
         workflow_id: String,
         run_id: Option<String>,
         reason: String,
+        request_id: Option<String>,
     ) -> Result<RequestCancelWorkflowExecutionResponse> {
         retry_call!(
             self,
             cancel_workflow_execution,
             workflow_id.clone(),
             run_id.clone(),
-            reason.clone()
+            reason.clone(),
+            request_id.clone()
         )
     }
 

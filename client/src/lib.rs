@@ -39,7 +39,7 @@ use temporal_sdk_core_protos::{
     temporal::api::{
         command::v1::Command,
         common::v1::{Payload, Payloads, WorkflowExecution, WorkflowType},
-        enums::v1::{TaskQueueKind, WorkflowTaskFailedCause},
+        enums::v1::{TaskQueueKind, WorkflowTaskFailedCause, WorkflowIdReusePolicy},
         failure::v1::Failure,
         query::v1::{WorkflowQuery, WorkflowQueryResult},
         taskqueue::v1::{StickyExecutionAttributes, TaskQueue, TaskQueueMetadata},
@@ -607,6 +607,7 @@ pub trait WorkflowClientTrait {
         run_id: String,
         signal_name: String,
         payloads: Option<Payloads>,
+        request_id: Option<String>,
     ) -> Result<SignalWorkflowExecutionResponse>;
 
     /// Send signal and start workflow transcationally
@@ -659,6 +660,7 @@ pub trait WorkflowClientTrait {
         workflow_id: String,
         run_id: Option<String>,
         reason: String,
+        request_id: Option<String>,
     ) -> Result<RequestCancelWorkflowExecutionResponse>;
 
     /// Terminate a currently executing workflow
@@ -681,8 +683,23 @@ pub trait WorkflowClientTrait {
 /// Optional fields supplied at the start of workflow execution
 #[derive(Debug, Clone, Default)]
 pub struct WorkflowOptions {
+    /// Optional request id for dedup requests 
+    pub request_id: Option<String>,
+
+    /// Set the policy for reusing the workflow id 
+    pub workflow_id_reuse_policy: WorkflowIdReusePolicy,
+
+    /// Optionally indicates the default execution timeout for workflow tasks
+    pub execution_timeout: Option<Duration>,
+
+    /// Optionally indicates the default run timeout for workflow tasks
+    pub run_timeout: Option<Duration>,
+
     /// Optionally indicates the default task timeout for workflow tasks
     pub task_timeout: Option<Duration>,
+
+    /// Optionally set a cron schedule for workflow
+    pub cron_schedule: Option<String>,
 
     /// Optionally associate extra search attributes with a workflow
     pub search_attributes: Option<HashMap<String, Payload>>,
@@ -698,8 +715,6 @@ impl WorkflowClientTrait for Client {
         workflow_type: String,
         options: WorkflowOptions,
     ) -> Result<StartWorkflowExecutionResponse> {
-        let request_id = Uuid::new_v4().to_string();
-
         Ok(self
             .wf_svc()
             .start_workflow_execution(StartWorkflowExecutionRequest {
@@ -713,9 +728,13 @@ impl WorkflowClientTrait for Client {
                     name: task_queue,
                     kind: TaskQueueKind::Unspecified as i32,
                 }),
-                request_id,
+                request_id: options.request_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
+                workflow_id_reuse_policy: options.workflow_id_reuse_policy as i32,
+                workflow_execution_timeout: options.execution_timeout.map(Into::into),
+                workflow_run_timeout: options.execution_timeout.map(Into::into),
                 workflow_task_timeout: options.task_timeout.map(Into::into),
                 search_attributes: options.search_attributes.map(Into::into),
+                cron_schedule: options.cron_schedule.unwrap_or_default(),
                 ..Default::default()
             })
             .await?
@@ -924,6 +943,7 @@ impl WorkflowClientTrait for Client {
         run_id: String,
         signal_name: String,
         payloads: Option<Payloads>,
+        request_id: Option<String>,
     ) -> Result<SignalWorkflowExecutionResponse> {
         Ok(self
             .wf_svc()
@@ -936,6 +956,7 @@ impl WorkflowClientTrait for Client {
                 signal_name,
                 input: payloads,
                 identity: self.inner.options.identity.clone(),
+                request_id: request_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
                 ..Default::default()
             })
             .await?
@@ -952,7 +973,6 @@ impl WorkflowClientTrait for Client {
         signal_name: String,
         signal_input: Option<Payloads>,
     ) -> Result<SignalWithStartWorkflowExecutionResponse> {
-        let request_id = Uuid::new_v4().to_string();
         Ok(self
             .wf_svc()
             .signal_with_start_workflow_execution(SignalWithStartWorkflowExecutionRequest {
@@ -965,13 +985,17 @@ impl WorkflowClientTrait for Client {
                     name: task_queue,
                     kind: TaskQueueKind::Normal as i32,
                 }),
-                request_id,
                 input,
                 signal_name,
                 signal_input,
                 identity: self.inner.options.identity.clone(),
+                request_id: options.request_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
+                workflow_id_reuse_policy: options.workflow_id_reuse_policy as i32,
+                workflow_execution_timeout: options.execution_timeout.map(Into::into),
+                workflow_run_timeout: options.execution_timeout.map(Into::into),
                 workflow_task_timeout: options.task_timeout.map(Into::into),
                 search_attributes: options.search_attributes.map(Into::into),
+                cron_schedule: options.cron_schedule.unwrap_or_default(),
                 ..Default::default()
             })
             .await?
@@ -1062,6 +1086,7 @@ impl WorkflowClientTrait for Client {
         workflow_id: String,
         run_id: Option<String>,
         reason: String,
+        request_id: Option<String>,
     ) -> Result<RequestCancelWorkflowExecutionResponse> {
         Ok(self
             .wf_svc()
@@ -1072,7 +1097,7 @@ impl WorkflowClientTrait for Client {
                     run_id: run_id.unwrap_or_default(),
                 }),
                 identity: self.inner.options.identity.clone(),
-                request_id: "".to_string(),
+                request_id: request_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
                 first_execution_run_id: "".to_string(),
                 reason,
             })
