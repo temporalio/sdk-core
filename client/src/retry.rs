@@ -208,6 +208,7 @@ where
         task_queue: String,
         workflow_id: String,
         workflow_type: String,
+        request_id: Option<String>,
         options: WorkflowOptions,
     ) -> Result<StartWorkflowExecutionResponse> {
         retry_call!(
@@ -217,6 +218,7 @@ where
             task_queue.clone(),
             workflow_id.clone(),
             workflow_type.clone(),
+            request_id.clone(),
             options.clone()
         )
     }
@@ -354,6 +356,7 @@ where
         task_queue: String,
         workflow_id: String,
         workflow_type: String,
+        request_id: Option<String>,
         options: WorkflowOptions,
         signal_name: String,
         signal_input: Option<Payloads>,
@@ -365,6 +368,7 @@ where
             task_queue.clone(),
             workflow_id.clone(),
             workflow_type.clone(),
+            request_id.clone(),
             options.clone(),
             signal_name.clone(),
             signal_input.clone()

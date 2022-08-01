@@ -521,6 +521,7 @@ pub trait WorkflowClientTrait {
         task_queue: String,
         workflow_id: String,
         workflow_type: String,
+        request_id: Option<String>,
         options: WorkflowOptions,
     ) -> Result<StartWorkflowExecutionResponse>;
 
@@ -619,6 +620,7 @@ pub trait WorkflowClientTrait {
         task_queue: String,
         workflow_id: String,
         workflow_type: String,
+        request_id: Option<String>,
         options: WorkflowOptions,
         signal_name: String,
         signal_input: Option<Payloads>,
@@ -683,9 +685,6 @@ pub trait WorkflowClientTrait {
 /// Optional fields supplied at the start of workflow execution
 #[derive(Debug, Clone, Default)]
 pub struct WorkflowOptions {
-    /// Optional request id for dedup requests 
-    pub request_id: Option<String>,
-
     /// Set the policy for reusing the workflow id 
     pub workflow_id_reuse_policy: WorkflowIdReusePolicy,
 
@@ -713,6 +712,7 @@ impl WorkflowClientTrait for Client {
         task_queue: String,
         workflow_id: String,
         workflow_type: String,
+        request_id: Option<String>,
         options: WorkflowOptions,
     ) -> Result<StartWorkflowExecutionResponse> {
         Ok(self
@@ -728,7 +728,7 @@ impl WorkflowClientTrait for Client {
                     name: task_queue,
                     kind: TaskQueueKind::Unspecified as i32,
                 }),
-                request_id: options.request_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
+                request_id: request_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
                 workflow_id_reuse_policy: options.workflow_id_reuse_policy as i32,
                 workflow_execution_timeout: options.execution_timeout.map(Into::into),
                 workflow_run_timeout: options.execution_timeout.map(Into::into),
@@ -969,6 +969,7 @@ impl WorkflowClientTrait for Client {
         task_queue: String,
         workflow_id: String,
         workflow_type: String,
+        request_id: Option<String>,
         options: WorkflowOptions,
         signal_name: String,
         signal_input: Option<Payloads>,
@@ -989,7 +990,7 @@ impl WorkflowClientTrait for Client {
                 signal_name,
                 signal_input,
                 identity: self.inner.options.identity.clone(),
-                request_id: options.request_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
+                request_id: request_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
                 workflow_id_reuse_policy: options.workflow_id_reuse_policy as i32,
                 workflow_execution_timeout: options.execution_timeout.map(Into::into),
                 workflow_run_timeout: options.execution_timeout.map(Into::into),

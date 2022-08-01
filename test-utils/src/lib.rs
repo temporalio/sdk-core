@@ -160,6 +160,7 @@ impl CoreWfStarter {
                 self.worker_config.task_queue.clone(),
                 workflow_id,
                 self.task_queue_name.clone(),
+                None,
                 opts,
             )
             .await
@@ -319,6 +320,7 @@ impl TestWorker {
                     self.inner.task_queue().to_string(),
                     wfid.clone(),
                     workflow_type.into(),
+                    None,
                     options,
                 )
                 .await?;

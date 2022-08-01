@@ -102,6 +102,7 @@ async fn sends_signal_with_create_wf() {
             worker.inner_mut().task_queue().to_owned(),
             "sends_signal_with_create_wf".to_owned(),
             "receiversignal".to_owned(),
+            None,
             WorkflowOptions::default(),
             SIGNAME.to_owned(),
             vec![b"tada".into()].into_payloads(),
