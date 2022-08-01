@@ -466,17 +466,6 @@ where
     }
 }
 
-// impl<C> RawClientLikeUser for RetryClient<C>
-// where
-//     C: RawClientLikeUser,
-// {
-//     type RawClientT = C::RawClientT;
-//
-//     fn wf_svc(&self) -> Self::RawClientT {
-//         self.client.wf_svc()
-//     }
-// }
-
 #[cfg(test)]
 mod tests {
     use super::*;
