@@ -399,7 +399,6 @@ async fn local_act_null_result() {
 
 #[tokio::test]
 async fn query_during_wft_heartbeat_doesnt_accidentally_fail_to_continue_heartbeat() {
-    crate::telemetry::test_telem_console();
     let wfid = "fake_wf_id";
     let mut t = TestHistoryBuilder::default();
     let mut wes_short_wft_timeout = default_wes_attribs();

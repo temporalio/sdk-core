@@ -49,6 +49,23 @@ pub(super) mod sealed {
         {
             callfn(self.client(), req).await
         }
+
+        async fn do_operator_call<F, Req, Resp>(
+            &mut self,
+            _call_name: &'static str,
+            mut callfn: F,
+            req: Request<Req>,
+        ) -> Result<Response<Resp>, Status>
+        where
+            Req: Clone + Unpin + Send + Sync + 'static,
+            F: FnMut(
+                &mut OperatorServiceClient<Self::SvcType>,
+                Request<Req>,
+            ) -> BoxFuture<'static, Result<Response<Resp>, Status>>,
+            F: Send + Sync + Unpin + 'static,
+        {
+            callfn(self.operator_client(), req).await
+        }
     }
 
     // Here we implement retry on anything that is already RawClientLike
@@ -87,6 +104,30 @@ pub(super) mod sealed {
             let fact = || {
                 let req_clone = req_cloner(&req);
                 callfn(self.client(), req_clone)
+            };
+            let res = Self::make_future_retry(rtc, fact, call_name);
+            res.map_err(|(e, _attempt)| e).map_ok(|x| x.0).await
+        }
+
+        async fn do_operator_call<F, Req, Resp>(
+            &mut self,
+            call_name: &'static str,
+            mut callfn: F,
+            req: Request<Req>,
+        ) -> Result<Response<Resp>, Status>
+        where
+            Req: Clone + Unpin + Send + Sync + 'static,
+            F: FnMut(
+                &mut OperatorServiceClient<Self::SvcType>,
+                Request<Req>,
+            ) -> BoxFuture<'static, Result<Response<Resp>, Status>>,
+            F: Send + Sync + Unpin + 'static,
+        {
+            let rtc = self.get_retry_config(call_name);
+            let req = req_cloner(&req);
+            let fact = || {
+                let req_clone = req_cloner(&req);
+                callfn(self.operator_client(), req_clone)
             };
             let res = Self::make_future_retry(rtc, fact, call_name);
             res.map_err(|(e, _attempt)| e).map_ok(|x| x.0).await
@@ -198,32 +239,43 @@ where
     <T::ResponseBody as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
 {
 }
+impl<RC, T> OperatorService for RC
+where
+    RC: RawClientLike<SvcType = T>,
+    T: GrpcService<BoxBody> + Send + Clone + 'static,
+    T::ResponseBody: tonic::codegen::Body + Send + 'static,
+    T::Error: Into<tonic::codegen::StdError>,
+    T::Future: Send,
+    <T::ResponseBody as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
+{
+}
 
 /// Helps re-declare gRPC client methods
 macro_rules! proxy {
-    ($method:ident, $req:ident, $resp:ident $(, $closure:expr)?) => {
-        #[doc = concat!("See [WorkflowServiceClient::", stringify!($method), "]")]
+    ($client_type:tt, $call_meth:ident, $method:ident, $req:ident, $resp:ident $(, $closure:expr)?) => {
+        #[doc = concat!("See [", stringify!($client_type), "::", stringify!($method), "]")]
         fn $method(
             &mut self,
             request: impl tonic::IntoRequest<super::$req>,
         ) -> BoxFuture<Result<tonic::Response<super::$resp>, tonic::Status>> {
             #[allow(unused_mut)]
-            let fact = |c: &mut WorkflowServiceClient<Self::SvcType>, mut req: tonic::Request<super::$req>| {
+            let fact = |c: &mut $client_type<Self::SvcType>, mut req: tonic::Request<super::$req>| {
                 $( type_closure_arg(&mut req, $closure); )*
                 let mut c = c.clone();
                 async move { c.$method(req).await }.boxed()
             };
-            self.do_call(stringify!($method), fact, request.into_request())
+            self.$call_meth(stringify!($method), fact, request.into_request())
         }
     };
 }
 macro_rules! proxier {
-    ( $(($method:ident, $req:ident, $resp:ident $(, $closure:expr)?  );)* ) => {
+    ( $trait_name:ident; $impl_list_name:ident; $client_type:tt; $call_meth:ident;
+      $(($method:ident, $req:ident, $resp:ident $(, $closure:expr)?  );)* ) => {
         #[cfg(test)]
-        const ALL_IMPLEMENTED_RPCS: &'static [&'static str] = &[$(stringify!($method)),*];
-        /// Trait version of the generated workflow service client with modifications to attach appropriate
-        /// metric labels or whatever else to requests
-        pub trait WorkflowService: RawClientLike
+        const $impl_list_name: &'static [&'static str] = &[$(stringify!($method)),*];
+        /// Trait version of the generated client with modifications to attach appropriate metric
+        /// labels or whatever else to requests
+        pub trait $trait_name: RawClientLike
         where
             // Yo this is wild
             <Self as RawClientLike>::SvcType: GrpcService<BoxBody> + Send + Clone + 'static,
@@ -236,17 +288,19 @@ macro_rules! proxier {
                 as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
         {
             $(
-               proxy!($method, $req, $resp $(,$closure)*);
+               proxy!($client_type, $call_meth, $method, $req, $resp $(,$closure)*);
             )*
         }
     };
 }
+
 // Nice little trick to avoid the callsite asking to type the closure parameter
 fn type_closure_arg<T, R>(arg: T, f: impl FnOnce(T) -> R) -> R {
     f(arg)
 }
 
 proxier! {
+    WorkflowService; ALL_IMPLEMENTED_WORKFLOW_SERVICE_RPCS; WorkflowServiceClient; do_call;
     (
         register_namespace,
         RegisterNamespaceRequest,
@@ -694,12 +748,41 @@ proxier! {
     );
 }
 
+proxier! {
+    OperatorService; ALL_IMPLEMENTED_OPERATOR_SERVICE_RPCS; OperatorServiceClient; do_operator_call;
+    (add_search_attributes, AddSearchAttributesRequest, AddSearchAttributesResponse);
+    (remove_search_attributes, RemoveSearchAttributesRequest, RemoveSearchAttributesResponse);
+    (list_search_attributes, ListSearchAttributesRequest, ListSearchAttributesResponse);
+    (delete_namespace, DeleteNamespaceRequest, DeleteNamespaceResponse,
+        |r| {
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (delete_workflow_execution, DeleteWorkflowExecutionRequest, DeleteWorkflowExecutionResponse,
+        |r| {
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (add_or_update_remote_cluster, AddOrUpdateRemoteClusterRequest, AddOrUpdateRemoteClusterResponse);
+    (remove_remote_cluster, RemoveRemoteClusterRequest, RemoveRemoteClusterResponse);
+    (describe_cluster, DescribeClusterRequest, DescribeClusterResponse);
+    (list_clusters, ListClustersRequest, ListClustersResponse);
+    (list_cluster_members, ListClusterMembersRequest, ListClusterMembersResponse);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ClientOptionsBuilder, RetryClient, WorkflowServiceClientWithMetrics};
+    use crate::{
+        ClientOptionsBuilder, OperatorServiceClientWithMetrics, RetryClient,
+        WorkflowServiceClientWithMetrics,
+    };
     use std::collections::HashSet;
-    use temporal_sdk_core_protos::temporal::api::workflowservice::v1::ListNamespacesRequest;
+    use temporal_sdk_core_protos::temporal::api::{
+        operatorservice::v1::DeleteNamespaceRequest, workflowservice::v1::ListNamespacesRequest,
+    };
 
     // Just to help make sure some stuff compiles. Not run.
     #[allow(dead_code)]
@@ -708,23 +791,34 @@ mod tests {
         let raw_client = opts.connect_no_namespace(None, None).await.unwrap();
         let mut retry_client = RetryClient::new(raw_client, opts.retry_config);
 
-        let the_request = ListNamespacesRequest::default();
+        let list_ns_req = ListNamespacesRequest::default();
         let fact = |c: &mut WorkflowServiceClientWithMetrics, req| {
             let mut c = c.clone();
             async move { c.list_namespaces(req).await }.boxed()
         };
         retry_client
-            .do_call("whatever", fact, tonic::Request::new(the_request))
+            .do_call("whatever", fact, tonic::Request::new(list_ns_req.clone()))
             .await
             .unwrap();
+
+        // Operator svc method
+        let del_ns_req = DeleteNamespaceRequest::default();
+        let fact = |c: &mut OperatorServiceClientWithMetrics, req| {
+            let mut c = c.clone();
+            async move { c.delete_namespace(req).await }.boxed()
+        };
+        retry_client
+            .do_operator_call("whatever", fact, tonic::Request::new(del_ns_req.clone()))
+            .await
+            .unwrap();
+
+        // Verify calling through traits works
+        retry_client.list_namespaces(list_ns_req).await.unwrap();
+        retry_client.delete_namespace(del_ns_req).await.unwrap();
     }
 
-    #[test]
-    fn verify_all_methods_implemented() {
-        // This is less work than trying to hook into the codegen process
-        let proto_def =
-            include_str!("../../protos/api_upstream/temporal/api/workflowservice/v1/service.proto");
-        let methods: Vec<_> = proto_def
+    fn verify_methods(proto_def_str: &str, impl_list: &[&str]) {
+        let methods: Vec<_> = proto_def_str
             .lines()
             .map(|l| l.trim())
             .filter(|l| l.starts_with("rpc"))
@@ -733,17 +827,26 @@ mod tests {
                 (&stripped[..stripped.find('(').unwrap()]).trim()
             })
             .collect();
-        let no_underscores: HashSet<_> = ALL_IMPLEMENTED_RPCS
-            .iter()
-            .map(|x| x.replace('_', ""))
-            .collect();
+        let no_underscores: HashSet<_> = impl_list.iter().map(|x| x.replace('_', "")).collect();
         for method in methods {
             if !no_underscores.contains(&method.to_lowercase()) {
-                panic!(
-                    "WorkflowService RPC method {} is not implemented by raw client",
-                    method
-                )
+                panic!("RPC method {} is not implemented by raw client", method)
             }
         }
+    }
+    #[test]
+    fn verify_all_workflow_service_methods_implemented() {
+        // This is less work than trying to hook into the codegen process
+        let proto_def =
+            include_str!("../../protos/api_upstream/temporal/api/workflowservice/v1/service.proto");
+        verify_methods(proto_def, ALL_IMPLEMENTED_WORKFLOW_SERVICE_RPCS);
+    }
+
+    #[test]
+    fn verify_all_operator_service_methods_implemented() {
+        // This is less work than trying to hook into the codegen process
+        let proto_def =
+            include_str!("../../protos/api_upstream/temporal/api/operatorservice/v1/service.proto");
+        verify_methods(proto_def, ALL_IMPLEMENTED_OPERATOR_SERVICE_RPCS);
     }
 }

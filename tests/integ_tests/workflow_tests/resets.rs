@@ -46,13 +46,12 @@ async fn reset_workflow() {
         .await
         .unwrap();
 
-    let client = starter.get_client().await;
+    let mut client = starter.get_client().await;
+    let client = Arc::make_mut(&mut client);
     let resetter_fut = async {
         notify.notified().await;
         // Do the reset
         client
-            .get_client()
-            .raw_retry_client()
             .reset_workflow_execution(ResetWorkflowExecutionRequest {
                 namespace: NAMESPACE.to_owned(),
                 workflow_execution: Some(WorkflowExecution {
@@ -69,15 +68,15 @@ async fn reset_workflow() {
 
         // Unblock the workflow by sending the signal. Run ID will have changed after reset so
         // we use empty run id
-        client
-            .signal_workflow_execution(
-                wf_name.to_owned(),
-                "".to_owned(),
-                POST_RESET_SIG.to_owned(),
-                None,
-            )
-            .await
-            .unwrap();
+        WorkflowClientTrait::signal_workflow_execution(
+            client,
+            wf_name.to_owned(),
+            "".to_owned(),
+            POST_RESET_SIG.to_owned(),
+            None,
+        )
+        .await
+        .unwrap();
 
         // Wait for the now-reset workflow to finish
         client

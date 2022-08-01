@@ -42,7 +42,7 @@ use temporal_sdk_core_protos::{
         common::v1::{Payload, Payloads, WorkflowExecution, WorkflowType},
         enums::v1::{TaskQueueKind, WorkflowTaskFailedCause},
         failure::v1::Failure,
-        operatorservice::v1::operator_service_client::OperatorServiceClient,
+        operatorservice::v1::{operator_service_client::OperatorServiceClient, *},
         query::v1::{WorkflowQuery, WorkflowQueryResult},
         taskqueue::v1::{StickyExecutionAttributes, TaskQueue, TaskQueueMetadata},
         workflowservice::v1::{workflow_service_client::WorkflowServiceClient, *},
@@ -466,18 +466,22 @@ where
             operator_svc_client: OnceCell::new(),
         }
     }
+    /// Get the underlying workflow service client
     pub fn workflow_svc(&self) -> &WorkflowServiceClient<T> {
         self.workflow_svc_client
             .get_or_init(|| WorkflowServiceClient::new(self.svc.clone()))
     }
+    /// Get the underlying operator service client
     pub fn operator_svc(&self) -> &OperatorServiceClient<T> {
         self.operator_svc_client
             .get_or_init(|| OperatorServiceClient::new(self.svc.clone()))
     }
+    /// Get the underlying workflow service client mutably
     pub fn workflow_svc_mut(&mut self) -> &mut WorkflowServiceClient<T> {
         let _ = self.workflow_svc();
         self.workflow_svc_client.get_mut().unwrap()
     }
+    /// Get the underlying operator service client mutably
     pub fn operator_svc_mut(&mut self) -> &mut OperatorServiceClient<T> {
         let _ = self.operator_svc();
         self.operator_svc_client.get_mut().unwrap()
