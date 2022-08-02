@@ -93,6 +93,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "../protos/local/temporal/sdk/core/core_interface.proto",
                 "../protos/local/temporal/sdk/core/bridge/bridge.proto",
                 "../protos/api_upstream/temporal/api/workflowservice/v1/service.proto",
+                "../protos/api_upstream/temporal/api/operatorservice/v1/service.proto",
             ],
             &["../protos/api_upstream", "../protos/local"],
         )?;

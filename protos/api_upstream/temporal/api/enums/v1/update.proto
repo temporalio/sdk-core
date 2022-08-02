@@ -27,31 +27,25 @@ package temporal.api.enums.v1;
 option go_package = "go.temporal.io/api/enums/v1;enums";
 option java_package = "io.temporal.api.enums.v1";
 option java_multiple_files = true;
-option java_outer_classname = "CommandTypeProto";
+option java_outer_classname = "UpdateProto";
 option ruby_package = "Temporal::Api::Enums::V1";
 option csharp_namespace = "Temporal.Api.Enums.V1";
 
-// Whenever this list of command types is changed do change the function shouldBufferEvent in mutableStateBuilder.go to make sure to do the correct event ordering.
-enum CommandType {
-    COMMAND_TYPE_UNSPECIFIED = 0;
-    COMMAND_TYPE_SCHEDULE_ACTIVITY_TASK = 1;
-    COMMAND_TYPE_REQUEST_CANCEL_ACTIVITY_TASK = 2;
-    COMMAND_TYPE_START_TIMER = 3;
-    COMMAND_TYPE_COMPLETE_WORKFLOW_EXECUTION = 4;
-    COMMAND_TYPE_FAIL_WORKFLOW_EXECUTION = 5;
-    COMMAND_TYPE_CANCEL_TIMER = 6;
-    COMMAND_TYPE_CANCEL_WORKFLOW_EXECUTION = 7;
-    COMMAND_TYPE_REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION = 8;
-    COMMAND_TYPE_RECORD_MARKER = 9;
-    COMMAND_TYPE_CONTINUE_AS_NEW_WORKFLOW_EXECUTION = 10;
-    COMMAND_TYPE_START_CHILD_WORKFLOW_EXECUTION = 11;
-    COMMAND_TYPE_SIGNAL_EXTERNAL_WORKFLOW_EXECUTION = 12;
-    COMMAND_TYPE_UPSERT_WORKFLOW_SEARCH_ATTRIBUTES = 13;
+enum WorkflowUpdateResultAccessStyle {
+    WORKFLOW_UPDATE_RESULT_ACCESS_STYLE_UNSPECIFIED = 0;
 
-    // Indicates that an update has been accepted for processing workflow code
-    COMMAND_TYPE_ACCEPT_WORKFLOW_UPDATE = 14;
+    // Indicates that the update response _must_ be included as part of the gRPC
+    // response body
+    WORKFLOW_UPDATE_RESULT_ACCESS_STYLE_REQUIRE_INLINE = 1;
+}
 
-    // Indicates that an update has completed and carries either the success or
-    // failure outcome of said update.
-    COMMAND_TYPE_COMPLETE_WORKFLOW_UPDATE = 15;
+enum WorkflowUpdateDurabilityPreference {
+    // The workflow expresses no preference as to the durability of the
+    // the associated update.
+    WORKFLOW_UPDATE_DURABILITY_PREFERENCE_UNSPECIFIED = 0;
+
+    // Used by a workflow to indicate that no workflow state mutation occurred
+    // while processing the update and that it wishes that the update not be
+    // made durable (and thus not take up space in workflow history).
+    WORKFLOW_UPDATE_DURABILITY_PREFERENCE_BYPASS = 1;
 }

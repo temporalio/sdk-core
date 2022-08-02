@@ -86,7 +86,7 @@ where
             if let Some(ref id_override) = worker_config.client_identity_override {
                 client.options_mut().identity = id_override.clone();
             }
-            let retry_client = RetryClient::new(client, Default::default());
+            let retry_client = RetryClient::new(client, RetryConfig::default());
             Arc::new(retry_client)
         }
     };

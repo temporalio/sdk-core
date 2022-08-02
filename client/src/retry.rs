@@ -1,10 +1,10 @@
 use crate::{
-    ClientOptions, RawClientLikeUser, Result, RetryConfig, WorkflowClientTrait, WorkflowOptions,
+    ClientOptions, Result, RetryConfig, WorkflowClientTrait, WorkflowOptions,
     WorkflowTaskCompletion,
 };
 use backoff::{backoff::Backoff, ExponentialBackoff};
 use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
-use std::{fmt::Debug, future::Future, time::Duration};
+use std::{fmt::Debug, future::Future, sync::Arc, time::Duration};
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::QueryResult,
     temporal::api::{
@@ -34,15 +34,15 @@ pub const RETRYABLE_ERROR_CODES: [Code; 7] = [
 #[derive(Debug, Clone)]
 pub struct RetryClient<SG> {
     client: SG,
-    retry_config: RetryConfig,
+    retry_config: Arc<RetryConfig>,
 }
 
 impl<SG> RetryClient<SG> {
     /// Use the provided retry config with the provided client
-    pub const fn new(client: SG, retry_config: RetryConfig) -> Self {
+    pub fn new(client: SG, retry_config: RetryConfig) -> Self {
         Self {
             client,
-            retry_config,
+            retry_config: Arc::new(retry_config),
         }
     }
 }
@@ -83,7 +83,7 @@ impl<SG> RetryClient<SG> {
     pub(crate) fn get_retry_config(&self, call_name: &'static str) -> RetryConfig {
         let call_type = Self::determine_call_type(call_name);
         match call_type {
-            CallType::Normal => self.retry_config.clone(),
+            CallType::Normal => (*self.retry_config).clone(),
             CallType::LongPoll => RetryConfig::poll_retry_policy(),
         }
     }
@@ -463,17 +463,6 @@ where
 
     fn namespace(&self) -> &str {
         self.client.namespace()
-    }
-}
-
-impl<C> RawClientLikeUser for RetryClient<C>
-where
-    C: RawClientLikeUser,
-{
-    type RawClientT = C::RawClientT;
-
-    fn wf_svc(&self) -> Self::RawClientT {
-        self.client.wf_svc()
     }
 }
 
