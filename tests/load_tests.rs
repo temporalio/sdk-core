@@ -35,13 +35,13 @@ async fn activity_load() {
             let activity = ActivityOptions {
                 activity_id: Some(activity_id.to_string()),
                 activity_type: "test_activity".to_string(),
-                input: Default::default(),
                 task_queue,
                 schedule_to_start_timeout: Some(activity_timeout),
                 start_to_close_timeout: Some(activity_timeout),
                 schedule_to_close_timeout: Some(activity_timeout),
                 heartbeat_timeout: Some(activity_timeout),
                 cancellation_type: ActivityCancellationType::TryCancel,
+                ..Default::default()
             };
             let res = ctx.activity(activity).await.unwrap_ok_payload();
             assert_eq!(res.data, payload_dat);
