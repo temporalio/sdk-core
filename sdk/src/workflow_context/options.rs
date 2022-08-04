@@ -59,6 +59,8 @@ pub struct ActivityOptions {
     pub heartbeat_timeout: Option<Duration>,
     /// Determines what the SDK does when the Activity is cancelled.
     pub cancellation_type: ActivityCancellationType,
+    /// Activity retry policy
+    pub retry_policy: Option<RetryPolicy>,
 }
 
 impl IntoWorkflowCommand for ActivityOptions {
@@ -78,6 +80,7 @@ impl IntoWorkflowCommand for ActivityOptions {
             heartbeat_timeout: self.heartbeat_timeout.map(Into::into),
             cancellation_type: self.cancellation_type as i32,
             arguments: vec![self.input],
+            retry_policy: self.retry_policy,
             ..Default::default()
         }
     }
