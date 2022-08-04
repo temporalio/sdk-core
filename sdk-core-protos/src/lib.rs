@@ -201,7 +201,8 @@ pub mod coresdk {
             pub fn timed_out(&self) -> bool {
                 matches!(self.status, Some(activity_resolution::Status::Failed(Failure {
                     failure: Some(ref f)
-                })) if f.is_timeout())
+                })) if f.is_timeout()
+                    || f.cause.as_ref().map(|c| c.is_timeout()).unwrap_or_default())
             }
 
             pub fn cancelled(&self) -> bool {
