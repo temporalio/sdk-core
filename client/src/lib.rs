@@ -433,7 +433,7 @@ impl Interceptor for ServiceCallInterceptor {
         );
         let headers = &*self.headers.read();
         for (k, v) in headers {
-            if let (Ok(k), Ok(v)) = (MetadataKey::from_str(k), MetadataValue::from_str(v)) {
+            if let (Ok(k), Ok(v)) = (MetadataKey::from_str(k), v.parse()) {
                 metadata.insert(k, v);
             }
         }
@@ -457,7 +457,7 @@ impl<T> TemporalServiceClient<T>
 where
     T: Clone,
     T: GrpcService<BoxBody> + Send + Clone + 'static,
-    T::ResponseBody: tonic::codegen::Body + Send + 'static,
+    T::ResponseBody: tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
     T::Error: Into<tonic::codegen::StdError>,
     <T::ResponseBody as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
 {
@@ -780,7 +780,7 @@ impl WorkflowClientTrait for Client {
                     kind: TaskQueueKind::Unspecified as i32,
                 }),
                 request_id,
-                workflow_task_timeout: options.task_timeout.map(Into::into),
+                workflow_task_timeout: options.task_timeout.and_then(|d| d.try_into().ok()),
                 search_attributes: options.search_attributes.map(Into::into),
                 ..Default::default()
             })
@@ -1036,7 +1036,7 @@ impl WorkflowClientTrait for Client {
                 signal_name,
                 signal_input,
                 identity: self.inner.options.identity.clone(),
-                workflow_task_timeout: options.task_timeout.map(Into::into),
+                workflow_task_timeout: options.task_timeout.and_then(|d| d.try_into().ok()),
                 search_attributes: options.search_attributes.map(Into::into),
                 ..Default::default()
             })

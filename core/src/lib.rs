@@ -58,7 +58,7 @@ use temporal_sdk_core_protos::{coresdk::ActivityHeartbeat, temporal::api::histor
 lazy_static::lazy_static! {
     /// A process-wide unique string, which will be different on every startup
     static ref PROCCESS_UNIQ_ID: String = {
-        uuid::Uuid::new_v4().to_simple().to_string()
+        uuid::Uuid::new_v4().simple().to_string()
     };
 }
 

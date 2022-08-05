@@ -1,4 +1,5 @@
 use crate::{
+    prost_dur,
     test_help::{
         build_fake_worker, build_mock_pollers, canned_histories, mock_manual_poller, mock_worker,
         MockPollCfg, MockWorkerInputs, MocksHolder, ResponseType,
@@ -35,7 +36,7 @@ async fn after_shutdown_of_worker_get_shutdown_err() {
                 run_id.clone(),
                 workflow_command::Variant::StartTimer(StartTimer {
                     seq: 1,
-                    start_to_fire_timeout: Some(Duration::from_secs(1).into()),
+                    start_to_fire_timeout: Some(prost_dur!(from_secs(1))),
                 }),
             ))
             .await

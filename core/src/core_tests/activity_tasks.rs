@@ -1,5 +1,5 @@
 use crate::{
-    advance_fut, job_assert,
+    advance_fut, job_assert, prost_dur,
     test_help::{
         build_fake_worker, build_mock_pollers, canned_histories, gen_assert_and_reply,
         mock_manual_poller, mock_poller, mock_poller_from_resps, mock_worker, poll_and_reply,
@@ -149,14 +149,14 @@ async fn heartbeats_report_cancels_only_once() {
             PollActivityTaskQueueResponse {
                 task_token: vec![1],
                 activity_id: "act1".to_string(),
-                heartbeat_timeout: Some(Duration::from_millis(1).into()),
+                heartbeat_timeout: Some(prost_dur!(from_millis(1))),
                 ..Default::default()
             }
             .into(),
             PollActivityTaskQueueResponse {
                 task_token: vec![2],
                 activity_id: "act2".to_string(),
-                heartbeat_timeout: Some(Duration::from_millis(1).into()),
+                heartbeat_timeout: Some(prost_dur!(from_millis(1))),
                 ..Default::default()
             }
             .into(),
@@ -226,7 +226,7 @@ async fn activity_cancel_interrupts_poll() {
         async {
             Some(Ok(PollActivityTaskQueueResponse {
                 task_token: vec![1],
-                heartbeat_timeout: Some(Duration::from_secs(1).into()),
+                heartbeat_timeout: Some(prost_dur!(from_secs(1))),
                 ..Default::default()
             }))
         }
@@ -333,7 +333,7 @@ async fn many_concurrent_heartbeat_cancels() {
                 async move {
                     Ok(PollActivityTaskQueueResponse {
                         task_token: i.to_be_bytes().to_vec(),
-                        heartbeat_timeout: Some(Duration::from_millis(200).into()),
+                        heartbeat_timeout: Some(prost_dur!(from_millis(200))),
                         ..Default::default()
                     })
                 }
@@ -506,7 +506,7 @@ async fn can_heartbeat_acts_during_shutdown() {
         [PollActivityTaskQueueResponse {
             task_token: vec![1],
             activity_id: "act1".to_string(),
-            heartbeat_timeout: Some(Duration::from_millis(1).into()),
+            heartbeat_timeout: Some(prost_dur!(from_millis(1))),
             ..Default::default()
         }
         .into()],
@@ -559,7 +559,7 @@ async fn complete_act_with_fail_flushes_heartbeat() {
         [PollActivityTaskQueueResponse {
             task_token: vec![1],
             activity_id: "act1".to_string(),
-            heartbeat_timeout: Some(Duration::from_secs(10).into()),
+            heartbeat_timeout: Some(prost_dur!(from_secs(10))),
             ..Default::default()
         }
         .into()],
@@ -818,7 +818,7 @@ async fn retryable_net_error_exhaustion_is_nonfatal() {
         [PollActivityTaskQueueResponse {
             task_token: vec![1],
             activity_id: "act1".to_string(),
-            heartbeat_timeout: Some(Duration::from_secs(10).into()),
+            heartbeat_timeout: Some(prost_dur!(from_secs(10))),
             ..Default::default()
         }
         .into()],

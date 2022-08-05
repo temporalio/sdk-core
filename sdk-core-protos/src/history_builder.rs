@@ -487,7 +487,11 @@ pub fn default_wes_attribs() -> WorkflowExecutionStartedEventAttributes {
         workflow_type: Some(WorkflowType {
             name: DEFAULT_WORKFLOW_TYPE.to_owned(),
         }),
-        workflow_task_timeout: Some(Duration::from_secs(5).into()),
+        workflow_task_timeout: Some(
+            Duration::from_secs(5)
+                .try_into()
+                .expect("5 secs is a valid duration"),
+        ),
         ..Default::default()
     }
 }

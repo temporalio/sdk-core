@@ -30,7 +30,7 @@ async fn timer_workflow_replay() {
         task.run_id,
         vec![StartTimer {
             seq: 0,
-            start_to_fire_timeout: Some(Duration::from_secs(1).into()),
+            start_to_fire_timeout: Some(prost_dur!(from_secs(1))),
         }
         .into()],
     ))

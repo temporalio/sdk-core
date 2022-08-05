@@ -24,12 +24,12 @@ async fn simple_query_legacy() {
         vec![
             StartTimer {
                 seq: 0,
-                start_to_fire_timeout: Some(Duration::from_millis(500).into()),
+                start_to_fire_timeout: Some(prost_dur!(from_millis(500))),
             }
             .into(),
             StartTimer {
                 seq: 1,
-                start_to_fire_timeout: Some(Duration::from_secs(3).into()),
+                start_to_fire_timeout: Some(prost_dur!(from_secs(3))),
             }
             .into(),
         ],
@@ -343,12 +343,12 @@ async fn fail_legacy_query() {
     let t1_resp = vec![
         StartTimer {
             seq: 1,
-            start_to_fire_timeout: Some(Duration::from_millis(500).into()),
+            start_to_fire_timeout: Some(prost_dur!(from_millis(500))),
         }
         .into(),
         StartTimer {
             seq: 2,
-            start_to_fire_timeout: Some(Duration::from_secs(3).into()),
+            start_to_fire_timeout: Some(prost_dur!(from_secs(3))),
         }
         .into(),
     ];

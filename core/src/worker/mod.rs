@@ -273,7 +273,10 @@ impl Worker {
                         kind: TaskQueueKind::Sticky as i32,
                     }),
                     schedule_to_start_timeout: Some(
-                        config.sticky_queue_schedule_to_start_timeout.into(),
+                        config
+                            .sticky_queue_schedule_to_start_timeout
+                            .try_into()
+                            .expect("timeout fits into proto"),
                     ),
                 }),
                 client,

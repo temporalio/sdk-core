@@ -100,7 +100,7 @@ pub(super) mod sealed {
     where
         T: Send + Sync + Clone + 'static,
         T: GrpcService<BoxBody> + Send + Clone + 'static,
-        T::ResponseBody: tonic::codegen::Body + Send + 'static,
+        T::ResponseBody: tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
         T::Error: Into<tonic::codegen::StdError>,
         <T::ResponseBody as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
     {
@@ -123,7 +123,7 @@ pub(super) mod sealed {
     where
         T: Send + Sync + Clone + 'static,
         T: GrpcService<BoxBody> + Send + Clone + 'static,
-        T::ResponseBody: tonic::codegen::Body + Send + 'static,
+        T::ResponseBody: tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
         T::Error: Into<tonic::codegen::StdError>,
         <T::ResponseBody as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
     {
@@ -207,7 +207,7 @@ impl<RC, T> WorkflowService for RC
 where
     RC: RawClientLike<SvcType = T>,
     T: GrpcService<BoxBody> + Send + Clone + 'static,
-    T::ResponseBody: tonic::codegen::Body + Send + 'static,
+    T::ResponseBody: tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
     T::Error: Into<tonic::codegen::StdError>,
     T::Future: Send,
     <T::ResponseBody as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
@@ -217,7 +217,17 @@ impl<RC, T> OperatorService for RC
 where
     RC: RawClientLike<SvcType = T>,
     T: GrpcService<BoxBody> + Send + Clone + 'static,
-    T::ResponseBody: tonic::codegen::Body + Send + 'static,
+    T::ResponseBody: tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
+    T::Error: Into<tonic::codegen::StdError>,
+    T::Future: Send,
+    <T::ResponseBody as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
+{
+}
+impl<RC, T> TestService for RC
+where
+    RC: RawClientLike<SvcType = T>,
+    T: GrpcService<BoxBody> + Send + Clone + 'static,
+    T::ResponseBody: tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
     T::Error: Into<tonic::codegen::StdError>,
     T::Future: Send,
     <T::ResponseBody as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
@@ -254,7 +264,7 @@ macro_rules! proxier {
             // Yo this is wild
             <Self as RawClientLike>::SvcType: GrpcService<BoxBody> + Send + Clone + 'static,
             <<Self as RawClientLike>::SvcType as GrpcService<BoxBody>>::ResponseBody:
-                tonic::codegen::Body + Send + 'static,
+                tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
             <<Self as RawClientLike>::SvcType as GrpcService<BoxBody>>::Error:
                 Into<tonic::codegen::StdError>,
             <<Self as RawClientLike>::SvcType as GrpcService<BoxBody>>::Future: Send,

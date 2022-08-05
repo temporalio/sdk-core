@@ -42,7 +42,7 @@ async fn timer_workflow_manual() {
         task.run_id,
         vec![StartTimer {
             seq: 0,
-            start_to_fire_timeout: Some(Duration::from_secs(1).into()),
+            start_to_fire_timeout: Some(prost_dur!(from_secs(1))),
         }
         .into()],
     ))
@@ -63,12 +63,12 @@ async fn timer_cancel_workflow() {
         vec![
             StartTimer {
                 seq: 0,
-                start_to_fire_timeout: Some(Duration::from_millis(50).into()),
+                start_to_fire_timeout: Some(prost_dur!(from_millis(50))),
             }
             .into(),
             StartTimer {
                 seq: 1,
-                start_to_fire_timeout: Some(Duration::from_secs(10).into()),
+                start_to_fire_timeout: Some(prost_dur!(from_secs(10))),
             }
             .into(),
         ],

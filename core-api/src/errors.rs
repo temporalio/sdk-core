@@ -1,6 +1,6 @@
 //! Error types exposed by public APIs
 
-use prost_types::TimestampOutOfSystemRangeError;
+use prost_types::TimestampError;
 use temporal_sdk_core_protos::coresdk::{
     activity_result::ActivityExecutionResult,
     workflow_activation::remove_from_cache::EvictionReason,
@@ -96,8 +96,8 @@ impl WFMachinesError {
     }
 }
 
-impl From<TimestampOutOfSystemRangeError> for WFMachinesError {
-    fn from(_: TimestampOutOfSystemRangeError) -> Self {
+impl From<TimestampError> for WFMachinesError {
+    fn from(_: TimestampError) -> Self {
         Self::Fatal("Could not decode timestamp".to_string())
     }
 }

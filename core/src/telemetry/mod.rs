@@ -25,7 +25,6 @@ use std::{
     time::Duration,
 };
 use temporal_sdk_core_api::CoreTelemetry;
-use tonic::metadata::MetadataMap;
 use tracing_subscriber::{filter::ParseError, layer::SubscriberExt, EnvFilter};
 use url::Url;
 
@@ -237,9 +236,11 @@ pub fn telemetry_init(opts: &TelemetryOptions) -> Result<&'static GlobalTelemDat
                                     opentelemetry_otlp::new_exporter()
                                         .tonic()
                                         .with_endpoint(url.to_string())
-                                        .with_metadata(MetadataMap::from_headers(
-                                            headers.try_into()?,
-                                        )),
+                                        .with_metadata(
+                                            tonic_otel::metadata::MetadataMap::from_headers(
+                                                headers.try_into()?,
+                                            ),
+                                        ),
                                 )
                                 .build()?;
                             global::set_meter_provider(metrics.provider());
@@ -261,9 +262,11 @@ pub fn telemetry_init(opts: &TelemetryOptions) -> Result<&'static GlobalTelemDat
                                     opentelemetry_otlp::new_exporter()
                                         .tonic()
                                         .with_endpoint(url.to_string())
-                                        .with_metadata(MetadataMap::from_headers(
-                                            headers.try_into()?,
-                                        )),
+                                        .with_metadata(
+                                            tonic_otel::metadata::MetadataMap::from_headers(
+                                                headers.try_into()?,
+                                            ),
+                                        ),
                                 )
                                 .with_trace_config(tracer_cfg)
                                 .install_batch(opentelemetry::runtime::Tokio)?;
