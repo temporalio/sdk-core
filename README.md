@@ -76,6 +76,18 @@ subtree. To update it, use:
 
 Do not question why this git command is the way it is. It is not our place to interpret git's ways.
 
+The java testserver protos are also pulled from the sdk-java repo, but since we only need a
+subdirectory of that repo, we just copy the files with read-tree:
+```bash
+# add sdk-java as a remote if you have not already
+git remote add -f -t master --no-tags testsrv-protos git@github.com:temporalio/sdk-java.git
+# delete existing protos
+git rm -rf protos/testsrv_upstream
+# pull from upstream & commit
+git read-tree --prefix protos/testsrv_upstream -u testsrv-protos/master:temporal-test-server/src/main/proto
+git commit
+```
+
 ## Fetching Histories
 Tests which would like to replay stored histories rely on that history being made available in
 binary format. You can fetch histories in that format like so (from a local docker server):
