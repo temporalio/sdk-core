@@ -15,8 +15,8 @@ base64 = "0.13"
 futures = "0.3"
 log = "0.4"
 parking_lot = "0.12"
-prost = "0.9"
-prost-types = "0.9"
+prost = "0.11"
+prost-types = "0.11"
 rand = "0.8"
 serde_json = "1.0"
 temporal-client = { path = "../client" }
@@ -28,7 +28,7 @@ tokio = "1.1"
 tokio-util = { version = "0.7" }
 tracing = "0.1"
 url = "2.2"
-uuid = "0.8"
+uuid = "1.1"
 
 [dependencies.temporal-sdk-core-protos]
 path = "../sdk-core-protos"

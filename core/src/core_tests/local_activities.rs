@@ -1,4 +1,5 @@
 use crate::{
+    prost_dur,
     replay::{default_wes_attribs, TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE},
     test_help::{
         hist_to_poll_resp, mock_sdk, mock_sdk_cfg, mock_worker, single_hist_mock_sg, MockPollCfg,
@@ -162,7 +163,7 @@ async fn local_act_heartbeat(#[case] shutdown_middle: bool) {
     let mut t = TestHistoryBuilder::default();
     let wft_timeout = Duration::from_millis(200);
     let mut wes_short_wft_timeout = default_wes_attribs();
-    wes_short_wft_timeout.workflow_task_timeout = Some(wft_timeout.into());
+    wes_short_wft_timeout.workflow_task_timeout = Some(wft_timeout.try_into().unwrap());
     t.add(
         EventType::WorkflowExecutionStarted,
         wes_short_wft_timeout.into(),
@@ -247,7 +248,7 @@ async fn local_act_fail_and_retry(#[case] eventually_pass: bool) {
                     activity_type: "echo".to_string(),
                     input: "hi".as_json_payload().expect("serializes fine"),
                     retry_policy: RetryPolicy {
-                        initial_interval: Some(Duration::from_millis(50).into()),
+                        initial_interval: Some(prost_dur!(from_millis(50))),
                         backoff_coefficient: 1.2,
                         maximum_interval: None,
                         maximum_attempts: 5,
@@ -328,10 +329,10 @@ async fn local_act_retry_long_backoff_uses_timer() {
                     activity_type: "echo".to_string(),
                     input: "hi".as_json_payload().expect("serializes fine"),
                     retry_policy: RetryPolicy {
-                        initial_interval: Some(Duration::from_millis(65).into()),
+                        initial_interval: Some(prost_dur!(from_millis(65))),
                         // This will make the second backoff 65 seconds, plenty to use timer
                         backoff_coefficient: 1_000.,
-                        maximum_interval: Some(Duration::from_secs(600).into()),
+                        maximum_interval: Some(prost_dur!(from_secs(600))),
                         maximum_attempts: 3,
                         non_retryable_error_types: vec![],
                     },
@@ -402,7 +403,7 @@ async fn query_during_wft_heartbeat_doesnt_accidentally_fail_to_continue_heartbe
     let wfid = "fake_wf_id";
     let mut t = TestHistoryBuilder::default();
     let mut wes_short_wft_timeout = default_wes_attribs();
-    wes_short_wft_timeout.workflow_task_timeout = Some(Duration::from_millis(200).into());
+    wes_short_wft_timeout.workflow_task_timeout = Some(prost_dur!(from_millis(200)));
     t.add(
         EventType::WorkflowExecutionStarted,
         wes_short_wft_timeout.into(),

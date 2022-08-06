@@ -389,8 +389,8 @@ impl LocalActivityManager {
                 current_attempt_scheduled_time: Some(new_la.schedule_time.into()),
                 started_time: Some(SystemTime::now().into()),
                 attempt,
-                schedule_to_close_timeout: schedule_to_close.map(Into::into),
-                start_to_close_timeout: start_to_close.map(Into::into),
+                schedule_to_close_timeout: schedule_to_close.and_then(|d| d.try_into().ok()),
+                start_to_close_timeout: start_to_close.and_then(|d| d.try_into().ok()),
                 heartbeat_timeout: None,
                 retry_policy: Some(sa.retry_policy),
                 is_local: true,
@@ -440,7 +440,7 @@ impl LocalActivityManager {
                             // We want this to be reported, as the workflow will mark this
                             // failure down, then start a timer for backoff.
                             return LACompleteAction::LangDoesTimerBackoff(
-                                backoff_dur.into(),
+                                backoff_dur.try_into().expect("backoff fits into proto"),
                                 info,
                             );
                         }
@@ -638,7 +638,7 @@ impl Drop for TimeoutBag {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protosext::LACloseTimeouts;
+    use crate::{prost_dur, protosext::LACloseTimeouts};
     use temporal_sdk_core_protos::temporal::api::{
         common::v1::RetryPolicy,
         failure::v1::{failure::FailureInfo, ApplicationFailureInfo, Failure},
@@ -764,9 +764,9 @@ mod tests {
                 activity_id: 1.to_string(),
                 attempt: 5,
                 retry_policy: RetryPolicy {
-                    initial_interval: Some(Duration::from_secs(1).into()),
+                    initial_interval: Some(prost_dur!(from_secs(1))),
                     backoff_coefficient: 10.0,
-                    maximum_interval: Some(Duration::from_secs(10).into()),
+                    maximum_interval: Some(prost_dur!(from_secs(10))),
                     maximum_attempts: 10,
                     non_retryable_error_types: vec![],
                 },
@@ -799,9 +799,9 @@ mod tests {
                 activity_id: "1".to_string(),
                 attempt: 1,
                 retry_policy: RetryPolicy {
-                    initial_interval: Some(Duration::from_secs(1).into()),
+                    initial_interval: Some(prost_dur!(from_secs(1))),
                     backoff_coefficient: 10.0,
-                    maximum_interval: Some(Duration::from_secs(10).into()),
+                    maximum_interval: Some(prost_dur!(from_secs(10))),
                     maximum_attempts: 10,
                     non_retryable_error_types: vec!["TestError".to_string()],
                 },
@@ -843,9 +843,9 @@ mod tests {
                 activity_id: 1.to_string(),
                 attempt: 5,
                 retry_policy: RetryPolicy {
-                    initial_interval: Some(Duration::from_secs(10).into()),
+                    initial_interval: Some(prost_dur!(from_secs(10))),
                     backoff_coefficient: 1.0,
-                    maximum_interval: Some(Duration::from_secs(10).into()),
+                    maximum_interval: Some(prost_dur!(from_secs(10))),
                     maximum_attempts: 10,
                     non_retryable_error_types: vec![],
                 },
@@ -892,7 +892,7 @@ mod tests {
                 activity_id: 1.to_string(),
                 attempt: 5,
                 retry_policy: RetryPolicy {
-                    initial_interval: Some(Duration::from_millis(10).into()),
+                    initial_interval: Some(prost_dur!(from_millis(10))),
                     backoff_coefficient: 1.0,
                     ..Default::default()
                 },
@@ -929,7 +929,7 @@ mod tests {
                 activity_id: 1.to_string(),
                 attempt: 5,
                 retry_policy: RetryPolicy {
-                    initial_interval: Some(Duration::from_millis(10).into()),
+                    initial_interval: Some(prost_dur!(from_millis(10))),
                     backoff_coefficient: 1.0,
                     ..Default::default()
                 },
@@ -975,7 +975,7 @@ mod tests {
                 activity_id: 1.to_string(),
                 attempt: 5,
                 retry_policy: RetryPolicy {
-                    initial_interval: Some(Duration::from_millis(10).into()),
+                    initial_interval: Some(prost_dur!(from_millis(10))),
                     backoff_coefficient: 1.0,
                     ..Default::default()
                 },

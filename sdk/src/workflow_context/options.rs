@@ -74,10 +74,14 @@ impl IntoWorkflowCommand for ActivityOptions {
             },
             activity_type: self.activity_type,
             task_queue: self.task_queue,
-            schedule_to_close_timeout: self.schedule_to_close_timeout.map(Into::into),
-            schedule_to_start_timeout: self.schedule_to_start_timeout.map(Into::into),
-            start_to_close_timeout: self.start_to_close_timeout.map(Into::into),
-            heartbeat_timeout: self.heartbeat_timeout.map(Into::into),
+            schedule_to_close_timeout: self
+                .schedule_to_close_timeout
+                .and_then(|d| d.try_into().ok()),
+            schedule_to_start_timeout: self
+                .schedule_to_start_timeout
+                .and_then(|d| d.try_into().ok()),
+            start_to_close_timeout: self.start_to_close_timeout.and_then(|d| d.try_into().ok()),
+            heartbeat_timeout: self.heartbeat_timeout.and_then(|d| d.try_into().ok()),
             cancellation_type: self.cancellation_type as i32,
             arguments: vec![self.input],
             retry_policy: self.retry_policy,
@@ -147,11 +151,15 @@ impl IntoWorkflowCommand for LocalActivityOptions {
             activity_type: self.activity_type,
             arguments: vec![self.input],
             retry_policy: Some(self.retry_policy),
-            local_retry_threshold: self.timer_backoff_threshold.map(Into::into),
+            local_retry_threshold: self.timer_backoff_threshold.and_then(|d| d.try_into().ok()),
             cancellation_type: self.cancel_type.into(),
-            schedule_to_close_timeout: self.schedule_to_close_timeout.map(Into::into),
-            schedule_to_start_timeout: self.schedule_to_start_timeout.map(Into::into),
-            start_to_close_timeout: self.start_to_close_timeout.map(Into::into),
+            schedule_to_close_timeout: self
+                .schedule_to_close_timeout
+                .and_then(|d| d.try_into().ok()),
+            schedule_to_start_timeout: self
+                .schedule_to_start_timeout
+                .and_then(|d| d.try_into().ok()),
+            start_to_close_timeout: self.start_to_close_timeout.and_then(|d| d.try_into().ok()),
             ..Default::default()
         }
     }

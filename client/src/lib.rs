@@ -45,6 +45,7 @@ use temporal_sdk_core_protos::{
         operatorservice::v1::{operator_service_client::OperatorServiceClient, *},
         query::v1::{WorkflowQuery, WorkflowQueryResult},
         taskqueue::v1::{StickyExecutionAttributes, TaskQueue, TaskQueueMetadata},
+        testservice::v1::{test_service_client::TestServiceClient, *},
         workflowservice::v1::{workflow_service_client::WorkflowServiceClient, *},
     },
     TaskToken,
@@ -432,7 +433,7 @@ impl Interceptor for ServiceCallInterceptor {
         );
         let headers = &*self.headers.read();
         for (k, v) in headers {
-            if let (Ok(k), Ok(v)) = (MetadataKey::from_str(k), MetadataValue::from_str(v)) {
+            if let (Ok(k), Ok(v)) = (MetadataKey::from_str(k), v.parse()) {
                 metadata.insert(k, v);
             }
         }
@@ -450,12 +451,13 @@ pub struct TemporalServiceClient<T> {
     svc: T,
     workflow_svc_client: OnceCell<WorkflowServiceClient<T>>,
     operator_svc_client: OnceCell<OperatorServiceClient<T>>,
+    test_svc_client: OnceCell<TestServiceClient<T>>,
 }
 impl<T> TemporalServiceClient<T>
 where
     T: Clone,
     T: GrpcService<BoxBody> + Send + Clone + 'static,
-    T::ResponseBody: tonic::codegen::Body + Send + 'static,
+    T::ResponseBody: tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
     T::Error: Into<tonic::codegen::StdError>,
     <T::ResponseBody as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
 {
@@ -464,6 +466,7 @@ where
             svc,
             workflow_svc_client: OnceCell::new(),
             operator_svc_client: OnceCell::new(),
+            test_svc_client: OnceCell::new(),
         }
     }
     /// Get the underlying workflow service client
@@ -476,6 +479,11 @@ where
         self.operator_svc_client
             .get_or_init(|| OperatorServiceClient::new(self.svc.clone()))
     }
+    /// Get the underlying test service client
+    pub fn test_svc(&self) -> &TestServiceClient<T> {
+        self.test_svc_client
+            .get_or_init(|| TestServiceClient::new(self.svc.clone()))
+    }
     /// Get the underlying workflow service client mutably
     pub fn workflow_svc_mut(&mut self) -> &mut WorkflowServiceClient<T> {
         let _ = self.workflow_svc();
@@ -486,11 +494,18 @@ where
         let _ = self.operator_svc();
         self.operator_svc_client.get_mut().unwrap()
     }
+    /// Get the underlying test service client mutably
+    pub fn test_svc_mut(&mut self) -> &mut TestServiceClient<T> {
+        let _ = self.test_svc();
+        self.test_svc_client.get_mut().unwrap()
+    }
 }
 /// A [WorkflowServiceClient] with the default interceptors attached.
 pub type WorkflowServiceClientWithMetrics = WorkflowServiceClient<InterceptedMetricsSvc>;
 /// An [OperatorServiceClient] with the default interceptors attached.
 pub type OperatorServiceClientWithMetrics = OperatorServiceClient<InterceptedMetricsSvc>;
+/// An [TestServiceClient] with the default interceptors attached.
+pub type TestServiceClientWithMetrics = TestServiceClient<InterceptedMetricsSvc>;
 /// A [TemporalServiceClient] with the default interceptors attached.
 pub type TemporalServiceClientWithMetrics = TemporalServiceClient<InterceptedMetricsSvc>;
 type InterceptedMetricsSvc = InterceptedService<GrpcMetricSvc, ServiceCallInterceptor>;
@@ -765,7 +780,7 @@ impl WorkflowClientTrait for Client {
                     kind: TaskQueueKind::Unspecified as i32,
                 }),
                 request_id,
-                workflow_task_timeout: options.task_timeout.map(Into::into),
+                workflow_task_timeout: options.task_timeout.and_then(|d| d.try_into().ok()),
                 search_attributes: options.search_attributes.map(Into::into),
                 ..Default::default()
             })
@@ -1021,7 +1036,7 @@ impl WorkflowClientTrait for Client {
                 signal_name,
                 signal_input,
                 identity: self.inner.options.identity.clone(),
-                workflow_task_timeout: options.task_timeout.map(Into::into),
+                workflow_task_timeout: options.task_timeout.and_then(|d| d.try_into().ok()),
                 search_attributes: options.search_attributes.map(Into::into),
                 ..Default::default()
             })

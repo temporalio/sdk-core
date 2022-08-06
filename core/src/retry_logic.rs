@@ -91,13 +91,14 @@ fn try_from_secs_f64(secs: f64) -> Option<Duration> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::prost_dur;
 
     #[test]
     fn calcs_backoffs_properly() {
         let rp = RetryPolicy {
-            initial_interval: Some(Duration::from_secs(1).into()),
+            initial_interval: Some(prost_dur!(from_secs(1))),
             backoff_coefficient: 2.0,
-            maximum_interval: Some(Duration::from_secs(10).into()),
+            maximum_interval: Some(prost_dur!(from_secs(10))),
             maximum_attempts: 10,
             non_retryable_error_types: vec![],
         };
@@ -132,7 +133,7 @@ mod tests {
     #[test]
     fn max_attempts_zero_retry_forever() {
         let rp = RetryPolicy {
-            initial_interval: Some(Duration::from_secs(1).into()),
+            initial_interval: Some(prost_dur!(from_secs(1))),
             backoff_coefficient: 1.2,
             maximum_interval: None,
             maximum_attempts: 0,
@@ -146,7 +147,7 @@ mod tests {
     #[test]
     fn no_overflows() {
         let rp = RetryPolicy {
-            initial_interval: Some(Duration::from_secs(1).into()),
+            initial_interval: Some(prost_dur!(from_secs(1))),
             backoff_coefficient: 10.,
             maximum_interval: None,
             maximum_attempts: 0,
@@ -160,9 +161,9 @@ mod tests {
     #[test]
     fn no_retry_err_str_match() {
         let rp = RetryPolicy {
-            initial_interval: Some(Duration::from_secs(1).into()),
+            initial_interval: Some(prost_dur!(from_secs(1))),
             backoff_coefficient: 2.0,
-            maximum_interval: Some(Duration::from_secs(10).into()),
+            maximum_interval: Some(prost_dur!(from_secs(10))),
             maximum_attempts: 10,
             non_retryable_error_types: vec!["no retry".to_string()],
         };
@@ -181,9 +182,9 @@ mod tests {
     #[test]
     fn no_non_retryable_application_failure() {
         let rp = RetryPolicy {
-            initial_interval: Some(Duration::from_secs(1).into()),
+            initial_interval: Some(prost_dur!(from_secs(1))),
             backoff_coefficient: 2.0,
-            maximum_interval: Some(Duration::from_secs(10).into()),
+            maximum_interval: Some(prost_dur!(from_secs(10))),
             maximum_attempts: 10,
             non_retryable_error_types: vec![],
         };

@@ -105,14 +105,14 @@ async fn many_act_fails_with_heartbeats() {
             activity_id: activity_id.to_string(),
             activity_type: "test_act".to_string(),
             task_queue: starter.get_task_queue().to_string(),
-            start_to_close_timeout: Some(Duration::from_secs(30).into()),
+            start_to_close_timeout: Some(prost_dur!(from_secs(30))),
             retry_policy: Some(RetryPolicy {
-                initial_interval: Some(Duration::from_millis(10).into()),
+                initial_interval: Some(prost_dur!(from_millis(10))),
                 backoff_coefficient: 1.0,
                 maximum_attempts: 4,
                 ..Default::default()
             }),
-            heartbeat_timeout: Some(Duration::from_secs(1).into()),
+            heartbeat_timeout: Some(prost_dur!(from_secs(1))),
             ..Default::default()
         }
         .into(),

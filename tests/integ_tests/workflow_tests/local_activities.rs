@@ -189,10 +189,10 @@ async fn local_act_retry_timer_backoff() {
                 activity_type: "echo".to_string(),
                 input: "hi".as_json_payload().expect("serializes fine"),
                 retry_policy: RetryPolicy {
-                    initial_interval: Some(Duration::from_micros(15).into()),
+                    initial_interval: Some(prost_dur!(from_micros(15))),
                     // We want two local backoffs that are short. Third backoff will use timer
                     backoff_coefficient: 1_000.,
-                    maximum_interval: Some(Duration::from_millis(1500).into()),
+                    maximum_interval: Some(prost_dur!(from_millis(1500))),
                     maximum_attempts: 4,
                     non_retryable_error_types: vec![],
                 },
@@ -318,9 +318,9 @@ async fn cancel_after_act_starts(
             activity_type: "echo".to_string(),
             input: "hi".as_json_payload().expect("serializes fine"),
             retry_policy: RetryPolicy {
-                initial_interval: Some(bo_dur.into()),
+                initial_interval: Some(bo_dur.try_into().unwrap()),
                 backoff_coefficient: 1.,
-                maximum_interval: Some(bo_dur.into()),
+                maximum_interval: Some(bo_dur.try_into().unwrap()),
                 // Retry forever until cancelled
                 ..Default::default()
             },
@@ -410,9 +410,9 @@ async fn x_to_close_timeout(#[case] is_schedule: bool) {
                 activity_type: "echo".to_string(),
                 input: "hi".as_json_payload().expect("serializes fine"),
                 retry_policy: RetryPolicy {
-                    initial_interval: Some(Duration::from_micros(15).into()),
+                    initial_interval: Some(prost_dur!(from_micros(15))),
                     backoff_coefficient: 1_000.,
-                    maximum_interval: Some(Duration::from_millis(1500).into()),
+                    maximum_interval: Some(prost_dur!(from_millis(1500))),
                     maximum_attempts: 4,
                     non_retryable_error_types: vec![],
                 },
@@ -467,9 +467,9 @@ async fn schedule_to_close_timeout_across_timer_backoff(#[case] cached: bool) {
                 activity_type: "echo".to_string(),
                 input: "hi".as_json_payload().expect("serializes fine"),
                 retry_policy: RetryPolicy {
-                    initial_interval: Some(Duration::from_micros(15).into()),
+                    initial_interval: Some(prost_dur!(from_micros(15))),
                     backoff_coefficient: 1_000.,
-                    maximum_interval: Some(Duration::from_millis(1500).into()),
+                    maximum_interval: Some(prost_dur!(from_millis(1500))),
                     maximum_attempts: 40,
                     non_retryable_error_types: vec![],
                 },
@@ -538,9 +538,9 @@ async fn timer_backoff_concurrent_with_non_timer_backoff() {
             activity_type: "echo".to_string(),
             input: "hi".as_json_payload().expect("serializes fine"),
             retry_policy: RetryPolicy {
-                initial_interval: Some(Duration::from_micros(15).into()),
+                initial_interval: Some(prost_dur!(from_micros(15))),
                 backoff_coefficient: 1_000.,
-                maximum_interval: Some(Duration::from_millis(1500).into()),
+                maximum_interval: Some(prost_dur!(from_millis(1500))),
                 maximum_attempts: 4,
                 non_retryable_error_types: vec![],
             },
@@ -551,9 +551,9 @@ async fn timer_backoff_concurrent_with_non_timer_backoff() {
             activity_type: "echo".to_string(),
             input: "hi".as_json_payload().expect("serializes fine"),
             retry_policy: RetryPolicy {
-                initial_interval: Some(Duration::from_millis(15).into()),
+                initial_interval: Some(prost_dur!(from_millis(15))),
                 backoff_coefficient: 10.,
-                maximum_interval: Some(Duration::from_millis(1500).into()),
+                maximum_interval: Some(prost_dur!(from_millis(1500))),
                 maximum_attempts: 4,
                 non_retryable_error_types: vec![],
             },
@@ -593,9 +593,9 @@ async fn repro_nondeterminism_with_timer_bug() {
             activity_type: "delay".to_string(),
             input: "hi".as_json_payload().expect("serializes fine"),
             retry_policy: RetryPolicy {
-                initial_interval: Some(Duration::from_micros(15).into()),
+                initial_interval: Some(prost_dur!(from_micros(15))),
                 backoff_coefficient: 1_000.,
-                maximum_interval: Some(Duration::from_millis(1500).into()),
+                maximum_interval: Some(prost_dur!(from_millis(1500))),
                 maximum_attempts: 4,
                 non_retryable_error_types: vec![],
             },

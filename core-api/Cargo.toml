@@ -18,9 +18,9 @@ async-trait = "0.1"
 derive_builder = "0.11"
 log = "0.4"
 opentelemetry = "0.17"
-prost-types = "0.9"
+prost-types = "0.11"
 thiserror = "1.0"
-tonic = "0.6"
+tonic = "0.8"
 
 [dependencies.temporal-sdk-core-protos]
 path = "../sdk-core-protos"
