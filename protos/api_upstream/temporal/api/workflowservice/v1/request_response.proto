@@ -38,6 +38,7 @@ import "temporal/api/enums/v1/common.proto";
 import "temporal/api/enums/v1/query.proto";
 import "temporal/api/enums/v1/reset.proto";
 import "temporal/api/enums/v1/task_queue.proto";
+import "temporal/api/enums/v1/update.proto";
 import "temporal/api/common/v1/message.proto";
 import "temporal/api/history/v1/message.proto";
 import "temporal/api/workflow/v1/message.proto";
@@ -49,6 +50,7 @@ import "temporal/api/query/v1/message.proto";
 import "temporal/api/replication/v1/message.proto";
 import "temporal/api/schedule/v1/message.proto";
 import "temporal/api/taskqueue/v1/message.proto";
+import "temporal/api/update/v1/message.proto";
 import "temporal/api/version/v1/message.proto";
 
 import "google/protobuf/duration.proto";
@@ -800,6 +802,9 @@ message GetSystemInfoResponse {
 
         // Supports scheduled workflow features.
         bool supports_schedules = 4;
+
+        // True if server uses protos that include temporal.api.failure.v1.Failure.encoded_attributes
+        bool encoded_failure_attributes = 5;
     }
 }
 
@@ -949,4 +954,86 @@ message ListSchedulesRequest {
 message ListSchedulesResponse {
     repeated temporal.api.schedule.v1.ScheduleListEntry schedules = 1;
     bytes next_page_token = 2;
+}
+
+// (-- api-linter: core::0134::request-mask-required=disabled
+//     aip.dev/not-precedent: UpdateWorkerBuildIdOrderingRequest doesn't follow Google API format --)
+// (-- api-linter: core::0134::request-resource-required=disabled
+//     aip.dev/not-precedent: UpdateWorkerBuildIdOrderingRequest RPC doesn't follow Google API format. --)
+message UpdateWorkerBuildIdOrderingRequest {
+    string namespace = 1;
+    // Must be set, the task queue to apply changes to. Because all workers on
+    // a given task queue must have the same set of workflow & activity
+    // implementations, there is no reason to specify a task queue type here.
+    string task_queue = 2;
+    // The version id we are targeting.
+    temporal.api.taskqueue.v1.VersionId version_id = 3;
+    // When set, indicates that the `version_id` in this message is compatible
+    // with the one specified in this field. Because compatability should form
+    // a DAG, any build id can only be the "next compatible" version for one
+    // other ID of a certain type at a time, and any setting which would create a cycle is invalid.
+    temporal.api.taskqueue.v1.VersionId previous_compatible = 4;
+    // When set, establishes the specified `version_id` as the default of it's type
+    // for the queue. Workers matching it will begin processing new workflow executions.
+    // The existing default will be marked as a previous incompatible version
+    // to this one, assuming it is not also in `is_compatible_with`.
+    bool become_default = 5;
+}
+message UpdateWorkerBuildIdOrderingResponse {}
+
+// (-- api-linter: core::0134::request-resource-required=disabled
+//     aip.dev/not-precedent: GetWorkerBuildIdOrderingRequest RPC doesn't follow Google API format. --)
+message GetWorkerBuildIdOrderingRequest {
+    string namespace = 1;
+    // Must be set, the task queue to interrogate about worker id ordering
+    string task_queue = 2;
+    // Limits how deep the returned DAG will go. 1 will return only the
+    // default build id. A default/0 value will return the entire graph.
+    int32 max_depth = 3;
+}
+message GetWorkerBuildIdOrderingResponse {
+    // The currently established default version
+    temporal.api.taskqueue.v1.VersionIdNode current_default = 1;
+    // Other current latest-compatible versions who are not the overall default. These are the
+    // versions that will be used when generating new tasks by following the graph from the
+    // version of the last task out to a leaf.
+    repeated temporal.api.taskqueue.v1.VersionIdNode compatible_leaves = 2;
+}
+
+// (-- api-linter: core::0134=disabled
+//     aip.dev/not-precedent: Update RPCs don't follow Google API format. --)
+message UpdateWorkflowRequest {
+    // A unique ID for this logical request
+    string request_id = 1;
+
+    // The manner in which the update result will be accessed.
+    // This field requires a non-default value; the default value of the enum
+    // will result in an error.
+    temporal.api.enums.v1.WorkflowUpdateResultAccessStyle result_access_style = 2;
+
+    // The namespace name of the target workflow
+    string namespace = 3;
+    // The target workflow id and (optionally) a specific run thereof
+    // (-- api-linter: core::0203::optional=disabled
+    //     aip.dev/not-precedent: false positive triggered by the word "optional" --)
+    temporal.api.common.v1.WorkflowExecution workflow_execution = 4;
+    // If set, this call will error if the most recent (if no run id is set on
+    // `workflow_execution`), or specified (if it is) workflow execution is not
+    // part of the same execution chain as this id.
+    string first_execution_run_id = 5;
+
+    // The name under which the workflow update function is registered and the
+    // arguments to pass to said function.
+    temporal.api.update.v1.WorkflowUpdate update = 6;
+}
+
+message UpdateWorkflowResponse {
+    // An opaque token that can be used to retrieve the update result via
+    // polling if it is not returned as part of the gRPC response
+    bytes update_token = 1;
+    // The success or failure status of the update
+    oneof result {
+        temporal.api.common.v1.Payloads success = 2;
+        temporal.api.failure.v1.Failure failure = 3;
+    }
 }

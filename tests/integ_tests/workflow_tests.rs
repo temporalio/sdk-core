@@ -223,7 +223,7 @@ async fn fail_wf_task(#[values(true, false)] replay: bool) {
         task.run_id,
         vec![StartTimer {
             seq: 0,
-            start_to_fire_timeout: Some(Duration::from_millis(200).into()),
+            start_to_fire_timeout: Some(prost_dur!(from_millis(200))),
         }
         .into()],
     ))
@@ -347,7 +347,7 @@ async fn signal_workflow_signal_not_handled_on_workflow_completion() {
             res.run_id,
             vec![StartTimer {
                 seq: 0,
-                start_to_fire_timeout: Some(Duration::from_millis(10).into()),
+                start_to_fire_timeout: Some(prost_dur!(from_millis(10))),
             }
             .into()],
         ))

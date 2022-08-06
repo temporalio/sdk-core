@@ -539,7 +539,9 @@ impl WFStream {
                 &run_id,
                 ActivationCompleteOutcome::ReportWFTSuccess(ServerCommandsWithWorkflowInfo {
                     task_token,
-                    action: ActivationAction::RespondLegacyQuery { result: qr },
+                    action: ActivationAction::RespondLegacyQuery {
+                        result: Box::new(qr),
+                    },
                 }),
                 resp_chan,
             );

@@ -61,6 +61,8 @@ pub struct ActivityOptions {
     pub heartbeat_timeout: Option<Duration>,
     /// Determines what the SDK does when the Activity is cancelled.
     pub cancellation_type: ActivityCancellationType,
+    /// Activity retry policy
+    pub retry_policy: Option<RetryPolicy>,
 }
 
 impl IntoWorkflowCommand for ActivityOptions {
@@ -74,12 +76,17 @@ impl IntoWorkflowCommand for ActivityOptions {
             },
             activity_type: self.activity_type,
             task_queue: self.task_queue,
-            schedule_to_close_timeout: self.schedule_to_close_timeout.map(Into::into),
-            schedule_to_start_timeout: self.schedule_to_start_timeout.map(Into::into),
-            start_to_close_timeout: self.start_to_close_timeout.map(Into::into),
-            heartbeat_timeout: self.heartbeat_timeout.map(Into::into),
+            schedule_to_close_timeout: self
+                .schedule_to_close_timeout
+                .and_then(|d| d.try_into().ok()),
+            schedule_to_start_timeout: self
+                .schedule_to_start_timeout
+                .and_then(|d| d.try_into().ok()),
+            start_to_close_timeout: self.start_to_close_timeout.and_then(|d| d.try_into().ok()),
+            heartbeat_timeout: self.heartbeat_timeout.and_then(|d| d.try_into().ok()),
             cancellation_type: self.cancellation_type as i32,
             arguments: vec![self.input],
+            retry_policy: self.retry_policy,
             ..Default::default()
         }
     }
@@ -146,11 +153,15 @@ impl IntoWorkflowCommand for LocalActivityOptions {
             activity_type: self.activity_type,
             arguments: vec![self.input],
             retry_policy: Some(self.retry_policy),
-            local_retry_threshold: self.timer_backoff_threshold.map(Into::into),
+            local_retry_threshold: self.timer_backoff_threshold.and_then(|d| d.try_into().ok()),
             cancellation_type: self.cancel_type.into(),
-            schedule_to_close_timeout: self.schedule_to_close_timeout.map(Into::into),
-            schedule_to_start_timeout: self.schedule_to_start_timeout.map(Into::into),
-            start_to_close_timeout: self.start_to_close_timeout.map(Into::into),
+            schedule_to_close_timeout: self
+                .schedule_to_close_timeout
+                .and_then(|d| d.try_into().ok()),
+            schedule_to_start_timeout: self
+                .schedule_to_start_timeout
+                .and_then(|d| d.try_into().ok()),
+            start_to_close_timeout: self.start_to_close_timeout.and_then(|d| d.try_into().ok()),
             ..Default::default()
         }
     }
@@ -181,9 +192,15 @@ impl IntoWorkflowCommand for ChildWorkflowOptions {
             input: self.input,
             cancellation_type: self.cancel_type as i32,
             workflow_id_reuse_policy: self.options.workflow_id_reuse_policy as i32,
-            workflow_execution_timeout: self.options.execution_timeout.map(Into::into),
-            workflow_run_timeout: self.options.execution_timeout.map(Into::into),
-            workflow_task_timeout: self.options.task_timeout.map(Into::into),
+            workflow_execution_timeout: self
+                .options
+                .execution_timeout
+                .and_then(|d| d.try_into().ok()),
+            workflow_run_timeout: self
+                .options
+                .execution_timeout
+                .and_then(|d| d.try_into().ok()),
+            workflow_task_timeout: self.options.task_timeout.and_then(|d| d.try_into().ok()),
             search_attributes: self.options.search_attributes.unwrap_or_default(),
             cron_schedule: self.options.cron_schedule.unwrap_or_default(),
             ..Default::default()

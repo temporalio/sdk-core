@@ -485,10 +485,10 @@ pub fn schedule_activity_cmd(
         activity_type: "test_activity".to_string(),
         namespace: NAMESPACE.to_owned(),
         task_queue: task_q.to_owned(),
-        schedule_to_start_timeout: Some(activity_timeout.into()),
-        start_to_close_timeout: Some(activity_timeout.into()),
-        schedule_to_close_timeout: Some(activity_timeout.into()),
-        heartbeat_timeout: Some(heartbeat_timeout.into()),
+        schedule_to_start_timeout: Some(activity_timeout.try_into().expect("duration fits")),
+        start_to_close_timeout: Some(activity_timeout.try_into().expect("duration fits")),
+        schedule_to_close_timeout: Some(activity_timeout.try_into().expect("duration fits")),
+        heartbeat_timeout: Some(heartbeat_timeout.try_into().expect("duration fits")),
         cancellation_type: cancellation_type as i32,
         ..Default::default()
     }
@@ -505,9 +505,9 @@ pub fn schedule_local_activity_cmd(
         seq,
         activity_id: activity_id.to_string(),
         activity_type: "test_activity".to_string(),
-        schedule_to_start_timeout: Some(activity_timeout.into()),
-        start_to_close_timeout: Some(activity_timeout.into()),
-        schedule_to_close_timeout: Some(activity_timeout.into()),
+        schedule_to_start_timeout: Some(activity_timeout.try_into().expect("duration fits")),
+        start_to_close_timeout: Some(activity_timeout.try_into().expect("duration fits")),
+        schedule_to_close_timeout: Some(activity_timeout.try_into().expect("duration fits")),
         cancellation_type: cancellation_type as i32,
         ..Default::default()
     }
@@ -517,7 +517,7 @@ pub fn schedule_local_activity_cmd(
 pub fn start_timer_cmd(seq: u32, duration: Duration) -> workflow_command::Variant {
     StartTimer {
         seq,
-        start_to_fire_timeout: Some(duration.into()),
+        start_to_fire_timeout: Some(duration.try_into().expect("duration fits")),
     }
     .into()
 }
@@ -567,7 +567,7 @@ where
             run_id.to_string(),
             vec![StartTimer {
                 seq,
-                start_to_fire_timeout: Some(duration.into()),
+                start_to_fire_timeout: Some(duration.try_into().expect("duration fits")),
             }
             .into()],
         ))

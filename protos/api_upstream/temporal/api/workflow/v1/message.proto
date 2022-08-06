@@ -142,3 +142,4 @@ message NewWorkflowExecutionInfo {
     temporal.api.common.v1.SearchAttributes search_attributes = 12;
     temporal.api.common.v1.Header header = 13;
 }
+

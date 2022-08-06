@@ -863,3 +863,12 @@ macro_rules! advance_fut {
         }
     };
 }
+
+#[macro_export]
+macro_rules! prost_dur {
+    ($dur_call:ident $args:tt) => {
+        std::time::Duration::$dur_call$args
+            .try_into()
+            .expect("test duration fits")
+    };
+}

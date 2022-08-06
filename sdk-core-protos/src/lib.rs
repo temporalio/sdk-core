@@ -201,7 +201,8 @@ pub mod coresdk {
             pub fn timed_out(&self) -> bool {
                 matches!(self.status, Some(activity_resolution::Status::Failed(Failure {
                     failure: Some(ref f)
-                })) if f.is_timeout())
+                })) if f.is_timeout()
+                    || f.cause.as_ref().map(|c| c.is_timeout()).unwrap_or_default())
             }
 
             pub fn cancelled(&self) -> bool {
@@ -1318,6 +1319,11 @@ pub mod coresdk {
 // This is disgusting, but unclear to me how to avoid it. TODO: Discuss w/ prost maintainer
 pub mod temporal {
     pub mod api {
+        pub mod cluster {
+            pub mod v1 {
+                tonic::include_proto!("temporal.api.cluster.v1");
+            }
+        }
         pub mod command {
             pub mod v1 {
                 tonic::include_proto!("temporal.api.command.v1");
@@ -1506,21 +1512,6 @@ pub mod temporal {
                 }
             }
         }
-        pub mod enums {
-            pub mod v1 {
-                tonic::include_proto!("temporal.api.enums.v1");
-            }
-        }
-        pub mod failure {
-            pub mod v1 {
-                tonic::include_proto!("temporal.api.failure.v1");
-            }
-        }
-        pub mod filter {
-            pub mod v1 {
-                tonic::include_proto!("temporal.api.filter.v1");
-            }
-        }
         pub mod common {
             pub mod v1 {
                 use std::{
@@ -1592,6 +1583,21 @@ pub mod temporal {
                         }
                     }
                 }
+            }
+        }
+        pub mod enums {
+            pub mod v1 {
+                tonic::include_proto!("temporal.api.enums.v1");
+            }
+        }
+        pub mod failure {
+            pub mod v1 {
+                tonic::include_proto!("temporal.api.failure.v1");
+            }
+        }
+        pub mod filter {
+            pub mod v1 {
+                tonic::include_proto!("temporal.api.filter.v1");
             }
         }
         pub mod history {
@@ -1709,31 +1715,31 @@ pub mod temporal {
                 }
             }
         }
-
         pub mod namespace {
             pub mod v1 {
                 tonic::include_proto!("temporal.api.namespace.v1");
             }
         }
-
+        pub mod operatorservice {
+            pub mod v1 {
+                tonic::include_proto!("temporal.api.operatorservice.v1");
+            }
+        }
         pub mod query {
             pub mod v1 {
                 tonic::include_proto!("temporal.api.query.v1");
             }
         }
-
         pub mod replication {
             pub mod v1 {
                 tonic::include_proto!("temporal.api.replication.v1");
             }
         }
-
         pub mod schedule {
             pub mod v1 {
                 tonic::include_proto!("temporal.api.schedule.v1");
             }
         }
-
         pub mod taskqueue {
             pub mod v1 {
                 use crate::temporal::api::enums::v1::TaskQueueKind;
@@ -1749,19 +1755,26 @@ pub mod temporal {
                 }
             }
         }
-
+        pub mod testservice {
+            pub mod v1 {
+                tonic::include_proto!("temporal.api.testservice.v1");
+            }
+        }
+        pub mod update {
+            pub mod v1 {
+                tonic::include_proto!("temporal.api.update.v1");
+            }
+        }
         pub mod version {
             pub mod v1 {
                 tonic::include_proto!("temporal.api.version.v1");
             }
         }
-
         pub mod workflow {
             pub mod v1 {
                 tonic::include_proto!("temporal.api.workflow.v1");
             }
         }
-
         pub mod workflowservice {
             pub mod v1 {
                 use std::{

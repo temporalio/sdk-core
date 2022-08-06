@@ -83,3 +83,23 @@ message StickyExecutionAttributes {
     //     aip.dev/not-precedent: "to" is used to indicate interval. --)
     google.protobuf.Duration schedule_to_start_timeout = 2 [(gogoproto.stdduration) = true];
 }
+
+// Used by the worker versioning APIs, represents a node in the version graph for a particular
+// task queue
+message VersionIdNode {
+    VersionId version = 1;
+    // A pointer to the previous version this version is considered to be compatible with
+    VersionIdNode previous_compatible = 2;
+    // A pointer to the last incompatible version (previous major version)
+    VersionIdNode previous_incompatible = 3;
+}
+
+// Used by the worker versioning APIs, represents a specific version of something
+// Currently, that's just a whole-worker id. In the future, if we support 
+// WASM workflow bundle based versioning, for example, then the inside of this
+// message may become a oneof of different version types.
+message VersionId {
+    // An opaque whole-worker identifier
+    string worker_build_id = 1;
+}
+

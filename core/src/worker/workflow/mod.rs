@@ -270,7 +270,7 @@ impl Workflows {
                     task_token,
                     action: ActivationAction::RespondLegacyQuery { result },
                 } => {
-                    self.respond_legacy_query(task_token, result).await?;
+                    self.respond_legacy_query(task_token, *result).await?;
                     true
                 }
             },
@@ -794,7 +794,7 @@ pub(crate) enum ActivationAction {
         force_new_wft: bool,
     },
     /// We should respond to a legacy query request
-    RespondLegacyQuery { result: QueryResult },
+    RespondLegacyQuery { result: Box<QueryResult> },
 }
 
 #[derive(Debug, Eq, PartialEq, Hash)]
@@ -847,6 +847,7 @@ struct ActivationCompleteResult {
 }
 /// What needs to be done after calling [Workflows::activation_completed]
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 enum ActivationCompleteOutcome {
     /// The WFT must be reported as successful to the server using the contained information.
     ReportWFTSuccess(ServerCommandsWithWorkflowInfo),
@@ -917,6 +918,7 @@ fn validate_completion(
 }
 
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 enum ValidatedCompletion {
     Success {
         run_id: String,
@@ -944,6 +946,7 @@ struct RunAction {
     trace_span: Span,
 }
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 enum RunActions {
     NewIncomingWFT(NewIncomingWFT),
     ActivationCompletion(RunActivationCompletion),
@@ -984,6 +987,7 @@ struct RunUpdateResponse {
     span: Span,
 }
 #[derive(Debug, derive_more::Display)]
+#[allow(clippy::large_enum_variant)]
 enum RunUpdateResponseKind {
     Good(GoodRunUpdate),
     Fail(FailRunUpdate),

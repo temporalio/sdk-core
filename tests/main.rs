@@ -2,6 +2,14 @@
 
 #[cfg(test)]
 mod integ_tests {
+    #[macro_export]
+    macro_rules! prost_dur {
+        ($dur_call:ident $args:tt) => {
+            std::time::Duration::$dur_call$args
+                .try_into()
+                .expect("test duration fits")
+        };
+    }
     mod client_tests;
     mod heartbeat_tests;
     mod polling_tests;

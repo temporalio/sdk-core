@@ -9,13 +9,18 @@ use crate::{
 };
 use futures::{future::BoxFuture, FutureExt};
 use temporal_sdk_core_protos::temporal::api::{
-    taskqueue::v1::TaskQueue, workflowservice::v1::workflow_service_client::WorkflowServiceClient,
+    operatorservice::v1::{operator_service_client::OperatorServiceClient, *},
+    taskqueue::v1::TaskQueue,
+    testservice::v1::{test_service_client::TestServiceClient, *},
+    workflowservice::v1::{workflow_service_client::WorkflowServiceClient, *},
 };
 use tonic::{body::BoxBody, client::GrpcService, metadata::KeyAndValueRef};
 
 pub(super) mod sealed {
     use super::*;
-    use crate::{Client, ConfiguredClient, InterceptedMetricsSvc, RetryClient};
+    use crate::{
+        Client, ConfiguredClient, InterceptedMetricsSvc, RetryClient, TemporalServiceClient,
+    };
     use futures::TryFutureExt;
     use tonic::{Request, Response, Status};
 
@@ -24,10 +29,16 @@ pub(super) mod sealed {
     pub trait RawClientLike: Send {
         type SvcType: Send + Sync + Clone + 'static;
 
-        /// Return the actual client instance
+        /// Return the workflow service client instance
         fn client(&mut self) -> &mut WorkflowServiceClient<Self::SvcType>;
 
-        async fn do_call<F, Req, Resp>(
+        /// Return the operator service client instance
+        fn operator_client(&mut self) -> &mut OperatorServiceClient<Self::SvcType>;
+
+        /// Return the test service client instance
+        fn test_client(&mut self) -> &mut TestServiceClient<Self::SvcType>;
+
+        async fn call<F, Req, Resp>(
             &mut self,
             _call_name: &'static str,
             mut callfn: F,
@@ -35,13 +46,10 @@ pub(super) mod sealed {
         ) -> Result<Response<Resp>, Status>
         where
             Req: Clone + Unpin + Send + Sync + 'static,
-            F: FnMut(
-                &mut WorkflowServiceClient<Self::SvcType>,
-                Request<Req>,
-            ) -> BoxFuture<'static, Result<Response<Resp>, Status>>,
+            F: FnMut(&mut Self, Request<Req>) -> BoxFuture<'static, Result<Response<Resp>, Status>>,
             F: Send + Sync + Unpin + 'static,
         {
-            callfn(self.client(), req).await
+            callfn(self, req).await
         }
     }
 
@@ -58,7 +66,15 @@ pub(super) mod sealed {
             self.get_client_mut().client()
         }
 
-        async fn do_call<F, Req, Resp>(
+        fn operator_client(&mut self) -> &mut OperatorServiceClient<Self::SvcType> {
+            self.get_client_mut().operator_client()
+        }
+
+        fn test_client(&mut self) -> &mut TestServiceClient<Self::SvcType> {
+            self.get_client_mut().test_client()
+        }
+
+        async fn call<F, Req, Resp>(
             &mut self,
             call_name: &'static str,
             mut callfn: F,
@@ -66,42 +82,63 @@ pub(super) mod sealed {
         ) -> Result<Response<Resp>, Status>
         where
             Req: Clone + Unpin + Send + Sync + 'static,
-            F: FnMut(
-                &mut WorkflowServiceClient<Self::SvcType>,
-                Request<Req>,
-            ) -> BoxFuture<'static, Result<Response<Resp>, Status>>,
+            F: FnMut(&mut Self, Request<Req>) -> BoxFuture<'static, Result<Response<Resp>, Status>>,
             F: Send + Sync + Unpin + 'static,
         {
             let rtc = self.get_retry_config(call_name);
             let req = req_cloner(&req);
             let fact = || {
                 let req_clone = req_cloner(&req);
-                callfn(self.client(), req_clone)
+                callfn(self, req_clone)
             };
             let res = Self::make_future_retry(rtc, fact, call_name);
             res.map_err(|(e, _attempt)| e).map_ok(|x| x.0).await
         }
     }
 
-    impl<T> RawClientLike for WorkflowServiceClient<T>
+    impl<T> RawClientLike for TemporalServiceClient<T>
     where
         T: Send + Sync + Clone + 'static,
+        T: GrpcService<BoxBody> + Send + Clone + 'static,
+        T::ResponseBody: tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
+        T::Error: Into<tonic::codegen::StdError>,
+        <T::ResponseBody as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
     {
         type SvcType = T;
 
         fn client(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
-            self
+            self.workflow_svc_mut()
+        }
+
+        fn operator_client(&mut self) -> &mut OperatorServiceClient<Self::SvcType> {
+            self.operator_svc_mut()
+        }
+
+        fn test_client(&mut self) -> &mut TestServiceClient<Self::SvcType> {
+            self.test_svc_mut()
         }
     }
 
-    impl<T> RawClientLike for ConfiguredClient<WorkflowServiceClient<T>>
+    impl<T> RawClientLike for ConfiguredClient<TemporalServiceClient<T>>
     where
         T: Send + Sync + Clone + 'static,
+        T: GrpcService<BoxBody> + Send + Clone + 'static,
+        T::ResponseBody: tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
+        T::Error: Into<tonic::codegen::StdError>,
+        <T::ResponseBody as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
     {
         type SvcType = T;
 
         fn client(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
-            &mut self.client
+            self.client.client()
+        }
+
+        fn operator_client(&mut self) -> &mut OperatorServiceClient<Self::SvcType> {
+            self.client.operator_client()
+        }
+
+        fn test_client(&mut self) -> &mut TestServiceClient<Self::SvcType> {
+            self.client.test_client()
         }
     }
 
@@ -109,7 +146,15 @@ pub(super) mod sealed {
         type SvcType = InterceptedMetricsSvc;
 
         fn client(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
-            &mut self.inner
+            self.inner.client()
+        }
+
+        fn operator_client(&mut self) -> &mut OperatorServiceClient<Self::SvcType> {
+            self.inner.operator_client()
+        }
+
+        fn test_client(&mut self) -> &mut TestServiceClient<Self::SvcType> {
+            self.inner.test_client()
         }
     }
 }
@@ -146,8 +191,12 @@ impl AttachMetricLabels {
     }
     pub fn task_q(&mut self, tq: Option<TaskQueue>) -> &mut Self {
         if let Some(tq) = tq {
-            self.labels.push(task_queue_kv(tq.name));
+            self.task_q_str(tq.name);
         }
+        self
+    }
+    pub fn task_q_str(&mut self, tq: impl Into<String>) -> &mut Self {
+        self.labels.push(task_queue_kv(tq.into()));
         self
     }
 }
@@ -158,7 +207,27 @@ impl<RC, T> WorkflowService for RC
 where
     RC: RawClientLike<SvcType = T>,
     T: GrpcService<BoxBody> + Send + Clone + 'static,
-    T::ResponseBody: tonic::codegen::Body + Send + 'static,
+    T::ResponseBody: tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
+    T::Error: Into<tonic::codegen::StdError>,
+    T::Future: Send,
+    <T::ResponseBody as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
+{
+}
+impl<RC, T> OperatorService for RC
+where
+    RC: RawClientLike<SvcType = T>,
+    T: GrpcService<BoxBody> + Send + Clone + 'static,
+    T::ResponseBody: tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
+    T::Error: Into<tonic::codegen::StdError>,
+    T::Future: Send,
+    <T::ResponseBody as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
+{
+}
+impl<RC, T> TestService for RC
+where
+    RC: RawClientLike<SvcType = T>,
+    T: GrpcService<BoxBody> + Send + Clone + 'static,
+    T::ResponseBody: tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
     T::Error: Into<tonic::codegen::StdError>,
     T::Future: Send,
     <T::ResponseBody as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
@@ -167,34 +236,35 @@ where
 
 /// Helps re-declare gRPC client methods
 macro_rules! proxy {
-    ($method:ident, $req:ident, $resp:ident $(, $closure:expr)?) => {
-        #[doc = concat!("See [WorkflowServiceClient::", stringify!($method), "]")]
+    ($client_type:tt, $client_meth:ident, $method:ident, $req:ty, $resp:ident $(, $closure:expr)?) => {
+        #[doc = concat!("See [", stringify!($client_type), "::", stringify!($method), "]")]
         fn $method(
             &mut self,
-            request: impl tonic::IntoRequest<super::$req>,
+            request: impl tonic::IntoRequest<$req>,
         ) -> BoxFuture<Result<tonic::Response<super::$resp>, tonic::Status>> {
             #[allow(unused_mut)]
-            let fact = |c: &mut WorkflowServiceClient<Self::SvcType>, mut req: tonic::Request<super::$req>| {
+            let fact = |c: &mut Self, mut req: tonic::Request<$req>| {
                 $( type_closure_arg(&mut req, $closure); )*
-                let mut c = c.clone();
+                let mut c = c.$client_meth().clone();
                 async move { c.$method(req).await }.boxed()
             };
-            self.do_call(stringify!($method), fact, request.into_request())
+            self.call(stringify!($method), fact, request.into_request())
         }
     };
 }
 macro_rules! proxier {
-    ( $(($method:ident, $req:ident, $resp:ident $(, $closure:expr)?  );)* ) => {
+    ( $trait_name:ident; $impl_list_name:ident; $client_type:tt; $client_meth:ident;
+      $(($method:ident, $req:ty, $resp:ident $(, $closure:expr)?  );)* ) => {
         #[cfg(test)]
-        const ALL_IMPLEMENTED_RPCS: &'static [&'static str] = &[$(stringify!($method)),*];
-        /// Trait version of the generated workflow service client with modifications to attach appropriate
-        /// metric labels or whatever else to requests
-        pub trait WorkflowService: RawClientLike
+        const $impl_list_name: &'static [&'static str] = &[$(stringify!($method)),*];
+        /// Trait version of the generated client with modifications to attach appropriate metric
+        /// labels or whatever else to requests
+        pub trait $trait_name: RawClientLike
         where
             // Yo this is wild
             <Self as RawClientLike>::SvcType: GrpcService<BoxBody> + Send + Clone + 'static,
             <<Self as RawClientLike>::SvcType as GrpcService<BoxBody>>::ResponseBody:
-                tonic::codegen::Body + Send + 'static,
+                tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
             <<Self as RawClientLike>::SvcType as GrpcService<BoxBody>>::Error:
                 Into<tonic::codegen::StdError>,
             <<Self as RawClientLike>::SvcType as GrpcService<BoxBody>>::Future: Send,
@@ -202,17 +272,19 @@ macro_rules! proxier {
                 as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
         {
             $(
-               proxy!($method, $req, $resp $(,$closure)*);
+               proxy!($client_type, $client_meth, $method, $req, $resp $(,$closure)*);
             )*
         }
     };
 }
+
 // Nice little trick to avoid the callsite asking to type the closure parameter
 fn type_closure_arg<T, R>(arg: T, f: impl FnOnce(T) -> R) -> R {
     f(arg)
 }
 
 proxier! {
+    WorkflowService; ALL_IMPLEMENTED_WORKFLOW_SERVICE_RPCS; WorkflowServiceClient; client;
     (
         register_namespace,
         RegisterNamespaceRequest,
@@ -629,14 +701,79 @@ proxier! {
             r.extensions_mut().insert(labels);
         }
     );
+    (
+        update_worker_build_id_ordering,
+        UpdateWorkerBuildIdOrderingRequest,
+        UpdateWorkerBuildIdOrderingResponse,
+        |r| {
+            let mut labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            labels.task_q_str(r.get_ref().task_queue.clone());
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        get_worker_build_id_ordering,
+        GetWorkerBuildIdOrderingRequest,
+        GetWorkerBuildIdOrderingResponse,
+        |r| {
+            let mut labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            labels.task_q_str(r.get_ref().task_queue.clone());
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        update_workflow,
+        UpdateWorkflowRequest,
+        UpdateWorkflowResponse,
+        |r| {
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            r.extensions_mut().insert(labels);
+        }
+    );
+}
+
+proxier! {
+    OperatorService; ALL_IMPLEMENTED_OPERATOR_SERVICE_RPCS; OperatorServiceClient; operator_client;
+    (add_search_attributes, AddSearchAttributesRequest, AddSearchAttributesResponse);
+    (remove_search_attributes, RemoveSearchAttributesRequest, RemoveSearchAttributesResponse);
+    (list_search_attributes, ListSearchAttributesRequest, ListSearchAttributesResponse);
+    (delete_namespace, DeleteNamespaceRequest, DeleteNamespaceResponse,
+        |r| {
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (delete_workflow_execution, DeleteWorkflowExecutionRequest, DeleteWorkflowExecutionResponse,
+        |r| {
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (add_or_update_remote_cluster, AddOrUpdateRemoteClusterRequest, AddOrUpdateRemoteClusterResponse);
+    (remove_remote_cluster, RemoveRemoteClusterRequest, RemoveRemoteClusterResponse);
+    (describe_cluster, DescribeClusterRequest, DescribeClusterResponse);
+    (list_clusters, ListClustersRequest, ListClustersResponse);
+    (list_cluster_members, ListClusterMembersRequest, ListClusterMembersResponse);
+}
+
+proxier! {
+    TestService; ALL_IMPLEMENTED_TEST_SERVICE_RPCS; TestServiceClient; test_client;
+    (lock_time_skipping, LockTimeSkippingRequest, LockTimeSkippingResponse);
+    (unlock_time_skipping, UnlockTimeSkippingRequest, UnlockTimeSkippingResponse);
+    (sleep, SleepRequest, SleepResponse);
+    (sleep_until, SleepUntilRequest, SleepResponse);
+    (unlock_time_skipping_with_sleep, SleepRequest, SleepResponse);
+    (get_current_time, (), GetCurrentTimeResponse);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ClientOptionsBuilder, RetryClient, WorkflowServiceClientWithMetrics};
+    use crate::{ClientOptionsBuilder, RetryClient};
     use std::collections::HashSet;
-    use temporal_sdk_core_protos::temporal::api::workflowservice::v1::ListNamespacesRequest;
+    use temporal_sdk_core_protos::temporal::api::{
+        operatorservice::v1::DeleteNamespaceRequest, workflowservice::v1::ListNamespacesRequest,
+    };
 
     // Just to help make sure some stuff compiles. Not run.
     #[allow(dead_code)]
@@ -645,23 +782,34 @@ mod tests {
         let raw_client = opts.connect_no_namespace(None, None).await.unwrap();
         let mut retry_client = RetryClient::new(raw_client, opts.retry_config);
 
-        let the_request = ListNamespacesRequest::default();
-        let fact = |c: &mut WorkflowServiceClientWithMetrics, req| {
-            let mut c = c.clone();
+        let list_ns_req = ListNamespacesRequest::default();
+        let fact = |c: &mut RetryClient<_>, req| {
+            let mut c = c.client().clone();
             async move { c.list_namespaces(req).await }.boxed()
         };
         retry_client
-            .do_call("whatever", fact, tonic::Request::new(the_request))
+            .call("whatever", fact, tonic::Request::new(list_ns_req.clone()))
             .await
             .unwrap();
+
+        // Operator svc method
+        let del_ns_req = DeleteNamespaceRequest::default();
+        let fact = |c: &mut RetryClient<_>, req| {
+            let mut c = c.operator_client().clone();
+            async move { c.delete_namespace(req).await }.boxed()
+        };
+        retry_client
+            .call("whatever", fact, tonic::Request::new(del_ns_req.clone()))
+            .await
+            .unwrap();
+
+        // Verify calling through traits works
+        retry_client.list_namespaces(list_ns_req).await.unwrap();
+        retry_client.delete_namespace(del_ns_req).await.unwrap();
     }
 
-    #[test]
-    fn verify_all_methods_implemented() {
-        // This is less work than trying to hook into the codegen process
-        let proto_def =
-            include_str!("../../protos/api_upstream/temporal/api/workflowservice/v1/service.proto");
-        let methods: Vec<_> = proto_def
+    fn verify_methods(proto_def_str: &str, impl_list: &[&str]) {
+        let methods: Vec<_> = proto_def_str
             .lines()
             .map(|l| l.trim())
             .filter(|l| l.starts_with("rpc"))
@@ -670,17 +818,32 @@ mod tests {
                 (&stripped[..stripped.find('(').unwrap()]).trim()
             })
             .collect();
-        let no_underscores: HashSet<_> = ALL_IMPLEMENTED_RPCS
-            .iter()
-            .map(|x| x.replace('_', ""))
-            .collect();
+        let no_underscores: HashSet<_> = impl_list.iter().map(|x| x.replace('_', "")).collect();
         for method in methods {
             if !no_underscores.contains(&method.to_lowercase()) {
-                panic!(
-                    "WorkflowService RPC method {} is not implemented by raw client",
-                    method
-                )
+                panic!("RPC method {} is not implemented by raw client", method)
             }
         }
+    }
+    #[test]
+    fn verify_all_workflow_service_methods_implemented() {
+        // This is less work than trying to hook into the codegen process
+        let proto_def =
+            include_str!("../../protos/api_upstream/temporal/api/workflowservice/v1/service.proto");
+        verify_methods(proto_def, ALL_IMPLEMENTED_WORKFLOW_SERVICE_RPCS);
+    }
+
+    #[test]
+    fn verify_all_operator_service_methods_implemented() {
+        let proto_def =
+            include_str!("../../protos/api_upstream/temporal/api/operatorservice/v1/service.proto");
+        verify_methods(proto_def, ALL_IMPLEMENTED_OPERATOR_SERVICE_RPCS);
+    }
+
+    #[test]
+    fn verify_all_test_service_methods_implemented() {
+        let proto_def =
+            include_str!("../../protos/testsrv_upstream/temporal/api/testservice/v1/service.proto");
+        verify_methods(proto_def, ALL_IMPLEMENTED_TEST_SERVICE_RPCS);
     }
 }

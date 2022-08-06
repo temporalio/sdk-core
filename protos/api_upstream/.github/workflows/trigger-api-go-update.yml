@@ -1,0 +1,29 @@
+name: 'Trigger api-go Update'
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+jobs:
+  notify:
+    name: 'Trigger api-go update'
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Dispatch api-go Github Action
+        env:
+          PAT: ${{ secrets.COMMANDER_DATA_TOKEN }}
+          PARENT_REPO: temporalio/api-go
+          PARENT_BRANCH: ${{ toJSON('master') }}
+          WORKFLOW_ID: update-proto.yml
+          COMMIT_AUTHOR: ${{ toJSON(github.event.head_commit.author.name) }}
+          COMMIT_AUTHOR_EMAIL: ${{ toJSON(github.event.head_commit.author.email) }}
+          COMMIT_MESSAGE: ${{ toJSON(github.event.head_commit.message) }}
+        run: |
+          curl -fL -X POST -H "Accept: application/vnd.github.v3+json" -H "Authorization: token ${{ env.PAT }}" https://api.github.com/repos/${{ env.PARENT_REPO }}/actions/workflows/${{ env.WORKFLOW_ID }}/dispatches -d '{"ref":'"$PARENT_BRANCH"', "inputs":{"commit_author":'"$COMMIT_AUTHOR"', "commit_author_email":'"$COMMIT_AUTHOR_EMAIL"', "commit_message":'"$COMMIT_MESSAGE"'}}'

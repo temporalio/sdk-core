@@ -171,7 +171,11 @@ impl WfContext {
             CommandCreateRequest {
                 cmd: StartTimer {
                     seq,
-                    start_to_fire_timeout: Some(duration.into()),
+                    start_to_fire_timeout: Some(
+                        duration
+                            .try_into()
+                            .expect("Durations must fit into 64 bits"),
+                    ),
                 }
                 .into(),
                 unblocker,

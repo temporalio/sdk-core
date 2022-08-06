@@ -19,11 +19,12 @@ pub use workflow_handle::{WorkflowExecutionInfo, WorkflowExecutionResult};
 use crate::{
     metrics::{GrpcMetricSvc, MetricsContext},
     raw::{sealed::RawClientLike, AttachMetricLabels},
-    sealed::{RawClientLikeUser, WfHandleClient},
+    sealed::WfHandleClient,
     workflow_handle::UntypedWorkflowHandle,
 };
 use backoff::{ExponentialBackoff, SystemClock};
 use http::uri::InvalidUri;
+use once_cell::sync::OnceCell;
 use opentelemetry::metrics::Meter;
 use parking_lot::RwLock;
 use std::{
@@ -41,13 +42,17 @@ use temporal_sdk_core_protos::{
         common::v1::{Payload, Payloads, WorkflowExecution, WorkflowType},
         enums::v1::{TaskQueueKind, WorkflowTaskFailedCause, WorkflowIdReusePolicy},
         failure::v1::Failure,
+        operatorservice::v1::{operator_service_client::OperatorServiceClient, *},
         query::v1::{WorkflowQuery, WorkflowQueryResult},
         taskqueue::v1::{StickyExecutionAttributes, TaskQueue, TaskQueueMetadata},
+        testservice::v1::{test_service_client::TestServiceClient, *},
         workflowservice::v1::{workflow_service_client::WorkflowServiceClient, *},
     },
     TaskToken,
 };
 use tonic::{
+    body::BoxBody,
+    client::GrpcService,
     codegen::InterceptedService,
     metadata::{MetadataKey, MetadataValue},
     service::Interceptor,
@@ -212,7 +217,7 @@ pub enum AnyClient {
     /// A high level client, like the type workers work with
     HighLevel(Arc<dyn WorkflowClientTrait + Send + Sync>),
     /// A low level gRPC client, wrapped with the typical interceptors
-    LowLevel(Box<ConfiguredClient<WorkflowServiceClientWithMetrics>>),
+    LowLevel(Box<ConfiguredClient<TemporalServiceClientWithMetrics>>),
 }
 
 impl<SGA> From<SGA> for AnyClient
@@ -231,23 +236,23 @@ where
         Self::HighLevel(s)
     }
 }
-impl From<RetryClient<ConfiguredClient<WorkflowServiceClientWithMetrics>>> for AnyClient {
-    fn from(c: RetryClient<ConfiguredClient<WorkflowServiceClientWithMetrics>>) -> Self {
+impl From<RetryClient<ConfiguredClient<TemporalServiceClientWithMetrics>>> for AnyClient {
+    fn from(c: RetryClient<ConfiguredClient<TemporalServiceClientWithMetrics>>) -> Self {
         Self::LowLevel(Box::new(c.into_inner()))
     }
 }
-impl From<ConfiguredClient<WorkflowServiceClientWithMetrics>> for AnyClient {
-    fn from(c: ConfiguredClient<WorkflowServiceClientWithMetrics>) -> Self {
+impl From<ConfiguredClient<TemporalServiceClientWithMetrics>> for AnyClient {
+    fn from(c: ConfiguredClient<TemporalServiceClientWithMetrics>) -> Self {
         Self::LowLevel(Box::new(c))
     }
 }
 
 /// A client with [ClientOptions] attached, which can be passed to initialize workers,
-/// or can be used directly.
+/// or can be used directly. Is cheap to clone.
 #[derive(Clone, Debug)]
 pub struct ConfiguredClient<C> {
     client: C,
-    options: ClientOptions,
+    options: Arc<ClientOptions>,
     headers: Arc<RwLock<HashMap<String, String>>>,
     /// Capabilities as read from the `get_system_info` RPC call made on client connection
     capabilities: Option<get_system_info_response::Capabilities>,
@@ -269,11 +274,6 @@ impl<C> ConfiguredClient<C> {
     /// connection
     pub fn capabilities(&self) -> Option<&get_system_info_response::Capabilities> {
         self.capabilities.as_ref()
-    }
-
-    /// De-constitute this type
-    pub fn into_parts(self) -> (C, ClientOptions) {
-        (self.client, self.options)
     }
 }
 
@@ -317,7 +317,7 @@ impl ClientOptions {
         &self,
         metrics_meter: Option<&Meter>,
         headers: Option<Arc<RwLock<HashMap<String, String>>>>,
-    ) -> Result<RetryClient<ConfiguredClient<WorkflowServiceClientWithMetrics>>, ClientInitError>
+    ) -> Result<RetryClient<ConfiguredClient<TemporalServiceClientWithMetrics>>, ClientInitError>
     {
         let channel = Channel::from_shared(self.target_url.to_string())?;
         let channel = self.add_tls_to_channel(channel).await?;
@@ -333,11 +333,12 @@ impl ClientOptions {
             opts: self.clone(),
             headers: headers.clone(),
         };
+        let svc = InterceptedService::new(service, interceptor);
 
         let mut client = ConfiguredClient {
             headers,
-            client: WorkflowServiceClient::with_interceptor(service, interceptor),
-            options: self.clone(),
+            client: TemporalServiceClient::new(svc),
+            options: Arc::new(self.clone()),
             capabilities: None,
         };
         match client
@@ -432,7 +433,7 @@ impl Interceptor for ServiceCallInterceptor {
         );
         let headers = &*self.headers.read();
         for (k, v) in headers {
-            if let (Ok(k), Ok(v)) = (MetadataKey::from_str(k), MetadataValue::from_str(v)) {
+            if let (Ok(k), Ok(v)) = (MetadataKey::from_str(k), v.parse()) {
                 metadata.insert(k, v);
             }
         }
@@ -444,15 +445,76 @@ impl Interceptor for ServiceCallInterceptor {
     }
 }
 
+/// Aggregates various services exposed by the Temporal server
+#[derive(Debug, Clone)]
+pub struct TemporalServiceClient<T> {
+    svc: T,
+    workflow_svc_client: OnceCell<WorkflowServiceClient<T>>,
+    operator_svc_client: OnceCell<OperatorServiceClient<T>>,
+    test_svc_client: OnceCell<TestServiceClient<T>>,
+}
+impl<T> TemporalServiceClient<T>
+where
+    T: Clone,
+    T: GrpcService<BoxBody> + Send + Clone + 'static,
+    T::ResponseBody: tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
+    T::Error: Into<tonic::codegen::StdError>,
+    <T::ResponseBody as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
+{
+    fn new(svc: T) -> Self {
+        Self {
+            svc,
+            workflow_svc_client: OnceCell::new(),
+            operator_svc_client: OnceCell::new(),
+            test_svc_client: OnceCell::new(),
+        }
+    }
+    /// Get the underlying workflow service client
+    pub fn workflow_svc(&self) -> &WorkflowServiceClient<T> {
+        self.workflow_svc_client
+            .get_or_init(|| WorkflowServiceClient::new(self.svc.clone()))
+    }
+    /// Get the underlying operator service client
+    pub fn operator_svc(&self) -> &OperatorServiceClient<T> {
+        self.operator_svc_client
+            .get_or_init(|| OperatorServiceClient::new(self.svc.clone()))
+    }
+    /// Get the underlying test service client
+    pub fn test_svc(&self) -> &TestServiceClient<T> {
+        self.test_svc_client
+            .get_or_init(|| TestServiceClient::new(self.svc.clone()))
+    }
+    /// Get the underlying workflow service client mutably
+    pub fn workflow_svc_mut(&mut self) -> &mut WorkflowServiceClient<T> {
+        let _ = self.workflow_svc();
+        self.workflow_svc_client.get_mut().unwrap()
+    }
+    /// Get the underlying operator service client mutably
+    pub fn operator_svc_mut(&mut self) -> &mut OperatorServiceClient<T> {
+        let _ = self.operator_svc();
+        self.operator_svc_client.get_mut().unwrap()
+    }
+    /// Get the underlying test service client mutably
+    pub fn test_svc_mut(&mut self) -> &mut TestServiceClient<T> {
+        let _ = self.test_svc();
+        self.test_svc_client.get_mut().unwrap()
+    }
+}
 /// A [WorkflowServiceClient] with the default interceptors attached.
 pub type WorkflowServiceClientWithMetrics = WorkflowServiceClient<InterceptedMetricsSvc>;
+/// An [OperatorServiceClient] with the default interceptors attached.
+pub type OperatorServiceClientWithMetrics = OperatorServiceClient<InterceptedMetricsSvc>;
+/// An [TestServiceClient] with the default interceptors attached.
+pub type TestServiceClientWithMetrics = TestServiceClient<InterceptedMetricsSvc>;
+/// A [TemporalServiceClient] with the default interceptors attached.
+pub type TemporalServiceClientWithMetrics = TemporalServiceClient<InterceptedMetricsSvc>;
 type InterceptedMetricsSvc = InterceptedService<GrpcMetricSvc, ServiceCallInterceptor>;
 
 /// Contains an instance of a namespace-bound client for interacting with the Temporal server
 #[derive(Debug, Clone)]
 pub struct Client {
     /// Client for interacting with workflow service
-    inner: ConfiguredClient<WorkflowServiceClientWithMetrics>,
+    inner: ConfiguredClient<TemporalServiceClientWithMetrics>,
     /// The namespace this client interacts with
     namespace: String,
     /// If set, attach as the worker build id to relevant calls
@@ -462,7 +524,7 @@ pub struct Client {
 impl Client {
     /// Create a new client from an existing configured lower level client and a namespace
     pub fn new(
-        client: ConfiguredClient<WorkflowServiceClientWithMetrics>,
+        client: ConfiguredClient<TemporalServiceClientWithMetrics>,
         namespace: String,
     ) -> Self {
         Client {
@@ -489,7 +551,7 @@ impl Client {
     /// Note that it is reasonably cheap to clone the returned type if you need to own it. Such
     /// clones will keep re-using the same channel.
     pub fn raw_client(&self) -> &WorkflowServiceClientWithMetrics {
-        self.inner.deref()
+        self.inner.workflow_svc()
     }
 
     /// Return the options this client was initialized with
@@ -499,13 +561,17 @@ impl Client {
 
     /// Return the options this client was initialized with mutably
     pub fn options_mut(&mut self) -> &mut ClientOptions {
-        &mut self.inner.options
+        Arc::make_mut(&mut self.inner.options)
     }
 
     /// Set a worker build id to be attached to relevant requests. Unlikely to be useful outside
     /// of core.
     pub fn set_worker_build_id(&mut self, id: String) {
         self.bound_worker_build_id = Some(id)
+    }
+
+    fn wf_svc(&self) -> WorkflowServiceClientWithMetrics {
+        self.inner.workflow_svc().clone()
     }
 }
 
@@ -730,10 +796,10 @@ impl WorkflowClientTrait for Client {
                 }),
                 request_id: request_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
                 workflow_id_reuse_policy: options.workflow_id_reuse_policy as i32,
-                workflow_execution_timeout: options.execution_timeout.map(Into::into),
-                workflow_run_timeout: options.execution_timeout.map(Into::into),
-                workflow_task_timeout: options.task_timeout.map(Into::into),
-                search_attributes: options.search_attributes.map(Into::into),
+                workflow_execution_timeout: options.execution_timeout.and_then(|d| d.try_into().ok()),
+                workflow_run_timeout: options.execution_timeout.and_then(|d| d.try_into().ok()),
+                workflow_task_timeout: options.task_timeout.and_then(|d| d.try_into().ok()),
+                search_attributes: options.search_attributes.and_then(|d| d.try_into().ok()),
                 cron_schedule: options.cron_schedule.unwrap_or_default(),
                 ..Default::default()
             })
@@ -992,10 +1058,10 @@ impl WorkflowClientTrait for Client {
                 identity: self.inner.options.identity.clone(),
                 request_id: request_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
                 workflow_id_reuse_policy: options.workflow_id_reuse_policy as i32,
-                workflow_execution_timeout: options.execution_timeout.map(Into::into),
-                workflow_run_timeout: options.execution_timeout.map(Into::into),
-                workflow_task_timeout: options.task_timeout.map(Into::into),
-                search_attributes: options.search_attributes.map(Into::into),
+                workflow_execution_timeout: options.execution_timeout.and_then(|d| d.try_into().ok()),
+                workflow_run_timeout: options.execution_timeout.and_then(|d| d.try_into().ok()),
+                workflow_task_timeout: options.task_timeout.and_then(|d| d.try_into().ok()),
+                search_attributes: options.search_attributes.and_then(|d| d.try_into().ok()),
                 cron_schedule: options.cron_schedule.unwrap_or_default(),
                 ..Default::default()
             })
@@ -1148,39 +1214,28 @@ impl WorkflowClientTrait for Client {
 mod sealed {
     use crate::{InterceptedMetricsSvc, RawClientLike, WorkflowClientTrait};
 
-    pub trait RawClientLikeUser {
-        type RawClientT: RawClientLike<SvcType = InterceptedMetricsSvc>;
-        /// Used to access the client as a [WorkflowService] implementor rather than the raw struct
-        fn wf_svc(&self) -> Self::RawClientT;
+    pub trait WfHandleClient:
+        WorkflowClientTrait + RawClientLike<SvcType = InterceptedMetricsSvc>
+    {
     }
-
-    pub trait WfHandleClient: WorkflowClientTrait + RawClientLikeUser {}
-    impl<T> WfHandleClient for T where T: WorkflowClientTrait + RawClientLikeUser {}
-}
-
-impl RawClientLikeUser for Client {
-    type RawClientT = WorkflowServiceClientWithMetrics;
-
-    fn wf_svc(&self) -> Self::RawClientT {
-        self.raw_client().clone()
+    impl<T> WfHandleClient for T where
+        T: WorkflowClientTrait + RawClientLike<SvcType = InterceptedMetricsSvc>
+    {
     }
 }
 
 /// Additional methods for workflow clients
-pub trait WfClientExt: WfHandleClient + Sized {
+pub trait WfClientExt: WfHandleClient + Sized + Clone {
     /// Create an untyped handle for a workflow execution, which can be used to do things like
     /// wait for that workflow's result. `run_id` may be left blank to target the latest run.
     fn get_untyped_workflow_handle(
         &self,
         workflow_id: impl Into<String>,
         run_id: impl Into<String>,
-    ) -> UntypedWorkflowHandle<Self::RawClientT>
-    where
-        Self::RawClientT: Clone,
-    {
+    ) -> UntypedWorkflowHandle<Self> {
         let rid = run_id.into();
         UntypedWorkflowHandle::new(
-            self.wf_svc(),
+            self.clone(),
             WorkflowExecutionInfo {
                 namespace: self.namespace().to_string(),
                 workflow_id: workflow_id.into(),
@@ -1189,4 +1244,4 @@ pub trait WfClientExt: WfHandleClient + Sized {
         )
     }
 }
-impl<T> WfClientExt for T where T: WfHandleClient + Sized {}
+impl<T> WfClientExt for T where T: WfHandleClient + Clone + Sized {}
