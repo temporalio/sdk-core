@@ -752,7 +752,7 @@ pub trait WorkflowClientTrait {
 #[derive(Debug, Clone, Default)]
 pub struct WorkflowOptions {
     /// Set the policy for reusing the workflow id 
-    pub workflow_id_reuse_policy: WorkflowIdReusePolicy,
+    pub id_reuse_policy: WorkflowIdReusePolicy,
 
     /// Optionally indicates the default execution timeout for workflow tasks
     pub execution_timeout: Option<Duration>,
@@ -795,7 +795,7 @@ impl WorkflowClientTrait for Client {
                     kind: TaskQueueKind::Unspecified as i32,
                 }),
                 request_id: request_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
-                workflow_id_reuse_policy: options.workflow_id_reuse_policy as i32,
+                workflow_id_reuse_policy: options.id_reuse_policy as i32,
                 workflow_execution_timeout: options.execution_timeout.and_then(|d| d.try_into().ok()),
                 workflow_run_timeout: options.execution_timeout.and_then(|d| d.try_into().ok()),
                 workflow_task_timeout: options.task_timeout.and_then(|d| d.try_into().ok()),
@@ -1057,7 +1057,7 @@ impl WorkflowClientTrait for Client {
                 signal_input,
                 identity: self.inner.options.identity.clone(),
                 request_id: request_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
-                workflow_id_reuse_policy: options.workflow_id_reuse_policy as i32,
+                workflow_id_reuse_policy: options.id_reuse_policy as i32,
                 workflow_execution_timeout: options.execution_timeout.and_then(|d| d.try_into().ok()),
                 workflow_run_timeout: options.execution_timeout.and_then(|d| d.try_into().ok()),
                 workflow_task_timeout: options.task_timeout.and_then(|d| d.try_into().ok()),

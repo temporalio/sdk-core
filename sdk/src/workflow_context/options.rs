@@ -191,7 +191,7 @@ impl IntoWorkflowCommand for ChildWorkflowOptions {
             workflow_type: self.workflow_type,
             input: self.input,
             cancellation_type: self.cancel_type as i32,
-            workflow_id_reuse_policy: self.options.workflow_id_reuse_policy as i32,
+            workflow_id_reuse_policy: self.options.id_reuse_policy as i32,
             workflow_execution_timeout: self
                 .options
                 .execution_timeout
