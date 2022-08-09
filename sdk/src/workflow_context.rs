@@ -11,7 +11,7 @@ use crate::{
     SignalExternalWfResult, TimerResult, UnblockEvent, Unblockable,
 };
 use crossbeam::channel::{Receiver, Sender};
-use futures::{task::Context, FutureExt, Stream};
+use futures::{task::Context, FutureExt, Stream, StreamExt};
 use parking_lot::RwLock;
 use std::{
     collections::HashMap,
@@ -301,10 +301,11 @@ impl WfContext {
     pub fn make_signal_channel(
         &self,
         signal_name: impl Into<String>,
-    ) -> impl Stream<Item = SignalData> {
+        // ) -> impl Stream<Item = SignalData> {
+    ) -> CollectableSignalStream {
         let (tx, rx) = mpsc::unbounded_channel();
         self.send(RustWfCmd::SubscribeSignal(signal_name.into(), tx));
-        UnboundedReceiverStream::new(rx)
+        CollectableSignalStream(UnboundedReceiverStream::new(rx))
     }
 
     /// Force a workflow task failure (EX: in order to retry on non-sticky queue)
@@ -367,6 +368,27 @@ impl WfContext {
 
     fn send(&self, c: RustWfCmd) {
         self.chan.send(c).unwrap();
+    }
+}
+
+pub struct CollectableSignalStream(UnboundedReceiverStream<SignalData>);
+
+impl CollectableSignalStream {
+    pub fn collect(mut self) -> Vec<SignalData> {
+        let mut cx = std::task::Context::from_waker(futures::task::noop_waker_ref());
+        let mut signals = vec![];
+        while let Poll::Ready(Some(s)) = self.0.poll_next_unpin(&mut cx) {
+            signals.push(s);
+        }
+        signals
+    }
+}
+
+impl Stream for CollectableSignalStream {
+    type Item = SignalData;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        Pin::new(&mut self.0).poll_next(cx)
     }
 }
 

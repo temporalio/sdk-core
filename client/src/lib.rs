@@ -40,7 +40,7 @@ use temporal_sdk_core_protos::{
     temporal::api::{
         command::v1::Command,
         common::v1::{Payload, Payloads, WorkflowExecution, WorkflowType},
-        enums::v1::{TaskQueueKind, WorkflowTaskFailedCause, WorkflowIdReusePolicy},
+        enums::v1::{TaskQueueKind, WorkflowIdReusePolicy, WorkflowTaskFailedCause},
         failure::v1::Failure,
         operatorservice::v1::{operator_service_client::OperatorServiceClient, *},
         query::v1::{WorkflowQuery, WorkflowQueryResult},
@@ -751,7 +751,7 @@ pub trait WorkflowClientTrait {
 /// Optional fields supplied at the start of workflow execution
 #[derive(Debug, Clone, Default)]
 pub struct WorkflowOptions {
-    /// Set the policy for reusing the workflow id 
+    /// Set the policy for reusing the workflow id
     pub id_reuse_policy: WorkflowIdReusePolicy,
 
     /// Optionally indicates the default execution timeout for workflow tasks
@@ -796,7 +796,9 @@ impl WorkflowClientTrait for Client {
                 }),
                 request_id: request_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
                 workflow_id_reuse_policy: options.id_reuse_policy as i32,
-                workflow_execution_timeout: options.execution_timeout.and_then(|d| d.try_into().ok()),
+                workflow_execution_timeout: options
+                    .execution_timeout
+                    .and_then(|d| d.try_into().ok()),
                 workflow_run_timeout: options.execution_timeout.and_then(|d| d.try_into().ok()),
                 workflow_task_timeout: options.task_timeout.and_then(|d| d.try_into().ok()),
                 search_attributes: options.search_attributes.and_then(|d| d.try_into().ok()),
@@ -1058,7 +1060,9 @@ impl WorkflowClientTrait for Client {
                 identity: self.inner.options.identity.clone(),
                 request_id: request_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
                 workflow_id_reuse_policy: options.id_reuse_policy as i32,
-                workflow_execution_timeout: options.execution_timeout.and_then(|d| d.try_into().ok()),
+                workflow_execution_timeout: options
+                    .execution_timeout
+                    .and_then(|d| d.try_into().ok()),
                 workflow_run_timeout: options.execution_timeout.and_then(|d| d.try_into().ok()),
                 workflow_task_timeout: options.task_timeout.and_then(|d| d.try_into().ok()),
                 search_attributes: options.search_attributes.and_then(|d| d.try_into().ok()),

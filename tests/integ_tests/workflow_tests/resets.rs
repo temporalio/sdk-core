@@ -68,16 +68,17 @@ async fn reset_workflow() {
 
         // Unblock the workflow by sending the signal. Run ID will have changed after reset so
         // we use empty run id
-        client
-            .signal_workflow_execution(
-                wf_name.to_owned(),
-                "".to_owned(),
-                POST_RESET_SIG.to_owned(),
-                None,
-                None,
-            )
-            .await
-            .unwrap();
+        WorkflowClientTrait::signal_workflow_execution(
+            client,
+            wf_name.to_owned(),
+            "".to_owned(),
+            POST_RESET_SIG.to_owned(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
         // Wait for the now-reset workflow to finish
         client
             .get_untyped_workflow_handle(wf_name.to_owned(), "")
