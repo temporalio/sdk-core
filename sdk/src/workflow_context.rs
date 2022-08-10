@@ -301,7 +301,6 @@ impl WfContext {
     pub fn make_signal_channel(
         &self,
         signal_name: impl Into<String>,
-        // ) -> impl Stream<Item = SignalData> {
     ) -> CollectableSignalStream {
         let (tx, rx) = mpsc::unbounded_channel();
         self.send(RustWfCmd::SubscribeSignal(signal_name.into(), tx));
