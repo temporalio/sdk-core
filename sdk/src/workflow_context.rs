@@ -301,10 +301,10 @@ impl WfContext {
     pub fn make_signal_channel(
         &self,
         signal_name: impl Into<String>,
-    ) -> CollectableSignalStream {
+    ) -> DrainableSignalStream {
         let (tx, rx) = mpsc::unbounded_channel();
         self.send(RustWfCmd::SubscribeSignal(signal_name.into(), tx));
-        CollectableSignalStream(UnboundedReceiverStream::new(rx))
+        DrainableSignalStream(UnboundedReceiverStream::new(rx))
     }
 
     /// Force a workflow task failure (EX: in order to retry on non-sticky queue)
@@ -370,10 +370,12 @@ impl WfContext {
     }
 }
 
-pub struct CollectableSignalStream(UnboundedReceiverStream<SignalData>);
+/// Helper Wrapper that can drain the channel into a Vec<SignalData> in a blocking way.  Useful
+/// for making sure channels are empty before ContinueAsNew-ing a workflow
+pub struct DrainableSignalStream(UnboundedReceiverStream<SignalData>);
 
-impl CollectableSignalStream {
-    pub fn collect(mut self) -> Vec<SignalData> {
+impl DrainableSignalStream {
+    pub fn drain_all(mut self) -> Vec<SignalData> {
         let mut cx = std::task::Context::from_waker(futures::task::noop_waker_ref());
         let mut signals = vec![];
         while let Poll::Ready(Some(s)) = self.0.poll_next_unpin(&mut cx) {
@@ -383,7 +385,7 @@ impl CollectableSignalStream {
     }
 }
 
-impl Stream for CollectableSignalStream {
+impl Stream for DrainableSignalStream {
     type Item = SignalData;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
