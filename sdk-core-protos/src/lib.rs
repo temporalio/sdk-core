@@ -1324,6 +1324,11 @@ pub mod temporal {
                 tonic::include_proto!("temporal.api.cluster.v1");
             }
         }
+        pub mod batch {
+            pub mod v1 {
+                tonic::include_proto!("temporal.api.batch.v1");
+            }
+        }
         pub mod command {
             pub mod v1 {
                 tonic::include_proto!("temporal.api.command.v1");
