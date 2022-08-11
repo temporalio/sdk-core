@@ -70,7 +70,7 @@ lazy_static::lazy_static! {
 /// the client identity appropriately. IE: Use [ClientOptions::connect_no_namespace], not
 /// [ClientOptions::connect].
 ///
-/// It is also possible to pass in a [WorkflowClientTrait] implementor, but this largely exists to
+/// It is also possible to pass in a [WorkflowService] implementor, but this largely exists to
 /// support testing and mocking. Lang impls should not operate that way, as it may result in
 /// improper retry behavior for a worker.
 pub fn init_worker<CT>(worker_config: WorkerConfig, client: CT) -> Worker
@@ -79,15 +79,14 @@ where
 {
     let as_enum = client.into();
     let client = match as_enum {
-        AnyClient::HighLevel(ac) => ac,
+        // AnyClient::HighLevel(ac) => ac,
         AnyClient::LowLevel(ll) => {
             let mut client = Client::new(*ll, worker_config.namespace.clone());
             client.set_worker_build_id(worker_config.worker_build_id.clone());
             if let Some(ref id_override) = worker_config.client_identity_override {
                 client.options_mut().identity = id_override.clone();
             }
-            let retry_client = RetryClient::new(client, RetryConfig::default());
-            Arc::new(retry_client)
+            RetryClient::new(client, RetryConfig::default())
         }
     };
     if client.namespace() != worker_config.namespace {

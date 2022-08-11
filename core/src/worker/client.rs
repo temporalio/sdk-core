@@ -2,15 +2,17 @@
 
 pub(crate) mod mocks;
 
-use std::{
-    borrow::Borrow,
-    ops::{Deref, DerefMut},
+use std::ops::{Deref, DerefMut};
+use temporal_client::{
+    RawClientLike, WorkflowService, WorkflowTaskCompletion, RETRYABLE_ERROR_CODES,
 };
-use temporal_client::{WorkflowClientTrait, WorkflowTaskCompletion, RETRYABLE_ERROR_CODES};
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::QueryResult,
     temporal::api::{
-        common::v1::Payloads, enums::v1::WorkflowTaskFailedCause, failure::v1::Failure,
+        common::v1::Payloads,
+        enums::v1::{TaskQueueKind, WorkflowTaskFailedCause},
+        failure::v1::Failure,
+        taskqueue::v1::TaskQueue,
         workflowservice::v1::*,
     },
     TaskToken,
@@ -124,17 +126,38 @@ pub(crate) trait WorkerClient: Sync + Send {
 }
 
 #[async_trait::async_trait]
-impl<'a, T> WorkerClient for T
+impl<T, SVC> WorkerClient for T
 where
-    // TODO: This should be workflow service... no reason to marry worker trait to sdk client trait
-    T: Borrow<dyn WorkflowClientTrait + 'a + Send + Sync> + Send + Sync,
+    T: RawClientLike<SvcType = SVC> + Send + Sync + 'static,
+    // Look! Everyone's favorite giant block of tonic generic bounds!
+    SVC: Send + Sync + Clone + 'static,
+    SVC: tonic::client::GrpcService<tonic::body::BoxBody> + Send + Clone + 'static,
+    SVC::ResponseBody: tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
+    SVC::Error: Into<tonic::codegen::StdError>,
+    <SVC::ResponseBody as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
+    SVC::Future: Send,
 {
     async fn poll_workflow_task(
         &self,
         task_queue: String,
         is_sticky: bool,
     ) -> Result<PollWorkflowTaskQueueResponse> {
-        WorkflowClientTrait::poll_workflow_task(self.borrow(), task_queue, is_sticky).await
+        let request = PollWorkflowTaskQueueRequest {
+            namespace: todo!().to_string(),
+            task_queue: Some(TaskQueue {
+                name: task_queue,
+                kind: if is_sticky {
+                    TaskQueueKind::Sticky
+                } else {
+                    TaskQueueKind::Normal
+                } as i32,
+            }),
+            identity: todo!().to_string(),
+            binary_checksum: todo!().to_string(),
+            worker_versioning_build_id: todo!().to_string(),
+        };
+
+        Ok(self.poll_workflow_task_queue(request).await?.into_inner())
     }
 
     async fn poll_activity_task(
@@ -142,14 +165,14 @@ where
         task_queue: String,
         max_tasks_per_sec: Option<f64>,
     ) -> Result<PollActivityTaskQueueResponse> {
-        WorkflowClientTrait::poll_activity_task(self.borrow(), task_queue, max_tasks_per_sec).await
+        todo!()
     }
 
     async fn complete_workflow_task(
         &self,
         request: WorkflowTaskCompletion,
     ) -> Result<RespondWorkflowTaskCompletedResponse> {
-        WorkflowClientTrait::complete_workflow_task(self.borrow(), request).await
+        todo!()
     }
 
     async fn complete_activity_task(
@@ -157,7 +180,7 @@ where
         task_token: TaskToken,
         result: Option<Payloads>,
     ) -> Result<RespondActivityTaskCompletedResponse> {
-        WorkflowClientTrait::complete_activity_task(self.borrow(), task_token, result).await
+        todo!()
     }
 
     async fn record_activity_heartbeat(
@@ -165,7 +188,7 @@ where
         task_token: TaskToken,
         details: Option<Payloads>,
     ) -> Result<RecordActivityTaskHeartbeatResponse> {
-        WorkflowClientTrait::record_activity_heartbeat(self.borrow(), task_token, details).await
+        todo!()
     }
 
     async fn cancel_activity_task(
@@ -173,7 +196,7 @@ where
         task_token: TaskToken,
         details: Option<Payloads>,
     ) -> Result<RespondActivityTaskCanceledResponse> {
-        WorkflowClientTrait::cancel_activity_task(self.borrow(), task_token, details).await
+        todo!()
     }
 
     async fn fail_activity_task(
@@ -181,7 +204,7 @@ where
         task_token: TaskToken,
         failure: Option<Failure>,
     ) -> Result<RespondActivityTaskFailedResponse> {
-        WorkflowClientTrait::fail_activity_task(self.borrow(), task_token, failure).await
+        todo!()
     }
 
     async fn fail_workflow_task(
@@ -190,7 +213,7 @@ where
         cause: WorkflowTaskFailedCause,
         failure: Option<Failure>,
     ) -> Result<RespondWorkflowTaskFailedResponse> {
-        WorkflowClientTrait::fail_workflow_task(self.borrow(), task_token, cause, failure).await
+        todo!()
     }
 
     async fn get_workflow_execution_history(
@@ -199,13 +222,7 @@ where
         run_id: Option<String>,
         page_token: Vec<u8>,
     ) -> Result<GetWorkflowExecutionHistoryResponse> {
-        WorkflowClientTrait::get_workflow_execution_history(
-            self.borrow(),
-            workflow_id,
-            run_id,
-            page_token,
-        )
-        .await
+        todo!()
     }
 
     async fn respond_legacy_query(
@@ -213,6 +230,6 @@ where
         task_token: TaskToken,
         query_result: QueryResult,
     ) -> Result<RespondQueryTaskCompletedResponse> {
-        WorkflowClientTrait::respond_legacy_query(self.borrow(), task_token, query_result).await
+        todo!()
     }
 }
