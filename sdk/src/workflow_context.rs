@@ -298,10 +298,7 @@ impl WfContext {
     }
 
     /// Return a stream that produces values when the named signal is sent to this workflow
-    pub fn make_signal_channel(
-        &self,
-        signal_name: impl Into<String>,
-    ) -> DrainableSignalStream {
+    pub fn make_signal_channel(&self, signal_name: impl Into<String>) -> DrainableSignalStream {
         let (tx, rx) = mpsc::unbounded_channel();
         self.send(RustWfCmd::SubscribeSignal(signal_name.into(), tx));
         DrainableSignalStream(UnboundedReceiverStream::new(rx))

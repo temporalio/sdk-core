@@ -1,7 +1,7 @@
 use assert_matches::assert_matches;
 use std::time::Duration;
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowExecutionResult, WorkflowOptions};
-use temporal_sdk::{ActContext, ActivityOptions, CancellableFuture, WfContext, WorkflowResult};
+use temporal_sdk::{ActExitValue, ActContext, ActivityOptions, CancellableFuture, WfContext, WorkflowResult};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{
@@ -792,4 +792,16 @@ async fn one_activity_abandon_cancelled_after_complete() {
         .await
         .unwrap();
     assert_matches!(res, WorkflowExecutionResult::Succeeded(_));
+}
+
+#[tokio::test]
+async fn it_can_complete_async() {
+    let mut starter = CoreWfStarter::new("bah");
+    let mut worker = starter.worker().await;
+
+    async fn activity(_: ActContext, _: String) -> anyhow::Result<ActExitValue<()>> {
+        Ok(ActExitValue::WillCompleteAsync)
+    }
+
+    worker.register_activity("async_activity", activity);
 }
