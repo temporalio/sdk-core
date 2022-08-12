@@ -64,15 +64,11 @@ lazy_static::lazy_static! {
 
 /// Initialize a worker bound to a task queue.
 ///
-/// Lang implementations should pass in a a [temporal_client::ConfiguredClient] directly (or a
-/// [RetryClient] wrapping one). When they do so, this function will always overwrite the client
-/// retry configuration, force the client to use the namespace defined in the worker config, and set
-/// the client identity appropriately. IE: Use [ClientOptions::connect_no_namespace], not
-/// [ClientOptions::connect].
-///
-/// It is also possible to pass in a [WorkflowService] implementor, but this largely exists to
-/// support testing and mocking. Lang impls should not operate that way, as it may result in
-/// improper retry behavior for a worker.
+/// Lang implementations may pass in a [temporal_client::ConfiguredClient] directly (or a
+/// [RetryClient] wrapping one, or a handful of other variants of the same idea). When they do so,
+/// this function will always overwrite the client retry configuration, force the client to use the
+/// namespace defined in the worker config, and set the client identity appropriately. IE: Use
+/// [ClientOptions::connect_no_namespace], not [ClientOptions::connect].
 pub fn init_worker<CT>(worker_config: WorkerConfig, client: CT) -> Worker
 where
     CT: Into<sealed::AnyClient>,
