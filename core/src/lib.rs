@@ -48,7 +48,7 @@ use crate::{
     worker::client::WorkerClientBag,
 };
 use std::sync::Arc;
-use temporal_client::AnyClient;
+use temporal_client::{ConfiguredClient, TemporalServiceClientWithMetrics};
 use temporal_sdk_core_api::{
     errors::{CompleteActivityError, PollActivityError, PollWfError},
     CoreLog, Worker as WorkerTrait,
@@ -75,19 +75,16 @@ lazy_static::lazy_static! {
 /// improper retry behavior for a worker.
 pub fn init_worker<CT>(worker_config: WorkerConfig, client: CT) -> Worker
 where
-    CT: Into<AnyClient>,
+    CT: Into<sealed::AnyClient>,
 {
-    let as_enum = client.into();
-    let client = match as_enum {
-        // AnyClient::HighLevel(ac) => ac,
-        AnyClient::LowLevel(ll) => {
-            let mut client = Client::new(*ll, worker_config.namespace.clone());
-            client.set_worker_build_id(worker_config.worker_build_id.clone());
-            if let Some(ref id_override) = worker_config.client_identity_override {
-                client.options_mut().identity = id_override.clone();
-            }
-            RetryClient::new(client, RetryConfig::default())
+    let client = {
+        let ll = client.into().into_inner();
+        let mut client = Client::new(*ll, worker_config.namespace.clone());
+        client.set_worker_build_id(worker_config.worker_build_id.clone());
+        if let Some(ref id_override) = worker_config.client_identity_override {
+            client.options_mut().identity = id_override.clone();
         }
+        RetryClient::new(client, RetryConfig::default())
     };
     if client.namespace() != worker_config.namespace {
         panic!("Passed in client is not bound to the same namespace as the worker");
@@ -142,5 +139,41 @@ pub(crate) fn sticky_q_name_for_worker(
         ))
     } else {
         None
+    }
+}
+
+mod sealed {
+    use super::*;
+
+    /// Allows passing different kinds of clients into things that want to be flexible. Motivating
+    /// use-case was worker initialization.
+    ///
+    /// Needs to exist in this crate to avoid blanket impl conflicts.
+    pub struct AnyClient(Box<ConfiguredClient<TemporalServiceClientWithMetrics>>);
+    impl AnyClient {
+        pub(crate) fn into_inner(self) -> Box<ConfiguredClient<TemporalServiceClientWithMetrics>> {
+            self.0
+        }
+    }
+
+    impl From<RetryClient<ConfiguredClient<TemporalServiceClientWithMetrics>>> for AnyClient {
+        fn from(c: RetryClient<ConfiguredClient<TemporalServiceClientWithMetrics>>) -> Self {
+            Self(Box::new(c.into_inner()))
+        }
+    }
+    impl From<RetryClient<Client>> for AnyClient {
+        fn from(c: RetryClient<Client>) -> Self {
+            Self(Box::new(c.into_inner().into_inner()))
+        }
+    }
+    impl From<Arc<RetryClient<Client>>> for AnyClient {
+        fn from(c: Arc<RetryClient<Client>>) -> Self {
+            Self(Box::new(c.get_client().inner().clone()))
+        }
+    }
+    impl From<ConfiguredClient<TemporalServiceClientWithMetrics>> for AnyClient {
+        fn from(c: ConfiguredClient<TemporalServiceClientWithMetrics>) -> Self {
+            Self(Box::new(c))
+        }
     }
 }

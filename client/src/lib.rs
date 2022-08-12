@@ -208,39 +208,6 @@ pub enum ClientInitError {
     SystemInfoCallError(tonic::Status),
 }
 
-#[doc(hidden)]
-/// Allows passing different kinds of clients into things that want to be flexible. Motivating
-/// use-case was worker initialization.
-///
-/// Needs to exist in this crate to avoid blanket impl conflicts.
-pub enum AnyClient {
-    // /// A high level client, like the type workers work with
-    // HighLevel(Arc<dyn WorkflowService + Send + Sync>),
-    /// A low level gRPC client, wrapped with the typical interceptors
-    LowLevel(Box<ConfiguredClient<TemporalServiceClientWithMetrics>>),
-}
-
-impl From<RetryClient<ConfiguredClient<TemporalServiceClientWithMetrics>>> for AnyClient {
-    fn from(c: RetryClient<ConfiguredClient<TemporalServiceClientWithMetrics>>) -> Self {
-        Self::LowLevel(Box::new(c.into_inner()))
-    }
-}
-impl From<RetryClient<Client>> for AnyClient {
-    fn from(c: RetryClient<Client>) -> Self {
-        Self::LowLevel(Box::new(c.into_inner().inner))
-    }
-}
-impl From<Arc<RetryClient<Client>>> for AnyClient {
-    fn from(c: Arc<RetryClient<Client>>) -> Self {
-        Self::LowLevel(Box::new(c.get_client().inner.clone()))
-    }
-}
-impl From<ConfiguredClient<TemporalServiceClientWithMetrics>> for AnyClient {
-    fn from(c: ConfiguredClient<TemporalServiceClientWithMetrics>) -> Self {
-        Self::LowLevel(Box::new(c))
-    }
-}
-
 /// A client with [ClientOptions] attached, which can be passed to initialize workers,
 /// or can be used directly. Is cheap to clone.
 #[derive(Clone, Debug)]
@@ -562,6 +529,16 @@ impl Client {
     /// of core.
     pub fn set_worker_build_id(&mut self, id: String) {
         self.bound_worker_build_id = Some(id)
+    }
+
+    /// Returns a reference to the underlying client
+    pub fn inner(&self) -> &ConfiguredClient<TemporalServiceClientWithMetrics> {
+        &self.inner
+    }
+
+    /// Consumes self and returns the underlying client
+    pub fn into_inner(self) -> ConfiguredClient<TemporalServiceClientWithMetrics> {
+        self.inner
     }
 
     fn wf_svc(&self) -> WorkflowServiceClientWithMetrics {
