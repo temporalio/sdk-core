@@ -96,8 +96,7 @@ where
         worker_config.namespace.clone(),
         client_ident,
         worker_config.worker_build_id.clone(),
-        // TODO: Add to config
-        false,
+        worker_config.use_worker_versioning,
     ));
 
     let metrics = MetricsContext::top_level(worker_config.namespace.clone())
