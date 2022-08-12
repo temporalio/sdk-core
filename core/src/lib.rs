@@ -92,11 +92,17 @@ where
     if client.namespace() != worker_config.namespace {
         panic!("Passed in client is not bound to the same namespace as the worker");
     }
-    let sticky_q = sticky_q_name_for_worker(&client.get_options().identity, &worker_config);
+    let client_ident = client.get_options().identity.clone();
+    let sticky_q = sticky_q_name_for_worker(&client_ident, &worker_config);
     let client_bag = Arc::new(WorkerClientBag::new(
         client,
         worker_config.namespace.clone(),
+        client_ident,
+        worker_config.worker_build_id.clone(),
+        // TODO: Add to config
+        false,
     ));
+
     let metrics = MetricsContext::top_level(worker_config.namespace.clone())
         .with_task_q(worker_config.task_queue.clone());
     Worker::new(worker_config, sticky_q, client_bag, metrics)

@@ -8,10 +8,11 @@ use temporal_client::{
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::QueryResult,
     temporal::api::{
-        common::v1::Payloads,
+        common::v1::{Payloads, WorkflowExecution},
         enums::v1::{TaskQueueKind, WorkflowTaskFailedCause},
         failure::v1::Failure,
-        taskqueue::v1::TaskQueue,
+        query::v1::WorkflowQueryResult,
+        taskqueue::v1::{TaskQueue, TaskQueueMetadata},
         workflowservice::v1::*,
     },
     TaskToken,
@@ -31,15 +32,33 @@ pub(crate) fn should_swallow_net_error(err: &tonic::Status) -> bool {
 pub(crate) struct WorkerClientBag {
     client: RetryClient<Client>,
     namespace: String,
+    identity: String,
+    worker_build_id: String,
+    use_versioning: bool,
 }
 
 impl WorkerClientBag {
-    pub fn new(client: RetryClient<Client>, namespace: String) -> Self {
-        Self { client, namespace }
+    pub fn new(
+        client: RetryClient<Client>,
+        namespace: String,
+        identity: String,
+        worker_build_id: String,
+        use_versioning: bool,
+    ) -> Self {
+        Self {
+            client,
+            namespace,
+            identity,
+            worker_build_id,
+            use_versioning,
+        }
     }
-
-    pub fn namespace(&self) -> &str {
-        &self.namespace
+    fn versioning_build_id(&self) -> String {
+        if self.use_versioning {
+            self.worker_build_id.clone()
+        } else {
+            "".to_string()
+        }
     }
 }
 
@@ -118,13 +137,18 @@ impl WorkerClient for WorkerClientBag {
                     TaskQueueKind::Normal
                 } as i32,
             }),
-            identity: todo!().to_string(),
-            binary_checksum: todo!().to_string(),
-            worker_versioning_build_id: todo!().to_string(),
+            identity: self.identity.clone(),
+            binary_checksum: if self.use_versioning {
+                "".to_string()
+            } else {
+                self.worker_build_id.clone()
+            },
+            worker_versioning_build_id: self.versioning_build_id(),
         };
 
         Ok(self
             .client
+            .clone()
             .poll_workflow_task_queue(request)
             .await?
             .into_inner())
@@ -135,14 +159,62 @@ impl WorkerClient for WorkerClientBag {
         task_queue: String,
         max_tasks_per_sec: Option<f64>,
     ) -> Result<PollActivityTaskQueueResponse> {
-        todo!()
+        let request = PollActivityTaskQueueRequest {
+            namespace: self.namespace.clone(),
+            task_queue: Some(TaskQueue {
+                name: task_queue,
+                kind: TaskQueueKind::Normal as i32,
+            }),
+            identity: self.identity.clone(),
+            task_queue_metadata: max_tasks_per_sec.map(|tps| TaskQueueMetadata {
+                max_tasks_per_second: Some(tps),
+            }),
+            worker_versioning_build_id: self.versioning_build_id(),
+        };
+
+        Ok(self
+            .client
+            .clone()
+            .poll_activity_task_queue(request)
+            .await?
+            .into_inner())
     }
 
     async fn complete_workflow_task(
         &self,
         request: WorkflowTaskCompletion,
     ) -> Result<RespondWorkflowTaskCompletedResponse> {
-        todo!()
+        let request = RespondWorkflowTaskCompletedRequest {
+            task_token: request.task_token.into(),
+            commands: request.commands,
+            identity: self.identity.clone(),
+            sticky_attributes: request.sticky_attributes,
+            return_new_workflow_task: request.return_new_workflow_task,
+            force_create_new_workflow_task: request.force_create_new_workflow_task,
+            binary_checksum: self.worker_build_id.clone(),
+            query_results: request
+                .query_responses
+                .into_iter()
+                .map(|qr| {
+                    let (id, completed_type, query_result, error_message) = qr.into_components();
+                    (
+                        id,
+                        WorkflowQueryResult {
+                            result_type: completed_type as i32,
+                            answer: query_result,
+                            error_message,
+                        },
+                    )
+                })
+                .collect(),
+            namespace: self.namespace.clone(),
+        };
+        Ok(self
+            .client
+            .clone()
+            .respond_workflow_task_completed(request)
+            .await?
+            .into_inner())
     }
 
     async fn complete_activity_task(
@@ -150,7 +222,17 @@ impl WorkerClient for WorkerClientBag {
         task_token: TaskToken,
         result: Option<Payloads>,
     ) -> Result<RespondActivityTaskCompletedResponse> {
-        todo!()
+        Ok(self
+            .client
+            .clone()
+            .respond_activity_task_completed(RespondActivityTaskCompletedRequest {
+                task_token: task_token.0,
+                result,
+                identity: self.identity.clone(),
+                namespace: self.namespace.clone(),
+            })
+            .await?
+            .into_inner())
     }
 
     async fn record_activity_heartbeat(
@@ -158,7 +240,17 @@ impl WorkerClient for WorkerClientBag {
         task_token: TaskToken,
         details: Option<Payloads>,
     ) -> Result<RecordActivityTaskHeartbeatResponse> {
-        todo!()
+        Ok(self
+            .client
+            .clone()
+            .record_activity_task_heartbeat(RecordActivityTaskHeartbeatRequest {
+                task_token: task_token.0,
+                details,
+                identity: self.identity.clone(),
+                namespace: self.namespace.clone(),
+            })
+            .await?
+            .into_inner())
     }
 
     async fn cancel_activity_task(
@@ -166,7 +258,17 @@ impl WorkerClient for WorkerClientBag {
         task_token: TaskToken,
         details: Option<Payloads>,
     ) -> Result<RespondActivityTaskCanceledResponse> {
-        todo!()
+        Ok(self
+            .client
+            .clone()
+            .respond_activity_task_canceled(RespondActivityTaskCanceledRequest {
+                task_token: task_token.0,
+                details,
+                identity: self.identity.clone(),
+                namespace: self.namespace.clone(),
+            })
+            .await?
+            .into_inner())
     }
 
     async fn fail_activity_task(
@@ -174,7 +276,19 @@ impl WorkerClient for WorkerClientBag {
         task_token: TaskToken,
         failure: Option<Failure>,
     ) -> Result<RespondActivityTaskFailedResponse> {
-        todo!()
+        Ok(self
+            .client
+            .clone()
+            .respond_activity_task_failed(RespondActivityTaskFailedRequest {
+                task_token: task_token.0,
+                failure,
+                identity: self.identity.clone(),
+                namespace: self.namespace.clone(),
+                // TODO: Implement - https://github.com/temporalio/sdk-core/issues/293
+                last_heartbeat_details: None,
+            })
+            .await?
+            .into_inner())
     }
 
     async fn fail_workflow_task(
@@ -183,7 +297,20 @@ impl WorkerClient for WorkerClientBag {
         cause: WorkflowTaskFailedCause,
         failure: Option<Failure>,
     ) -> Result<RespondWorkflowTaskFailedResponse> {
-        todo!()
+        let request = RespondWorkflowTaskFailedRequest {
+            task_token: task_token.0,
+            cause: cause as i32,
+            failure,
+            identity: self.identity.clone(),
+            binary_checksum: self.worker_build_id.clone(),
+            namespace: self.namespace.clone(),
+        };
+        Ok(self
+            .client
+            .clone()
+            .respond_workflow_task_failed(request)
+            .await?
+            .into_inner())
     }
 
     async fn get_workflow_execution_history(
@@ -192,7 +319,20 @@ impl WorkerClient for WorkerClientBag {
         run_id: Option<String>,
         page_token: Vec<u8>,
     ) -> Result<GetWorkflowExecutionHistoryResponse> {
-        todo!()
+        Ok(self
+            .client
+            .clone()
+            .get_workflow_execution_history(GetWorkflowExecutionHistoryRequest {
+                namespace: self.namespace.clone(),
+                execution: Some(WorkflowExecution {
+                    workflow_id,
+                    run_id: run_id.unwrap_or_default(),
+                }),
+                next_page_token: page_token,
+                ..Default::default()
+            })
+            .await?
+            .into_inner())
     }
 
     async fn respond_legacy_query(
@@ -200,6 +340,18 @@ impl WorkerClient for WorkerClientBag {
         task_token: TaskToken,
         query_result: QueryResult,
     ) -> Result<RespondQueryTaskCompletedResponse> {
-        todo!()
+        let (_, completed_type, query_result, error_message) = query_result.into_components();
+        Ok(self
+            .client
+            .clone()
+            .respond_query_task_completed(RespondQueryTaskCompletedRequest {
+                task_token: task_token.into(),
+                completed_type: completed_type as i32,
+                query_result,
+                error_message,
+                namespace: self.namespace.clone(),
+            })
+            .await?
+            .into_inner())
     }
 }

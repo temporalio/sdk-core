@@ -13,12 +13,12 @@ mod retry;
 mod workflow_handle;
 
 pub use crate::retry::{CallType, RetryClient, RETRYABLE_ERROR_CODES};
-pub use raw::{OperatorService, RawClientLike, TestService, WorkflowService};
+pub use raw::{OperatorService, TestService, WorkflowService};
 pub use workflow_handle::{WorkflowExecutionInfo, WorkflowExecutionResult};
 
 use crate::{
     metrics::{GrpcMetricSvc, MetricsContext},
-    raw::AttachMetricLabels,
+    raw::{sealed::RawClientLike, AttachMetricLabels},
     sealed::WfHandleClient,
     workflow_handle::UntypedWorkflowHandle,
 };

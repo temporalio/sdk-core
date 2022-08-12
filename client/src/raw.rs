@@ -4,47 +4,51 @@
 
 use crate::{
     metrics::{namespace_kv, task_queue_kv},
+    raw::sealed::RawClientLike,
+    Client, ConfiguredClient, InterceptedMetricsSvc, RetryClient, TemporalServiceClient,
     LONG_POLL_TIMEOUT,
 };
-use futures::{future::BoxFuture, FutureExt};
+use futures::{future::BoxFuture, FutureExt, TryFutureExt};
 use temporal_sdk_core_protos::temporal::api::{
     operatorservice::v1::{operator_service_client::OperatorServiceClient, *},
     taskqueue::v1::TaskQueue,
     testservice::v1::{test_service_client::TestServiceClient, *},
     workflowservice::v1::{workflow_service_client::WorkflowServiceClient, *},
 };
-use tonic::{body::BoxBody, client::GrpcService, metadata::KeyAndValueRef};
+use tonic::{
+    body::BoxBody, client::GrpcService, metadata::KeyAndValueRef, Request, Response, Status,
+};
 
-use crate::{Client, ConfiguredClient, InterceptedMetricsSvc, RetryClient, TemporalServiceClient};
-use futures::TryFutureExt;
-use tonic::{Request, Response, Status};
+pub(super) mod sealed {
+    use super::*;
 
-/// Something that has a workflow service client
-#[async_trait::async_trait]
-pub trait RawClientLike: Send {
-    type SvcType: Send + Sync + Clone + 'static;
+    /// Something that has a workflow service client
+    #[async_trait::async_trait]
+    pub trait RawClientLike: Send {
+        type SvcType: Send + Sync + Clone + 'static;
 
-    /// Return the workflow service client instance
-    fn client(&mut self) -> &mut WorkflowServiceClient<Self::SvcType>;
+        /// Return the workflow service client instance
+        fn client(&mut self) -> &mut WorkflowServiceClient<Self::SvcType>;
 
-    /// Return the operator service client instance
-    fn operator_client(&mut self) -> &mut OperatorServiceClient<Self::SvcType>;
+        /// Return the operator service client instance
+        fn operator_client(&mut self) -> &mut OperatorServiceClient<Self::SvcType>;
 
-    /// Return the test service client instance
-    fn test_client(&mut self) -> &mut TestServiceClient<Self::SvcType>;
+        /// Return the test service client instance
+        fn test_client(&mut self) -> &mut TestServiceClient<Self::SvcType>;
 
-    async fn call<F, Req, Resp>(
-        &mut self,
-        _call_name: &'static str,
-        mut callfn: F,
-        req: Request<Req>,
-    ) -> Result<Response<Resp>, Status>
-    where
-        Req: Clone + Unpin + Send + Sync + 'static,
-        F: FnMut(&mut Self, Request<Req>) -> BoxFuture<'static, Result<Response<Resp>, Status>>,
-        F: Send + Sync + Unpin + 'static,
-    {
-        callfn(self, req).await
+        async fn call<F, Req, Resp>(
+            &mut self,
+            _call_name: &'static str,
+            mut callfn: F,
+            req: Request<Req>,
+        ) -> Result<Response<Resp>, Status>
+        where
+            Req: Clone + Unpin + Send + Sync + 'static,
+            F: FnMut(&mut Self, Request<Req>) -> BoxFuture<'static, Result<Response<Resp>, Status>>,
+            F: Send + Sync + Unpin + 'static,
+        {
+            callfn(self, req).await
+        }
     }
 }
 
