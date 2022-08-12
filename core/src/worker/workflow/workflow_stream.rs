@@ -6,7 +6,7 @@ use crate::{
         workflow::{history_update::NextPageToken, run_cache::RunCache, *},
         LocalActRequest, LocalActivityResolution, LEGACY_QUERY_ID,
     },
-    MetricsContext, WorkerClientBag,
+    MetricsContext,
 };
 use futures::{stream, stream::PollNext, Stream, StreamExt};
 use std::{collections::VecDeque, fmt::Debug, future, sync::Arc, time::Instant};
@@ -36,7 +36,7 @@ pub(crate) struct WFStream {
     buffered_polls_need_cache_slot: VecDeque<PermittedWFT>,
 
     /// Client for accessing server for history pagination etc.
-    client: Arc<WorkerClientBag>,
+    client: Arc<dyn WorkerClient>,
 
     /// Ensures we stay at or below this worker's maximum concurrent workflow task limit
     wft_semaphore: MeteredSemaphore,
@@ -118,7 +118,7 @@ impl WFStream {
         basics: WorkflowBasics,
         external_wfts: impl Stream<Item = Result<ValidPollWFTQResponse, tonic::Status>> + Send + 'static,
         local_rx: impl Stream<Item = LocalInput> + Send + 'static,
-        client: Arc<WorkerClientBag>,
+        client: Arc<dyn WorkerClient>,
         local_activity_request_sink: impl Fn(Vec<LocalActRequest>) -> Vec<LocalActivityResolution>
             + Send
             + Sync
@@ -157,7 +157,7 @@ impl WFStream {
             buffered_polls_need_cache_slot: Default::default(),
             runs: RunCache::new(
                 basics.max_cached_workflows,
-                client.namespace().to_string(),
+                basics.namespace.clone(),
                 run_update_tx,
                 Arc::new(local_activity_request_sink),
                 basics.metrics.clone(),

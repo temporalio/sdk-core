@@ -94,7 +94,7 @@ where
     }
     let sticky_q = sticky_q_name_for_worker(&client.get_options().identity, &worker_config);
     let client_bag = Arc::new(WorkerClientBag::new(
-        Box::new(client),
+        client,
         worker_config.namespace.clone(),
     ));
     let metrics = MetricsContext::top_level(worker_config.namespace.clone())
@@ -117,7 +117,7 @@ pub fn init_replay_worker(
     config.max_concurrent_wft_polls = 1;
     config.no_remote_activities = true;
     // Could possibly just use mocked pollers here?
-    let client = mock_client_from_history(history, &config.task_queue);
+    let client = mock_client_from_history(history, config.task_queue.clone());
     let run_id = history.extract_run_id_from_start()?.to_string();
     let last_event = history.last_event_id();
     let mut worker = Worker::new(config, None, Arc::new(client), MetricsContext::default());

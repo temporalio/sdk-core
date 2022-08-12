@@ -2,9 +2,8 @@
 
 pub(crate) mod mocks;
 
-use std::ops::{Deref, DerefMut};
 use temporal_client::{
-    RawClientLike, WorkflowService, WorkflowTaskCompletion, RETRYABLE_ERROR_CODES,
+    Client, RetryClient, WorkflowService, WorkflowTaskCompletion, RETRYABLE_ERROR_CODES,
 };
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::QueryResult,
@@ -30,40 +29,17 @@ pub(crate) fn should_swallow_net_error(err: &tonic::Status) -> bool {
 
 /// Contains everything a worker needs to interact with the server
 pub(crate) struct WorkerClientBag {
-    client: Box<dyn WorkerClient>,
+    client: RetryClient<Client>,
     namespace: String,
 }
 
 impl WorkerClientBag {
-    pub fn new(client: Box<dyn WorkerClient>, namespace: String) -> Self {
+    pub fn new(client: RetryClient<Client>, namespace: String) -> Self {
         Self { client, namespace }
     }
 
     pub fn namespace(&self) -> &str {
         &self.namespace
-    }
-}
-impl Deref for WorkerClientBag {
-    type Target = dyn WorkerClient;
-
-    fn deref(&self) -> &Self::Target {
-        &*self.client
-    }
-}
-impl DerefMut for WorkerClientBag {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut *self.client
-    }
-}
-#[cfg(test)]
-impl<T> From<T> for WorkerClientBag
-where
-    T: WorkerClient + 'static,
-{
-    fn from(c: T) -> Self {
-        use temporal_sdk_core_test_utils::NAMESPACE;
-
-        WorkerClientBag::new(Box::new(c), NAMESPACE.to_string())
     }
 }
 
@@ -126,24 +102,14 @@ pub(crate) trait WorkerClient: Sync + Send {
 }
 
 #[async_trait::async_trait]
-impl<T, SVC> WorkerClient for T
-where
-    T: RawClientLike<SvcType = SVC> + Send + Sync + 'static,
-    // Look! Everyone's favorite giant block of tonic generic bounds!
-    SVC: Send + Sync + Clone + 'static,
-    SVC: tonic::client::GrpcService<tonic::body::BoxBody> + Send + Clone + 'static,
-    SVC::ResponseBody: tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
-    SVC::Error: Into<tonic::codegen::StdError>,
-    <SVC::ResponseBody as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
-    SVC::Future: Send,
-{
+impl WorkerClient for WorkerClientBag {
     async fn poll_workflow_task(
         &self,
         task_queue: String,
         is_sticky: bool,
     ) -> Result<PollWorkflowTaskQueueResponse> {
         let request = PollWorkflowTaskQueueRequest {
-            namespace: todo!().to_string(),
+            namespace: self.namespace.clone(),
             task_queue: Some(TaskQueue {
                 name: task_queue,
                 kind: if is_sticky {
@@ -157,7 +123,11 @@ where
             worker_versioning_build_id: todo!().to_string(),
         };
 
-        Ok(self.poll_workflow_task_queue(request).await?.into_inner())
+        Ok(self
+            .client
+            .poll_workflow_task_queue(request)
+            .await?
+            .into_inner())
     }
 
     async fn poll_activity_task(

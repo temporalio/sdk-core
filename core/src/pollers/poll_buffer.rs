@@ -1,6 +1,6 @@
 use crate::{
     pollers::{self, Poller},
-    worker::client::WorkerClientBag,
+    worker::client::WorkerClient,
 };
 use futures::{prelude::stream::FuturesUnordered, StreamExt};
 use std::{
@@ -199,7 +199,7 @@ impl Poller<PollWorkflowTaskQueueResponse> for WorkflowTaskPoller {
 
 pub type PollWorkflowTaskBuffer = LongPollBuffer<PollWorkflowTaskQueueResponse>;
 pub(crate) fn new_workflow_task_buffer(
-    client: Arc<WorkerClientBag>,
+    client: Arc<dyn WorkerClient>,
     task_queue: String,
     is_sticky: bool,
     concurrent_pollers: usize,
@@ -220,7 +220,7 @@ pub(crate) fn new_workflow_task_buffer(
 
 pub type PollActivityTaskBuffer = LongPollBuffer<PollActivityTaskQueueResponse>;
 pub(crate) fn new_activity_task_buffer(
-    client: Arc<WorkerClientBag>,
+    client: Arc<dyn WorkerClient>,
     task_queue: String,
     concurrent_pollers: usize,
     buffer_size: usize,
@@ -262,7 +262,7 @@ mod tests {
             });
 
         let pb = new_workflow_task_buffer(
-            Arc::new(mock_client.into()),
+            Arc::new(mock_client),
             "someq".to_string(),
             false,
             1,

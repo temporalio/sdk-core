@@ -1,5 +1,5 @@
 use crate::{
-    worker::{activities::PendingActivityCancel, client::WorkerClientBag},
+    worker::{activities::PendingActivityCancel, client::WorkerClient},
     TaskToken,
 };
 use futures::StreamExt;
@@ -304,7 +304,7 @@ impl HeartbeatStreamState {
 impl ActivityHeartbeatManager {
     /// Creates a new instance of an activity heartbeat manager and returns a handle to the user,
     /// which allows to send new heartbeats and initiate the shutdown.
-    pub fn new(client: Arc<WorkerClientBag>) -> Self {
+    pub fn new(client: Arc<dyn WorkerClient>) -> Self {
         let (heartbeat_stream_state, heartbeat_tx_source, shutdown_token) =
             HeartbeatStreamState::new();
         let (cancels_tx, cancels_rx) = unbounded_channel();
@@ -425,7 +425,7 @@ mod test {
             .expect_record_activity_heartbeat()
             .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
             .times(2);
-        let hm = ActivityHeartbeatManager::new(Arc::new(mock_client.into()));
+        let hm = ActivityHeartbeatManager::new(Arc::new(mock_client));
         let fake_task_token = vec![1, 2, 3];
         // Send 2 heartbeat requests for 20ms apart.
         // The first heartbeat should be sent right away, and
@@ -446,9 +446,9 @@ mod test {
             .expect_record_activity_heartbeat()
             .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
             .times(3);
-        let hm = ActivityHeartbeatManager::new(Arc::new(mock_client.into()));
+        let hm = ActivityHeartbeatManager::new(Arc::new(mock_client));
         let fake_task_token = vec![1, 2, 3];
-        // Heartbeats always get sent if recorded less frequently than the throttle intreval
+        // Heartbeats always get sent if recorded less frequently than the throttle interval
         for i in 0_u8..3 {
             record_heartbeat(&hm, fake_task_token.clone(), i, Duration::from_millis(10));
             sleep(Duration::from_millis(20)).await;
@@ -466,7 +466,7 @@ mod test {
             .expect_record_activity_heartbeat()
             .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
             .times(1);
-        let hm = ActivityHeartbeatManager::new(Arc::new(mock_client.into()));
+        let hm = ActivityHeartbeatManager::new(Arc::new(mock_client));
         let fake_task_token = vec![1, 2, 3];
         // Send a whole bunch of heartbeats very fast. We should still only send one total.
         for i in 0_u8..50 {
@@ -485,7 +485,7 @@ mod test {
             .expect_record_activity_heartbeat()
             .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
             .times(2);
-        let hm = ActivityHeartbeatManager::new(Arc::new(mock_client.into()));
+        let hm = ActivityHeartbeatManager::new(Arc::new(mock_client));
         let fake_task_token = vec![1, 2, 3];
         record_heartbeat(&hm, fake_task_token.clone(), 0, Duration::from_millis(100));
         sleep(Duration::from_millis(500)).await;
@@ -502,7 +502,7 @@ mod test {
             .expect_record_activity_heartbeat()
             .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
             .times(2);
-        let hm = ActivityHeartbeatManager::new(Arc::new(mock_client.into()));
+        let hm = ActivityHeartbeatManager::new(Arc::new(mock_client));
         let fake_task_token = vec![1, 2, 3];
         record_heartbeat(&hm, fake_task_token.clone(), 0, Duration::from_millis(100));
         // Let it propagate
@@ -522,7 +522,7 @@ mod test {
             .expect_record_activity_heartbeat()
             .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
             .times(1);
-        let hm = ActivityHeartbeatManager::new(Arc::new(mock_client.into()));
+        let hm = ActivityHeartbeatManager::new(Arc::new(mock_client));
         let fake_task_token = vec![1, 2, 3];
         record_heartbeat(&hm, fake_task_token.clone(), 0, Duration::from_millis(100));
         hm.evict(fake_task_token.clone().into()).await;
@@ -537,7 +537,7 @@ mod test {
             .expect_record_activity_heartbeat()
             .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
             .times(0);
-        let hm = ActivityHeartbeatManager::new(Arc::new(mock_client.into()));
+        let hm = ActivityHeartbeatManager::new(Arc::new(mock_client));
         hm.shutdown().await;
         match hm.record(
             ActivityHeartbeat {
