@@ -720,8 +720,8 @@ impl<T: Debug> WfExitValue<T> {
 }
 
 /// Activity functions may return these values when exiting
-#[derive(Debug, derive_more::From)]
-pub enum ActExitValue<T: Debug> {
+#[derive(derive_more::From)]
+pub enum ActExitValue<T> {
     /// Completion requires an asynchronous callback
     #[from(ignore)]
     WillCompleteAsync,
@@ -765,7 +765,7 @@ where
     A: FromJsonPayloadExt + Send,
     Rf: Future<Output = Result<R, anyhow::Error>> + Send + 'static,
     R: Into<ActExitValue<O>>,
-    O: AsJsonPayloadExt + Debug,
+    O: AsJsonPayloadExt,
 {
     fn into_activity_fn(self) -> BoxActFn {
         let wrapper = move |ctx: ActContext, input: Payload| {
