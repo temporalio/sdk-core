@@ -8,7 +8,7 @@ use std::{fmt::Debug, future::Future, sync::Arc, time::Duration};
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::QueryResult,
     temporal::api::{
-        common::v1::{Payload, Payloads},
+        common::v1::{Header, Payload, Payloads},
         enums::v1::WorkflowTaskFailedCause,
         failure::v1::Failure,
         query::v1::WorkflowQuery,
@@ -360,6 +360,7 @@ where
         options: WorkflowOptions,
         signal_name: String,
         signal_input: Option<Payloads>,
+        signal_header: Option<Header>,
     ) -> Result<SignalWithStartWorkflowExecutionResponse> {
         retry_call!(
             self,
@@ -371,7 +372,8 @@ where
             request_id.clone(),
             options.clone(),
             signal_name.clone(),
-            signal_input.clone()
+            signal_input.clone(),
+            signal_header.clone()
         )
     }
 

@@ -39,7 +39,7 @@ use temporal_sdk_core_protos::{
     coresdk::{workflow_commands::QueryResult, IntoPayloadsExt},
     temporal::api::{
         command::v1::Command,
-        common::v1::{Payload, Payloads, WorkflowExecution, WorkflowType},
+        common::v1::{Header, Payload, Payloads, WorkflowExecution, WorkflowType},
         enums::v1::{TaskQueueKind, WorkflowIdReusePolicy, WorkflowTaskFailedCause},
         failure::v1::Failure,
         operatorservice::v1::{operator_service_client::OperatorServiceClient, *},
@@ -690,6 +690,7 @@ pub trait WorkflowClientTrait {
         options: WorkflowOptions,
         signal_name: String,
         signal_input: Option<Payloads>,
+        signal_header: Option<Header>,
     ) -> Result<SignalWithStartWorkflowExecutionResponse>;
 
     /// Request a query of a certain workflow instance
@@ -1041,6 +1042,7 @@ impl WorkflowClientTrait for Client {
         options: WorkflowOptions,
         signal_name: String,
         signal_input: Option<Payloads>,
+        signal_header: Option<Header>,
     ) -> Result<SignalWithStartWorkflowExecutionResponse> {
         Ok(self
             .wf_svc()
@@ -1067,6 +1069,7 @@ impl WorkflowClientTrait for Client {
                 workflow_task_timeout: options.task_timeout.and_then(|d| d.try_into().ok()),
                 search_attributes: options.search_attributes.and_then(|d| d.try_into().ok()),
                 cron_schedule: options.cron_schedule.unwrap_or_default(),
+                header: signal_header,
                 ..Default::default()
             })
             .await?

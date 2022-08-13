@@ -1,7 +1,9 @@
 use assert_matches::assert_matches;
 use std::time::Duration;
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowExecutionResult, WorkflowOptions};
-use temporal_sdk::{ActExitValue, ActContext, ActivityOptions, CancellableFuture, WfContext, WorkflowResult};
+use temporal_sdk::{
+    ActContext, ActExitValue, ActivityOptions, CancellableFuture, WfContext, WorkflowResult,
+};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{
