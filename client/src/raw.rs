@@ -28,7 +28,7 @@ pub(super) mod sealed {
         type SvcType: Send + Sync + Clone + 'static;
 
         /// Return the workflow service client instance
-        fn client(&mut self) -> &mut WorkflowServiceClient<Self::SvcType>;
+        fn workflow_client(&mut self) -> &mut WorkflowServiceClient<Self::SvcType>;
 
         /// Return the operator service client instance
         fn operator_client(&mut self) -> &mut OperatorServiceClient<Self::SvcType>;
@@ -61,8 +61,8 @@ where
 {
     type SvcType = T;
 
-    fn client(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
-        self.get_client_mut().client()
+    fn workflow_client(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
+        self.get_client_mut().workflow_client()
     }
 
     fn operator_client(&mut self) -> &mut OperatorServiceClient<Self::SvcType> {
@@ -105,7 +105,7 @@ where
 {
     type SvcType = T;
 
-    fn client(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
+    fn workflow_client(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
         self.workflow_svc_mut()
     }
 
@@ -128,8 +128,8 @@ where
 {
     type SvcType = T;
 
-    fn client(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
-        self.client.client()
+    fn workflow_client(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
+        self.client.workflow_client()
     }
 
     fn operator_client(&mut self) -> &mut OperatorServiceClient<Self::SvcType> {
@@ -144,8 +144,8 @@ where
 impl RawClientLike for Client {
     type SvcType = InterceptedMetricsSvc;
 
-    fn client(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
-        self.inner.client()
+    fn workflow_client(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
+        self.inner.workflow_client()
     }
 
     fn operator_client(&mut self) -> &mut OperatorServiceClient<Self::SvcType> {
@@ -282,7 +282,7 @@ fn type_closure_arg<T, R>(arg: T, f: impl FnOnce(T) -> R) -> R {
 }
 
 proxier! {
-    WorkflowService; ALL_IMPLEMENTED_WORKFLOW_SERVICE_RPCS; WorkflowServiceClient; client;
+    WorkflowService; ALL_IMPLEMENTED_WORKFLOW_SERVICE_RPCS; WorkflowServiceClient; workflow_client;
     (
         register_namespace,
         RegisterNamespaceRequest,
@@ -818,7 +818,7 @@ mod tests {
 
         let list_ns_req = ListNamespacesRequest::default();
         let fact = |c: &mut RetryClient<_>, req| {
-            let mut c = c.client().clone();
+            let mut c = c.workflow_client().clone();
             async move { c.list_namespaces(req).await }.boxed()
         };
         retry_client
