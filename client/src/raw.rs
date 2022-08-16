@@ -5,24 +5,22 @@
 use crate::{
     metrics::{namespace_kv, task_queue_kv},
     raw::sealed::RawClientLike,
+    Client, ConfiguredClient, InterceptedMetricsSvc, RetryClient, TemporalServiceClient,
     LONG_POLL_TIMEOUT,
 };
-use futures::{future::BoxFuture, FutureExt};
+use futures::{future::BoxFuture, FutureExt, TryFutureExt};
 use temporal_sdk_core_protos::temporal::api::{
     operatorservice::v1::{operator_service_client::OperatorServiceClient, *},
     taskqueue::v1::TaskQueue,
     testservice::v1::{test_service_client::TestServiceClient, *},
     workflowservice::v1::{workflow_service_client::WorkflowServiceClient, *},
 };
-use tonic::{body::BoxBody, client::GrpcService, metadata::KeyAndValueRef};
+use tonic::{
+    body::BoxBody, client::GrpcService, metadata::KeyAndValueRef, Request, Response, Status,
+};
 
 pub(super) mod sealed {
     use super::*;
-    use crate::{
-        Client, ConfiguredClient, InterceptedMetricsSvc, RetryClient, TemporalServiceClient,
-    };
-    use futures::TryFutureExt;
-    use tonic::{Request, Response, Status};
 
     /// Something that has a workflow service client
     #[async_trait::async_trait]
@@ -30,7 +28,7 @@ pub(super) mod sealed {
         type SvcType: Send + Sync + Clone + 'static;
 
         /// Return the workflow service client instance
-        fn client(&mut self) -> &mut WorkflowServiceClient<Self::SvcType>;
+        fn workflow_client(&mut self) -> &mut WorkflowServiceClient<Self::SvcType>;
 
         /// Return the operator service client instance
         fn operator_client(&mut self) -> &mut OperatorServiceClient<Self::SvcType>;
@@ -52,110 +50,110 @@ pub(super) mod sealed {
             callfn(self, req).await
         }
     }
+}
 
-    // Here we implement retry on anything that is already RawClientLike
-    #[async_trait::async_trait]
-    impl<RC, T> RawClientLike for RetryClient<RC>
-    where
-        RC: RawClientLike<SvcType = T> + 'static,
-        T: Send + Sync + Clone + 'static,
-    {
-        type SvcType = T;
+// Here we implement retry on anything that is already RawClientLike
+#[async_trait::async_trait]
+impl<RC, T> RawClientLike for RetryClient<RC>
+where
+    RC: RawClientLike<SvcType = T> + 'static,
+    T: Send + Sync + Clone + 'static,
+{
+    type SvcType = T;
 
-        fn client(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
-            self.get_client_mut().client()
-        }
-
-        fn operator_client(&mut self) -> &mut OperatorServiceClient<Self::SvcType> {
-            self.get_client_mut().operator_client()
-        }
-
-        fn test_client(&mut self) -> &mut TestServiceClient<Self::SvcType> {
-            self.get_client_mut().test_client()
-        }
-
-        async fn call<F, Req, Resp>(
-            &mut self,
-            call_name: &'static str,
-            mut callfn: F,
-            req: Request<Req>,
-        ) -> Result<Response<Resp>, Status>
-        where
-            Req: Clone + Unpin + Send + Sync + 'static,
-            F: FnMut(&mut Self, Request<Req>) -> BoxFuture<'static, Result<Response<Resp>, Status>>,
-            F: Send + Sync + Unpin + 'static,
-        {
-            let rtc = self.get_retry_config(call_name);
-            let req = req_cloner(&req);
-            let fact = || {
-                let req_clone = req_cloner(&req);
-                callfn(self, req_clone)
-            };
-            let res = Self::make_future_retry(rtc, fact, call_name);
-            res.map_err(|(e, _attempt)| e).map_ok(|x| x.0).await
-        }
+    fn workflow_client(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
+        self.get_client_mut().workflow_client()
     }
 
-    impl<T> RawClientLike for TemporalServiceClient<T>
-    where
-        T: Send + Sync + Clone + 'static,
-        T: GrpcService<BoxBody> + Send + Clone + 'static,
-        T::ResponseBody: tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
-        T::Error: Into<tonic::codegen::StdError>,
-        <T::ResponseBody as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
-    {
-        type SvcType = T;
-
-        fn client(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
-            self.workflow_svc_mut()
-        }
-
-        fn operator_client(&mut self) -> &mut OperatorServiceClient<Self::SvcType> {
-            self.operator_svc_mut()
-        }
-
-        fn test_client(&mut self) -> &mut TestServiceClient<Self::SvcType> {
-            self.test_svc_mut()
-        }
+    fn operator_client(&mut self) -> &mut OperatorServiceClient<Self::SvcType> {
+        self.get_client_mut().operator_client()
     }
 
-    impl<T> RawClientLike for ConfiguredClient<TemporalServiceClient<T>>
-    where
-        T: Send + Sync + Clone + 'static,
-        T: GrpcService<BoxBody> + Send + Clone + 'static,
-        T::ResponseBody: tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
-        T::Error: Into<tonic::codegen::StdError>,
-        <T::ResponseBody as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
-    {
-        type SvcType = T;
-
-        fn client(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
-            self.client.client()
-        }
-
-        fn operator_client(&mut self) -> &mut OperatorServiceClient<Self::SvcType> {
-            self.client.operator_client()
-        }
-
-        fn test_client(&mut self) -> &mut TestServiceClient<Self::SvcType> {
-            self.client.test_client()
-        }
+    fn test_client(&mut self) -> &mut TestServiceClient<Self::SvcType> {
+        self.get_client_mut().test_client()
     }
 
-    impl RawClientLike for Client {
-        type SvcType = InterceptedMetricsSvc;
+    async fn call<F, Req, Resp>(
+        &mut self,
+        call_name: &'static str,
+        mut callfn: F,
+        req: Request<Req>,
+    ) -> Result<Response<Resp>, Status>
+    where
+        Req: Clone + Unpin + Send + Sync + 'static,
+        F: FnMut(&mut Self, Request<Req>) -> BoxFuture<'static, Result<Response<Resp>, Status>>,
+        F: Send + Sync + Unpin + 'static,
+    {
+        let rtc = self.get_retry_config(call_name);
+        let req = req_cloner(&req);
+        let fact = || {
+            let req_clone = req_cloner(&req);
+            callfn(self, req_clone)
+        };
+        let res = Self::make_future_retry(rtc, fact, call_name);
+        res.map_err(|(e, _attempt)| e).map_ok(|x| x.0).await
+    }
+}
 
-        fn client(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
-            self.inner.client()
-        }
+impl<T> RawClientLike for TemporalServiceClient<T>
+where
+    T: Send + Sync + Clone + 'static,
+    T: GrpcService<BoxBody> + Send + Clone + 'static,
+    T::ResponseBody: tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
+    T::Error: Into<tonic::codegen::StdError>,
+    <T::ResponseBody as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
+{
+    type SvcType = T;
 
-        fn operator_client(&mut self) -> &mut OperatorServiceClient<Self::SvcType> {
-            self.inner.operator_client()
-        }
+    fn workflow_client(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
+        self.workflow_svc_mut()
+    }
 
-        fn test_client(&mut self) -> &mut TestServiceClient<Self::SvcType> {
-            self.inner.test_client()
-        }
+    fn operator_client(&mut self) -> &mut OperatorServiceClient<Self::SvcType> {
+        self.operator_svc_mut()
+    }
+
+    fn test_client(&mut self) -> &mut TestServiceClient<Self::SvcType> {
+        self.test_svc_mut()
+    }
+}
+
+impl<T> RawClientLike for ConfiguredClient<TemporalServiceClient<T>>
+where
+    T: Send + Sync + Clone + 'static,
+    T: GrpcService<BoxBody> + Send + Clone + 'static,
+    T::ResponseBody: tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
+    T::Error: Into<tonic::codegen::StdError>,
+    <T::ResponseBody as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
+{
+    type SvcType = T;
+
+    fn workflow_client(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
+        self.client.workflow_client()
+    }
+
+    fn operator_client(&mut self) -> &mut OperatorServiceClient<Self::SvcType> {
+        self.client.operator_client()
+    }
+
+    fn test_client(&mut self) -> &mut TestServiceClient<Self::SvcType> {
+        self.client.test_client()
+    }
+}
+
+impl RawClientLike for Client {
+    type SvcType = InterceptedMetricsSvc;
+
+    fn workflow_client(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
+        self.inner.workflow_client()
+    }
+
+    fn operator_client(&mut self) -> &mut OperatorServiceClient<Self::SvcType> {
+        self.inner.operator_client()
+    }
+
+    fn test_client(&mut self) -> &mut TestServiceClient<Self::SvcType> {
+        self.inner.test_client()
     }
 }
 
@@ -284,7 +282,7 @@ fn type_closure_arg<T, R>(arg: T, f: impl FnOnce(T) -> R) -> R {
 }
 
 proxier! {
-    WorkflowService; ALL_IMPLEMENTED_WORKFLOW_SERVICE_RPCS; WorkflowServiceClient; client;
+    WorkflowService; ALL_IMPLEMENTED_WORKFLOW_SERVICE_RPCS; WorkflowServiceClient; workflow_client;
     (
         register_namespace,
         RegisterNamespaceRequest,
@@ -730,6 +728,42 @@ proxier! {
             r.extensions_mut().insert(labels);
         }
     );
+    (
+        start_batch_operation,
+        StartBatchOperationRequest,
+        StartBatchOperationResponse,
+        |r| {
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        stop_batch_operation,
+        StopBatchOperationRequest,
+        StopBatchOperationResponse,
+        |r| {
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        describe_batch_operation,
+        DescribeBatchOperationRequest,
+        DescribeBatchOperationResponse,
+        |r| {
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        list_batch_operations,
+        ListBatchOperationsRequest,
+        ListBatchOperationsResponse,
+        |r| {
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            r.extensions_mut().insert(labels);
+        }
+    );
 }
 
 proxier! {
@@ -784,7 +818,7 @@ mod tests {
 
         let list_ns_req = ListNamespacesRequest::default();
         let fact = |c: &mut RetryClient<_>, req| {
-            let mut c = c.client().clone();
+            let mut c = c.workflow_client().clone();
             async move { c.list_namespaces(req).await }.boxed()
         };
         retry_client

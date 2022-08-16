@@ -105,7 +105,7 @@ async fn worker_shutdown_during_poll_doesnt_deadlock() {
     mock_client
         .expect_complete_workflow_task()
         .returning(|_| Ok(RespondWorkflowTaskCompletedResponse::default()));
-    let worker = mock_worker(MocksHolder::from_mock_worker(mock_client.into(), mw));
+    let worker = mock_worker(MocksHolder::from_mock_worker(mock_client, mw));
     let pollfut = worker.poll_workflow_activation();
     let shutdownfut = async {
         worker.shutdown().await;

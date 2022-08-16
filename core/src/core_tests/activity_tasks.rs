@@ -263,7 +263,7 @@ async fn activity_cancel_interrupts_poll() {
         act_poller: Some(Box::from(mock_poller)),
         ..Default::default()
     };
-    let core = mock_worker(MocksHolder::from_mock_worker(mock_client.into(), mw));
+    let core = mock_worker(MocksHolder::from_mock_worker(mock_client, mw));
     let last_finisher = AtomicUsize::new(0);
     // Perform first poll to get the activity registered
     let act = core.poll_activity_task().await.unwrap();
@@ -315,7 +315,7 @@ async fn activity_poll_timeout_retries() {
         act_poller: Some(Box::from(mock_act_poller)),
         ..Default::default()
     };
-    let core = mock_worker(MocksHolder::from_mock_worker(mock_client.into(), mw));
+    let core = mock_worker(MocksHolder::from_mock_worker(mock_client, mw));
     let r = core.poll_activity_task().await.unwrap();
     assert_matches!(r.task_token.as_slice(), b"hello!");
 }

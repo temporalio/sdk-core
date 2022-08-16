@@ -31,6 +31,7 @@ option java_outer_classname = "RequestResponseProto";
 option ruby_package = "Temporal::Api::WorkflowService::V1";
 option csharp_namespace = "Temporal.Api.WorkflowService.V1";
 
+import "temporal/api/enums/v1/batch_operation.proto";
 import "temporal/api/enums/v1/workflow.proto";
 import "temporal/api/enums/v1/namespace.proto";
 import "temporal/api/enums/v1/failed_cause.proto";
@@ -52,6 +53,7 @@ import "temporal/api/schedule/v1/message.proto";
 import "temporal/api/taskqueue/v1/message.proto";
 import "temporal/api/update/v1/message.proto";
 import "temporal/api/version/v1/message.proto";
+import "temporal/api/batch/v1/message.proto";
 
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
@@ -102,6 +104,9 @@ message DescribeNamespaceResponse {
     temporal.api.replication.v1.NamespaceReplicationConfig replication_config = 3;
     int64 failover_version = 4;
     bool is_global_namespace = 5;
+    // Contains the historical state of failover_versions for the cluster, truncated to contain only the last N
+    // states to ensure that the list does not grow unbounded.
+    repeated temporal.api.replication.v1.FailoverStatus failover_history = 6;
 }
 
 // (-- api-linter: core::0134::request-mask-required=disabled
@@ -214,7 +219,14 @@ message PollWorkflowTaskQueueRequest {
     // The identity of the worker/client who is polling this task queue
     string identity = 3;
     // Each worker process should provide an ID unique to the specific set of code it is running
+    // "checksum" in this field name isn't very accurate, it should be though of as an id.
     string binary_checksum = 4;
+    // If set, the worker is opting in to build-id based versioning and wishes to only
+    // receive tasks that are considered compatible with the version provided in the string.
+    // Doing so only makes sense in conjunction with the `UpdateWorkerBuildIdOrdering` API.
+    // When set, and `binary_checksum` is not, this value should also be considered as the
+    // `binary_checksum`.
+    string worker_versioning_build_id = 5;
 }
 
 message PollWorkflowTaskQueueResponse {
@@ -313,6 +325,10 @@ message PollActivityTaskQueueRequest {
     // The identity of the worker/client
     string identity = 3;
     temporal.api.taskqueue.v1.TaskQueueMetadata task_queue_metadata = 4;
+    // If set, the worker is opting in to build-id based versioning and wishes to only
+    // receive tasks that are considered compatible with the version provided in the string.
+    // Doing so only makes sense in conjunction with the `UpdateWorkerBuildIdOrdering` API.
+    string worker_versioning_build_id = 5;
 }
 
 message PollActivityTaskQueueResponse {
@@ -1036,4 +1052,73 @@ message UpdateWorkflowResponse {
         temporal.api.common.v1.Payloads success = 2;
         temporal.api.failure.v1.Failure failure = 3;
     }
+}
+
+message StartBatchOperationRequest {
+    // Namespace that contains the batch operation
+    string namespace = 1;
+    // Visibility query defines the the group of workflow to do batch operation
+    string visibility_query = 2;
+    // Operation input
+    oneof operation {
+        temporal.api.batch.v1.BatchOperationTermination termination_operation = 10;
+        temporal.api.batch.v1.BatchOperationSignal signal_operation = 11;
+        temporal.api.batch.v1.BatchOperationCancellation cancellation_operation = 12;
+    }
+}
+
+message StartBatchOperationResponse {
+    // Batch job id
+    string job_id = 1;
+}
+
+message StopBatchOperationRequest {
+    // Namespace that contains the batch operation
+    string namespace = 1;
+    // Batch job id
+    string job_id = 2;
+}
+
+message StopBatchOperationResponse {
+}
+
+message DescribeBatchOperationRequest {
+    // Namespace that contains the batch operation
+    string namespace = 1;
+    // Batch job id
+    string job_id = 2;
+}
+
+message DescribeBatchOperationResponse {
+    // Batch operation type
+    temporal.api.enums.v1.BatchOperationType operation_type = 1;
+    // Batch job ID
+    string job_id = 2;
+    // Batch operation state
+    temporal.api.enums.v1.BatchOperationState state = 3;
+    // Batch operation start time
+    google.protobuf.Timestamp start_time = 4 [(gogoproto.stdtime) = true];
+    // Batch operation close time
+    google.protobuf.Timestamp close_time = 5 [(gogoproto.stdtime) = true];
+    // Total operation count
+    int64 total_operation_count = 6;
+    // Complete operation count
+    int64 complete_operation_count = 7;
+    // Failure operation count
+    int64 failure_operation_count = 8;
+}
+
+message ListBatchOperationsRequest {
+    // Namespace that contains the batch operation
+    string namespace = 1;
+    // List page size
+    int32 page_size = 2;
+    // Next page token
+    bytes next_page_token = 3;
+}
+
+message ListBatchOperationsResponse {
+    // BatchOperationInfo contains the basic info about batch operation
+    repeated temporal.api.batch.v1.BatchOperationInfo operation_info = 1;
+    bytes next_page_token = 2;
 }

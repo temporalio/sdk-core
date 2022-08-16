@@ -1,6 +1,6 @@
 use crate::{
     replay::{HistoryInfo, TestHistoryBuilder},
-    worker::client::WorkerClientBag,
+    worker::client::WorkerClient,
 };
 use futures::{future::BoxFuture, stream, stream::BoxStream, FutureExt, Stream, StreamExt};
 use std::{
@@ -42,7 +42,7 @@ impl Debug for HistoryUpdate {
 
 pub struct HistoryPaginator {
     // Potentially this could actually be a ref w/ lifetime here
-    client: Arc<WorkerClientBag>,
+    client: Arc<dyn WorkerClient>,
     event_queue: VecDeque<HistoryEvent>,
     wf_id: String,
     run_id: String,
@@ -82,7 +82,7 @@ impl HistoryPaginator {
         wf_id: String,
         run_id: String,
         next_page_token: impl Into<NextPageToken>,
-        client: Arc<WorkerClientBag>,
+        client: Arc<dyn WorkerClient>,
     ) -> Self {
         let next_page_token = next_page_token.into();
         let (event_queue, final_events) =
@@ -397,7 +397,7 @@ pub mod tests {
                 "wfid".to_string(),
                 "runid".to_string(),
                 vec![2], // Start at page "2"
-                Arc::new(mock_client.into()),
+                Arc::new(mock_client),
             ),
             prev_started,
         );
@@ -442,7 +442,7 @@ pub mod tests {
                 "runid".to_string(),
                 // A cache miss means we'll try to fetch from start
                 NextPageToken::FetchFromStart,
-                Arc::new(mock_client.into()),
+                Arc::new(mock_client),
             ),
             1,
         );

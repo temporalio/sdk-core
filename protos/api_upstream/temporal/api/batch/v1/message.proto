@@ -1,0 +1,86 @@
+// The MIT License
+//
+// Copyright (c) 2020 Temporal Technologies Inc.  All rights reserved.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+
+syntax = "proto3";
+
+package temporal.api.batch.v1;
+
+option go_package = "go.temporal.io/api/batch/v1;batch";
+option java_package = "io.temporal.api.batch.v1";
+option java_multiple_files = true;
+option java_outer_classname = "MessageProto";
+option ruby_package = "Temporal::Api::Batch::V1";
+option csharp_namespace = "Temporal.Api.Batch.V1";
+
+import "dependencies/gogoproto/gogo.proto";
+import "google/protobuf/timestamp.proto";
+
+
+import "temporal/api/common/v1/message.proto";
+import "temporal/api/enums/v1/batch_operation.proto";
+
+message BatchOperationInfo {
+  // Batch job ID
+  string job_id = 1;
+  // Batch operation state
+  temporal.api.enums.v1.BatchOperationState state = 2;
+  // Batch operation start time
+  google.protobuf.Timestamp start_time = 3 [(gogoproto.stdtime) = true];
+  // Batch operation close time
+  google.protobuf.Timestamp close_time = 4 [(gogoproto.stdtime) = true];
+}
+
+// BatchOperationTermination sends terminate requests to batch workflows.
+// Keep the parameter in sync with temporal.api.workflowservice.v1.TerminateWorkflowExecutionRequest.
+// Ignore first_execution_run_id because this is used for single workflow operation.
+message BatchOperationTermination {
+  // Reason of terminate workflows
+  string reason = 1;
+  // Serialized value(s) to provide to the termination event
+  temporal.api.common.v1.Payloads details = 2;
+  // The identity of the worker/client
+  string identity = 3;
+}
+
+// BatchOperationSignal sends signals to batch workflows.
+// Keep the parameter in sync with temporal.api.workflowservice.v1.SignalWorkflowExecutionRequest.
+message BatchOperationSignal {
+  // The workflow author-defined name of the signal to send to the workflow
+  string signal = 1;
+  // Serialized value(s) to provide with the signal
+  temporal.api.common.v1.Payloads input = 2;
+  // Headers that are passed with the signal to the processing workflow.
+  // These can include things like auth or tracing tokens.
+  temporal.api.common.v1.Header header = 3;
+  // The identity of the worker/client
+  string identity = 4;
+}
+
+// BatchOperationCancellation sends cancel requests to batch workflows.
+// Keep the parameter in sync with temporal.api.workflowservice.v1.RequestCancelWorkflowExecutionRequest.
+// Ignore first_execution_run_id because this is used for single workflow operation.
+message BatchOperationCancellation {
+  // Reason of cancel workflows
+  string reason = 1;
+  // The identity of the worker/client
+  string identity = 2;
+}

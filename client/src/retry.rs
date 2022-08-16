@@ -1,7 +1,4 @@
-use crate::{
-    ClientOptions, Result, RetryConfig, WorkflowClientTrait, WorkflowOptions,
-    WorkflowTaskCompletion,
-};
+use crate::{ClientOptions, Result, RetryConfig, WorkflowClientTrait, WorkflowOptions};
 use backoff::{backoff::Backoff, ExponentialBackoff};
 use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
 use std::{fmt::Debug, future::Future, sync::Arc, time::Duration};
@@ -221,27 +218,6 @@ where
         )
     }
 
-    async fn poll_workflow_task(
-        &self,
-        task_queue: String,
-        is_sticky: bool,
-    ) -> Result<PollWorkflowTaskQueueResponse> {
-        retry_call!(self, poll_workflow_task, task_queue.clone(), is_sticky)
-    }
-
-    async fn poll_activity_task(
-        &self,
-        task_queue: String,
-        max_tasks_per_sec: Option<f64>,
-    ) -> Result<PollActivityTaskQueueResponse> {
-        retry_call!(
-            self,
-            poll_activity_task,
-            task_queue.clone(),
-            max_tasks_per_sec
-        )
-    }
-
     async fn reset_sticky_task_queue(
         &self,
         workflow_id: String,
@@ -253,13 +229,6 @@ where
             workflow_id.clone(),
             run_id.clone()
         )
-    }
-
-    async fn complete_workflow_task(
-        &self,
-        request: WorkflowTaskCompletion,
-    ) -> Result<RespondWorkflowTaskCompletedResponse> {
-        retry_call!(self, complete_workflow_task, request.clone())
     }
 
     async fn complete_activity_task(
@@ -470,6 +439,7 @@ where
 mod tests {
     use super::*;
     use crate::MockWorkflowClientTrait;
+    use assert_matches::assert_matches;
     use tonic::Status;
 
     #[tokio::test]
@@ -510,24 +480,20 @@ mod tests {
             Code::Unauthenticated,
             Code::Unimplemented,
         ] {
-            let mut mock_client = MockWorkflowClientTrait::new();
-            mock_client
-                .expect_poll_workflow_task()
-                .returning(move |_, _| Err(Status::new(code, "non-retryable failure")))
-                .times(1);
-            mock_client
-                .expect_poll_activity_task()
-                .returning(move |_, _| Err(Status::new(code, "non-retryable failure")))
-                .times(1);
-            let retry_client = RetryClient::new(mock_client, Default::default());
-            let result = retry_client
-                .poll_workflow_task("tq".to_string(), false)
-                .await;
-            assert!(result.is_err());
-            let result = retry_client
-                .poll_activity_task("tq".to_string(), None)
-                .await;
-            assert!(result.is_err());
+            let mut err_handler = TonicErrorHandler::new(
+                Default::default(),
+                CallType::LongPoll,
+                "poll_workflow_task",
+            );
+            let result = err_handler.handle(1, Status::new(code, "Ahh"));
+            assert_matches!(result, RetryPolicy::ForwardError(_));
+            let mut err_handler = TonicErrorHandler::new(
+                Default::default(),
+                CallType::LongPoll,
+                "poll_activity_task",
+            );
+            let result = err_handler.handle(1, Status::new(code, "Ahh"));
+            assert_matches!(result, RetryPolicy::ForwardError(_));
         }
     }
 
@@ -555,68 +521,38 @@ mod tests {
 
     #[tokio::test]
     async fn long_poll_retries_forever() {
-        let mut mock_client = MockWorkflowClientTrait::new();
-        mock_client
-            .expect_poll_workflow_task()
-            .returning(move |_, _| Err(Status::new(Code::Unknown, "retryable failure")))
-            .times(50);
-        mock_client
-            .expect_poll_workflow_task()
-            .returning(|_, _| Ok(Default::default()))
-            .times(1);
-        mock_client
-            .expect_poll_activity_task()
-            .returning(move |_, _| Err(Status::new(Code::Unknown, "retryable failure")))
-            .times(50);
-        mock_client
-            .expect_poll_activity_task()
-            .returning(|_, _| Ok(Default::default()))
-            .times(1);
-
-        let retry_client = RetryClient::new(mock_client, Default::default());
-
-        let result = retry_client
-            .poll_workflow_task("tq".to_string(), false)
-            .await;
-        assert!(result.is_ok());
-        let result = retry_client
-            .poll_activity_task("tq".to_string(), None)
-            .await;
-        assert!(result.is_ok());
+        // A bit odd, but we don't need a real client to test the retry client passes through the
+        // correct retry config
+        let fake_retry = RetryClient::new((), Default::default());
+        for i in 1..=50 {
+            for call in ["poll_workflow_task", "poll_activity_task"] {
+                let mut err_handler = TonicErrorHandler::new(
+                    fake_retry.get_retry_config(call),
+                    CallType::LongPoll,
+                    call,
+                );
+                let result = err_handler.handle(i, Status::new(Code::Unknown, "Ahh"));
+                assert_matches!(result, RetryPolicy::WaitRetry(_));
+            }
+        }
     }
 
     #[tokio::test]
     async fn long_poll_retries_deadline_exceeded() {
+        let fake_retry = RetryClient::new((), Default::default());
         // For some reason we will get cancelled in these situations occasionally (always?) too
         for code in [Code::Cancelled, Code::DeadlineExceeded] {
-            let mut mock_client = MockWorkflowClientTrait::new();
-            mock_client
-                .expect_poll_workflow_task()
-                .returning(move |_, _| Err(Status::new(code, "retryable failure")))
-                .times(5);
-            mock_client
-                .expect_poll_workflow_task()
-                .returning(|_, _| Ok(Default::default()))
-                .times(1);
-            mock_client
-                .expect_poll_activity_task()
-                .returning(move |_, _| Err(Status::new(code, "retryable failure")))
-                .times(5);
-            mock_client
-                .expect_poll_activity_task()
-                .returning(|_, _| Ok(Default::default()))
-                .times(1);
-
-            let retry_client = RetryClient::new(mock_client, Default::default());
-
-            let result = retry_client
-                .poll_workflow_task("tq".to_string(), false)
-                .await;
-            assert!(result.is_ok());
-            let result = retry_client
-                .poll_activity_task("tq".to_string(), None)
-                .await;
-            assert!(result.is_ok());
+            for call in ["poll_workflow_task", "poll_activity_task"] {
+                let mut err_handler = TonicErrorHandler::new(
+                    fake_retry.get_retry_config(call),
+                    CallType::LongPoll,
+                    call,
+                );
+                for i in 1..=5 {
+                    let result = err_handler.handle(i, Status::new(code, "retryable failure"));
+                    assert_matches!(result, RetryPolicy::WaitRetry(_));
+                }
+            }
         }
     }
 }

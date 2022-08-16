@@ -75,6 +75,9 @@ message PollerInfo {
     google.protobuf.Timestamp last_access_time = 1 [(gogoproto.stdtime) = true];
     string identity = 2;
     double rate_per_second = 3;
+    // If a worker has specified an ID for use with the worker versioning feature while polling,
+    // that id must appear here.
+    string worker_versioning_build_id = 4;
 }
 
 message StickyExecutionAttributes {

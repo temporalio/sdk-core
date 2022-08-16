@@ -25,8 +25,8 @@ use crate::{
     },
     worker::{
         activities::{DispatchOrTimeoutLA, LACompleteAction, LocalActivityManager},
-        client::{should_swallow_net_error, WorkerClientBag},
-        workflow::{LocalResolution, Workflows},
+        client::{should_swallow_net_error, WorkerClient},
+        workflow::{LocalResolution, WorkflowBasics, Workflows},
     },
     ActivityHeartbeat, CompleteActivityError, PollActivityError, PollWfError, WorkerTrait,
 };
@@ -50,14 +50,10 @@ use temporal_sdk_core_protos::{
 };
 use tokio_util::sync::CancellationToken;
 
-#[cfg(test)]
-use crate::worker::client::WorkerClient;
-use crate::worker::workflow::WorkflowBasics;
-
 /// A worker polls on a certain task queue
 pub struct Worker {
     config: WorkerConfig,
-    wf_client: Arc<WorkerClientBag>,
+    wf_client: Arc<dyn WorkerClient>,
 
     /// Manages all workflows and WFT processing
     workflows: Workflows,
@@ -156,7 +152,7 @@ impl Worker {
     pub(crate) fn new(
         config: WorkerConfig,
         sticky_queue_name: Option<String>,
-        client: Arc<WorkerClientBag>,
+        client: Arc<dyn WorkerClient>,
         metrics: MetricsContext,
     ) -> Self {
         info!(task_queue = %config.task_queue, "Initializing worker");
@@ -228,13 +224,13 @@ impl Worker {
 
     #[cfg(test)]
     pub(crate) fn new_test(config: WorkerConfig, client: impl WorkerClient + 'static) -> Self {
-        Self::new(config, None, Arc::new(client.into()), Default::default())
+        Self::new(config, None, Arc::new(client), Default::default())
     }
 
     pub(crate) fn new_with_pollers(
         config: WorkerConfig,
         sticky_queue_name: Option<String>,
-        client: Arc<WorkerClientBag>,
+        client: Arc<dyn WorkerClient>,
         wft_stream: impl Stream<Item = Result<ValidPollWFTQResponse, tonic::Status>> + Send + 'static,
         act_poller: Option<BoxedActPoller>,
         metrics: MetricsContext,
@@ -266,6 +262,7 @@ impl Worker {
                     max_outstanding_wfts: config.max_outstanding_workflow_tasks,
                     shutdown_token: shutdown_token.child_token(),
                     metrics,
+                    namespace: config.namespace.clone(),
                 },
                 sticky_queue_name.map(|sq| StickyExecutionAttributes {
                     worker_task_queue: Some(TaskQueue {
@@ -425,7 +422,7 @@ impl Worker {
         }
 
         if let Some(atm) = &self.at_task_mgr {
-            match atm.complete(task_token, status, &**self.wf_client).await {
+            match atm.complete(task_token, status, &*self.wf_client).await {
                 Err(CompleteActivityError::TonicError(e)) if should_swallow_net_error(&e) => {
                     warn!(error=?e, "Network error while completing activity");
                     Ok(())

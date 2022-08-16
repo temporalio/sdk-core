@@ -48,7 +48,7 @@ use crate::{
     worker::client::WorkerClientBag,
 };
 use std::sync::Arc;
-use temporal_client::AnyClient;
+use temporal_client::{ConfiguredClient, TemporalServiceClientWithMetrics};
 use temporal_sdk_core_api::{
     errors::{CompleteActivityError, PollActivityError, PollWfError},
     CoreLog, Worker as WorkerTrait,
@@ -64,40 +64,37 @@ lazy_static::lazy_static! {
 
 /// Initialize a worker bound to a task queue.
 ///
-/// Lang implementations should pass in a a [temporal_client::ConfiguredClient] directly (or a
-/// [RetryClient] wrapping one). When they do so, this function will always overwrite the client
-/// retry configuration, force the client to use the namespace defined in the worker config, and set
-/// the client identity appropriately. IE: Use [ClientOptions::connect_no_namespace], not
-/// [ClientOptions::connect].
-///
-/// It is also possible to pass in a [WorkflowClientTrait] implementor, but this largely exists to
-/// support testing and mocking. Lang impls should not operate that way, as it may result in
-/// improper retry behavior for a worker.
+/// Lang implementations may pass in a [temporal_client::ConfiguredClient] directly (or a
+/// [RetryClient] wrapping one, or a handful of other variants of the same idea). When they do so,
+/// this function will always overwrite the client retry configuration, force the client to use the
+/// namespace defined in the worker config, and set the client identity appropriately. IE: Use
+/// [ClientOptions::connect_no_namespace], not [ClientOptions::connect].
 pub fn init_worker<CT>(worker_config: WorkerConfig, client: CT) -> Worker
 where
-    CT: Into<AnyClient>,
+    CT: Into<sealed::AnyClient>,
 {
-    let as_enum = client.into();
-    let client = match as_enum {
-        AnyClient::HighLevel(ac) => ac,
-        AnyClient::LowLevel(ll) => {
-            let mut client = Client::new(*ll, worker_config.namespace.clone());
-            client.set_worker_build_id(worker_config.worker_build_id.clone());
-            if let Some(ref id_override) = worker_config.client_identity_override {
-                client.options_mut().identity = id_override.clone();
-            }
-            let retry_client = RetryClient::new(client, RetryConfig::default());
-            Arc::new(retry_client)
+    let client = {
+        let ll = client.into().into_inner();
+        let mut client = Client::new(*ll, worker_config.namespace.clone());
+        client.set_worker_build_id(worker_config.worker_build_id.clone());
+        if let Some(ref id_override) = worker_config.client_identity_override {
+            client.options_mut().identity = id_override.clone();
         }
+        RetryClient::new(client, RetryConfig::default())
     };
     if client.namespace() != worker_config.namespace {
         panic!("Passed in client is not bound to the same namespace as the worker");
     }
-    let sticky_q = sticky_q_name_for_worker(&client.get_options().identity, &worker_config);
+    let client_ident = client.get_options().identity.clone();
+    let sticky_q = sticky_q_name_for_worker(&client_ident, &worker_config);
     let client_bag = Arc::new(WorkerClientBag::new(
-        Box::new(client),
+        client,
         worker_config.namespace.clone(),
+        client_ident,
+        worker_config.worker_build_id.clone(),
+        worker_config.use_worker_versioning,
     ));
+
     let metrics = MetricsContext::top_level(worker_config.namespace.clone())
         .with_task_q(worker_config.task_queue.clone());
     Worker::new(worker_config, sticky_q, client_bag, metrics)
@@ -118,7 +115,7 @@ pub fn init_replay_worker(
     config.max_concurrent_wft_polls = 1;
     config.no_remote_activities = true;
     // Could possibly just use mocked pollers here?
-    let client = mock_client_from_history(history, &config.task_queue);
+    let client = mock_client_from_history(history, config.task_queue.clone());
     let run_id = history.extract_run_id_from_start()?.to_string();
     let last_event = history.last_event_id();
     let mut worker = Worker::new(config, None, Arc::new(client), MetricsContext::default());
@@ -137,5 +134,41 @@ pub(crate) fn sticky_q_name_for_worker(
         ))
     } else {
         None
+    }
+}
+
+mod sealed {
+    use super::*;
+
+    /// Allows passing different kinds of clients into things that want to be flexible. Motivating
+    /// use-case was worker initialization.
+    ///
+    /// Needs to exist in this crate to avoid blanket impl conflicts.
+    pub struct AnyClient(Box<ConfiguredClient<TemporalServiceClientWithMetrics>>);
+    impl AnyClient {
+        pub(crate) fn into_inner(self) -> Box<ConfiguredClient<TemporalServiceClientWithMetrics>> {
+            self.0
+        }
+    }
+
+    impl From<RetryClient<ConfiguredClient<TemporalServiceClientWithMetrics>>> for AnyClient {
+        fn from(c: RetryClient<ConfiguredClient<TemporalServiceClientWithMetrics>>) -> Self {
+            Self(Box::new(c.into_inner()))
+        }
+    }
+    impl From<RetryClient<Client>> for AnyClient {
+        fn from(c: RetryClient<Client>) -> Self {
+            Self(Box::new(c.into_inner().into_inner()))
+        }
+    }
+    impl From<Arc<RetryClient<Client>>> for AnyClient {
+        fn from(c: Arc<RetryClient<Client>>) -> Self {
+            Self(Box::new(c.get_client().inner().clone()))
+        }
+    }
+    impl From<ConfiguredClient<TemporalServiceClientWithMetrics>> for AnyClient {
+        fn from(c: ConfiguredClient<TemporalServiceClientWithMetrics>) -> Self {
+            Self(Box::new(c))
+        }
     }
 }
