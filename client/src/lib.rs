@@ -1092,3 +1092,30 @@ pub trait WfClientExt: WfHandleClient + Sized + Clone {
     }
 }
 impl<T> WfClientExt for T where T: WfHandleClient + Clone + Sized {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn respects_per_call_headers() {
+        let opts = ClientOptionsBuilder::default()
+            .identity("enchicat".to_string())
+            .target_url(Url::parse("https://smolkitty").unwrap())
+            .client_name("cute-kitty".to_string())
+            .client_version("0.1.0".to_string())
+            .build()
+            .unwrap();
+
+        let mut static_headers = HashMap::new();
+        static_headers.insert("enchi".to_string(), "kitty".to_string());
+        let mut iceptor = ServiceCallInterceptor {
+            opts,
+            headers: Arc::new(RwLock::new(static_headers)),
+        };
+        let mut req = tonic::Request::new(());
+        req.metadata_mut().insert("enchi", "cat".parse().unwrap());
+        let next_req = iceptor.call(req).unwrap();
+        assert_eq!(next_req.metadata().get("enchi").unwrap(), "cat");
+    }
+}
