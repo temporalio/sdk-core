@@ -24,6 +24,8 @@ derive_builder = "0.11"
 derive_more = "0.99"
 enum_dispatch = "0.3"
 futures = "0.3"
+# TODO: Pinned b/c https://github.com/rust-lang/futures-rs/issues/2634
+futures-util = "=0.3.21"
 governor = "0.4"
 http = "0.2"
 hyper = "0.14"
