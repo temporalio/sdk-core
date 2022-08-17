@@ -63,6 +63,8 @@ use tower::ServiceBuilder;
 use url::Url;
 use uuid::Uuid;
 
+static CLIENT_NAME_HEADER_KEY: &str = "client-name";
+static CLIENT_VERSION_HEADER_KEY: &str = "client-version";
 static LONG_POLL_METHOD_NAMES: [&str; 2] = ["PollWorkflowTaskQueue", "PollActivityTaskQueue"];
 /// The server times out polls after 60 seconds. Set our timeout to be slightly beyond that.
 const LONG_POLL_TIMEOUT: Duration = Duration::from_secs(70);
@@ -378,27 +380,35 @@ impl Interceptor for ServiceCallInterceptor {
     /// cancel the request and have that status returned to the caller.
     fn call(&mut self, mut request: tonic::Request<()>) -> Result<tonic::Request<()>, Status> {
         let metadata = request.metadata_mut();
-        metadata.insert(
-            "client-name",
-            self.opts
-                .client_name
-                .parse()
-                .unwrap_or_else(|_| MetadataValue::from_static("")),
-        );
-        metadata.insert(
-            "client-version",
-            self.opts
-                .client_version
-                .parse()
-                .unwrap_or_else(|_| MetadataValue::from_static("")),
-        );
+        if !metadata.contains_key(CLIENT_NAME_HEADER_KEY) {
+            metadata.insert(
+                CLIENT_NAME_HEADER_KEY,
+                self.opts
+                    .client_name
+                    .parse()
+                    .unwrap_or_else(|_| MetadataValue::from_static("")),
+            );
+        }
+        if !metadata.contains_key(CLIENT_VERSION_HEADER_KEY) {
+            metadata.insert(
+                CLIENT_VERSION_HEADER_KEY,
+                self.opts
+                    .client_version
+                    .parse()
+                    .unwrap_or_else(|_| MetadataValue::from_static("")),
+            );
+        }
         let headers = &*self.headers.read();
         for (k, v) in headers {
+            if metadata.contains_key(k) {
+                // Don't overwrite per-request specified headers
+                continue;
+            }
             if let (Ok(k), Ok(v)) = (MetadataKey::from_str(k), v.parse()) {
                 metadata.insert(k, v);
             }
         }
-        if metadata.get("grpc-timeout").is_none() {
+        if !metadata.contains_key("grpc-timeout") {
             request.set_timeout(OTHER_CALL_TIMEOUT);
         }
 
@@ -1082,3 +1092,30 @@ pub trait WfClientExt: WfHandleClient + Sized + Clone {
     }
 }
 impl<T> WfClientExt for T where T: WfHandleClient + Clone + Sized {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn respects_per_call_headers() {
+        let opts = ClientOptionsBuilder::default()
+            .identity("enchicat".to_string())
+            .target_url(Url::parse("https://smolkitty").unwrap())
+            .client_name("cute-kitty".to_string())
+            .client_version("0.1.0".to_string())
+            .build()
+            .unwrap();
+
+        let mut static_headers = HashMap::new();
+        static_headers.insert("enchi".to_string(), "kitty".to_string());
+        let mut iceptor = ServiceCallInterceptor {
+            opts,
+            headers: Arc::new(RwLock::new(static_headers)),
+        };
+        let mut req = tonic::Request::new(());
+        req.metadata_mut().insert("enchi", "cat".parse().unwrap());
+        let next_req = iceptor.call(req).unwrap();
+        assert_eq!(next_req.metadata().get("enchi").unwrap(), "cat");
+    }
+}

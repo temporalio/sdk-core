@@ -159,9 +159,9 @@ impl RawClientLike for Client {
 
 /// Helper for cloning a tonic request as long as the inner message may be cloned.
 /// We drop extensions, so, lang bridges can't pass those in :shrug:
-fn req_cloner<T: Clone>(cloneme: &tonic::Request<T>) -> tonic::Request<T> {
+fn req_cloner<T: Clone>(cloneme: &Request<T>) -> Request<T> {
     let msg = cloneme.get_ref().clone();
-    let mut new_req = tonic::Request::new(msg);
+    let mut new_req = Request::new(msg);
     let new_met = new_req.metadata_mut();
     for kv in cloneme.metadata().iter() {
         match kv {
@@ -822,7 +822,7 @@ mod tests {
             async move { c.list_namespaces(req).await }.boxed()
         };
         retry_client
-            .call("whatever", fact, tonic::Request::new(list_ns_req.clone()))
+            .call("whatever", fact, Request::new(list_ns_req.clone()))
             .await
             .unwrap();
 
@@ -833,7 +833,7 @@ mod tests {
             async move { c.delete_namespace(req).await }.boxed()
         };
         retry_client
-            .call("whatever", fact, tonic::Request::new(del_ns_req.clone()))
+            .call("whatever", fact, Request::new(del_ns_req.clone()))
             .await
             .unwrap();
 
