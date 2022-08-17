@@ -95,11 +95,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "../protos/api_upstream/temporal/api/workflowservice/v1/service.proto",
                 "../protos/api_upstream/temporal/api/operatorservice/v1/service.proto",
                 "../protos/testsrv_upstream/temporal/api/testservice/v1/service.proto",
+                "../protos/grpc/health/v1/health.proto",
             ],
             &[
                 "../protos/api_upstream",
                 "../protos/local",
                 "../protos/testsrv_upstream",
+                "../protos/grpc",
             ],
         )?;
     Ok(())

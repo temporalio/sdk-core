@@ -37,15 +37,16 @@ use std::{
 };
 use temporal_sdk_core_protos::{
     coresdk::{workflow_commands::QueryResult, IntoPayloadsExt},
+    grpc::health::v1::health_client::HealthClient,
     temporal::api::{
         command::v1::Command,
         common::v1::{Payload, Payloads, WorkflowExecution, WorkflowType},
         enums::v1::{TaskQueueKind, WorkflowTaskFailedCause},
         failure::v1::Failure,
-        operatorservice::v1::{operator_service_client::OperatorServiceClient, *},
+        operatorservice::v1::operator_service_client::OperatorServiceClient,
         query::v1::WorkflowQuery,
         taskqueue::v1::{StickyExecutionAttributes, TaskQueue},
-        testservice::v1::{test_service_client::TestServiceClient, *},
+        testservice::v1::test_service_client::TestServiceClient,
         workflowservice::v1::{workflow_service_client::WorkflowServiceClient, *},
     },
     TaskToken,
@@ -423,6 +424,7 @@ pub struct TemporalServiceClient<T> {
     workflow_svc_client: OnceCell<WorkflowServiceClient<T>>,
     operator_svc_client: OnceCell<OperatorServiceClient<T>>,
     test_svc_client: OnceCell<TestServiceClient<T>>,
+    health_svc_client: OnceCell<HealthClient<T>>,
 }
 impl<T> TemporalServiceClient<T>
 where
@@ -438,6 +440,7 @@ where
             workflow_svc_client: OnceCell::new(),
             operator_svc_client: OnceCell::new(),
             test_svc_client: OnceCell::new(),
+            health_svc_client: OnceCell::new(),
         }
     }
     /// Get the underlying workflow service client
@@ -469,6 +472,11 @@ where
     pub fn test_svc_mut(&mut self) -> &mut TestServiceClient<T> {
         let _ = self.test_svc();
         self.test_svc_client.get_mut().unwrap()
+    }
+    /// Get the underlying health service client mutably
+    pub fn health_svc_mut(&mut self) -> &mut HealthClient<T> {
+        let _ = self.test_svc();
+        self.health_svc_client.get_mut().unwrap()
     }
 }
 /// A [WorkflowServiceClient] with the default interceptors attached.
