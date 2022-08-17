@@ -1893,3 +1893,17 @@ pub mod temporal {
         }
     }
 }
+
+#[allow(
+    clippy::all,
+    missing_docs,
+    rustdoc::broken_intra_doc_links,
+    rustdoc::bare_urls
+)]
+pub mod grpc {
+    pub mod health {
+        pub mod v1 {
+            tonic::include_proto!("grpc.health.v1");
+        }
+    }
+}

@@ -9,11 +9,14 @@ use crate::{
     LONG_POLL_TIMEOUT,
 };
 use futures::{future::BoxFuture, FutureExt, TryFutureExt};
-use temporal_sdk_core_protos::temporal::api::{
-    operatorservice::v1::{operator_service_client::OperatorServiceClient, *},
-    taskqueue::v1::TaskQueue,
-    testservice::v1::{test_service_client::TestServiceClient, *},
-    workflowservice::v1::{workflow_service_client::WorkflowServiceClient, *},
+use temporal_sdk_core_protos::{
+    grpc::health::v1::{health_client::HealthClient, *},
+    temporal::api::{
+        operatorservice::v1::{operator_service_client::OperatorServiceClient, *},
+        taskqueue::v1::TaskQueue,
+        testservice::v1::{test_service_client::TestServiceClient, *},
+        workflowservice::v1::{workflow_service_client::WorkflowServiceClient, *},
+    },
 };
 use tonic::{
     body::BoxBody, client::GrpcService, metadata::KeyAndValueRef, Request, Response, Status,
@@ -35,6 +38,9 @@ pub(super) mod sealed {
 
         /// Return the test service client instance
         fn test_client(&mut self) -> &mut TestServiceClient<Self::SvcType>;
+
+        /// Return the health service client instance
+        fn health_client(&mut self) -> &mut HealthClient<Self::SvcType>;
 
         async fn call<F, Req, Resp>(
             &mut self,
@@ -71,6 +77,10 @@ where
 
     fn test_client(&mut self) -> &mut TestServiceClient<Self::SvcType> {
         self.get_client_mut().test_client()
+    }
+
+    fn health_client(&mut self) -> &mut HealthClient<Self::SvcType> {
+        self.get_client_mut().health_client()
     }
 
     async fn call<F, Req, Resp>(
@@ -116,6 +126,10 @@ where
     fn test_client(&mut self) -> &mut TestServiceClient<Self::SvcType> {
         self.test_svc_mut()
     }
+
+    fn health_client(&mut self) -> &mut HealthClient<Self::SvcType> {
+        self.health_svc_mut()
+    }
 }
 
 impl<T> RawClientLike for ConfiguredClient<TemporalServiceClient<T>>
@@ -139,6 +153,10 @@ where
     fn test_client(&mut self) -> &mut TestServiceClient<Self::SvcType> {
         self.client.test_client()
     }
+
+    fn health_client(&mut self) -> &mut HealthClient<Self::SvcType> {
+        self.client.health_client()
+    }
 }
 
 impl RawClientLike for Client {
@@ -154,6 +172,10 @@ impl RawClientLike for Client {
 
     fn test_client(&mut self) -> &mut TestServiceClient<Self::SvcType> {
         self.inner.test_client()
+    }
+
+    fn health_client(&mut self) -> &mut HealthClient<Self::SvcType> {
+        self.inner.health_client()
     }
 }
 
@@ -231,15 +253,25 @@ where
     <T::ResponseBody as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
 {
 }
+impl<RC, T> HealthService for RC
+where
+    RC: RawClientLike<SvcType = T>,
+    T: GrpcService<BoxBody> + Send + Clone + 'static,
+    T::ResponseBody: tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
+    T::Error: Into<tonic::codegen::StdError>,
+    T::Future: Send,
+    <T::ResponseBody as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
+{
+}
 
 /// Helps re-declare gRPC client methods
 macro_rules! proxy {
-    ($client_type:tt, $client_meth:ident, $method:ident, $req:ty, $resp:ident $(, $closure:expr)?) => {
+    ($client_type:tt, $client_meth:ident, $method:ident, $req:ty, $resp:ty $(, $closure:expr)?) => {
         #[doc = concat!("See [", stringify!($client_type), "::", stringify!($method), "]")]
         fn $method(
             &mut self,
             request: impl tonic::IntoRequest<$req>,
-        ) -> BoxFuture<Result<tonic::Response<super::$resp>, tonic::Status>> {
+        ) -> BoxFuture<Result<tonic::Response<$resp>, tonic::Status>> {
             #[allow(unused_mut)]
             let fact = |c: &mut Self, mut req: tonic::Request<$req>| {
                 $( type_closure_arg(&mut req, $closure); )*
@@ -252,7 +284,7 @@ macro_rules! proxy {
 }
 macro_rules! proxier {
     ( $trait_name:ident; $impl_list_name:ident; $client_type:tt; $client_meth:ident;
-      $(($method:ident, $req:ty, $resp:ident $(, $closure:expr)?  );)* ) => {
+      $(($method:ident, $req:ty, $resp:ty $(, $closure:expr)?  );)* ) => {
         #[cfg(test)]
         const $impl_list_name: &'static [&'static str] = &[$(stringify!($method)),*];
         /// Trait version of the generated client with modifications to attach appropriate metric
@@ -800,6 +832,12 @@ proxier! {
     (get_current_time, (), GetCurrentTimeResponse);
 }
 
+proxier! {
+    HealthService; ALL_IMPLEMENTED_HEALTH_SERVICE_RPCS; HealthClient; health_client;
+    (check, HealthCheckRequest, HealthCheckResponse);
+    (watch, HealthCheckRequest, tonic::codec::Streaming<HealthCheckResponse>);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -840,6 +878,11 @@ mod tests {
         // Verify calling through traits works
         retry_client.list_namespaces(list_ns_req).await.unwrap();
         retry_client.delete_namespace(del_ns_req).await.unwrap();
+        retry_client.get_current_time(()).await.unwrap();
+        retry_client
+            .check(HealthCheckRequest::default())
+            .await
+            .unwrap();
     }
 
     fn verify_methods(proto_def_str: &str, impl_list: &[&str]) {
@@ -879,5 +922,11 @@ mod tests {
         let proto_def =
             include_str!("../../protos/testsrv_upstream/temporal/api/testservice/v1/service.proto");
         verify_methods(proto_def, ALL_IMPLEMENTED_TEST_SERVICE_RPCS);
+    }
+
+    #[test]
+    fn verify_all_health_service_methods_implemented() {
+        let proto_def = include_str!("../../protos/grpc/health/v1/health.proto");
+        verify_methods(proto_def, ALL_IMPLEMENTED_HEALTH_SERVICE_RPCS);
     }
 }
