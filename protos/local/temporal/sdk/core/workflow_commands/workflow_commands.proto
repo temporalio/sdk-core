@@ -173,27 +173,30 @@ message FailWorkflowExecution {
     temporal.api.failure.v1.Failure failure = 1;
 }
 
-// TODO: Maybe combine all execution resolves into one message
-/// Continue the workflow as a new execution. Unless noted otherwise, unset or default field values
-/// will re-use the issuing workflow's values.
+// Continue the workflow as a new execution
 message ContinueAsNewWorkflowExecution {
-    /// The identifier the lang-specific sdk uses to execute workflow code
+    // The identifier the lang-specific sdk uses to execute workflow code
     string workflow_type = 1;
-    /// Task queue for the new workflow execution
+    // Task queue for the new workflow execution
     string task_queue = 2;
-    /// Inputs to the workflow code. Should be specified. Will not re-use old arguments, as that
-    /// typically wouldn't make any sense.
+    // Inputs to the workflow code. Should be specified. Will not re-use old arguments, as that
+    // typically wouldn't make any sense.
     repeated temporal.api.common.v1.Payload arguments = 3;
-    /// Timeout for a single run of the new workflow.
+    // Timeout for a single run of the new workflow. Will not re-use current workflow's value.
     google.protobuf.Duration workflow_run_timeout = 4;
-    /// Timeout of a single workflow task.
+    // Timeout of a single workflow task. Will not re-use current workflow's value.
     google.protobuf.Duration workflow_task_timeout = 5;
-    /// Memo fields
+    // If set, the new workflow will have this memo. If unset, re-uses the current workflow's memo
     map<string, temporal.api.common.v1.Payload> memo = 6;
-    /// Header fields
+    // If set, the new workflow will have these headers. Will *not* re-use current workflow's
+    // headers otherwise.
     map<string, temporal.api.common.v1.Payload> headers = 7;
-    /// Search attributes
+    // If set, the new workflow will have these search attributes. If unset, re-uses the current
+    // workflow's search attributes.
     map<string, temporal.api.common.v1.Payload> search_attributes = 8;
+    // If set, the new workflow will have this retry policy. If unset, re-uses the current
+    // workflow's retry policy.
+    temporal.api.common.v1.RetryPolicy retry_policy = 9;
 }
 
 /// Indicate a workflow has completed as cancelled. Generally sent as a response to an activation

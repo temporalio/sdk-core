@@ -42,7 +42,9 @@ use temporal_sdk_core_protos::{
             workflow_activation_job::{self, Variant},
             NotifyHasPatch, UpdateRandomSeed, WorkflowActivation,
         },
-        workflow_commands::request_cancel_external_workflow_execution as cancel_we,
+        workflow_commands::{
+            request_cancel_external_workflow_execution as cancel_we, ContinueAsNewWorkflowExecution,
+        },
     },
     temporal::api::{
         command::v1::Command as ProtoCommand,
@@ -878,6 +880,7 @@ impl WorkflowMachines {
                 }
                 WFCommand::ContinueAsNew(attrs) => {
                     self.metrics.wf_continued_as_new();
+                    let attrs = self.augment_continue_as_new_with_current_values(attrs);
                     self.add_terminal_command(continue_as_new(attrs));
                 }
                 WFCommand::CancelWorkflow(attrs) => {
@@ -1079,6 +1082,32 @@ impl WorkflowMachines {
             .get_mut(m)
             .expect("Machine must exist")
             .borrow_mut()
+    }
+
+    fn augment_continue_as_new_with_current_values(
+        &self,
+        mut attrs: ContinueAsNewWorkflowExecution,
+    ) -> ContinueAsNewWorkflowExecution {
+        if let Some(started_info) = self.drive_me.get_started_info() {
+            if attrs.memo.is_empty() {
+                attrs.memo = started_info
+                    .clone()
+                    .memo
+                    .map(Into::into)
+                    .unwrap_or_default();
+            }
+            if attrs.search_attributes.is_empty() {
+                attrs.search_attributes = started_info
+                    .search_attrs
+                    .clone()
+                    .map(Into::into)
+                    .unwrap_or_default();
+            }
+            if attrs.retry_policy.is_none() {
+                attrs.retry_policy = started_info.retry_policy.clone();
+            }
+        }
+        attrs
     }
 }
 

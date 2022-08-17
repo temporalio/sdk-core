@@ -58,6 +58,7 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::{
         command::v1::{command::Attributes, Command as ProtoCommand, Command},
+        common::v1::{Memo, RetryPolicy, SearchAttributes},
         enums::v1::WorkflowTaskFailedCause,
         taskqueue::v1::StickyExecutionAttributes,
         workflowservice::v1::PollActivityTaskQueueResponse,
@@ -1141,6 +1142,9 @@ enum CommandID {
 pub struct WorkflowStartedInfo {
     workflow_task_timeout: Option<Duration>,
     workflow_execution_timeout: Option<Duration>,
+    memo: Option<Memo>,
+    search_attrs: Option<SearchAttributes>,
+    retry_policy: Option<RetryPolicy>,
 }
 
 type LocalActivityRequestSink =

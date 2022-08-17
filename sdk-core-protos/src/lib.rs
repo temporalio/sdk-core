@@ -1501,7 +1501,7 @@ pub mod temporal {
                                 workflow_task_timeout: c.workflow_task_timeout,
                                 memo: Some(c.memo.into()),
                                 header: Some(c.headers.into()),
-                                search_attributes: Some(c.search_attributes.into()),
+                                retry_policy: c.retry_policy,
                                 ..Default::default()
                             },
                         )
@@ -1578,6 +1578,21 @@ pub mod temporal {
                 impl From<Header> for HashMap<String, Payload> {
                     fn from(h: Header) -> Self {
                         h.fields.into_iter().map(|(k, v)| (k, v.into())).collect()
+                    }
+                }
+
+                impl From<Memo> for HashMap<String, Payload> {
+                    fn from(h: Memo) -> Self {
+                        h.fields.into_iter().map(|(k, v)| (k, v.into())).collect()
+                    }
+                }
+
+                impl From<SearchAttributes> for HashMap<String, Payload> {
+                    fn from(h: SearchAttributes) -> Self {
+                        h.indexed_fields
+                            .into_iter()
+                            .map(|(k, v)| (k, v.into()))
+                            .collect()
                     }
                 }
 
