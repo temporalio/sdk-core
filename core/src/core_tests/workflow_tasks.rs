@@ -15,7 +15,7 @@ use crate::{
 use futures::{stream, FutureExt};
 use rstest::{fixture, rstest};
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
@@ -33,11 +33,15 @@ use temporal_sdk_core_protos::{
         },
         workflow_commands::{
             ActivityCancellationType, CancelTimer, CompleteWorkflowExecution,
-            FailWorkflowExecution, RequestCancelActivity, ScheduleActivity,
+            ContinueAsNewWorkflowExecution, FailWorkflowExecution, RequestCancelActivity,
+            ScheduleActivity,
         },
         workflow_completion::WorkflowActivationCompletion,
     },
+    default_wes_attribs,
     temporal::api::{
+        command::v1::command::Attributes,
+        common::v1::{Payload, RetryPolicy},
         enums::v1::{EventType, WorkflowTaskFailedCause},
         failure::v1::Failure,
         history::v1::{history_event, TimerFiredEventAttributes},
@@ -1999,4 +2003,68 @@ async fn no_race_acquiring_permits() {
         task_barr.wait().await;
     };
     join!(poll_1_f, poll_2_f, other_f);
+}
+
+#[tokio::test]
+async fn continue_as_new_preserves_some_values() {
+    let wfid = "fake_wf_id";
+    let memo = HashMap::<String, Payload>::from([("enchi".to_string(), b"cat".into())]).into();
+    let search = HashMap::<String, Payload>::from([("noisy".to_string(), b"kitty".into())]).into();
+    let retry_policy = RetryPolicy {
+        backoff_coefficient: 3.14,
+        ..Default::default()
+    };
+    let mut wes_attrs = default_wes_attribs();
+    wes_attrs.memo = Some(memo);
+    wes_attrs.search_attributes = Some(search);
+    wes_attrs.retry_policy = Some(retry_policy);
+    let mut mock_client = mock_workflow_client();
+    let hist = {
+        let mut t = TestHistoryBuilder::default();
+        t.add(
+            EventType::WorkflowExecutionStarted,
+            wes_attrs.clone().into(),
+        );
+        t.add_full_wf_task();
+        t
+    };
+    mock_client
+        .expect_poll_workflow_task()
+        .returning(move |_, _| {
+            Ok(hist_to_poll_resp(
+                &hist,
+                wfid.to_owned(),
+                ResponseType::AllHistory,
+                TEST_Q.to_string(),
+            )
+            .resp)
+        });
+    mock_client
+        .expect_complete_workflow_task()
+        .returning(move |mut c| {
+            let can_cmd = c.commands.pop().unwrap().attributes.unwrap();
+            if let Attributes::ContinueAsNewWorkflowExecutionCommandAttributes(a) = can_cmd {
+                assert_eq!(a.workflow_type.unwrap().name, "meow");
+                assert_eq!(a.memo, wes_attrs.memo);
+                assert_eq!(a.search_attributes, wes_attrs.search_attributes);
+                assert_eq!(a.retry_policy, wes_attrs.retry_policy);
+            } else {
+                panic!("Wrong attributes type");
+            }
+            Ok(Default::default())
+        });
+
+    let worker = Worker::new_test(test_worker_cfg().build().unwrap(), mock_client);
+    let r = worker.poll_workflow_activation().await.unwrap();
+    worker
+        .complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+            r.run_id,
+            ContinueAsNewWorkflowExecution {
+                workflow_type: "meow".to_string(),
+                ..Default::default()
+            }
+            .into(),
+        ))
+        .await
+        .unwrap();
 }

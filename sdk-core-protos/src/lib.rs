@@ -1499,9 +1499,22 @@ pub mod temporal {
                                 input: c.arguments.into_payloads(),
                                 workflow_run_timeout: c.workflow_run_timeout,
                                 workflow_task_timeout: c.workflow_task_timeout,
-                                memo: Some(c.memo.into()),
-                                header: Some(c.headers.into()),
+                                memo: if c.memo.is_empty() {
+                                    None
+                                } else {
+                                    Some(c.memo.into())
+                                },
+                                header: if c.headers.is_empty() {
+                                    None
+                                } else {
+                                    Some(c.headers.into())
+                                },
                                 retry_policy: c.retry_policy,
+                                search_attributes: if c.search_attributes.is_empty() {
+                                    None
+                                } else {
+                                    Some(c.search_attributes.into())
+                                },
                                 ..Default::default()
                             },
                         )

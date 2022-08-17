@@ -1091,8 +1091,8 @@ impl WorkflowMachines {
         if let Some(started_info) = self.drive_me.get_started_info() {
             if attrs.memo.is_empty() {
                 attrs.memo = started_info
-                    .clone()
                     .memo
+                    .clone()
                     .map(Into::into)
                     .unwrap_or_default();
             }
