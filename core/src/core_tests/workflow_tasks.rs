@@ -2011,7 +2011,7 @@ async fn continue_as_new_preserves_some_values() {
     let memo = HashMap::<String, Payload>::from([("enchi".to_string(), b"cat".into())]).into();
     let search = HashMap::<String, Payload>::from([("noisy".to_string(), b"kitty".into())]).into();
     let retry_policy = RetryPolicy {
-        backoff_coefficient: 3.14,
+        backoff_coefficient: 13.37,
         ..Default::default()
     };
     let mut wes_attrs = default_wes_attribs();
