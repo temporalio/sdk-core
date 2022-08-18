@@ -1435,6 +1435,49 @@ pub fn single_child_workflow_cancelled(child_wf_id: &str) -> TestHistoryBuilder 
 ///  3: EVENT_TYPE_WORKFLOW_TASK_STARTED
 ///  4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
 ///  5: EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED
+///  6: EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_STARTED
+///  7: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  8: EVENT_TYPE_WORKFLOW_TASK_STARTED
+///  9: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+/// 10: EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
+pub fn single_child_workflow_abandon_cancelled(child_wf_id: &str) -> TestHistoryBuilder {
+    let (mut t, _, _) = start_child_wf_preamble(child_wf_id);
+    t.add_workflow_execution_completed();
+    t
+}
+
+///  1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
+///  2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  3: EVENT_TYPE_WORKFLOW_TASK_STARTED
+///  4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+///  5: EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED
+///  6: EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_STARTED
+///  7: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  8: EVENT_TYPE_WORKFLOW_TASK_STARTED
+///  9: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+/// 10: EVENT_TYPE_REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED
+/// 11: EVENT_TYPE_EXTERNAL_WORKFLOW_EXECUTION_CANCEL_REQUESTED
+/// 12: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+/// 13: EVENT_TYPE_WORKFLOW_TASK_STARTED
+/// 14: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+/// 15: EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
+pub fn single_child_workflow_try_cancelled(child_wf_id: &str) -> TestHistoryBuilder {
+    let (mut t, _, _) = start_child_wf_preamble(child_wf_id);
+    let id = t.add_cancel_external_wf(NamespacedWorkflowExecution {
+        workflow_id: child_wf_id.to_string(),
+        ..Default::default()
+    });
+    t.add_cancel_external_wf_completed(id);
+    t.add_full_wf_task();
+    t.add_workflow_execution_completed();
+    t
+}
+
+///  1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
+///  2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  3: EVENT_TYPE_WORKFLOW_TASK_STARTED
+///  4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+///  5: EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED
 ///  5: EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_FAILED
 ///  6: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
 ///  7: EVENT_TYPE_WORKFLOW_TASK_STARTED

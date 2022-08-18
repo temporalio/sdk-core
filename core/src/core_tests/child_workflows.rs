@@ -104,12 +104,26 @@ async fn cancel_child_workflow() {
     wfm.shutdown().await.unwrap();
 }
 
+#[rstest::rstest]
+#[case::abandon(ChildWorkflowCancellationType::Abandon)]
+#[case::try_cancel(ChildWorkflowCancellationType::TryCancel)]
+#[case::wait_cancel_completed(ChildWorkflowCancellationType::WaitCancellationCompleted)]
 #[tokio::test]
-async fn cancel_child_workflow_lang_thinks_not_started_but_is() {
+async fn cancel_child_workflow_lang_thinks_not_started_but_is(
+    #[case] cancellation_type: ChildWorkflowCancellationType,
+) {
     // Since signal handlers always run first, it's possible lang might try to cancel
     // a child workflow it thinks isn't started, but we've told it is in the same activation.
     // It would be annoying for lang to have to peek ahead at jobs to be consistent in that case.
-    let t = canned_histories::single_child_workflow_cancelled("child-id-1");
+    let t = match cancellation_type {
+        ChildWorkflowCancellationType::Abandon => {
+            canned_histories::single_child_workflow_abandon_cancelled("child-id-1")
+        }
+        ChildWorkflowCancellationType::TryCancel => {
+            canned_histories::single_child_workflow_try_cancelled("child-id-1")
+        }
+        _ => canned_histories::single_child_workflow_cancelled("child-id-1"),
+    };
     let mock = mock_workflow_client();
     let mock = single_hist_mock_sg("fakeid", t, [ResponseType::AllHistory], mock, true);
     let core = mock_worker(mock);
@@ -118,6 +132,7 @@ async fn cancel_child_workflow_lang_thinks_not_started_but_is() {
         act.run_id,
         StartChildWorkflowExecution {
             seq: 1,
+            cancellation_type: cancellation_type as i32,
             ..Default::default()
         }
         .into(),

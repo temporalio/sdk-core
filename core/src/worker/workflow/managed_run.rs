@@ -154,7 +154,6 @@ impl ManagedRun {
                         me.send_update_response(outcome, no_wft);
                     }
                     Err(e) => {
-                        // TODO: Suppress pointless channel debug output
                         error!(error=?e, "Error in run machines");
                         me.am_broken = true;
                         me.update_tx
@@ -500,7 +499,8 @@ enum RunActionOutcome {
     AfterHeartbeatTimeout(Option<ActivationOrAuto>),
 }
 
-#[derive(Debug)]
+#[derive(derive_more::DebugCustom)]
+#[debug(fmt = "RunUpdateErr({:?})", source)]
 struct RunUpdateErr {
     source: WFMachinesError,
     complete_resp_chan: Option<oneshot::Sender<ActivationCompleteResult>>,

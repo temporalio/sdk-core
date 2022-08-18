@@ -7,7 +7,8 @@ use std::convert::{TryFrom, TryInto};
 use temporal_sdk_core_protos::{
     coresdk::{
         child_workflow::{
-            self as wfr, child_workflow_result::Status as ChildWorkflowStatus, ChildWorkflowResult,
+            self as wfr, child_workflow_result::Status as ChildWorkflowStatus,
+            ChildWorkflowCancellationType, ChildWorkflowResult,
         },
         workflow_activation::{
             resolve_child_workflow_execution_start, ResolveChildWorkflowExecution,
@@ -26,8 +27,7 @@ use temporal_sdk_core_protos::{
         history::v1::{
             history_event, ChildWorkflowExecutionCompletedEventAttributes,
             ChildWorkflowExecutionFailedEventAttributes,
-            ChildWorkflowExecutionStartedEventAttributes,
-            ChildWorkflowExecutionTimedOutEventAttributes, HistoryEvent,
+            ChildWorkflowExecutionStartedEventAttributes, HistoryEvent,
             StartChildWorkflowExecutionFailedEventAttributes,
         },
     },
@@ -54,16 +54,18 @@ fsm! {
         on_child_workflow_execution_completed) --> Completed;
     Started --(ChildWorkflowExecutionFailed(ChildWorkflowExecutionFailedEventAttributes),
         shared on_child_workflow_execution_failed) --> Failed;
-    Started --(ChildWorkflowExecutionTimedOut(i32),
+    Started --(ChildWorkflowExecutionTimedOut(RetryState),
         shared on_child_workflow_execution_timed_out) --> TimedOut;
     Started --(ChildWorkflowExecutionCancelled,
-        shared on_child_workflow_execution_cancelled) --> Cancelled;
+        on_child_workflow_execution_cancelled) --> Cancelled;
     Started --(ChildWorkflowExecutionTerminated,
         shared on_child_workflow_execution_terminated) --> Terminated;
     // If cancelled after started, we need to issue a cancel external workflow command, and then
     // the child workflow will resolve somehow, so we want to go back to started and wait for that
     // resolution.
-    Started --(Cancel, on_cancelled) --> Started;
+    Started --(Cancel, shared on_cancelled) --> Started;
+    // Abandon & try cancel modes may immediately move to cancelled
+    Started --(Cancel, shared on_cancelled) --> Cancelled;
     Started --(CommandRequestCancelExternalWorkflowExecution) --> Started;
 
     // Ignore any spurious cancellations after resolution
@@ -87,7 +89,7 @@ pub(super) enum ChildWorkflowCommand {
     #[display(fmt = "Fail")]
     Fail(Failure),
     #[display(fmt = "Cancel")]
-    Cancel(Failure),
+    Cancel,
     #[display(fmt = "StartFail")]
     StartFail(StartChildWorkflowExecutionFailedCause),
     #[display(fmt = "StartCancel")]
@@ -152,10 +154,7 @@ impl StartCommandCreated {
                     )),
                     ..Default::default()
                 })),
-                failure_info: failure_info_from_state(
-                    state.clone(),
-                    RetryState::NonRetryableFailure as i32,
-                ),
+                failure_info: failure_info_from_state(&state, RetryState::NonRetryableFailure),
                 ..Default::default()
             })],
             Cancelled::default(),
@@ -220,8 +219,8 @@ impl Started {
         ChildWorkflowMachineTransition::ok(
             vec![ChildWorkflowCommand::Fail(Failure {
                 message: "Child Workflow execution failed".to_owned(),
+                failure_info: failure_info_from_state(&state, attrs.retry_state()),
                 cause: attrs.failure.map(Box::new),
-                failure_info: failure_info_from_state(state, attrs.retry_state),
                 ..Default::default()
             })],
             Failed::default(),
@@ -230,7 +229,7 @@ impl Started {
     fn on_child_workflow_execution_timed_out(
         self,
         state: SharedState,
-        retry_state: i32,
+        retry_state: RetryState,
     ) -> ChildWorkflowMachineTransition<TimedOut> {
         ChildWorkflowMachineTransition::ok(
             vec![ChildWorkflowCommand::Fail(Failure {
@@ -245,35 +244,14 @@ impl Started {
                     )),
                     ..Default::default()
                 })),
-                failure_info: failure_info_from_state(state, retry_state),
+                failure_info: failure_info_from_state(&state, retry_state),
                 ..Default::default()
             })],
             TimedOut::default(),
         )
     }
-    fn on_child_workflow_execution_cancelled(
-        self,
-        state: SharedState,
-    ) -> ChildWorkflowMachineTransition<Cancelled> {
-        ChildWorkflowMachineTransition::ok(
-            vec![ChildWorkflowCommand::Cancel(Failure {
-                message: "Child Workflow execution cancelled".to_owned(),
-                cause: Some(Box::new(Failure {
-                    failure_info: Some(FailureInfo::CanceledFailureInfo(
-                        failure::CanceledFailureInfo {
-                            ..Default::default()
-                        },
-                    )),
-                    ..Default::default()
-                })),
-                failure_info: failure_info_from_state(
-                    state,
-                    RetryState::NonRetryableFailure as i32,
-                ),
-                ..Default::default()
-            })],
-            Cancelled::default(),
-        )
+    fn on_child_workflow_execution_cancelled(self) -> ChildWorkflowMachineTransition<Cancelled> {
+        ChildWorkflowMachineTransition::ok(vec![ChildWorkflowCommand::Cancel], Cancelled::default())
     }
     fn on_child_workflow_execution_terminated(
         self,
@@ -289,23 +267,27 @@ impl Started {
                     )),
                     ..Default::default()
                 })),
-                failure_info: failure_info_from_state(
-                    state,
-                    RetryState::NonRetryableFailure as i32,
-                ),
+                failure_info: failure_info_from_state(&state, RetryState::NonRetryableFailure),
                 ..Default::default()
             })],
             Terminated::default(),
         )
     }
-    fn on_cancelled(self) -> ChildWorkflowMachineTransition<Started> {
+    fn on_cancelled(
+        self,
+        state: SharedState,
+    ) -> ChildWorkflowMachineTransition<StartedOrCancelled> {
+        let dest = match state.cancel_type {
+            ChildWorkflowCancellationType::Abandon | ChildWorkflowCancellationType::TryCancel => {
+                StartedOrCancelled::Cancelled(Default::default())
+            }
+            _ => StartedOrCancelled::Started(Default::default()),
+        };
         TransitionResult::ok(
-            // TODO: Also immediately resolve ABANDON / TRY_CANCEL
-            //   No good way to pass in reason currently.
             [ChildWorkflowCommand::IssueCancelAfterStarted {
                 reason: "Parent workflow requested cancel".to_string(),
             }],
-            Started::default(),
+            dest,
         )
     }
 }
@@ -326,6 +308,7 @@ pub(super) struct SharedState {
     run_id: String,
     workflow_type: String,
     cancelled_before_sent: bool,
+    cancel_type: ChildWorkflowCancellationType,
 }
 
 /// Creates a new child workflow state machine and a command to start it on the server.
@@ -347,6 +330,7 @@ impl ChildWorkflowMachine {
                 workflow_id: attribs.workflow_id.clone(),
                 workflow_type: attribs.workflow_type.clone(),
                 namespace: attribs.namespace.clone(),
+                cancel_type: attribs.cancellation_type(),
                 ..Default::default()
             },
         };
@@ -357,6 +341,33 @@ impl ChildWorkflowMachine {
             attributes: Some(attribs.into()),
         };
         (s, cmd)
+    }
+
+    fn resolve_cancelled_msg(&self) -> ResolveChildWorkflowExecution {
+        let failure = Failure {
+            message: "Child Workflow execution cancelled".to_owned(),
+            cause: Some(Box::new(Failure {
+                failure_info: Some(FailureInfo::CanceledFailureInfo(
+                    failure::CanceledFailureInfo {
+                        ..Default::default()
+                    },
+                )),
+                ..Default::default()
+            })),
+            failure_info: failure_info_from_state(
+                &self.shared_state,
+                RetryState::NonRetryableFailure,
+            ),
+            ..Default::default()
+        };
+        ResolveChildWorkflowExecution {
+            seq: self.shared_state.lang_sequence_number,
+            result: Some(ChildWorkflowResult {
+                status: Some(ChildWorkflowStatus::Cancelled(wfr::Cancellation {
+                    failure: Some(failure),
+                })),
+            }),
+        }
     }
 }
 
@@ -440,12 +451,10 @@ impl TryFrom<HistoryEvent> for ChildWorkflowMachineEvents {
             }
             Some(EventType::ChildWorkflowExecutionTimedOut) => {
                 if let Some(
-                    history_event::Attributes::ChildWorkflowExecutionTimedOutEventAttributes(
-                        ChildWorkflowExecutionTimedOutEventAttributes { retry_state, .. },
-                    ),
+                    history_event::Attributes::ChildWorkflowExecutionTimedOutEventAttributes(atts),
                 ) = e.attributes
                 {
-                    Self::ChildWorkflowExecutionTimedOut(retry_state)
+                    Self::ChildWorkflowExecutionTimedOut(atts.retry_state())
                 } else {
                     return Err(WFMachinesError::Fatal(
                         "ChildWorkflowExecutionTimedOut attributes were unset or malformed"
@@ -531,29 +540,33 @@ impl WFMachinesAdapter for ChildWorkflowMachine {
                 }
                 .into()]
             }
-            ChildWorkflowCommand::Cancel(failure) => {
-                vec![ResolveChildWorkflowExecution {
-                    seq: self.shared_state.lang_sequence_number,
-                    result: Some(ChildWorkflowResult {
-                        status: Some(ChildWorkflowStatus::Cancelled(wfr::Cancellation {
-                            failure: Some(failure),
-                        })),
-                    }),
-                }
-                .into()]
+            ChildWorkflowCommand::Cancel => {
+                vec![self.resolve_cancelled_msg().into()]
             }
             ChildWorkflowCommand::IssueCancelAfterStarted { reason } => {
-                vec![MachineResponse::NewCoreOriginatedCommand(
-                    RequestCancelExternalWorkflowExecutionCommandAttributes {
-                        namespace: self.shared_state.namespace.clone(),
-                        workflow_id: self.shared_state.workflow_id.clone(),
-                        run_id: self.shared_state.run_id.clone(),
-                        child_workflow_only: true,
-                        reason,
-                        control: "".to_string(),
-                    }
-                    .into(),
-                )]
+                let mut resps = vec![];
+                if self.shared_state.cancel_type != ChildWorkflowCancellationType::Abandon {
+                    resps.push(MachineResponse::NewCoreOriginatedCommand(
+                        RequestCancelExternalWorkflowExecutionCommandAttributes {
+                            namespace: self.shared_state.namespace.clone(),
+                            workflow_id: self.shared_state.workflow_id.clone(),
+                            run_id: self.shared_state.run_id.clone(),
+                            child_workflow_only: true,
+                            reason,
+                            control: "".to_string(),
+                        }
+                        .into(),
+                    ))
+                }
+                // Immediately resolve abandon/trycancel modes
+                if matches!(
+                    self.shared_state.cancel_type,
+                    ChildWorkflowCancellationType::Abandon
+                        | ChildWorkflowCancellationType::TryCancel
+                ) {
+                    resps.push(self.resolve_cancelled_msg().into())
+                }
+                resps
             }
         })
     }
@@ -616,7 +629,7 @@ impl Cancellable for ChildWorkflowMachine {
     }
 }
 
-fn failure_info_from_state(state: SharedState, retry_state: i32) -> Option<FailureInfo> {
+fn failure_info_from_state(state: &SharedState, retry_state: RetryState) -> Option<FailureInfo> {
     Some(FailureInfo::ChildWorkflowExecutionFailureInfo(
         failure::ChildWorkflowExecutionFailureInfo {
             namespace: state.namespace.clone(),
@@ -625,10 +638,10 @@ fn failure_info_from_state(state: SharedState, retry_state: i32) -> Option<Failu
             }),
             initiated_event_id: state.initiated_event_id,
             started_event_id: state.started_event_id,
-            retry_state,
+            retry_state: retry_state as i32,
             workflow_execution: Some(WorkflowExecution {
                 workflow_id: state.workflow_id.clone(),
-                run_id: state.run_id,
+                run_id: state.run_id.clone(),
             }),
         },
     ))
