@@ -1074,7 +1074,7 @@ pub enum WFCommand {
     CancelWorkflow(CancelWorkflowExecution),
     SetPatchMarker(SetPatchMarker),
     AddChildWorkflow(StartChildWorkflowExecution),
-    CancelUnstartedChild(CancelUnstartedChildWorkflowExecution),
+    CancelChild(CancelChildWorkflowExecution),
     RequestCancelExternalWorkflow(RequestCancelExternalWorkflowExecution),
     SignalExternalWorkflow(SignalExternalWorkflowExecution),
     CancelSignalWorkflow(CancelSignalWorkflow),
@@ -1112,9 +1112,7 @@ impl TryFrom<WorkflowCommand> for WFCommand {
                 Ok(Self::SignalExternalWorkflow(s))
             }
             workflow_command::Variant::CancelSignalWorkflow(s) => Ok(Self::CancelSignalWorkflow(s)),
-            workflow_command::Variant::CancelUnstartedChildWorkflowExecution(s) => {
-                Ok(Self::CancelUnstartedChild(s))
-            }
+            workflow_command::Variant::CancelChildWorkflowExecution(s) => Ok(Self::CancelChild(s)),
             workflow_command::Variant::ScheduleLocalActivity(s) => Ok(Self::AddLocalActivity(s)),
             workflow_command::Variant::RequestCancelLocalActivity(s) => {
                 Ok(Self::RequestCancelLocalActivity(s))

@@ -11,7 +11,7 @@ use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::coresdk::{
     child_workflow::{child_workflow_result, ChildWorkflowCancellationType},
     workflow_activation::{workflow_activation_job, WorkflowActivationJob},
-    workflow_commands::{CancelUnstartedChildWorkflowExecution, StartChildWorkflowExecution},
+    workflow_commands::{CancelChildWorkflowExecution, StartChildWorkflowExecution},
     workflow_completion::WorkflowActivationCompletion,
 };
 use tokio::join;
@@ -132,17 +132,16 @@ async fn cancel_child_workflow_lang_thinks_not_started_but_is() {
             variant: Some(workflow_activation_job::Variant::ResolveChildWorkflowExecutionStart(_)),
         }]
     );
-    // Respond with "incorrect" cancel type command
-    core.complete_workflow_activation(
-        WorkflowActivationCompletion::from_cmd(
-            act.run_id,
-            CancelUnstartedChildWorkflowExecution {
-                child_workflow_seq: 1,
-            }
-            .into(),
-        )
+    // Issue the cancel command
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+        act.run_id,
+        CancelChildWorkflowExecution {
+            child_workflow_seq: 1,
+        }
         .into(),
-    )
+    ))
     .await
     .unwrap();
+    let act = core.poll_workflow_activation().await.unwrap();
+    dbg!(act);
 }

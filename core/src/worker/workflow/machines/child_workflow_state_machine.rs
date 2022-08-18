@@ -17,7 +17,7 @@ use temporal_sdk_core_protos::{
         workflow_commands::StartChildWorkflowExecution,
     },
     temporal::api::{
-        command::v1::Command,
+        command::v1::{Command, RequestCancelExternalWorkflowExecutionCommandAttributes},
         common::v1::{Payload, Payloads, WorkflowExecution, WorkflowType},
         enums::v1::{
             CommandType, EventType, RetryState, StartChildWorkflowExecutionFailedCause, TimeoutType,
@@ -41,17 +41,30 @@ fsm! {
 
     Created --(Schedule, on_schedule) --> StartCommandCreated;
     StartCommandCreated --(CommandStartChildWorkflowExecution) --> StartCommandCreated;
-    StartCommandCreated --(StartChildWorkflowExecutionInitiated(i64), shared on_start_child_workflow_execution_initiated) --> StartEventRecorded;
+    StartCommandCreated --(StartChildWorkflowExecutionInitiated(i64),
+        shared on_start_child_workflow_execution_initiated) --> StartEventRecorded;
     StartCommandCreated --(Cancel, shared on_cancelled) --> Cancelled;
 
-    StartEventRecorded --(ChildWorkflowExecutionStarted(ChildWorkflowExecutionStartedEvent), shared on_child_workflow_execution_started) --> Started;
-    StartEventRecorded --(StartChildWorkflowExecutionFailed(StartChildWorkflowExecutionFailedCause), on_start_child_workflow_execution_failed) --> StartFailed;
+    StartEventRecorded --(ChildWorkflowExecutionStarted(ChildWorkflowExecutionStartedEvent),
+        shared on_child_workflow_execution_started) --> Started;
+    StartEventRecorded --(StartChildWorkflowExecutionFailed(StartChildWorkflowExecutionFailedCause),
+        on_start_child_workflow_execution_failed) --> StartFailed;
 
-    Started --(ChildWorkflowExecutionCompleted(Option<Payloads>), on_child_workflow_execution_completed) --> Completed;
-    Started --(ChildWorkflowExecutionFailed(ChildWorkflowExecutionFailedEventAttributes), shared on_child_workflow_execution_failed) --> Failed;
-    Started --(ChildWorkflowExecutionTimedOut(i32), shared on_child_workflow_execution_timed_out) --> TimedOut;
-    Started --(ChildWorkflowExecutionCancelled, shared on_child_workflow_execution_cancelled) --> Cancelled;
-    Started --(ChildWorkflowExecutionTerminated, shared on_child_workflow_execution_terminated) --> Terminated;
+    Started --(ChildWorkflowExecutionCompleted(Option<Payloads>),
+        on_child_workflow_execution_completed) --> Completed;
+    Started --(ChildWorkflowExecutionFailed(ChildWorkflowExecutionFailedEventAttributes),
+        shared on_child_workflow_execution_failed) --> Failed;
+    Started --(ChildWorkflowExecutionTimedOut(i32),
+        shared on_child_workflow_execution_timed_out) --> TimedOut;
+    Started --(ChildWorkflowExecutionCancelled,
+        shared on_child_workflow_execution_cancelled) --> Cancelled;
+    Started --(ChildWorkflowExecutionTerminated,
+        shared on_child_workflow_execution_terminated) --> Terminated;
+    // If cancelled after started, we need to issue a cancel external workflow command, and then
+    // the child workflow will resolve somehow, so we want to go back to started and wait for that
+    // resolution.
+    Started --(Cancel, on_cancelled) --> Started;
+    Started --(CommandRequestCancelExternalWorkflowExecution) --> Started;
 
     // Ignore any spurious cancellations after resolution
     Cancelled --(Cancel) --> Cancelled;
@@ -79,6 +92,8 @@ pub(super) enum ChildWorkflowCommand {
     StartFail(StartChildWorkflowExecutionFailedCause),
     #[display(fmt = "StartCancel")]
     StartCancel(Failure),
+    #[display(fmt = "CancelAfterStarted")]
+    IssueCancelAfterStarted { reason: String },
 }
 
 #[derive(Default, Clone)]
@@ -188,7 +203,7 @@ pub(super) struct StartFailed {}
 pub(super) struct Started {}
 
 impl Started {
-    pub(super) fn on_child_workflow_execution_completed(
+    fn on_child_workflow_execution_completed(
         self,
         result: Option<Payloads>,
     ) -> ChildWorkflowMachineTransition<Completed> {
@@ -197,7 +212,7 @@ impl Started {
             Completed::default(),
         )
     }
-    pub(super) fn on_child_workflow_execution_failed(
+    fn on_child_workflow_execution_failed(
         self,
         state: SharedState,
         attrs: ChildWorkflowExecutionFailedEventAttributes,
@@ -212,7 +227,7 @@ impl Started {
             Failed::default(),
         )
     }
-    pub(super) fn on_child_workflow_execution_timed_out(
+    fn on_child_workflow_execution_timed_out(
         self,
         state: SharedState,
         retry_state: i32,
@@ -236,7 +251,7 @@ impl Started {
             TimedOut::default(),
         )
     }
-    pub(super) fn on_child_workflow_execution_cancelled(
+    fn on_child_workflow_execution_cancelled(
         self,
         state: SharedState,
     ) -> ChildWorkflowMachineTransition<Cancelled> {
@@ -260,7 +275,7 @@ impl Started {
             Cancelled::default(),
         )
     }
-    pub(super) fn on_child_workflow_execution_terminated(
+    fn on_child_workflow_execution_terminated(
         self,
         state: SharedState,
     ) -> ChildWorkflowMachineTransition<Terminated> {
@@ -281,6 +296,16 @@ impl Started {
                 ..Default::default()
             })],
             Terminated::default(),
+        )
+    }
+    fn on_cancelled(self) -> ChildWorkflowMachineTransition<Started> {
+        TransitionResult::ok(
+            // TODO: Also immediately resolve ABANDON / TRY_CANCEL
+            //   No good way to pass in reason currently.
+            [ChildWorkflowCommand::IssueCancelAfterStarted {
+                reason: "Parent workflow requested cancel".to_string(),
+            }],
+            Started::default(),
         )
     }
 }
@@ -435,9 +460,10 @@ impl TryFrom<HistoryEvent> for ChildWorkflowMachineEvents {
                 Self::ChildWorkflowExecutionCancelled
             }
             _ => {
-                return Err(WFMachinesError::Fatal(
-                    "Child workflow machine does not handle this event".to_string(),
-                ))
+                return Err(WFMachinesError::Fatal(format!(
+                    "Child workflow machine does not handle this event: {:?}",
+                    e
+                )))
             }
         })
     }
@@ -516,6 +542,19 @@ impl WFMachinesAdapter for ChildWorkflowMachine {
                 }
                 .into()]
             }
+            ChildWorkflowCommand::IssueCancelAfterStarted { reason } => {
+                vec![MachineResponse::NewCoreOriginatedCommand(
+                    RequestCancelExternalWorkflowExecutionCommandAttributes {
+                        namespace: self.shared_state.namespace.clone(),
+                        workflow_id: self.shared_state.workflow_id.clone(),
+                        run_id: self.shared_state.run_id.clone(),
+                        child_workflow_only: true,
+                        reason,
+                        control: "".to_string(),
+                    }
+                    .into(),
+                )]
+            }
         })
     }
 
@@ -544,34 +583,30 @@ impl TryFrom<CommandType> for ChildWorkflowMachineEvents {
     fn try_from(c: CommandType) -> Result<Self, Self::Error> {
         Ok(match c {
             CommandType::StartChildWorkflowExecution => Self::CommandStartChildWorkflowExecution,
+            CommandType::RequestCancelExternalWorkflowExecution => {
+                Self::CommandRequestCancelExternalWorkflowExecution
+            }
             _ => return Err(()),
         })
     }
 }
 
-/// Cancellation through this machine is valid only when start child workflow command is not sent
-/// yet. Cancellation of an initiated child workflow is done through CancelExternal.
-/// All of the types besides ABANDON are treated differently.
 impl Cancellable for ChildWorkflowMachine {
     fn cancel(&mut self) -> Result<Vec<MachineResponse>, MachineError<Self::Error>> {
         let event = ChildWorkflowMachineEvents::Cancel;
         let vec = OnEventWrapper::on_event_mut(self, event)?;
         let res = vec
             .into_iter()
-            .flat_map(|mc| match mc {
-                ChildWorkflowCommand::StartCancel(failure) => {
-                    vec![ResolveChildWorkflowExecutionStart {
-                        seq: self.shared_state.lang_sequence_number,
-                        status: Some(resolve_child_workflow_execution_start::Status::Cancelled(
-                            ResolveChildWorkflowExecutionStartCancelled {
-                                failure: Some(failure),
-                            },
-                        )),
-                    }
-                    .into()]
+            .map(|mc| match mc {
+                c @ ChildWorkflowCommand::StartCancel(_)
+                | c @ ChildWorkflowCommand::IssueCancelAfterStarted { .. } => {
+                    self.adapt_response(c, None)
                 }
                 x => panic!("Invalid cancel event response {:?}", x),
             })
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .flatten()
             .collect();
         Ok(res)
     }

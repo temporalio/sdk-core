@@ -47,7 +47,7 @@ use temporal_sdk_core_protos::{
         },
     },
     temporal::api::{
-        command::v1::Command as ProtoCommand,
+        command::v1::{command::Attributes as ProtoCmdAttrs, Command as ProtoCommand},
         enums::v1::EventType,
         history::v1::{history_event, HistoryEvent},
     },
@@ -155,7 +155,14 @@ pub enum MachineResponse {
     #[display(fmt = "PushWFJob({})", "_0")]
     PushWFJob(workflow_activation_job::Variant),
 
+    /// Pushes a new command into the list that will be sent to server once we respond with the
+    /// workflow task completion
     IssueNewCommand(ProtoCommand),
+    /// The machine requests the creation of another *different* machine. This acts as if lang
+    /// had replied to the activation with a command, but we use a special set of IDs to avoid
+    /// collisions.
+    #[display(fmt = "NewCoreOriginatedCommand({:?})", "_0")]
+    NewCoreOriginatedCommand(ProtoCmdAttrs),
     #[display(fmt = "IssueFakeLocalActivityMarker({})", "_0")]
     IssueFakeLocalActivityMarker(u32),
     #[display(fmt = "TriggerWFTaskStarted")]
@@ -164,9 +171,7 @@ pub enum MachineResponse {
         time: SystemTime,
     },
     #[display(fmt = "UpdateRunIdOnWorkflowReset({})", run_id)]
-    UpdateRunIdOnWorkflowReset {
-        run_id: String,
-    },
+    UpdateRunIdOnWorkflowReset { run_id: String },
 
     /// Queue a local activity to be processed by the worker
     #[display(fmt = "QueueLocalActivity")]
@@ -784,6 +789,9 @@ impl WorkflowMachines {
                         machine: smk,
                     })
                 }
+                MachineResponse::NewCoreOriginatedCommand(_) => {
+                    todo!("Use impl from process_cancellation")
+                }
                 MachineResponse::IssueFakeLocalActivityMarker(seq) => {
                     self.current_wf_task_commands.push_back(CommandAndMachine {
                         command: MachineAssociatedCommand::FakeLocalActivityMarker(seq),
@@ -917,7 +925,7 @@ impl WorkflowMachines {
                         Some(CommandID::ChildWorkflowStart(seq)),
                     );
                 }
-                WFCommand::CancelUnstartedChild(attrs) => jobs.extend(self.process_cancellation(
+                WFCommand::CancelChild(attrs) => jobs.extend(self.process_cancellation(
                     CommandID::ChildWorkflowStart(attrs.child_workflow_seq),
                 )?),
                 WFCommand::RequestCancelExternalWorkflow(attrs) => {
@@ -973,9 +981,14 @@ impl WorkflowMachines {
     fn process_cancellation(&mut self, id: CommandID) -> Result<Vec<Variant>> {
         let mut jobs = vec![];
         let m_key = self.get_machine_key(id)?;
-        let machine_resps = self.machine_mut(m_key).cancel()?;
+        let mach = self.machine_mut(m_key);
+        // If we're cancelling an already-started child workflow, turn that into an external
+        // workflow cancel.
+        dbg!(&mach.kind());
+        let machine_resps = mach.cancel()?;
         debug!(machine_responses = %machine_resps.display(), cmd_id = ?id,
                "Cancel request responses");
+        // TODO: Only check valid response variants, then delegate to `process_machine_responses`
         for r in machine_resps {
             match r {
                 MachineResponse::IssueNewCommand(c) => {
@@ -984,6 +997,29 @@ impl WorkflowMachines {
                         machine: m_key,
                     });
                 }
+                MachineResponse::NewCoreOriginatedCommand(attrs) => match attrs {
+                    ProtoCmdAttrs::RequestCancelExternalWorkflowExecutionCommandAttributes(
+                        attrs,
+                    ) => {
+                        info!("Yo want to make machine");
+                        // TODO: figure out seq
+                        let we = NamespacedWorkflowExecution {
+                            namespace: attrs.namespace,
+                            workflow_id: attrs.workflow_id,
+                            run_id: attrs.run_id,
+                        };
+                        self.add_cmd_to_wf_task(
+                            new_external_cancel(0, we, attrs.child_workflow_only, attrs.reason),
+                            None,
+                        );
+                    }
+                    c => {
+                        return Err(WFMachinesError::Fatal(format!(
+                        "A machine requested to create a new command of an unsupported type: {:?}",
+                        c
+                    )))
+                    }
+                },
                 MachineResponse::PushWFJob(j) => {
                     jobs.push(j);
                 }

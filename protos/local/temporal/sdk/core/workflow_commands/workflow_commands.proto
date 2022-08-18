@@ -28,7 +28,7 @@ message WorkflowCommand {
         CancelWorkflowExecution cancel_workflow_execution = 9;
         SetPatchMarker set_patch_marker = 10;
         StartChildWorkflowExecution start_child_workflow_execution = 11;
-        CancelUnstartedChildWorkflowExecution cancel_unstarted_child_workflow_execution = 12;
+        CancelChildWorkflowExecution cancel_child_workflow_execution = 12;
         RequestCancelExternalWorkflowExecution request_cancel_external_workflow_execution = 13;
         SignalExternalWorkflowExecution signal_external_workflow_execution = 14;
         CancelSignalWorkflow cancel_signal_workflow = 15;
@@ -246,8 +246,8 @@ message StartChildWorkflowExecution {
     child_workflow.ChildWorkflowCancellationType cancellation_type = 18;
 }
 
-/// Cancel a not-yet-started child workflow
-message CancelUnstartedChildWorkflowExecution {
+/// Cancel a child workflow
+message CancelChildWorkflowExecution {
     // Sequence number as given to the `StartChildWorkflowExecution` command
     uint32 child_workflow_seq = 1;
 }

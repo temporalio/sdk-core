@@ -154,6 +154,7 @@ impl ManagedRun {
                         me.send_update_response(outcome, no_wft);
                     }
                     Err(e) => {
+                        // TODO: Suppress pointless channel debug output
                         error!(error=?e, "Error in run machines");
                         me.am_broken = true;
                         me.update_tx
