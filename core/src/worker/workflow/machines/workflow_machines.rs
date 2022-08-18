@@ -27,7 +27,7 @@ use crate::{
     },
 };
 use siphasher::sip::SipHasher13;
-use slotmap::SlotMap;
+use slotmap::{SlotMap, SparseSecondaryMap};
 use std::{
     borrow::{Borrow, BorrowMut},
     collections::{HashMap, VecDeque},
@@ -96,6 +96,9 @@ pub(crate) struct WorkflowMachines {
     current_wf_time: Option<SystemTime>,
 
     all_machines: SlotMap<MachineKey, Machines>,
+    /// If a machine key is in this map, that machine was created internally by core, not as a
+    /// command from lang.
+    machine_is_core_created: SparseSecondaryMap<MachineKey, ()>,
 
     /// A mapping for accessing machines associated to a particular event, where the key is the id
     /// of the initiating event for that machine.
@@ -227,6 +230,7 @@ impl WorkflowMachines {
             wft_start_time: None,
             current_wf_time: None,
             all_machines: Default::default(),
+            machine_is_core_created: Default::default(),
             machines_by_event_id: Default::default(),
             id_to_machine: Default::default(),
             commands: Default::default(),
@@ -765,7 +769,10 @@ impl WorkflowMachines {
         for response in machine_responses {
             match response {
                 MachineResponse::PushWFJob(a) => {
-                    self.drive_me.send_job(a);
+                    // We don't need to notify lang about jobs created by core-internal machines
+                    if !self.machine_is_core_created.contains_key(smk) {
+                        self.drive_me.send_job(a);
+                    }
                 }
                 MachineResponse::TriggerWFTaskStarted {
                     task_started_event_id,
@@ -835,17 +842,20 @@ impl WorkflowMachines {
             match cmd {
                 WFCommand::AddTimer(attrs) => {
                     let seq = attrs.seq;
-                    self.add_cmd_to_wf_task(new_timer(attrs), Some(CommandID::Timer(seq)));
+                    self.add_cmd_to_wf_task(new_timer(attrs), CommandID::Timer(seq).into());
                 }
                 WFCommand::UpsertSearchAttributes(attrs) => {
-                    self.add_cmd_to_wf_task(upsert_search_attrs(attrs), None);
+                    self.add_cmd_to_wf_task(
+                        upsert_search_attrs(attrs),
+                        CommandIdKind::NeverResolves,
+                    );
                 }
                 WFCommand::CancelTimer(attrs) => {
                     jobs.extend(self.process_cancellation(CommandID::Timer(attrs.seq))?);
                 }
                 WFCommand::AddActivity(attrs) => {
                     let seq = attrs.seq;
-                    self.add_cmd_to_wf_task(new_activity(attrs), Some(CommandID::Activity(seq)));
+                    self.add_cmd_to_wf_task(new_activity(attrs), CommandID::Activity(seq).into());
                 }
                 WFCommand::AddLocalActivity(attrs) => {
                     let seq = attrs.seq;
@@ -903,7 +913,7 @@ impl WorkflowMachines {
                     {
                         self.add_cmd_to_wf_task(
                             has_change(attrs.patch_id.clone(), self.replaying, attrs.deprecated),
-                            None,
+                            CommandIdKind::NeverResolves,
                         );
 
                         if let Some(ci) = self.encountered_change_markers.get_mut(&attrs.patch_id) {
@@ -922,7 +932,7 @@ impl WorkflowMachines {
                     let seq = attrs.seq;
                     self.add_cmd_to_wf_task(
                         new_child_workflow(attrs),
-                        Some(CommandID::ChildWorkflowStart(seq)),
+                        CommandID::ChildWorkflowStart(seq).into(),
                     );
                 }
                 WFCommand::CancelChild(attrs) => jobs.extend(self.process_cancellation(
@@ -953,14 +963,14 @@ impl WorkflowMachines {
                             only_child,
                             format!("Cancel requested by workflow with run id {}", self.run_id),
                         ),
-                        Some(CommandID::CancelExternal(attrs.seq)),
+                        CommandID::CancelExternal(attrs.seq).into(),
                     );
                 }
                 WFCommand::SignalExternalWorkflow(attrs) => {
                     let seq = attrs.seq;
                     self.add_cmd_to_wf_task(
                         new_external_signal(attrs, &self.namespace)?,
-                        Some(CommandID::SignalExternal(seq)),
+                        CommandID::SignalExternal(seq).into(),
                     );
                 }
                 WFCommand::CancelSignalWorkflow(attrs) => {
@@ -1010,7 +1020,7 @@ impl WorkflowMachines {
                         };
                         self.add_cmd_to_wf_task(
                             new_external_cancel(0, we, attrs.child_workflow_only, attrs.reason),
-                            None,
+                            CommandIdKind::CoreInternal,
                         );
                     }
                     c => {
@@ -1090,10 +1100,13 @@ impl WorkflowMachines {
     }
 
     /// Add a new command/machines for that command to the current workflow task
-    fn add_cmd_to_wf_task(&mut self, machine: NewMachineWithCommand, id: Option<CommandID>) {
+    fn add_cmd_to_wf_task(&mut self, machine: NewMachineWithCommand, id: CommandIdKind) {
         let mach = self.add_new_command_machine(machine);
-        if let Some(id) = id {
+        if let CommandIdKind::LangIssued(id) = id {
             self.id_to_machine.insert(id, mach.machine);
+        }
+        if matches!(id, CommandIdKind::CoreInternal) {
+            self.machine_is_core_created.insert(mach.machine, ());
         }
         self.current_wf_task_commands.push_back(mach);
     }
@@ -1191,4 +1204,14 @@ fn change_marker_handling(
         }
     }
     Ok(ChangeMarkerOutcome::Normal)
+}
+
+#[derive(derive_more::From)]
+enum CommandIdKind {
+    /// A normal command, requested by lang
+    LangIssued(CommandID),
+    /// A command created internally
+    CoreInternal,
+    /// A command which is fire-and-forget (ex: Upsert search attribs)
+    NeverResolves,
 }

@@ -106,7 +106,6 @@ async fn cancel_child_workflow() {
 
 #[tokio::test]
 async fn cancel_child_workflow_lang_thinks_not_started_but_is() {
-    crate::telemetry::test_telem_console();
     // Since signal handlers always run first, it's possible lang might try to cancel
     // a child workflow it thinks isn't started, but we've told it is in the same activation.
     // It would be annoying for lang to have to peek ahead at jobs to be consistent in that case.
@@ -143,5 +142,14 @@ async fn cancel_child_workflow_lang_thinks_not_started_but_is() {
     .await
     .unwrap();
     let act = core.poll_workflow_activation().await.unwrap();
-    dbg!(act);
+    // Make sure that a resolve for the "request cancel external workflow" command does *not* appear
+    // since lang didn't actually issue one. The only job should be resolving the child workflow.
+    assert_matches!(
+        act.jobs.as_slice(),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::ResolveChildWorkflowExecution(_)),
+        }]
+    );
+    // Request cancel external is technically fallible, but the only reasons relate to targeting
+    // a not-found workflow, which couldn't happen in this case.
 }
