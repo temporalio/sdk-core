@@ -2,7 +2,7 @@
 //! to replay canned histories. It should be used by Lang SDKs to provide replay capabilities to
 //! users during testing.
 
-use crate::{worker::client::mocks::mock_manual_workflow_client, WorkerClientBag};
+use crate::worker::client::{mocks::mock_manual_workflow_client, WorkerClient};
 use futures::FutureExt;
 use std::{
     sync::{
@@ -29,7 +29,7 @@ pub use temporal_sdk_core_protos::{
 pub(crate) fn mock_client_from_history(
     history: &History,
     task_queue: impl Into<String>,
-) -> WorkerClientBag {
+) -> impl WorkerClient {
     let mut mg = mock_manual_workflow_client();
 
     let hist_info = HistoryInfo::new_from_history(history, None).unwrap();
@@ -67,5 +67,5 @@ pub(crate) fn mock_client_from_history(
         async move { Ok(RespondWorkflowTaskFailedResponse {}) }.boxed()
     });
 
-    WorkerClientBag::new(Box::new(mg), "fake_namespace".to_string())
+    mg
 }

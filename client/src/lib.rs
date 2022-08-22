@@ -37,15 +37,16 @@ use std::{
 };
 use temporal_sdk_core_protos::{
     coresdk::{workflow_commands::QueryResult, IntoPayloadsExt},
+    grpc::health::v1::health_client::HealthClient,
     temporal::api::{
         command::v1::Command,
         common::v1::{Header, Payload, Payloads, WorkflowExecution, WorkflowType},
         enums::v1::{TaskQueueKind, WorkflowIdReusePolicy, WorkflowTaskFailedCause},
         failure::v1::Failure,
-        operatorservice::v1::{operator_service_client::OperatorServiceClient, *},
-        query::v1::{WorkflowQuery, WorkflowQueryResult},
-        taskqueue::v1::{StickyExecutionAttributes, TaskQueue, TaskQueueMetadata},
-        testservice::v1::{test_service_client::TestServiceClient, *},
+        operatorservice::v1::operator_service_client::OperatorServiceClient,
+        query::v1::WorkflowQuery,
+        taskqueue::v1::{StickyExecutionAttributes, TaskQueue},
+        testservice::v1::test_service_client::TestServiceClient,
         workflowservice::v1::{workflow_service_client::WorkflowServiceClient, *},
     },
     TaskToken,
@@ -63,6 +64,8 @@ use tower::ServiceBuilder;
 use url::Url;
 use uuid::Uuid;
 
+static CLIENT_NAME_HEADER_KEY: &str = "client-name";
+static CLIENT_VERSION_HEADER_KEY: &str = "client-version";
 static LONG_POLL_METHOD_NAMES: [&str; 2] = ["PollWorkflowTaskQueue", "PollActivityTaskQueue"];
 /// The server times out polls after 60 seconds. Set our timeout to be slightly beyond that.
 const LONG_POLL_TIMEOUT: Duration = Duration::from_secs(70);
@@ -206,45 +209,6 @@ pub enum ClientInitError {
     /// server capabilities / verify server is responding.
     #[error("`get_system_info` call error after connection: {0:?}")]
     SystemInfoCallError(tonic::Status),
-}
-
-#[doc(hidden)]
-/// Allows passing different kinds of clients into things that want to be flexible. Motivating
-/// use-case was worker initialization.
-///
-/// Needs to exist in this crate to avoid blanket impl conflicts.
-pub enum AnyClient {
-    /// A high level client, like the type workers work with
-    HighLevel(Arc<dyn WorkflowClientTrait + Send + Sync>),
-    /// A low level gRPC client, wrapped with the typical interceptors
-    LowLevel(Box<ConfiguredClient<TemporalServiceClientWithMetrics>>),
-}
-
-impl<SGA> From<SGA> for AnyClient
-where
-    SGA: WorkflowClientTrait + Send + Sync + 'static,
-{
-    fn from(s: SGA) -> Self {
-        Self::HighLevel(Arc::new(s))
-    }
-}
-impl<SGA> From<Arc<SGA>> for AnyClient
-where
-    SGA: WorkflowClientTrait + Send + Sync + 'static,
-{
-    fn from(s: Arc<SGA>) -> Self {
-        Self::HighLevel(s)
-    }
-}
-impl From<RetryClient<ConfiguredClient<TemporalServiceClientWithMetrics>>> for AnyClient {
-    fn from(c: RetryClient<ConfiguredClient<TemporalServiceClientWithMetrics>>) -> Self {
-        Self::LowLevel(Box::new(c.into_inner()))
-    }
-}
-impl From<ConfiguredClient<TemporalServiceClientWithMetrics>> for AnyClient {
-    fn from(c: ConfiguredClient<TemporalServiceClientWithMetrics>) -> Self {
-        Self::LowLevel(Box::new(c))
-    }
 }
 
 /// A client with [ClientOptions] attached, which can be passed to initialize workers,
@@ -417,27 +381,35 @@ impl Interceptor for ServiceCallInterceptor {
     /// cancel the request and have that status returned to the caller.
     fn call(&mut self, mut request: tonic::Request<()>) -> Result<tonic::Request<()>, Status> {
         let metadata = request.metadata_mut();
-        metadata.insert(
-            "client-name",
-            self.opts
-                .client_name
-                .parse()
-                .unwrap_or_else(|_| MetadataValue::from_static("")),
-        );
-        metadata.insert(
-            "client-version",
-            self.opts
-                .client_version
-                .parse()
-                .unwrap_or_else(|_| MetadataValue::from_static("")),
-        );
+        if !metadata.contains_key(CLIENT_NAME_HEADER_KEY) {
+            metadata.insert(
+                CLIENT_NAME_HEADER_KEY,
+                self.opts
+                    .client_name
+                    .parse()
+                    .unwrap_or_else(|_| MetadataValue::from_static("")),
+            );
+        }
+        if !metadata.contains_key(CLIENT_VERSION_HEADER_KEY) {
+            metadata.insert(
+                CLIENT_VERSION_HEADER_KEY,
+                self.opts
+                    .client_version
+                    .parse()
+                    .unwrap_or_else(|_| MetadataValue::from_static("")),
+            );
+        }
         let headers = &*self.headers.read();
         for (k, v) in headers {
+            if metadata.contains_key(k) {
+                // Don't overwrite per-request specified headers
+                continue;
+            }
             if let (Ok(k), Ok(v)) = (MetadataKey::from_str(k), v.parse()) {
                 metadata.insert(k, v);
             }
         }
-        if metadata.get("grpc-timeout").is_none() {
+        if !metadata.contains_key("grpc-timeout") {
             request.set_timeout(OTHER_CALL_TIMEOUT);
         }
 
@@ -452,6 +424,7 @@ pub struct TemporalServiceClient<T> {
     workflow_svc_client: OnceCell<WorkflowServiceClient<T>>,
     operator_svc_client: OnceCell<OperatorServiceClient<T>>,
     test_svc_client: OnceCell<TestServiceClient<T>>,
+    health_svc_client: OnceCell<HealthClient<T>>,
 }
 impl<T> TemporalServiceClient<T>
 where
@@ -467,6 +440,7 @@ where
             workflow_svc_client: OnceCell::new(),
             operator_svc_client: OnceCell::new(),
             test_svc_client: OnceCell::new(),
+            health_svc_client: OnceCell::new(),
         }
     }
     /// Get the underlying workflow service client
@@ -498,6 +472,11 @@ where
     pub fn test_svc_mut(&mut self) -> &mut TestServiceClient<T> {
         let _ = self.test_svc();
         self.test_svc_client.get_mut().unwrap()
+    }
+    /// Get the underlying health service client mutably
+    pub fn health_svc_mut(&mut self) -> &mut HealthClient<T> {
+        let _ = self.test_svc();
+        self.health_svc_client.get_mut().unwrap()
     }
 }
 /// A [WorkflowServiceClient] with the default interceptors attached.
@@ -570,6 +549,16 @@ impl Client {
         self.bound_worker_build_id = Some(id)
     }
 
+    /// Returns a reference to the underlying client
+    pub fn inner(&self) -> &ConfiguredClient<TemporalServiceClientWithMetrics> {
+        &self.inner
+    }
+
+    /// Consumes self and returns the underlying client
+    pub fn into_inner(self) -> ConfiguredClient<TemporalServiceClientWithMetrics> {
+        self.inner
+    }
+
     fn wf_svc(&self) -> WorkflowServiceClientWithMetrics {
         self.inner.workflow_svc().clone()
     }
@@ -591,22 +580,6 @@ pub trait WorkflowClientTrait {
         options: WorkflowOptions,
     ) -> Result<StartWorkflowExecutionResponse>;
 
-    /// Fetch new workflow tasks from the provided queue. Should block indefinitely if there is no
-    /// work.
-    async fn poll_workflow_task(
-        &self,
-        task_queue: String,
-        is_sticky: bool,
-    ) -> Result<PollWorkflowTaskQueueResponse>;
-
-    /// Fetch new activity tasks from the provided queue. Should block indefinitely if there is no
-    /// work.
-    async fn poll_activity_task(
-        &self,
-        task_queue: String,
-        max_tasks_per_sec: Option<f64>,
-    ) -> Result<PollActivityTaskQueueResponse>;
-
     /// Notifies the server that workflow tasks for a given workflow should be sent to the normal
     /// non-sticky task queue. This normally happens when workflow has been evicted from the cache.
     async fn reset_sticky_task_queue(
@@ -614,12 +587,6 @@ pub trait WorkflowClientTrait {
         workflow_id: String,
         run_id: String,
     ) -> Result<ResetStickyTaskQueueResponse>;
-
-    /// Complete a workflow activation.
-    async fn complete_workflow_task(
-        &self,
-        request: WorkflowTaskCompletion,
-    ) -> Result<RespondWorkflowTaskCompletedResponse>;
 
     /// Complete activity task by sending response to the server. `task_token` contains activity
     /// identifier that would've been received from polling for an activity task. `result` is a blob
@@ -810,56 +777,6 @@ impl WorkflowClientTrait for Client {
             .into_inner())
     }
 
-    async fn poll_workflow_task(
-        &self,
-        task_queue: String,
-        is_sticky: bool,
-    ) -> Result<PollWorkflowTaskQueueResponse> {
-        let request = PollWorkflowTaskQueueRequest {
-            namespace: self.namespace.clone(),
-            task_queue: Some(TaskQueue {
-                name: task_queue,
-                kind: if is_sticky {
-                    TaskQueueKind::Sticky
-                } else {
-                    TaskQueueKind::Normal
-                } as i32,
-            }),
-            identity: self.inner.options.identity.clone(),
-            binary_checksum: self.bound_worker_build_id.clone().unwrap_or_default(),
-        };
-
-        Ok(self
-            .wf_svc()
-            .poll_workflow_task_queue(request)
-            .await?
-            .into_inner())
-    }
-
-    async fn poll_activity_task(
-        &self,
-        task_queue: String,
-        max_tasks_per_sec: Option<f64>,
-    ) -> Result<PollActivityTaskQueueResponse> {
-        let request = PollActivityTaskQueueRequest {
-            namespace: self.namespace.clone(),
-            task_queue: Some(TaskQueue {
-                name: task_queue,
-                kind: TaskQueueKind::Normal as i32,
-            }),
-            identity: self.inner.options.identity.clone(),
-            task_queue_metadata: max_tasks_per_sec.map(|tps| TaskQueueMetadata {
-                max_tasks_per_second: Some(tps),
-            }),
-        };
-
-        Ok(self
-            .wf_svc()
-            .poll_activity_task_queue(request)
-            .await?
-            .into_inner())
-    }
-
     async fn reset_sticky_task_queue(
         &self,
         workflow_id: String,
@@ -875,42 +792,6 @@ impl WorkflowClientTrait for Client {
         Ok(self
             .wf_svc()
             .reset_sticky_task_queue(request)
-            .await?
-            .into_inner())
-    }
-
-    async fn complete_workflow_task(
-        &self,
-        request: WorkflowTaskCompletion,
-    ) -> Result<RespondWorkflowTaskCompletedResponse> {
-        let request = RespondWorkflowTaskCompletedRequest {
-            task_token: request.task_token.into(),
-            commands: request.commands,
-            identity: self.inner.options.identity.clone(),
-            sticky_attributes: request.sticky_attributes,
-            return_new_workflow_task: request.return_new_workflow_task,
-            force_create_new_workflow_task: request.force_create_new_workflow_task,
-            binary_checksum: self.bound_worker_build_id.clone().unwrap_or_default(),
-            query_results: request
-                .query_responses
-                .into_iter()
-                .map(|qr| {
-                    let (id, completed_type, query_result, error_message) = qr.into_components();
-                    (
-                        id,
-                        WorkflowQueryResult {
-                            result_type: completed_type as i32,
-                            answer: query_result,
-                            error_message,
-                        },
-                    )
-                })
-                .collect(),
-            namespace: self.namespace.clone(),
-        };
-        Ok(self
-            .wf_svc()
-            .respond_workflow_task_completed(request)
             .await?
             .into_inner())
     }
@@ -1252,3 +1133,30 @@ pub trait WfClientExt: WfHandleClient + Sized + Clone {
     }
 }
 impl<T> WfClientExt for T where T: WfHandleClient + Clone + Sized {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn respects_per_call_headers() {
+        let opts = ClientOptionsBuilder::default()
+            .identity("enchicat".to_string())
+            .target_url(Url::parse("https://smolkitty").unwrap())
+            .client_name("cute-kitty".to_string())
+            .client_version("0.1.0".to_string())
+            .build()
+            .unwrap();
+
+        let mut static_headers = HashMap::new();
+        static_headers.insert("enchi".to_string(), "kitty".to_string());
+        let mut iceptor = ServiceCallInterceptor {
+            opts,
+            headers: Arc::new(RwLock::new(static_headers)),
+        };
+        let mut req = tonic::Request::new(());
+        req.metadata_mut().insert("enchi", "cat".parse().unwrap());
+        let next_req = iceptor.call(req).unwrap();
+        assert_eq!(next_req.metadata().get("enchi").unwrap(), "cat");
+    }
+}

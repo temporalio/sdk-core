@@ -12,8 +12,7 @@ use crate::{
     pollers::BoxedActPoller,
     telemetry::metrics::{activity_type, activity_worker_type, workflow_type, MetricsContext},
     worker::{
-        activities::activity_heartbeat_manager::ActivityHeartbeatError,
-        client::{WorkerClient, WorkerClientBag},
+        activities::activity_heartbeat_manager::ActivityHeartbeatError, client::WorkerClient,
     },
     CompleteActivityError, PollActivityError, TaskToken,
 };
@@ -136,7 +135,7 @@ impl WorkerActivityTasks {
         max_activity_tasks: usize,
         max_worker_act_per_sec: Option<f64>,
         poller: BoxedActPoller,
-        client: Arc<WorkerClientBag>,
+        client: Arc<dyn WorkerClient>,
         metrics: MetricsContext,
         max_heartbeat_throttle_interval: Duration,
         default_heartbeat_throttle_interval: Duration,
@@ -446,15 +445,11 @@ mod tests {
             }
             .into(),
         ]);
-        let client = WorkerClientBag::new(
-            Box::new(mock_manual_workflow_client()),
-            "fake_namespace".to_string(),
-        );
         let atm = WorkerActivityTasks::new(
             10,
             Some(2.0),
             poller,
-            Arc::new(client),
+            Arc::new(mock_manual_workflow_client()),
             MetricsContext::default(),
             Duration::from_secs(1),
             Duration::from_secs(1),

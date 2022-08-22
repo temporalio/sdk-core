@@ -9,7 +9,7 @@ use crate::{
         client::{mocks::mock_workflow_client, MockWorkerClient, WorkerClient},
         new_wft_poller,
     },
-    TaskToken, Worker, WorkerClientBag, WorkerConfig, WorkerConfigBuilder,
+    TaskToken, Worker, WorkerConfig, WorkerConfigBuilder,
 };
 use bimap::BiMap;
 use futures::{future::BoxFuture, stream, stream::BoxStream, FutureExt, Stream, StreamExt};
@@ -136,7 +136,7 @@ pub(crate) fn mock_worker(mocks: MocksHolder) -> Worker {
     Worker::new_with_pollers(
         mocks.inputs.config,
         sticky_q,
-        Arc::new(mocks.client_bag),
+        mocks.client,
         mocks.inputs.wft_stream,
         mocks.inputs.act_poller,
         Default::default(),
@@ -166,7 +166,7 @@ pub struct FakeWfResponses {
 
 // TODO: Should be all-internal to this module
 pub struct MocksHolder {
-    client_bag: WorkerClientBag,
+    client: Arc<dyn WorkerClient>,
     inputs: MockWorkerInputs,
     pub outstanding_task_map: Option<OutstandingWFTMap>,
 }
@@ -218,11 +218,11 @@ impl MockWorkerInputs {
 
 impl MocksHolder {
     pub(crate) fn from_mock_worker(
-        client_bag: WorkerClientBag,
+        client: impl WorkerClient + 'static,
         mock_worker: MockWorkerInputs,
     ) -> Self {
         Self {
-            client_bag,
+            client: Arc::new(client),
             inputs: mock_worker,
             outstanding_task_map: None,
         }
@@ -245,7 +245,7 @@ impl MocksHolder {
             config: test_worker_cfg().build().unwrap(),
         };
         Self {
-            client_bag: client.into(),
+            client: Arc::new(client),
             inputs: mock_worker,
             outstanding_task_map: None,
         }
@@ -267,7 +267,7 @@ impl MocksHolder {
             config: test_worker_cfg().build().unwrap(),
         };
         Self {
-            client_bag: client.into(),
+            client: Arc::new(client),
             inputs: mock_worker,
             outstanding_task_map: None,
         }
@@ -604,7 +604,7 @@ pub(crate) fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder {
         });
 
     MocksHolder {
-        client_bag: cfg.mock_client.into(),
+        client: Arc::new(cfg.mock_client),
         inputs: mock_worker,
         outstanding_task_map: Some(outstanding_wf_task_tokens),
     }

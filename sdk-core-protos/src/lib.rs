@@ -1324,6 +1324,11 @@ pub mod temporal {
                 tonic::include_proto!("temporal.api.cluster.v1");
             }
         }
+        pub mod batch {
+            pub mod v1 {
+                tonic::include_proto!("temporal.api.batch.v1");
+            }
+        }
         pub mod command {
             pub mod v1 {
                 tonic::include_proto!("temporal.api.command.v1");
@@ -1494,9 +1499,22 @@ pub mod temporal {
                                 input: c.arguments.into_payloads(),
                                 workflow_run_timeout: c.workflow_run_timeout,
                                 workflow_task_timeout: c.workflow_task_timeout,
-                                memo: Some(c.memo.into()),
-                                header: Some(c.headers.into()),
-                                search_attributes: Some(c.search_attributes.into()),
+                                memo: if c.memo.is_empty() {
+                                    None
+                                } else {
+                                    Some(c.memo.into())
+                                },
+                                header: if c.headers.is_empty() {
+                                    None
+                                } else {
+                                    Some(c.headers.into())
+                                },
+                                retry_policy: c.retry_policy,
+                                search_attributes: if c.search_attributes.is_empty() {
+                                    None
+                                } else {
+                                    Some(c.search_attributes.into())
+                                },
                                 ..Default::default()
                             },
                         )
@@ -1573,6 +1591,21 @@ pub mod temporal {
                 impl From<Header> for HashMap<String, Payload> {
                     fn from(h: Header) -> Self {
                         h.fields.into_iter().map(|(k, v)| (k, v.into())).collect()
+                    }
+                }
+
+                impl From<Memo> for HashMap<String, Payload> {
+                    fn from(h: Memo) -> Self {
+                        h.fields.into_iter().map(|(k, v)| (k, v.into())).collect()
+                    }
+                }
+
+                impl From<SearchAttributes> for HashMap<String, Payload> {
+                    fn from(h: SearchAttributes) -> Self {
+                        h.indexed_fields
+                            .into_iter()
+                            .map(|(k, v)| (k, v.into()))
+                            .collect()
                     }
                 }
 
@@ -1857,6 +1890,20 @@ pub mod temporal {
                     }
                 }
             }
+        }
+    }
+}
+
+#[allow(
+    clippy::all,
+    missing_docs,
+    rustdoc::broken_intra_doc_links,
+    rustdoc::bare_urls
+)]
+pub mod grpc {
+    pub mod health {
+        pub mod v1 {
+            tonic::include_proto!("grpc.health.v1");
         }
     }
 }

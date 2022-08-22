@@ -88,6 +88,13 @@ pub struct WorkerConfig {
     /// the options to fail.
     #[builder(default)]
     pub max_worker_activities_per_second: Option<f64>,
+
+    /// # UNDER DEVELOPMENT
+    /// If set to true this worker will opt-in to the whole-worker versioning feature.
+    /// `worker_build_id` will be used as the version.
+    /// todo: link to feature docs
+    #[builder(default = "false")]
+    pub use_worker_versioning: bool,
 }
 
 impl WorkerConfig {

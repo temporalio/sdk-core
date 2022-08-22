@@ -24,7 +24,7 @@ use crate::{
     telemetry::VecDisplayer,
     worker::{
         activities::{ActivitiesFromWFTsHandle, PermittedTqResp},
-        client::should_swallow_net_error,
+        client::{should_swallow_net_error, WorkerClient},
         workflow::{
             managed_run::{ManagedRun, WorkflowManager},
             wft_poller::validate_wft,
@@ -32,7 +32,7 @@ use crate::{
         },
         LocalActRequest, LocalActivityResolution,
     },
-    MetricsContext, WorkerClientBag,
+    MetricsContext,
 };
 use futures::{stream::BoxStream, Stream, StreamExt};
 use std::{
@@ -58,6 +58,7 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::{
         command::v1::{command::Attributes, Command as ProtoCommand, Command},
+        common::v1::{Memo, RetryPolicy, SearchAttributes},
         enums::v1::WorkflowTaskFailedCause,
         taskqueue::v1::StickyExecutionAttributes,
         workflowservice::v1::PollActivityTaskQueueResponse,
@@ -90,7 +91,7 @@ pub(crate) struct Workflows {
         // Used to indicate polling may begin
         Option<oneshot::Sender<()>>,
     )>,
-    client: Arc<WorkerClientBag>,
+    client: Arc<dyn WorkerClient>,
     /// Will be populated when this worker is using a cache and should complete WFTs with a sticky
     /// queue.
     sticky_attrs: Option<StickyExecutionAttributes>,
@@ -103,13 +104,14 @@ pub(super) struct WorkflowBasics {
     pub max_outstanding_wfts: usize,
     pub shutdown_token: CancellationToken,
     pub metrics: MetricsContext,
+    pub namespace: String,
 }
 
 impl Workflows {
     pub(super) fn new(
         basics: WorkflowBasics,
         sticky_attrs: Option<StickyExecutionAttributes>,
-        client: Arc<WorkerClientBag>,
+        client: Arc<dyn WorkerClient>,
         wft_stream: impl Stream<Item = Result<ValidPollWFTQResponse, tonic::Status>> + Send + 'static,
         local_activity_request_sink: impl Fn(Vec<LocalActRequest>) -> Vec<LocalActivityResolution>
             + Send
@@ -1140,6 +1142,9 @@ enum CommandID {
 pub struct WorkflowStartedInfo {
     workflow_task_timeout: Option<Duration>,
     workflow_execution_timeout: Option<Duration>,
+    memo: Option<Memo>,
+    search_attrs: Option<SearchAttributes>,
+    retry_policy: Option<RetryPolicy>,
 }
 
 type LocalActivityRequestSink =

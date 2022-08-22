@@ -45,6 +45,9 @@ impl DrivenWorkflow {
                 .workflow_execution_timeout
                 .clone()
                 .try_into_or_none(),
+            memo: attribs.memo.clone(),
+            search_attrs: attribs.search_attributes.clone(),
+            retry_policy: attribs.retry_policy.clone(),
         };
         self.send_job(start_workflow_from_attribs(attribs, workflow_id, randomness_seed).into());
         self.started_attrs = Some(started_info);
