@@ -754,7 +754,7 @@ pub struct WorkflowOptions {
     /// Optionally indicates the default task timeout for workflow tasks
     pub task_timeout: Option<Duration>,
 
-    /// Optionally set a cron schedule for workflow
+    /// Optionally set a cron schedule for the workflow
     pub cron_schedule: Option<String>,
 
     /// Optionally associate extra search attributes with a workflow
