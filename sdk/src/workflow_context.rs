@@ -372,10 +372,10 @@ impl WfContext {
 pub struct DrainableSignalStream(UnboundedReceiverStream<SignalData>);
 
 impl DrainableSignalStream {
-    pub fn drain_all(mut self) -> Vec<SignalData> {
-        let mut cx = std::task::Context::from_waker(futures::task::noop_waker_ref());
+    pub fn drain_all(self) -> Vec<SignalData> {
+        let mut receiver = self.0.into_inner();
         let mut signals = vec![];
-        while let Poll::Ready(Some(s)) = self.0.poll_next_unpin(&mut cx) {
+        while let Ok(s) = receiver.try_recv() {
             signals.push(s);
         }
         signals
