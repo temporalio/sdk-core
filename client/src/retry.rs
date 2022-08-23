@@ -1,4 +1,4 @@
-use crate::{ClientOptions, Result, RetryConfig, WorkflowClientTrait, WorkflowOptions};
+use crate::{ClientOptions, Result, RetryConfig, WorkflowClientTrait, WorkflowOptions, Namespace};
 use backoff::{backoff::Backoff, ExponentialBackoff};
 use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
 use std::{fmt::Debug, future::Future, sync::Arc, time::Duration};
@@ -434,6 +434,10 @@ where
 
     async fn list_namespaces(&self) -> Result<ListNamespacesResponse> {
         retry_call!(self, list_namespaces,)
+    }
+
+    async fn describe_namespace(&self, namespace: Namespace) -> Result<DescribeNamespaceResponse> {
+        retry_call!(self, describe_namespace, namespace.clone())
     }
 
     fn get_options(&self) -> &ClientOptions {
