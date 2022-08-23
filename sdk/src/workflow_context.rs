@@ -11,7 +11,7 @@ use crate::{
     SignalExternalWfResult, TimerResult, UnblockEvent, Unblockable,
 };
 use crossbeam::channel::{Receiver, Sender};
-use futures::{task::Context, FutureExt, Stream, StreamExt};
+use futures::{task::Context, FutureExt, Stream};
 use parking_lot::RwLock;
 use std::{
     collections::HashMap,
