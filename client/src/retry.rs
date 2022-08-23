@@ -1,4 +1,4 @@
-use crate::{ClientOptions, Result, RetryConfig, WorkflowClientTrait, WorkflowOptions, Namespace};
+use crate::{ClientOptions, Namespace, Result, RetryConfig, WorkflowClientTrait, WorkflowOptions};
 use backoff::{backoff::Backoff, ExponentialBackoff};
 use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
 use std::{fmt::Debug, future::Future, sync::Arc, time::Duration};

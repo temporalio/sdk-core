@@ -569,7 +569,7 @@ impl Client {
 pub enum Namespace {
     /// Namespace name
     Name(String),
-    /// Namespace id 
+    /// Namespace id
     Id(String),
 }
 
@@ -577,15 +577,11 @@ impl Namespace {
     fn into_describe_namespace_request(self) -> DescribeNamespaceRequest {
         let (namespace, id) = match self {
             Namespace::Name(n) => (n, "".to_owned()),
-            Namespace::Id(n) => ("".to_owned(), n)
+            Namespace::Id(n) => ("".to_owned(), n),
         };
-        DescribeNamespaceRequest{
-            namespace,
-            id,
-        }
+        DescribeNamespaceRequest { namespace, id }
     }
 }
-
 
 /// This trait provides higher-level friendlier interaction with the server.
 /// See the [WorkflowService] trait for a lower-level client.
@@ -733,7 +729,7 @@ pub trait WorkflowClientTrait {
     async fn list_namespaces(&self) -> Result<ListNamespacesResponse>;
 
     /// Query namespace details
-    async fn describe_namespace(&self, namespace: Namespace ) -> Result<DescribeNamespaceResponse>;
+    async fn describe_namespace(&self, namespace: Namespace) -> Result<DescribeNamespaceResponse>;
 
     /// Returns options that were used to initialize the client
     fn get_options(&self) -> &ClientOptions;
@@ -1116,7 +1112,7 @@ impl WorkflowClientTrait for Client {
             .into_inner())
     }
 
-    async fn describe_namespace(&self, namespace: Namespace ) -> Result<DescribeNamespaceResponse> {
+    async fn describe_namespace(&self, namespace: Namespace) -> Result<DescribeNamespaceResponse> {
         Ok(self
             .wf_svc()
             .describe_namespace(namespace.into_describe_namespace_request())
