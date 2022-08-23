@@ -7,8 +7,7 @@ use temporal_sdk::{
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{
-            self, activity_resolution, activity_resolution as act_res, ActivityExecutionResult,
-            ActivityResolution,
+            self, activity_resolution as act_res, ActivityExecutionResult, ActivityResolution,
         },
         activity_task::activity_task as act_task,
         workflow_activation::{
@@ -394,7 +393,7 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
             variant: Some(workflow_activation_job::Variant::ResolveActivity(
                 ResolveActivity {
                     result: Some(ActivityResolution {
-                        status: Some(activity_resolution::Status::Cancelled(_))
+                        status: Some(act_res::Status::Cancelled(_))
                     }),
                     ..
                 }
@@ -820,12 +819,9 @@ async fn it_can_complete_async() {
             .await;
 
         let res = match activity_resolution.status {
-            Some(act_res::Status::Completed(activity_result::Success { result })) => {
-                println!("RESULT: {:?}", result);
-                result
-                    .map(|p| String::from_json_payload(&p).unwrap())
-                    .unwrap()
-            }
+            Some(act_res::Status::Completed(activity_result::Success { result })) => result
+                .map(|p| String::from_json_payload(&p).unwrap())
+                .unwrap(),
             _ => panic!("activity task failed {:?}", activity_resolution),
         };
 
@@ -854,7 +850,6 @@ async fn it_can_complete_async() {
         loop {
             let mut shared = shared_token_ref2.lock().await;
             let maybe_token = shared.take();
-            println!("token {:?}", maybe_token);
             drop(shared);
 
             if let Some(task_token) = maybe_token {

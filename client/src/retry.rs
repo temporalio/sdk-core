@@ -1,7 +1,10 @@
-use crate::{ClientOptions, Namespace, Result, RetryConfig, WorkflowClientTrait, WorkflowOptions};
+use crate::{
+    ClientOptions, ListClosedFilters, ListOpenFilters, Namespace, Result, RetryConfig,
+    WorkflowClientTrait, WorkflowOptions,
+};
 use backoff::{backoff::Backoff, ExponentialBackoff};
 use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
-use std::{fmt::Debug, future::Future, sync::Arc, time::Duration};
+use std::{fmt::Debug, future::Future, sync::Arc, time::Duration, time::SystemTime};
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::QueryResult,
     temporal::api::{
@@ -438,6 +441,55 @@ where
 
     async fn describe_namespace(&self, namespace: Namespace) -> Result<DescribeNamespaceResponse> {
         retry_call!(self, describe_namespace, namespace.clone())
+    }
+
+    async fn list_open_workflow_executions(
+        &self,
+        maximum_page_size: i32,
+        next_page_token: Vec<u8>,
+        start_time_filter: Option<(Option<SystemTime>, Option<SystemTime>)>,
+        filters: Option<ListOpenFilters>,
+    ) -> Result<ListOpenWorkflowExecutionsResponse> {
+        retry_call!(
+            self,
+            list_open_workflow_executions,
+            maximum_page_size,
+            next_page_token.clone(),
+            start_time_filter.clone(),
+            filters.clone()
+        )
+    }
+
+    async fn list_closed_workflow_executions(
+        &self,
+        maximum_page_size: i32,
+        next_page_token: Vec<u8>,
+        start_time_filter: Option<(Option<SystemTime>, Option<SystemTime>)>,
+        filters: Option<ListClosedFilters>,
+    ) -> Result<ListClosedWorkflowExecutionsResponse> {
+        retry_call!(
+            self,
+            list_closed_workflow_executions,
+            maximum_page_size,
+            next_page_token.clone(),
+            start_time_filter.clone(),
+            filters.clone()
+        )
+    }
+
+    async fn list_workflow_executions(
+        &self,
+        page_size: i32,
+        next_page_token: Vec<u8>,
+        query: String,
+    ) -> Result<ListWorkflowExecutionsResponse> {
+        retry_call!(
+            self,
+            list_workflow_executions,
+            page_size,
+            next_page_token.clone(),
+            query.clone()
+        )
     }
 
     fn get_options(&self) -> &ClientOptions {

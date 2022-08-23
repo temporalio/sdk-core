@@ -14,6 +14,13 @@ mod workflow_handle;
 
 pub use crate::retry::{CallType, RetryClient, RETRYABLE_ERROR_CODES};
 pub use raw::{OperatorService, TestService, WorkflowService};
+pub use temporal_sdk_core_protos::temporal::api::{
+    filter::v1::{StatusFilter, WorkflowExecutionFilter, WorkflowTypeFilter},
+    workflowservice::v1::{
+        list_closed_workflow_executions_request::Filters as ListClosedFilters,
+        list_open_workflow_executions_request::Filters as ListOpenFilters,
+    },
+};
 pub use workflow_handle::{WorkflowExecutionInfo, WorkflowExecutionResult};
 
 use crate::{
@@ -27,6 +34,7 @@ use http::uri::InvalidUri;
 use once_cell::sync::OnceCell;
 use opentelemetry::metrics::Meter;
 use parking_lot::RwLock;
+use std::time::SystemTime;
 use std::{
     collections::HashMap,
     fmt::{Debug, Formatter},
@@ -43,6 +51,7 @@ use temporal_sdk_core_protos::{
         common::v1::{Header, Payload, Payloads, WorkflowExecution, WorkflowType},
         enums::v1::{TaskQueueKind, WorkflowIdReusePolicy, WorkflowTaskFailedCause},
         failure::v1::Failure,
+        filter::v1::StartTimeFilter,
         operatorservice::v1::operator_service_client::OperatorServiceClient,
         query::v1::WorkflowQuery,
         taskqueue::v1::{StickyExecutionAttributes, TaskQueue},
@@ -731,6 +740,32 @@ pub trait WorkflowClientTrait {
     /// Query namespace details
     async fn describe_namespace(&self, namespace: Namespace) -> Result<DescribeNamespaceResponse>;
 
+    /// List open workflows with Standard Visibility filtering
+    async fn list_open_workflow_executions(
+        &self,
+        max_page_size: i32,
+        next_page_token: Vec<u8>,
+        start_time_filter: Option<(Option<SystemTime>, Option<SystemTime>)>,
+        filters: Option<ListOpenFilters>,
+    ) -> Result<ListOpenWorkflowExecutionsResponse>;
+
+    /// List closed workflows Standard Visibility filtering
+    async fn list_closed_workflow_executions(
+        &self,
+        max_page_size: i32,
+        next_page_token: Vec<u8>,
+        start_time_filter: Option<(Option<SystemTime>, Option<SystemTime>)>,
+        filters: Option<ListClosedFilters>,
+    ) -> Result<ListClosedWorkflowExecutionsResponse>;
+
+    /// List workflows with Advanced Visibility filtering
+    async fn list_workflow_executions(
+        &self,
+        max_page_size: i32,
+        next_page_token: Vec<u8>,
+        query: String,
+    ) -> Result<ListWorkflowExecutionsResponse>;
+
     /// Returns options that were used to initialize the client
     fn get_options(&self) -> &ClientOptions;
 
@@ -1117,6 +1152,74 @@ impl WorkflowClientTrait for Client {
         Ok(self
             .wf_svc()
             .describe_namespace(namespace.into_describe_namespace_request())
+            .await?
+            .into_inner())
+    }
+
+    async fn list_open_workflow_executions(
+        &self,
+        maximum_page_size: i32,
+        next_page_token: Vec<u8>,
+        start_time_filter: Option<(Option<SystemTime>, Option<SystemTime>)>,
+        filters: Option<ListOpenFilters>,
+    ) -> Result<ListOpenWorkflowExecutionsResponse> {
+        Ok(self
+            .wf_svc()
+            .list_open_workflow_executions(ListOpenWorkflowExecutionsRequest {
+                namespace: self.namespace.clone(),
+                maximum_page_size,
+                next_page_token,
+                start_time_filter: start_time_filter.and_then(|(earliest, latest)| {
+                    Some(StartTimeFilter {
+                        earliest_time: earliest.and_then(|t| t.try_into().ok()),
+                        latest_time: latest.and_then(|t| t.try_into().ok()),
+                    })
+                }),
+                filters,
+            })
+            .await?
+            .into_inner())
+    }
+
+    async fn list_closed_workflow_executions(
+        &self,
+        maximum_page_size: i32,
+        next_page_token: Vec<u8>,
+        start_time_filter: Option<(Option<SystemTime>, Option<SystemTime>)>,
+        filters: Option<ListClosedFilters>,
+    ) -> Result<ListClosedWorkflowExecutionsResponse> {
+        Ok(self
+            .wf_svc()
+            .list_closed_workflow_executions(ListClosedWorkflowExecutionsRequest {
+                namespace: self.namespace.clone(),
+                maximum_page_size,
+                next_page_token,
+                start_time_filter: start_time_filter.and_then(|(earliest, latest)| {
+                    Some(StartTimeFilter {
+                        earliest_time: earliest.and_then(|t| t.try_into().ok()),
+                        latest_time: latest.and_then(|t| t.try_into().ok()),
+                    })
+                }),
+                filters,
+            })
+            .await?
+            .into_inner())
+    }
+
+    async fn list_workflow_executions(
+        &self,
+        page_size: i32,
+        next_page_token: Vec<u8>,
+        query: String,
+    ) -> Result<ListWorkflowExecutionsResponse> {
+        Ok(self
+            .wf_svc()
+            .list_workflow_executions(ListWorkflowExecutionsRequest {
+                namespace: self.namespace.clone(),
+                page_size,
+                next_page_token,
+                query,
+            })
             .await?
             .into_inner())
     }
