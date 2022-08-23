@@ -744,7 +744,8 @@ pub struct WorkflowOptions {
     /// Set the policy for reusing the workflow id
     pub id_reuse_policy: WorkflowIdReusePolicy,
 
-    /// Optionally indicates the default execution timeout for workflow tasks
+    /// Optionally set the execution timeout for the workflow
+    /// https://docs.temporal.io/workflows/#workflow-execution-timeout
     pub execution_timeout: Option<Duration>,
 
     /// Optionally indicates the default run timeout for workflow tasks
