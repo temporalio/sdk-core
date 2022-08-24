@@ -40,7 +40,6 @@ use std::{
     ops::{Deref, DerefMut},
     str::FromStr,
     sync::Arc,
-    time::SystemTime,
     time::{Duration, Instant},
 };
 use temporal_sdk_core_protos::{
