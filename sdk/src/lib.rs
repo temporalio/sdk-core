@@ -53,7 +53,7 @@ mod workflow_context;
 mod workflow_future;
 
 pub use activity_context::ActContext;
-
+pub use temporal_client::Namespace;
 pub use workflow_context::{
     ActivityOptions, CancellableFuture, ChildWorkflow, ChildWorkflowOptions, LocalActivityOptions,
     Signal, SignalData, SignalWorkflowOptions, WfContext,
@@ -720,7 +720,7 @@ impl<T: Debug> WfExitValue<T> {
 }
 
 /// Activity functions may return these values when exiting
-#[derive(Debug, derive_more::From)]
+#[derive(derive_more::From)]
 pub enum ActExitValue<T: Debug> {
     /// Completion requires an asynchronous callback
     #[from(ignore)]

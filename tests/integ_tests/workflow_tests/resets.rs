@@ -74,6 +74,7 @@ async fn reset_workflow() {
             "".to_owned(),
             POST_RESET_SIG.to_owned(),
             None,
+            None,
         )
         .await
         .unwrap();

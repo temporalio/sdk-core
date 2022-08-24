@@ -1,4 +1,6 @@
 use std::{collections::HashMap, time::Duration};
+
+use temporal_client::WorkflowOptions;
 use temporal_sdk_core_protos::{
     coresdk::{
         child_workflow::ChildWorkflowCancellationType,
@@ -176,6 +178,8 @@ pub struct ChildWorkflowOptions {
     pub input: Vec<Payload>,
     /// Cancellation strategy for the child workflow
     pub cancel_type: ChildWorkflowCancellationType,
+    /// Common options
+    pub options: WorkflowOptions,
 }
 
 impl IntoWorkflowCommand for ChildWorkflowOptions {
@@ -187,6 +191,18 @@ impl IntoWorkflowCommand for ChildWorkflowOptions {
             workflow_type: self.workflow_type,
             input: self.input,
             cancellation_type: self.cancel_type as i32,
+            workflow_id_reuse_policy: self.options.id_reuse_policy as i32,
+            workflow_execution_timeout: self
+                .options
+                .execution_timeout
+                .and_then(|d| d.try_into().ok()),
+            workflow_run_timeout: self
+                .options
+                .execution_timeout
+                .and_then(|d| d.try_into().ok()),
+            workflow_task_timeout: self.options.task_timeout.and_then(|d| d.try_into().ok()),
+            search_attributes: self.options.search_attributes.unwrap_or_default(),
+            cron_schedule: self.options.cron_schedule.unwrap_or_default(),
             ..Default::default()
         }
     }
@@ -250,6 +266,7 @@ impl Signal {
 }
 
 /// Data contained within a signal
+#[derive(Default)]
 pub struct SignalData {
     /// The arguments the signal will receive
     pub input: Vec<Payload>,

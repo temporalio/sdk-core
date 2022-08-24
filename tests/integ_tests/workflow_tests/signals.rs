@@ -1,9 +1,11 @@
+use std::collections::HashMap;
+
 use futures::StreamExt;
 use temporal_client::{WorkflowClientTrait, WorkflowExecutionInfo, WorkflowOptions};
 use temporal_sdk::{
     ChildWorkflowOptions, Signal, SignalWorkflowOptions, WfContext, WorkflowResult,
 };
-use temporal_sdk_core_protos::coresdk::IntoPayloadsExt;
+use temporal_sdk_core_protos::{coresdk::IntoPayloadsExt, temporal::api::common::v1::Payload};
 use temporal_sdk_core_test_utils::CoreWfStarter;
 use uuid::Uuid;
 
@@ -57,7 +59,12 @@ async fn signal_receiver(ctx: WfContext) -> WorkflowResult<()> {
 
 async fn signal_with_create_wf_receiver(ctx: WfContext) -> WorkflowResult<()> {
     let res = ctx.make_signal_channel(SIGNAME).next().await.unwrap();
+    println!("HEADER: {:?}", res.headers);
     assert_eq!(&res.input, &[b"tada".into()]);
+    assert_eq!(
+        *res.headers.get("tupac").expect("tupac header exists"),
+        b"shakur".into()
+    );
     Ok(().into())
 }
 
@@ -96,15 +103,19 @@ async fn sends_signal_with_create_wf() {
     worker.register_wf("receiversignal", signal_with_create_wf_receiver);
 
     let client = starter.get_client().await;
+    let mut header: HashMap<String, Payload> = HashMap::new();
+    header.insert("tupac".into(), "shakur".into());
     let res = client
         .signal_with_start_workflow_execution(
             None,
             worker.inner_mut().task_queue().to_owned(),
             "sends_signal_with_create_wf".to_owned(),
             "receiversignal".to_owned(),
+            None,
             WorkflowOptions::default(),
             SIGNAME.to_owned(),
             vec![b"tada".into()].into_payloads(),
+            Some(header.into()),
         )
         .await
         .expect("request succeeds.qed");

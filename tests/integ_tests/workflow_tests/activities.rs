@@ -1,12 +1,13 @@
 use assert_matches::assert_matches;
 use std::time::Duration;
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowExecutionResult, WorkflowOptions};
-use temporal_sdk::{ActContext, ActivityOptions, CancellableFuture, WfContext, WorkflowResult};
+use temporal_sdk::{
+    ActContext, ActExitValue, ActivityOptions, CancellableFuture, WfContext, WorkflowResult,
+};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{
-            self, activity_resolution, activity_resolution as act_res, ActivityExecutionResult,
-            ActivityResolution,
+            self, activity_resolution as act_res, ActivityExecutionResult, ActivityResolution,
         },
         activity_task::activity_task as act_task,
         workflow_activation::{
@@ -14,13 +15,15 @@ use temporal_sdk_core_protos::{
         },
         workflow_commands::{ActivityCancellationType, RequestCancelActivity, StartTimer},
         workflow_completion::WorkflowActivationCompletion,
-        ActivityHeartbeat, ActivityTaskCompletion, AsJsonPayloadExt, IntoCompletion,
+        ActivityHeartbeat, ActivityTaskCompletion, AsJsonPayloadExt, FromJsonPayloadExt,
+        IntoCompletion,
     },
     temporal::api::{
         common::v1::{ActivityType, Payload, Payloads},
         enums::v1::RetryState,
         failure::v1::{failure::FailureInfo, ActivityFailureInfo, Failure},
     },
+    TaskToken,
 };
 use temporal_sdk_core_test_utils::{
     init_core_and_create_wf, schedule_activity_cmd, CoreWfStarter, WorkerTestHelpers,
@@ -390,7 +393,7 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
             variant: Some(workflow_activation_job::Variant::ResolveActivity(
                 ResolveActivity {
                     result: Some(ActivityResolution {
-                        status: Some(activity_resolution::Status::Cancelled(_))
+                        status: Some(act_res::Status::Cancelled(_))
                     }),
                     ..
                 }
@@ -792,4 +795,84 @@ async fn one_activity_abandon_cancelled_after_complete() {
         .await
         .unwrap();
     assert_matches!(res, WorkflowExecutionResult::Succeeded(_));
+}
+
+#[tokio::test]
+async fn it_can_complete_async() {
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
+
+    let wf_name = "it_can_complete_async".to_owned();
+    let mut starter = CoreWfStarter::new(&wf_name);
+    let mut worker = starter.worker().await;
+    let client = starter.get_client().await;
+    let async_response = "agence";
+    let shared_token: Arc<Mutex<Option<Vec<u8>>>> = Arc::new(Mutex::new(None));
+    worker.register_wf(wf_name.clone(), move |ctx: WfContext| async move {
+        let activity_resolution = ctx
+            .activity(ActivityOptions {
+                activity_type: "complete_async_activity".to_string(),
+                input: "hi".as_json_payload().expect("serializes fine"),
+                start_to_close_timeout: Some(Duration::from_secs(30)),
+                ..Default::default()
+            })
+            .await;
+
+        let res = match activity_resolution.status {
+            Some(act_res::Status::Completed(activity_result::Success { result })) => result
+                .map(|p| String::from_json_payload(&p).unwrap())
+                .unwrap(),
+            _ => panic!("activity task failed {:?}", activity_resolution),
+        };
+
+        assert_eq!(&res, async_response);
+        Ok(().into())
+    });
+
+    let shared_token_ref = shared_token.clone();
+    worker.register_activity(
+        "complete_async_activity",
+        move |ctx: ActContext, _: String| {
+            let shared_token_ref = shared_token_ref.clone();
+            async move {
+                // set the `activity_task_token`
+                let activity_info = ctx.get_info();
+                let task_token = &activity_info.task_token;
+                let mut shared = shared_token_ref.lock().await;
+                *shared = Some(task_token.clone());
+                Ok::<ActExitValue<()>, _>(ActExitValue::WillCompleteAsync)
+            }
+        },
+    );
+
+    let shared_token_ref2 = shared_token.clone();
+    tokio::spawn(async move {
+        loop {
+            let mut shared = shared_token_ref2.lock().await;
+            let maybe_token = shared.take();
+
+            if let Some(task_token) = maybe_token {
+                client
+                    .complete_activity_task(
+                        TaskToken(task_token),
+                        Some(async_response.as_json_payload().unwrap().into()),
+                    )
+                    .await
+                    .unwrap();
+                return;
+            }
+        }
+    });
+
+    let _run_id = worker
+        .submit_wf(
+            wf_name.to_owned(),
+            wf_name.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+
+    worker.run_until_done().await.unwrap();
 }

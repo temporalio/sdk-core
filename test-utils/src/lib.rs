@@ -160,6 +160,7 @@ impl CoreWfStarter {
                 self.worker_config.task_queue.clone(),
                 workflow_id,
                 self.task_queue_name.clone(),
+                None,
                 opts,
             )
             .await
@@ -319,6 +320,7 @@ impl TestWorker {
                     self.inner.task_queue().to_string(),
                     wfid.clone(),
                     workflow_type.into(),
+                    None,
                     options,
                 )
                 .await?;
@@ -362,6 +364,8 @@ impl TestWorker {
     }
 }
 
+pub type BoxDynActivationHook = Box<dyn Fn(&WorkflowActivationCompletion)>;
+
 pub enum TestWorkerShutdownCond {
     GetResults(Vec<WorkflowExecutionInfo>, Arc<RetryClient<Client>>),
     NoAutoShutdown,
@@ -370,7 +374,7 @@ pub enum TestWorkerShutdownCond {
 pub struct TestWorkerCompletionIceptor {
     condition: TestWorkerShutdownCond,
     shutdown_handle: Arc<dyn Fn()>,
-    every_activation: Option<Box<dyn Fn(&WorkflowActivationCompletion)>>,
+    every_activation: Option<BoxDynActivationHook>,
     next: Option<Box<dyn WorkerInterceptor>>,
 }
 impl TestWorkerCompletionIceptor {

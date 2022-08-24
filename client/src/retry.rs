@@ -1,11 +1,14 @@
-use crate::{ClientOptions, Result, RetryConfig, WorkflowClientTrait, WorkflowOptions};
+use crate::{
+    ClientOptions, ListClosedFilters, ListOpenFilters, Namespace, Result, RetryConfig,
+    StartTimeFilter, WorkflowClientTrait, WorkflowOptions,
+};
 use backoff::{backoff::Backoff, ExponentialBackoff};
 use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
 use std::{fmt::Debug, future::Future, sync::Arc, time::Duration};
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::QueryResult,
     temporal::api::{
-        common::v1::{Payload, Payloads},
+        common::v1::{Header, Payload, Payloads},
         enums::v1::WorkflowTaskFailedCause,
         failure::v1::Failure,
         query::v1::WorkflowQuery,
@@ -205,6 +208,7 @@ where
         task_queue: String,
         workflow_id: String,
         workflow_type: String,
+        request_id: Option<String>,
         options: WorkflowOptions,
     ) -> Result<StartWorkflowExecutionResponse> {
         retry_call!(
@@ -214,6 +218,7 @@ where
             task_queue.clone(),
             workflow_id.clone(),
             workflow_type.clone(),
+            request_id.clone(),
             options.clone()
         )
     }
@@ -304,6 +309,7 @@ where
         run_id: String,
         signal_name: String,
         payloads: Option<Payloads>,
+        request_id: Option<String>,
     ) -> Result<SignalWorkflowExecutionResponse> {
         retry_call!(
             self,
@@ -311,7 +317,8 @@ where
             workflow_id.clone(),
             run_id.clone(),
             signal_name.clone(),
-            payloads.clone()
+            payloads.clone(),
+            request_id.clone()
         )
     }
 
@@ -321,9 +328,11 @@ where
         task_queue: String,
         workflow_id: String,
         workflow_type: String,
+        request_id: Option<String>,
         options: WorkflowOptions,
         signal_name: String,
         signal_input: Option<Payloads>,
+        signal_header: Option<Header>,
     ) -> Result<SignalWithStartWorkflowExecutionResponse> {
         retry_call!(
             self,
@@ -332,9 +341,11 @@ where
             task_queue.clone(),
             workflow_id.clone(),
             workflow_type.clone(),
+            request_id.clone(),
             options.clone(),
             signal_name.clone(),
-            signal_input.clone()
+            signal_input.clone(),
+            signal_header.clone()
         )
     }
 
@@ -399,13 +410,15 @@ where
         workflow_id: String,
         run_id: Option<String>,
         reason: String,
+        request_id: Option<String>,
     ) -> Result<RequestCancelWorkflowExecutionResponse> {
         retry_call!(
             self,
             cancel_workflow_execution,
             workflow_id.clone(),
             run_id.clone(),
-            reason.clone()
+            reason.clone(),
+            request_id.clone()
         )
     }
 
@@ -424,6 +437,59 @@ where
 
     async fn list_namespaces(&self) -> Result<ListNamespacesResponse> {
         retry_call!(self, list_namespaces,)
+    }
+
+    async fn describe_namespace(&self, namespace: Namespace) -> Result<DescribeNamespaceResponse> {
+        retry_call!(self, describe_namespace, namespace.clone())
+    }
+
+    async fn list_open_workflow_executions(
+        &self,
+        maximum_page_size: i32,
+        next_page_token: Vec<u8>,
+        start_time_filter: Option<StartTimeFilter>,
+        filters: Option<ListOpenFilters>,
+    ) -> Result<ListOpenWorkflowExecutionsResponse> {
+        retry_call!(
+            self,
+            list_open_workflow_executions,
+            maximum_page_size,
+            next_page_token.clone(),
+            start_time_filter.clone(),
+            filters.clone()
+        )
+    }
+
+    async fn list_closed_workflow_executions(
+        &self,
+        maximum_page_size: i32,
+        next_page_token: Vec<u8>,
+        start_time_filter: Option<StartTimeFilter>,
+        filters: Option<ListClosedFilters>,
+    ) -> Result<ListClosedWorkflowExecutionsResponse> {
+        retry_call!(
+            self,
+            list_closed_workflow_executions,
+            maximum_page_size,
+            next_page_token.clone(),
+            start_time_filter.clone(),
+            filters.clone()
+        )
+    }
+
+    async fn list_workflow_executions(
+        &self,
+        page_size: i32,
+        next_page_token: Vec<u8>,
+        query: String,
+    ) -> Result<ListWorkflowExecutionsResponse> {
+        retry_call!(
+            self,
+            list_workflow_executions,
+            page_size,
+            next_page_token.clone(),
+            query.clone()
+        )
     }
 
     fn get_options(&self) -> &ClientOptions {

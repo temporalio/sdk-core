@@ -279,6 +279,7 @@ async fn signal_workflow() {
             res.run_id.to_string(),
             signal_id_1.to_string(),
             None,
+            None,
         )
         .await
         .unwrap();
@@ -287,6 +288,7 @@ async fn signal_workflow() {
             workflow_id.to_string(),
             res.run_id.to_string(),
             signal_id_2.to_string(),
+            None,
             None,
         )
         .await
@@ -374,6 +376,7 @@ async fn signal_workflow_signal_not_handled_on_workflow_completion() {
                     res.run_id.to_string(),
                     signal_id_1.to_string(),
                     None,
+                    None,
                 )
                 .await
                 .unwrap();
@@ -458,7 +461,13 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
     // Send the signals to the server & resolve activity -- sometimes this happens too fast
     sleep(Duration::from_millis(200)).await;
     client
-        .signal_workflow_execution(wf_id.to_string(), rid, signal_at_start.to_string(), None)
+        .signal_workflow_execution(
+            wf_id.to_string(),
+            rid,
+            signal_at_start.to_string(),
+            None,
+            None,
+        )
         .await
         .unwrap();
     // Complete activity successfully.
@@ -470,7 +479,13 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
     .unwrap();
     let rid = wf_task.run_id.clone();
     client
-        .signal_workflow_execution(wf_id.to_string(), rid, signal_at_complete.to_string(), None)
+        .signal_workflow_execution(
+            wf_id.to_string(),
+            rid,
+            signal_at_complete.to_string(),
+            None,
+            None,
+        )
         .await
         .unwrap();
     // Now poll again, it will be an eviction b/c non-sticky mode.

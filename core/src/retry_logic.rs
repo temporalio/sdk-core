@@ -81,7 +81,7 @@ const NANOS_PER_SEC: u32 = 1_000_000_000;
 fn try_from_secs_f64(secs: f64) -> Option<Duration> {
     const MAX_NANOS_F64: f64 = ((u64::MAX as u128 + 1) * (NANOS_PER_SEC as u128)) as f64;
     let nanos = secs * (NANOS_PER_SEC as f64);
-    if !nanos.is_finite() || nanos >= MAX_NANOS_F64 || nanos < 0.0 {
+    if !nanos.is_finite() || !(0.0..MAX_NANOS_F64).contains(&nanos) {
         None
     } else {
         Some(Duration::from_secs_f64(secs))
