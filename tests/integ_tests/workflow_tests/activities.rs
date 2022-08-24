@@ -802,10 +802,10 @@ async fn it_can_complete_async() {
     use std::sync::Arc;
     use tokio::sync::Mutex;
 
-    let mut starter = CoreWfStarter::new("it_can_complete_async");
+    let wf_name = "it_can_complete_async".to_owned();
+    let mut starter = CoreWfStarter::new(&wf_name);
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
-    let wf_name = "it_can_complete_async".to_owned();
     let async_response = "agence";
     let shared_token: Arc<Mutex<Option<Vec<u8>>>> = Arc::new(Mutex::new(None));
     worker.register_wf(wf_name.clone(), move |ctx: WfContext| async move {
@@ -835,7 +835,7 @@ async fn it_can_complete_async() {
         move |ctx: ActContext, _: String| {
             let shared_token_ref = shared_token_ref.clone();
             async move {
-                //signal spawned task the activity's `task_token`
+                // set the `activity_task_token`
                 let activity_info = ctx.get_info();
                 let task_token = &activity_info.task_token;
                 let mut shared = shared_token_ref.lock().await;
@@ -850,7 +850,6 @@ async fn it_can_complete_async() {
         loop {
             let mut shared = shared_token_ref2.lock().await;
             let maybe_token = shared.take();
-            drop(shared);
 
             if let Some(task_token) = maybe_token {
                 client
