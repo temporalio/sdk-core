@@ -72,19 +72,6 @@ use tower::ServiceBuilder;
 use url::Url;
 use uuid::Uuid;
 
-/// Convenience type for sdk callers
-#[derive(Clone)]
-pub struct TimeFilter(StartTimeFilter);
-
-impl From<(Option<SystemTime>, Option<SystemTime>)> for TimeFilter {
-    fn from(filter: (Option<SystemTime>, Option<SystemTime>)) -> Self {
-        TimeFilter(StartTimeFilter {
-            earliest_time: filter.0.and_then(|t| t.try_into().ok()),
-            latest_time: filter.0.and_then(|t| t.try_into().ok()),
-        })
-    }
-}
-
 static CLIENT_NAME_HEADER_KEY: &str = "client-name";
 static CLIENT_VERSION_HEADER_KEY: &str = "client-version";
 static LONG_POLL_METHOD_NAMES: [&str; 2] = ["PollWorkflowTaskQueue", "PollActivityTaskQueue"];
