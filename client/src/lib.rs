@@ -15,7 +15,7 @@ mod workflow_handle;
 pub use crate::retry::{CallType, RetryClient, RETRYABLE_ERROR_CODES};
 pub use raw::{OperatorService, TestService, WorkflowService};
 pub use temporal_sdk_core_protos::temporal::api::{
-    filter::v1::{StatusFilter, WorkflowExecutionFilter, WorkflowTypeFilter},
+    filter::v1::{StartTimeFilter, StatusFilter, WorkflowExecutionFilter, WorkflowTypeFilter},
     workflowservice::v1::{
         list_closed_workflow_executions_request::Filters as ListClosedFilters,
         list_open_workflow_executions_request::Filters as ListOpenFilters,
@@ -34,13 +34,13 @@ use http::uri::InvalidUri;
 use once_cell::sync::OnceCell;
 use opentelemetry::metrics::Meter;
 use parking_lot::RwLock;
-use std::time::SystemTime;
 use std::{
     collections::HashMap,
     fmt::{Debug, Formatter},
     ops::{Deref, DerefMut},
     str::FromStr,
     sync::Arc,
+    time::SystemTime,
     time::{Duration, Instant},
 };
 use temporal_sdk_core_protos::{
@@ -51,7 +51,6 @@ use temporal_sdk_core_protos::{
         common::v1::{Header, Payload, Payloads, WorkflowExecution, WorkflowType},
         enums::v1::{TaskQueueKind, WorkflowIdReusePolicy, WorkflowTaskFailedCause},
         failure::v1::Failure,
-        filter::v1::StartTimeFilter,
         operatorservice::v1::operator_service_client::OperatorServiceClient,
         query::v1::WorkflowQuery,
         taskqueue::v1::{StickyExecutionAttributes, TaskQueue},
@@ -72,6 +71,19 @@ use tonic::{
 use tower::ServiceBuilder;
 use url::Url;
 use uuid::Uuid;
+
+/// Convenience type for sdk callers
+#[derive(Clone)]
+pub struct TimeFilter(StartTimeFilter);
+
+impl From<(Option<SystemTime>, Option<SystemTime>)> for TimeFilter {
+    fn from(filter: (Option<SystemTime>, Option<SystemTime>)) -> Self {
+        TimeFilter(StartTimeFilter {
+            earliest_time: filter.0.and_then(|t| t.try_into().ok()),
+            latest_time: filter.0.and_then(|t| t.try_into().ok()),
+        })
+    }
+}
 
 static CLIENT_NAME_HEADER_KEY: &str = "client-name";
 static CLIENT_VERSION_HEADER_KEY: &str = "client-version";
@@ -745,7 +757,7 @@ pub trait WorkflowClientTrait {
         &self,
         max_page_size: i32,
         next_page_token: Vec<u8>,
-        start_time_filter: Option<(Option<SystemTime>, Option<SystemTime>)>,
+        start_time_filter: Option<StartTimeFilter>,
         filters: Option<ListOpenFilters>,
     ) -> Result<ListOpenWorkflowExecutionsResponse>;
 
@@ -754,7 +766,7 @@ pub trait WorkflowClientTrait {
         &self,
         max_page_size: i32,
         next_page_token: Vec<u8>,
-        start_time_filter: Option<(Option<SystemTime>, Option<SystemTime>)>,
+        start_time_filter: Option<StartTimeFilter>,
         filters: Option<ListClosedFilters>,
     ) -> Result<ListClosedWorkflowExecutionsResponse>;
 
@@ -780,13 +792,13 @@ pub struct WorkflowOptions {
     pub id_reuse_policy: WorkflowIdReusePolicy,
 
     /// Optionally set the execution timeout for the workflow
-    /// https://docs.temporal.io/workflows/#workflow-execution-timeout
+    /// <https://docs.temporal.io/workflows/#workflow-execution-timeout>
     pub execution_timeout: Option<Duration>,
 
-    /// Optionally indicates the default run timeout for workflow tasks
+    /// Optionally indicates the default run timeout for a workflow run
     pub run_timeout: Option<Duration>,
 
-    /// Optionally indicates the default task timeout for workflow tasks
+    /// Optionally indicates the default task timeout for a workflow run
     pub task_timeout: Option<Duration>,
 
     /// Optionally set a cron schedule for the workflow
@@ -1160,7 +1172,7 @@ impl WorkflowClientTrait for Client {
         &self,
         maximum_page_size: i32,
         next_page_token: Vec<u8>,
-        start_time_filter: Option<(Option<SystemTime>, Option<SystemTime>)>,
+        start_time_filter: Option<StartTimeFilter>,
         filters: Option<ListOpenFilters>,
     ) -> Result<ListOpenWorkflowExecutionsResponse> {
         Ok(self
@@ -1169,12 +1181,7 @@ impl WorkflowClientTrait for Client {
                 namespace: self.namespace.clone(),
                 maximum_page_size,
                 next_page_token,
-                start_time_filter: start_time_filter.and_then(|(earliest, latest)| {
-                    Some(StartTimeFilter {
-                        earliest_time: earliest.and_then(|t| t.try_into().ok()),
-                        latest_time: latest.and_then(|t| t.try_into().ok()),
-                    })
-                }),
+                start_time_filter,
                 filters,
             })
             .await?
@@ -1185,7 +1192,7 @@ impl WorkflowClientTrait for Client {
         &self,
         maximum_page_size: i32,
         next_page_token: Vec<u8>,
-        start_time_filter: Option<(Option<SystemTime>, Option<SystemTime>)>,
+        start_time_filter: Option<StartTimeFilter>,
         filters: Option<ListClosedFilters>,
     ) -> Result<ListClosedWorkflowExecutionsResponse> {
         Ok(self
@@ -1194,12 +1201,7 @@ impl WorkflowClientTrait for Client {
                 namespace: self.namespace.clone(),
                 maximum_page_size,
                 next_page_token,
-                start_time_filter: start_time_filter.and_then(|(earliest, latest)| {
-                    Some(StartTimeFilter {
-                        earliest_time: earliest.and_then(|t| t.try_into().ok()),
-                        latest_time: latest.and_then(|t| t.try_into().ok()),
-                    })
-                }),
+                start_time_filter,
                 filters,
             })
             .await?

@@ -1,10 +1,10 @@
 use crate::{
     ClientOptions, ListClosedFilters, ListOpenFilters, Namespace, Result, RetryConfig,
-    WorkflowClientTrait, WorkflowOptions,
+    StartTimeFilter, WorkflowClientTrait, WorkflowOptions,
 };
 use backoff::{backoff::Backoff, ExponentialBackoff};
 use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
-use std::{fmt::Debug, future::Future, sync::Arc, time::Duration, time::SystemTime};
+use std::{fmt::Debug, future::Future, sync::Arc, time::Duration};
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::QueryResult,
     temporal::api::{
@@ -447,7 +447,7 @@ where
         &self,
         maximum_page_size: i32,
         next_page_token: Vec<u8>,
-        start_time_filter: Option<(Option<SystemTime>, Option<SystemTime>)>,
+        start_time_filter: Option<StartTimeFilter>,
         filters: Option<ListOpenFilters>,
     ) -> Result<ListOpenWorkflowExecutionsResponse> {
         retry_call!(
@@ -464,7 +464,7 @@ where
         &self,
         maximum_page_size: i32,
         next_page_token: Vec<u8>,
-        start_time_filter: Option<(Option<SystemTime>, Option<SystemTime>)>,
+        start_time_filter: Option<StartTimeFilter>,
         filters: Option<ListClosedFilters>,
     ) -> Result<ListClosedWorkflowExecutionsResponse> {
         retry_call!(
