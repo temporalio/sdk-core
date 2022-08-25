@@ -592,6 +592,44 @@ impl Namespace {
     }
 }
 
+/// Helper struct for `signal_with_start_workflow_execution`.
+/// Required Params:
+/// `task_queue`, `workflow_id`, `workflow_type`, `signal_name`
+#[derive(Clone, derive_builder::Builder)]
+pub struct SignalWithStartOptions {
+    /// Input payload for the workflow run/signal
+    #[builder(setter(strip_option), default)]
+    pub input: Option<Payloads>,
+    /// Task Queue to target
+    #[builder(setter(into))]
+    pub task_queue: String,
+    /// Workflow id of the run/signal
+    #[builder(setter(into))]
+    pub workflow_id: String,
+    /// Workflow type of the run/signal
+    #[builder(setter(into))]
+    pub workflow_type: String,
+    #[builder(setter(strip_option), default)]
+    /// Request id for idempotency/deduplication
+    pub request_id: Option<String>,
+    /// The signal name to send
+    #[builder(setter(into))]
+    pub signal_name: String,
+    /// Payloads for the signal
+    #[builder(default)]
+    pub signal_input: Option<Payloads>,
+    #[builder(setter(strip_option), default)]
+    /// Headers for the signal
+    pub signal_header: Option<Header>,
+}
+
+impl SignalWithStartOptions {
+    /// Builder convenience.  Less `use` imports
+    pub fn builder() -> SignalWithStartOptionsBuilder {
+        Default::default()
+    }
+}
+
 /// This trait provides higher-level friendlier interaction with the server.
 /// See the [WorkflowService] trait for a lower-level client.
 #[cfg_attr(test, mockall::automock)]
@@ -677,15 +715,8 @@ pub trait WorkflowClientTrait {
     #[allow(clippy::too_many_arguments)]
     async fn signal_with_start_workflow_execution(
         &self,
-        input: Option<Payloads>,
-        task_queue: String,
-        workflow_id: String,
-        workflow_type: String,
-        request_id: Option<String>,
-        options: WorkflowOptions,
-        signal_name: String,
-        signal_input: Option<Payloads>,
-        signal_header: Option<Header>,
+        options: SignalWithStartOptions,
+        workflow_options: WorkflowOptions,
     ) -> Result<SignalWithStartWorkflowExecutionResponse>;
 
     /// Request a query of a certain workflow instance
@@ -740,7 +771,7 @@ pub trait WorkflowClientTrait {
     /// Query namespace details
     async fn describe_namespace(&self, namespace: Namespace) -> Result<DescribeNamespaceResponse>;
 
-    /// List open workflows with Standard Visibility filtering
+    /// List open workflow executions with Standard Visibility filtering
     async fn list_open_workflow_executions(
         &self,
         max_page_size: i32,
@@ -749,7 +780,7 @@ pub trait WorkflowClientTrait {
         filters: Option<ListOpenFilters>,
     ) -> Result<ListOpenWorkflowExecutionsResponse>;
 
-    /// List closed workflows Standard Visibility filtering
+    /// List closed workflow executions Standard Visibility filtering
     async fn list_closed_workflow_executions(
         &self,
         max_page_size: i32,
@@ -758,13 +789,21 @@ pub trait WorkflowClientTrait {
         filters: Option<ListClosedFilters>,
     ) -> Result<ListClosedWorkflowExecutionsResponse>;
 
-    /// List workflows with Advanced Visibility filtering
+    /// List workflow executions with Advanced Visibility filtering
     async fn list_workflow_executions(
         &self,
-        max_page_size: i32,
+        page_size: i32,
         next_page_token: Vec<u8>,
         query: String,
     ) -> Result<ListWorkflowExecutionsResponse>;
+
+    /// List archived workflow executions
+    async fn list_archived_workflow_executions(
+        &self,
+        page_size: i32,
+        next_page_token: Vec<u8>,
+        query: String,
+    ) -> Result<ListArchivedWorkflowExecutionsResponse>;
 
     /// Returns options that were used to initialize the client
     fn get_options(&self) -> &ClientOptions;
@@ -973,42 +1012,43 @@ impl WorkflowClientTrait for Client {
 
     async fn signal_with_start_workflow_execution(
         &self,
-        input: Option<Payloads>,
-        task_queue: String,
-        workflow_id: String,
-        workflow_type: String,
-        request_id: Option<String>,
-        options: WorkflowOptions,
-        signal_name: String,
-        signal_input: Option<Payloads>,
-        signal_header: Option<Header>,
+        options: SignalWithStartOptions,
+        workflow_options: WorkflowOptions,
     ) -> Result<SignalWithStartWorkflowExecutionResponse> {
         Ok(self
             .wf_svc()
             .signal_with_start_workflow_execution(SignalWithStartWorkflowExecutionRequest {
                 namespace: self.namespace.clone(),
-                workflow_id,
+                workflow_id: options.workflow_id,
                 workflow_type: Some(WorkflowType {
-                    name: workflow_type,
+                    name: options.workflow_type,
                 }),
                 task_queue: Some(TaskQueue {
-                    name: task_queue,
+                    name: options.task_queue,
                     kind: TaskQueueKind::Normal as i32,
                 }),
-                input,
-                signal_name,
-                signal_input,
+                input: options.input,
+                signal_name: options.signal_name,
+                signal_input: options.signal_input,
                 identity: self.inner.options.identity.clone(),
-                request_id: request_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
-                workflow_id_reuse_policy: options.id_reuse_policy as i32,
-                workflow_execution_timeout: options
+                request_id: options
+                    .request_id
+                    .unwrap_or_else(|| Uuid::new_v4().to_string()),
+                workflow_id_reuse_policy: workflow_options.id_reuse_policy as i32,
+                workflow_execution_timeout: workflow_options
                     .execution_timeout
                     .and_then(|d| d.try_into().ok()),
-                workflow_run_timeout: options.execution_timeout.and_then(|d| d.try_into().ok()),
-                workflow_task_timeout: options.task_timeout.and_then(|d| d.try_into().ok()),
-                search_attributes: options.search_attributes.and_then(|d| d.try_into().ok()),
-                cron_schedule: options.cron_schedule.unwrap_or_default(),
-                header: signal_header,
+                workflow_run_timeout: workflow_options
+                    .execution_timeout
+                    .and_then(|d| d.try_into().ok()),
+                workflow_task_timeout: workflow_options
+                    .task_timeout
+                    .and_then(|d| d.try_into().ok()),
+                search_attributes: workflow_options
+                    .search_attributes
+                    .and_then(|d| d.try_into().ok()),
+                cron_schedule: workflow_options.cron_schedule.unwrap_or_default(),
+                header: options.signal_header,
                 ..Default::default()
             })
             .await?
@@ -1205,6 +1245,24 @@ impl WorkflowClientTrait for Client {
         Ok(self
             .wf_svc()
             .list_workflow_executions(ListWorkflowExecutionsRequest {
+                namespace: self.namespace.clone(),
+                page_size,
+                next_page_token,
+                query,
+            })
+            .await?
+            .into_inner())
+    }
+
+    async fn list_archived_workflow_executions(
+        &self,
+        page_size: i32,
+        next_page_token: Vec<u8>,
+        query: String,
+    ) -> Result<ListArchivedWorkflowExecutionsResponse> {
+        Ok(self
+            .wf_svc()
+            .list_archived_workflow_executions(ListArchivedWorkflowExecutionsRequest {
                 namespace: self.namespace.clone(),
                 page_size,
                 next_page_token,

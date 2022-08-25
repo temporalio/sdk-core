@@ -1,6 +1,6 @@
 use crate::{
     ClientOptions, ListClosedFilters, ListOpenFilters, Namespace, Result, RetryConfig,
-    StartTimeFilter, WorkflowClientTrait, WorkflowOptions,
+    SignalWithStartOptions, StartTimeFilter, WorkflowClientTrait, WorkflowOptions,
 };
 use backoff::{backoff::Backoff, exponential::ExponentialBackoff, Clock, SystemClock};
 use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
@@ -8,7 +8,7 @@ use std::{fmt::Debug, future::Future, sync::Arc, time::Duration};
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::QueryResult,
     temporal::api::{
-        common::v1::{Header, Payload, Payloads},
+        common::v1::{Payload, Payloads},
         enums::v1::WorkflowTaskFailedCause,
         failure::v1::Failure,
         query::v1::WorkflowQuery,
@@ -362,28 +362,14 @@ where
 
     async fn signal_with_start_workflow_execution(
         &self,
-        input: Option<Payloads>,
-        task_queue: String,
-        workflow_id: String,
-        workflow_type: String,
-        request_id: Option<String>,
-        options: WorkflowOptions,
-        signal_name: String,
-        signal_input: Option<Payloads>,
-        signal_header: Option<Header>,
+        options: SignalWithStartOptions,
+        workflow_options: WorkflowOptions,
     ) -> Result<SignalWithStartWorkflowExecutionResponse> {
         retry_call!(
             self,
             signal_with_start_workflow_execution,
-            input.clone(),
-            task_queue.clone(),
-            workflow_id.clone(),
-            workflow_type.clone(),
-            request_id.clone(),
             options.clone(),
-            signal_name.clone(),
-            signal_input.clone(),
-            signal_header.clone()
+            workflow_options.clone()
         )
     }
 
@@ -524,6 +510,21 @@ where
         retry_call!(
             self,
             list_workflow_executions,
+            page_size,
+            next_page_token.clone(),
+            query.clone()
+        )
+    }
+
+    async fn list_archived_workflow_executions(
+        &self,
+        page_size: i32,
+        next_page_token: Vec<u8>,
+        query: String,
+    ) -> Result<ListArchivedWorkflowExecutionsResponse> {
+        retry_call!(
+            self,
+            list_archived_workflow_executions,
             page_size,
             next_page_token.clone(),
             query.clone()

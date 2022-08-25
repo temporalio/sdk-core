@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
 use futures::StreamExt;
-use temporal_client::{WorkflowClientTrait, WorkflowExecutionInfo, WorkflowOptions};
+use temporal_client::{
+    SignalWithStartOptions, WorkflowClientTrait, WorkflowExecutionInfo, WorkflowOptions,
+};
 use temporal_sdk::{
     ChildWorkflowOptions, Signal, SignalWorkflowOptions, WfContext, WorkflowResult,
 };
@@ -59,7 +61,6 @@ async fn signal_receiver(ctx: WfContext) -> WorkflowResult<()> {
 
 async fn signal_with_create_wf_receiver(ctx: WfContext) -> WorkflowResult<()> {
     let res = ctx.make_signal_channel(SIGNAME).next().await.unwrap();
-    println!("HEADER: {:?}", res.headers);
     assert_eq!(&res.input, &[b"tada".into()]);
     assert_eq!(
         *res.headers.get("tupac").expect("tupac header exists"),
@@ -100,22 +101,24 @@ async fn sends_signal_to_other_wf() {
 async fn sends_signal_with_create_wf() {
     let mut starter = CoreWfStarter::new("sends_signal_with_create_wf");
     let mut worker = starter.worker().await;
-    worker.register_wf("receiversignal", signal_with_create_wf_receiver);
+    worker.register_wf("receiver_signal", signal_with_create_wf_receiver);
 
     let client = starter.get_client().await;
     let mut header: HashMap<String, Payload> = HashMap::new();
     header.insert("tupac".into(), "shakur".into());
+    let options = SignalWithStartOptions::builder()
+        .task_queue(worker.inner_mut().task_queue())
+        .workflow_id("sends_signal_with_create_wf")
+        .workflow_type("receiver_signal")
+        .signal_name(SIGNAME)
+        .signal_input(vec![b"tada".into()].into_payloads())
+        .signal_header(header.into())
+        .build()
+        .unwrap();
     let res = client
         .signal_with_start_workflow_execution(
-            None,
-            worker.inner_mut().task_queue().to_owned(),
-            "sends_signal_with_create_wf".to_owned(),
-            "receiversignal".to_owned(),
-            None,
+            options,
             WorkflowOptions::default(),
-            SIGNAME.to_owned(),
-            vec![b"tada".into()].into_payloads(),
-            Some(header.into()),
         )
         .await
         .expect("request succeeds.qed");
