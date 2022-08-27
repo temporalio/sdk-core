@@ -116,10 +116,7 @@ async fn sends_signal_with_create_wf() {
         .build()
         .unwrap();
     let res = client
-        .signal_with_start_workflow_execution(
-            options,
-            WorkflowOptions::default(),
-        )
+        .signal_with_start_workflow_execution(options, WorkflowOptions::default())
         .await
         .expect("request succeeds.qed");
 

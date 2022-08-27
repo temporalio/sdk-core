@@ -1,6 +1,6 @@
 use crate::{
-    ClientOptions, ListClosedFilters, ListOpenFilters, Namespace, Result, RetryConfig,
-    SignalWithStartOptions, StartTimeFilter, WorkflowClientTrait, WorkflowOptions,
+    ClientOptions, ListClosedFilters, ListOpenFilters, Namespace, RegisterNamespaceOptions, Result,
+    RetryConfig, SignalWithStartOptions, StartTimeFilter, WorkflowClientTrait, WorkflowOptions,
 };
 use backoff::{backoff::Backoff, exponential::ExponentialBackoff, Clock, SystemClock};
 use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
@@ -457,6 +457,13 @@ where
             workflow_id.clone(),
             run_id.clone()
         )
+    }
+
+    async fn register_namespace(
+        &self,
+        options: RegisterNamespaceOptions,
+    ) -> Result<RegisterNamespaceResponse> {
+        retry_call!(self, register_namespace, options.clone())
     }
 
     async fn list_namespaces(&self) -> Result<ListNamespacesResponse> {

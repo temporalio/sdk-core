@@ -15,6 +15,7 @@ mod workflow_handle;
 pub use crate::retry::{CallType, RetryClient, RETRYABLE_ERROR_CODES};
 pub use raw::{HealthService, OperatorService, TestService, WorkflowService};
 pub use temporal_sdk_core_protos::temporal::api::{
+    enums::v1::ArchivalState,
     filter::v1::{StartTimeFilter, StatusFilter, WorkflowExecutionFilter, WorkflowTypeFilter},
     workflowservice::v1::{
         list_closed_workflow_executions_request::Filters as ListClosedFilters,
@@ -51,6 +52,7 @@ use temporal_sdk_core_protos::{
         failure::v1::Failure,
         operatorservice::v1::operator_service_client::OperatorServiceClient,
         query::v1::WorkflowQuery,
+        replication::v1::ClusterReplicationConfig,
         taskqueue::v1::TaskQueue,
         testservice::v1::test_service_client::TestServiceClient,
         workflowservice::v1::{workflow_service_client::WorkflowServiceClient, *},
@@ -592,27 +594,115 @@ impl Namespace {
     }
 }
 
+/// Default workflow execution retention for a Namespace is 3 days
+pub const DEFAULT_WORKFLOW_EXECUTION_RETENTION_PERIOD: Duration =
+    Duration::from_secs(60 * 60 * 24 * 3);
+
+/// Helper struct for `register_namespace`.
+#[derive(Clone, derive_builder::Builder)]
+pub struct RegisterNamespaceOptions {
+    /// Name (required)
+    #[builder(setter(into))]
+    pub namespace: String,
+    /// Description (required)
+    #[builder(setter(into))]
+    pub description: String,
+    /// Owner's email
+    #[builder(default)]
+    pub owner_email: String,
+    /// Workflow execution retention period
+    #[builder(default = "DEFAULT_WORKFLOW_EXECUTION_RETENTION_PERIOD")]
+    pub workflow_execution_retention_period: Duration,
+    /// Cluster settings
+    #[builder(setter(strip_option, custom), default)]
+    pub clusters: Vec<ClusterReplicationConfig>,
+    /// Active cluster name
+    #[builder(setter(into), default)]
+    pub active_cluster_name: String,
+    /// Custom Data
+    #[builder(default)]
+    pub data: HashMap<String, String>,
+    /// Security Token
+    #[builder(default)]
+    pub security_token: String,
+    /// Global namespace
+    #[builder(default)]
+    pub is_global_namespace: bool,
+    /// History Archival setting
+    #[builder(setter(into), default = "ArchivalState::Unspecified")]
+    pub history_archival_state: ArchivalState,
+    /// History Archival uri
+    #[builder(setter(strip_option), default)]
+    pub history_archival_uri: String,
+    /// Visibility Archival setting
+    #[builder(setter(into), default = "ArchivalState::Unspecified")]
+    pub visibility_archival_state: ArchivalState,
+    /// Visibility Archival uri
+    #[builder(setter(strip_option), default)]
+    pub visibility_archival_uri: String,
+}
+
+impl RegisterNamespaceOptions {
+    /// Builder convenience.  Less `use` imports
+    pub fn builder() -> RegisterNamespaceOptionsBuilder {
+        Default::default()
+    }
+}
+
+impl Into<RegisterNamespaceRequest> for RegisterNamespaceOptions {
+    fn into(self) -> RegisterNamespaceRequest {
+        RegisterNamespaceRequest {
+            namespace: self.namespace,
+            description: self.description,
+            owner_email: self.owner_email,
+            workflow_execution_retention_period: self
+                .workflow_execution_retention_period
+                .try_into()
+                .ok(),
+            clusters: self.clusters,
+            active_cluster_name: self.active_cluster_name,
+            data: self.data,
+            security_token: self.security_token,
+            is_global_namespace: self.is_global_namespace,
+            history_archival_state: self.history_archival_state as i32,
+            history_archival_uri: self.history_archival_uri,
+            visibility_archival_state: self.visibility_archival_state as i32,
+            visibility_archival_uri: self.visibility_archival_uri,
+        }
+    }
+}
+
+impl RegisterNamespaceOptionsBuilder {
+    /// Custum builder function for convenience
+    pub fn clusters(&mut self, clusters: Vec<String>) {
+        self.clusters = Some(
+            clusters
+                .into_iter()
+                .map(|s| ClusterReplicationConfig { cluster_name: s })
+                .collect(),
+        );
+    }
+}
+
 /// Helper struct for `signal_with_start_workflow_execution`.
-/// Required Params:
-/// `task_queue`, `workflow_id`, `workflow_type`, `signal_name`
 #[derive(Clone, derive_builder::Builder)]
 pub struct SignalWithStartOptions {
     /// Input payload for the workflow run/signal
     #[builder(setter(strip_option), default)]
     pub input: Option<Payloads>,
-    /// Task Queue to target
+    /// Task Queue to target (required)
     #[builder(setter(into))]
     pub task_queue: String,
-    /// Workflow id of the run/signal
+    /// Workflow id of the run/signal (required)
     #[builder(setter(into))]
     pub workflow_id: String,
-    /// Workflow type of the run/signal
+    /// Workflow type of the run/signal (required)
     #[builder(setter(into))]
     pub workflow_type: String,
     #[builder(setter(strip_option), default)]
     /// Request id for idempotency/deduplication
     pub request_id: Option<String>,
-    /// The signal name to send
+    /// The signal name to send (requierd)
     #[builder(setter(into))]
     pub signal_name: String,
     /// Payloads for the signal
@@ -764,6 +854,12 @@ pub trait WorkflowClientTrait {
         workflow_id: String,
         run_id: Option<String>,
     ) -> Result<TerminateWorkflowExecutionResponse>;
+
+    /// Register a new namespace
+    async fn register_namespace(
+        &self,
+        options: RegisterNamespaceOptions,
+    ) -> Result<RegisterNamespaceResponse>;
 
     /// Lists all available namespaces
     async fn list_namespaces(&self) -> Result<ListNamespacesResponse>;
@@ -1178,6 +1274,14 @@ impl WorkflowClientTrait for Client {
             })
             .await?
             .into_inner())
+    }
+
+    async fn register_namespace(
+        &self,
+        options: RegisterNamespaceOptions,
+    ) -> Result<RegisterNamespaceResponse> {
+        let req = Into::<RegisterNamespaceRequest>::into(options);
+        Ok(self.wf_svc().register_namespace(req).await?.into_inner())
     }
 
     async fn list_namespaces(&self) -> Result<ListNamespacesResponse> {
