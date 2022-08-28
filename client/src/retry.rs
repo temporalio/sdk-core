@@ -538,6 +538,10 @@ where
         )
     }
 
+    async fn get_search_attributes(&self) -> Result<GetSearchAttributesResponse> {
+        retry_call!(self, get_search_attributes)
+    }
+
     fn get_options(&self) -> &ClientOptions {
         self.client.get_options()
     }

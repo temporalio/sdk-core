@@ -12,7 +12,6 @@ mod raw;
 mod retry;
 mod workflow_handle;
 
-pub use tonic;
 pub use crate::retry::{CallType, RetryClient, RETRYABLE_ERROR_CODES};
 pub use raw::{HealthService, OperatorService, TestService, WorkflowService};
 pub use temporal_sdk_core_protos::temporal::api::{
@@ -23,6 +22,7 @@ pub use temporal_sdk_core_protos::temporal::api::{
         list_open_workflow_executions_request::Filters as ListOpenFilters,
     },
 };
+pub use tonic;
 pub use workflow_handle::{WorkflowExecutionInfo, WorkflowExecutionResult};
 
 use crate::{
@@ -902,6 +902,9 @@ pub trait WorkflowClientTrait {
         query: String,
     ) -> Result<ListArchivedWorkflowExecutionsResponse>;
 
+    /// Get Cluster Search Attributes
+    async fn get_search_attributes(&self) -> Result<GetSearchAttributesResponse>;
+
     /// Returns options that were used to initialize the client
     fn get_options(&self) -> &ClientOptions;
 
@@ -1373,6 +1376,14 @@ impl WorkflowClientTrait for Client {
                 next_page_token,
                 query,
             })
+            .await?
+            .into_inner())
+    }
+
+    async fn get_search_attributes(&self) -> Result<GetSearchAttributesResponse> {
+        Ok(self
+            .wf_svc()
+            .get_search_attributes(GetSearchAttributesRequest {})
             .await?
             .into_inner())
     }
