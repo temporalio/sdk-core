@@ -12,7 +12,7 @@ mod raw;
 mod retry;
 mod workflow_handle;
 
-pub use tonic::Status;
+pub use tonic::Status as TonicStatus;
 pub use crate::retry::{CallType, RetryClient, RETRYABLE_ERROR_CODES};
 pub use raw::{HealthService, OperatorService, TestService, WorkflowService};
 pub use temporal_sdk_core_protos::temporal::api::{
