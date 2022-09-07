@@ -465,6 +465,11 @@ where
         self.test_svc_client
             .get_or_init(|| TestServiceClient::new(self.svc.clone()))
     }
+    /// Get the underlying health service client
+    pub fn health_svc(&self) -> &HealthClient<T> {
+        self.health_svc_client
+            .get_or_init(|| HealthClient::new(self.svc.clone()))
+    }
     /// Get the underlying workflow service client mutably
     pub fn workflow_svc_mut(&mut self) -> &mut WorkflowServiceClient<T> {
         let _ = self.workflow_svc();
@@ -482,7 +487,7 @@ where
     }
     /// Get the underlying health service client mutably
     pub fn health_svc_mut(&mut self) -> &mut HealthClient<T> {
-        let _ = self.test_svc();
+        let _ = self.health_svc();
         self.health_svc_client.get_mut().unwrap()
     }
 }
