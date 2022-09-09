@@ -13,7 +13,7 @@ use url::Url;
 use zip::read::read_zipfile_from_stream;
 
 #[derive(Debug, Clone, derive_builder::Builder)]
-pub struct TemporaliteServerConfig {
+pub struct TemporaliteConfig {
     #[builder(default)]
     pub namespace: String,
 
@@ -37,18 +37,9 @@ pub struct TemporaliteServerConfig {
 
     #[builder(default)]
     pub download_version: Option<String>,
-}
 
-impl TemporaliteServerConfigBuilder {
-    pub fn to_args() -> Vec<String> {
-        todo!()
-    }
-}
-
-pub struct TemporaliteServer {}
-
-impl TemporaliteServer {
-    // fn start
+    #[builder(default)]
+    pub download_dest_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, derive_builder::Builder)]
@@ -69,78 +60,124 @@ pub struct TestServerConfig {
     pub download_dest_dir: Option<String>,
 }
 
-pub struct TestServer {
-    target: String,
-    child: tokio::process::Child,
-}
-
-impl TestServer {
-    pub async fn start(config: TestServerConfig) -> anyhow::Result<TestServer> {
-        // Use exe path or download and extract
-        let exe_path = if let Some(exe_path) = config.exe_path {
+impl TestServerConfig {
+    pub async fn start(&self) -> anyhow::Result<EphemeralServer> {
+        // Use exe path or prepare download
+        let exe = if let Some(exe_path) = &self.exe_path {
             let path = PathBuf::from(exe_path);
             if !path.exists() {
                 return Err(anyhow!("Exe path does not exist"));
             }
-            path
-        } else if let Some(download_version) = config.download_version {
+            EphemeralExe::ExistingPath(path)
+        } else if let Some(download_version) = &self.download_version {
             // Use given dest dir or use temp dir
-            let dest_dir = if let Some(download_dest_dir) = config.download_dest_dir {
+            let dest_dir = if let Some(download_dest_dir) = &self.download_dest_dir {
                 PathBuf::from(download_dest_dir)
             } else {
                 std::env::temp_dir()
             };
 
-            // Build URI from platform specific components
-            let (platform, download_ext, out_ext) = match std::env::consts::OS {
-                "windows" => ("windows", ".zip", ".exe"),
-                "macos" => ("macOS", ".tar.gz", ""),
-                _ => ("linux", ".tar.gz", ""),
-            };
+            // Build URI  and download paths from platform-specific components
+            let (extract_platform, download_platform, download_ext, out_ext) =
+                match std::env::consts::OS {
+                    "windows" => ("windows", "windows", ".zip", ".exe"),
+                    "macos" => ("macOS", "darwin", ".tar.gz", ""),
+                    _ => ("linux", "linux", ".tar.gz", ""),
+                };
             // We intentionally always choose amd64 even in cases of ARM
             // processors because we don't have native ARM binaries yet and some
             // systems like M1 can run the amd64 one
-            let name = format!(
-                "temporal-test-server_{}_{}_amd64",
-                download_version, platform
-            );
             let uri = format!(
-                "https://github.com/temporalio/sdk-java/releases/download/v{}/{}{}",
-                download_version, name, download_ext
+                "https://temporal.download/temporal-test-server/temporal-test-server_{}_{}_amd64.{}",
+                download_version, download_platform, download_ext
             );
             let dest = dest_dir.join(format!(
                 "temporal-test-server-{}{}",
                 download_version, out_ext
             ));
-            let file_to_extract: PathBuf = [name, format!("temporal-test-server{}", out_ext)]
-                .iter()
-                .collect();
-
-            info!(
-                "Downloading {} to extract test server to {}",
+            let file_to_extract: PathBuf = [
+                format!(
+                    "temporal-test-server_{}_{}_amd64",
+                    download_version, extract_platform
+                ),
+                format!("temporal-test-server{}", out_ext),
+            ]
+            .iter()
+            .collect();
+            EphemeralExe::LazyDownload {
                 uri,
-                dest.display()
-            );
-            lazy_download_exe(&uri, &file_to_extract, &dest).await?;
-            dest
+                file_to_extract,
+                dest,
+            }
         } else {
             return Err(anyhow!("Must have either exe path or download version"));
         };
+        // Get free port if not already given
+        let port = self.port.unwrap_or_else(get_free_port);
+        // Build arg set
+        let mut args = self.extra_args.clone();
+        args.insert(0, port.to_string());
+        EphemeralServer::start(EphemeralServerConfig {
+            exe,
+            port,
+            args,
+            has_test_service: true,
+        })
+        .await
+    }
+}
 
-        // Get port
-        let port = config.port.unwrap_or_else(get_free_port);
+enum EphemeralExe {
+    ExistingPath(PathBuf),
+    LazyDownload {
+        uri: String,
+        file_to_extract: PathBuf,
+        dest: PathBuf,
+    },
+}
+
+struct EphemeralServerConfig {
+    exe: EphemeralExe,
+    port: u16,
+    args: Vec<String>,
+    has_test_service: bool,
+}
+
+pub struct EphemeralServer {
+    pub target: String,
+    pub has_test_service: bool,
+    child: tokio::process::Child,
+}
+
+impl EphemeralServer {
+    async fn start(config: EphemeralServerConfig) -> anyhow::Result<EphemeralServer> {
+        // Use exe path or download and extract
+        let exe_path = match config.exe {
+            EphemeralExe::ExistingPath(path) => path,
+            EphemeralExe::LazyDownload {
+                uri,
+                file_to_extract,
+                dest,
+            } => {
+                info!(
+                    "Downloading {} to extract test server to {}",
+                    uri,
+                    dest.display()
+                );
+                lazy_download_exe(&uri, &file_to_extract, &dest).await;
+                dest
+            }
+        };
 
         // Start process
         // TODO(cretz): Offer stdio suppression?
-        let mut args = vec![port.to_string()];
-        args.extend(config.extra_args);
         let child = tokio::process::Command::new(exe_path)
-            .args(args)
+            .args(config.args)
             .kill_on_drop(true)
             .spawn()?;
 
         // Try to connect every 100ms for 5s
-        let target = format!("127.0.0.1:{}", port);
+        let target = format!("127.0.0.1:{}", config.port);
         let target_url = format!("http://{}", target);
         let client_options = ClientOptionsBuilder::default()
             .target_url(Url::parse(&target_url)?)
@@ -152,7 +189,11 @@ impl TestServer {
                 .await
                 .is_ok()
             {
-                return Ok(TestServer { target, child });
+                return Ok(EphemeralServer {
+                    target,
+                    has_test_service: config.has_test_service,
+                    child,
+                });
             }
         }
         Err(anyhow!("Failed connecting to test server after 5 seconds"))
