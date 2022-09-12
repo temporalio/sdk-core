@@ -29,6 +29,23 @@ async fn temporalite_fixed() {
 }
 
 #[tokio::test]
+async fn temporalite_shutdown_port_reuse() {
+    // Start, test shutdown, do again immediately on same port to ensure we can
+    // reuse after shutdown
+    let config = TemporaliteConfigBuilder::default()
+        .exe(default_cached_download())
+        .port(Some(10123))
+        .build()
+        .unwrap();
+    let mut server = config.start_server().await.unwrap();
+    assert_ephemeral_server(&server).await;
+    server.shutdown().await.unwrap();
+    let mut server = config.start_server().await.unwrap();
+    assert_ephemeral_server(&server).await;
+    server.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn test_server_default() {
     let config = TestServerConfigBuilder::default()
         .exe(default_cached_download())
@@ -46,6 +63,23 @@ async fn test_server_fixed() {
         .unwrap();
     let server = config.start_server().await.unwrap();
     assert_ephemeral_server(&server).await;
+}
+
+#[tokio::test]
+async fn test_server_shutdown_port_reuse() {
+    // Start, test shutdown, do again immediately on same port to ensure we can
+    // reuse after shutdown
+    let config = TestServerConfigBuilder::default()
+        .exe(default_cached_download())
+        .port(Some(10124))
+        .build()
+        .unwrap();
+    let mut server = config.start_server().await.unwrap();
+    assert_ephemeral_server(&server).await;
+    server.shutdown().await.unwrap();
+    let mut server = config.start_server().await.unwrap();
+    assert_ephemeral_server(&server).await;
+    server.shutdown().await.unwrap();
 }
 
 async fn assert_ephemeral_server(server: &EphemeralServer) {

@@ -140,7 +140,7 @@ pub struct EphemeralServer {
     pub target: String,
     /// Whether the target implements the gRPC TestService
     pub has_test_service: bool,
-    _child: tokio::process::Child,
+    child: tokio::process::Child,
 }
 
 impl EphemeralServer {
@@ -149,6 +149,8 @@ impl EphemeralServer {
         // TODO(cretz): Offer stdio suppression?
         let child = tokio::process::Command::new(config.exe_path)
             .args(config.args)
+            // We kill this on drop in case of errors or other issues. We still
+            // encourage users to manually shutdown.
             .kill_on_drop(true)
             .spawn()?;
         let target = format!("127.0.0.1:{}", config.port);
@@ -156,7 +158,7 @@ impl EphemeralServer {
         let success = Ok(EphemeralServer {
             target,
             has_test_service: config.has_test_service,
-            _child: child,
+            child,
         });
 
         // Try to connect every 100ms for 5s
@@ -179,6 +181,11 @@ impl EphemeralServer {
             }
         }
         Err(anyhow!("Failed connecting to test server after 5 seconds"))
+    }
+
+    /// Shutdown the server (i.e. kill the child process).
+    pub async fn shutdown(&mut self) -> anyhow::Result<()> {
+        Ok(self.child.kill().await?)
     }
 }
 
