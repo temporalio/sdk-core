@@ -85,7 +85,6 @@ impl TemporaliteConfig {
             port,
             args,
             has_test_service: false,
-            wait_for_client_connect: false,
         })
         .await
     }
@@ -123,7 +122,6 @@ impl TestServerConfig {
             port,
             args,
             has_test_service: true,
-            wait_for_client_connect: true,
         })
         .await
     }
@@ -134,7 +132,6 @@ struct EphemeralServerConfig {
     port: u16,
     args: Vec<String>,
     has_test_service: bool,
-    wait_for_client_connect: bool,
 }
 
 /// Server that will be stopped when dropped.
@@ -162,12 +159,9 @@ impl EphemeralServer {
             _child: child,
         });
 
-        // If we don't have to wait for client connect, we're done
-        if !config.wait_for_client_connect {
-            return success;
-        }
-
         // Try to connect every 100ms for 5s
+        // TODO(cretz): Some other way, e.g. via stdout, to know whether the
+        // server is up?
         let client_options = ClientOptionsBuilder::default()
             .identity("online_checker".to_owned())
             .target_url(Url::parse(&target_url)?)

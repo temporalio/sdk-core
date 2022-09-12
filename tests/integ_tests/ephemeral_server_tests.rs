@@ -96,7 +96,7 @@ fn fixed_cached_download(version: &str) -> EphemeralExe {
 fn client_options(target: &str) -> ClientOptions {
     return ClientOptionsBuilder::default()
         .identity("integ_tester".to_string())
-        .target_url(Url::try_from(&*format!("http://{}", target).to_string()).unwrap())
+        .target_url(Url::try_from(&*format!("http://{}", target)).unwrap())
         .client_name("temporal-core".to_string())
         .client_version("0.1.0".to_string())
         .build()
