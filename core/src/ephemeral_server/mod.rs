@@ -1,6 +1,6 @@
 use anyhow::anyhow;
 use flate2::read::GzDecoder;
-use hyper::{body, body::Buf, client::HttpConnector, Client};
+use futures::StreamExt;
 use serde::Deserialize;
 #[cfg(target_family = "unix")]
 use std::os::unix::fs::OpenOptionsExt;
@@ -9,7 +9,11 @@ use std::{
     path::{Path, PathBuf},
 };
 use temporal_client::ClientOptionsBuilder;
-use tokio::time::{sleep, Duration};
+use tokio::{
+    task::spawn_blocking,
+    time::{sleep, Duration},
+};
+use tokio_util::io::{StreamReader, SyncIoBridge};
 use url::Url;
 use zip::read::read_zipfile_from_stream;
 
@@ -33,6 +37,9 @@ pub struct TemporaliteConfig {
     /// Whether to enable the UI.
     #[builder(default)]
     pub ui: bool,
+    /// Log format and level
+    #[builder(default = "(\"pretty\".to_owned(), \"warn\".to_owned())")]
+    pub log: (String, String),
     /// Additional arguments to Temporalite.
     #[builder(default)]
     pub extra_args: Vec<String>,
@@ -56,6 +63,10 @@ impl TemporaliteConfig {
             self.namespace.clone(),
             "--ip".to_owned(),
             self.ip.clone(),
+            "--log-format".to_owned(),
+            self.log.0.clone(),
+            "--log-level".to_owned(),
+            self.log.1.clone(),
         ];
         if let Some(db_filename) = &self.db_filename {
             args.push("--filename".to_owned());
@@ -74,6 +85,7 @@ impl TemporaliteConfig {
             port,
             args,
             has_test_service: false,
+            wait_for_client_connect: false,
         })
         .await
     }
@@ -96,7 +108,7 @@ impl TestServerConfig {
     /// Start a test server.
     pub async fn start_server(&self) -> anyhow::Result<EphemeralServer> {
         // Get exe path
-        let exe_path = self.exe.get_or_download("test-server").await?;
+        let exe_path = self.exe.get_or_download("temporal-test-server").await?;
 
         // Get free port if not already given
         let port = self.port.unwrap_or_else(get_free_port);
@@ -111,6 +123,7 @@ impl TestServerConfig {
             port,
             args,
             has_test_service: true,
+            wait_for_client_connect: true,
         })
         .await
     }
@@ -121,6 +134,7 @@ struct EphemeralServerConfig {
     port: u16,
     args: Vec<String>,
     has_test_service: bool,
+    wait_for_client_connect: bool,
 }
 
 /// Server that will be stopped when dropped.
@@ -140,12 +154,25 @@ impl EphemeralServer {
             .args(config.args)
             .kill_on_drop(true)
             .spawn()?;
-
-        // Try to connect every 100ms for 5s
         let target = format!("127.0.0.1:{}", config.port);
         let target_url = format!("http://{}", target);
+        let success = Ok(EphemeralServer {
+            target,
+            has_test_service: config.has_test_service,
+            _child: child,
+        });
+
+        // If we don't have to wait for client connect, we're done
+        if !config.wait_for_client_connect {
+            return success;
+        }
+
+        // Try to connect every 100ms for 5s
         let client_options = ClientOptionsBuilder::default()
+            .identity("online_checker".to_owned())
             .target_url(Url::parse(&target_url)?)
+            .client_name("online-checker".to_owned())
+            .client_version("0.1.0".to_owned())
             .build()?;
         for _ in 0..50 {
             sleep(Duration::from_millis(100)).await;
@@ -154,11 +181,7 @@ impl EphemeralServer {
                 .await
                 .is_ok()
             {
-                return Ok(EphemeralServer {
-                    target,
-                    has_test_service: config.has_test_service,
-                    _child: child,
-                });
+                return success;
             }
         }
         Err(anyhow!("Failed connecting to test server after 5 seconds"))
@@ -184,7 +207,9 @@ pub enum EphemeralExe {
 pub enum EphemeralExeVersion {
     /// Use a default version for the given SDK name and version.
     Default {
+        /// Name of the SDK to get the default for.
         sdk_name: String,
+        /// Version of the SDK to get the default for.
         sdk_version: String,
     },
     /// Specific version.
@@ -192,12 +217,11 @@ pub enum EphemeralExeVersion {
 }
 
 #[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
 struct DownloadInfo {
-    archive_uri: String,
+    archive_url: String,
     file_to_extract: String,
 }
-
-type HyperClient = Client<HttpConnector>;
 
 impl EphemeralExe {
     async fn get_or_download(&self, artifact_name: &str) -> anyhow::Result<PathBuf> {
@@ -229,6 +253,10 @@ impl EphemeralExe {
                         format!("{}-{}{}", artifact_name, version, out_ext)
                     }
                 });
+                debug!(
+                    "Lazily downloading or using existing exe at {}",
+                    dest.display()
+                );
 
                 // If it already exists, skip
                 if dest.exists() {
@@ -247,32 +275,30 @@ impl EphemeralExe {
                         sdk_name,
                         sdk_version,
                     } => {
-                        get_info_params.push(("sdk_name", sdk_name.as_str()));
-                        get_info_params.push(("sdk_version", sdk_version.as_str()));
+                        get_info_params.push(("sdk-name", sdk_name.as_str()));
+                        get_info_params.push(("sdk-version", sdk_version.as_str()));
                         "default"
                     }
                     EphemeralExeVersion::Fixed(version) => version,
                 };
-                let get_info_url: String = Url::parse_with_params(
-                    format!(
+                let client = reqwest::Client::new();
+                let info: DownloadInfo = client
+                    .get(format!(
                         "https://temporal.download/{}/{}",
-                        version_name, artifact_name
-                    )
-                    .as_str(),
-                    get_info_params,
-                )?
-                .into();
-                let client = Client::new();
-                let info_res = client.get(get_info_url.parse()?).await?;
-                let info_body = hyper::body::aggregate(info_res).await?;
-                let info: DownloadInfo = serde_json::from_reader(info_body.reader())?;
+                        artifact_name, version_name
+                    ))
+                    .query(&get_info_params)
+                    .send()
+                    .await?
+                    .json()
+                    .await?;
 
                 // Attempt download, looping because it could have waited for
                 // concurrent one to finish
                 loop {
                     if lazy_download_exe(
                         &client,
-                        &info.archive_uri,
+                        &info.archive_url,
                         Path::new(&info.file_to_extract),
                         &dest,
                     )
@@ -300,7 +326,7 @@ fn get_free_port() -> u16 {
 // true if the destination is known to exist. Should call again if false is
 // returned.
 async fn lazy_download_exe(
-    client: &HyperClient,
+    client: &reqwest::Client,
     uri: &str,
     file_to_extract: &Path,
     dest: &Path,
@@ -340,19 +366,22 @@ async fn lazy_download_exe(
             return Ok(true);
         }
         // Download and extract the binary
-        Ok(mut temp_file) => download_and_extract(client, uri, file_to_extract, &mut temp_file)
-            .await
-            .map_err(|err| {
-                // Failed to download, just remove file
-                if let Err(err) = std::fs::remove_file(temp_dest) {
-                    warn!(
-                        "Failed removing temp file at {}: {:?}",
-                        temp_dest.display(),
-                        err
-                    );
-                }
-                err
-            }),
+        Ok(mut temp_file) => {
+            info!("Downloading {} to {}", uri, dest.display());
+            download_and_extract(client, uri, file_to_extract, &mut temp_file)
+                .await
+                .map_err(|err| {
+                    // Failed to download, just remove file
+                    if let Err(err) = std::fs::remove_file(temp_dest) {
+                        warn!(
+                            "Failed removing temp file at {}: {:?}",
+                            temp_dest.display(),
+                            err
+                        );
+                    }
+                    err
+                })
+        }
     }?;
     // Now that file should be dropped, we can rename
     std::fs::rename(temp_dest, dest)?;
@@ -361,53 +390,71 @@ async fn lazy_download_exe(
 
 #[cfg(target_family = "unix")]
 fn new_executable_file(file: &Path) -> std::io::Result<File> {
-    OpenOptions::new().create_new(true).mode(0o755).open(file)
+    OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .mode(0o755)
+        .open(file)
 }
 
 #[cfg(not(target_family = "unix"))]
 fn new_executable_file(file: &Path) -> std::io::Result<File> {
-    OpenOptions::new().create_new(true).open(file)
+    OpenOptions::new().create_new(true).write(true).open(file)
 }
 
 async fn download_and_extract(
-    client: &HyperClient,
+    client: &reqwest::Client,
     uri: &str,
     file_to_extract: &Path,
     dest: &mut std::fs::File,
 ) -> anyhow::Result<()> {
     // Start download. We are using streaming here to extract the file from the
     // tarball or zip instead of loading into memory for Cursor/Seek.
-    let resp = client.get(uri.parse()?).await?;
-    let buf = body::aggregate(resp.into_body()).await?;
-    let mut reader = buf.reader();
+    let resp = client.get(uri).send().await?;
+    // We have to map the error type to an io error
+    let stream = resp
+        .bytes_stream()
+        .map(|item| item.map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err)));
 
-    // Extract from tarball or zip. We use sync IO here because the file
-    // compression libraries use sync IO and it isn't worth using the Tokio sync
-    // bridge at this time. This should not block a thread for _too_ long.
-    if uri.ends_with(".tar.gz") {
-        for entry in tar::Archive::new(GzDecoder::new(reader)).entries()? {
-            let mut entry = entry?;
-            if entry.path()? == file_to_extract {
-                std::io::copy(&mut entry, dest)?;
-                return Ok(());
-            }
-        }
-        return Err(anyhow!("Unable to find file in tarball"));
+    // Since our tar/zip impls use sync IO, we have to create a bridge and run
+    // in a blocking closure. We have to extend the lifetime of some references
+    // we are given for this.
+    let mut reader = SyncIoBridge::new(StreamReader::new(stream));
+    let tarball = if uri.ends_with(".tar.gz") {
+        true
     } else if uri.ends_with(".zip") {
-        loop {
-            // This is the way to stream a zip file without creating an archive
-            // that requires Seek.
-            if let Some(mut file) = read_zipfile_from_stream(&mut reader)? {
-                // If this is the file we're expecting, extract it
-                if file.enclosed_name() == Some(file_to_extract) {
-                    std::io::copy(&mut file, dest)?;
-                    return Ok(());
-                }
-            } else {
-                return Err(anyhow!("Unable to find file in zip"));
-            }
-        }
+        false
     } else {
         return Err(anyhow!("URI not .tar.gz or .zip"));
-    }
+    };
+    let file_to_extract = file_to_extract.to_path_buf();
+    let mut dest = dest.try_clone()?;
+
+    spawn_blocking(move || {
+        if tarball {
+            for entry in tar::Archive::new(GzDecoder::new(reader)).entries()? {
+                let mut entry = entry?;
+                if entry.path()? == file_to_extract {
+                    std::io::copy(&mut entry, &mut dest)?;
+                    return Ok(());
+                }
+            }
+            Err(anyhow!("Unable to find file in tarball"))
+        } else {
+            loop {
+                // This is the way to stream a zip file without creating an archive
+                // that requires Seek.
+                if let Some(mut file) = read_zipfile_from_stream(&mut reader)? {
+                    // If this is the file we're expecting, extract it
+                    if file.enclosed_name() == Some(&file_to_extract) {
+                        std::io::copy(&mut file, &mut dest)?;
+                        return Ok(());
+                    }
+                } else {
+                    return Err(anyhow!("Unable to find file in zip"));
+                }
+            }
+        }
+    })
+    .await?
 }

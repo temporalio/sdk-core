@@ -30,8 +30,8 @@ mod test_help;
 pub(crate) use temporal_sdk_core_api::errors;
 
 pub use ephemeral_server::{
-    EphemeralExe, EphemeralServer, TemporaliteConfig, TemporaliteConfigBuilder, TestServerConfig,
-    TestServerConfigBuilder,
+    EphemeralExe, EphemeralExeVersion, EphemeralServer, TemporaliteConfig,
+    TemporaliteConfigBuilder, TestServerConfig, TestServerConfigBuilder,
 };
 pub use pollers::{
     Client, ClientOptions, ClientOptionsBuilder, ClientTlsConfig, RetryClient, RetryConfig,
