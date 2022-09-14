@@ -1,8 +1,11 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 use temporal_client::{TestService, WorkflowService};
 use temporal_sdk_core::{
-    ClientOptions, ClientOptionsBuilder, EphemeralExe, EphemeralExeVersion, EphemeralServer,
-    TemporaliteConfigBuilder, TestServerConfigBuilder,
+    ephemeral_server::{
+        EphemeralExe, EphemeralExeVersion, EphemeralServer, TemporaliteConfigBuilder,
+        TestServerConfigBuilder,
+    },
+    ClientOptions, ClientOptionsBuilder,
 };
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::DescribeNamespaceRequest;
 use temporal_sdk_core_test_utils::NAMESPACE;

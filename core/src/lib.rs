@@ -12,7 +12,7 @@ extern crate tracing;
 extern crate core;
 
 mod abstractions;
-mod ephemeral_server;
+pub mod ephemeral_server;
 mod log_export;
 mod pollers;
 mod protosext;
@@ -29,10 +29,6 @@ mod test_help;
 
 pub(crate) use temporal_sdk_core_api::errors;
 
-pub use ephemeral_server::{
-    EphemeralExe, EphemeralExeVersion, EphemeralServer, TemporaliteConfig,
-    TemporaliteConfigBuilder, TestServerConfig, TestServerConfigBuilder,
-};
 pub use pollers::{
     Client, ClientOptions, ClientOptionsBuilder, ClientTlsConfig, RetryClient, RetryConfig,
     TlsConfig, WorkflowClientTrait,

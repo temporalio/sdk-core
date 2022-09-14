@@ -1,11 +1,12 @@
+//! This module implements support for downloading and running ephemeral test
+//! servers useful for testing.
+
 use anyhow::anyhow;
 use flate2::read::GzDecoder;
 use futures::StreamExt;
 use serde::Deserialize;
-#[cfg(target_family = "unix")]
-use std::os::unix::fs::OpenOptionsExt;
 use std::{
-    fs::{File, OpenOptions},
+    fs::OpenOptions,
     path::{Path, PathBuf},
 };
 use temporal_client::ClientOptionsBuilder;
@@ -16,6 +17,9 @@ use tokio::{
 use tokio_util::io::{StreamReader, SyncIoBridge};
 use url::Url;
 use zip::read::read_zipfile_from_stream;
+
+#[cfg(target_family = "unix")]
+use std::os::unix::fs::OpenOptionsExt;
 
 /// Configuration for Temporalite.
 #[derive(Debug, Clone, derive_builder::Builder)]
@@ -52,7 +56,7 @@ impl TemporaliteConfig {
         let exe_path = self.exe.get_or_download("temporalite").await?;
 
         // Get free port if not already given
-        let port = self.port.unwrap_or_else(get_free_port);
+        let port = self.port.unwrap_or_else(|| get_free_port(&self.ip));
 
         // Build arg set
         let mut args = vec![
@@ -110,7 +114,7 @@ impl TestServerConfig {
         let exe_path = self.exe.get_or_download("temporal-test-server").await?;
 
         // Get free port if not already given
-        let port = self.port.unwrap_or_else(get_free_port);
+        let port = self.port.unwrap_or_else(|| get_free_port("0.0.0.0"));
 
         // Build arg set
         let mut args = vec![port.to_string()];
@@ -313,19 +317,19 @@ impl EphemeralExe {
     }
 }
 
-fn get_free_port() -> u16 {
+fn get_free_port(bind_ip: &str) -> u16 {
     // Can just ask OS to give us a port then close socket. OS's don't give that
     // port back to anyone else anytime soon.
-    std::net::TcpListener::bind("127.0.0.1:0")
+    std::net::TcpListener::bind(format!("{}:0", bind_ip))
         .unwrap()
         .local_addr()
         .unwrap()
         .port()
 }
 
-// Returns false if we successfully waited for another download to complete, or
-// true if the destination is known to exist. Should call again if false is
-// returned.
+/// Returns false if we successfully waited for another download to complete, or
+/// true if the destination is known to exist. Should call again if false is
+/// returned.
 async fn lazy_download_exe(
     client: &reqwest::Client,
     uri: &str,
@@ -343,12 +347,25 @@ async fn lazy_download_exe(
     // already exists, we'll wait a bit and re-run this.
     let temp_dest_str = format!("{}{}", dest.to_str().unwrap(), ".downloading");
     let temp_dest = Path::new(&temp_dest_str);
+    // Try to open file, using a file mode on unix families
+    #[cfg(target_family = "unix")]
+    let file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .mode(0o755)
+        .open(temp_dest);
+    #[cfg(not(target_family = "unix"))]
+    let file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(temp_dest);
     // This match only gets Ok if the file was downloaded and extracted to the
     // temporary path
-    match new_executable_file(temp_dest) {
+    match file {
         Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
             // Since it already exists, we'll try once a second for 20 seconds
-            // to wait for it to be done, then recurse
+            // to wait for it to be done, then return false so the caller can
+            // try again.
             for _ in 0..20 {
                 sleep(Duration::from_secs(1)).await;
                 if !temp_dest.exists() {
@@ -356,7 +373,8 @@ async fn lazy_download_exe(
                 }
             }
             Err(anyhow!(
-                "Temp download file at {} not complete after 20 seconds",
+                "Temp download file at {} not complete after 20 seconds. \
+                Make sure another download isn't running for too long and delete the temp file.",
                 temp_dest.display()
             ))
         }
@@ -389,20 +407,6 @@ async fn lazy_download_exe(
     Ok(true)
 }
 
-#[cfg(target_family = "unix")]
-fn new_executable_file(file: &Path) -> std::io::Result<File> {
-    OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .mode(0o755)
-        .open(file)
-}
-
-#[cfg(not(target_family = "unix"))]
-fn new_executable_file(file: &Path) -> std::io::Result<File> {
-    OpenOptions::new().create_new(true).write(true).open(file)
-}
-
 async fn download_and_extract(
     client: &reqwest::Client,
     uri: &str,
@@ -418,8 +422,7 @@ async fn download_and_extract(
         .map(|item| item.map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err)));
 
     // Since our tar/zip impls use sync IO, we have to create a bridge and run
-    // in a blocking closure. We have to extend the lifetime of some references
-    // we are given for this.
+    // in a blocking closure.
     let mut reader = SyncIoBridge::new(StreamReader::new(stream));
     let tarball = if uri.ends_with(".tar.gz") {
         true
