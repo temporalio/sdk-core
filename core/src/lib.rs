@@ -12,6 +12,7 @@ extern crate tracing;
 extern crate core;
 
 mod abstractions;
+pub mod ephemeral_server;
 mod log_export;
 mod pollers;
 mod protosext;

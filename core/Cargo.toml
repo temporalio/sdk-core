@@ -23,6 +23,7 @@ dashmap = "5.0"
 derive_builder = "0.11"
 derive_more = "0.99"
 enum_dispatch = "0.3"
+flate2 = "1.0"
 futures = "0.3"
 # TODO: Pinned b/c https://github.com/rust-lang/futures-rs/issues/2634
 futures-util = "=0.3.21"
@@ -43,13 +44,16 @@ prometheus = "0.13"
 prost = "0.11"
 prost-types = "0.11"
 rand = "0.8.3"
+reqwest = { version = "0.11", features = ["json", "stream"] }
 ringbuf = "0.2"
 serde = "1.0"
+serde_json = "1.0"
 siphasher = "0.3"
 slotmap = "1.0"
+tar = "0.4"
 thiserror = "1.0"
-tokio = { version = "1.1", features = ["rt", "rt-multi-thread", "parking_lot", "time", "fs"] }
-tokio-util = { version = "0.7" }
+tokio = { version = "1.1", features = ["rt", "rt-multi-thread", "parking_lot", "time", "fs", "process"] }
+tokio-util = { version = "0.7", features = ["io", "io-util"] }
 tokio-stream = "0.1"
 tonic = { version = "0.8", features = ["tls", "tls-roots"] }
 # TODO: Get rid of this once otel updates its tonic dep
@@ -60,6 +64,7 @@ tracing-opentelemetry = "0.17"
 tracing-subscriber = { version = "0.3", features = ["parking_lot", "env-filter"] }
 url = "2.2"
 uuid = { version = "1.1", features = ["v4"] }
+zip = "0.6"
 
 # 1st party local deps
 [dependencies.temporal-sdk-core-api]

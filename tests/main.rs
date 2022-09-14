@@ -11,6 +11,7 @@ mod integ_tests {
         };
     }
     mod client_tests;
+    mod ephemeral_server_tests;
     mod heartbeat_tests;
     mod polling_tests;
     mod queries_tests;
