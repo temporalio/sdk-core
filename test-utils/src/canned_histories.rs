@@ -1,4 +1,6 @@
+use prost::Message;
 use rand::RngCore;
+use std::{fs::File, io::Write, path::PathBuf};
 use temporal_sdk_core::replay::TestHistoryBuilder;
 use temporal_sdk_core_protos::{
     coresdk::common::NamespacedWorkflowExecution,
@@ -1561,4 +1563,17 @@ pub fn two_local_activities_separated_by_timer() -> TestHistoryBuilder {
     t.add_local_activity_result_marker(2, "2", b"hi2".into());
     t.add_workflow_execution_completed();
     t
+}
+
+/// Useful for one-of needs to write a crafted history to a file. Writes it as serialized proto
+/// binary to the provided path.
+pub fn write_hist_to_binfile(
+    thb: &TestHistoryBuilder,
+    file_path: PathBuf,
+) -> Result<(), anyhow::Error> {
+    let as_complete_hist: History = thb.get_full_history_info()?.into();
+    let serialized = as_complete_hist.encode_to_vec();
+    let mut file = File::create(file_path)?;
+    file.write_all(&serialized)?;
+    Ok(())
 }
