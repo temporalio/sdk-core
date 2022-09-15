@@ -11,7 +11,9 @@ use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::coresdk::{
     child_workflow::{child_workflow_result, ChildWorkflowCancellationType},
     workflow_activation::{workflow_activation_job, WorkflowActivationJob},
-    workflow_commands::{CancelChildWorkflowExecution, StartChildWorkflowExecution},
+    workflow_commands::{
+        CancelChildWorkflowExecution, CompleteWorkflowExecution, StartChildWorkflowExecution,
+    },
     workflow_completion::WorkflowActivationCompletion,
 };
 use tokio::join;
@@ -167,4 +169,53 @@ async fn cancel_child_workflow_lang_thinks_not_started_but_is(
     );
     // Request cancel external is technically fallible, but the only reasons relate to targeting
     // a not-found workflow, which couldn't happen in this case.
+}
+
+#[tokio::test]
+async fn cancel_already_complete_child_ignored() {
+    let t = canned_histories::single_child_workflow("child-id-1");
+    let mock = mock_workflow_client();
+    let mock = single_hist_mock_sg("fakeid", t, [ResponseType::AllHistory], mock, true);
+    let core = mock_worker(mock);
+    let act = core.poll_workflow_activation().await.unwrap();
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+        act.run_id,
+        StartChildWorkflowExecution {
+            seq: 1,
+            ..Default::default()
+        }
+        .into(),
+    ))
+    .await
+    .unwrap();
+    let act = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        act.jobs.as_slice(),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::ResolveChildWorkflowExecutionStart(_)),
+        }]
+    );
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(act.run_id))
+        .await
+        .unwrap();
+    let act = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        act.jobs.as_slice(),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::ResolveChildWorkflowExecution(_)),
+        }]
+    );
+    // Try to cancel post-completion, it should be ignored. Also complete the wf.
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
+        act.run_id,
+        vec![
+            CancelChildWorkflowExecution {
+                child_workflow_seq: 1,
+            }
+            .into(),
+            CompleteWorkflowExecution { result: None }.into(),
+        ],
+    ))
+    .await
+    .unwrap();
 }
