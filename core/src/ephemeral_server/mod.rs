@@ -153,9 +153,7 @@ impl EphemeralServer {
         // TODO(cretz): Offer stdio suppression?
         let child = tokio::process::Command::new(config.exe_path)
             .args(config.args)
-            // We kill this on drop in case of errors or other issues. We still
-            // encourage users to manually shutdown.
-            .kill_on_drop(true)
+            .stdin(std::process::Stdio::null())
             .spawn()?;
         let target = format!("127.0.0.1:{}", config.port);
         let target_url = format!("http://{}", target);
@@ -187,9 +185,46 @@ impl EphemeralServer {
         Err(anyhow!("Failed connecting to test server after 5 seconds"))
     }
 
-    /// Shutdown the server (i.e. kill the child process).
+    /// Shutdown the server (i.e. kill the child process). This does not attempt
+    /// a kill if the child process appears completed, but such a check is not
+    /// atomic so a kill could still fail as completed if completed just before
+    /// kill.
+    #[cfg(not(target_family = "unix"))]
     pub async fn shutdown(&mut self) -> anyhow::Result<()> {
-        Ok(self.child.kill().await?)
+        // Only kill if there is a PID
+        if self.child.id().is_some() {
+            Ok(self.child.kill().await?)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Shutdown the server (i.e. kill the child process). This does not attempt
+    /// a kill if the child process appears completed, but such a check is not
+    /// atomic so a kill could still fail as completed if completed just before
+    /// kill.
+    #[cfg(target_family = "unix")]
+    pub async fn shutdown(&mut self) -> anyhow::Result<()> {
+        // For whatever reason, Tokio is not properly waiting on result
+        // after sending kill in some cases which is causing defunct zombie
+        // processes to remain and kill() to hang. Therefore, we are sending
+        // SIGINT and waiting on the process ourselves using a low-level call.
+        //
+        // WARNING: This is based on empirical evidence starting a Python test
+        // run on Linux with Python 3.7 (does not happen on Python 3.10 nor does
+        // it happen on Temporalite nor does it happen in Rust integration
+        // tests). Do not consider this fixed without running that scenario.
+        if let Some(pid) = self.child.id() {
+            let nix_pid = nix::unistd::Pid::from_raw(pid as i32);
+            Ok(spawn_blocking(move || {
+                nix::sys::signal::kill(nix_pid, nix::sys::signal::Signal::SIGINT)?;
+                nix::sys::wait::waitpid(Some(nix_pid), None)
+            })
+            .await?
+            .map(|_| ())?)
+        } else {
+            Ok(())
+        }
     }
 }
 
