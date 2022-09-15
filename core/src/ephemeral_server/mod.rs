@@ -89,6 +89,10 @@ impl TemporaliteConfig {
             port,
             args,
             has_test_service: false,
+            // Zombie prevention not needed on Temporalite, it shuts down
+            // properly
+            #[cfg(target_family = "unix")]
+            prevent_zombie_on_unix_shutdown: false,
         })
         .await
     }
@@ -126,6 +130,8 @@ impl TestServerConfig {
             port,
             args,
             has_test_service: true,
+            #[cfg(target_family = "unix")]
+            prevent_zombie_on_unix_shutdown: true,
         })
         .await
     }
@@ -136,6 +142,8 @@ struct EphemeralServerConfig {
     port: u16,
     args: Vec<String>,
     has_test_service: bool,
+    #[cfg(target_family = "unix")]
+    prevent_zombie_on_unix_shutdown: bool,
 }
 
 /// Server that will be stopped when dropped.
@@ -145,6 +153,8 @@ pub struct EphemeralServer {
     /// Whether the target implements the gRPC TestService
     pub has_test_service: bool,
     child: tokio::process::Child,
+    #[cfg(target_family = "unix")]
+    prevent_zombie_on_unix_shutdown: bool,
 }
 
 impl EphemeralServer {
@@ -163,6 +173,8 @@ impl EphemeralServer {
             target,
             has_test_service: config.has_test_service,
             child,
+            #[cfg(target_family = "unix")]
+            prevent_zombie_on_unix_shutdown: config.prevent_zombie_on_unix_shutdown,
         });
 
         // Try to connect every 100ms for 5s
@@ -187,9 +199,45 @@ impl EphemeralServer {
         Err(anyhow!("Failed connecting to test server after 5 seconds"))
     }
 
-    /// Shutdown the server (i.e. kill the child process).
+    /// Shutdown the server (i.e. kill the child process). This does not attempt
+    /// a kill if the child process appears completed, but such a check is not
+    /// atomic so a kill could still fail as completed if completed just before
+    /// kill.
     pub async fn shutdown(&mut self) -> anyhow::Result<()> {
-        Ok(self.child.kill().await?)
+        #[cfg(target_family = "unix")]
+        if self.prevent_zombie_on_unix_shutdown {
+            return self.shutdown_prevent_zombie().await;
+        }
+        // Only kill if there is a PID
+        if self.child.id().is_some() {
+            Ok(self.child.kill().await?)
+        } else {
+            Ok(())
+        }
+    }
+
+    #[cfg(target_family = "unix")]
+    async fn shutdown_prevent_zombie(&mut self) -> anyhow::Result<()> {
+        // For whatever reason, Tokio is not properly waiting on result
+        // immediately after sending kill which is causing defunct zombie
+        // processes to remain in some cases and kill() to hang. Therefore, we
+        // have to send the SIGKILL and wait on the process ourselves using a
+        // low-level call.
+        //
+        // WARNING: This is based on empirical evidence starting a Python test
+        // run on Linux with Python 3.7 (does not happen on Python 3.10 nor does
+        // it happen on Temporalite nor does it happen in Rust integration
+        // tests). Do not consider this fixed without running that scenario.
+        if let Some(pid) = self.child.id() {
+            self.child.start_kill()?;
+            Ok(spawn_blocking(move || {
+                nix::sys::wait::waitpid(Some(nix::unistd::Pid::from_raw(pid as i32)), None)
+            })
+            .await?
+            .map(|_| ())?)
+        } else {
+            Ok(())
+        }
     }
 }
 
