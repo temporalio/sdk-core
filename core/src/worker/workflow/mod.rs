@@ -24,7 +24,7 @@ use crate::{
     telemetry::VecDisplayer,
     worker::{
         activities::{ActivitiesFromWFTsHandle, PermittedTqResp},
-        client::{should_swallow_net_error, WorkerClient},
+        client::WorkerClient,
         workflow::{
             managed_run::{ManagedRun, WorkflowManager},
             wft_poller::validate_wft,
@@ -265,14 +265,14 @@ impl Workflows {
                         );
                         Ok(())
                     })
-                    .await?;
+                    .await;
                     true
                 }
                 ServerCommandsWithWorkflowInfo {
                     task_token,
                     action: ActivationAction::RespondLegacyQuery { result },
                 } => {
-                    self.respond_legacy_query(task_token, *result).await?;
+                    self.respond_legacy_query(task_token, *result).await;
                     true
                 }
             },
@@ -284,13 +284,13 @@ impl Workflows {
                             .fail_workflow_task(tt, cause, failure.failure.map(Into::into))
                             .await
                     })
-                    .await?;
+                    .await;
                     true
                 }
                 FailedActivationWFTReport::ReportLegacyQueryFailure(task_token, failure) => {
                     warn!(run_id=%run_id, failure=?failure, "Failing legacy query request");
                     self.respond_legacy_query(task_token, legacy_query_failure(failure))
-                        .await?;
+                        .await;
                     true
                 }
             },
@@ -352,47 +352,34 @@ impl Workflows {
         self.send_local(msg);
     }
 
-    /// Handle server errors from either completing or failing a workflow task. Returns any errors
-    /// that can't be automatically handled.
-    async fn handle_wft_reporting_errs<T, Fut>(
-        &self,
-        run_id: &str,
-        completer: impl FnOnce() -> Fut,
-    ) -> Result<(), CompleteWfError>
+    /// Handle server errors from either completing or failing a workflow task. Un-handleable errors
+    /// trigger a workflow eviction and are logged.
+    async fn handle_wft_reporting_errs<T, Fut>(&self, run_id: &str, completer: impl FnOnce() -> Fut)
     where
         Fut: Future<Output = Result<T, tonic::Status>>,
     {
         let mut should_evict = None;
-        let res = match completer().await {
-            Err(err) => {
-                if should_swallow_net_error(&err) {
+        if let Err(err) = completer().await {
+            match err.code() {
+                // Silence unhandled command errors since the lang SDK cannot do anything
+                // about them besides poll again, which it will do anyway.
+                tonic::Code::InvalidArgument if err.message() == "UnhandledCommand" => {
+                    debug!(error = %err, run_id, "Unhandled command response when completing");
+                    should_evict = Some(EvictionReason::UnhandledCommand);
+                }
+                tonic::Code::NotFound => {
+                    warn!(error = %err, run_id, "Task not found when completing");
+                    should_evict = Some(EvictionReason::TaskNotFound);
+                }
+                _ => {
                     warn!(error= %err, "Network error while completing workflow activation");
                     should_evict = Some(EvictionReason::Fatal);
-                    Ok(())
-                } else {
-                    match err.code() {
-                        // Silence unhandled command errors since the lang SDK cannot do anything
-                        // about them besides poll again, which it will do anyway.
-                        tonic::Code::InvalidArgument if err.message() == "UnhandledCommand" => {
-                            debug!(error = %err, run_id, "Unhandled command response when completing");
-                            should_evict = Some(EvictionReason::UnhandledCommand);
-                            Ok(())
-                        }
-                        tonic::Code::NotFound => {
-                            warn!(error = %err, run_id, "Task not found when completing");
-                            should_evict = Some(EvictionReason::TaskNotFound);
-                            Ok(())
-                        }
-                        _ => Err(err),
-                    }
                 }
             }
-            _ => Ok(()),
-        };
+        }
         if let Some(reason) = should_evict {
             self.request_eviction(run_id, "Error reporting WFT to server", reason);
         }
-        res.map_err(Into::into)
     }
 
     /// Sends a message to the workflow processing stream. Returns true if the message was sent
@@ -488,22 +475,15 @@ impl Workflows {
     }
 
     /// Wraps responding to legacy queries. Handles ignore-able failures.
-    async fn respond_legacy_query(
-        &self,
-        tt: TaskToken,
-        res: QueryResult,
-    ) -> Result<(), tonic::Status> {
+    async fn respond_legacy_query(&self, tt: TaskToken, res: QueryResult) {
         match self.client.respond_legacy_query(tt, res).await {
-            Ok(_) => Ok(()),
-            Err(e) if should_swallow_net_error(&e) => {
-                warn!(error= %e, "Network error while responding to legacy query");
-                Ok(())
-            }
+            Ok(_) => {}
             Err(e) if e.code() == tonic::Code::NotFound => {
                 warn!(error=?e, "Query not found when attempting to respond to it");
-                Ok(())
             }
-            Err(e) => Err(e),
+            Err(e) => {
+                warn!(error= %e, "Network error while responding to legacy query");
+            }
         }
     }
 }

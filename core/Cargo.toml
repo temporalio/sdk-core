@@ -44,7 +44,7 @@ prometheus = "0.13"
 prost = "0.11"
 prost-types = "0.11"
 rand = "0.8.3"
-reqwest = { version = "0.11", features = ["json", "stream"] }
+reqwest = { version = "0.11", features = ["json", "stream", "rustls-tls", "tokio-rustls"], default-features = false }
 ringbuf = "0.2"
 serde = "1.0"
 serde_json = "1.0"

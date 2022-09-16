@@ -25,7 +25,7 @@ use crate::{
     },
     worker::{
         activities::{DispatchOrTimeoutLA, LACompleteAction, LocalActivityManager},
-        client::{should_swallow_net_error, WorkerClient},
+        client::WorkerClient,
         workflow::{LocalResolution, WorkflowBasics, Workflows},
     },
     ActivityHeartbeat, CompleteActivityError, PollActivityError, PollWfError, WorkerTrait,
@@ -422,20 +422,14 @@ impl Worker {
         }
 
         if let Some(atm) = &self.at_task_mgr {
-            match atm.complete(task_token, status, &*self.wf_client).await {
-                Err(CompleteActivityError::TonicError(e)) if should_swallow_net_error(&e) => {
-                    warn!(error=?e, "Network error while completing activity");
-                    Ok(())
-                }
-                o => o,
-            }
+            atm.complete(task_token, status, &*self.wf_client).await;
         } else {
             error!(
                 "Tried to complete activity {} on a worker that does not have an activity manager",
                 task_token
             );
-            Ok(())
         }
+        Ok(())
     }
 
     #[instrument(level = "debug", skip(self), fields(run_id))]
