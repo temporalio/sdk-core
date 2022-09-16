@@ -179,6 +179,14 @@ impl RetryConfig {
             max_retries: 0,
         }
     }
+
+    /// Because proxies are sometimes garbage and return fatal errors when they should be returning
+    /// a "not ready" status, we permit otherwise "fatal" looking errors for a brief period.
+    pub(crate) const fn fatal_poll_retry_policy() -> Self {
+        let mut r = Self::poll_retry_policy();
+        r.max_elapsed_time = Some(Duration::from_secs(60));
+        r
+    }
 }
 
 impl From<RetryConfig> for ExponentialBackoff {

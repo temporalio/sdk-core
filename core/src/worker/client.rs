@@ -2,9 +2,7 @@
 
 pub(crate) mod mocks;
 
-use temporal_client::{
-    Client, RetryClient, WorkflowService, WorkflowTaskCompletion, RETRYABLE_ERROR_CODES,
-};
+use temporal_client::{Client, RetryClient, WorkflowService, WorkflowTaskCompletion};
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::QueryResult,
     temporal::api::{
@@ -17,16 +15,8 @@ use temporal_sdk_core_protos::{
     },
     TaskToken,
 };
-use tonic::Code;
 
 type Result<T, E = tonic::Status> = std::result::Result<T, E>;
-
-/// Returns true if the network error should not be reported to lang. This can happen if we've
-/// exceeded the max number of retries, and we prefer to just warn rather than blowing up lang.
-pub(crate) fn should_swallow_net_error(err: &tonic::Status) -> bool {
-    RETRYABLE_ERROR_CODES.contains(&err.code())
-        || matches!(err.code(), Code::Cancelled | Code::DeadlineExceeded)
-}
 
 /// Contains everything a worker needs to interact with the server
 pub(crate) struct WorkerClientBag {
