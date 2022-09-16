@@ -356,6 +356,7 @@ pub(crate) fn single_hist_mock_sg(
     build_mock_pollers(mh)
 }
 
+#[allow(clippy::type_complexity)]
 pub(crate) struct MockPollCfg {
     pub hists: Vec<FakeWfResponses>,
     pub enforce_correct_number_of_polls: bool,

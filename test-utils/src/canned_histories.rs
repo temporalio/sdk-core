@@ -1,4 +1,6 @@
+use prost::Message;
 use rand::RngCore;
+use std::{fs::File, io::Write, path::PathBuf};
 use temporal_sdk_core::replay::TestHistoryBuilder;
 use temporal_sdk_core_protos::{
     coresdk::common::NamespacedWorkflowExecution,
@@ -1435,6 +1437,49 @@ pub fn single_child_workflow_cancelled(child_wf_id: &str) -> TestHistoryBuilder 
 ///  3: EVENT_TYPE_WORKFLOW_TASK_STARTED
 ///  4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
 ///  5: EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED
+///  6: EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_STARTED
+///  7: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  8: EVENT_TYPE_WORKFLOW_TASK_STARTED
+///  9: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+/// 10: EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
+pub fn single_child_workflow_abandon_cancelled(child_wf_id: &str) -> TestHistoryBuilder {
+    let (mut t, _, _) = start_child_wf_preamble(child_wf_id);
+    t.add_workflow_execution_completed();
+    t
+}
+
+///  1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
+///  2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  3: EVENT_TYPE_WORKFLOW_TASK_STARTED
+///  4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+///  5: EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED
+///  6: EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_STARTED
+///  7: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  8: EVENT_TYPE_WORKFLOW_TASK_STARTED
+///  9: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+/// 10: EVENT_TYPE_REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED
+/// 11: EVENT_TYPE_EXTERNAL_WORKFLOW_EXECUTION_CANCEL_REQUESTED
+/// 12: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+/// 13: EVENT_TYPE_WORKFLOW_TASK_STARTED
+/// 14: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+/// 15: EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
+pub fn single_child_workflow_try_cancelled(child_wf_id: &str) -> TestHistoryBuilder {
+    let (mut t, _, _) = start_child_wf_preamble(child_wf_id);
+    let id = t.add_cancel_external_wf(NamespacedWorkflowExecution {
+        workflow_id: child_wf_id.to_string(),
+        ..Default::default()
+    });
+    t.add_cancel_external_wf_completed(id);
+    t.add_full_wf_task();
+    t.add_workflow_execution_completed();
+    t
+}
+
+///  1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
+///  2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+///  3: EVENT_TYPE_WORKFLOW_TASK_STARTED
+///  4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+///  5: EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED
 ///  5: EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_FAILED
 ///  6: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
 ///  7: EVENT_TYPE_WORKFLOW_TASK_STARTED
@@ -1518,4 +1563,17 @@ pub fn two_local_activities_separated_by_timer() -> TestHistoryBuilder {
     t.add_local_activity_result_marker(2, "2", b"hi2".into());
     t.add_workflow_execution_completed();
     t
+}
+
+/// Useful for one-of needs to write a crafted history to a file. Writes it as serialized proto
+/// binary to the provided path.
+pub fn write_hist_to_binfile(
+    thb: &TestHistoryBuilder,
+    file_path: PathBuf,
+) -> Result<(), anyhow::Error> {
+    let as_complete_hist: History = thb.get_full_history_info()?.into();
+    let serialized = as_complete_hist.encode_to_vec();
+    let mut file = File::create(file_path)?;
+    file.write_all(&serialized)?;
+    Ok(())
 }

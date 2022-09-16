@@ -24,7 +24,7 @@ use temporal_sdk_core_protos::{
         },
         workflow_commands::{
             request_cancel_external_workflow_execution as cancel_we, workflow_command,
-            CancelSignalWorkflow, CancelTimer, CancelUnstartedChildWorkflowExecution,
+            CancelChildWorkflowExecution, CancelSignalWorkflow, CancelTimer,
             CancelWorkflowExecution, CompleteWorkflowExecution, FailWorkflowExecution,
             RequestCancelActivity, RequestCancelExternalWorkflowExecution,
             RequestCancelLocalActivity, ScheduleActivity, ScheduleLocalActivity,
@@ -334,9 +334,9 @@ impl Future for WorkflowFuture {
                             }
                             CancellableID::ChildWorkflow(seq) => {
                                 activation_cmds.push(
-                                    workflow_command::Variant::CancelUnstartedChildWorkflowExecution(
-                                        CancelUnstartedChildWorkflowExecution {
-                                            child_workflow_seq: seq
+                                    workflow_command::Variant::CancelChildWorkflowExecution(
+                                        CancelChildWorkflowExecution {
+                                            child_workflow_seq: seq,
                                         },
                                     ),
                                 );

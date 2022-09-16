@@ -7,7 +7,7 @@ use crate::{
     MetricsContext,
 };
 use lru::LruCache;
-use std::time::Instant;
+use std::{num::NonZeroUsize, time::Instant};
 use tokio::sync::mpsc::UnboundedSender;
 
 pub(super) struct RunCache {
@@ -40,7 +40,9 @@ impl RunCache {
             max: max_cache_size,
             namespace,
             run_update_tx,
-            runs: LruCache::new(lru_size),
+            runs: LruCache::new(
+                NonZeroUsize::new(lru_size).expect("LRU size is guaranteed positive"),
+            ),
             local_activity_request_sink,
             metrics,
         }
@@ -132,7 +134,7 @@ impl RunCache {
         self.runs.iter().map(|(_, v)| v)
     }
     pub fn is_full(&self) -> bool {
-        self.runs.cap() == self.runs.len()
+        self.runs.cap().get() == self.runs.len()
     }
     pub fn len(&self) -> usize {
         self.runs.len()

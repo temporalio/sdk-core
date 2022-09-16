@@ -499,7 +499,8 @@ enum RunActionOutcome {
     AfterHeartbeatTimeout(Option<ActivationOrAuto>),
 }
 
-#[derive(Debug)]
+#[derive(derive_more::DebugCustom)]
+#[debug(fmt = "RunUpdateErr({:?})", source)]
 struct RunUpdateErr {
     source: WFMachinesError,
     complete_resp_chan: Option<oneshot::Sender<ActivationCompleteResult>>,

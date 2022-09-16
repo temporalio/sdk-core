@@ -17,7 +17,7 @@ pub use history_builder::{default_wes_attribs, TestHistoryBuilder, DEFAULT_WORKF
 pub use history_info::HistoryInfo;
 pub use task_token::TaskToken;
 
-#[allow(clippy::large_enum_variant)]
+#[allow(clippy::large_enum_variant, clippy::derive_partial_eq_without_eq)]
 // I'd prefer not to do this, but there are some generated things that just don't need it.
 #[allow(missing_docs)]
 pub mod coresdk {
@@ -271,8 +271,9 @@ pub mod coresdk {
         pub fn decode_change_marker_details(
             details: &HashMap<String, Payloads>,
         ) -> Option<(String, bool)> {
-            let name = std::str::from_utf8(&details.get("patch_id")?.payloads.get(0)?.data).ok()?;
-            let deprecated = *details.get("deprecated")?.payloads.get(0)?.data.get(0)? != 0;
+            let name =
+                std::str::from_utf8(&details.get("patch_id")?.payloads.first()?.data).ok()?;
+            let deprecated = *details.get("deprecated")?.payloads.first()?.data.first()? != 0;
             Some((name.to_string(), deprecated))
         }
 
@@ -789,11 +790,11 @@ pub mod coresdk {
             }
         }
 
-        impl Display for CancelUnstartedChildWorkflowExecution {
+        impl Display for CancelChildWorkflowExecution {
             fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
                 write!(
                     f,
-                    "CancelUnstartedChildWorkflowExecution({})",
+                    "CancelChildWorkflowExecution({})",
                     self.child_workflow_seq
                 )
             }

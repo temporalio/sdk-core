@@ -27,7 +27,7 @@ use crate::{
     },
 };
 use siphasher::sip::SipHasher13;
-use slotmap::SlotMap;
+use slotmap::{SlotMap, SparseSecondaryMap};
 use std::{
     borrow::{Borrow, BorrowMut},
     collections::{HashMap, VecDeque},
@@ -39,15 +39,14 @@ use temporal_sdk_core_protos::{
     coresdk::{
         common::NamespacedWorkflowExecution,
         workflow_activation::{
-            workflow_activation_job::{self, Variant},
-            NotifyHasPatch, UpdateRandomSeed, WorkflowActivation,
+            workflow_activation_job, NotifyHasPatch, UpdateRandomSeed, WorkflowActivation,
         },
         workflow_commands::{
             request_cancel_external_workflow_execution as cancel_we, ContinueAsNewWorkflowExecution,
         },
     },
     temporal::api::{
-        command::v1::Command as ProtoCommand,
+        command::v1::{command::Attributes as ProtoCmdAttrs, Command as ProtoCommand},
         enums::v1::EventType,
         history::v1::{history_event, HistoryEvent},
     },
@@ -96,6 +95,9 @@ pub(crate) struct WorkflowMachines {
     current_wf_time: Option<SystemTime>,
 
     all_machines: SlotMap<MachineKey, Machines>,
+    /// If a machine key is in this map, that machine was created internally by core, not as a
+    /// command from lang.
+    machine_is_core_created: SparseSecondaryMap<MachineKey, ()>,
 
     /// A mapping for accessing machines associated to a particular event, where the key is the id
     /// of the initiating event for that machine.
@@ -155,7 +157,14 @@ pub enum MachineResponse {
     #[display(fmt = "PushWFJob({})", "_0")]
     PushWFJob(workflow_activation_job::Variant),
 
+    /// Pushes a new command into the list that will be sent to server once we respond with the
+    /// workflow task completion
     IssueNewCommand(ProtoCommand),
+    /// The machine requests the creation of another *different* machine. This acts as if lang
+    /// had replied to the activation with a command, but we use a special set of IDs to avoid
+    /// collisions.
+    #[display(fmt = "NewCoreOriginatedCommand({:?})", "_0")]
+    NewCoreOriginatedCommand(ProtoCmdAttrs),
     #[display(fmt = "IssueFakeLocalActivityMarker({})", "_0")]
     IssueFakeLocalActivityMarker(u32),
     #[display(fmt = "TriggerWFTaskStarted")]
@@ -164,9 +173,7 @@ pub enum MachineResponse {
         time: SystemTime,
     },
     #[display(fmt = "UpdateRunIdOnWorkflowReset({})", run_id)]
-    UpdateRunIdOnWorkflowReset {
-        run_id: String,
-    },
+    UpdateRunIdOnWorkflowReset { run_id: String },
 
     /// Queue a local activity to be processed by the worker
     #[display(fmt = "QueueLocalActivity")]
@@ -222,6 +229,7 @@ impl WorkflowMachines {
             wft_start_time: None,
             current_wf_time: None,
             all_machines: Default::default(),
+            machine_is_core_created: Default::default(),
             machines_by_event_id: Default::default(),
             id_to_machine: Default::default(),
             commands: Default::default(),
@@ -317,6 +325,12 @@ impl WorkflowMachines {
     /// invalid state.
     #[instrument(level = "debug", skip(self, event), fields(event=%event))]
     fn handle_event(&mut self, event: HistoryEvent, has_next_event: bool) -> Result<()> {
+        if event.event_type() == EventType::Unspecified {
+            return Err(WFMachinesError::Fatal(format!(
+                "Event type is unspecified! This history is invalid. Event detail: {:?}",
+                event
+            )));
+        }
         if event.is_final_wf_execution_event() {
             self.have_seen_terminal_event = true;
         }
@@ -601,10 +615,7 @@ impl WorkflowMachines {
     /// the workflow code, handling them, and preparing them to be sent off to the server.
     pub(crate) async fn iterate_machines(&mut self) -> Result<()> {
         let results = self.drive_me.fetch_workflow_iteration_output().await;
-        let jobs = self.handle_driven_results(results)?;
-        for job in jobs {
-            self.drive_me.send_job(job);
-        }
+        self.handle_driven_results(results)?;
         self.prepare_commands()?;
         if self.workflow_is_finished() {
             if let Some(rt) = self.total_runtime() {
@@ -757,10 +768,21 @@ impl WorkflowMachines {
             debug!(responses = %machine_responses.display(), machine_name = %sm.kind(),
                    "Machine produced responses");
         }
+        self.process_machine_resps_impl(smk, machine_responses)
+    }
+
+    fn process_machine_resps_impl(
+        &mut self,
+        smk: MachineKey,
+        machine_responses: Vec<MachineResponse>,
+    ) -> Result<()> {
         for response in machine_responses {
             match response {
                 MachineResponse::PushWFJob(a) => {
-                    self.drive_me.send_job(a);
+                    // We don't need to notify lang about jobs created by core-internal machines
+                    if !self.machine_is_core_created.contains_key(smk) {
+                        self.drive_me.send_job(a);
+                    }
                 }
                 MachineResponse::TriggerWFTaskStarted {
                     task_started_event_id,
@@ -784,6 +806,27 @@ impl WorkflowMachines {
                         machine: smk,
                     })
                 }
+                MachineResponse::NewCoreOriginatedCommand(attrs) => match attrs {
+                    ProtoCmdAttrs::RequestCancelExternalWorkflowExecutionCommandAttributes(
+                        attrs,
+                    ) => {
+                        let we = NamespacedWorkflowExecution {
+                            namespace: attrs.namespace,
+                            workflow_id: attrs.workflow_id,
+                            run_id: attrs.run_id,
+                        };
+                        self.add_cmd_to_wf_task(
+                            new_external_cancel(0, we, attrs.child_workflow_only, attrs.reason),
+                            CommandIdKind::CoreInternal,
+                        );
+                    }
+                    c => {
+                        return Err(WFMachinesError::Fatal(format!(
+                        "A machine requested to create a new command of an unsupported type: {:?}",
+                        c
+                    )))
+                    }
+                },
                 MachineResponse::IssueFakeLocalActivityMarker(seq) => {
                     self.current_wf_task_commands.push_back(CommandAndMachine {
                         command: MachineAssociatedCommand::FakeLocalActivityMarker(seq),
@@ -793,11 +836,44 @@ impl WorkflowMachines {
                 MachineResponse::QueueLocalActivity(act) => {
                     self.local_activity_data.enqueue(act);
                 }
-                MachineResponse::RequestCancelLocalActivity(_) => {
-                    panic!(
-                        "Request cancel local activity should not be returned from \
-                         anything other than explicit cancellation"
-                    )
+                MachineResponse::RequestCancelLocalActivity(seq) => {
+                    // We might already know about the status from a pre-resolution. Apply it if so.
+                    // We need to do this because otherwise we might need to perform additional
+                    // activations during replay that didn't happen during execution, just like
+                    // we sometimes pre-resolve activities when first requested.
+                    if let Some(preres) = self.local_activity_data.take_preresolution(seq) {
+                        if let Machines::LocalActivityMachine(lam) = self.machine_mut(smk) {
+                            let more_responses = lam.try_resolve_with_dat(preres)?;
+                            self.process_machine_responses(smk, more_responses)?;
+                        } else {
+                            panic!("A non local-activity machine returned a request cancel LA response");
+                        }
+                    }
+                    // If it's in the request queue, just rip it out.
+                    else if let Some(removed_act) =
+                        self.local_activity_data.remove_from_queue(seq)
+                    {
+                        // We removed it. Notify the machine that the activity cancelled.
+                        if let Machines::LocalActivityMachine(lam) = self.machine_mut(smk) {
+                            let more_responses = lam.try_resolve(
+                                LocalActivityExecutionResult::empty_cancel(),
+                                Duration::from_secs(0),
+                                removed_act.attempt,
+                                None,
+                                None,
+                            )?;
+                            self.process_machine_responses(smk, more_responses)?;
+                        } else {
+                            panic!("A non local-activity machine returned a request cancel LA response");
+                        }
+                    } else {
+                        // Finally, if we know about the LA at all, it's currently running, so
+                        // queue the cancel request to be given to the LA manager.
+                        self.local_activity_data.enqueue_cancel(ExecutingLAId {
+                            run_id: self.run_id.clone(),
+                            seq_num: seq,
+                        });
+                    }
                 }
                 MachineResponse::AbandonLocalActivity(seq) => {
                     self.local_activity_data.done_executing(seq);
@@ -818,26 +894,25 @@ impl WorkflowMachines {
     /// as part of command processing. For example some types of activity cancellation need to
     /// immediately unblock lang side without having it to poll for an actual workflow task from the
     /// server.
-    fn handle_driven_results(
-        &mut self,
-        results: Vec<WFCommand>,
-    ) -> Result<Vec<workflow_activation_job::Variant>> {
-        let mut jobs = vec![];
+    fn handle_driven_results(&mut self, results: Vec<WFCommand>) -> Result<()> {
         for cmd in results {
             match cmd {
                 WFCommand::AddTimer(attrs) => {
                     let seq = attrs.seq;
-                    self.add_cmd_to_wf_task(new_timer(attrs), Some(CommandID::Timer(seq)));
+                    self.add_cmd_to_wf_task(new_timer(attrs), CommandID::Timer(seq).into());
                 }
                 WFCommand::UpsertSearchAttributes(attrs) => {
-                    self.add_cmd_to_wf_task(upsert_search_attrs(attrs), None);
+                    self.add_cmd_to_wf_task(
+                        upsert_search_attrs(attrs),
+                        CommandIdKind::NeverResolves,
+                    );
                 }
                 WFCommand::CancelTimer(attrs) => {
-                    jobs.extend(self.process_cancellation(CommandID::Timer(attrs.seq))?);
+                    self.process_cancellation(CommandID::Timer(attrs.seq))?;
                 }
                 WFCommand::AddActivity(attrs) => {
                     let seq = attrs.seq;
-                    self.add_cmd_to_wf_task(new_activity(attrs), Some(CommandID::Activity(seq)));
+                    self.add_cmd_to_wf_task(new_activity(attrs), CommandID::Activity(seq).into());
                 }
                 WFCommand::AddLocalActivity(attrs) => {
                     let seq = attrs.seq;
@@ -865,10 +940,10 @@ impl WorkflowMachines {
                     self.process_machine_responses(machkey, mach_resp)?;
                 }
                 WFCommand::RequestCancelActivity(attrs) => {
-                    jobs.extend(self.process_cancellation(CommandID::Activity(attrs.seq))?);
+                    self.process_cancellation(CommandID::Activity(attrs.seq))?;
                 }
                 WFCommand::RequestCancelLocalActivity(attrs) => {
-                    jobs.extend(self.process_cancellation(CommandID::LocalActivity(attrs.seq))?);
+                    self.process_cancellation(CommandID::LocalActivity(attrs.seq))?;
                 }
                 WFCommand::CompleteWorkflow(attrs) => {
                     self.metrics.wf_completed();
@@ -895,7 +970,7 @@ impl WorkflowMachines {
                     {
                         self.add_cmd_to_wf_task(
                             has_change(attrs.patch_id.clone(), self.replaying, attrs.deprecated),
-                            None,
+                            CommandIdKind::NeverResolves,
                         );
 
                         if let Some(ci) = self.encountered_change_markers.get_mut(&attrs.patch_id) {
@@ -914,12 +989,12 @@ impl WorkflowMachines {
                     let seq = attrs.seq;
                     self.add_cmd_to_wf_task(
                         new_child_workflow(attrs),
-                        Some(CommandID::ChildWorkflowStart(seq)),
+                        CommandID::ChildWorkflowStart(seq).into(),
                     );
                 }
-                WFCommand::CancelUnstartedChild(attrs) => jobs.extend(self.process_cancellation(
+                WFCommand::CancelChild(attrs) => self.process_cancellation(
                     CommandID::ChildWorkflowStart(attrs.child_workflow_seq),
-                )?),
+                )?,
                 WFCommand::RequestCancelExternalWorkflow(attrs) => {
                     let (we, only_child) = match attrs.target {
                         None => {
@@ -945,18 +1020,18 @@ impl WorkflowMachines {
                             only_child,
                             format!("Cancel requested by workflow with run id {}", self.run_id),
                         ),
-                        Some(CommandID::CancelExternal(attrs.seq)),
+                        CommandID::CancelExternal(attrs.seq).into(),
                     );
                 }
                 WFCommand::SignalExternalWorkflow(attrs) => {
                     let seq = attrs.seq;
                     self.add_cmd_to_wf_task(
                         new_external_signal(attrs, &self.namespace)?,
-                        Some(CommandID::SignalExternal(seq)),
+                        CommandID::SignalExternal(seq).into(),
                     );
                 }
                 WFCommand::CancelSignalWorkflow(attrs) => {
-                    jobs.extend(self.process_cancellation(CommandID::SignalExternal(attrs.seq))?);
+                    self.process_cancellation(CommandID::SignalExternal(attrs.seq))?;
                 }
                 WFCommand::QueryResponse(_) => {
                     // Nothing to do here, queries are handled above the machine level
@@ -965,80 +1040,18 @@ impl WorkflowMachines {
                 WFCommand::NoCommandsFromLang => (),
             }
         }
-        Ok(jobs)
+        Ok(())
     }
 
     /// Given a command id to attempt to cancel, try to cancel it and return any jobs that should
     /// be included in the activation
-    fn process_cancellation(&mut self, id: CommandID) -> Result<Vec<Variant>> {
-        let mut jobs = vec![];
+    fn process_cancellation(&mut self, id: CommandID) -> Result<()> {
         let m_key = self.get_machine_key(id)?;
-        let machine_resps = self.machine_mut(m_key).cancel()?;
+        let mach = self.machine_mut(m_key);
+        let machine_resps = mach.cancel()?;
         debug!(machine_responses = %machine_resps.display(), cmd_id = ?id,
                "Cancel request responses");
-        for r in machine_resps {
-            match r {
-                MachineResponse::IssueNewCommand(c) => {
-                    self.current_wf_task_commands.push_back(CommandAndMachine {
-                        command: MachineAssociatedCommand::Real(Box::new(c)),
-                        machine: m_key,
-                    });
-                }
-                MachineResponse::PushWFJob(j) => {
-                    jobs.push(j);
-                }
-                MachineResponse::RequestCancelLocalActivity(seq) => {
-                    // We might already know about the status from a pre-resolution. Apply it if so.
-                    // We need to do this because otherwise we might need to perform additional
-                    // activations during replay that didn't happen during execution, just like
-                    // we sometimes pre-resolve activities when first requested.
-                    if let Some(preres) = self.local_activity_data.take_preresolution(seq) {
-                        if let Machines::LocalActivityMachine(lam) = self.machine_mut(m_key) {
-                            let more_responses = lam.try_resolve_with_dat(preres)?;
-                            self.process_machine_responses(m_key, more_responses)?;
-                        } else {
-                            panic!("A non local-activity machine returned a request cancel LA response");
-                        }
-                    }
-                    // If it's in the request queue, just rip it out.
-                    else if let Some(removed_act) =
-                        self.local_activity_data.remove_from_queue(seq)
-                    {
-                        // We removed it. Notify the machine that the activity cancelled.
-                        if let Machines::LocalActivityMachine(lam) = self.machine_mut(m_key) {
-                            let more_responses = lam.try_resolve(
-                                LocalActivityExecutionResult::empty_cancel(),
-                                Duration::from_secs(0),
-                                removed_act.attempt,
-                                None,
-                                None,
-                            )?;
-                            self.process_machine_responses(m_key, more_responses)?;
-                        } else {
-                            panic!("A non local-activity machine returned a request cancel LA response");
-                        }
-                    } else {
-                        // Finally, if we know about the LA at all, it's currently running, so
-                        // queue the cancel request to be given to the LA manager.
-                        self.local_activity_data.enqueue_cancel(ExecutingLAId {
-                            run_id: self.run_id.clone(),
-                            seq_num: seq,
-                        });
-                    }
-                }
-                MachineResponse::AbandonLocalActivity(seq) => {
-                    self.local_activity_data.done_executing(seq);
-                }
-                MachineResponse::UpdateWFTime(None) => {}
-                v => {
-                    return Err(WFMachinesError::Fatal(format!(
-                        "Unexpected machine response {:?} when cancelling {:?}",
-                        v, id
-                    )));
-                }
-            }
-        }
-        Ok(jobs)
+        self.process_machine_resps_impl(m_key, machine_resps)
     }
 
     fn get_machine_key(&self, id: CommandID) -> Result<MachineKey> {
@@ -1054,10 +1067,13 @@ impl WorkflowMachines {
     }
 
     /// Add a new command/machines for that command to the current workflow task
-    fn add_cmd_to_wf_task(&mut self, machine: NewMachineWithCommand, id: Option<CommandID>) {
+    fn add_cmd_to_wf_task(&mut self, machine: NewMachineWithCommand, id: CommandIdKind) {
         let mach = self.add_new_command_machine(machine);
-        if let Some(id) = id {
+        if let CommandIdKind::LangIssued(id) = id {
             self.id_to_machine.insert(id, mach.machine);
+        }
+        if matches!(id, CommandIdKind::CoreInternal) {
+            self.machine_is_core_created.insert(mach.machine, ());
         }
         self.current_wf_task_commands.push_back(mach);
     }
@@ -1155,4 +1171,14 @@ fn change_marker_handling(
         }
     }
     Ok(ChangeMarkerOutcome::Normal)
+}
+
+#[derive(derive_more::From)]
+enum CommandIdKind {
+    /// A normal command, requested by lang
+    LangIssued(CommandID),
+    /// A command created internally
+    CoreInternal,
+    /// A command which is fire-and-forget (ex: Upsert search attribs)
+    NeverResolves,
 }
