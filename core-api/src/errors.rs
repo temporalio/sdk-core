@@ -50,10 +50,6 @@ pub enum CompleteWfError {
         /// The run associated with the completion
         run_id: String,
     },
-    /// Unhandled error when calling the temporal server. Core will attempt to retry any non-fatal
-    /// errors, so lang should consider this fatal.
-    #[error("Unhandled grpc error when completing workflow task: {0:?}")]
-    TonicError(#[from] tonic::Status),
 }
 
 /// Errors thrown by [crate::Worker::complete_activity_task]
@@ -67,10 +63,6 @@ pub enum CompleteActivityError {
         /// The completion, which may not be included to avoid unnecessary copies.
         completion: Option<ActivityExecutionResult>,
     },
-    /// Unhandled error when calling the temporal server. Core will attempt to retry any non-fatal
-    /// errors, so lang should consider this fatal.
-    #[error("Unhandled grpc error when completing activity: {0:?}")]
-    TonicError(#[from] tonic::Status),
 }
 
 /// Errors thrown inside of workflow machines

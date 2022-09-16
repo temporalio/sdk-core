@@ -2,7 +2,7 @@ use crate::{
     ClientOptions, ListClosedFilters, ListOpenFilters, Namespace, Result, RetryConfig,
     StartTimeFilter, WorkflowClientTrait, WorkflowOptions,
 };
-use backoff::{backoff::Backoff, ExponentialBackoff};
+use backoff::{backoff::Backoff, exponential::ExponentialBackoff, Clock, SystemClock};
 use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
 use std::{fmt::Debug, future::Future, sync::Arc, time::Duration};
 use temporal_sdk_core_protos::{
@@ -28,6 +28,7 @@ pub const RETRYABLE_ERROR_CODES: [Code; 7] = [
     Code::OutOfRange,
     Code::Unavailable,
 ];
+const LONG_POLL_FATAL_GRACE: Duration = Duration::from_secs(60);
 
 /// A wrapper for a [WorkflowClientTrait] or [crate::WorkflowService] implementor which performs
 /// auto-retries
@@ -92,7 +93,7 @@ impl<SG> RetryClient<SG> {
         rtc: RetryConfig,
         factory: F,
         call_name: &'static str,
-    ) -> FutureRetry<F, TonicErrorHandler>
+    ) -> FutureRetry<F, TonicErrorHandler<SystemClock>>
     where
         F: FnMut() -> Fut + Unpin,
         Fut: Future<Output = Result<R>>,
@@ -110,13 +111,13 @@ impl<SG> RetryClient<SG> {
 }
 
 #[derive(Debug)]
-pub(crate) struct TonicErrorHandler {
-    backoff: ExponentialBackoff,
+pub(crate) struct TonicErrorHandler<C: Clock> {
+    backoff: ExponentialBackoff<C>,
     max_retries: usize,
     call_type: CallType,
     call_name: &'static str,
 }
-impl TonicErrorHandler {
+impl TonicErrorHandler<SystemClock> {
     fn new(cfg: RetryConfig, call_type: CallType, call_name: &'static str) -> Self {
         Self {
             max_retries: cfg.max_retries,
@@ -125,7 +126,11 @@ impl TonicErrorHandler {
             backoff: cfg.into(),
         }
     }
-
+}
+impl<C> TonicErrorHandler<C>
+where
+    C: Clock,
+{
     const fn should_log_retry_warning(&self, cur_attempt: usize) -> bool {
         // Warn on more than 5 retries for unlimited retrying
         if self.max_retries == 0 && cur_attempt > 5 {
@@ -145,7 +150,10 @@ pub enum CallType {
     LongPoll,
 }
 
-impl ErrorHandler<tonic::Status> for TonicErrorHandler {
+impl<C> ErrorHandler<tonic::Status> for TonicErrorHandler<C>
+where
+    C: Clock,
+{
     type OutError = tonic::Status;
 
     fn handle(&mut self, current_attempt: usize, e: tonic::Status) -> RetryPolicy<tonic::Status> {
@@ -154,10 +162,11 @@ impl ErrorHandler<tonic::Status> for TonicErrorHandler {
             return RetryPolicy::ForwardError(e);
         }
 
+        let is_long_poll = self.call_type == CallType::LongPoll;
         // Long polls are OK with being cancelled or running into the timeout because there's
         // nothing to do but retry anyway
-        let long_poll_allowed = self.call_type == CallType::LongPoll
-            && [Code::Cancelled, Code::DeadlineExceeded].contains(&e.code());
+        let long_poll_allowed =
+            is_long_poll && [Code::Cancelled, Code::DeadlineExceeded].contains(&e.code());
 
         if RETRYABLE_ERROR_CODES.contains(&e.code()) || long_poll_allowed {
             if current_attempt == 1 {
@@ -178,6 +187,10 @@ impl ErrorHandler<tonic::Status> for TonicErrorHandler {
                     }
                 }
             }
+        } else if is_long_poll && self.backoff.get_elapsed_time() <= LONG_POLL_FATAL_GRACE {
+            // We permit "fatal" errors while long polling for a while, because some proxies return
+            // stupid error codes while getting ready, among other weird infra issues
+            RetryPolicy::WaitRetry(self.backoff.max_interval)
         } else {
             RetryPolicy::ForwardError(e)
         }
@@ -506,6 +519,8 @@ mod tests {
     use super::*;
     use crate::MockWorkflowClientTrait;
     use assert_matches::assert_matches;
+    use backoff::Clock;
+    use std::{ops::Add, time::Instant};
     use tonic::Status;
 
     #[tokio::test]
@@ -535,6 +550,13 @@ mod tests {
         }
     }
 
+    struct FixedClock(Instant);
+    impl Clock for FixedClock {
+        fn now(&self) -> Instant {
+            self.0
+        }
+    }
+
     #[tokio::test]
     async fn long_poll_non_retryable_errors() {
         for code in [
@@ -546,20 +568,33 @@ mod tests {
             Code::Unauthenticated,
             Code::Unimplemented,
         ] {
-            let mut err_handler = TonicErrorHandler::new(
-                Default::default(),
-                CallType::LongPoll,
-                "poll_workflow_task",
-            );
-            let result = err_handler.handle(1, Status::new(code, "Ahh"));
-            assert_matches!(result, RetryPolicy::ForwardError(_));
-            let mut err_handler = TonicErrorHandler::new(
-                Default::default(),
-                CallType::LongPoll,
-                "poll_activity_task",
-            );
-            let result = err_handler.handle(1, Status::new(code, "Ahh"));
-            assert_matches!(result, RetryPolicy::ForwardError(_));
+            for call_name in ["poll_workflow_task", "poll_activity_task"] {
+                let retry_cfg = RetryConfig::default();
+                let mut err_handler = TonicErrorHandler {
+                    max_retries: retry_cfg.max_retries,
+                    call_type: CallType::LongPoll,
+                    call_name,
+                    backoff: ExponentialBackoff {
+                        current_interval: retry_cfg.initial_interval,
+                        initial_interval: retry_cfg.initial_interval,
+                        randomization_factor: retry_cfg.randomization_factor,
+                        multiplier: retry_cfg.multiplier,
+                        max_interval: retry_cfg.max_interval,
+                        max_elapsed_time: retry_cfg.max_elapsed_time,
+                        clock: FixedClock(Instant::now()),
+                        start_time: Instant::now(),
+                    },
+                };
+                let result = err_handler.handle(1, Status::new(code, "Ahh"));
+                assert_matches!(result, RetryPolicy::WaitRetry(_));
+                err_handler.backoff.clock.0 = err_handler
+                    .backoff
+                    .clock
+                    .0
+                    .add(LONG_POLL_FATAL_GRACE + Duration::from_secs(1));
+                let result = err_handler.handle(2, Status::new(code, "Ahh"));
+                assert_matches!(result, RetryPolicy::ForwardError(_));
+            }
         }
     }
 

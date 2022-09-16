@@ -14,7 +14,7 @@ use crate::{
     worker::{
         activities::activity_heartbeat_manager::ActivityHeartbeatError, client::WorkerClient,
     },
-    CompleteActivityError, PollActivityError, TaskToken,
+    PollActivityError, TaskToken,
 };
 use activity_heartbeat_manager::ActivityHeartbeatManager;
 use dashmap::DashMap;
@@ -231,7 +231,7 @@ impl WorkerActivityTasks {
         task_token: TaskToken,
         status: aer::Status,
         client: &dyn WorkerClient,
-    ) -> Result<(), CompleteActivityError> {
+    ) {
         if let Some((_, act_info)) = self.outstanding_activity_tasks.remove(&task_token) {
             let act_metrics = self.metrics.with_new_attrs([
                 activity_type(act_info.base.activity_type.clone()),
@@ -284,7 +284,7 @@ impl WorkerActivityTasks {
                         completion. This may happen if the activity has already been cancelled but \
                         completed anyway.");
                     } else {
-                        return Err(e.into());
+                        warn!(error=?e, "Network error while completing activity");
                     };
                 };
             };
@@ -294,7 +294,6 @@ impl WorkerActivityTasks {
                 &task_token
             );
         }
-        Ok(())
     }
 
     /// Attempt to record an activity heartbeat
