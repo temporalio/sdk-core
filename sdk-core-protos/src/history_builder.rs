@@ -10,9 +10,10 @@ use crate::{
     },
     temporal::api::{
         common::v1::{Payload, Payloads, WorkflowExecution, WorkflowType},
-        enums::v1::{EventType, WorkflowTaskFailedCause},
+        enums::v1::{EventType, TaskQueueKind, WorkflowTaskFailedCause},
         failure::v1::{failure, CanceledFailureInfo, Failure},
         history::v1::{history_event::Attributes, *},
+        taskqueue::v1::TaskQueue,
     },
     HistoryInfo,
 };
@@ -450,6 +451,17 @@ impl TestHistoryBuilder {
             .unwrap()
     }
 
+    /// Alter the workflow type of the history
+    pub fn set_wf_type(&mut self, name: &str) {
+        if let Some(Attributes::WorkflowExecutionStartedEventAttributes(wes)) =
+            self.events.get_mut(0).and_then(|e| e.attributes.as_mut())
+        {
+            wes.workflow_type = Some(WorkflowType {
+                name: name.to_string(),
+            })
+        }
+    }
+
     fn build_and_push_event(&mut self, event_type: EventType, attribs: Attributes) {
         self.current_event_id += 1;
         let evt = HistoryEvent {
@@ -492,6 +504,10 @@ pub fn default_wes_attribs() -> WorkflowExecutionStartedEventAttributes {
                 .try_into()
                 .expect("5 secs is a valid duration"),
         ),
+        task_queue: Some(TaskQueue {
+            name: "q".to_string(),
+            kind: TaskQueueKind::Normal as i32,
+        }),
         ..Default::default()
     }
 }

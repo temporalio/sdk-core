@@ -498,7 +498,7 @@ pub(crate) fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder {
             .into_iter()
             .map(|response| {
                 let cur_attempt = attempts_at_task_num.entry(response.hashable()).or_insert(1);
-                let mut r = hist_to_poll_resp(&hist.hist, hist.wf_id.clone(), response, TEST_Q);
+                let mut r = hist_to_poll_resp(&hist.hist, hist.wf_id.clone(), response);
                 r.attempt = *cur_attempt;
                 *cur_attempt += 1;
                 r
@@ -649,7 +649,6 @@ pub fn hist_to_poll_resp(
     t: &TestHistoryBuilder,
     wf_id: impl Into<String>,
     response_type: ResponseType,
-    task_queue: impl Into<String>,
 ) -> QueueResponse<PollWorkflowTaskQueueResponse> {
     let run_id = t.get_orig_run_id();
     let wf = WorkflowExecution {
@@ -678,7 +677,7 @@ pub fn hist_to_poll_resp(
             }
         }
     };
-    let mut resp = hist_info.as_poll_wft_response(task_queue);
+    let mut resp = hist_info.as_poll_wft_response();
     resp.workflow_execution = Some(wf);
     QueueResponse { resp, delay_until }
 }

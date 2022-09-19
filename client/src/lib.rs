@@ -362,6 +362,7 @@ impl ClientOptions {
     }
 }
 
+// TODO: Move to worker client
 /// A version of [RespondWorkflowTaskCompletedRequest] that will finish being filled out by the
 /// server client
 #[derive(Debug, Clone, PartialEq)]

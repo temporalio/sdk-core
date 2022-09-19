@@ -1,7 +1,7 @@
 use crate::temporal::api::{
     common::v1::WorkflowType,
     enums::v1::{EventType, TaskQueueKind},
-    history::v1::{history_event, History, HistoryEvent},
+    history::v1::{history_event, History, HistoryEvent, WorkflowExecutionStartedEventAttributes},
     taskqueue::v1::TaskQueue,
     workflowservice::v1::{GetWorkflowExecutionHistoryResponse, PollWorkflowTaskQueueResponse},
 };
@@ -18,6 +18,7 @@ pub struct HistoryInfo {
     events: Vec<HistoryEvent>,
     wf_task_count: usize,
     wf_type: String,
+    wf_exe_started_attrs: WorkflowExecutionStartedEventAttributes,
 }
 
 type Result<T, E = anyhow::Error> = std::result::Result<T, E>;
@@ -36,20 +37,18 @@ impl HistoryInfo {
         let mut workflow_task_started_event_id = 0;
         let mut wf_task_count = 0;
         let mut history = events.iter().peekable();
-
-        let wf_type = match &events.get(0).unwrap().attributes {
+        let started_attrs = match &events.get(0).unwrap().attributes {
             Some(history_event::Attributes::WorkflowExecutionStartedEventAttributes(attrs)) => {
-                attrs
-                    .workflow_type
-                    .as_ref()
-                    .ok_or_else(|| {
-                        anyhow!("No workflow type defined in execution started attributes")
-                    })?
-                    .name
-                    .clone()
+                attrs.clone()
             }
             _ => bail!("First event in history was not workflow execution started!"),
         };
+        let wf_type = started_attrs
+            .workflow_type
+            .as_ref()
+            .ok_or_else(|| anyhow!("No workflow type defined in execution started attributes"))?
+            .name
+            .clone();
 
         let mut events = vec![];
         while let Some(event) = history.next() {
@@ -87,6 +86,7 @@ impl HistoryInfo {
                             events,
                             wf_task_count,
                             wf_type,
+                            wf_exe_started_attrs: started_attrs,
                         });
                     }
                 } else if next_event.is_some() && !next_is_failed_or_timeout_or_term {
@@ -108,6 +108,7 @@ impl HistoryInfo {
                         events,
                         wf_task_count,
                         wf_type,
+                        wf_exe_started_attrs: started_attrs,
                     });
                 }
                 // No more events
@@ -135,16 +136,9 @@ impl HistoryInfo {
         &self.events
     }
 
-    /// Attempt to extract run id from internal events. If the first event is not workflow execution
-    /// started, it will panic.
+    /// Extract run id from the workflow execution started attributes.
     pub fn orig_run_id(&self) -> &str {
-        if let Some(history_event::Attributes::WorkflowExecutionStartedEventAttributes(wes)) =
-            &self.events[0].attributes
-        {
-            &wes.original_execution_run_id
-        } else {
-            panic!("First event is wrong type")
-        }
+        &self.wf_exe_started_attrs.original_execution_run_id
     }
 
     /// Return total workflow task count in this history
@@ -155,7 +149,7 @@ impl HistoryInfo {
     /// Create a workflow task polling response containing all the events in this history and a
     /// randomly generated task token. Caller should attach a meaningful `workflow_execution` if
     /// needed.
-    pub fn as_poll_wft_response(&self, task_q: impl Into<String>) -> PollWorkflowTaskQueueResponse {
+    pub fn as_poll_wft_response(&self) -> PollWorkflowTaskQueueResponse {
         let task_token: [u8; 16] = thread_rng().gen();
         PollWorkflowTaskQueueResponse {
             history: Some(History {
@@ -166,7 +160,13 @@ impl HistoryInfo {
                 name: self.wf_type.clone(),
             }),
             workflow_execution_task_queue: Some(TaskQueue {
-                name: task_q.into(),
+                name: self
+                    .wf_exe_started_attrs
+                    .task_queue
+                    .as_ref()
+                    .unwrap()
+                    .name
+                    .clone(),
                 kind: TaskQueueKind::Normal as i32,
             }),
             previous_started_event_id: self.previous_started_event_id,

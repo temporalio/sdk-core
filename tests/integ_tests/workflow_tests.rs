@@ -181,9 +181,9 @@ async fn fail_wf_task(#[values(true, false)] replay: bool) {
     let core = if replay {
         let (core, _) = init_core_replay_preloaded(
             "fail_wf_task",
-            &history_from_proto_binary("histories/fail_wf_task.bin")
+            [history_from_proto_binary("histories/fail_wf_task.bin")
                 .await
-                .unwrap(),
+                .unwrap()],
         );
         core
     } else {

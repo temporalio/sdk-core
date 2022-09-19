@@ -470,16 +470,6 @@ impl Worker {
         self.post_activate_hook = Some(Box::new(callback))
     }
 
-    /// Used for replay workers - causes the worker to shutdown when the given run reaches the
-    /// given event number
-    pub(crate) fn set_shutdown_on_run_reaches_event(&mut self, run_id: String, last_event: i64) {
-        self.set_post_activate_hook(move |worker, activated_run_id, last_processed_event| {
-            if activated_run_id == run_id && last_processed_event >= last_event as usize {
-                worker.initiate_shutdown();
-            }
-        });
-    }
-
     fn complete_local_act(
         &self,
         la_res: LocalActivityExecutionResult,

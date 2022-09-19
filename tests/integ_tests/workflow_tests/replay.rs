@@ -19,9 +19,11 @@ use tokio::join;
 async fn timer_workflow_replay() {
     let (core, _) = init_core_replay_preloaded(
         "timer_workflow_replay",
-        &history_from_proto_binary("histories/timer_workflow_history.bin")
-            .await
-            .unwrap(),
+        [
+            history_from_proto_binary("histories/timer_workflow_history.bin")
+                .await
+                .unwrap(),
+        ],
     );
     let task = core.poll_workflow_activation().await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
@@ -66,9 +68,11 @@ async fn timer_workflow_replay() {
 async fn workflow_nondeterministic_replay() {
     let (core, _) = init_core_replay_preloaded(
         "timer_workflow_replay",
-        &history_from_proto_binary("histories/timer_workflow_history.bin")
-            .await
-            .unwrap(),
+        [
+            history_from_proto_binary("histories/timer_workflow_history.bin")
+                .await
+                .unwrap(),
+        ],
     );
     let task = core.poll_workflow_activation().await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
@@ -103,7 +107,7 @@ async fn replay_using_wf_function() {
     let t = canned_histories::long_sequential_timers(num_timers as usize);
     let func = timers_wf(num_timers);
     let (worker, _) =
-        init_core_replay_preloaded("replay_bench", &t.get_full_history_info().unwrap().into());
+        init_core_replay_preloaded("replay_bench", [t.get_full_history_info().unwrap().into()]);
     let mut worker = Worker::new_from_core(worker, "replay_bench".to_string());
     worker.register_wf(DEFAULT_WORKFLOW_TYPE, func);
     worker.run().await.unwrap();
@@ -119,12 +123,34 @@ async fn replay_ok_ending_with_terminated_or_timed_out() {
         let func = timers_wf(1);
         let (worker, _) = init_core_replay_preloaded(
             "replay_ok_terminate",
-            &t.get_full_history_info().unwrap().into(),
+            [t.get_full_history_info().unwrap().into()],
         );
         let mut worker = Worker::new_from_core(worker, "replay_ok_terminate".to_string());
         worker.register_wf(DEFAULT_WORKFLOW_TYPE, func);
         worker.run().await.unwrap();
     }
+}
+
+#[tokio::test]
+async fn multiple_histories_replay() {
+    let num_timers = 10;
+    let seq_timer_wf = timers_wf(num_timers);
+    let one_timer_wf = timers_wf(1);
+    let mut one_timer_hist = canned_histories::single_timer("1");
+    one_timer_hist.set_wf_type("onetimer");
+    let mut seq_timer_hist = canned_histories::long_sequential_timers(num_timers as usize);
+    seq_timer_hist.set_wf_type("seqtimer");
+    let (worker, _) = init_core_replay_preloaded(
+        "multiple_hist_replay",
+        [
+            one_timer_hist.get_full_history_info().unwrap().into(),
+            seq_timer_hist.get_full_history_info().unwrap().into(),
+        ],
+    );
+    let mut worker = Worker::new_from_core(worker, "replay_ok_terminate".to_string());
+    worker.register_wf("onetimer", one_timer_wf);
+    worker.register_wf("seqtimer", seq_timer_wf);
+    worker.run().await.unwrap();
 }
 
 fn timers_wf(num_timers: u32) -> WorkflowFunction {

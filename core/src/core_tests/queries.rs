@@ -1,7 +1,7 @@
 use crate::{
     test_help::{
         build_mock_pollers, canned_histories, hist_to_poll_resp, mock_worker, single_hist_mock_sg,
-        MockPollCfg, ResponseType, TEST_Q,
+        MockPollCfg, ResponseType,
     },
     worker::{client::mocks::mock_workflow_client, LEGACY_QUERY_ID},
 };
@@ -44,9 +44,9 @@ async fn legacy_query(#[case] include_history: bool) {
     let mut header = HashMap::new();
     header.insert("head".to_string(), Payload::from(b"er"));
     let tasks = [
-        hist_to_poll_resp(&t, wfid.to_owned(), 1.into(), TEST_Q.to_string()),
+        hist_to_poll_resp(&t, wfid.to_owned(), 1.into()),
         {
-            let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), 1.into(), TEST_Q.to_string());
+            let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), 1.into());
             pr.query = Some(WorkflowQuery {
                 query_type: "query-type".to_string(),
                 query_args: Some(b"hi".into()),
@@ -57,7 +57,7 @@ async fn legacy_query(#[case] include_history: bool) {
             }
             pr
         },
-        hist_to_poll_resp(&t, wfid.to_owned(), 2.into(), TEST_Q.to_string()),
+        hist_to_poll_resp(&t, wfid.to_owned(), 2.into()),
     ];
     let mut mock = MockPollCfg::from_resp_batches(wfid, t, tasks, mock_workflow_client());
     mock.num_expected_legacy_query_resps = 1;
@@ -155,29 +155,21 @@ async fn new_queries(#[case] num_queries: usize) {
     let t = canned_histories::single_timer("1");
     let mut header = HashMap::new();
     header.insert("head".to_string(), Payload::from(b"er"));
-    let tasks = VecDeque::from(vec![
-        hist_to_poll_resp(&t, wfid.to_owned(), 1.into(), TEST_Q.to_string()),
-        {
-            let mut pr = hist_to_poll_resp(
-                &t,
-                wfid.to_owned(),
-                ResponseType::OneTask(2),
-                TEST_Q.to_string(),
+    let tasks = VecDeque::from(vec![hist_to_poll_resp(&t, wfid.to_owned(), 1.into()), {
+        let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), ResponseType::OneTask(2));
+        pr.queries = HashMap::new();
+        for i in 1..=num_queries {
+            pr.queries.insert(
+                format!("q{}", i),
+                WorkflowQuery {
+                    query_type: "query-type".to_string(),
+                    query_args: Some(b"hi".into()),
+                    header: Some(header.clone().into()),
+                },
             );
-            pr.queries = HashMap::new();
-            for i in 1..=num_queries {
-                pr.queries.insert(
-                    format!("q{}", i),
-                    WorkflowQuery {
-                        query_type: "query-type".to_string(),
-                        query_args: Some(b"hi".into()),
-                        header: Some(header.clone().into()),
-                    },
-                );
-            }
-            pr
-        },
-    ]);
+        }
+        pr
+    }]);
     let mut mock_client = mock_workflow_client();
     mock_client.expect_respond_legacy_query().times(0);
     let mut mock = single_hist_mock_sg(wfid, t, tasks, mock_client, true);
@@ -237,19 +229,16 @@ async fn new_queries(#[case] num_queries: usize) {
 async fn legacy_query_failure_on_wft_failure() {
     let wfid = "fake_wf_id";
     let t = canned_histories::single_timer("1");
-    let tasks = VecDeque::from(vec![
-        hist_to_poll_resp(&t, wfid.to_owned(), 1.into(), TEST_Q.to_string()),
-        {
-            let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), 1.into(), TEST_Q.to_string());
-            pr.query = Some(WorkflowQuery {
-                query_type: "query-type".to_string(),
-                query_args: Some(b"hi".into()),
-                header: None,
-            });
-            pr.history = Some(History { events: vec![] });
-            pr
-        },
-    ]);
+    let tasks = VecDeque::from(vec![hist_to_poll_resp(&t, wfid.to_owned(), 1.into()), {
+        let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), 1.into());
+        pr.query = Some(WorkflowQuery {
+            query_type: "query-type".to_string(),
+            query_args: Some(b"hi".into()),
+            header: None,
+        });
+        pr.history = Some(History { events: vec![] });
+        pr
+    }]);
     let mut mock = MockPollCfg::from_resp_batches(wfid, t, tasks, mock_workflow_client());
     mock.num_expected_legacy_query_resps = 1;
     let mut mock = build_mock_pollers(mock);
@@ -292,12 +281,7 @@ async fn query_failure_because_nondeterminism(#[values(true, false)] legacy: boo
     let wfid = "fake_wf_id";
     let t = canned_histories::single_timer("1");
     let tasks = [{
-        let mut pr = hist_to_poll_resp(
-            &t,
-            wfid.to_owned(),
-            ResponseType::AllHistory,
-            TEST_Q.to_string(),
-        );
+        let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), ResponseType::AllHistory);
         if legacy {
             pr.query = Some(WorkflowQuery {
                 query_type: "query-type".to_string(),
@@ -356,12 +340,7 @@ async fn legacy_query_after_complete(#[values(false, true)] full_history: bool) 
         t
     };
     let query_with_hist_task = {
-        let mut pr = hist_to_poll_resp(
-            &t,
-            wfid.to_owned(),
-            ResponseType::AllHistory,
-            TEST_Q.to_string(),
-        );
+        let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), ResponseType::AllHistory);
         pr.query = Some(WorkflowQuery {
             query_type: "query-type".to_string(),
             query_args: Some(b"hi".into()),
@@ -375,15 +354,7 @@ async fn legacy_query_after_complete(#[values(false, true)] full_history: bool) 
     let mut tasks = if full_history {
         vec![]
     } else {
-        vec![
-            hist_to_poll_resp(
-                &t,
-                wfid.to_owned(),
-                ResponseType::AllHistory,
-                TEST_Q.to_string(),
-            )
-            .resp,
-        ]
+        vec![hist_to_poll_resp(&t, wfid.to_owned(), ResponseType::AllHistory).resp]
     };
     tasks.extend([query_with_hist_task.clone(), query_with_hist_task]);
 
@@ -456,29 +427,14 @@ async fn query_cache_miss_causes_page_fetch_dont_reply_wft_too_early(
             QueryHists::Empty => {
                 // Create a no-history poll response. This happens to be easiest to do by just ripping
                 // out the history after making a normal one.
-                let mut pr = hist_to_poll_resp(
-                    &t,
-                    wfid.to_owned(),
-                    ResponseType::AllHistory,
-                    TEST_Q.to_string(),
-                );
+                let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), ResponseType::AllHistory);
                 pr.history = Some(Default::default());
                 pr
             }
-            QueryHists::Full => hist_to_poll_resp(
-                &t,
-                wfid.to_owned(),
-                ResponseType::AllHistory,
-                TEST_Q.to_string(),
-            ),
+            QueryHists::Full => hist_to_poll_resp(&t, wfid.to_owned(), ResponseType::AllHistory),
             QueryHists::Partial => {
                 // Create a partial task
-                hist_to_poll_resp(
-                    &t,
-                    wfid.to_owned(),
-                    ResponseType::OneTask(2),
-                    TEST_Q.to_string(),
-                )
+                hist_to_poll_resp(&t, wfid.to_owned(), ResponseType::OneTask(2))
             }
         };
         pr.queries = HashMap::new();
@@ -579,12 +535,7 @@ async fn query_replay_with_continue_as_new_doesnt_reply_empty_command() {
     let wfid = "fake_wf_id";
     let t = canned_histories::single_timer("1");
     let query_with_hist_task = {
-        let mut pr = hist_to_poll_resp(
-            &t,
-            wfid.to_owned(),
-            ResponseType::ToTaskNum(1),
-            TEST_Q.to_string(),
-        );
+        let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), ResponseType::ToTaskNum(1));
         pr.queries = HashMap::new();
         pr.queries.insert(
             "the-query".to_string(),
@@ -682,7 +633,7 @@ async fn legacy_query_response_gets_not_found_not_fatal() {
     let wfid = "fake_wf_id";
     let t = canned_histories::single_timer("1");
     let tasks = [{
-        let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), 1.into(), TEST_Q.to_string());
+        let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), 1.into());
         pr.query = Some(WorkflowQuery {
             query_type: "query-type".to_string(),
             query_args: Some(b"hi".into()),

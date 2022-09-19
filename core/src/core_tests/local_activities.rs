@@ -3,7 +3,7 @@ use crate::{
     replay::{default_wes_attribs, TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE},
     test_help::{
         hist_to_poll_resp, mock_sdk, mock_sdk_cfg, mock_worker, single_hist_mock_sg, MockPollCfg,
-        ResponseType, TEST_Q,
+        ResponseType,
     },
     worker::client::mocks::mock_workflow_client,
 };
@@ -415,7 +415,7 @@ async fn query_during_wft_heartbeat_doesnt_accidentally_fail_to_continue_heartbe
     t.add_workflow_execution_completed();
 
     let query_with_hist_task = {
-        let mut pr = hist_to_poll_resp(&t, wfid, ResponseType::ToTaskNum(1), TEST_Q);
+        let mut pr = hist_to_poll_resp(&t, wfid, ResponseType::ToTaskNum(1));
         pr.queries = HashMap::new();
         pr.queries.insert(
             "the-query".to_string(),
@@ -441,7 +441,6 @@ async fn query_during_wft_heartbeat_doesnt_accidentally_fail_to_continue_heartbe
                 .boxed(),
                 3,
             ),
-            TEST_Q,
         ),
     ];
     let mock = mock_workflow_client();

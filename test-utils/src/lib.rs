@@ -61,12 +61,13 @@ pub async fn init_core_and_create_wf(test_name: &str) -> CoreWfStarter {
     starter
 }
 
-/// Create a worker replay instance preloaded with a provided history. Returns the worker impl
+/// Create a worker replay instance preloaded with provided histories. Returns the worker impl
 /// and the task queue name as in [init_core_and_create_wf].
-pub fn init_core_replay_preloaded(
-    test_name: &str,
-    history: &History,
-) -> (Arc<dyn CoreWorker>, String) {
+pub fn init_core_replay_preloaded<I>(test_name: &str, histories: I) -> (Arc<dyn CoreWorker>, String)
+where
+    I: IntoIterator<Item = History> + 'static,
+    <I as IntoIterator>::IntoIter: Send,
+{
     telemetry_init(&get_integ_telem_options()).expect("Telemetry inits cleanly");
     let worker_cfg = WorkerConfigBuilder::default()
         .namespace(NAMESPACE)
@@ -74,7 +75,8 @@ pub fn init_core_replay_preloaded(
         .worker_build_id("test_bin_id")
         .build()
         .expect("Configuration options construct properly");
-    let worker = init_replay_worker(worker_cfg, history).expect("Replay worker must init properly");
+    let worker =
+        init_replay_worker(worker_cfg, histories).expect("Replay worker must init properly");
     (Arc::new(worker), test_name.to_string())
 }
 
@@ -192,7 +194,7 @@ impl CoreWfStarter {
             .await?
             .history
             .expect("history field must be populated");
-        let (replay_worker, _) = init_core_replay_preloaded(worker.task_queue(), &history);
+        let (replay_worker, _) = init_core_replay_preloaded(worker.task_queue(), [history]);
         worker.with_new_core_worker(replay_worker);
         worker.run().await.unwrap();
         Ok(())
