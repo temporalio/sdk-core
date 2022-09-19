@@ -23,6 +23,7 @@ use std::{
 use temporal_client::WorkflowOptions;
 use temporal_sdk::{ActivityOptions, WfContext};
 use temporal_sdk_core_api::{errors::CompleteActivityError, Worker as WorkerTrait};
+use temporal_sdk_core_protos::temporal::api::command::v1::ScheduleActivityTaskCommandAttributes;
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{
@@ -620,21 +621,46 @@ async fn activity_tasks_from_completion_are_delivered() {
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
-    let schedid = t.add_activity_task_scheduled("act_id");
-    let startid = t.add_activity_task_started(schedid);
-    t.add_activity_task_completed(schedid, startid, b"hi".into());
+    let act_same_queue_sched_id = t.add_activity_task_scheduled("act_id_same_queue");
+    let act_different_queue_sched_id = t.add_activity_task_scheduled("act_id_different_queue");
+    let act_same_queue_start_id = t.add_activity_task_started(act_same_queue_sched_id);
+    t.add_activity_task_completed(
+        act_same_queue_sched_id,
+        act_same_queue_start_id,
+        b"hi".into(),
+    );
     t.add_full_wf_task();
+    t.add_activity_task_cancel_requested(act_different_queue_sched_id);
     t.add_workflow_execution_completed();
+
+    let num_eager_requested = Arc::new(AtomicUsize::new(0));
+    // Clone it to move into the callback below
+    let num_eager_requested_clone = num_eager_requested.clone();
 
     let mut mock = mock_workflow_client();
     mock.expect_complete_workflow_task()
         .times(1)
-        .returning(move |_| {
+        .returning(move |req| {
+            // Store the number of eager activities requested to be checked below
+            let count = req
+                .commands
+                .into_iter()
+                .filter(|c| match c.attributes {
+                    Some(Attributes::ScheduleActivityTaskCommandAttributes(
+                        ScheduleActivityTaskCommandAttributes {
+                            request_eager_execution,
+                            ..
+                        },
+                    )) => request_eager_execution,
+                    _ => false,
+                })
+                .count();
+            num_eager_requested_clone.store(count, Ordering::Relaxed);
             Ok(RespondWorkflowTaskCompletedResponse {
                 workflow_task: None,
                 activity_tasks: vec![PollActivityTaskQueueResponse {
                     task_token: vec![1],
-                    activity_id: "act1".to_string(),
+                    activity_id: "act_id_same_queue".to_string(),
                     ..Default::default()
                 }],
             })
@@ -652,15 +678,26 @@ async fn activity_tasks_from_completion_are_delivered() {
     let core = mock_worker(mock);
 
     let wf_task = core.poll_workflow_activation().await.unwrap();
-    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         wf_task.run_id,
-        ScheduleActivity {
-            seq: 1,
-            activity_id: "act_id".to_string(),
-            cancellation_type: ActivityCancellationType::TryCancel as i32,
-            ..Default::default()
-        }
-        .into(),
+        vec![
+            ScheduleActivity {
+                seq: 1,
+                activity_id: "act_id_same_queue".to_string(),
+                task_queue: TEST_Q.to_string(),
+                cancellation_type: ActivityCancellationType::TryCancel as i32,
+                ..Default::default()
+            }
+            .into(),
+            ScheduleActivity {
+                seq: 2,
+                activity_id: "act_id_different_queue".to_string(),
+                task_queue: "different_queue".to_string(),
+                cancellation_type: ActivityCancellationType::Abandon as i32,
+                ..Default::default()
+            }
+            .into(),
+        ],
     ))
     .await
     .unwrap();
@@ -677,6 +714,9 @@ async fn activity_tasks_from_completion_are_delivered() {
     .unwrap();
 
     core.shutdown().await;
+
+    // Verify only a single eager activity was scheduled (the one on our worker's task queue)
+    assert_eq!(num_eager_requested.load(Ordering::Relaxed), 1);
 }
 
 #[tokio::test]

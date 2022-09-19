@@ -263,6 +263,7 @@ impl Worker {
                     shutdown_token: shutdown_token.child_token(),
                     metrics,
                     namespace: config.namespace.clone(),
+                    task_queue: config.task_queue.clone(),
                 },
                 sticky_queue_name.map(|sq| StickyExecutionAttributes {
                     worker_task_queue: Some(TaskQueue {

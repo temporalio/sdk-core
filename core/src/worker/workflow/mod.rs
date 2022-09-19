@@ -84,6 +84,7 @@ type BoxedActivationStream = BoxStream<'static, Result<ActivationOrAuto, PollWfE
 
 /// Centralizes all state related to workflows and workflow tasks
 pub(crate) struct Workflows {
+    task_queue: String,
     local_tx: UnboundedSender<LocalInput>,
     processing_task: tokio::sync::Mutex<Option<JoinHandle<()>>>,
     activation_stream: tokio::sync::Mutex<(
@@ -105,6 +106,7 @@ pub(super) struct WorkflowBasics {
     pub shutdown_token: CancellationToken,
     pub metrics: MetricsContext,
     pub namespace: String,
+    pub task_queue: String,
 }
 
 impl Workflows {
@@ -121,6 +123,7 @@ impl Workflows {
     ) -> Self {
         let (local_tx, local_rx) = unbounded_channel();
         let shutdown_tok = basics.shutdown_token.clone();
+        let task_queue = basics.task_queue.clone();
         let mut stream = WFStream::build(
             basics,
             wft_stream,
@@ -153,6 +156,7 @@ impl Workflows {
             }
         });
         Self {
+            task_queue,
             local_tx,
             processing_task: tokio::sync::Mutex::new(Some(processing_task)),
             activation_stream: tokio::sync::Mutex::new((
@@ -460,10 +464,20 @@ impl Workflows {
                 {
                     // If request_eager_execution was already false, that means lang explicitly
                     // told us it didn't want to eagerly execute for some reason. So, we only
-                    // ever turn *off* eager execution if a slot is not available.
+                    // ever turn *off* eager execution if a slot is not available or the activity
+                    // is scheduled on a different task queue.
                     if attrs.request_eager_execution {
-                        if let Some(p) = at_handle.reserve_slot() {
-                            reserved.push(p);
+                        let same_task_queue = attrs
+                            .task_queue
+                            .as_ref()
+                            .map(|q| q.name == self.task_queue)
+                            .unwrap_or_default();
+                        if same_task_queue {
+                            if let Some(p) = at_handle.reserve_slot() {
+                                reserved.push(p);
+                            } else {
+                                attrs.request_eager_execution = false;
+                            }
                         } else {
                             attrs.request_eager_execution = false;
                         }
