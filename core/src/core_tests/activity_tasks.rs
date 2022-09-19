@@ -646,14 +646,13 @@ async fn activity_tasks_from_completion_are_delivered() {
                 .commands
                 .into_iter()
                 .filter(|c| match c.attributes {
-                    None => false,
                     Some(Attributes::ScheduleActivityTaskCommandAttributes(
                         ScheduleActivityTaskCommandAttributes {
                             request_eager_execution,
                             ..
                         },
                     )) => request_eager_execution,
-                    Some(_) => false,
+                    _ => false,
                 })
                 .count();
             num_eager_requested_clone.store(count, Ordering::Relaxed);
