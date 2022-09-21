@@ -13,3 +13,4 @@ src/protos/*.rs
 /tarpaulin-report.html
 /machine_coverage/
 /bindings/
+/core/machine_coverage/

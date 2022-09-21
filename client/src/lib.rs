@@ -29,7 +29,7 @@ use crate::{
     sealed::WfHandleClient,
     workflow_handle::UntypedWorkflowHandle,
 };
-use backoff::{ExponentialBackoff, SystemClock};
+use backoff::{exponential, ExponentialBackoff, SystemClock};
 use http::uri::InvalidUri;
 use once_cell::sync::OnceCell;
 use opentelemetry::metrics::Meter;
@@ -73,6 +73,7 @@ use uuid::Uuid;
 
 static CLIENT_NAME_HEADER_KEY: &str = "client-name";
 static CLIENT_VERSION_HEADER_KEY: &str = "client-version";
+/// These must match the gRPC method names, not the snake case versions that exist in the Rust code.
 static LONG_POLL_METHOD_NAMES: [&str; 2] = ["PollWorkflowTaskQueue", "PollActivityTaskQueue"];
 /// The server times out polls after 60 seconds. Set our timeout to be slightly beyond that.
 const LONG_POLL_TIMEOUT: Duration = Duration::from_secs(70);
@@ -179,20 +180,24 @@ impl RetryConfig {
             max_retries: 0,
         }
     }
+
+    pub(crate) fn into_exp_backoff<C>(self, clock: C) -> exponential::ExponentialBackoff<C> {
+        exponential::ExponentialBackoff {
+            current_interval: self.initial_interval,
+            initial_interval: self.initial_interval,
+            randomization_factor: self.randomization_factor,
+            multiplier: self.multiplier,
+            max_interval: self.max_interval,
+            max_elapsed_time: self.max_elapsed_time,
+            clock,
+            start_time: Instant::now(),
+        }
+    }
 }
 
 impl From<RetryConfig> for ExponentialBackoff {
     fn from(c: RetryConfig) -> Self {
-        Self {
-            current_interval: c.initial_interval,
-            initial_interval: c.initial_interval,
-            randomization_factor: c.randomization_factor,
-            multiplier: c.multiplier,
-            max_interval: c.max_interval,
-            max_elapsed_time: c.max_elapsed_time,
-            clock: SystemClock::default(),
-            start_time: Instant::now(),
-        }
+        c.into_exp_backoff(SystemClock::default())
     }
 }
 
