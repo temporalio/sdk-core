@@ -95,7 +95,6 @@ where
         F: Send + Sync + Unpin + 'static,
     {
         let rtc = self.get_retry_config(call_name);
-        let req = req_cloner(&req);
         let fact = || {
             let req_clone = req_cloner(&req);
             callfn(self, req_clone)
