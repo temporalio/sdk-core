@@ -105,7 +105,7 @@ async fn simple_query_legacy() {
     assert_eq!(&q_resp.unwrap()[0].data, query_resp);
 }
 
-#[rstest::rstest]
+#[rstest]
 #[case::no_eviction(false)]
 #[case::with_eviction(true)]
 #[tokio::test]

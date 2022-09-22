@@ -229,7 +229,7 @@ pub fn telemetry_init(opts: &TelemetryOptions) -> Result<&'static GlobalTelemDat
                                 .pretty()
                                 .with_source_location(false);
                             let reg = tracing_subscriber::registry()
-                                .with((&opts).try_get_env_filter()?)
+                                .with((opts).try_get_env_filter()?)
                                 .with(
                                     tracing_subscriber::fmt::layer()
                                         .with_target(false)

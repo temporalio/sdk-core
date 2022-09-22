@@ -19,6 +19,7 @@ pub type Result<T, E = tonic::Status> = std::result::Result<T, E>;
 /// A trait for things that poll the server. Hides complexity of concurrent polling or polling
 /// on sticky/nonsticky queues simultaneously.
 #[cfg_attr(test, mockall::automock)]
+#[cfg_attr(test, allow(unused))]
 #[async_trait::async_trait]
 pub trait Poller<PollResult>
 where
@@ -37,6 +38,7 @@ pub type BoxedActPoller = BoxedPoller<PollActivityTaskQueueResponse>;
 #[cfg(test)]
 mockall::mock! {
     pub ManualPoller<T: Send + Sync + 'static> {}
+    #[allow(unused)]
     impl<T: Send + Sync + 'static> Poller<T> for ManualPoller<T> {
         fn poll<'a, 'b>(&self)
           -> impl Future<Output = Option<Result<T>>> + Send + 'b

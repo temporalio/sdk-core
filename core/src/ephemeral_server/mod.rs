@@ -20,6 +20,7 @@ use zip::read::read_zipfile_from_stream;
 
 #[cfg(target_family = "unix")]
 use std::os::unix::fs::OpenOptionsExt;
+use std::process::Stdio;
 
 /// Configuration for Temporalite.
 #[derive(Debug, Clone, derive_builder::Builder)]
@@ -52,6 +53,11 @@ pub struct TemporaliteConfig {
 impl TemporaliteConfig {
     /// Start a Temporalite server.
     pub async fn start_server(&self) -> anyhow::Result<EphemeralServer> {
+        self.start_server_with_output(Stdio::inherit()).await
+    }
+
+    /// Start a Temporalite server with configurable stdout destination.
+    pub async fn start_server_with_output(&self, output: Stdio) -> anyhow::Result<EphemeralServer> {
         // Get exe path
         let exe_path = self.exe.get_or_download("temporalite").await?;
 
@@ -89,6 +95,7 @@ impl TemporaliteConfig {
             port,
             args,
             has_test_service: false,
+            output,
         })
         .await
     }
@@ -110,6 +117,11 @@ pub struct TestServerConfig {
 impl TestServerConfig {
     /// Start a test server.
     pub async fn start_server(&self) -> anyhow::Result<EphemeralServer> {
+        self.start_server_with_output(Stdio::inherit()).await
+    }
+
+    /// Start a test server with configurable stdout.
+    pub async fn start_server_with_output(&self, output: Stdio) -> anyhow::Result<EphemeralServer> {
         // Get exe path
         let exe_path = self.exe.get_or_download("temporal-test-server").await?;
 
@@ -126,6 +138,7 @@ impl TestServerConfig {
             port,
             args,
             has_test_service: true,
+            output,
         })
         .await
     }
@@ -136,9 +149,11 @@ struct EphemeralServerConfig {
     port: u16,
     args: Vec<String>,
     has_test_service: bool,
+    output: Stdio,
 }
 
 /// Server that will be stopped when dropped.
+#[derive(Debug)]
 pub struct EphemeralServer {
     /// gRPC target host:port for the server frontend.
     pub target: String,
@@ -153,7 +168,8 @@ impl EphemeralServer {
         // TODO(cretz): Offer stdio suppression?
         let child = tokio::process::Command::new(config.exe_path)
             .args(config.args)
-            .stdin(std::process::Stdio::null())
+            .stdin(Stdio::null())
+            .stdout(config.output)
             .spawn()?;
         let target = format!("127.0.0.1:{}", config.port);
         let target_url = format!("http://{}", target);
@@ -208,7 +224,7 @@ impl EphemeralServer {
         // For whatever reason, Tokio is not properly waiting on result
         // after sending kill in some cases which is causing defunct zombie
         // processes to remain and kill() to hang. Therefore, we are sending
-        // SIGINT and waiting on the process ourselves using a low-level call.
+        // SIGKILL and waiting on the process ourselves using a low-level call.
         //
         // WARNING: This is based on empirical evidence starting a Python test
         // run on Linux with Python 3.7 (does not happen on Python 3.10 nor does
@@ -217,7 +233,7 @@ impl EphemeralServer {
         if let Some(pid) = self.child.id() {
             let nix_pid = nix::unistd::Pid::from_raw(pid as i32);
             Ok(spawn_blocking(move || {
-                nix::sys::signal::kill(nix_pid, nix::sys::signal::Signal::SIGINT)?;
+                nix::sys::signal::kill(nix_pid, nix::sys::signal::Signal::SIGKILL)?;
                 nix::sys::wait::waitpid(Some(nix_pid), None)
             })
             .await?

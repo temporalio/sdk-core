@@ -133,6 +133,7 @@ async fn can_paginate_long_history() {
     worker.run_until_done().await.unwrap();
 }
 
+// TODO: Takes ages now, fix somehow
 #[tokio::test]
 async fn poll_of_nonexistent_namespace_is_fatal() {
     let mut starter = CoreWfStarter::new("whatever_yo");

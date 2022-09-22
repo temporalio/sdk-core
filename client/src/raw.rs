@@ -891,7 +891,7 @@ mod tests {
             .filter(|l| l.starts_with("rpc"))
             .map(|l| {
                 let stripped = l.strip_prefix("rpc ").unwrap();
-                (&stripped[..stripped.find('(').unwrap()]).trim()
+                (stripped[..stripped.find('(').unwrap()]).trim()
             })
             .collect();
         let no_underscores: HashSet<_> = impl_list.iter().map(|x| x.replace('_', "")).collect();

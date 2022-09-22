@@ -99,7 +99,7 @@ pub extern "C" fn tmprl_bytes_free(worker: *mut tmprl_worker_t, bytes: *const tm
         worker.return_buf(vec);
     }
     unsafe {
-        Box::from_raw(bytes);
+        let _ = Box::from_raw(bytes);
     }
 }
 
@@ -174,7 +174,7 @@ pub extern "C" fn tmprl_runtime_new() -> *mut tmprl_runtime_t {
 pub extern "C" fn tmprl_runtime_free(runtime: *mut tmprl_runtime_t) {
     if !runtime.is_null() {
         unsafe {
-            Box::from_raw(runtime);
+            let _ = Box::from_raw(runtime);
         }
     }
 }

@@ -17,6 +17,7 @@ pub(crate) fn mock_manual_workflow_client() -> MockManualWorkerClient {
 // https://github.com/asomers/mockall/issues/189 to be fixed for it to go away.
 mockall::mock! {
     pub ManualWorkerClient {}
+    #[allow(unused)]
     impl WorkerClient for ManualWorkerClient {
         fn poll_workflow_task<'a, 'b>(&'a self, task_queue: String, is_sticky: bool)
             -> impl Future<Output = Result<PollWorkflowTaskQueueResponse>> + Send + 'b

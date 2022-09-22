@@ -20,6 +20,7 @@ use temporal_client::{
 };
 use temporal_sdk::{interceptors::WorkerInterceptor, IntoActivityFunc, Worker, WorkflowFunction};
 use temporal_sdk_core::{
+    ephemeral_server::{EphemeralExe, EphemeralExeVersion},
     init_replay_worker, init_worker, telemetry_init, ClientOptions, ClientOptionsBuilder, Logger,
     MetricsExporter, OtelCollectorOptions, TelemetryOptions, TelemetryOptionsBuilder,
     TraceExporter, WorkerConfig, WorkerConfigBuilder,
@@ -40,11 +41,17 @@ use url::Url;
 
 pub const NAMESPACE: &str = "default";
 pub const TEST_Q: &str = "q";
+/// The env var used to specify where the integ tests should point
+pub const INTEG_SERVER_TARGET_ENV_VAR: &str = "TEMPORAL_SERVICE_ADDRESS";
+/// This env var is set (to any value) if temporalite is in use
+pub const INTEG_TEMPORALITE_USED_ENV_VAR: &str = "INTEG_TEMPORALITE_ON";
+/// This env var is set (to any value) if the test server is in use
+pub const INTEG_TEST_SERVER_USED_ENV_VAR: &str = "INTEG_TEST_SERVER_ON";
+
 /// If set, turn export traces and metrics to the OTel collector at the given URL
 const OTEL_URL_ENV_VAR: &str = "TEMPORAL_INTEG_OTEL_URL";
 /// If set, enable direct scraping of prom metrics on the specified port
 const PROM_ENABLE_ENV_VAR: &str = "TEMPORAL_INTEG_PROM_PORT";
-
 /// Create a worker instance which will use the provided test name to base the task queue and wf id
 /// upon. Returns the instance and the task queue name (which is also the workflow id).
 pub async fn init_core_and_create_wf(test_name: &str) -> CoreWfStarter {
@@ -433,8 +440,10 @@ impl WorkerInterceptor for TestWorkerCompletionIceptor {
     }
 }
 
+/// Returns the client options used to connect to the server used for integration tests.
 pub fn get_integ_server_options() -> ClientOptions {
-    let temporal_server_address = match env::var("TEMPORAL_SERVICE_ADDRESS") {
+    telemetry_init(&get_integ_telem_options()).expect("Telemetry inits cleanly");
+    let temporal_server_address = match env::var(INTEG_SERVER_TARGET_ENV_VAR) {
         Ok(addr) => addr,
         Err(_) => "http://localhost:7233".to_owned(),
     };
@@ -471,6 +480,16 @@ pub fn get_integ_telem_options() -> TelemetryOptions {
         .logging(Logger::Console)
         .build()
         .unwrap()
+}
+
+pub fn default_cached_download() -> EphemeralExe {
+    EphemeralExe::CachedDownload {
+        version: EphemeralExeVersion::Default {
+            sdk_name: "sdk-rust".to_string(),
+            sdk_version: "0.1.0".to_string(),
+        },
+        dest_dir: None,
+    }
 }
 
 pub fn schedule_activity_cmd(
