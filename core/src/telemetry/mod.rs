@@ -9,12 +9,15 @@ use crate::{
 use itertools::Itertools;
 use log::LevelFilter;
 use once_cell::sync::OnceCell;
-use opentelemetry::sdk::export::metrics::aggregation;
 use opentelemetry::{
     global,
     metrics::Meter,
     runtime,
-    sdk::{trace::Config, Resource},
+    sdk::{
+        export::metrics::aggregation::{self, Temporality, TemporalitySelector},
+        trace::Config,
+        Resource,
+    },
     KeyValue,
 };
 use opentelemetry_otlp::WithExportConfig;
@@ -70,7 +73,7 @@ pub enum MetricsExporter {
 }
 
 /// Control where logs go
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum Logger {
     /// Log directly to console.
     Console,
@@ -102,6 +105,30 @@ pub struct TelemetryOptions {
     /// the prefix is consistent with other SDKs.
     #[builder(default)]
     pub no_temporal_prefix_for_metrics: bool,
+
+    /// Specifies the aggregation temporality for metric export. Defaults to cumulative.
+    #[builder(default = "MetricTemporality::Cumulative")]
+    pub metric_temporality: MetricTemporality,
+}
+
+/// Types of aggregation temporality for metric export
+#[derive(Debug, Clone, Copy)]
+pub enum MetricTemporality {
+    Cumulative,
+    Delta,
+}
+
+impl MetricTemporality {
+    fn to_selector(self) -> impl TemporalitySelector + Send + Sync + Clone {
+        match self {
+            MetricTemporality::Cumulative => {
+                aggregation::constant_temporality_selector(Temporality::Cumulative)
+            }
+            MetricTemporality::Delta => {
+                aggregation::constant_temporality_selector(Temporality::Delta)
+            }
+        }
+    }
 }
 
 impl TelemetryOptions {
@@ -221,7 +248,7 @@ pub fn telemetry_init(opts: &TelemetryOptions) -> Result<&'static GlobalTelemDat
             if let Some(ref metrics) = opts.metrics {
                 match metrics {
                     MetricsExporter::Prometheus(addr) => {
-                        let srv = PromServer::new(*addr)?;
+                        let srv = PromServer::new(*addr, opts.metric_temporality.to_selector())?;
                         globaldat.prom_srv = Some(srv);
                     }
                     MetricsExporter::Otel(OtelCollectorOptions { url, headers }) => {
@@ -229,13 +256,11 @@ pub fn telemetry_init(opts: &TelemetryOptions) -> Result<&'static GlobalTelemDat
                             let metrics = opentelemetry_otlp::new_pipeline()
                                 .metrics(
                                     SDKAggSelector,
-                                    aggregation::cumulative_temporality_selector(),
+                                    opts.metric_temporality.to_selector(),
                                     runtime::Tokio,
                                 )
                                 .with_period(Duration::from_secs(1))
-                                .with_resource(Resource::new(
-                                    default_resource_kvs().iter().cloned(),
-                                ))
+                                .with_resource(default_resource())
                                 .with_exporter(
                                     // No joke exporter builder literally not cloneable for some insane
                                     // reason
@@ -270,7 +295,7 @@ pub fn telemetry_init(opts: &TelemetryOptions) -> Result<&'static GlobalTelemDat
                                         )),
                                 )
                                 .with_trace_config(tracer_cfg)
-                                .install_batch(opentelemetry::runtime::Tokio)?;
+                                .install_batch(runtime::Tokio)?;
 
                             let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
 
@@ -335,6 +360,7 @@ pub(crate) fn test_telem_console() {
         tracing: None,
         metrics: None,
         no_temporal_prefix_for_metrics: false,
+        metric_temporality: MetricTemporality::Cumulative,
     })
     .unwrap();
 }
@@ -351,6 +377,7 @@ pub(crate) fn test_telem_collector() {
         })),
         metrics: None,
         no_temporal_prefix_for_metrics: false,
+        metric_temporality: MetricTemporality::Cumulative,
     })
     .unwrap();
 }
