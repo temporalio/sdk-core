@@ -1,15 +1,17 @@
 use super::TELEM_SERVICE_NAME;
 use crate::telemetry::GLOBAL_TELEM_DAT;
+use opentelemetry::sdk::metrics::aggregators::Aggregator;
+use opentelemetry::sdk::metrics::sdk_api::{Descriptor, InstrumentKind};
 use opentelemetry::{
     global,
-    metrics::{Counter, Descriptor, InstrumentKind, Meter, ValueRecorder},
+    metrics::{Counter, Histogram, Meter},
     sdk::{
-        export::metrics::{Aggregator, AggregatorSelector},
+        export::metrics::AggregatorSelector,
         metrics::aggregators::{histogram, last_value, sum},
     },
-    KeyValue,
+    Context, KeyValue,
 };
-use std::{borrow::Cow, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 /// Used to track context associated with metrics, and record/update them
 ///
@@ -17,12 +19,16 @@ use std::{borrow::Cow, sync::Arc, time::Duration};
 /// appropriate k/vs have already been set.
 #[derive(Default, Clone, Debug)]
 pub(crate) struct MetricsContext {
+    ctx: Context,
     kvs: Arc<Vec<KeyValue>>,
 }
 
 impl MetricsContext {
     fn new(kvs: Vec<KeyValue>) -> Self {
-        Self { kvs: Arc::new(kvs) }
+        Self {
+            ctx: Context::current(),
+            kvs: Arc::new(kvs),
+        }
     }
 
     pub(crate) fn top_level(namespace: String) -> Self {
@@ -38,113 +44,116 @@ impl MetricsContext {
     pub(crate) fn with_new_attrs(&self, new_kvs: impl IntoIterator<Item = KeyValue>) -> Self {
         let mut kvs = self.kvs.clone();
         Arc::make_mut(&mut kvs).extend(new_kvs);
-        Self { kvs }
+        Self {
+            ctx: Context::current(),
+            kvs,
+        }
     }
 
     /// A workflow task queue poll succeeded
     pub(crate) fn wf_tq_poll_ok(&self) {
-        WF_TASK_QUEUE_POLL_SUCCEED_COUNTER.add(1, &self.kvs);
+        WF_TASK_QUEUE_POLL_SUCCEED_COUNTER.add(&self.ctx, 1, &self.kvs);
     }
 
     /// A workflow task queue poll timed out / had empty response
     pub(crate) fn wf_tq_poll_empty(&self) {
-        WF_TASK_QUEUE_POLL_EMPTY_COUNTER.add(1, &self.kvs);
+        WF_TASK_QUEUE_POLL_EMPTY_COUNTER.add(&self.ctx, 1, &self.kvs);
     }
 
     /// A workflow task execution failed
     pub(crate) fn wf_task_failed(&self) {
-        WF_TASK_EXECUTION_FAILURE_COUNTER.add(1, &self.kvs);
+        WF_TASK_EXECUTION_FAILURE_COUNTER.add(&self.ctx, 1, &self.kvs);
     }
 
     /// A workflow completed successfully
     pub(crate) fn wf_completed(&self) {
-        WF_COMPLETED_COUNTER.add(1, &self.kvs);
+        WF_COMPLETED_COUNTER.add(&self.ctx, 1, &self.kvs);
     }
 
     /// A workflow ended cancelled
     pub(crate) fn wf_canceled(&self) {
-        WF_CANCELED_COUNTER.add(1, &self.kvs);
+        WF_CANCELED_COUNTER.add(&self.ctx, 1, &self.kvs);
     }
 
     /// A workflow ended failed
     pub(crate) fn wf_failed(&self) {
-        WF_FAILED_COUNTER.add(1, &self.kvs);
+        WF_FAILED_COUNTER.add(&self.ctx, 1, &self.kvs);
     }
 
     /// A workflow continued as new
     pub(crate) fn wf_continued_as_new(&self) {
-        WF_CONT_COUNTER.add(1, &self.kvs);
+        WF_CONT_COUNTER.add(&self.ctx, 1, &self.kvs);
     }
 
     /// Record workflow total execution time in milliseconds
     pub(crate) fn wf_e2e_latency(&self, dur: Duration) {
-        WF_E2E_LATENCY.record(dur.as_millis() as u64, &self.kvs);
+        WF_E2E_LATENCY.record(&self.ctx, dur.as_millis() as u64, &self.kvs);
     }
 
     /// Record workflow task schedule to start time in millis
     pub(crate) fn wf_task_sched_to_start_latency(&self, dur: Duration) {
-        WF_TASK_SCHED_TO_START_LATENCY.record(dur.as_millis() as u64, &self.kvs);
+        WF_TASK_SCHED_TO_START_LATENCY.record(&self.ctx, dur.as_millis() as u64, &self.kvs);
     }
 
     /// Record workflow task execution time in milliseconds
     pub(crate) fn wf_task_latency(&self, dur: Duration) {
-        WF_TASK_EXECUTION_LATENCY.record(dur.as_millis() as u64, &self.kvs);
+        WF_TASK_EXECUTION_LATENCY.record(&self.ctx, dur.as_millis() as u64, &self.kvs);
     }
 
     /// Record time it takes to catch up on replaying a WFT
     pub(crate) fn wf_task_replay_latency(&self, dur: Duration) {
-        WF_TASK_REPLAY_LATENCY.record(dur.as_millis() as u64, &self.kvs);
+        WF_TASK_REPLAY_LATENCY.record(&self.ctx, dur.as_millis() as u64, &self.kvs);
     }
 
     /// An activity long poll timed out
     pub(crate) fn act_poll_timeout(&self) {
-        ACT_POLL_NO_TASK.add(1, &self.kvs);
+        ACT_POLL_NO_TASK.add(&self.ctx, 1, &self.kvs);
     }
 
     /// An activity execution failed
     pub(crate) fn act_execution_failed(&self) {
-        ACT_EXECUTION_FAILED.add(1, &self.kvs);
+        ACT_EXECUTION_FAILED.add(&self.ctx, 1, &self.kvs);
     }
 
     /// Record activity task schedule to start time in millis
     pub(crate) fn act_sched_to_start_latency(&self, dur: Duration) {
-        ACT_SCHED_TO_START_LATENCY.record(dur.as_millis() as u64, &self.kvs);
+        ACT_SCHED_TO_START_LATENCY.record(&self.ctx, dur.as_millis() as u64, &self.kvs);
     }
 
     /// Record time it took to complete activity execution, from the time core generated the
     /// activity task, to the time lang responded with a completion (failure or success).
     pub(crate) fn act_execution_latency(&self, dur: Duration) {
-        ACT_EXEC_LATENCY.record(dur.as_millis() as u64, &self.kvs);
+        ACT_EXEC_LATENCY.record(&self.ctx, dur.as_millis() as u64, &self.kvs);
     }
 
     /// A worker was registered
     pub(crate) fn worker_registered(&self) {
-        WORKER_REGISTERED.add(1, &self.kvs);
+        WORKER_REGISTERED.add(&self.ctx, 1, &self.kvs);
     }
 
     /// Record current number of available task slots. Context should have worker type set.
     pub(crate) fn available_task_slots(&self, num: usize) {
-        TASK_SLOTS_AVAILABLE.record(num as u64, &self.kvs)
+        TASK_SLOTS_AVAILABLE.record(&self.ctx, num as u64, &self.kvs)
     }
 
     /// Record current number of pollers. Context should include poller type / task queue tag.
     pub(crate) fn record_num_pollers(&self, num: usize) {
-        NUM_POLLERS.record(num as u64, &self.kvs);
+        NUM_POLLERS.record(&self.ctx, num as u64, &self.kvs);
     }
 
     /// A workflow task found a cached workflow to run against
     pub(crate) fn sticky_cache_hit(&self) {
-        STICKY_CACHE_HIT.add(1, &self.kvs);
+        STICKY_CACHE_HIT.add(&self.ctx, 1, &self.kvs);
     }
 
     /// A workflow task did not find a cached workflow
     pub(crate) fn sticky_cache_miss(&self) {
-        STICKY_CACHE_MISS.add(1, &self.kvs);
+        STICKY_CACHE_MISS.add(&self.ctx, 1, &self.kvs);
     }
 
     /// Record current cache size (in number of wfs, not bytes)
     pub(crate) fn cache_size(&self, size: u64) {
-        STICKY_CACHE_SIZE.record(size, &self.kvs);
+        STICKY_CACHE_SIZE.record(&self.ctx, size, &self.kvs);
     }
 }
 
@@ -182,8 +191,8 @@ macro_rules! tm {
     };
     (vr_u64, $ident:ident, $name:expr) => {
         lazy_static::lazy_static! {
-            static ref $ident: ValueRecorder<u64> = {
-                METRIC_METER.u64_value_recorder(metric_prefix().to_string() + $name).init()
+            static ref $ident: Histogram<u64> = {
+                METRIC_METER.u64_histogram(metric_prefix().to_string() + $name).init()
             };
         }
     };
@@ -214,22 +223,22 @@ pub(crate) fn activity_type(ty: String) -> KeyValue {
 pub(crate) fn workflow_type(ty: String) -> KeyValue {
     KeyValue::new(KEY_WF_TYPE, ty)
 }
-pub(crate) const fn workflow_worker_type() -> KeyValue {
+pub(crate) fn workflow_worker_type() -> KeyValue {
     KeyValue {
         key: opentelemetry::Key::from_static_str(KEY_WORKER_TYPE),
-        value: opentelemetry::Value::String(Cow::Borrowed("WorkflowWorker")),
+        value: opentelemetry::Value::String("WorkflowWorker".into()),
     }
 }
-pub(crate) const fn activity_worker_type() -> KeyValue {
+pub(crate) fn activity_worker_type() -> KeyValue {
     KeyValue {
         key: opentelemetry::Key::from_static_str(KEY_WORKER_TYPE),
-        value: opentelemetry::Value::String(Cow::Borrowed("ActivityWorker")),
+        value: opentelemetry::Value::String("ActivityWorker".into()),
     }
 }
-pub(crate) const fn local_activity_worker_type() -> KeyValue {
+pub(crate) fn local_activity_worker_type() -> KeyValue {
     KeyValue {
         key: opentelemetry::Key::from_static_str(KEY_WORKER_TYPE),
-        value: opentelemetry::Value::String(Cow::Borrowed("LocalActivityWorker")),
+        value: opentelemetry::Value::String("LocalActivityWorker".into()),
     }
 }
 
@@ -338,12 +347,12 @@ pub struct SDKAggSelector;
 
 impl AggregatorSelector for SDKAggSelector {
     fn aggregator_for(&self, descriptor: &Descriptor) -> Option<Arc<dyn Aggregator + Send + Sync>> {
-        // Observers are always last value
-        if *descriptor.instrument_kind() == InstrumentKind::ValueObserver {
+        // Gauges are always last value
+        if *descriptor.instrument_kind() == InstrumentKind::GaugeObserver {
             return Some(Arc::new(last_value()));
         }
 
-        if *descriptor.instrument_kind() == InstrumentKind::ValueRecorder {
+        if *descriptor.instrument_kind() == InstrumentKind::Histogram {
             let dname = descriptor
                 .name()
                 .strip_prefix(metric_prefix())
@@ -366,7 +375,7 @@ impl AggregatorSelector for SDKAggSelector {
                 ACT_EXEC_LATENCY_NAME => ACT_EXE_MS_BUCKETS,
                 _ => DEFAULT_MS_BUCKETS,
             };
-            return Some(Arc::new(histogram(descriptor, buckets)));
+            return Some(Arc::new(histogram(buckets)));
         }
 
         Some(Arc::new(sum()))
