@@ -1,13 +1,16 @@
-use crate::telemetry::{
-    default_resource,
-    metrics::{SDKAggSelector, DEFAULT_MS_BUCKETS},
-};
+use crate::telemetry::{default_resource, metrics::SDKAggSelector};
 use hyper::{
     header::CONTENT_TYPE,
     service::{make_service_fn, service_fn},
     Body, Method, Request, Response, Server,
 };
-use opentelemetry::metrics::MetricsError;
+use opentelemetry::{
+    metrics::MetricsError,
+    sdk::{
+        export::metrics::aggregation::TemporalitySelector,
+        metrics::{controllers, processors},
+    },
+};
 use opentelemetry_prometheus::{ExporterBuilder, PrometheusExporter};
 use prometheus::{Encoder, TextEncoder};
 use std::{convert::Infallible, net::SocketAddr, sync::Arc};
@@ -19,14 +22,15 @@ pub(super) struct PromServer {
 }
 
 impl PromServer {
-    pub fn new(addr: SocketAddr) -> Result<Self, MetricsError> {
-        let exporter = ExporterBuilder::default()
-            .with_default_histogram_boundaries(DEFAULT_MS_BUCKETS.to_vec())
-            .with_aggregator_selector(SDKAggSelector)
-            .with_host(addr.ip().to_string())
-            .with_port(addr.port())
-            .with_resource(default_resource())
-            .try_init()?;
+    pub fn new(
+        addr: SocketAddr,
+        temporality: impl TemporalitySelector + Send + Sync + 'static,
+    ) -> Result<Self, MetricsError> {
+        let controller =
+            controllers::basic(processors::factory(SDKAggSelector, temporality).with_memory(true))
+                .with_resource(default_resource())
+                .build();
+        let exporter = ExporterBuilder::new(controller).try_init()?;
         Ok(Self {
             exporter: Arc::new(exporter),
             addr,

@@ -1,7 +1,7 @@
 use crate::{AttachMetricLabels, LONG_POLL_METHOD_NAMES};
 use futures::{future::BoxFuture, FutureExt};
 use opentelemetry::{
-    metrics::{Counter, Meter, ValueRecorder},
+    metrics::{Counter, Histogram, Meter},
     KeyValue,
 };
 use std::{
@@ -17,6 +17,7 @@ use tower::Service;
 // appropriate k/vs have already been set.
 #[derive(Clone, Debug)]
 pub struct MetricsContext {
+    ctx: opentelemetry::Context,
     kvs: Arc<Vec<KeyValue>>,
     poll_is_long: bool,
 
@@ -25,21 +26,22 @@ pub struct MetricsContext {
     long_svc_request: Counter<u64>,
     long_svc_request_failed: Counter<u64>,
 
-    svc_request_latency: ValueRecorder<u64>,
-    long_svc_request_latency: ValueRecorder<u64>,
+    svc_request_latency: Histogram<u64>,
+    long_svc_request_latency: Histogram<u64>,
 }
 
 impl MetricsContext {
     pub(crate) fn new(kvs: Vec<KeyValue>, meter: &Meter) -> Self {
         Self {
+            ctx: opentelemetry::Context::current(),
             kvs: Arc::new(kvs),
             poll_is_long: false,
             svc_request: meter.u64_counter("request").init(),
             svc_request_failed: meter.u64_counter("request_failure").init(),
             long_svc_request: meter.u64_counter("long_request").init(),
             long_svc_request_failed: meter.u64_counter("long_request_failure").init(),
-            svc_request_latency: meter.u64_value_recorder("request_latency").init(),
-            long_svc_request_latency: meter.u64_value_recorder("long_request_latency").init(),
+            svc_request_latency: meter.u64_histogram("request_latency").init(),
+            long_svc_request_latency: meter.u64_histogram("long_request_latency").init(),
         }
     }
 
@@ -62,18 +64,18 @@ impl MetricsContext {
     /// A request to the temporal service was made
     pub(crate) fn svc_request(&self) {
         if self.poll_is_long {
-            self.long_svc_request.add(1, &self.kvs);
+            self.long_svc_request.add(&self.ctx, 1, &self.kvs);
         } else {
-            self.svc_request.add(1, &self.kvs);
+            self.svc_request.add(&self.ctx, 1, &self.kvs);
         }
     }
 
     /// A request to the temporal service failed
     pub(crate) fn svc_request_failed(&self) {
         if self.poll_is_long {
-            self.long_svc_request_failed.add(1, &self.kvs);
+            self.long_svc_request_failed.add(&self.ctx, 1, &self.kvs);
         } else {
-            self.svc_request_failed.add(1, &self.kvs);
+            self.svc_request_failed.add(&self.ctx, 1, &self.kvs);
         }
     }
 
@@ -81,10 +83,10 @@ impl MetricsContext {
     pub(crate) fn record_svc_req_latency(&self, dur: Duration) {
         if self.poll_is_long {
             self.long_svc_request_latency
-                .record(dur.as_millis() as u64, &self.kvs);
+                .record(&self.ctx, dur.as_millis() as u64, &self.kvs);
         } else {
             self.svc_request_latency
-                .record(dur.as_millis() as u64, &self.kvs);
+                .record(&self.ctx, dur.as_millis() as u64, &self.kvs);
         }
     }
 }

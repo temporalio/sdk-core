@@ -12,8 +12,12 @@ use once_cell::sync::OnceCell;
 use opentelemetry::{
     global,
     metrics::Meter,
-    sdk::{metrics::PushController, trace::Config, Resource},
-    util::tokio_interval_stream,
+    runtime,
+    sdk::{
+        export::metrics::aggregation::{self, Temporality, TemporalitySelector},
+        trace::Config,
+        Resource,
+    },
     KeyValue,
 };
 use opentelemetry_otlp::WithExportConfig;
@@ -25,6 +29,7 @@ use std::{
     time::Duration,
 };
 use temporal_sdk_core_api::CoreTelemetry;
+use tonic::metadata::MetadataMap;
 use tracing_subscriber::{filter::ParseError, layer::SubscriberExt, EnvFilter};
 use url::Url;
 
@@ -68,7 +73,7 @@ pub enum MetricsExporter {
 }
 
 /// Control where logs go
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum Logger {
     /// Log directly to console.
     Console,
@@ -100,6 +105,30 @@ pub struct TelemetryOptions {
     /// the prefix is consistent with other SDKs.
     #[builder(default)]
     pub no_temporal_prefix_for_metrics: bool,
+
+    /// Specifies the aggregation temporality for metric export. Defaults to cumulative.
+    #[builder(default = "MetricTemporality::Cumulative")]
+    pub metric_temporality: MetricTemporality,
+}
+
+/// Types of aggregation temporality for metric export
+#[derive(Debug, Clone, Copy)]
+pub enum MetricTemporality {
+    Cumulative,
+    Delta,
+}
+
+impl MetricTemporality {
+    fn to_selector(self) -> impl TemporalitySelector + Send + Sync + Clone {
+        match self {
+            MetricTemporality::Cumulative => {
+                aggregation::constant_temporality_selector(Temporality::Cumulative)
+            }
+            MetricTemporality::Delta => {
+                aggregation::constant_temporality_selector(Temporality::Delta)
+            }
+        }
+    }
 }
 
 impl TelemetryOptions {
@@ -122,7 +151,6 @@ impl Default for TelemetryOptions {
 /// Things that need to not be dropped while telemetry is ongoing
 #[derive(Default)]
 pub struct GlobalTelemDat {
-    metric_push_controller: Option<PushController>,
     core_export_logger: Option<CoreExportLogger>,
     runtime: Option<tokio::runtime::Runtime>,
     prom_srv: Option<PromServer>,
@@ -220,31 +248,31 @@ pub fn telemetry_init(opts: &TelemetryOptions) -> Result<&'static GlobalTelemDat
             if let Some(ref metrics) = opts.metrics {
                 match metrics {
                     MetricsExporter::Prometheus(addr) => {
-                        let srv = PromServer::new(*addr)?;
+                        let srv = PromServer::new(*addr, opts.metric_temporality.to_selector())?;
                         globaldat.prom_srv = Some(srv);
                     }
                     MetricsExporter::Otel(OtelCollectorOptions { url, headers }) => {
                         runtime.block_on(async {
                             let metrics = opentelemetry_otlp::new_pipeline()
-                                .metrics(|f| runtime.spawn(f), tokio_interval_stream)
-                                .with_aggregator_selector(SDKAggSelector)
+                                .metrics(
+                                    SDKAggSelector,
+                                    opts.metric_temporality.to_selector(),
+                                    runtime::Tokio,
+                                )
                                 .with_period(Duration::from_secs(1))
-                                .with_resource(default_resource_kvs().iter().cloned())
+                                .with_resource(default_resource())
                                 .with_exporter(
                                     // No joke exporter builder literally not cloneable for some insane
                                     // reason
                                     opentelemetry_otlp::new_exporter()
                                         .tonic()
                                         .with_endpoint(url.to_string())
-                                        .with_metadata(
-                                            tonic_otel::metadata::MetadataMap::from_headers(
-                                                headers.try_into()?,
-                                            ),
-                                        ),
+                                        .with_metadata(MetadataMap::from_headers(
+                                            headers.try_into()?,
+                                        )),
                                 )
                                 .build()?;
-                            global::set_meter_provider(metrics.provider());
-                            globaldat.metric_push_controller = Some(metrics);
+                            global::set_meter_provider(metrics);
                             Result::<(), anyhow::Error>::Ok(())
                         })?;
                     }
@@ -262,14 +290,12 @@ pub fn telemetry_init(opts: &TelemetryOptions) -> Result<&'static GlobalTelemDat
                                     opentelemetry_otlp::new_exporter()
                                         .tonic()
                                         .with_endpoint(url.to_string())
-                                        .with_metadata(
-                                            tonic_otel::metadata::MetadataMap::from_headers(
-                                                headers.try_into()?,
-                                            ),
-                                        ),
+                                        .with_metadata(MetadataMap::from_headers(
+                                            headers.try_into()?,
+                                        )),
                                 )
                                 .with_trace_config(tracer_cfg)
-                                .install_batch(opentelemetry::runtime::Tokio)?;
+                                .install_batch(runtime::Tokio)?;
 
                             let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
 
@@ -334,6 +360,7 @@ pub(crate) fn test_telem_console() {
         tracing: None,
         metrics: None,
         no_temporal_prefix_for_metrics: false,
+        metric_temporality: MetricTemporality::Cumulative,
     })
     .unwrap();
 }
@@ -350,6 +377,7 @@ pub(crate) fn test_telem_collector() {
         })),
         metrics: None,
         no_temporal_prefix_for_metrics: false,
+        metric_temporality: MetricTemporality::Cumulative,
     })
     .unwrap();
 }

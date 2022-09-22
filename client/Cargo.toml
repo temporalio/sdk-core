@@ -20,7 +20,7 @@ futures = "0.3"
 futures-retry = "0.6.0"
 http = "0.2"
 once_cell = "1.13"
-opentelemetry = { version = "0.17", features = ["metrics"] }
+opentelemetry = { version = "0.18", features = ["metrics"] }
 parking_lot = "0.12"
 prost-types = "0.11"
 thiserror = "1.0"
