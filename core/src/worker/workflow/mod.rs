@@ -78,6 +78,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::Span;
 
 pub(crate) const LEGACY_QUERY_ID: &str = "legacy_query";
+const MAX_EAGER_ACTIVITY_RESERVATIONS_PER_WORKFLOW_TASK: usize = 3;
 
 type Result<T, E = WFMachinesError> = result::Result<T, E>;
 type BoxedActivationStream = BoxStream<'static, Result<ActivationOrAuto, PollWfError>>;
@@ -472,7 +473,9 @@ impl Workflows {
                             .as_ref()
                             .map(|q| q.name == self.task_queue)
                             .unwrap_or_default();
-                        if same_task_queue {
+                        if same_task_queue
+                            && reserved.len() < MAX_EAGER_ACTIVITY_RESERVATIONS_PER_WORKFLOW_TASK
+                        {
                             if let Some(p) = at_handle.reserve_slot() {
                                 reserved.push(p);
                             } else {
