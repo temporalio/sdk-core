@@ -112,7 +112,7 @@ pub struct TelemetryOptions {
 }
 
 /// Types of aggregation temporality for metric export.
-/// See: https://github.com/open-telemetry/opentelemetry-specification/blob/ce50e4634efcba8da445cc23523243cb893905cb/specification/metrics/datamodel.md#temporality
+/// See: <https://github.com/open-telemetry/opentelemetry-specification/blob/ce50e4634efcba8da445cc23523243cb893905cb/specification/metrics/datamodel.md#temporality>
 #[derive(Debug, Clone, Copy)]
 pub enum MetricTemporality {
     /// Successive data points repeat the starting timestamp
