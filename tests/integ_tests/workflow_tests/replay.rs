@@ -11,8 +11,7 @@ use temporal_sdk_core_protos::{
     DEFAULT_WORKFLOW_TYPE,
 };
 use temporal_sdk_core_test_utils::{
-    canned_histories, history_from_proto_binary,
-    init_core_replay_preloaded, WorkerTestHelpers,
+    canned_histories, history_from_proto_binary, init_core_replay_preloaded, WorkerTestHelpers,
 };
 use tokio::join;
 

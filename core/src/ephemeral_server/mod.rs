@@ -229,11 +229,11 @@ impl EphemeralServer {
         // WARNING: This is based on empirical evidence starting a Python test
         // run on Linux with Python 3.7 (does not happen on Python 3.10 nor does
         // it happen on Temporalite nor does it happen in Rust integration
-        // tests). Do not consider this fixed without running that scenario.
+        // tests). Don't alter without running that scenario. EX: SIGINT works but not SIGKILL
         if let Some(pid) = self.child.id() {
             let nix_pid = nix::unistd::Pid::from_raw(pid as i32);
             Ok(spawn_blocking(move || {
-                nix::sys::signal::kill(nix_pid, nix::sys::signal::Signal::SIGKILL)?;
+                nix::sys::signal::kill(nix_pid, nix::sys::signal::Signal::SIGINT)?;
                 nix::sys::wait::waitpid(Some(nix_pid), None)
             })
             .await?
