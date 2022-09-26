@@ -1,4 +1,11 @@
 //! Integration tests
+//!
+//! Note that integ tests which want to use the server (nearly all of them) *need* to use the
+//! `#[rstest]` macro and accept the TODO fixture to support auto setup & teardown of ephemeral
+//! local servers.
+
+#[macro_use]
+extern crate rstest;
 
 #[cfg(test)]
 mod integ_tests {

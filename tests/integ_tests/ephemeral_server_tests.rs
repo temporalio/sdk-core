@@ -1,14 +1,11 @@
 use std::time::{SystemTime, UNIX_EPOCH};
-use temporal_client::{TestService, WorkflowService};
-use temporal_sdk_core::{
-    ephemeral_server::{
-        EphemeralExe, EphemeralExeVersion, EphemeralServer, TemporaliteConfigBuilder,
-        TestServerConfigBuilder,
-    },
-    ClientOptions, ClientOptionsBuilder,
+use temporal_client::{ClientOptionsBuilder, TestService, WorkflowService};
+use temporal_sdk_core::ephemeral_server::{
+    EphemeralExe, EphemeralExeVersion, EphemeralServer, TemporaliteConfigBuilder,
+    TestServerConfigBuilder,
 };
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::DescribeNamespaceRequest;
-use temporal_sdk_core_test_utils::NAMESPACE;
+use temporal_sdk_core_test_utils::{default_cached_download, NAMESPACE};
 use url::Url;
 
 #[tokio::test]
@@ -17,8 +14,9 @@ async fn temporalite_default() {
         .exe(default_cached_download())
         .build()
         .unwrap();
-    let server = config.start_server().await.unwrap();
+    let mut server = config.start_server().await.unwrap();
     assert_ephemeral_server(&server).await;
+    server.shutdown().await.unwrap();
 }
 
 #[tokio::test]
@@ -27,8 +25,9 @@ async fn temporalite_fixed() {
         .exe(fixed_cached_download("v0.1.1"))
         .build()
         .unwrap();
-    let server = config.start_server().await.unwrap();
+    let mut server = config.start_server().await.unwrap();
     assert_ephemeral_server(&server).await;
+    server.shutdown().await.unwrap();
 }
 
 #[tokio::test]
@@ -54,8 +53,9 @@ async fn test_server_default() {
         .exe(default_cached_download())
         .build()
         .unwrap();
-    let server = config.start_server().await.unwrap();
+    let mut server = config.start_server().await.unwrap();
     assert_ephemeral_server(&server).await;
+    server.shutdown().await.unwrap();
 }
 
 #[tokio::test]
@@ -64,8 +64,9 @@ async fn test_server_fixed() {
         .exe(fixed_cached_download("v1.16.0"))
         .build()
         .unwrap();
-    let server = config.start_server().await.unwrap();
+    let mut server = config.start_server().await.unwrap();
     assert_ephemeral_server(&server).await;
+    server.shutdown().await.unwrap();
 }
 
 #[tokio::test]
@@ -85,9 +86,22 @@ async fn test_server_shutdown_port_reuse() {
     server.shutdown().await.unwrap();
 }
 
+fn fixed_cached_download(version: &str) -> EphemeralExe {
+    EphemeralExe::CachedDownload {
+        version: EphemeralExeVersion::Fixed(version.to_string()),
+        dest_dir: None,
+    }
+}
+
 async fn assert_ephemeral_server(server: &EphemeralServer) {
     // Connect and describe namespace
-    let mut client = client_options(&server.target)
+    let mut client = ClientOptionsBuilder::default()
+        .identity("integ_tester".to_string())
+        .target_url(Url::try_from(&*format!("http://{}", server.target)).unwrap())
+        .client_name("temporal-core".to_string())
+        .client_version("0.1.0".to_string())
+        .build()
+        .unwrap()
         .connect_no_namespace(None, None)
         .await
         .unwrap();
@@ -111,31 +125,4 @@ async fn assert_ephemeral_server(server: &EphemeralServer) {
             .as_secs();
         assert!(curr_seconds - 300 < resp_seconds && curr_seconds + 300 > resp_seconds);
     }
-}
-
-fn default_cached_download() -> EphemeralExe {
-    EphemeralExe::CachedDownload {
-        version: EphemeralExeVersion::Default {
-            sdk_name: "sdk-rust".to_string(),
-            sdk_version: "0.1.0".to_string(),
-        },
-        dest_dir: None,
-    }
-}
-
-fn fixed_cached_download(version: &str) -> EphemeralExe {
-    EphemeralExe::CachedDownload {
-        version: EphemeralExeVersion::Fixed(version.to_string()),
-        dest_dir: None,
-    }
-}
-
-fn client_options(target: &str) -> ClientOptions {
-    return ClientOptionsBuilder::default()
-        .identity("integ_tester".to_string())
-        .target_url(Url::try_from(&*format!("http://{}", target)).unwrap())
-        .client_name("temporal-core".to_string())
-        .client_version("0.1.0".to_string())
-        .build()
-        .unwrap();
 }

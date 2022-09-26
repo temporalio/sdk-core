@@ -1,8 +1,9 @@
-use std::collections::HashMap;
+use log::warn;
+use std::{collections::HashMap, env};
 use temporal_client::{WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{WfContext, WorkflowResult};
 use temporal_sdk_core_protos::coresdk::{AsJsonPayloadExt, FromJsonPayloadExt};
-use temporal_sdk_core_test_utils::CoreWfStarter;
+use temporal_sdk_core_test_utils::{CoreWfStarter, INTEG_TEMPORALITE_USED_ENV_VAR};
 use uuid::Uuid;
 
 // These are initialized on the server as part of the autosetup container which we
@@ -24,6 +25,11 @@ async fn sends_upsert() {
     let wf_id = Uuid::new_v4();
     let mut starter = CoreWfStarter::new(wf_name);
     let mut worker = starter.worker().await;
+    if env::var(INTEG_TEMPORALITE_USED_ENV_VAR).is_ok() {
+        warn!("skipping sends_upsert -- does not work on temporalite");
+        return;
+    }
+
     worker.register_wf(wf_name, search_attr_updater);
     let run_id = worker
         .submit_wf(

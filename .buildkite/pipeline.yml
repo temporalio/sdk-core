@@ -46,6 +46,8 @@ steps:
     agents:
       queue: "default"
       docker: "*"
+    env:
+      INTEG_SERVER_TYPE: docker
     command: "cargo test --test integ_tests"
     timeout_in_minutes: 15
     plugins:

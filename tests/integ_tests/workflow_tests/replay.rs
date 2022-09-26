@@ -1,7 +1,6 @@
 use assert_matches::assert_matches;
 use std::time::Duration;
 use temporal_sdk::{WfContext, Worker, WorkflowFunction};
-use temporal_sdk_core::telemetry_init;
 use temporal_sdk_core_api::errors::{PollActivityError, PollWfError};
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -12,8 +11,7 @@ use temporal_sdk_core_protos::{
     DEFAULT_WORKFLOW_TYPE,
 };
 use temporal_sdk_core_test_utils::{
-    canned_histories, get_integ_telem_options, history_from_proto_binary,
-    init_core_replay_preloaded, WorkerTestHelpers,
+    canned_histories, history_from_proto_binary, init_core_replay_preloaded, WorkerTestHelpers,
 };
 use tokio::join;
 
@@ -101,7 +99,6 @@ async fn workflow_nondeterministic_replay() {
 
 #[tokio::test]
 async fn replay_using_wf_function() {
-    telemetry_init(&get_integ_telem_options()).unwrap();
     let num_timers = 10;
     let t = canned_histories::long_sequential_timers(num_timers as usize);
     let func = timers_wf(num_timers);
@@ -118,7 +115,6 @@ async fn replay_ok_ending_with_terminated_or_timed_out() {
     t1.add_workflow_execution_terminated();
     let mut t2 = canned_histories::single_timer("1");
     t2.add_workflow_execution_timed_out();
-    telemetry_init(&get_integ_telem_options()).unwrap();
     for t in [t1, t2] {
         let func = timers_wf(1);
         let (worker, _) = init_core_replay_preloaded(
