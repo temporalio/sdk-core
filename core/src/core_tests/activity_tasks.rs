@@ -662,23 +662,13 @@ async fn activity_tasks_from_completion_are_delivered() {
             num_eager_requested_clone.store(count, Ordering::Relaxed);
             Ok(RespondWorkflowTaskCompletedResponse {
                 workflow_task: None,
-                activity_tasks: vec![
-                    PollActivityTaskQueueResponse {
-                        task_token: vec![1],
-                        activity_id: "act_id_1_same_queue".to_string(),
+                activity_tasks: (1..4)
+                    .map(|i| PollActivityTaskQueueResponse {
+                        task_token: vec![i],
+                        activity_id: format!("act_id_{}_same_queue", i).to_string(),
                         ..Default::default()
-                    },
-                    PollActivityTaskQueueResponse {
-                        task_token: vec![2],
-                        activity_id: "act_id_2_same_queue".to_string(),
-                        ..Default::default()
-                    },
-                    PollActivityTaskQueueResponse {
-                        task_token: vec![3],
-                        activity_id: "act_id_3_same_queue".to_string(),
-                        ..Default::default()
-                    },
-                ],
+                    })
+                    .collect_vec(),
             })
         });
     mock.expect_complete_activity_task()
@@ -695,50 +685,42 @@ async fn activity_tasks_from_completion_are_delivered() {
 
     // Test start
     let wf_task = core.poll_workflow_activation().await.unwrap();
-    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        wf_task.run_id,
-        vec![
+    let mut cmds = (1..4)
+        .map(|seq| {
             ScheduleActivity {
-                seq: 1,
+                seq,
                 activity_id: "act_id_1_same_queue".to_string(),
                 task_queue: TEST_Q.to_string(),
                 cancellation_type: ActivityCancellationType::TryCancel as i32,
                 ..Default::default()
             }
-            .into(),
-            ScheduleActivity {
-                seq: 2,
-                activity_id: "act_id_2_same_queue".to_string(),
-                task_queue: TEST_Q.to_string(),
-                cancellation_type: ActivityCancellationType::TryCancel as i32,
-                ..Default::default()
-            }
-            .into(),
-            ScheduleActivity {
-                seq: 3,
-                activity_id: "act_id_3_same_queue".to_string(),
-                task_queue: TEST_Q.to_string(),
-                cancellation_type: ActivityCancellationType::TryCancel as i32,
-                ..Default::default()
-            }
-            .into(),
-            ScheduleActivity {
-                seq: 4,
-                activity_id: "act_id_4_same_queue".to_string(),
-                task_queue: TEST_Q.to_string(),
-                cancellation_type: ActivityCancellationType::TryCancel as i32,
-                ..Default::default()
-            }
-            .into(),
-            ScheduleActivity {
-                seq: 5,
-                activity_id: "act_id_different_queue".to_string(),
-                task_queue: "different_queue".to_string(),
-                cancellation_type: ActivityCancellationType::Abandon as i32,
-                ..Default::default()
-            }
-            .into(),
-        ],
+            .into()
+        })
+        .collect_vec();
+    cmds.push(
+        ScheduleActivity {
+            seq: 4,
+            activity_id: "act_id_same_queue_not_eager".to_string(),
+            task_queue: TEST_Q.to_string(),
+            cancellation_type: ActivityCancellationType::TryCancel as i32,
+            ..Default::default()
+        }
+        .into(),
+    );
+    cmds.push(
+        ScheduleActivity {
+            seq: 5,
+            activity_id: "act_id_different_queue".to_string(),
+            task_queue: "different_queue".to_string(),
+            cancellation_type: ActivityCancellationType::Abandon as i32,
+            ..Default::default()
+        }
+        .into(),
+    );
+
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
+        wf_task.run_id,
+        cmds,
     ))
     .await
     .unwrap();
