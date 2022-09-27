@@ -665,7 +665,7 @@ async fn activity_tasks_from_completion_are_delivered() {
                 activity_tasks: (1..4)
                     .map(|i| PollActivityTaskQueueResponse {
                         task_token: vec![i],
-                        activity_id: format!("act_id_{}_same_queue", i).to_string(),
+                        activity_id: format!("act_id_{}_same_queue", i),
                         ..Default::default()
                     })
                     .collect_vec(),
@@ -689,7 +689,7 @@ async fn activity_tasks_from_completion_are_delivered() {
         .map(|seq| {
             ScheduleActivity {
                 seq,
-                activity_id: "act_id_1_same_queue".to_string(),
+                activity_id: format!("act_id_{}_same_queue", seq),
                 task_queue: TEST_Q.to_string(),
                 cancellation_type: ActivityCancellationType::TryCancel as i32,
                 ..Default::default()
