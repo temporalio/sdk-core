@@ -81,9 +81,13 @@ impl Debug for OwnedMeteredSemPermit {
     }
 }
 
+// TODO: Convert to use stream rather than proceeder fn?
 /// From the input stream, create a new stream which only pulls from the input stream when allowed.
 /// When allowed is determined by the passed in `proceeder` which must return a future every time
 /// it's called. The input stream is only pulled from when that future resolves.
+///
+/// This is *almost* identical to `zip`, but does not terminate early if the input stream closes.
+/// The proceeder must allow the poll before the returned stream closes.
 pub(crate) fn stream_when_allowed<S, F, FF>(
     input: S,
     proceeder: FF,

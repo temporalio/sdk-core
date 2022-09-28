@@ -6,7 +6,9 @@ use crate::{
     replay::TestHistoryBuilder,
     sticky_q_name_for_worker,
     worker::{
-        client::{mocks::mock_workflow_client, MockWorkerClient, WorkerClient},
+        client::{
+            mocks::mock_workflow_client, MockWorkerClient, WorkerClient, WorkflowTaskCompletion,
+        },
         new_wft_poller,
     },
     TaskToken, Worker, WorkerConfig, WorkerConfigBuilder,
@@ -26,7 +28,6 @@ use std::{
     task::{Context, Poll},
     time::Duration,
 };
-use temporal_client::WorkflowTaskCompletion;
 use temporal_sdk_core_api::Worker as WorkerTrait;
 use temporal_sdk_core_protos::{
     coresdk::{

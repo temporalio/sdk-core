@@ -48,6 +48,7 @@ use crate::{
     telemetry::metrics::{MetricsContext, METRIC_METER},
     worker::client::WorkerClientBag,
 };
+use futures::Stream;
 use std::sync::Arc;
 use temporal_client::{ConfiguredClient, TemporalServiceClientWithMetrics};
 use temporal_sdk_core_api::{
@@ -108,8 +109,7 @@ pub fn init_replay_worker<I>(
     histories: I,
 ) -> Result<Worker, anyhow::Error>
 where
-    I: IntoIterator<Item = History> + 'static,
-    <I as IntoIterator>::IntoIter: Send,
+    I: Stream<Item = History> + Send + 'static,
 {
     info!(
         task_queue = config.task_queue.as_str(),
@@ -118,11 +118,14 @@ where
     config.max_cached_workflows = 1;
     config.max_concurrent_wft_polls = 1;
     config.no_remote_activities = true;
+    config.issue_evicts_before_shutdown = true;
     let historator = Historator::new(histories);
-    let shutdown_handle = historator.make_post_activate_hook();
+    let post_activate = historator.get_post_activate_hook();
+    let shutdown_tok = historator.get_shutdown_setter();
     let client = mock_client_from_histories(historator);
     let mut worker = Worker::new(config, None, Arc::new(client), MetricsContext::default());
-    worker.set_post_activate_hook(shutdown_handle);
+    worker.set_post_activate_hook(post_activate);
+    shutdown_tok(worker.shutdown_token());
     Ok(worker)
 }
 

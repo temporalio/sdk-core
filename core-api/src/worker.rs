@@ -95,6 +95,12 @@ pub struct WorkerConfig {
     /// todo: link to feature docs
     #[builder(default = "false")]
     pub use_worker_versioning: bool,
+
+    /// If set true, shutdown will not finish until all pending evictions have been issued and
+    /// replied to. If not set (the default) shutdown will be considered complete when the only
+    /// remaining work is pending evictions.
+    #[builder(default = "false")]
+    pub issue_evicts_before_shutdown: bool,
 }
 
 impl WorkerConfig {

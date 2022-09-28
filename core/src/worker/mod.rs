@@ -264,6 +264,7 @@ impl Worker {
                     metrics,
                     namespace: config.namespace.clone(),
                     task_queue: config.task_queue.clone(),
+                    issue_evicts_before_shutdown: config.issue_evicts_before_shutdown,
                 },
                 sticky_queue_name.map(|sq| StickyExecutionAttributes {
                     worker_task_queue: Some(TaskQueue {
@@ -315,6 +316,10 @@ impl Worker {
         if let Some(b) = self.at_task_mgr {
             b.shutdown().await;
         }
+    }
+
+    pub(crate) fn shutdown_token(&self) -> CancellationToken {
+        self.shutdown_token.clone()
     }
 
     /// Returns number of currently cached workflows

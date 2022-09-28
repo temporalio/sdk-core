@@ -75,8 +75,8 @@ where
         .worker_build_id("test_bin_id")
         .build()
         .expect("Configuration options construct properly");
-    let worker =
-        init_replay_worker(worker_cfg, histories).expect("Replay worker must init properly");
+    let worker = init_replay_worker(worker_cfg, stream::iter(histories))
+        .expect("Replay worker must init properly");
     (Arc::new(worker), test_name.to_string())
 }
 
