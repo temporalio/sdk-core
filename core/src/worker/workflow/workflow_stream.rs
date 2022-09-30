@@ -41,7 +41,7 @@ pub(crate) struct WFStream {
     /// Ensures we stay at or below this worker's maximum concurrent workflow task limit
     wft_semaphore: MeteredSemaphore,
     shutdown_token: CancellationToken,
-    issue_evicts_before_shutdown: bool,
+    ignore_evicts_on_shutdown: bool,
 
     metrics: MetricsContext,
 }
@@ -165,7 +165,7 @@ impl WFStream {
             client,
             wft_semaphore,
             shutdown_token: basics.shutdown_token,
-            issue_evicts_before_shutdown: basics.issue_evicts_before_shutdown,
+            ignore_evicts_on_shutdown: basics.ignore_evicts_on_shutdown,
             metrics: basics.metrics,
         };
         all_inputs
@@ -876,7 +876,7 @@ impl WFStream {
         let all_runs_ready = self
             .runs
             .handles()
-            .all(|r| !r.has_any_pending_work(!self.issue_evicts_before_shutdown, false));
+            .all(|r| !r.has_any_pending_work(self.ignore_evicts_on_shutdown, false));
         if self.shutdown_token.is_cancelled() && all_runs_ready {
             info!("Workflow shutdown is done");
             true

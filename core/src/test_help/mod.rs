@@ -58,6 +58,7 @@ pub fn test_worker_cfg() -> WorkerConfigBuilder {
     wcb.namespace("default")
         .task_queue(TEST_Q)
         .worker_build_id("test_bin_id")
+        .ignore_evicts_on_shutdown(true)
         // Serial polling since it makes mocking much easier.
         .max_concurrent_wft_polls(1_usize);
     wcb

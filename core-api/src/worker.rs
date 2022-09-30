@@ -96,11 +96,15 @@ pub struct WorkerConfig {
     #[builder(default = "false")]
     pub use_worker_versioning: bool,
 
-    /// If set true, shutdown will not finish until all pending evictions have been issued and
-    /// replied to. If not set (the default) shutdown will be considered complete when the only
+    /// If set false (default), shutdown will not finish until all pending evictions have been
+    /// issued and replied to. If set true shutdown will be considered complete when the only
     /// remaining work is pending evictions.
+    ///
+    /// This flag is useful during tests to avoid needing to deal with lots of uninteresting
+    /// evictions during shutdown. Alternatively, if a lang implementation finds it easy to clean
+    /// up during shutdown, setting this true saves some back-and-forth.
     #[builder(default = "false")]
-    pub issue_evicts_before_shutdown: bool,
+    pub ignore_evicts_on_shutdown: bool,
 }
 
 impl WorkerConfig {

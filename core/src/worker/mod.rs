@@ -264,7 +264,7 @@ impl Worker {
                     metrics,
                     namespace: config.namespace.clone(),
                     task_queue: config.task_queue.clone(),
-                    issue_evicts_before_shutdown: config.issue_evicts_before_shutdown,
+                    ignore_evicts_on_shutdown: config.ignore_evicts_on_shutdown,
                 },
                 sticky_queue_name.map(|sq| StickyExecutionAttributes {
                     worker_task_queue: Some(TaskQueue {

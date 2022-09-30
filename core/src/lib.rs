@@ -118,7 +118,6 @@ where
     config.max_cached_workflows = 1;
     config.max_concurrent_wft_polls = 1;
     config.no_remote_activities = true;
-    config.issue_evicts_before_shutdown = true;
     let historator = Historator::new(histories);
     let post_activate = historator.get_post_activate_hook();
     let shutdown_tok = historator.get_shutdown_setter();

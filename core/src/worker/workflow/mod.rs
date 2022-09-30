@@ -107,7 +107,7 @@ pub(super) struct WorkflowBasics {
     pub metrics: MetricsContext,
     pub namespace: String,
     pub task_queue: String,
-    pub issue_evicts_before_shutdown: bool,
+    pub ignore_evicts_on_shutdown: bool,
 }
 
 impl Workflows {
