@@ -131,10 +131,9 @@ impl WFStream {
             MetricsContext::available_task_slots,
         );
         let wft_sem_clone = wft_semaphore.clone();
-        let proceeder = move || {
-            let wft_sem_clone = wft_sem_clone.clone();
-            async move { wft_sem_clone.acquire_owned().await.unwrap() }
-        };
+        let proceeder = stream::unfold(wft_sem_clone, |sem| async move {
+            Some((sem.acquire_owned().await.unwrap(), sem))
+        });
         let poller_wfts = stream_when_allowed(external_wfts, proceeder);
         let (run_update_tx, run_update_rx) = unbounded_channel();
         let local_rx = stream::select(

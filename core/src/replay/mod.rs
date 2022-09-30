@@ -12,15 +12,11 @@ use parking_lot::Mutex;
 use std::{
     collections::HashMap,
     pin::Pin,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
+    sync::Arc,
     task::{Context, Poll},
 };
 use temporal_sdk_core_protos::temporal::api::{
     common::v1::WorkflowExecution,
-    enums::v1::WorkflowTaskFailedCause,
     history::v1::History,
     workflowservice::v1::{
         RespondWorkflowTaskCompletedResponse, RespondWorkflowTaskFailedResponse,
@@ -35,7 +31,7 @@ use tokio_util::sync::CancellationToken;
 
 /// A history which will be used during replay verification. Since histories do not include the
 /// workflow id, it must be manually attached.
-#[derive(Debug, derive_more::Constructor)]
+#[derive(Debug, Clone, derive_more::Constructor)]
 pub struct HistoryForReplay {
     hist: History,
     workflow_id: String,
@@ -85,30 +81,17 @@ impl Stream for HistoryFeederStream {
 pub(crate) fn mock_client_from_histories(historator: Historator) -> impl WorkerClient {
     let mut mg = mock_manual_workflow_client();
 
-    let current_hist = Arc::new(TokioMutex::new(None));
-    let needs_redispatch = Arc::new(AtomicBool::new(false));
     let hist_allow_tx = historator.replay_done_tx.clone();
     let historator = Arc::new(TokioMutex::new(historator));
-    let nd_fail_clone = needs_redispatch.clone();
 
     mg.expect_poll_workflow_task().returning(move |_, _| {
-        let current_hist = current_hist.clone();
-        let needs_redispatch = needs_redispatch.clone();
         let historator = historator.clone();
         async move {
             let mut hlock = historator.lock().await;
             // Always wait for permission before dispatching the next task
-            let last_run = hlock.allow_stream.next().await;
+            let _ = hlock.allow_stream.next().await;
 
-            let mut cur_hist_info = current_hist.lock().await;
-            let history = if needs_redispatch.swap(false, Ordering::AcqRel) {
-                &*cur_hist_info
-            } else {
-                let hist_rid = hlock.next().await;
-                *cur_hist_info = hist_rid;
-                &*cur_hist_info
-            };
-            if let Some(history) = history {
+            if let Some(history) = hlock.next().await {
                 let hist_info = HistoryInfo::new_from_history(&history.hist, None).unwrap();
                 let mut resp = hist_info.as_poll_wft_response();
                 resp.workflow_execution = Some(WorkflowExecution {
@@ -117,7 +100,9 @@ pub(crate) fn mock_client_from_histories(historator: Historator) -> impl WorkerC
                 });
                 Ok(resp)
             } else {
-                hlock.worker_closer.get().map(|wc| wc.cancel());
+                if let Some(wc) = hlock.worker_closer.get() {
+                    wc.cancel();
+                }
                 Ok(Default::default())
             }
         }
@@ -127,15 +112,10 @@ pub(crate) fn mock_client_from_histories(historator: Historator) -> impl WorkerC
     mg.expect_complete_workflow_task().returning(move |_| {
         async move { Ok(RespondWorkflowTaskCompletedResponse::default()) }.boxed()
     });
-    mg.expect_fail_workflow_task()
-        .returning(move |_, cause, _| {
-            if !(matches!(cause, WorkflowTaskFailedCause::NonDeterministicError)) {
-                nd_fail_clone.store(true, Ordering::Release);
-            }
-            // TODO: can get rid of bool and use channel instead??
-            hist_allow_tx.send("Failed".to_string()).unwrap();
-            async move { Ok(RespondWorkflowTaskFailedResponse::default()) }.boxed()
-        });
+    mg.expect_fail_workflow_task().returning(move |_, _, _| {
+        hist_allow_tx.send("Failed".to_string()).unwrap();
+        async move { Ok(RespondWorkflowTaskFailedResponse::default()) }.boxed()
+    });
 
     mg
 }

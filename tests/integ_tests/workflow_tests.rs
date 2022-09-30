@@ -180,15 +180,14 @@ async fn shutdown_aborts_actively_blocked_poll() {
 #[tokio::test]
 async fn fail_wf_task(#[values(true, false)] replay: bool) {
     let core = if replay {
-        let (core, _) = init_core_replay_preloaded(
-            "fail_wf_task",
-            [HistoryForReplay::new(
-                history_from_proto_binary("histories/fail_wf_task.bin")
-                    .await
-                    .unwrap(),
-                "fake".to_string(),
-            )],
+        let hist = HistoryForReplay::new(
+            history_from_proto_binary("histories/fail_wf_task.bin")
+                .await
+                .unwrap(),
+            "fake".to_string(),
         );
+        // We need to send the history twice, since we fail it the first time.
+        let (core, _) = init_core_replay_preloaded("fail_wf_task", [hist.clone(), hist]);
         core
     } else {
         let mut starter = init_core_and_create_wf("fail_wf_task").await;

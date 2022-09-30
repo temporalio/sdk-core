@@ -191,7 +191,6 @@ impl CoreWfStarter {
         &mut self,
         wf_id: impl Into<String>,
         run_id: impl Into<String>,
-        // TODO: Need not be passed in
         worker: &mut Worker,
     ) -> Result<(), anyhow::Error> {
         let wf_id = wf_id.into();
