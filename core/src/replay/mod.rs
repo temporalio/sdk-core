@@ -95,7 +95,7 @@ pub(crate) fn mock_client_from_histories(historator: Historator) -> impl WorkerC
                 let hist_info = HistoryInfo::new_from_history(&history.hist, None).unwrap();
                 let mut resp = hist_info.as_poll_wft_response();
                 resp.workflow_execution = Some(WorkflowExecution {
-                    workflow_id: history.workflow_id.clone(),
+                    workflow_id: history.workflow_id,
                     run_id: hist_info.orig_run_id().to_string(),
                 });
                 Ok(resp)
