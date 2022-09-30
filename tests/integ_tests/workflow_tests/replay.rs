@@ -1,6 +1,8 @@
 use assert_matches::assert_matches;
-use std::time::Duration;
-use temporal_sdk::{WfContext, Worker, WorkflowFunction};
+use parking_lot::Mutex;
+use std::{collections::HashSet, sync::Arc, time::Duration};
+use temporal_sdk::{interceptors::WorkerInterceptor, WfContext, Worker, WorkflowFunction};
+use temporal_sdk_core::replay::{HistoryFeeder, HistoryForReplay};
 use temporal_sdk_core_api::errors::{PollActivityError, PollWfError};
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -8,22 +10,29 @@ use temporal_sdk_core_protos::{
         workflow_commands::{ScheduleActivity, StartTimer},
         workflow_completion::WorkflowActivationCompletion,
     },
-    DEFAULT_WORKFLOW_TYPE,
+    TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE,
 };
 use temporal_sdk_core_test_utils::{
-    canned_histories, history_from_proto_binary, init_core_replay_preloaded, WorkerTestHelpers,
+    canned_histories, history_from_proto_binary, init_core_replay_preloaded,
+    init_core_replay_stream, WorkerTestHelpers,
 };
 use tokio::join;
+
+fn test_hist_to_replay(t: TestHistoryBuilder) -> HistoryForReplay {
+    let hi = t.get_full_history_info().unwrap().into();
+    HistoryForReplay::new(hi, "fake".to_string())
+}
 
 #[tokio::test]
 async fn timer_workflow_replay() {
     let (core, _) = init_core_replay_preloaded(
         "timer_workflow_replay",
-        [
+        [HistoryForReplay::new(
             history_from_proto_binary("histories/timer_workflow_history.bin")
                 .await
                 .unwrap(),
-        ],
+            "fake".to_owned(),
+        )],
     );
     let task = core.poll_workflow_activation().await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
@@ -68,11 +77,12 @@ async fn timer_workflow_replay() {
 async fn workflow_nondeterministic_replay() {
     let (core, _) = init_core_replay_preloaded(
         "timer_workflow_replay",
-        [
+        [HistoryForReplay::new(
             history_from_proto_binary("histories/timer_workflow_history.bin")
                 .await
                 .unwrap(),
-        ],
+            "fake".to_owned(),
+        )],
     );
     let task = core.poll_workflow_activation().await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
@@ -106,8 +116,7 @@ async fn replay_using_wf_function() {
     let num_timers = 10;
     let t = canned_histories::long_sequential_timers(num_timers as usize);
     let func = timers_wf(num_timers);
-    let (worker, _) =
-        init_core_replay_preloaded("replay_bench", [t.get_full_history_info().unwrap().into()]);
+    let (worker, _) = init_core_replay_preloaded("replay_bench", [test_hist_to_replay(t)]);
     let mut worker = Worker::new_from_core(worker, "replay_bench".to_string());
     worker.register_wf(DEFAULT_WORKFLOW_TYPE, func);
     worker.run().await.unwrap();
@@ -121,18 +130,17 @@ async fn replay_ok_ending_with_terminated_or_timed_out() {
     t2.add_workflow_execution_timed_out();
     for t in [t1, t2] {
         let func = timers_wf(1);
-        let (worker, _) = init_core_replay_preloaded(
-            "replay_ok_terminate",
-            [t.get_full_history_info().unwrap().into()],
-        );
+        let (worker, _) =
+            init_core_replay_preloaded("replay_ok_terminate", [test_hist_to_replay(t)]);
         let mut worker = Worker::new_from_core(worker, "replay_ok_terminate".to_string());
         worker.register_wf(DEFAULT_WORKFLOW_TYPE, func);
         worker.run().await.unwrap();
     }
 }
 
+#[rstest::rstest]
 #[tokio::test]
-async fn multiple_histories_replay() {
+async fn multiple_histories_replay(#[values(false, true)] use_feeder: bool) {
     let num_timers = 10;
     let seq_timer_wf = timers_wf(num_timers);
     let one_timer_wf = timers_wf(1);
@@ -140,17 +148,42 @@ async fn multiple_histories_replay() {
     one_timer_hist.set_wf_type("onetimer");
     let mut seq_timer_hist = canned_histories::long_sequential_timers(num_timers as usize);
     seq_timer_hist.set_wf_type("seqtimer");
-    let (worker, _) = init_core_replay_preloaded(
-        "multiple_hist_replay",
-        [
-            one_timer_hist.get_full_history_info().unwrap().into(),
-            seq_timer_hist.get_full_history_info().unwrap().into(),
-        ],
-    );
+    let (feeder, stream) = HistoryFeeder::new(1);
+    let (worker, _) = if use_feeder {
+        init_core_replay_stream("multiple_hist_replay", stream)
+    } else {
+        init_core_replay_preloaded(
+            "multiple_hist_replay",
+            [
+                test_hist_to_replay(one_timer_hist.clone()),
+                test_hist_to_replay(seq_timer_hist.clone()),
+            ],
+        )
+    };
     let mut worker = Worker::new_from_core(worker, "replay_ok_terminate".to_string());
+    let runs_ctr_i = UniqueRunsCounter::default();
+    let runs_ctr = runs_ctr_i.runs.clone();
+    worker.set_worker_interceptor(Box::new(runs_ctr_i));
     worker.register_wf("onetimer", one_timer_wf);
     worker.register_wf("seqtimer", seq_timer_wf);
-    worker.run().await.unwrap();
+
+    if use_feeder {
+        let feed_fut = async move {
+            feeder
+                .feed(test_hist_to_replay(one_timer_hist))
+                .await
+                .unwrap();
+            feeder
+                .feed(test_hist_to_replay(seq_timer_hist))
+                .await
+                .unwrap();
+        };
+        let (_, runr) = join!(feed_fut, worker.run());
+        runr.unwrap();
+    } else {
+        worker.run().await.unwrap();
+    }
+    assert_eq!(runs_ctr.lock().len(), 2);
 }
 
 fn timers_wf(num_timers: u32) -> WorkflowFunction {
@@ -162,5 +195,15 @@ fn timers_wf(num_timers: u32) -> WorkflowFunction {
     })
 }
 
-// TODO: Add test to either ensure we can collect nondeterministic failures (and not loop forever
-//   replaying the same wf). Or that we end early on one.
+#[derive(Default)]
+struct UniqueRunsCounter {
+    runs: Arc<Mutex<HashSet<String>>>,
+}
+#[async_trait::async_trait(?Send)]
+impl WorkerInterceptor for UniqueRunsCounter {
+    async fn on_workflow_activation_completion(&self, completion: &WorkflowActivationCompletion) {
+        self.runs.lock().insert(completion.run_id.clone());
+    }
+
+    fn on_shutdown(&self, _: &Worker) {}
+}

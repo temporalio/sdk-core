@@ -28,6 +28,7 @@ use temporal_client::{WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{
     interceptors::WorkerInterceptor, ActContext, ActivityOptions, WfContext, WorkflowResult,
 };
+use temporal_sdk_core::replay::HistoryForReplay;
 use temporal_sdk_core_api::{errors::PollWfError, Worker};
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -181,9 +182,12 @@ async fn fail_wf_task(#[values(true, false)] replay: bool) {
     let core = if replay {
         let (core, _) = init_core_replay_preloaded(
             "fail_wf_task",
-            [history_from_proto_binary("histories/fail_wf_task.bin")
-                .await
-                .unwrap()],
+            [HistoryForReplay::new(
+                history_from_proto_binary("histories/fail_wf_task.bin")
+                    .await
+                    .unwrap(),
+                "fake".to_string(),
+            )],
         );
         core
     } else {

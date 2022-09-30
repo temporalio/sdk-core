@@ -33,19 +33,47 @@ use tokio::sync::{mpsc, mpsc::UnboundedSender, Mutex as TokioMutex};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
 
-/// Allows lang to feed histories into the replayer at whatever cadence it prefers
-pub struct HistoryFeeder {}
-pub struct HistoryFeederStream {}
+/// A history which will be used during replay verification. Since histories do not include the
+/// workflow id, it must be manually attached.
+#[derive(Debug, derive_more::Constructor)]
+pub struct HistoryForReplay {
+    hist: History,
+    workflow_id: String,
+}
+
+/// Allows lang to feed histories into the replayer one at a time. Simply drop the feeder to signal
+/// to the worker that you're done and it should initiate shutdown.
+pub struct HistoryFeeder {
+    tx: mpsc::Sender<HistoryForReplay>,
+}
+/// The stream half of a [HistoryFeeder]
+pub struct HistoryFeederStream {
+    rcvr: mpsc::Receiver<HistoryForReplay>,
+}
 
 impl HistoryFeeder {
-    pub async fn feed(history: History) {}
+    /// Make a new history feeder, which will store at most `buffer_size` histories before `feed`
+    /// blocks.
+    ///
+    /// Returns a feeder which will be used to feed in histories, and a stream you can pass to
+    /// one of the replay worker init functions.
+    pub fn new(buffer_size: usize) -> (Self, HistoryFeederStream) {
+        let (tx, rcvr) = mpsc::channel(buffer_size);
+        (Self { tx }, HistoryFeederStream { rcvr })
+    }
+    /// Feed a new history into the replayer, blocking if there is not room to accept another
+    /// history.
+    pub async fn feed(&self, history: HistoryForReplay) -> anyhow::Result<()> {
+        self.tx.send(history).await?;
+        Ok(())
+    }
 }
 
 impl Stream for HistoryFeederStream {
-    type Item = History;
+    type Item = HistoryForReplay;
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        todo!()
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.rcvr.poll_recv(cx)
     }
 }
 
@@ -67,18 +95,13 @@ pub(crate) fn mock_client_from_histories(historator: Historator) -> impl WorkerC
         let current_hist = current_hist.clone();
         let needs_redispatch = needs_redispatch.clone();
         let historator = historator.clone();
-        info!("Polled");
         async move {
             let mut hlock = historator.lock().await;
-            info!("Got historator lock");
             // Always wait for permission before dispatching the next task
             let last_run = hlock.allow_stream.next().await;
-            info!("Allowing next, last run: {:?}", last_run);
 
             let mut cur_hist_info = current_hist.lock().await;
-            info!("Got cur hist lock");
             let history = if needs_redispatch.swap(false, Ordering::AcqRel) {
-                info!("Re-dispatching");
                 &*cur_hist_info
             } else {
                 let hist_rid = hlock.next().await;
@@ -86,16 +109,14 @@ pub(crate) fn mock_client_from_histories(historator: Historator) -> impl WorkerC
                 &*cur_hist_info
             };
             if let Some(history) = history {
-                info!("Dispatching history");
-                let hist_info = HistoryInfo::new_from_history(history, None).unwrap();
+                let hist_info = HistoryInfo::new_from_history(&history.hist, None).unwrap();
                 let mut resp = hist_info.as_poll_wft_response();
                 resp.workflow_execution = Some(WorkflowExecution {
-                    workflow_id: "fake_wf_id".to_string(),
+                    workflow_id: history.workflow_id.clone(),
                     run_id: hist_info.orig_run_id().to_string(),
                 });
                 Ok(resp)
             } else {
-                warn!("Out of history yo");
                 hlock.worker_closer.get().map(|wc| wc.cancel());
                 Ok(Default::default())
             }
@@ -108,11 +129,7 @@ pub(crate) fn mock_client_from_histories(historator: Historator) -> impl WorkerC
     });
     mg.expect_fail_workflow_task()
         .returning(move |_, cause, _| {
-            warn!("Should fail wft and re-dispatch");
-            if matches!(cause, WorkflowTaskFailedCause::NonDeterministicError) {
-                // TODO: Record all failures for final output
-                warn!("Nondeterminism reported!");
-            } else {
+            if !(matches!(cause, WorkflowTaskFailedCause::NonDeterministicError)) {
                 nd_fail_clone.store(true, Ordering::Release);
             }
             // TODO: can get rid of bool and use channel instead??
@@ -124,17 +141,14 @@ pub(crate) fn mock_client_from_histories(historator: Historator) -> impl WorkerC
 }
 
 pub(crate) struct Historator {
-    iter: Pin<Box<dyn Stream<Item = History> + Send>>,
+    iter: Pin<Box<dyn Stream<Item = HistoryForReplay> + Send>>,
     allow_stream: UnboundedReceiverStream<String>,
     worker_closer: Arc<OnceCell<CancellationToken>>,
     dat: Arc<Mutex<HistoratorDat>>,
     replay_done_tx: UnboundedSender<String>,
 }
 impl Historator {
-    pub(crate) fn new(
-        // TODO: history + wfid to avoid making them up?
-        histories: impl Stream<Item = History> + Send + 'static,
-    ) -> Self {
+    pub(crate) fn new(histories: impl Stream<Item = HistoryForReplay> + Send + 'static) -> Self {
         let dat = Arc::new(Mutex::new(HistoratorDat::default()));
         let (replay_done_tx, replay_done_rx) = mpsc::unbounded_channel();
         // Need to allow the first history item
@@ -177,19 +191,20 @@ impl Historator {
 }
 
 impl Stream for Historator {
-    type Item = History;
+    type Item = HistoryForReplay;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match self.iter.poll_next_unpin(cx) {
             Poll::Ready(Some(history)) => {
                 let run_id = history
+                    .hist
                     .extract_run_id_from_start()
                     .expect(
                         "Histories provided for replay must contain run ids in their workflow \
                                  execution started events",
                     )
                     .to_string();
-                let last_event = history.last_event_id();
+                let last_event = history.hist.last_event_id();
                 self.dat
                     .lock()
                     .run_id_to_last_event_num

@@ -44,7 +44,7 @@ pub use url::Url;
 pub use worker::{Worker, WorkerConfig, WorkerConfigBuilder};
 
 use crate::{
-    replay::{mock_client_from_histories, Historator},
+    replay::{mock_client_from_histories, Historator, HistoryForReplay},
     telemetry::metrics::{MetricsContext, METRIC_METER},
     worker::client::WorkerClientBag,
 };
@@ -55,7 +55,7 @@ use temporal_sdk_core_api::{
     errors::{CompleteActivityError, PollActivityError, PollWfError},
     CoreLog, Worker as WorkerTrait,
 };
-use temporal_sdk_core_protos::{coresdk::ActivityHeartbeat, temporal::api::history::v1::History};
+use temporal_sdk_core_protos::coresdk::ActivityHeartbeat;
 
 lazy_static::lazy_static! {
     /// A process-wide unique string, which will be different on every startup
@@ -109,7 +109,7 @@ pub fn init_replay_worker<I>(
     histories: I,
 ) -> Result<Worker, anyhow::Error>
 where
-    I: Stream<Item = History> + Send + 'static,
+    I: Stream<Item = HistoryForReplay> + Send + 'static,
 {
     info!(
         task_queue = config.task_queue.as_str(),
