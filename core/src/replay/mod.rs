@@ -33,6 +33,22 @@ use tokio::sync::{mpsc, mpsc::UnboundedSender, Mutex as TokioMutex};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
 
+/// Allows lang to feed histories into the replayer at whatever cadence it prefers
+pub struct HistoryFeeder {}
+pub struct HistoryFeederStream {}
+
+impl HistoryFeeder {
+    pub async fn feed(history: History) {}
+}
+
+impl Stream for HistoryFeederStream {
+    type Item = History;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        todo!()
+    }
+}
+
 /// Create a mock client which can be used by a replay worker to serve up canned histories. It will
 /// return the entire history in one workflow task. If a workflow task failure is sent to the mock,
 /// it will send the complete response again.
