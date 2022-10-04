@@ -184,10 +184,12 @@ where
             match self.backoff.next_backoff() {
                 None => RetryPolicy::ForwardError(e), // None is returned when we've ran out of time
                 Some(backoff) => {
-                    if cfg!(test) {
-                        // Allow unit tests to do lots of retries quickly. This does *not* apply
-                        // during integration testing, importantly.
-                        RetryPolicy::WaitRetry(Duration::from_millis(1))
+                    // We treat ResourceExhausted as a special case and backoff more
+                    // so we don't overload the server
+                    if e.code() == Code::ResourceExhausted {
+                        let extended_backoff =
+                            backoff.max(self.backoff.next_backoff().unwrap_or_default());
+                        RetryPolicy::WaitRetry(extended_backoff)
                     } else {
                         RetryPolicy::WaitRetry(backoff)
                     }
@@ -529,6 +531,16 @@ mod tests {
     use std::{ops::Add, time::Instant};
     use tonic::Status;
 
+    /// Predefined retry configs with low durations to make unit tests faster
+    const TEST_RETRY_CONFIG: RetryConfig = RetryConfig {
+        initial_interval: Duration::from_millis(1),
+        randomization_factor: 0.0,
+        multiplier: 2.0,
+        max_interval: Duration::from_millis(10),
+        max_elapsed_time: None,
+        max_retries: 10,
+    };
+
     #[tokio::test]
     async fn non_retryable_errors() {
         for code in [
@@ -547,7 +559,7 @@ mod tests {
                 .expect_cancel_activity_task()
                 .returning(move |_, _| Err(Status::new(code, "non-retryable failure")))
                 .times(1);
-            let retry_client = RetryClient::new(mock_client, Default::default());
+            let retry_client = RetryClient::new(mock_client, TEST_RETRY_CONFIG);
             let result = retry_client
                 .cancel_activity_task(vec![1].into(), None)
                 .await;
@@ -575,12 +587,11 @@ mod tests {
             Code::Unimplemented,
         ] {
             for call_name in [POLL_WORKFLOW_METH_NAME, POLL_ACTIVITY_METH_NAME] {
-                let retry_cfg = RetryConfig::poll_retry_policy();
                 let mut err_handler = TonicErrorHandler {
-                    max_retries: retry_cfg.max_retries,
+                    max_retries: TEST_RETRY_CONFIG.max_retries,
                     call_type: CallType::LongPoll,
                     call_name,
-                    backoff: retry_cfg.into_exp_backoff(FixedClock(Instant::now())),
+                    backoff: TEST_RETRY_CONFIG.into_exp_backoff(FixedClock(Instant::now())),
                 };
                 let result = err_handler.handle(1, Status::new(code, "Ahh"));
                 assert_matches!(result, RetryPolicy::WaitRetry(_));
@@ -599,12 +610,11 @@ mod tests {
     async fn long_poll_retryable_errors_never_fatal() {
         for code in RETRYABLE_ERROR_CODES {
             for call_name in [POLL_WORKFLOW_METH_NAME, POLL_ACTIVITY_METH_NAME] {
-                let retry_cfg = RetryConfig::poll_retry_policy();
                 let mut err_handler = TonicErrorHandler {
-                    max_retries: retry_cfg.max_retries,
+                    max_retries: TEST_RETRY_CONFIG.max_retries,
                     call_type: CallType::LongPoll,
                     call_name,
-                    backoff: retry_cfg.into_exp_backoff(FixedClock(Instant::now())),
+                    backoff: TEST_RETRY_CONFIG.into_exp_backoff(FixedClock(Instant::now())),
                 };
                 let result = err_handler.handle(1, Status::new(code, "Ahh"));
                 assert_matches!(result, RetryPolicy::WaitRetry(_));
@@ -632,7 +642,7 @@ mod tests {
                 .returning(|_, _| Ok(Default::default()))
                 .times(1);
 
-            let retry_client = RetryClient::new(mock_client, Default::default());
+            let retry_client = RetryClient::new(mock_client, TEST_RETRY_CONFIG);
             let result = retry_client
                 .cancel_activity_task(vec![1].into(), None)
                 .await;
@@ -642,10 +652,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn retry_resource_exhausted() {
+        let mut err_handler = TonicErrorHandler {
+            max_retries: TEST_RETRY_CONFIG.max_retries,
+            call_type: CallType::Normal,
+            call_name: POLL_WORKFLOW_METH_NAME,
+            backoff: TEST_RETRY_CONFIG.into_exp_backoff(FixedClock(Instant::now())),
+        };
+        let result = err_handler.handle(1, Status::new(Code::ResourceExhausted, "leave me alone"));
+        match result {
+            RetryPolicy::WaitRetry(duration) => assert_eq!(duration, Duration::from_millis(2)),
+            _ => assert!(false),
+        }
+        err_handler.backoff.clock.0 = err_handler.backoff.clock.0.add(Duration::from_millis(10));
+        let result = err_handler.handle(2, Status::new(Code::ResourceExhausted, "leave me alone"));
+        match result {
+            RetryPolicy::WaitRetry(duration) => assert_eq!(duration, Duration::from_millis(8)),
+            _ => assert!(false),
+        }
+    }
+
+    #[tokio::test]
     async fn long_poll_retries_forever() {
         // A bit odd, but we don't need a real client to test the retry client passes through the
         // correct retry config
-        let fake_retry = RetryClient::new((), Default::default());
+        let fake_retry = RetryClient::new((), TEST_RETRY_CONFIG);
         for i in 1..=50 {
             for call in [POLL_WORKFLOW_METH_NAME, POLL_ACTIVITY_METH_NAME] {
                 let mut err_handler =
@@ -658,7 +689,7 @@ mod tests {
 
     #[tokio::test]
     async fn long_poll_retries_deadline_exceeded() {
-        let fake_retry = RetryClient::new((), Default::default());
+        let fake_retry = RetryClient::new((), TEST_RETRY_CONFIG);
         // For some reason we will get cancelled in these situations occasionally (always?) too
         for code in [Code::Cancelled, Code::DeadlineExceeded] {
             for call in [POLL_WORKFLOW_METH_NAME, POLL_ACTIVITY_METH_NAME] {
