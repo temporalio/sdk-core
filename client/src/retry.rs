@@ -101,32 +101,49 @@ impl<SG> RetryClient<SG> {
         F: FnMut() -> Fut + Unpin,
         Fut: Future<Output = Result<R>>,
     {
-        FutureRetry::new(factory, TonicErrorHandler::new(rtc, call_name))
+        FutureRetry::new(
+            factory,
+            TonicErrorHandler::new(rtc, RetryConfig::throttle_retry_policy(), call_name),
+        )
     }
 }
 
 #[derive(Debug)]
 pub(crate) struct TonicErrorHandler<C: Clock> {
     backoff: ExponentialBackoff<C>,
+    throttle_backoff: ExponentialBackoff<C>,
     max_retries: usize,
     call_type: CallType,
     call_name: &'static str,
 }
 impl TonicErrorHandler<SystemClock> {
-    fn new(cfg: RetryConfig, call_name: &'static str) -> Self {
-        Self::new_with_clock(cfg, call_name, SystemClock::default())
+    fn new(cfg: RetryConfig, throttle_cfg: RetryConfig, call_name: &'static str) -> Self {
+        Self::new_with_clock(
+            cfg,
+            throttle_cfg,
+            call_name,
+            SystemClock::default(),
+            SystemClock::default(),
+        )
     }
 }
 impl<C> TonicErrorHandler<C>
 where
     C: Clock,
 {
-    fn new_with_clock(cfg: RetryConfig, call_name: &'static str, clock: C) -> Self {
+    fn new_with_clock(
+        cfg: RetryConfig,
+        throttle_cfg: RetryConfig,
+        call_name: &'static str,
+        clock: C,
+        throttle_clock: C,
+    ) -> Self {
         Self {
             max_retries: cfg.max_retries,
             call_type: CallType::from_call_name(call_name),
             call_name,
             backoff: cfg.into_exp_backoff(clock),
+            throttle_backoff: throttle_cfg.into_exp_backoff(throttle_clock),
         }
     }
     const fn should_log_retry_warning(&self, cur_attempt: usize) -> bool {
@@ -188,7 +205,7 @@ where
                     // so we don't overload the server
                     if e.code() == Code::ResourceExhausted {
                         let extended_backoff =
-                            backoff.max(self.backoff.next_backoff().unwrap_or_default());
+                            backoff.max(self.throttle_backoff.next_backoff().unwrap_or_default());
                         RetryPolicy::WaitRetry(extended_backoff)
                     } else {
                         RetryPolicy::WaitRetry(backoff)
@@ -592,6 +609,8 @@ mod tests {
                     call_type: CallType::LongPoll,
                     call_name,
                     backoff: TEST_RETRY_CONFIG.into_exp_backoff(FixedClock(Instant::now())),
+                    throttle_backoff: TEST_RETRY_CONFIG
+                        .into_exp_backoff(FixedClock(Instant::now())),
                 };
                 let result = err_handler.handle(1, Status::new(code, "Ahh"));
                 assert_matches!(result, RetryPolicy::WaitRetry(_));
@@ -615,6 +634,8 @@ mod tests {
                     call_type: CallType::LongPoll,
                     call_name,
                     backoff: TEST_RETRY_CONFIG.into_exp_backoff(FixedClock(Instant::now())),
+                    throttle_backoff: TEST_RETRY_CONFIG
+                        .into_exp_backoff(FixedClock(Instant::now())),
                 };
                 let result = err_handler.handle(1, Status::new(code, "Ahh"));
                 assert_matches!(result, RetryPolicy::WaitRetry(_));
@@ -658,17 +679,31 @@ mod tests {
             call_type: CallType::Normal,
             call_name: POLL_WORKFLOW_METH_NAME,
             backoff: TEST_RETRY_CONFIG.into_exp_backoff(FixedClock(Instant::now())),
+            throttle_backoff: RetryConfig {
+                initial_interval: Duration::from_millis(2),
+                randomization_factor: 0.0,
+                multiplier: 4.0,
+                max_interval: Duration::from_millis(10),
+                max_elapsed_time: None,
+                max_retries: 10,
+            }
+            .into_exp_backoff(FixedClock(Instant::now())),
         };
         let result = err_handler.handle(1, Status::new(Code::ResourceExhausted, "leave me alone"));
         match result {
             RetryPolicy::WaitRetry(duration) => assert_eq!(duration, Duration::from_millis(2)),
-            _ => assert!(false),
+            _ => panic!(),
         }
         err_handler.backoff.clock.0 = err_handler.backoff.clock.0.add(Duration::from_millis(10));
+        err_handler.throttle_backoff.clock.0 = err_handler
+            .throttle_backoff
+            .clock
+            .0
+            .add(Duration::from_millis(10));
         let result = err_handler.handle(2, Status::new(Code::ResourceExhausted, "leave me alone"));
         match result {
             RetryPolicy::WaitRetry(duration) => assert_eq!(duration, Duration::from_millis(8)),
-            _ => assert!(false),
+            _ => panic!(),
         }
     }
 
@@ -679,8 +714,11 @@ mod tests {
         let fake_retry = RetryClient::new((), TEST_RETRY_CONFIG);
         for i in 1..=50 {
             for call in [POLL_WORKFLOW_METH_NAME, POLL_ACTIVITY_METH_NAME] {
-                let mut err_handler =
-                    TonicErrorHandler::new(fake_retry.get_retry_config(call), call);
+                let mut err_handler = TonicErrorHandler::new(
+                    fake_retry.get_retry_config(call),
+                    fake_retry.get_retry_config(call),
+                    call,
+                );
                 let result = err_handler.handle(i, Status::new(Code::Unknown, "Ahh"));
                 assert_matches!(result, RetryPolicy::WaitRetry(_));
             }
@@ -693,8 +731,11 @@ mod tests {
         // For some reason we will get cancelled in these situations occasionally (always?) too
         for code in [Code::Cancelled, Code::DeadlineExceeded] {
             for call in [POLL_WORKFLOW_METH_NAME, POLL_ACTIVITY_METH_NAME] {
-                let mut err_handler =
-                    TonicErrorHandler::new(fake_retry.get_retry_config(call), call);
+                let mut err_handler = TonicErrorHandler::new(
+                    fake_retry.get_retry_config(call),
+                    fake_retry.get_retry_config(call),
+                    call,
+                );
                 for i in 1..=5 {
                     let result = err_handler.handle(i, Status::new(code, "retryable failure"));
                     assert_matches!(result, RetryPolicy::WaitRetry(_));
