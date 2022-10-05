@@ -46,13 +46,12 @@ use temporal_sdk_core_protos::{
     coresdk::{workflow_commands::QueryResult, IntoPayloadsExt},
     grpc::health::v1::health_client::HealthClient,
     temporal::api::{
-        command::v1::Command,
         common::v1::{Header, Payload, Payloads, WorkflowExecution, WorkflowType},
         enums::v1::{TaskQueueKind, WorkflowIdReusePolicy, WorkflowTaskFailedCause},
         failure::v1::Failure,
         operatorservice::v1::operator_service_client::OperatorServiceClient,
         query::v1::WorkflowQuery,
-        taskqueue::v1::{StickyExecutionAttributes, TaskQueue},
+        taskqueue::v1::TaskQueue,
         testservice::v1::test_service_client::TestServiceClient,
         workflowservice::v1::{workflow_service_client::WorkflowServiceClient, *},
     },
@@ -360,24 +359,6 @@ impl ClientOptions {
         }
         Ok(channel)
     }
-}
-
-/// A version of [RespondWorkflowTaskCompletedRequest] that will finish being filled out by the
-/// server client
-#[derive(Debug, Clone, PartialEq)]
-pub struct WorkflowTaskCompletion {
-    /// The task token that would've been received from polling for a workflow activation
-    pub task_token: TaskToken,
-    /// A list of new commands to send to the server, such as starting a timer.
-    pub commands: Vec<Command>,
-    /// If set, indicate that next task should be queued on sticky queue with given attributes.
-    pub sticky_attributes: Option<StickyExecutionAttributes>,
-    /// Responses to queries in the `queries` field of the workflow task.
-    pub query_responses: Vec<QueryResult>,
-    /// Indicate that the task completion should return a new WFT if one is available
-    pub return_new_workflow_task: bool,
-    /// Force a new WFT to be created after this completion
-    pub force_create_new_workflow_task: bool,
 }
 
 /// Interceptor which attaches common metadata (like "client-name") to every outgoing call

@@ -4,10 +4,9 @@ use crate::MetricsContext;
 use futures::{stream, Stream, StreamExt};
 use std::{
     fmt::{Debug, Formatter},
-    future::Future,
     sync::Arc,
 };
-use tokio::sync::{AcquireError, Notify, OwnedSemaphorePermit, Semaphore, TryAcquireError};
+use tokio::sync::{AcquireError, OwnedSemaphorePermit, Semaphore, TryAcquireError};
 
 /// Wraps a [Semaphore] with a function call that is fed the available permits any time a permit is
 /// acquired or restored through the provided methods
@@ -82,24 +81,29 @@ impl Debug for OwnedMeteredSemPermit {
 }
 
 /// From the input stream, create a new stream which only pulls from the input stream when allowed.
-/// When allowed is determined by the passed in `proceeder` which must return a future every time
-/// it's called. The input stream is only pulled from when that future resolves.
-pub(crate) fn stream_when_allowed<S, F, FF>(
+/// When allowed is determined by the passed in `proceeder` emitting an item. The input stream is
+/// only pulled from when that future resolves.
+///
+/// This is *almost* identical to `zip`, but does not terminate early if the input stream closes.
+/// The proceeder must allow the poll before the returned stream closes. If the proceeder terminates
+/// the overall stream will terminate.
+pub(crate) fn stream_when_allowed<S, AS>(
     input: S,
-    proceeder: FF,
-) -> impl Stream<Item = (S::Item, F::Output)>
+    proceeder: AS,
+) -> impl Stream<Item = (S::Item, AS::Item)>
 where
     S: Stream + Send + 'static,
-    F: Future,
-    FF: FnMut() -> F,
+    AS: Stream + Send + 'static,
 {
-    let acceptable_notify = Arc::new(Notify::new());
-    acceptable_notify.notify_one();
     let stream = stream::unfold(
-        (proceeder, input.boxed()),
+        (proceeder.boxed(), input.boxed()),
         |(mut proceeder, mut input)| async {
-            let v = proceeder().await;
-            input.next().await.map(|i| ((i, v), (proceeder, input)))
+            let v = proceeder.next().await;
+            if let Some(v) = v {
+                input.next().await.map(|i| ((i, v), (proceeder, input)))
+            } else {
+                None
+            }
         },
     );
     stream
@@ -117,19 +121,15 @@ pub(crate) use dbg_panic;
 mod tests {
     use super::*;
     use futures::pin_mut;
-    use std::{cell::RefCell, task::Poll};
+    use std::task::Poll;
     use tokio::sync::mpsc::unbounded_channel;
+    use tokio_stream::wrappers::UnboundedReceiverStream;
 
-    // This is fine. Test only / guaranteed to happen serially.
-    #[allow(clippy::await_holding_refcell_ref)]
     #[test]
     fn stream_when_allowed_works() {
         let inputs = stream::iter([1, 2, 3]);
         let (allow_tx, allow_rx) = unbounded_channel();
-        let allow_rx = RefCell::new(allow_rx);
-        let when_allowed = stream_when_allowed(inputs, || async {
-            allow_rx.borrow_mut().recv().await.unwrap()
-        });
+        let when_allowed = stream_when_allowed(inputs, UnboundedReceiverStream::new(allow_rx));
 
         let waker = futures::task::noop_waker_ref();
         let mut cx = std::task::Context::from_waker(waker);

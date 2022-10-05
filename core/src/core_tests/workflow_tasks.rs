@@ -7,7 +7,6 @@ use crate::{
         mock_worker, poll_and_reply, poll_and_reply_clears_outstanding_evicts, single_hist_mock_sg,
         test_worker_cfg, FakeWfResponses, MockPollCfg, MocksHolder, ResponseType,
         WorkflowCachingPolicy::{self, AfterEveryReply, NonSticky},
-        TEST_Q,
     },
     worker::client::mocks::{mock_manual_workflow_client, mock_workflow_client},
     Worker,
@@ -1224,7 +1223,7 @@ async fn buffered_work_drained_on_shutdown() {
     t.add_workflow_task_scheduled_and_started();
     // Need to build the first response before adding the timeout events b/c otherwise the history
     // builder will include them in the first task
-    let resp_1 = hist_to_poll_resp(&t, wfid.to_owned(), 1.into(), TEST_Q.to_string()).resp;
+    let resp_1 = hist_to_poll_resp(&t, wfid.to_owned(), 1.into()).resp;
     t.add_workflow_task_timed_out();
     t.add_full_wf_task();
     let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
@@ -1242,10 +1241,7 @@ async fn buffered_work_drained_on_shutdown() {
     // Extend the task list with the now timeout-included version of the task. We add a bunch of
     // them because the poll loop will spin while new tasks are available and it is buffering them
     tasks.extend(
-        std::iter::repeat_with(|| {
-            hist_to_poll_resp(&t, wfid.to_owned(), 2.into(), TEST_Q.to_string()).resp
-        })
-        .take(50),
+        std::iter::repeat_with(|| hist_to_poll_resp(&t, wfid.to_owned(), 2.into()).resp).take(50),
     );
     let mut mock = mock_workflow_client();
     mock.expect_complete_workflow_task()
@@ -1658,9 +1654,7 @@ async fn tasks_from_completion_are_delivered() {
 
     let mut mock = mock_workflow_client();
     let complete_resp = RespondWorkflowTaskCompletedResponse {
-        workflow_task: Some(
-            hist_to_poll_resp(&t, wfid.to_owned(), 2.into(), TEST_Q.to_string()).resp,
-        ),
+        workflow_task: Some(hist_to_poll_resp(&t, wfid.to_owned(), 2.into()).resp),
         activity_tasks: vec![],
     };
     mock.expect_complete_workflow_task()
@@ -1951,8 +1945,7 @@ async fn no_race_acquiring_permits() {
         .expect_poll_workflow_task()
         .returning(move |_, _| {
             let t = canned_histories::single_timer("1");
-            let poll_resp =
-                hist_to_poll_resp(&t, wfid.to_owned(), 2.into(), TEST_Q.to_string()).resp;
+            let poll_resp = hist_to_poll_resp(&t, wfid.to_owned(), 2.into()).resp;
             async move {
                 task_barr.wait().await;
                 Ok(poll_resp.clone())
@@ -2031,13 +2024,7 @@ async fn continue_as_new_preserves_some_values() {
     mock_client
         .expect_poll_workflow_task()
         .returning(move |_, _| {
-            Ok(hist_to_poll_resp(
-                &hist,
-                wfid.to_owned(),
-                ResponseType::AllHistory,
-                TEST_Q.to_string(),
-            )
-            .resp)
+            Ok(hist_to_poll_resp(&hist, wfid.to_owned(), ResponseType::AllHistory).resp)
         });
     mock_client
         .expect_complete_workflow_task()

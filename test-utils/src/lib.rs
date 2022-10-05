@@ -6,7 +6,7 @@ extern crate tracing;
 
 pub mod canned_histories;
 
-use crate::stream::TryStreamExt;
+use crate::stream::{Stream, TryStreamExt};
 use futures::{future, stream, stream::FuturesUnordered, StreamExt};
 use parking_lot::Mutex;
 use prost::Message;
@@ -21,9 +21,11 @@ use temporal_client::{
 use temporal_sdk::{interceptors::WorkerInterceptor, IntoActivityFunc, Worker, WorkflowFunction};
 use temporal_sdk_core::{
     ephemeral_server::{EphemeralExe, EphemeralExeVersion},
-    init_replay_worker, init_worker, telemetry_init, ClientOptions, ClientOptionsBuilder, Logger,
-    MetricsExporter, OtelCollectorOptions, TelemetryOptions, TelemetryOptionsBuilder,
-    TraceExporter, WorkerConfig, WorkerConfigBuilder,
+    init_replay_worker, init_worker,
+    replay::HistoryForReplay,
+    telemetry_init, ClientOptions, ClientOptionsBuilder, Logger, MetricsExporter,
+    OtelCollectorOptions, TelemetryOptions, TelemetryOptionsBuilder, TraceExporter, WorkerConfig,
+    WorkerConfigBuilder,
 };
 use temporal_sdk_core_api::Worker as CoreWorker;
 use temporal_sdk_core_protos::{
@@ -61,12 +63,19 @@ pub async fn init_core_and_create_wf(test_name: &str) -> CoreWfStarter {
     starter
 }
 
-/// Create a worker replay instance preloaded with a provided history. Returns the worker impl
-/// and the task queue name as in [init_core_and_create_wf].
-pub fn init_core_replay_preloaded(
-    test_name: &str,
-    history: &History,
-) -> (Arc<dyn CoreWorker>, String) {
+/// Create a worker replay instance preloaded with provided histories. Returns the worker impl
+/// and the task queue name.
+pub fn init_core_replay_preloaded<I>(test_name: &str, histories: I) -> (Arc<dyn CoreWorker>, String)
+where
+    I: IntoIterator<Item = HistoryForReplay> + 'static,
+    <I as IntoIterator>::IntoIter: Send,
+{
+    init_core_replay_stream(test_name, stream::iter(histories))
+}
+pub fn init_core_replay_stream<I>(test_name: &str, histories: I) -> (Arc<dyn CoreWorker>, String)
+where
+    I: Stream<Item = HistoryForReplay> + Send + 'static,
+{
     telemetry_init(&get_integ_telem_options()).expect("Telemetry inits cleanly");
     let worker_cfg = WorkerConfigBuilder::default()
         .namespace(NAMESPACE)
@@ -74,7 +83,8 @@ pub fn init_core_replay_preloaded(
         .worker_build_id("test_bin_id")
         .build()
         .expect("Configuration options construct properly");
-    let worker = init_replay_worker(worker_cfg, history).expect("Replay worker must init properly");
+    let worker =
+        init_replay_worker(worker_cfg, histories).expect("Replay worker must init properly");
     (Arc::new(worker), test_name.to_string())
 }
 
@@ -181,18 +191,19 @@ impl CoreWfStarter {
         &mut self,
         wf_id: impl Into<String>,
         run_id: impl Into<String>,
-        // TODO: Need not be passed in
         worker: &mut Worker,
     ) -> Result<(), anyhow::Error> {
+        let wf_id = wf_id.into();
         // Fetch history and replay it
         let history = self
             .get_client()
             .await
-            .get_workflow_execution_history(wf_id.into(), Some(run_id.into()), vec![])
+            .get_workflow_execution_history(wf_id.clone(), Some(run_id.into()), vec![])
             .await?
             .history
             .expect("history field must be populated");
-        let (replay_worker, _) = init_core_replay_preloaded(worker.task_queue(), &history);
+        let with_id = HistoryForReplay::new(history, wf_id);
+        let (replay_worker, _) = init_core_replay_preloaded(worker.task_queue(), [with_id]);
         worker.with_new_core_worker(replay_worker);
         worker.run().await.unwrap();
         Ok(())

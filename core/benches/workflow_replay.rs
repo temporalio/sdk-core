@@ -2,7 +2,7 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use futures::StreamExt;
 use std::time::Duration;
 use temporal_sdk::{WfContext, Worker, WorkflowFunction};
-use temporal_sdk_core::{telemetry_init, TelemetryOptionsBuilder};
+use temporal_sdk_core::{replay::HistoryForReplay, telemetry_init, TelemetryOptionsBuilder};
 use temporal_sdk_core_protos::DEFAULT_WORKFLOW_TYPE;
 use temporal_sdk_core_test_utils::{canned_histories, init_core_replay_preloaded};
 
@@ -16,13 +16,16 @@ pub fn criterion_benchmark(c: &mut Criterion) {
 
     let num_timers = 10;
     let t = canned_histories::long_sequential_timers(num_timers as usize);
-    let hist = t.get_full_history_info().unwrap().into();
+    let hist = HistoryForReplay::new(
+        t.get_full_history_info().unwrap().into(),
+        "whatever".to_string(),
+    );
 
     c.bench_function("Small history replay", |b| {
         b.iter(|| {
             tokio_runtime.block_on(async {
                 let func = timers_wf(num_timers);
-                let (worker, _) = init_core_replay_preloaded("replay_bench", &hist);
+                let (worker, _) = init_core_replay_preloaded("replay_bench", [hist.clone()]);
                 let mut worker = Worker::new_from_core(worker, "replay_bench".to_string());
                 worker.register_wf(DEFAULT_WORKFLOW_TYPE, func);
                 worker.run().await.unwrap();
@@ -32,13 +35,16 @@ pub fn criterion_benchmark(c: &mut Criterion) {
 
     let num_tasks = 50;
     let t = canned_histories::lots_of_big_signals(num_tasks);
-    let hist = t.get_full_history_info().unwrap().into();
+    let hist = HistoryForReplay::new(
+        t.get_full_history_info().unwrap().into(),
+        "whatever".to_string(),
+    );
 
     c.bench_function("Large payloads history replay", |b| {
         b.iter(|| {
             tokio_runtime.block_on(async {
                 let func = big_signals_wf(num_tasks);
-                let (worker, _) = init_core_replay_preloaded("large_hist_bench", &hist);
+                let (worker, _) = init_core_replay_preloaded("large_hist_bench", [hist.clone()]);
                 let mut worker = Worker::new_from_core(worker, "large_hist_bench".to_string());
                 worker.register_wf(DEFAULT_WORKFLOW_TYPE, func);
                 worker.run().await.unwrap();

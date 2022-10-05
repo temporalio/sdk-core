@@ -24,7 +24,7 @@ use crate::{
     telemetry::VecDisplayer,
     worker::{
         activities::{ActivitiesFromWFTsHandle, PermittedTqResp},
-        client::WorkerClient,
+        client::{WorkerClient, WorkflowTaskCompletion},
         workflow::{
             managed_run::{ManagedRun, WorkflowManager},
             wft_poller::validate_wft,
@@ -43,7 +43,6 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use temporal_client::WorkflowTaskCompletion;
 use temporal_sdk_core_api::errors::{CompleteWfError, PollWfError};
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -108,6 +107,7 @@ pub(super) struct WorkflowBasics {
     pub metrics: MetricsContext,
     pub namespace: String,
     pub task_queue: String,
+    pub ignore_evicts_on_shutdown: bool,
 }
 
 impl Workflows {

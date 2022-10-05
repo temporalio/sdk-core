@@ -16,7 +16,7 @@ pub(crate) fn mock_manual_workflow_client() -> MockManualWorkerClient {
 // results. This is really annoying b/c of the async trait stuff. Need
 // https://github.com/asomers/mockall/issues/189 to be fixed for it to go away.
 mockall::mock! {
-    pub ManualWorkerClient {}
+    pub(crate) ManualWorkerClient {}
     #[allow(unused)]
     impl WorkerClient for ManualWorkerClient {
         fn poll_workflow_task<'a, 'b>(&'a self, task_queue: String, is_sticky: bool)

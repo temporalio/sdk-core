@@ -41,6 +41,7 @@ pub(crate) struct WFStream {
     /// Ensures we stay at or below this worker's maximum concurrent workflow task limit
     wft_semaphore: MeteredSemaphore,
     shutdown_token: CancellationToken,
+    ignore_evicts_on_shutdown: bool,
 
     metrics: MetricsContext,
 }
@@ -130,10 +131,9 @@ impl WFStream {
             MetricsContext::available_task_slots,
         );
         let wft_sem_clone = wft_semaphore.clone();
-        let proceeder = move || {
-            let wft_sem_clone = wft_sem_clone.clone();
-            async move { wft_sem_clone.acquire_owned().await.unwrap() }
-        };
+        let proceeder = stream::unfold(wft_sem_clone, |sem| async move {
+            Some((sem.acquire_owned().await.unwrap(), sem))
+        });
         let poller_wfts = stream_when_allowed(external_wfts, proceeder);
         let (run_update_tx, run_update_rx) = unbounded_channel();
         let local_rx = stream::select(
@@ -165,6 +165,7 @@ impl WFStream {
             client,
             wft_semaphore,
             shutdown_token: basics.shutdown_token,
+            ignore_evicts_on_shutdown: basics.ignore_evicts_on_shutdown,
             metrics: basics.metrics,
         };
         all_inputs
@@ -875,7 +876,7 @@ impl WFStream {
         let all_runs_ready = self
             .runs
             .handles()
-            .all(|r| !r.has_any_pending_work(true, false));
+            .all(|r| !r.has_any_pending_work(self.ignore_evicts_on_shutdown, false));
         if self.shutdown_token.is_cancelled() && all_runs_ready {
             info!("Workflow shutdown is done");
             true

@@ -44,17 +44,18 @@ pub use url::Url;
 pub use worker::{Worker, WorkerConfig, WorkerConfigBuilder};
 
 use crate::{
-    replay::mock_client_from_history,
+    replay::{mock_client_from_histories, Historator, HistoryForReplay},
     telemetry::metrics::{MetricsContext, METRIC_METER},
     worker::client::WorkerClientBag,
 };
+use futures::Stream;
 use std::sync::Arc;
 use temporal_client::{ConfiguredClient, TemporalServiceClientWithMetrics};
 use temporal_sdk_core_api::{
     errors::{CompleteActivityError, PollActivityError, PollWfError},
     CoreLog, Worker as WorkerTrait,
 };
-use temporal_sdk_core_protos::{coresdk::ActivityHeartbeat, temporal::api::history::v1::History};
+use temporal_sdk_core_protos::coresdk::ActivityHeartbeat;
 
 lazy_static::lazy_static! {
     /// A process-wide unique string, which will be different on every startup
@@ -102,12 +103,14 @@ where
 }
 
 /// Create a worker for replaying a specific history. It will auto-shutdown as soon as the history
-/// has finished being replayed. The provided client should be a mock, and this should only be used
-/// for workflow testing purposes.
-pub fn init_replay_worker(
+/// has finished being replayed.
+pub fn init_replay_worker<I>(
     mut config: WorkerConfig,
-    history: &History,
-) -> Result<Worker, anyhow::Error> {
+    histories: I,
+) -> Result<Worker, anyhow::Error>
+where
+    I: Stream<Item = HistoryForReplay> + Send + 'static,
+{
     info!(
         task_queue = config.task_queue.as_str(),
         "Registering replay worker"
@@ -115,12 +118,13 @@ pub fn init_replay_worker(
     config.max_cached_workflows = 1;
     config.max_concurrent_wft_polls = 1;
     config.no_remote_activities = true;
-    // Could possibly just use mocked pollers here?
-    let client = mock_client_from_history(history, config.task_queue.clone());
-    let run_id = history.extract_run_id_from_start()?.to_string();
-    let last_event = history.last_event_id();
+    let historator = Historator::new(histories);
+    let post_activate = historator.get_post_activate_hook();
+    let shutdown_tok = historator.get_shutdown_setter();
+    let client = mock_client_from_histories(historator);
     let mut worker = Worker::new(config, None, Arc::new(client), MetricsContext::default());
-    worker.set_shutdown_on_run_reaches_event(run_id, last_event);
+    worker.set_post_activate_hook(post_activate);
+    shutdown_tok(worker.shutdown_token());
     Ok(worker)
 }
 
