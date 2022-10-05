@@ -180,6 +180,17 @@ impl RetryConfig {
         }
     }
 
+    pub(crate) const fn throttle_retry_policy() -> Self {
+        Self {
+            initial_interval: Duration::from_secs(1),
+            randomization_factor: 0.2,
+            multiplier: 2.0,
+            max_interval: Duration::from_secs(10),
+            max_elapsed_time: None,
+            max_retries: 0,
+        }
+    }
+
     pub(crate) fn into_exp_backoff<C>(self, clock: C) -> exponential::ExponentialBackoff<C> {
         exponential::ExponentialBackoff {
             current_interval: self.initial_interval,
