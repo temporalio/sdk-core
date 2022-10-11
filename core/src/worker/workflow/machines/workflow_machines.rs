@@ -323,7 +323,7 @@ impl WorkflowMachines {
     /// event is applied to the machine, which may also return a nondeterminism error if the machine
     /// does not match the expected type. A fatal error may be returned if the machine is in an
     /// invalid state.
-    #[instrument(level = "debug", skip(self, event), fields(event=%event))]
+    #[instrument(skip(self, event), fields(event=%event))]
     fn handle_event(&mut self, event: HistoryEvent, has_next_event: bool) -> Result<()> {
         if event.event_type() == EventType::Unspecified {
             return Err(WFMachinesError::Fatal(format!(

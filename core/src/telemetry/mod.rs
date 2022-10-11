@@ -25,6 +25,7 @@ use parking_lot::{const_mutex, Mutex};
 use std::{
     collections::{HashMap, VecDeque},
     convert::TryInto,
+    env,
     net::SocketAddr,
     time::Duration,
 };
@@ -58,6 +59,7 @@ pub struct OtelCollectorOptions {
 
 /// Control where traces are exported
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum TraceExporter {
     /// Export traces to an OpenTelemetry Collector <https://opentelemetry.io/docs/collector/>.
     Otel(OtelCollectorOptions),
@@ -65,6 +67,7 @@ pub enum TraceExporter {
 
 /// Control where metrics are exported
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub enum MetricsExporter {
     /// Export metrics to an OpenTelemetry Collector <https://opentelemetry.io/docs/collector/>.
     Otel(OtelCollectorOptions),
@@ -74,6 +77,7 @@ pub enum MetricsExporter {
 
 /// Control where logs go
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub enum Logger {
     /// Log directly to console.
     Console,
@@ -187,6 +191,34 @@ impl CoreTelemetry for GlobalTelemDat {
     }
 }
 
+macro_rules! event_fmt {
+    ($($exts:tt)*) => {
+        tracing_subscriber::fmt::format()
+        $($exts)*
+        .with_source_location(false)
+    }
+}
+
+/// This macro exists to avoid needing to box up the different possible layer types, which normally
+/// I wouldn't care about, but this is a pretty hot path.
+macro_rules! make_console_logger {
+    ($opts:ident, $registry:expr) => {
+        if env::var("TEMPORAL_CORE_PRETTY_LOGS").is_ok() {
+            make_console_logger!($opts, $registry, .pretty());
+        } else {
+            make_console_logger!($opts, $registry, .compact());
+        }
+    };
+    ($opts:ident, $registry:expr, $($exts:tt)*) => {{
+        let reg = $registry.with($opts.try_get_env_filter()?).with(
+            tracing_subscriber::fmt::layer()
+                .with_target(false)
+                .event_format(event_fmt!($($exts)*)),
+        );
+        tracing::subscriber::set_global_default(reg)?;
+    }}
+}
+
 /// Initialize tracing subscribers/output and logging export. If this function is called more than
 /// once, subsequent calls do nothing.
 ///
@@ -226,19 +258,10 @@ pub fn telemetry_init(opts: &TelemetryOptions) -> Result<&'static GlobalTelemDat
             if let Some(ref logger) = opts.logging {
                 match logger {
                     Logger::Console => {
-                        // TODO: this is duplicated below and is quite ugly, remove the duplication
                         if opts.tracing.is_none() {
-                            let pretty_fmt = tracing_subscriber::fmt::format()
-                                .pretty()
-                                .with_source_location(false);
-                            let reg = tracing_subscriber::registry()
-                                .with((opts).try_get_env_filter()?)
-                                .with(
-                                    tracing_subscriber::fmt::layer()
-                                        .with_target(false)
-                                        .event_format(pretty_fmt),
-                                );
-                            tracing::subscriber::set_global_default(reg)?;
+                            let reg =
+                                tracing_subscriber::registry().with(opts.try_get_env_filter()?);
+                            make_console_logger!(opts, reg);
                         }
                     }
                     Logger::Forward(filter) => {
@@ -302,26 +325,17 @@ pub fn telemetry_init(opts: &TelemetryOptions) -> Result<&'static GlobalTelemDat
 
                             let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
 
-                            // TODO: remove all of this duplicate code
                             if let Some(Logger::Console) = opts.logging {
-                                let pretty_fmt = tracing_subscriber::fmt::format()
-                                    .pretty()
-                                    .with_source_location(false);
                                 let reg = tracing_subscriber::registry()
                                     .with(opentelemetry)
-                                    .with(opts.try_get_env_filter()?)
-                                    .with(
-                                        tracing_subscriber::fmt::layer()
-                                            .with_target(false)
-                                            .event_format(pretty_fmt),
-                                    );
-                                // Can't use try_init here as it will blow away our custom logger if we do
-                                tracing::subscriber::set_global_default(reg)?;
+                                    .with(opts.try_get_env_filter()?);
+                                make_console_logger!(opts, reg);
                             } else {
                                 let reg = tracing_subscriber::registry()
                                     .with(opentelemetry)
                                     .with(opts.try_get_env_filter()?);
-                                // Can't use try_init here as it will blow away our custom logger if we do
+                                // Can't use try_init here as it will blow away our custom logger if
+                                // we do
                                 tracing::subscriber::set_global_default(reg)?;
                             }
                             Result::<(), anyhow::Error>::Ok(())

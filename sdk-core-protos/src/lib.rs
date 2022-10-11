@@ -66,7 +66,7 @@ pub mod coresdk {
                     "ActivityTaskCompletion(token: {}",
                     fmt_tt(&self.task_token),
                 )?;
-                if let Some(r) = self.result.as_ref() {
+                if let Some(r) = self.result.as_ref().and_then(|r| r.status.as_ref()) {
                     write!(f, ", {}", r)?;
                 } else {
                     write!(f, ", missing result")?;
@@ -120,21 +120,20 @@ pub mod coresdk {
             }
         }
 
-        impl Display for ActivityExecutionResult {
+        impl Display for aer::Status {
             fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
                 write!(f, "ActivityExecutionResult(")?;
-                match self.status.as_ref() {
-                    None => write!(f, "missing result)"),
-                    Some(aer::Status::Completed(v)) => {
+                match self {
+                    aer::Status::Completed(v) => {
                         write!(f, "{})", v)
                     }
-                    Some(aer::Status::Failed(v)) => {
+                    aer::Status::Failed(v) => {
                         write!(f, "{})", v)
                     }
-                    Some(aer::Status::Cancelled(v)) => {
+                    aer::Status::Cancelled(v) => {
                         write!(f, "{})", v)
                     }
-                    Some(aer::Status::WillCompleteAsync(_)) => {
+                    aer::Status::WillCompleteAsync(_) => {
                         write!(f, "Will complete async)")
                     }
                 }

@@ -98,7 +98,7 @@ impl ManagedWFFunc {
         }
     }
 
-    #[instrument(level = "debug", skip(self))]
+    #[instrument(skip(self))]
     pub(crate) async fn get_next_activation(&mut self) -> Result<WorkflowActivation> {
         let res = self.mgr.get_next_activation().await?;
         debug!("Managed wf next activation: {}", &res);
@@ -116,7 +116,7 @@ impl ManagedWFFunc {
     }
 
     /// Feed new history, as if received a new poll result. Returns new activation
-    #[instrument(level = "debug", skip(self, update))]
+    #[instrument(skip(self, update))]
     pub(crate) async fn new_history(
         &mut self,
         update: HistoryUpdate,
@@ -174,7 +174,7 @@ impl ManagedWFFunc {
         self.future_handle.take().unwrap().await.unwrap()
     }
 
-    #[instrument(level = "debug", skip(self, res))]
+    #[instrument(skip(self, res))]
     async fn push_activation_to_wf(&mut self, res: &WorkflowActivation) -> Result<()> {
         if res.jobs.is_empty() {
             // Nothing to do here

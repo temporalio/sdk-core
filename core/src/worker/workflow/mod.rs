@@ -36,6 +36,7 @@ use crate::{
 };
 use futures::{stream::BoxStream, Stream, StreamExt};
 use std::{
+    collections::HashSet,
     fmt::{Debug, Display, Formatter},
     future::Future,
     ops::DerefMut,
@@ -546,6 +547,11 @@ struct ManagedRunHandle {
     run_actions_tx: UnboundedSender<RunAction>,
     /// Handle to the task where the actual machines live
     handle: JoinHandle<()>,
+
+    /// We track if we have recorded useful debugging values onto a certain span yet, to overcome
+    /// duplicating field values. Remove this once https://github.com/tokio-rs/tracing/issues/2334
+    /// is fixed.
+    recorded_span_ids: HashSet<tracing::Id>,
     metrics: MetricsContext,
 }
 impl ManagedRunHandle {
@@ -567,9 +573,10 @@ impl ManagedRunHandle {
             more_pending_work: false,
             trying_to_evict: None,
             last_action_acked: true,
-            handle,
-            metrics,
             run_actions_tx,
+            handle,
+            recorded_span_ids: Default::default(),
+            metrics,
         }
     }
 
@@ -770,6 +777,11 @@ impl OutstandingActivation {
 pub struct WorkflowTaskInfo {
     pub task_token: TaskToken,
     pub attempt: u32,
+    /// Exists to allow easy tagging of spans with workflow ids. Is duplicative of info inside the
+    /// run machines themselves, but that can't be accessed easily. Would be nice to somehow have a
+    /// shared repository, or refcounts, or whatever, for strings like these that get duped all
+    /// sorts of places.
+    pub wf_id: String,
 }
 
 #[derive(Debug)]
@@ -990,6 +1002,14 @@ struct RunUpdateResponse {
 enum RunUpdateResponseKind {
     Good(GoodRunUpdate),
     Fail(FailRunUpdate),
+}
+impl RunUpdateResponseKind {
+    pub(crate) fn run_id(&self) -> &str {
+        match self {
+            RunUpdateResponseKind::Good(g) => &g.run_id,
+            RunUpdateResponseKind::Fail(f) => &f.run_id,
+        }
+    }
 }
 
 #[derive(Debug)]

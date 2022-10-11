@@ -41,6 +41,7 @@ use temporal_sdk_core_protos::{
     },
 };
 use tokio::sync::Notify;
+use tracing::Span;
 
 #[derive(Debug, derive_more::Constructor)]
 struct PendingActivityCancel {
@@ -48,11 +49,15 @@ struct PendingActivityCancel {
     reason: ActivityCancelReason,
 }
 
-/// Contains minimal set of details that core needs to store while an activity is running.
+/// Contains details that core wants to store while an activity is running.
 #[derive(Debug)]
 struct InFlightActInfo {
     pub activity_type: String,
     pub workflow_type: String,
+    /// Only kept for logging reasons
+    pub workflow_id: String,
+    /// Only kept for logging reasons
+    pub workflow_run_id: String,
     start_time: Instant,
 }
 
@@ -71,19 +76,17 @@ struct RemoteInFlightActInfo {
     _permit: OwnedMeteredSemPermit,
 }
 impl RemoteInFlightActInfo {
-    fn new(
-        activity_type: String,
-        workflow_type: String,
-        heartbeat_timeout: Option<prost_types::Duration>,
-        permit: OwnedMeteredSemPermit,
-    ) -> Self {
+    fn new(poll_resp: &PollActivityTaskQueueResponse, permit: OwnedMeteredSemPermit) -> Self {
+        let wec = poll_resp.workflow_execution.clone().unwrap_or_default();
         Self {
             base: InFlightActInfo {
-                activity_type,
-                workflow_type,
+                activity_type: poll_resp.activity_type.clone().unwrap_or_default().name,
+                workflow_type: poll_resp.workflow_type.clone().unwrap_or_default().name,
+                workflow_id: wec.workflow_id,
+                workflow_run_id: wec.run_id,
                 start_time: Instant::now(),
             },
-            heartbeat_timeout,
+            heartbeat_timeout: poll_resp.heartbeat_timeout.clone(),
             issued_cancel_to_lang: false,
             known_not_found: false,
             _permit: permit,
@@ -234,12 +237,14 @@ impl WorkerActivityTasks {
     ) {
         if let Some((_, act_info)) = self.outstanding_activity_tasks.remove(&task_token) {
             let act_metrics = self.metrics.with_new_attrs([
-                activity_type(act_info.base.activity_type.clone()),
-                workflow_type(act_info.base.workflow_type.clone()),
+                activity_type(act_info.base.activity_type),
+                workflow_type(act_info.base.workflow_type),
             ]);
+            Span::current().record("workflow_id", act_info.base.workflow_id);
+            Span::current().record("run_id", act_info.base.workflow_run_id);
             act_metrics.act_execution_latency(act_info.base.start_time.elapsed());
             let known_not_found = act_info.known_not_found;
-            drop(act_info); // TODO: Get rid of dashmap. If we hold ref across await, bad stuff.
+
             self.heartbeat_manager.evict(task_token.clone()).await;
             self.complete_notify.notify_waiters();
 
@@ -376,12 +381,7 @@ impl WorkerActivityTasks {
 
         self.outstanding_activity_tasks.insert(
             task.resp.task_token.clone().into(),
-            RemoteInFlightActInfo::new(
-                task.resp.activity_type.clone().unwrap_or_default().name,
-                task.resp.workflow_type.clone().unwrap_or_default().name,
-                task.resp.heartbeat_timeout.clone(),
-                task.permit,
-            ),
+            RemoteInFlightActInfo::new(&task.resp, task.permit),
         );
 
         ActivityTask::start_from_poll_resp(task.resp)

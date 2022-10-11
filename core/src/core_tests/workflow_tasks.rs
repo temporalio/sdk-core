@@ -1036,7 +1036,6 @@ async fn lots_of_workflows() {
     let completed_count = Arc::new(Semaphore::new(0));
     let killer = async {
         let _ = completed_count.acquire_many(total_wfs).await.unwrap();
-        dbg!("Shutdown initted");
         worker.initiate_shutdown();
     };
     let poller = fanout_tasks(5, |_| {
