@@ -74,7 +74,7 @@ impl WorkerTrait for Worker {
         self.next_workflow_activation().await
     }
 
-    #[instrument(level = "debug", skip(self))]
+    #[instrument(skip(self))]
     async fn poll_activity_task(&self) -> Result<ActivityTask, PollActivityError> {
         loop {
             match self.activity_poll().await.transpose() {
@@ -94,7 +94,6 @@ impl WorkerTrait for Worker {
         self.complete_workflow_activation(completion).await
     }
 
-    #[instrument(level = "debug", skip(self, completion), fields(completion=%&completion))]
     async fn complete_activity_task(
         &self,
         completion: ActivityTaskCompletion,
@@ -135,7 +134,11 @@ impl WorkerTrait for Worker {
         if let Some(atm) = self.at_task_mgr.as_ref() {
             atm.notify_shutdown();
         }
-        info!("Initiated shutdown");
+        info!(
+            task_queue=%self.config.task_queue,
+            namespace=%self.config.namespace,
+            "Initiated shutdown",
+        );
     }
 
     async fn shutdown(&self) {
@@ -155,7 +158,9 @@ impl Worker {
         client: Arc<dyn WorkerClient>,
         metrics: MetricsContext,
     ) -> Self {
-        info!(task_queue = %config.task_queue, "Initializing worker");
+        info!(task_queue=%config.task_queue,
+              namespace=%config.namespace,
+              "Initializing worker");
         metrics.worker_registered();
 
         let shutdown_token = CancellationToken::new();
@@ -399,6 +404,9 @@ impl Worker {
         }
     }
 
+    #[instrument(skip(self, task_token, status),
+                 fields(task_token=%&task_token, status=%&status,
+                        task_queue=%self.config.task_queue, workflow_id, run_id))]
     pub(crate) async fn complete_activity(
         &self,
         task_token: TaskToken,
@@ -438,13 +446,14 @@ impl Worker {
         Ok(())
     }
 
-    #[instrument(level = "debug", skip(self), fields(run_id))]
+    #[instrument(skip(self), fields(run_id, workflow_id, task_queue=%self.config.task_queue))]
     pub(crate) async fn next_workflow_activation(&self) -> Result<WorkflowActivation, PollWfError> {
         self.workflows.next_workflow_activation().await
     }
 
-    #[instrument(level = "debug", skip(self, completion),
-      fields(completion=%&completion, run_id=%completion.run_id))]
+    #[instrument(skip(self, completion),
+                 fields(completion=%&completion, run_id=%completion.run_id, workflow_id,
+                        task_queue=%self.config.task_queue))]
     pub(crate) async fn complete_workflow_activation(
         &self,
         completion: WorkflowActivationCompletion,

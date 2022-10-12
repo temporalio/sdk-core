@@ -45,6 +45,23 @@ pub(crate) struct WFStream {
 
     metrics: MetricsContext,
 }
+impl WFStream {
+    fn record_span_fields(&mut self, run_id: &str, span: &Span) {
+        if let Some(run_handle) = self.runs.get_mut(run_id) {
+            if let Some(spid) = span.id() {
+                if run_handle.recorded_span_ids.contains(&spid) {
+                    return;
+                }
+                run_handle.recorded_span_ids.insert(spid);
+
+                if let Some(wid) = run_handle.wft.as_ref().map(|wft| &wft.info.wf_id) {
+                    span.record("workflow_id", wid.as_str());
+                }
+            }
+        }
+    }
+}
+
 /// All possible inputs to the [WFStream]
 #[derive(derive_more::From, Debug)]
 enum WFStreamInput {
@@ -81,6 +98,18 @@ pub(super) enum LocalInputs {
     RunUpdateResponse(RunUpdateResponseKind),
     RequestEviction(RequestEvictMsg),
     GetStateInfo(GetStateInfoMsg),
+}
+impl LocalInputs {
+    fn run_id(&self) -> Option<&str> {
+        Some(match self {
+            LocalInputs::Completion(c) => c.completion.run_id(),
+            LocalInputs::LocalResolution(lr) => &lr.run_id,
+            LocalInputs::PostActivation(pa) => &pa.run_id,
+            LocalInputs::RunUpdateResponse(rur) => rur.run_id(),
+            LocalInputs::RequestEviction(re) => &re.run_id,
+            LocalInputs::GetStateInfo(_) => return None,
+        })
+    }
 }
 #[derive(Debug, derive_more::From)]
 #[allow(clippy::large_enum_variant)] // PollerDead only ever gets used once, so not important.
@@ -181,6 +210,9 @@ impl WFStream {
                     }
                     WFStreamInput::Local(local_input) => {
                         let _span_g = local_input.span.enter();
+                        if let Some(rid) = local_input.input.run_id() {
+                            state.record_span_fields(rid, &local_input.span);
+                        }
                         match local_input.input {
                             LocalInputs::RunUpdateResponse(resp) => {
                                 state.process_run_update_response(resp)
@@ -377,8 +409,9 @@ impl WFStream {
         }
     }
 
-    #[instrument(level = "debug", skip(self, pwft), 
-                 fields(run_id=%pwft.wft.workflow_execution.run_id))]
+    #[instrument(skip(self, pwft),
+                 fields(run_id=%pwft.wft.workflow_execution.run_id,
+                        workflow_id=%pwft.wft.workflow_execution.workflow_id))]
     fn instantiate_or_update(&mut self, pwft: PermittedWFT) {
         let (mut work, permit) = if let Some(w) = self.buffer_resp_if_outstanding_work(pwft) {
             (w.wft, w.permit)
@@ -408,6 +441,7 @@ impl WFStream {
         let wft_info = WorkflowTaskInfo {
             attempt: work.attempt,
             task_token: work.task_token,
+            wf_id: work.workflow_execution.workflow_id.clone(),
         };
         let poll_resp_is_incremental = work
             .history
@@ -477,8 +511,6 @@ impl WFStream {
         })
     }
 
-    #[instrument(level = "debug", skip(self, complete),
-                 fields(run_id=%complete.completion.run_id()))]
     fn process_completion(&mut self, complete: WFActCompleteMsg) {
         match complete.completion {
             ValidatedCompletion::Success { run_id, commands } => {
