@@ -53,12 +53,10 @@ message BatchOperationInfo {
 // Keep the parameter in sync with temporal.api.workflowservice.v1.TerminateWorkflowExecutionRequest.
 // Ignore first_execution_run_id because this is used for single workflow operation.
 message BatchOperationTermination {
-  // Reason of terminate workflows
-  string reason = 1;
   // Serialized value(s) to provide to the termination event
-  temporal.api.common.v1.Payloads details = 2;
+  temporal.api.common.v1.Payloads details = 1;
   // The identity of the worker/client
-  string identity = 3;
+  string identity = 2;
 }
 
 // BatchOperationSignal sends signals to batch workflows.
@@ -79,8 +77,6 @@ message BatchOperationSignal {
 // Keep the parameter in sync with temporal.api.workflowservice.v1.RequestCancelWorkflowExecutionRequest.
 // Ignore first_execution_run_id because this is used for single workflow operation.
 message BatchOperationCancellation {
-  // Reason of cancel workflows
-  string reason = 1;
   // The identity of the worker/client
-  string identity = 2;
+  string identity = 1;
 }

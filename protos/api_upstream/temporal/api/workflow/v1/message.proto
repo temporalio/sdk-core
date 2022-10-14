@@ -56,6 +56,7 @@ message WorkflowExecutionInfo {
     ResetPoints auto_reset_points = 12;
     string task_queue = 13;
     int64 state_transition_count = 14;
+    int64 history_size_bytes = 15;
 }
 
 message WorkflowExecutionConfig {

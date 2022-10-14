@@ -165,4 +165,6 @@ enum EventType {
     // The distinction of external vs. command-based modification is important so the SDK can
     // maintain determinism when using the command-based approach.
     EVENT_TYPE_ACTIVITY_PROPERTIES_MODIFIED_EXTERNALLY = 45;
+    // Workflow properties modified by user workflow code
+    EVENT_TYPE_WORKFLOW_PROPERTIES_MODIFIED = 46;
 }

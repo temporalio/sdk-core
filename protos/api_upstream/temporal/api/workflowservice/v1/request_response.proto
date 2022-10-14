@@ -222,11 +222,11 @@ message PollWorkflowTaskQueueRequest {
     // "checksum" in this field name isn't very accurate, it should be though of as an id.
     string binary_checksum = 4;
     // If set, the worker is opting in to build-id based versioning and wishes to only
-    // receive tasks that are considered compatible with the version provided in the string.
+    // receive tasks that are considered compatible with the version provided.
     // Doing so only makes sense in conjunction with the `UpdateWorkerBuildIdOrdering` API.
-    // When set, and `binary_checksum` is not, this value should also be considered as the
-    // `binary_checksum`.
-    string worker_versioning_build_id = 5;
+    // When `worker_versioning_id` has a `worker_build_id`, and `binary_checksum` is not
+    // set, that value should also be considered as the `binary_checksum`.
+    temporal.api.taskqueue.v1.VersionId worker_versioning_id = 5;
 }
 
 message PollWorkflowTaskQueueResponse {
@@ -292,6 +292,11 @@ message RespondWorkflowTaskCompletedRequest {
     // Responses to the `queries` field in the task being responded to
     map<string, temporal.api.query.v1.WorkflowQueryResult> query_results = 8;
     string namespace = 9;
+    // If using versioning, worker should send the same id here that it used to
+    // poll for the workflow task.
+    // When `worker_versioning_id` has a `worker_build_id`, and `binary_checksum` is not
+    // set, that value should also be considered as the `binary_checksum`.
+    temporal.api.taskqueue.v1.VersionId worker_versioning_id = 10;
 }
 
 message RespondWorkflowTaskCompletedResponse {
@@ -326,9 +331,9 @@ message PollActivityTaskQueueRequest {
     string identity = 3;
     temporal.api.taskqueue.v1.TaskQueueMetadata task_queue_metadata = 4;
     // If set, the worker is opting in to build-id based versioning and wishes to only
-    // receive tasks that are considered compatible with the version provided in the string.
+    // receive tasks that are considered compatible with the version provided.
     // Doing so only makes sense in conjunction with the `UpdateWorkerBuildIdOrdering` API.
-    string worker_versioning_build_id = 5;
+    temporal.api.taskqueue.v1.VersionId worker_versioning_id = 5;
 }
 
 message PollActivityTaskQueueResponse {
@@ -630,6 +635,19 @@ message TerminateWorkflowExecutionRequest {
 message TerminateWorkflowExecutionResponse {
 }
 
+// (-- api-linter: core::0135::request-unknown-fields=disabled
+//     aip.dev/not-precedent: DeleteNamespace RPC doesn't follow Google API format. --)
+// (-- api-linter: core::0135::request-name-required=disabled
+//     aip.dev/not-precedent: DeleteNamespace RPC doesn't follow Google API format. --)
+message DeleteWorkflowExecutionRequest {
+    string namespace = 1;
+    // Workflow Execution to delete. If run_id is not specified, the latest one is used.
+    temporal.api.common.v1.WorkflowExecution workflow_execution = 2;
+}
+
+message DeleteWorkflowExecutionResponse {
+}
+
 message ListOpenWorkflowExecutionsRequest {
     string namespace = 1;
     int32 maximum_page_size = 2;
@@ -821,6 +839,14 @@ message GetSystemInfoResponse {
 
         // True if server uses protos that include temporal.api.failure.v1.Failure.encoded_attributes
         bool encoded_failure_attributes = 5;
+
+        // True if server supports dispatching Workflow and Activity tasks based on a worker's build_id
+        // (see:
+        // https://github.com/temporalio/proposals/blob/a123af3b559f43db16ea6dd31870bfb754c4dc5e/versioning/worker-versions.md)
+        bool build_id_based_versioning = 6;
+
+        // True if server supports upserting workflow memo
+        bool upsert_memo = 7;
     }
 }
 
@@ -874,6 +900,9 @@ message DescribeScheduleRequest {
 message DescribeScheduleResponse {
     // The complete current schedule details. This may not match the schedule as
     // created because:
+    // - some types of schedule specs may get compiled into others (e.g.
+    //   CronString into StructuredCalendarSpec)
+    // - some unspecified fields may be replaced by defaults
     // - some fields in the state are modified automatically
     // - the schedule may have been modified by UpdateSchedule or PatchSchedule
     temporal.api.schedule.v1.Schedule schedule = 1;
@@ -1059,6 +1088,10 @@ message StartBatchOperationRequest {
     string namespace = 1;
     // Visibility query defines the the group of workflow to do batch operation
     string visibility_query = 2;
+    // Job ID defines the unique ID for the batch job
+    string job_id = 3;
+    // Reason to perform the batch operation
+    string reason = 4;
     // Operation input
     oneof operation {
         temporal.api.batch.v1.BatchOperationTermination termination_operation = 10;
@@ -1068,8 +1101,6 @@ message StartBatchOperationRequest {
 }
 
 message StartBatchOperationResponse {
-    // Batch job id
-    string job_id = 1;
 }
 
 message StopBatchOperationRequest {
@@ -1077,6 +1108,10 @@ message StopBatchOperationRequest {
     string namespace = 1;
     // Batch job id
     string job_id = 2;
+    // Reason to stop a batch operation
+    string reason = 3;
+    // Identity of the operator
+    string identity = 4;
 }
 
 message StopBatchOperationResponse {
@@ -1106,6 +1141,10 @@ message DescribeBatchOperationResponse {
     int64 complete_operation_count = 7;
     // Failure operation count
     int64 failure_operation_count = 8;
+    // Identity indicates the operator identity
+    string identity = 9;
+    // Reason indicates the reason to stop a operation
+    string reason = 10;
 }
 
 message ListBatchOperationsRequest {

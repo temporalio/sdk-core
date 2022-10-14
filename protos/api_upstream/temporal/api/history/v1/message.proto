@@ -192,6 +192,9 @@ message WorkflowTaskCompletedEventAttributes {
     string identity = 3;
     // Binary ID of the worker who completed this task
     string binary_checksum = 4;
+    // ID of the worker who picked up this workflow task, or missing if worker
+    // is not using versioning.
+    temporal.api.taskqueue.v1.VersionId worker_versioning_id = 5;
 }
 
 message WorkflowTaskTimedOutEventAttributes {
@@ -506,6 +509,15 @@ message UpsertWorkflowSearchAttributesEventAttributes {
     temporal.api.common.v1.SearchAttributes search_attributes = 2;
 }
 
+message WorkflowPropertiesModifiedEventAttributes {
+    // The `WORKFLOW_TASK_COMPLETED` event which this command was reported with
+    int64 workflow_task_completed_event_id = 1;
+    // If set, update the workflow memo with the provided values. The values will be merged with
+    // the existing memo. If the user wants to delete values, a default/empty Payload should be
+    // used as the value for the key being deleted.
+    temporal.api.common.v1.Memo upserted_memo = 2;
+}
+
 message StartChildWorkflowExecutionInitiatedEventAttributes {
     // Namespace of the child workflow.
     // SDKs and UI tools should use `namespace` field but server must use `namespace_id` only.
@@ -743,6 +755,7 @@ message HistoryEvent {
         WorkflowUpdateCompletedEventAttributes workflow_update_completed_event_attributes = 48;
         WorkflowPropertiesModifiedExternallyEventAttributes workflow_properties_modified_externally_event_attributes = 49;
         ActivityPropertiesModifiedExternallyEventAttributes activity_properties_modified_externally_event_attributes = 50;
+        WorkflowPropertiesModifiedEventAttributes workflow_properties_modified_event_attributes = 51;
     }
 }
 
