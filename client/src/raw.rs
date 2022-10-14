@@ -543,6 +543,15 @@ proxier! {
         }
     );
     (
+        delete_workflow_execution,
+        DeleteWorkflowExecutionRequest,
+        DeleteWorkflowExecutionResponse,
+        |r| {
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
         list_open_workflow_executions,
         ListOpenWorkflowExecutionsRequest,
         ListOpenWorkflowExecutionsResponse,
@@ -808,17 +817,9 @@ proxier! {
             r.extensions_mut().insert(labels);
         }
     );
-    (delete_workflow_execution, DeleteWorkflowExecutionRequest, DeleteWorkflowExecutionResponse,
-        |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
-            r.extensions_mut().insert(labels);
-        }
-    );
     (add_or_update_remote_cluster, AddOrUpdateRemoteClusterRequest, AddOrUpdateRemoteClusterResponse);
     (remove_remote_cluster, RemoveRemoteClusterRequest, RemoveRemoteClusterResponse);
-    (describe_cluster, DescribeClusterRequest, DescribeClusterResponse);
     (list_clusters, ListClustersRequest, ListClustersResponse);
-    (list_cluster_members, ListClusterMembersRequest, ListClusterMembersResponse);
 }
 
 proxier! {

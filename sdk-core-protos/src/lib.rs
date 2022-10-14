@@ -1319,11 +1319,6 @@ pub mod coresdk {
 // This is disgusting, but unclear to me how to avoid it. TODO: Discuss w/ prost maintainer
 pub mod temporal {
     pub mod api {
-        pub mod cluster {
-            pub mod v1 {
-                tonic::include_proto!("temporal.api.cluster.v1");
-            }
-        }
         pub mod batch {
             pub mod v1 {
                 tonic::include_proto!("temporal.api.batch.v1");
