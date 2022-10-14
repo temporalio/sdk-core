@@ -71,6 +71,7 @@ fsm! {
     // Ignore any spurious cancellations after resolution
     Cancelled --(Cancel) --> Cancelled;
     Failed --(Cancel) --> Failed;
+    StartFailed --(Cancel) --> StartFailed;
     TimedOut --(Cancel) --> TimedOut;
     Completed --(Cancel) --> Completed;
 }
@@ -845,6 +846,7 @@ mod test {
         for state in [
             ChildWorkflowMachineState::Cancelled(Cancelled {}),
             Failed {}.into(),
+            StartFailed {}.into(),
             TimedOut {}.into(),
             Completed {}.into(),
         ] {
