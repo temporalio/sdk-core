@@ -11,7 +11,7 @@ use temporal_sdk_core_protos::{
         enums::v1::{TaskQueueKind, WorkflowTaskFailedCause},
         failure::v1::Failure,
         query::v1::WorkflowQueryResult,
-        taskqueue::v1::{StickyExecutionAttributes, TaskQueue, TaskQueueMetadata},
+        taskqueue::v1::{StickyExecutionAttributes, TaskQueue, TaskQueueMetadata, VersionId},
         workflowservice::v1::*,
     },
     TaskToken,
@@ -134,7 +134,9 @@ impl WorkerClient for WorkerClientBag {
             } else {
                 self.worker_build_id.clone()
             },
-            worker_versioning_build_id: self.versioning_build_id(),
+            worker_versioning_id: Some(VersionId {
+                worker_build_id: self.versioning_build_id(),
+            }),
         };
 
         Ok(self
@@ -160,7 +162,9 @@ impl WorkerClient for WorkerClientBag {
             task_queue_metadata: max_tasks_per_sec.map(|tps| TaskQueueMetadata {
                 max_tasks_per_second: Some(tps),
             }),
-            worker_versioning_build_id: self.versioning_build_id(),
+            worker_versioning_id: Some(VersionId {
+                worker_build_id: self.versioning_build_id(),
+            }),
         };
 
         Ok(self
@@ -182,6 +186,9 @@ impl WorkerClient for WorkerClientBag {
             sticky_attributes: request.sticky_attributes,
             return_new_workflow_task: request.return_new_workflow_task,
             force_create_new_workflow_task: request.force_create_new_workflow_task,
+            worker_versioning_id: Some(VersionId {
+                worker_build_id: self.versioning_build_id(),
+            }),
             binary_checksum: self.worker_build_id.clone(),
             query_results: request
                 .query_responses

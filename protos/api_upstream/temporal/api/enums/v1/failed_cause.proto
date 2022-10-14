@@ -66,6 +66,7 @@ enum WorkflowTaskFailedCause {
     // The worker encountered a mismatch while replaying history between what was expected, and
     // what the workflow code actually did.
     WORKFLOW_TASK_FAILED_CAUSE_NON_DETERMINISTIC_ERROR = 24;
+    WORKFLOW_TASK_FAILED_CAUSE_BAD_MODIFY_WORKFLOW_PROPERTIES_ATTRIBUTES = 25;
 }
 
 enum StartChildWorkflowExecutionFailedCause {
@@ -94,4 +95,6 @@ enum ResourceExhaustedCause {
     RESOURCE_EXHAUSTED_CAUSE_CONCURRENT_LIMIT = 2;
     // System overloaded.
     RESOURCE_EXHAUSTED_CAUSE_SYSTEM_OVERLOADED = 3;
+    // Namespace exceeds persistence rate limit.
+    RESOURCE_EXHAUSTED_CAUSE_PERSISTENCE_LIMIT = 4;
 }

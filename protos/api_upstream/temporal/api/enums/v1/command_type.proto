@@ -47,11 +47,10 @@ enum CommandType {
     COMMAND_TYPE_START_CHILD_WORKFLOW_EXECUTION = 11;
     COMMAND_TYPE_SIGNAL_EXTERNAL_WORKFLOW_EXECUTION = 12;
     COMMAND_TYPE_UPSERT_WORKFLOW_SEARCH_ATTRIBUTES = 13;
-
     // Indicates that an update has been accepted for processing workflow code
     COMMAND_TYPE_ACCEPT_WORKFLOW_UPDATE = 14;
-
     // Indicates that an update has completed and carries either the success or
     // failure outcome of said update.
     COMMAND_TYPE_COMPLETE_WORKFLOW_UPDATE = 15;
+    COMMAND_TYPE_MODIFY_WORKFLOW_PROPERTIES = 16;
 }

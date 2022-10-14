@@ -20,6 +20,11 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
+// (-- api-linter: core::0203::optional=disabled
+//     aip.dev/not-precedent: field_behavior annotation not available in our gogo fork --)
+// (-- api-linter: core::0203::input-only=disabled
+//     aip.dev/not-precedent: field_behavior annotation not available in our gogo fork --)
+
 syntax = "proto3";
 
 package temporal.api.schedule.v1;
@@ -41,7 +46,8 @@ import "temporal/api/enums/v1/schedule.proto";
 import "temporal/api/workflow/v1/message.proto";
 
 // CalendarSpec describes an event specification relative to the calendar,
-// similar to a traditional cron specification. Each field can be one of:
+// similar to a traditional cron specification, but with labeled fields. Each
+// field can be one of:
 //   *: matches always
 //   x: matches when the field equals x
 //   x/y : matches when the field equals x+n*y where n is an integer
@@ -49,13 +55,14 @@ import "temporal/api/workflow/v1/message.proto";
 //   w,x,y,...: matches when the field is one of the listed values
 // Each x, y, z, ... is either a decimal integer, or a month or day of week name
 // or abbreviation (in the appropriate fields).
-// A second in time matches if all fields match.
+// A timestamp matches if all fields match.
+// Note that fields have different default values, for convenience.
 // Note that the special case that some cron implementations have for treating
 // day_of_month and day_of_week as "or" instead of "and" when both are set is
 // not implemented.
 // day_of_week can accept 0 or 7 as Sunday
-// TODO: add relative-to-end-of-month
-// TODO: add nth day-of-week in month
+// CalendarSpec gets compiled into StructuredCalendarSpec, which is what will be
+// returned if you describe the schedule.
 message CalendarSpec {
     // Expression to match seconds. Default: 0
     string second = 1;
@@ -73,6 +80,51 @@ message CalendarSpec {
     string year = 6;
     // Expression to match days of the week. Default: *
     string day_of_week = 7;
+    // Free-form comment describing the intention of this spec.
+    string comment = 8;
+}
+
+// Range represents a set of integer values, used to match fields of a calendar
+// time in StructuredCalendarSpec. If end < start, then end is interpreted as
+// equal to start. This means you can use a Range with start set to a value, and
+// end and step unset (defaulting to 0) to represent a single value.
+message Range {
+    // Start of range (inclusive).
+    int32 start = 1;
+    // End of range (inclusive).
+    int32 end = 2;
+    // Step (optional, default 1).
+    int32 step = 3;
+}
+
+// StructuredCalendarSpec describes an event specification relative to the
+// calendar, in a form that's easy to work with programmatically. Each field can
+// be one or more ranges.
+// A timestamp matches if at least one range of each field matches the
+// corresponding fields of the timestamp, except for year: if year is missing,
+// that means all years match. For all fields besides year, at least one Range
+// must be present to match anything.
+// TODO: add relative-to-end-of-month
+// TODO: add nth day-of-week in month
+message StructuredCalendarSpec {
+    // Match seconds (0-59)
+    repeated Range second = 1;
+    // Match minutes (0-59)
+    repeated Range minute = 2;
+    // Match hours (0-23)
+    repeated Range hour = 3;
+    // Match days of the month (1-31)
+    // (-- api-linter: core::0140::prepositions=disabled
+    //     aip.dev/not-precedent: standard name of field --)
+    repeated Range day_of_month = 4;
+    // Match months (1-12)
+    repeated Range month = 5;
+    // Match years.
+    repeated Range year = 6;
+    // Match days of the week (0-6; 0 is Sunday).
+    repeated Range day_of_week = 7;
+    // Free-form comment describing the intention of this spec.
+    string comment = 8;
 }
 
 // IntervalSpec matches times that can be expressed as:
@@ -97,24 +149,56 @@ message IntervalSpec {
 // definition of a time zone can change over time (most commonly, when daylight
 // saving time policy changes for an area). To create a totally self-contained
 // ScheduleSpec, use UTC or include timezone_data.
+//
+// For input, you can provide zero or more of: structured_calendar, calendar,
+// cron_string, interval, and exclude_structured_calendar, and all of them will
+// be used (the schedule will take action at the union of all of their times,
+// minus the ones that match exclude_structured_calendar).
+//
+// On input, calendar and cron_string fields will be compiled into
+// structured_calendar (and maybe interval and timezone_name), so if you
+// Describe a schedule, you'll see only structured_calendar, interval, etc.
 message ScheduleSpec {
+    // Calendar-based specifications of times.
+    repeated StructuredCalendarSpec structured_calendar = 7;
+    // cron_string holds a traditional cron specification as a string. It
+    // accepts 5, 6, or 7 fields, separated by spaces, and interprets them the
+    // same way as CalendarSpec.
+    // 5 fields:         minute, hour, day_of_month, month, day_of_week
+    // 6 fields:         minute, hour, day_of_month, month, day_of_week, year
+    // 7 fields: second, minute, hour, day_of_month, month, day_of_week, year
+    // If year is not given, it defaults to *. If second is not given, it
+    // defaults to 0.
+    // Shorthands @yearly, @monthly, @weekly, @daily, and @hourly are also
+    // accepted instead of the 5-7 time fields.
+    // Optionally, the string can be preceded by CRON_TZ=<timezone name> or
+    // TZ=<timezone name>, which will get copied to timezone_name. (There must
+    // not also be a timezone_name present.)
+    // Optionally "#" followed by a comment can appear at the end of the string.
+    // Note that the special case that some cron implementations have for
+    // treating day_of_month and day_of_week as "or" instead of "and" when both
+    // are set is not implemented.
+    // @every <interval>[/<phase>] is accepted and gets compiled into an
+    // IntervalSpec instead. <interval> and <phase> should be a decimal integer
+    // with a unit suffix s, m, h, or d.
+    repeated string cron_string = 8;
     // Calendar-based specifications of times.
     repeated CalendarSpec calendar = 1;
     // Interval-based specifications of times.
     repeated IntervalSpec interval = 2;
-    // Any timestamps matching any of the exclude_calendar specs will be
-    // skipped.
-    repeated CalendarSpec exclude_calendar = 3;
-    // Any timestamps before start_time will be skipped. Together, start_time
-    // and end_time make an inclusive interval.
+    // Any timestamps matching any of exclude_* will be skipped.
+    repeated CalendarSpec exclude_calendar = 3 [deprecated = true]; // use exclude_structured_calendar
+    repeated StructuredCalendarSpec exclude_structured_calendar = 9;
+    // If start_time is set, any timestamps before start_time will be skipped.
+    // (Together, start_time and end_time make an inclusive interval.)
     google.protobuf.Timestamp start_time = 4 [(gogoproto.stdtime) = true];
-    // Any timestamps after end_time will be skipped.
+    // If end_time is set, any timestamps after end_time will be skipped.
     google.protobuf.Timestamp end_time = 5 [(gogoproto.stdtime) = true];
     // All timestamps will be incremented by a random value from 0 to this
-    // amount of jitter. Default: 1 second
+    // amount of jitter. Default: 0
     google.protobuf.Duration jitter = 6 [(gogoproto.stdduration) = true];
 
-    // Time zone to interpret all CalendarSpecs in.
+    // Time zone to interpret all calendar-based specs in.
     //
     // If unset, defaults to UTC. We recommend using UTC for your application if
     // at all possible, to avoid various surprising properties of time zones.
@@ -134,21 +218,17 @@ message ScheduleSpec {
     // at 2:30am and specify a time zone that follows DST, that action will not
     // be triggered on the day that has no 2:30am. Similarly, an action that
     // fires at 1:30am will be triggered twice on the day that has two 1:30s.
+    //
+    // Also note that no actions are taken on leap-seconds (e.g. 23:59:60 UTC).
     string timezone_name = 10;
     bytes timezone_data = 11;
 }
 
 message SchedulePolicies {
     // Policy for overlaps.
-    // Note that this can be changed after a schedule has taken some actions, and we can't
-    // provide 100% sensible semantics for all changes. The most confusing case would be
-    // changes to/from ALLOW_ALL: with that policy multiple scheduled workflows can run
-    // concurrently, but for all other policies only one can run at a time. Changing
-    // between these two classes will leave all workflows with the other class alone.
-    // E.g., if changing from ALLOW_ALL to CANCEL_OTHER, and there are workflows running,
-    // those workflows will not be cancelled. If changing from ALLOW_ALL to SKIP with
-    // workflows running, the running workflows will not cause the next action to be
-    // skipped.
+    // Note that this can be changed after a schedule has taken some actions,
+    // and some changes might produce unintuitive results. In general, the later
+    // policy overrides the earlier policy.
     temporal.api.enums.v1.ScheduleOverlapPolicy overlap_policy = 1;
 
     // Policy for catchups:
@@ -195,10 +275,11 @@ message ScheduleState {
     // If true, do not take any actions based on the schedule spec.
     bool paused = 2;
 
-    // If limited_actions is true, decrement remaining_actions after each action, and do
-    // not take any more scheduled actions if remaining_actions is zero. Actions may still
-    // be taken by explicit request. Skipped actions (due to overlap policy) do not count
-    // against remaining actions.
+    // If limited_actions is true, decrement remaining_actions after each
+    // action, and do not take any more scheduled actions if remaining_actions
+    // is zero. Actions may still be taken by explicit request (i.e. trigger
+    // immediately or backfill). Skipped actions (due to overlap policy) do not
+    // count against remaining actions.
     bool limited_actions = 3;
     int64 remaining_actions = 4;
 }
@@ -258,8 +339,7 @@ message ScheduleInfo {
     google.protobuf.Timestamp create_time = 6 [(gogoproto.stdtime) = true];
     google.protobuf.Timestamp update_time = 7 [(gogoproto.stdtime) = true];
 
-    // Error for invalid schedule. If this is set, no actions will be taken.
-    string invalid_schedule_error = 8;
+    string invalid_schedule_error = 8 [deprecated = true];
 }
 
 message Schedule {
@@ -273,8 +353,7 @@ message Schedule {
 // that's returned in ListSchedules.
 message ScheduleListInfo {
     // From spec:
-    // Some fields are too large/unimportant for the purpose of listing, so we'll clear them
-    // from this copy of spec: exclude_calendar, jitter, timezone_data.
+    // Some fields are dropped from this copy of spec: timezone_data
     ScheduleSpec spec = 1;
 
     // From action:
