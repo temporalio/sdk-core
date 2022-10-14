@@ -135,7 +135,7 @@ impl WorkerClient for WorkerClientBag {
                 self.worker_build_id.clone()
             },
             worker_versioning_id: Some(VersionId {
-                worker_build_id: self.versioning_build_id()
+                worker_build_id: self.versioning_build_id(),
             }),
         };
 
@@ -163,7 +163,7 @@ impl WorkerClient for WorkerClientBag {
                 max_tasks_per_second: Some(tps),
             }),
             worker_versioning_id: Some(VersionId {
-                worker_build_id: self.versioning_build_id()
+                worker_build_id: self.versioning_build_id(),
             }),
         };
 
@@ -187,7 +187,7 @@ impl WorkerClient for WorkerClientBag {
             return_new_workflow_task: request.return_new_workflow_task,
             force_create_new_workflow_task: request.force_create_new_workflow_task,
             worker_versioning_id: Some(VersionId {
-                worker_build_id: self.versioning_build_id()
+                worker_build_id: self.versioning_build_id(),
             }),
             binary_checksum: self.worker_build_id.clone(),
             query_results: request
