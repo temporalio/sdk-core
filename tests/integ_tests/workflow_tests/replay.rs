@@ -186,6 +186,23 @@ async fn multiple_histories_replay(#[values(false, true)] use_feeder: bool) {
     assert_eq!(runs_ctr.lock().len(), 2);
 }
 
+#[tokio::test]
+async fn multiple_histories_can_handle_dupe_run_ids() {
+    let mut hist1 = canned_histories::single_timer("1");
+    hist1.set_wf_type("onetimer");
+    let (worker, _) = init_core_replay_preloaded(
+        "multiple_hist_replay",
+        [
+            test_hist_to_replay(hist1.clone()),
+            test_hist_to_replay(hist1.clone()),
+            test_hist_to_replay(hist1),
+        ],
+    );
+    let mut worker = Worker::new_from_core(worker, "replay_dupe_ids".to_string());
+    worker.register_wf("onetimer", timers_wf(1));
+    worker.run().await.unwrap();
+}
+
 fn timers_wf(num_timers: u32) -> WorkflowFunction {
     WorkflowFunction::new(move |ctx: WfContext| async move {
         for _ in 1..=num_timers {

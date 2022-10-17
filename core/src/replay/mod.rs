@@ -10,7 +10,7 @@ use futures::{FutureExt, Stream, StreamExt};
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -126,6 +126,7 @@ pub(crate) struct Historator {
     worker_closer: Arc<OnceCell<CancellationToken>>,
     dat: Arc<Mutex<HistoratorDat>>,
     replay_done_tx: UnboundedSender<String>,
+    seen_run_ids: HashSet<String>,
 }
 impl Historator {
     pub(crate) fn new(histories: impl Stream<Item = HistoryForReplay> + Send + 'static) -> Self {
@@ -139,6 +140,7 @@ impl Historator {
             worker_closer: Arc::new(OnceCell::new()),
             dat,
             replay_done_tx,
+            seen_run_ids: Default::default(),
         }
     }
 
@@ -184,6 +186,16 @@ impl Stream for Historator {
                                  execution started events",
                     )
                     .to_string();
+                if self.seen_run_ids.contains(&run_id) {
+                    error!(
+                        "Already replayed workflow with run id {}! Ending replay since this \
+                         likely means you are feeding in histories improperly",
+                        &run_id
+                    );
+                    return Poll::Ready(None);
+                } else {
+                    self.seen_run_ids.insert(run_id.clone());
+                }
                 let last_event = history.hist.last_event_id();
                 self.dat
                     .lock()
