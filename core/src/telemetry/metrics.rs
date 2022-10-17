@@ -1,13 +1,14 @@
 use super::TELEM_SERVICE_NAME;
 use crate::telemetry::GLOBAL_TELEM_DAT;
-use opentelemetry::sdk::metrics::aggregators::Aggregator;
-use opentelemetry::sdk::metrics::sdk_api::{Descriptor, InstrumentKind};
 use opentelemetry::{
     global,
     metrics::{Counter, Histogram, Meter},
     sdk::{
         export::metrics::AggregatorSelector,
-        metrics::aggregators::{histogram, last_value, sum},
+        metrics::{
+            aggregators::{histogram, last_value, sum, Aggregator},
+            sdk_api::{Descriptor, InstrumentKind},
+        },
     },
     Context, KeyValue,
 };
@@ -335,7 +336,8 @@ static WF_TASK_MS_BUCKETS: &[f64] = &[1., 10., 20., 50., 100., 200., 500., 1000.
 static ACT_EXE_MS_BUCKETS: &[f64] = &[50., 100., 500., 1000., 5000., 10_000., 60_000.];
 
 /// Schedule-to-start latency buckets for both WFT and AT
-static TASK_SCHED_TO_START_MS_BUCKETS: &[f64] = &[100., 500., 1000., 5000., 10_000.];
+static TASK_SCHED_TO_START_MS_BUCKETS: &[f64] =
+    &[100., 500., 1000., 5000., 10_000., 100_000., 1_000_000.];
 
 /// Default buckets. Should never really be used as they will be meaningless for many things, but
 /// broadly it's trying to represent latencies in millis.
