@@ -187,11 +187,12 @@ impl Stream for Historator {
                     )
                     .to_string();
                 if self.seen_run_ids.contains(&run_id) {
-                    info!(
-                        "Already replayed workflow with run id {}, skipping",
+                    error!(
+                        "Already replayed workflow with run id {}! Ending replay since this \
+                         likely means you are feeding in histories improperly",
                         &run_id
                     );
-                    return self.poll_next(cx);
+                    return Poll::Ready(None);
                 } else {
                     self.seen_run_ids.insert(run_id.clone());
                 }

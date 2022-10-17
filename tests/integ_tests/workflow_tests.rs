@@ -38,7 +38,7 @@ use temporal_sdk_core_protos::{
         workflow_completion::WorkflowActivationCompletion,
         ActivityTaskCompletion, AsJsonPayloadExt, IntoCompletion,
     },
-    temporal::api::failure::v1::Failure,
+    temporal::api::{failure::v1::Failure, history::v1::history_event},
 };
 use temporal_sdk_core_test_utils::{
     history_from_proto_binary, init_core_and_create_wf, init_core_replay_preloaded,
@@ -180,14 +180,20 @@ async fn shutdown_aborts_actively_blocked_poll() {
 #[tokio::test]
 async fn fail_wf_task(#[values(true, false)] replay: bool) {
     let core = if replay {
-        let hist = HistoryForReplay::new(
-            history_from_proto_binary("histories/fail_wf_task.bin")
-                .await
-                .unwrap(),
-            "fake".to_string(),
-        );
         // We need to send the history twice, since we fail it the first time.
-        let (core, _) = init_core_replay_preloaded("fail_wf_task", [hist.clone(), hist]);
+        let mut hist_proto = history_from_proto_binary("histories/fail_wf_task.bin")
+            .await
+            .unwrap();
+        let hist = HistoryForReplay::new(hist_proto.clone(), "fake".to_string());
+        if let Some(history_event::Attributes::WorkflowExecutionStartedEventAttributes(
+            ref mut attrs,
+        )) = hist_proto.events[0].attributes
+        {
+            attrs.original_execution_run_id = "run2".to_string();
+            attrs.first_execution_run_id = "run2".to_string();
+        }
+        let hist2 = HistoryForReplay::new(hist_proto, "fake".to_string());
+        let (core, _) = init_core_replay_preloaded("fail_wf_task", [hist, hist2]);
         core
     } else {
         let mut starter = init_core_and_create_wf("fail_wf_task").await;
