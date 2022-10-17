@@ -504,7 +504,7 @@ impl WorkflowMachines {
                     attrs,
                 )) = event.attributes
                 {
-                    if let Some(st) = event.event_time {
+                    if let Some(st) = event.event_time.clone() {
                         let as_systime: SystemTime = st.try_into()?;
                         self.workflow_start_time = Some(as_systime);
                         // Set the workflow time to be the event time of the first event, so that
@@ -516,6 +516,7 @@ impl WorkflowMachines {
                     self.drive_me.start(
                         self.workflow_id.clone(),
                         str_to_randomness_seed(&attrs.original_execution_run_id),
+                        event.event_time.unwrap_or_default(),
                         attrs,
                     );
                 } else {

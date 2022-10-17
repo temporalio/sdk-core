@@ -119,6 +119,8 @@ message StartWorkflow {
     temporal.api.common.v1.Memo memo = 21;
     // Search attributes created/updated when this workflow was started
     temporal.api.common.v1.SearchAttributes search_attributes = 22;
+    // When the workflow execution started event was first written
+    google.protobuf.Timestamp start_time = 23;
 }
 
 /// Notify a workflow that a timer has fired

@@ -404,6 +404,7 @@ pub mod coresdk {
                 query::v1::WorkflowQuery,
             },
         };
+        use prost_types::Timestamp;
         use std::{
             collections::HashMap,
             fmt::{Display, Formatter},
@@ -599,6 +600,7 @@ pub mod coresdk {
             attrs: WorkflowExecutionStartedEventAttributes,
             workflow_id: String,
             randomness_seed: u64,
+            start_time: Timestamp,
         ) -> StartWorkflow {
             StartWorkflow {
                 workflow_type: attrs.workflow_type.map(|wt| wt.name).unwrap_or_default(),
@@ -632,6 +634,7 @@ pub mod coresdk {
                 cron_schedule_to_schedule_interval: attrs.first_workflow_task_backoff,
                 memo: attrs.memo,
                 search_attributes: attrs.search_attributes,
+                start_time: Some(start_time),
             }
         }
     }
