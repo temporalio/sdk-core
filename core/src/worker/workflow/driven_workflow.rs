@@ -1,4 +1,5 @@
 use crate::worker::workflow::{WFCommand, WorkflowStartedInfo};
+use prost_types::Timestamp;
 use temporal_sdk_core_protos::{
     coresdk::workflow_activation::{
         start_workflow_from_attribs, workflow_activation_job, CancelWorkflow, SignalWorkflow,
@@ -36,6 +37,7 @@ impl DrivenWorkflow {
         &mut self,
         workflow_id: String,
         randomness_seed: u64,
+        start_time: Timestamp,
         attribs: WorkflowExecutionStartedEventAttributes,
     ) {
         debug!(run_id = %attribs.original_execution_run_id, "Driven WF start");
@@ -49,7 +51,9 @@ impl DrivenWorkflow {
             search_attrs: attribs.search_attributes.clone(),
             retry_policy: attribs.retry_policy.clone(),
         };
-        self.send_job(start_workflow_from_attribs(attribs, workflow_id, randomness_seed).into());
+        self.send_job(
+            start_workflow_from_attribs(attribs, workflow_id, randomness_seed, start_time).into(),
+        );
         self.started_attrs = Some(started_info);
     }
 
