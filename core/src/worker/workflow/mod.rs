@@ -902,10 +902,12 @@ fn validate_completion(
                 )
             {
                 return Err(CompleteWfError::MalformedWorkflowCompletion {
-                    reason: "Workflow completion had a legacy query response along with other \
-                                commands. This is not allowed and constitutes an error in the \
-                                lang SDK"
-                        .to_owned(),
+                    reason: format!(
+                        "Workflow completion had a legacy query response along with other \
+                         commands. This is not allowed and constitutes an error in the \
+                         lang SDK. Commands: {:?}",
+                        commands
+                    ),
                     run_id: completion.run_id,
                 });
             }
