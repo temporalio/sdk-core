@@ -1,17 +1,22 @@
 use log::{LevelFilter, Log, Metadata, Record};
-use ringbuf::{Consumer, Producer, RingBuffer};
-use std::{sync::Mutex, time::SystemTime};
+use ringbuf::{Consumer, Producer, StaticRb};
+use std::{
+    sync::{Arc, Mutex},
+    time::SystemTime,
+};
 use temporal_sdk_core_api::CoreLog;
 
+const RB_SIZE: usize = 2048;
+
 pub(crate) struct CoreExportLogger {
-    logs_in: Mutex<Producer<CoreLog>>,
-    logs_out: Mutex<Consumer<CoreLog>>,
+    logs_in: Mutex<Producer<CoreLog, Arc<StaticRb<CoreLog, RB_SIZE>>>>,
+    logs_out: Mutex<Consumer<CoreLog, Arc<StaticRb<CoreLog, RB_SIZE>>>>,
     level_filter: LevelFilter,
 }
 
 impl CoreExportLogger {
     pub(crate) fn new(level: LevelFilter) -> Self {
-        let (lin, lout) = RingBuffer::new(2048).split();
+        let (lin, lout) = StaticRb::<_, RB_SIZE>::default().split();
         Self {
             logs_in: Mutex::new(lin),
             logs_out: Mutex::new(lout),
@@ -25,13 +30,9 @@ impl CoreExportLogger {
             .lock()
             .expect("Logging output mutex must be acquired");
         let mut retme = Vec::with_capacity(lout.len());
-        lout.pop_each(
-            |el| {
-                retme.push(el);
-                true
-            },
-            None,
-        );
+        lout.pop_iter().for_each(|el| {
+            retme.push(el);
+        });
         retme
     }
 }
