@@ -54,6 +54,14 @@ async fn timer_workflow_replay() {
         );
     };
     let poll_fut = async {
+        let evict_task = core
+            .poll_workflow_activation()
+            .await
+            .expect("Should be an eviction activation");
+        assert!(evict_task.eviction_reason().is_some());
+        core.complete_workflow_activation(WorkflowActivationCompletion::empty(evict_task.run_id))
+            .await
+            .unwrap();
         assert_matches!(
             core.poll_workflow_activation().await,
             Err(PollWfError::ShutDown)

@@ -10,16 +10,19 @@ use futures::{FutureExt, Stream, StreamExt};
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
 };
-use temporal_sdk_core_protos::temporal::api::{
-    common::v1::WorkflowExecution,
-    history::v1::History,
-    workflowservice::v1::{
-        RespondWorkflowTaskCompletedResponse, RespondWorkflowTaskFailedResponse,
+use temporal_sdk_core_protos::{
+    coresdk::workflow_activation::remove_from_cache::EvictionReason,
+    temporal::api::{
+        common::v1::WorkflowExecution,
+        history::v1::History,
+        workflowservice::v1::{
+            RespondWorkflowTaskCompletedResponse, RespondWorkflowTaskFailedResponse,
+        },
     },
 };
 pub use temporal_sdk_core_protos::{
@@ -126,7 +129,6 @@ pub(crate) struct Historator {
     worker_closer: Arc<OnceCell<CancellationToken>>,
     dat: Arc<Mutex<HistoratorDat>>,
     replay_done_tx: UnboundedSender<String>,
-    seen_run_ids: HashSet<String>,
 }
 impl Historator {
     pub(crate) fn new(histories: impl Stream<Item = HistoryForReplay> + Send + 'static) -> Self {
@@ -140,7 +142,6 @@ impl Historator {
             worker_closer: Arc::new(OnceCell::new()),
             dat,
             replay_done_tx,
-            seen_run_ids: Default::default(),
         }
     }
 
@@ -149,7 +150,7 @@ impl Historator {
     pub(crate) fn get_post_activate_hook(&self) -> impl Fn(&Worker, &str, usize) + Send + Sync {
         let dat = self.dat.clone();
         let done_tx = self.replay_done_tx.clone();
-        move |_worker, activated_run_id, last_processed_event| {
+        move |worker, activated_run_id, last_processed_event| {
             // We can't hold the lock while evaluating the hook, or we'd deadlock.
             let last_event_in_hist = dat
                 .lock()
@@ -158,6 +159,11 @@ impl Historator {
                 .cloned();
             if let Some(le) = last_event_in_hist {
                 if last_processed_event >= le {
+                    worker.request_wf_eviction(
+                        activated_run_id,
+                        "Always evict workflows after replay",
+                        EvictionReason::LangRequested,
+                    );
                     done_tx.send(activated_run_id.to_string()).unwrap();
                 }
             }
@@ -186,16 +192,6 @@ impl Stream for Historator {
                                  execution started events",
                     )
                     .to_string();
-                if self.seen_run_ids.contains(&run_id) {
-                    error!(
-                        "Already replayed workflow with run id {}! Ending replay since this \
-                         likely means you are feeding in histories improperly",
-                        &run_id
-                    );
-                    return Poll::Ready(None);
-                } else {
-                    self.seen_run_ids.insert(run_id.clone());
-                }
                 let last_event = history.hist.last_event_id();
                 self.dat
                     .lock()
