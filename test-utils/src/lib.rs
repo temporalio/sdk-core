@@ -515,7 +515,6 @@ pub fn schedule_activity_cmd(
         seq,
         activity_id: activity_id.to_string(),
         activity_type: "test_activity".to_string(),
-        namespace: NAMESPACE.to_owned(),
         task_queue: task_q.to_owned(),
         schedule_to_start_timeout: Some(activity_timeout.try_into().expect("duration fits")),
         start_to_close_timeout: Some(activity_timeout.try_into().expect("duration fits")),

@@ -54,7 +54,6 @@ message ScheduleActivity {
     uint32 seq = 1;
     string activity_id = 2;
     string activity_type = 3;
-    string namespace = 4;
     // The name of the task queue to place this activity request in
     string task_queue = 5;
     map<string, temporal.api.common.v1.Payload> headers = 6;
