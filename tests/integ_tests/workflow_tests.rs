@@ -6,6 +6,7 @@ mod child_workflows;
 mod continue_as_new;
 mod determinism;
 mod local_activities;
+mod modify_wf_properties;
 mod patches;
 mod replay;
 mod resets;

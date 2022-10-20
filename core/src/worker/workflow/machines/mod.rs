@@ -314,9 +314,3 @@ struct NewMachineWithCommand {
     command: ProtoCommand,
     machine: Machines,
 }
-
-// impl Debug for dyn TemporalStateMachine {
-//     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-//         std::fmt::Display::fmt(&self.name(), f)
-//     }
-// }

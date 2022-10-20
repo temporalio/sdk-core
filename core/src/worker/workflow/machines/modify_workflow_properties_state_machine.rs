@@ -79,7 +79,7 @@ impl TryFrom<HistoryEvent> for ModifyWorkflowPropertiesMachineEvents {
 
     fn try_from(e: HistoryEvent) -> Result<Self, Self::Error> {
         match e.event_type() {
-            EventType::UpsertWorkflowSearchAttributes => {
+            EventType::WorkflowPropertiesModified => {
                 Ok(ModifyWorkflowPropertiesMachineEvents::CommandRecorded)
             }
             _ => Err(Self::Error::Nondeterminism(format!(
@@ -94,7 +94,7 @@ impl TryFrom<CommandType> for ModifyWorkflowPropertiesMachineEvents {
 
     fn try_from(c: CommandType) -> Result<Self, Self::Error> {
         match c {
-            CommandType::UpsertWorkflowSearchAttributes => {
+            CommandType::ModifyWorkflowProperties => {
                 Ok(ModifyWorkflowPropertiesMachineEvents::CommandScheduled)
             }
             _ => Err(Self::Error::Nondeterminism(format!(
@@ -113,5 +113,66 @@ impl From<CommandIssued> for Done {
 impl From<Created> for CommandIssued {
     fn from(_: Created) -> Self {
         Self {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{replay::TestHistoryBuilder, worker::workflow::ManagedWFFunc};
+    use temporal_sdk::{WfContext, WorkflowFunction};
+    use temporal_sdk_core_protos::temporal::api::{
+        command::v1::command::Attributes, common::v1::Payload,
+    };
+
+    #[tokio::test]
+    async fn workflow_modify_props() {
+        let mut t = TestHistoryBuilder::default();
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        t.add_full_wf_task();
+        t.add_workflow_execution_completed();
+
+        let (k1, k2) = ("foo", "bar");
+
+        let wff = WorkflowFunction::new(move |ctx: WfContext| async move {
+            ctx.upsert_memo([
+                (
+                    String::from(k1),
+                    Payload {
+                        data: vec![0x01],
+                        ..Default::default()
+                    },
+                ),
+                (
+                    String::from(k2),
+                    Payload {
+                        data: vec![0x02],
+                        ..Default::default()
+                    },
+                ),
+            ]);
+            Ok(().into())
+        });
+        let mut wfm = ManagedWFFunc::new(t, wff, vec![]);
+
+        wfm.get_next_activation().await.unwrap();
+        let commands = wfm.get_server_commands().commands;
+        assert!(!commands.is_empty());
+        let cmd = commands[0].clone();
+        assert_eq!(
+            cmd.command_type,
+            CommandType::ModifyWorkflowProperties as i32
+        );
+        assert_matches!(
+        cmd.attributes.unwrap(),
+        Attributes::ModifyWorkflowPropertiesCommandAttributes(msg) => {
+            let fields = &msg.upserted_memo.unwrap().fields;
+            let payload1 = fields.get(k1).unwrap();
+            let payload2 = fields.get(k2).unwrap();
+            assert_eq!(payload1.data[0], 0x01);
+            assert_eq!(payload2.data[0], 0x02);
+            assert_eq!(fields.len(), 2);
+        });
+        wfm.shutdown().await.unwrap();
     }
 }

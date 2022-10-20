@@ -34,11 +34,11 @@ use temporal_sdk_core_protos::{
         workflow_commands::{
             request_cancel_external_workflow_execution as cancel_we,
             signal_external_workflow_execution as sig_we, workflow_command,
-            RequestCancelExternalWorkflowExecution, SetPatchMarker,
+            ModifyWorkflowProperties, RequestCancelExternalWorkflowExecution, SetPatchMarker,
             SignalExternalWorkflowExecution, StartTimer, UpsertWorkflowSearchAttributes,
         },
     },
-    temporal::api::common::v1::Payload,
+    temporal::api::common::v1::{Memo, Payload},
 };
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -294,6 +294,17 @@ impl WfContext {
                     search_attributes: HashMap::from_iter(attr_iter.into_iter()),
                 },
             ),
+        ))
+    }
+
+    /// Add or create a set of search attributes
+    pub fn upsert_memo(&self, attr_iter: impl IntoIterator<Item = (String, Payload)>) {
+        self.send(RustWfCmd::NewNonblockingCmd(
+            workflow_command::Variant::ModifyWorkflowProperties(ModifyWorkflowProperties {
+                upserted_memo: Some(Memo {
+                    fields: HashMap::from_iter(attr_iter.into_iter()),
+                }),
+            }),
         ))
     }
 

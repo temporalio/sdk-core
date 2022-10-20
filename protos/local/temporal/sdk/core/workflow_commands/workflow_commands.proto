@@ -35,6 +35,7 @@ message WorkflowCommand {
         ScheduleLocalActivity schedule_local_activity = 16;
         RequestCancelLocalActivity request_cancel_local_activity = 17;
         UpsertWorkflowSearchAttributes upsert_workflow_search_attributes = 18;
+        ModifyWorkflowProperties modify_workflow_properties = 19;
     }
 }
 
