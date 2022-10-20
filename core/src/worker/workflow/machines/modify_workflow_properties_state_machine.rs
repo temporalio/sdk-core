@@ -2,7 +2,7 @@ use super::{
     workflow_machines::{MachineResponse, WFMachinesError},
     NewMachineWithCommand,
 };
-use crate::worker::workflow::machines::{Cancellable, EventInfo, MachineKind, WFMachinesAdapter};
+use crate::worker::workflow::machines::{Cancellable, EventInfo, WFMachinesAdapter};
 use rustfsm::{fsm, TransitionResult};
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::ModifyWorkflowProperties,
@@ -69,10 +69,6 @@ impl WFMachinesAdapter for ModifyWorkflowPropertiesMachine {
 
     fn matches_event(&self, event: &HistoryEvent) -> bool {
         matches!(event.event_type(), EventType::WorkflowPropertiesModified)
-    }
-
-    fn kind(&self) -> MachineKind {
-        MachineKind::ModifyWorkflowProperties
     }
 }
 

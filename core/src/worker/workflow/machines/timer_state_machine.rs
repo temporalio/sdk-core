@@ -2,7 +2,7 @@
 
 use super::{
     workflow_machines::{MachineResponse, WFMachinesError},
-    Cancellable, EventInfo, MachineKind, NewMachineWithCommand, OnEventWrapper, WFMachinesAdapter,
+    Cancellable, EventInfo, NewMachineWithCommand, OnEventWrapper, WFMachinesAdapter,
 };
 use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
 use std::convert::TryFrom;
@@ -245,10 +245,6 @@ impl WFMachinesAdapter for TimerMachine {
             event.event_type(),
             EventType::TimerStarted | EventType::TimerCanceled | EventType::TimerFired
         )
-    }
-
-    fn kind(&self) -> MachineKind {
-        MachineKind::Timer
     }
 }
 

@@ -2,7 +2,7 @@ use super::{
     workflow_machines::{MachineResponse, WFMachinesError},
     NewMachineWithCommand,
 };
-use crate::worker::workflow::machines::{Cancellable, EventInfo, MachineKind, WFMachinesAdapter};
+use crate::worker::workflow::machines::{Cancellable, EventInfo, WFMachinesAdapter};
 use rustfsm::{fsm, TransitionResult};
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::UpsertWorkflowSearchAttributes,
@@ -101,10 +101,6 @@ impl WFMachinesAdapter for UpsertSearchAttributesMachine {
             event.event_type(),
             EventType::UpsertWorkflowSearchAttributes
         )
-    }
-
-    fn kind(&self) -> MachineKind {
-        MachineKind::UpsertSearchAttributes
     }
 }
 

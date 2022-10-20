@@ -1,5 +1,5 @@
 use super::{
-    workflow_machines::MachineResponse, Cancellable, EventInfo, MachineKind, NewMachineWithCommand,
+    workflow_machines::MachineResponse, Cancellable, EventInfo, NewMachineWithCommand,
     OnEventWrapper, WFMachinesAdapter, WFMachinesError,
 };
 use rustfsm::{fsm, MachineError, TransitionResult};
@@ -584,10 +584,6 @@ impl WFMachinesAdapter for ChildWorkflowMachine {
                 | EventType::ChildWorkflowExecutionTerminated
                 | EventType::ChildWorkflowExecutionCanceled
         )
-    }
-
-    fn kind(&self) -> MachineKind {
-        MachineKind::ChildWorkflow
     }
 }
 

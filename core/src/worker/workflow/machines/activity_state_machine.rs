@@ -1,7 +1,7 @@
 #![allow(clippy::large_enum_variant)]
 
 use super::{
-    workflow_machines::MachineResponse, Cancellable, EventInfo, MachineKind, NewMachineWithCommand,
+    workflow_machines::MachineResponse, Cancellable, EventInfo, NewMachineWithCommand,
     OnEventWrapper, WFMachinesAdapter, WFMachinesError,
 };
 use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
@@ -287,10 +287,6 @@ impl WFMachinesAdapter for ActivityMachine {
                 | EventType::ActivityTaskCancelRequested
                 | EventType::ActivityTaskCanceled
         )
-    }
-
-    fn kind(&self) -> MachineKind {
-        MachineKind::Activity
     }
 }
 

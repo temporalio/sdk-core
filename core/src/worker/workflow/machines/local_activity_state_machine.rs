@@ -1,6 +1,6 @@
 use super::{
-    workflow_machines::MachineResponse, Cancellable, EventInfo, MachineKind, OnEventWrapper,
-    WFMachinesAdapter, WFMachinesError,
+    workflow_machines::MachineResponse, Cancellable, EventInfo, OnEventWrapper, WFMachinesAdapter,
+    WFMachinesError,
 };
 use crate::{
     protosext::{CompleteLocalActivityData, HistoryEventExt, ValidScheduleLA},
@@ -707,10 +707,6 @@ impl WFMachinesAdapter for LocalActivityMachine {
 
     fn matches_event(&self, event: &HistoryEvent) -> bool {
         event.is_local_activity_marker()
-    }
-
-    fn kind(&self) -> MachineKind {
-        MachineKind::LocalActivity
     }
 }
 

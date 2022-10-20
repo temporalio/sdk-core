@@ -1,6 +1,6 @@
 use super::{
-    Cancellable, EventInfo, HistoryEvent, MachineKind, MachineResponse, NewMachineWithCommand,
-    OnEventWrapper, WFMachinesAdapter, WFMachinesError,
+    Cancellable, EventInfo, HistoryEvent, MachineResponse, NewMachineWithCommand, OnEventWrapper,
+    WFMachinesAdapter, WFMachinesError,
 };
 use rustfsm::{fsm, TransitionResult};
 use std::convert::TryFrom;
@@ -109,10 +109,6 @@ impl WFMachinesAdapter for ContinueAsNewWorkflowMachine {
 
     fn matches_event(&self, event: &HistoryEvent) -> bool {
         event.event_type() == EventType::WorkflowExecutionContinuedAsNew
-    }
-
-    fn kind(&self) -> MachineKind {
-        MachineKind::ContinueAsNewWorkflow
     }
 }
 

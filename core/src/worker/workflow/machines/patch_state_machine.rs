@@ -18,7 +18,7 @@
 //! | replaying, no marker         | deprecate_patch | Call allowed                                                                       |
 
 use super::{
-    workflow_machines::MachineResponse, Cancellable, EventInfo, MachineKind, NewMachineWithCommand,
+    workflow_machines::MachineResponse, Cancellable, EventInfo, NewMachineWithCommand,
     OnEventWrapper, WFMachinesAdapter, WFMachinesError,
 };
 use crate::protosext::HistoryEventExt;
@@ -185,10 +185,6 @@ impl WFMachinesAdapter for PatchMachine {
 
     fn matches_event(&self, event: &HistoryEvent) -> bool {
         event.get_patch_marker_details().is_some()
-    }
-
-    fn kind(&self) -> MachineKind {
-        MachineKind::Patch
     }
 }
 
