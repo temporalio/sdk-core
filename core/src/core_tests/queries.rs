@@ -16,8 +16,8 @@ use temporal_sdk_core_protos::{
             remove_from_cache::EvictionReason, workflow_activation_job, WorkflowActivationJob,
         },
         workflow_commands::{
-            ActivityCancellationType, CompleteWorkflowExecution, ContinueAsNewWorkflowExecution,
-            QueryResult, QuerySuccess, RequestCancelActivity,
+            query_result, ActivityCancellationType, CompleteWorkflowExecution,
+            ContinueAsNewWorkflowExecution, QueryResult, QuerySuccess, RequestCancelActivity,
         },
         workflow_completion::WorkflowActivationCompletion,
     },
@@ -684,4 +684,75 @@ async fn legacy_query_response_gets_not_found_not_fatal() {
     .unwrap();
 
     core.shutdown().await;
+}
+
+#[tokio::test]
+async fn new_query_fail() {
+    let wfid = "fake_wf_id";
+    let t = canned_histories::single_timer("1");
+    let tasks = VecDeque::from(vec![{
+        let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), 1.into());
+        pr.queries = HashMap::new();
+        pr.queries.insert(
+            "q1".to_string(),
+            WorkflowQuery {
+                query_type: "query-type".to_string(),
+                query_args: Some(b"hi".into()),
+                header: Default::default(),
+            },
+        );
+        pr
+    }]);
+    let mut mock_client = mock_workflow_client();
+    mock_client
+        .expect_complete_workflow_task()
+        .times(1)
+        .returning(|resp| {
+            // Verify there is a failed query response along w/ start timer cmd
+            assert_eq!(resp.commands.len(), 1);
+            assert_matches!(
+                resp.query_responses.as_slice(),
+                &[QueryResult {
+                    variant: Some(query_result::Variant::Failed(_)),
+                    ..
+                }]
+            );
+            Ok(RespondWorkflowTaskCompletedResponse::default())
+        });
+
+    let mut mock = single_hist_mock_sg(wfid, t, tasks, mock_client, true);
+    mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
+    let core = mock_worker(mock);
+
+    let task = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        task.jobs[0],
+        WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::StartWorkflow(_)),
+        }
+    );
+
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+        task.run_id,
+        start_timer_cmd(1, Duration::from_secs(1)),
+    ))
+    .await
+    .unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        task.jobs[0],
+        WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::QueryWorkflow(_)),
+        }
+    );
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+        task.run_id,
+        QueryResult {
+            query_id: "q1".to_string(),
+            variant: Some(query_result::Variant::Failed("ahhh".into())),
+        }
+        .into(),
+    ))
+    .await
+    .unwrap();
 }
