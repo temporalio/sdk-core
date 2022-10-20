@@ -802,6 +802,16 @@ pub mod coresdk {
             }
         }
 
+        impl Display for ModifyWorkflowProperties {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(
+                    f,
+                    "ModifyWorkflowProperties(upserted memo keys: {:?})",
+                    self.upserted_memo.as_ref().map(|m| m.fields.keys())
+                )
+            }
+        }
+
         impl QueryResult {
             /// Helper to construct the Temporal API query result types.
             pub fn into_components(self) -> (String, QueryResultType, Option<Payloads>, String) {
@@ -1406,6 +1416,16 @@ pub mod temporal {
                         Self::UpsertWorkflowSearchAttributesCommandAttributes(
                             UpsertWorkflowSearchAttributesCommandAttributes {
                                 search_attributes: Some(s.search_attributes.into()),
+                            },
+                        )
+                    }
+                }
+
+                impl From<workflow_commands::ModifyWorkflowProperties> for command::Attributes {
+                    fn from(s: workflow_commands::ModifyWorkflowProperties) -> Self {
+                        Self::ModifyWorkflowPropertiesCommandAttributes(
+                            ModifyWorkflowPropertiesCommandAttributes {
+                                upserted_memo: s.upserted_memo.map(Into::into),
                             },
                         )
                     }

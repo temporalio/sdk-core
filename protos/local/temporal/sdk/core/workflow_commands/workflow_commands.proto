@@ -294,3 +294,10 @@ message UpsertWorkflowSearchAttributes {
     /// value?
     map<string, temporal.api.common.v1.Payload> search_attributes = 1;
 }
+
+message ModifyWorkflowProperties {
+    // If set, update the workflow memo with the provided values. The values will be merged with
+    // the existing memo. If the user wants to delete values, a default/empty Payload should be
+    // used as the value for the key being deleted.
+    temporal.api.common.v1.Memo upserted_memo = 1;
+}

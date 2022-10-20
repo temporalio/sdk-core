@@ -1098,6 +1098,7 @@ pub enum WFCommand {
     SignalExternalWorkflow(SignalExternalWorkflowExecution),
     CancelSignalWorkflow(CancelSignalWorkflow),
     UpsertSearchAttributes(UpsertWorkflowSearchAttributes),
+    ModifyWorkflowProperties(ModifyWorkflowProperties),
 }
 
 impl TryFrom<WorkflowCommand> for WFCommand {

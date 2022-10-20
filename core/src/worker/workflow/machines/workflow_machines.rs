@@ -20,6 +20,7 @@ use crate::{
     telemetry::{metrics::MetricsContext, VecDisplayer},
     worker::{
         workflow::{
+            machines::modify_workflow_properties_state_machine::modify_workflow_properties,
             CommandID, DrivenWorkflow, HistoryUpdate, LocalResolution, WFCommand, WorkflowFetcher,
             WorkflowStartedInfo,
         },
@@ -1037,6 +1038,12 @@ impl WorkflowMachines {
                 WFCommand::QueryResponse(_) => {
                     // Nothing to do here, queries are handled above the machine level
                     unimplemented!("Query responses should not make it down into the machines")
+                }
+                WFCommand::ModifyWorkflowProperties(attrs) => {
+                    self.add_cmd_to_wf_task(
+                        modify_workflow_properties(attrs),
+                        CommandIdKind::NeverResolves,
+                    );
                 }
                 WFCommand::NoCommandsFromLang => (),
             }
