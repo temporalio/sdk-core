@@ -1,5 +1,5 @@
 use super::{
-    workflow_machines::MachineResponse, Cancellable, EventInfo, HistoryEvent, MachineKind,
+    workflow_machines::MachineResponse, Cancellable, EventInfo, HistoryEvent,
     NewMachineWithCommand, OnEventWrapper, WFMachinesAdapter, WFMachinesError,
 };
 use rustfsm::{fsm, TransitionResult};
@@ -110,10 +110,6 @@ impl WFMachinesAdapter for CancelWorkflowMachine {
 
     fn matches_event(&self, event: &HistoryEvent) -> bool {
         event.event_type() == EventType::WorkflowExecutionCanceled
-    }
-
-    fn kind(&self) -> MachineKind {
-        MachineKind::CancelWorkflow
     }
 }
 

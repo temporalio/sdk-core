@@ -1098,6 +1098,7 @@ pub enum WFCommand {
     SignalExternalWorkflow(SignalExternalWorkflowExecution),
     CancelSignalWorkflow(CancelSignalWorkflow),
     UpsertSearchAttributes(UpsertWorkflowSearchAttributes),
+    ModifyWorkflowProperties(ModifyWorkflowProperties),
 }
 
 impl TryFrom<WorkflowCommand> for WFCommand {
@@ -1138,6 +1139,9 @@ impl TryFrom<WorkflowCommand> for WFCommand {
             }
             workflow_command::Variant::UpsertWorkflowSearchAttributes(s) => {
                 Ok(Self::UpsertSearchAttributes(s))
+            }
+            workflow_command::Variant::ModifyWorkflowProperties(s) => {
+                Ok(Self::ModifyWorkflowProperties(s))
             }
         }
     }

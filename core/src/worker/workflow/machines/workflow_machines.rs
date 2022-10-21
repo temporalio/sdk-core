@@ -12,7 +12,7 @@ use super::{
     patch_state_machine::has_change, signal_external_state_machine::new_external_signal,
     timer_state_machine::new_timer, upsert_search_attributes_state_machine::upsert_search_attrs,
     workflow_machines::local_acts::LocalActivityData,
-    workflow_task_state_machine::WorkflowTaskMachine, MachineKind, Machines, NewMachineWithCommand,
+    workflow_task_state_machine::WorkflowTaskMachine, Machines, NewMachineWithCommand,
     TemporalStateMachine,
 };
 use crate::{
@@ -20,6 +20,7 @@ use crate::{
     telemetry::{metrics::MetricsContext, VecDisplayer},
     worker::{
         workflow::{
+            machines::modify_workflow_properties_state_machine::modify_workflow_properties,
             CommandID, DrivenWorkflow, HistoryUpdate, LocalResolution, WFCommand, WorkflowFetcher,
             WorkflowStartedInfo,
         },
@@ -766,7 +767,7 @@ impl WorkflowMachines {
     ) -> Result<()> {
         let sm = self.machine(smk);
         if !machine_responses.is_empty() {
-            debug!(responses = %machine_responses.display(), machine_name = %sm.kind(),
+            debug!(responses = %machine_responses.display(), machine_name = %sm.name(),
                    "Machine produced responses");
         }
         self.process_machine_resps_impl(smk, machine_responses)
@@ -1038,6 +1039,12 @@ impl WorkflowMachines {
                     // Nothing to do here, queries are handled above the machine level
                     unimplemented!("Query responses should not make it down into the machines")
                 }
+                WFCommand::ModifyWorkflowProperties(attrs) => {
+                    self.add_cmd_to_wf_task(
+                        modify_workflow_properties(attrs),
+                        CommandIdKind::NeverResolves,
+                    );
+                }
                 WFCommand::NoCommandsFromLang => (),
             }
         }
@@ -1144,10 +1151,7 @@ enum ChangeMarkerOutcome {
 
 /// Special handling for patch markers, when handling command events as in
 /// [WorkflowMachines::handle_command_event]
-fn change_marker_handling(
-    event: &HistoryEvent,
-    mach: &dyn TemporalStateMachine,
-) -> Result<ChangeMarkerOutcome> {
+fn change_marker_handling(event: &HistoryEvent, mach: &Machines) -> Result<ChangeMarkerOutcome> {
     if !mach.matches_event(event) {
         // Version markers can be skipped in the event they are deprecated
         if let Some((patch_name, deprecated)) = event.get_patch_marker_details() {
@@ -1163,11 +1167,11 @@ fn change_marker_handling(
                 patch_name
             )));
         }
-        // Version machines themselves may also not *have* matching markers, where non-deprecated
+        // Patch machines themselves may also not *have* matching markers, where non-deprecated
         // calls take the old path, and deprecated calls assume history is produced by a new-code
         // worker.
-        if mach.kind() == MachineKind::Patch {
-            debug!("Skipping non-matching event against version machine");
+        if matches!(mach, Machines::PatchMachine(_)) {
+            debug!("Skipping non-matching event against patch machine");
             return Ok(ChangeMarkerOutcome::SkipCommand);
         }
     }

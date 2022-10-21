@@ -1,5 +1,5 @@
 use super::{
-    workflow_machines::MachineResponse, Cancellable, EventInfo, MachineKind, NewMachineWithCommand,
+    workflow_machines::MachineResponse, Cancellable, EventInfo, NewMachineWithCommand,
     OnEventWrapper, WFMachinesAdapter, WFMachinesError,
 };
 use rustfsm::{fsm, MachineError, TransitionResult};
@@ -267,10 +267,6 @@ impl WFMachinesAdapter for SignalExternalMachine {
                 | EventType::SignalExternalWorkflowExecutionInitiated
                 | EventType::SignalExternalWorkflowExecutionFailed
         )
-    }
-
-    fn kind(&self) -> MachineKind {
-        MachineKind::SignalExternalWorkflow
     }
 }
 

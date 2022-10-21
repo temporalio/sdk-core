@@ -1,8 +1,7 @@
 #![allow(clippy::enum_variant_names)]
 
 use super::{
-    workflow_machines::MachineResponse, Cancellable, EventInfo, MachineKind, WFMachinesAdapter,
-    WFMachinesError,
+    workflow_machines::MachineResponse, Cancellable, EventInfo, WFMachinesAdapter, WFMachinesError,
 };
 use rustfsm::{fsm, TransitionResult};
 use std::{
@@ -100,10 +99,6 @@ impl WFMachinesAdapter for WorkflowTaskMachine {
                 | EventType::WorkflowTaskCompleted
                 | EventType::WorkflowTaskFailed
         )
-    }
-
-    fn kind(&self) -> MachineKind {
-        MachineKind::WorkflowTask
     }
 }
 

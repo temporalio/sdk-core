@@ -35,6 +35,7 @@ message WorkflowCommand {
         ScheduleLocalActivity schedule_local_activity = 16;
         RequestCancelLocalActivity request_cancel_local_activity = 17;
         UpsertWorkflowSearchAttributes upsert_workflow_search_attributes = 18;
+        ModifyWorkflowProperties modify_workflow_properties = 19;
     }
 }
 
@@ -293,4 +294,11 @@ message UpsertWorkflowSearchAttributes {
     /// SearchAttributes fields - equivalent to indexed_fields on api. Key = search index, Value =
     /// value?
     map<string, temporal.api.common.v1.Payload> search_attributes = 1;
+}
+
+message ModifyWorkflowProperties {
+    // If set, update the workflow memo with the provided values. The values will be merged with
+    // the existing memo. If the user wants to delete values, a default/empty Payload should be
+    // used as the value for the key being deleted.
+    temporal.api.common.v1.Memo upserted_memo = 1;
 }

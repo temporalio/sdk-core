@@ -75,8 +75,10 @@ mod machine_coverage_report {
         complete_workflow_state_machine::CompleteWorkflowMachine,
         continue_as_new_workflow_state_machine::ContinueAsNewWorkflowMachine,
         fail_workflow_state_machine::FailWorkflowMachine,
-        local_activity_state_machine::LocalActivityMachine, patch_state_machine::PatchMachine,
-        signal_external_state_machine::SignalExternalMachine, timer_state_machine::TimerMachine,
+        local_activity_state_machine::LocalActivityMachine,
+        modify_workflow_properties_state_machine::ModifyWorkflowPropertiesMachine,
+        patch_state_machine::PatchMachine, signal_external_state_machine::SignalExternalMachine,
+        timer_state_machine::TimerMachine,
         upsert_search_attributes_state_machine::UpsertSearchAttributesMachine,
         workflow_task_state_machine::WorkflowTaskMachine,
     };
@@ -115,6 +117,7 @@ mod machine_coverage_report {
         let mut cancel_ext = CancelExternalMachine::visualizer().to_owned();
         let mut la_mach = LocalActivityMachine::visualizer().to_owned();
         let mut upsert_search_attr = UpsertSearchAttributesMachine::visualizer().to_owned();
+        let mut modify_wf_props = ModifyWorkflowPropertiesMachine::visualizer().to_owned();
 
         // This isn't at all efficient but doesn't need to be.
         // Replace transitions in the vizzes with green color if they are covered.
@@ -137,6 +140,9 @@ mod machine_coverage_report {
                 m @ "LocalActivityMachine" => cover_transitions(m, &mut la_mach, coverage),
                 m @ "UpsertSearchAttributesMachine" => {
                     cover_transitions(m, &mut upsert_search_attr, coverage)
+                }
+                m @ "ModifyWorkflowPropertiesMachine" => {
+                    cover_transitions(m, &mut modify_wf_props, coverage)
                 }
                 m => panic!("Unknown machine {}", m),
             }
