@@ -461,12 +461,6 @@ impl WorkflowMachines {
     /// invalid state.
     #[instrument(skip(self, event), fields(event=%event))]
     fn handle_event(&mut self, event: HistoryEvent, has_next_event: bool) -> Result<()> {
-        if event.event_type() == EventType::Unspecified {
-            return Err(WFMachinesError::Fatal(format!(
-                "Event type is unspecified! This history is invalid. Event detail: {:?}",
-                event
-            )));
-        }
         if event.is_final_wf_execution_event() {
             self.have_seen_terminal_event = true;
         }
@@ -491,6 +485,17 @@ impl WorkflowMachines {
         {
             // Replay is finished
             self.replaying = false;
+        }
+        if event.event_type() == EventType::Unspecified || event.attributes.is_none() {
+            return if !event.worker_may_ignore {
+                Err(WFMachinesError::Fatal(format!(
+                    "Event type is unspecified! This history is invalid. Event detail: {:?}",
+                    event
+                )))
+            } else {
+                debug!("Event is ignorable");
+                Ok(())
+            };
         }
 
         if event.is_command_event() {
