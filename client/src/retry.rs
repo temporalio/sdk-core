@@ -552,8 +552,8 @@ mod tests {
     const TEST_RETRY_CONFIG: RetryConfig = RetryConfig {
         initial_interval: Duration::from_millis(1),
         randomization_factor: 0.0,
-        multiplier: 2.0,
-        max_interval: Duration::from_millis(10),
+        multiplier: 1.1,
+        max_interval: Duration::from_millis(2),
         max_elapsed_time: None,
         max_retries: 10,
     };
@@ -652,7 +652,12 @@ mod tests {
 
     #[tokio::test]
     async fn retryable_errors() {
-        for code in RETRYABLE_ERROR_CODES {
+        // Take out retry exhausted since it gets a special policy which would make this take ages
+        for code in RETRYABLE_ERROR_CODES
+            .iter()
+            .copied()
+            .filter(|p| p != &Code::ResourceExhausted)
+        {
             let mut mock_client = MockWorkflowClientTrait::new();
             mock_client
                 .expect_cancel_activity_task()
