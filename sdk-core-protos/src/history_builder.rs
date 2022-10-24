@@ -462,6 +462,15 @@ impl TestHistoryBuilder {
         }
     }
 
+    /// Alter some specific event. You can easily craft nonsense histories this way, use carefully.
+    pub fn modify_event(&mut self, event_id: i64, modifier: impl FnOnce(&mut HistoryEvent)) {
+        let he = self
+            .events
+            .get_mut((event_id - 1) as usize)
+            .expect("Event must be present");
+        modifier(he);
+    }
+
     fn build_and_push_event(&mut self, event_type: EventType, attribs: Attributes) {
         self.current_event_id += 1;
         let evt = HistoryEvent {

@@ -316,6 +316,141 @@ impl WorkflowMachines {
         self.drive_me.get_started_info()
     }
 
+    /// Fetches commands which are ready for processing from the state machines, generally to be
+    /// sent off to the server. They are not removed from the internal queue, that happens when
+    /// corresponding history events from the server are being handled.
+    pub(crate) fn get_commands(&self) -> Vec<ProtoCommand> {
+        self.commands
+            .iter()
+            .filter_map(|c| {
+                if !self.machine(c.machine).is_final_state() {
+                    match &c.command {
+                        MachineAssociatedCommand::Real(cmd) => Some((**cmd).clone()),
+                        MachineAssociatedCommand::FakeLocalActivityMarker(_) => None,
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// Returns the next activation that needs to be performed by the lang sdk. Things like unblock
+    /// timer, etc. This does *not* cause any advancement of the state machines, it merely drains
+    /// from the outgoing queue of activation jobs.
+    ///
+    /// The job list may be empty, in which case it is expected the caller handles what to do in a
+    /// "no work" situation. Possibly, it may know about some work the machines don't, like queries.
+    pub(crate) fn get_wf_activation(&mut self) -> WorkflowActivation {
+        let jobs = self.drive_me.drain_jobs();
+        WorkflowActivation {
+            timestamp: self.current_wf_time.map(Into::into),
+            is_replaying: self.replaying,
+            run_id: self.run_id.clone(),
+            history_length: self.last_processed_event as u32,
+            jobs,
+        }
+    }
+
+    pub(crate) fn has_pending_jobs(&self) -> bool {
+        !self.drive_me.peek_pending_jobs().is_empty()
+    }
+
+    /// Iterate the state machines, which consists of grabbing any pending outgoing commands from
+    /// the workflow code, handling them, and preparing them to be sent off to the server.
+    pub(crate) async fn iterate_machines(&mut self) -> Result<()> {
+        let results = self.drive_me.fetch_workflow_iteration_output().await;
+        self.handle_driven_results(results)?;
+        self.prepare_commands()?;
+        if self.workflow_is_finished() {
+            if let Some(rt) = self.total_runtime() {
+                self.metrics.wf_e2e_latency(rt);
+            }
+        }
+        Ok(())
+    }
+
+    /// Apply the next (unapplied) entire workflow task from history to these machines. Will replay
+    /// any events that need to be replayed until caught up to the newest WFT. May also fetch
+    /// history from server if needed.
+    pub(crate) async fn apply_next_wft_from_history(&mut self) -> Result<usize> {
+        // If we have already seen the terminal event for the entire workflow in a previous WFT,
+        // then we don't need to do anything here, and in fact we need to avoid re-applying the
+        // final WFT.
+        if self.have_seen_terminal_event {
+            return Ok(0);
+        }
+
+        let last_handled_wft_started_id = self.current_started_event_id;
+        let events = {
+            let mut evts = self
+                .last_history_from_server
+                .take_next_wft_sequence(last_handled_wft_started_id)
+                .await
+                .map_err(WFMachinesError::HistoryFetchingError)?;
+            // Do not re-process events we have already processed
+            evts.retain(|e| e.event_id > self.last_processed_event);
+            evts
+        };
+        let num_events_to_process = events.len();
+
+        // We're caught up on reply if there are no new events to process
+        if events.is_empty() {
+            self.replaying = false;
+        }
+        let replay_start = Instant::now();
+
+        if let Some(last_event) = events.last() {
+            if last_event.event_type == EventType::WorkflowTaskStarted as i32 {
+                self.next_started_event_id = last_event.event_id;
+            }
+        }
+
+        let mut history = events.into_iter().peekable();
+        while let Some(event) = history.next() {
+            if event.event_id != self.last_processed_event + 1 {
+                return Err(WFMachinesError::Fatal(format!(
+                    "History is out of order. Last processed event: {}, event id: {}",
+                    self.last_processed_event, event.event_id
+                )));
+            }
+            let next_event = history.peek();
+            let eid = event.event_id;
+            let etype = event.event_type;
+            self.handle_event(event, next_event.is_some())?;
+            self.last_processed_event = eid;
+            if etype == EventType::WorkflowTaskStarted as i32 && next_event.is_none() {
+                break;
+            }
+        }
+
+        // Scan through to the next WFT, searching for any patch markers, so that we can
+        // pre-resolve them.
+        for e in self.last_history_from_server.peek_next_wft_sequence() {
+            if let Some((patch_id, _)) = e.get_patch_marker_details() {
+                self.encountered_change_markers.insert(
+                    patch_id.clone(),
+                    ChangeInfo {
+                        created_command: false,
+                    },
+                );
+                // Found a patch marker
+                self.drive_me
+                    .send_job(workflow_activation_job::Variant::NotifyHasPatch(
+                        NotifyHasPatch { patch_id },
+                    ));
+            } else if e.is_local_activity_marker() {
+                self.local_activity_data.process_peekahead_marker(e)?;
+            }
+        }
+
+        if !self.replaying {
+            self.metrics.wf_task_replay_latency(replay_start.elapsed());
+        }
+
+        Ok(num_events_to_process)
+    }
+
     /// Handle a single event from the workflow history. `has_next_event` should be false if `event`
     /// is the last event in the history.
     ///
@@ -326,12 +461,6 @@ impl WorkflowMachines {
     /// invalid state.
     #[instrument(skip(self, event), fields(event=%event))]
     fn handle_event(&mut self, event: HistoryEvent, has_next_event: bool) -> Result<()> {
-        if event.event_type() == EventType::Unspecified {
-            return Err(WFMachinesError::Fatal(format!(
-                "Event type is unspecified! This history is invalid. Event detail: {:?}",
-                event
-            )));
-        }
         if event.is_final_wf_execution_event() {
             self.have_seen_terminal_event = true;
         }
@@ -349,11 +478,6 @@ impl WorkflowMachines {
                 Ok(())
             };
         }
-
-        if event.is_command_event() {
-            self.handle_command_event(event)?;
-            return Ok(());
-        }
         if self.replaying
             && self.current_started_event_id
                 >= self.last_history_from_server.previous_started_event_id
@@ -362,56 +486,47 @@ impl WorkflowMachines {
             // Replay is finished
             self.replaying = false;
         }
+        if event.event_type() == EventType::Unspecified || event.attributes.is_none() {
+            return if !event.worker_may_ignore {
+                Err(WFMachinesError::Fatal(format!(
+                    "Event type is unspecified! This history is invalid. Event detail: {:?}",
+                    event
+                )))
+            } else {
+                debug!("Event is ignorable");
+                Ok(())
+            };
+        }
 
-        match event.get_initial_command_event_id() {
-            Some(initial_cmd_id) => {
-                // We remove the machine while we it handles events, then return it, to avoid
-                // borrowing from ourself mutably.
-                let maybe_machine = self.machines_by_event_id.remove(&initial_cmd_id);
-                match maybe_machine {
-                    Some(sm) => {
-                        self.submachine_handle_event(sm, event, has_next_event)?;
-                        // Restore machine if not in it's final state
-                        if !self.machine(sm).is_final_state() {
-                            self.machines_by_event_id.insert(initial_cmd_id, sm);
-                        }
+        if event.is_command_event() {
+            self.handle_command_event(event)?;
+            return Ok(());
+        }
+
+        if let Some(initial_cmd_id) = event.get_initial_command_event_id() {
+            // We remove the machine while we it handles events, then return it, to avoid
+            // borrowing from ourself mutably.
+            let maybe_machine = self.machines_by_event_id.remove(&initial_cmd_id);
+            match maybe_machine {
+                Some(sm) => {
+                    self.submachine_handle_event(sm, event, has_next_event)?;
+                    // Restore machine if not in it's final state
+                    if !self.machine(sm).is_final_state() {
+                        self.machines_by_event_id.insert(initial_cmd_id, sm);
                     }
-                    None => {
-                        return Err(WFMachinesError::Nondeterminism(format!(
-                            "During event handling, this event had an initial command ID but we \
+                }
+                None => {
+                    return Err(WFMachinesError::Nondeterminism(format!(
+                        "During event handling, this event had an initial command ID but we \
                             could not find a matching command for it: {:?}",
-                            event
-                        )));
-                    }
+                        event
+                    )));
                 }
             }
-            None => self.handle_non_stateful_event(event, has_next_event)?,
+        } else {
+            self.handle_non_stateful_event(event, has_next_event)?;
         }
 
-        Ok(())
-    }
-
-    /// Called when a workflow task started event has triggered. Ensures we are tracking the ID
-    /// of the current started event as well as workflow time properly.
-    fn task_started(&mut self, task_started_event_id: i64, time: SystemTime) -> Result<()> {
-        self.current_started_event_id = task_started_event_id;
-        self.wft_start_time = Some(time);
-        self.set_current_time(time);
-
-        // Notify local activity machines that we started a non-replay WFT, which will allow any
-        // which were waiting for a marker to instead decide to execute the LA since it clearly
-        // will not be resolved via marker.
-        if !self.replaying {
-            let mut resps = vec![];
-            for (k, mach) in self.all_machines.iter_mut() {
-                if let Machines::LocalActivityMachine(lam) = mach {
-                    resps.push((k, lam.encountered_non_replay_wft()?));
-                }
-            }
-            for (mkey, resp_set) in resps {
-                self.process_machine_responses(mkey, resp_set)?;
-            }
-        }
         Ok(())
     }
 
@@ -565,148 +680,12 @@ impl WorkflowMachines {
         Ok(())
     }
 
-    /// Fetches commands which are ready for processing from the state machines, generally to be
-    /// sent off to the server. They are not removed from the internal queue, that happens when
-    /// corresponding history events from the server are being handled.
-    pub(crate) fn get_commands(&self) -> Vec<ProtoCommand> {
-        self.commands
-            .iter()
-            .filter_map(|c| {
-                if !self.machine(c.machine).is_final_state() {
-                    match &c.command {
-                        MachineAssociatedCommand::Real(cmd) => Some((**cmd).clone()),
-                        MachineAssociatedCommand::FakeLocalActivityMarker(_) => None,
-                    }
-                } else {
-                    None
-                }
-            })
-            .collect()
-    }
-
-    /// Returns the next activation that needs to be performed by the lang sdk. Things like unblock
-    /// timer, etc. This does *not* cause any advancement of the state machines, it merely drains
-    /// from the outgoing queue of activation jobs.
-    ///
-    /// The job list may be empty, in which case it is expected the caller handles what to do in a
-    /// "no work" situation. Possibly, it may know about some work the machines don't, like queries.
-    pub(crate) fn get_wf_activation(&mut self) -> WorkflowActivation {
-        let jobs = self.drive_me.drain_jobs();
-        WorkflowActivation {
-            timestamp: self.current_wf_time.map(Into::into),
-            is_replaying: self.replaying,
-            run_id: self.run_id.clone(),
-            history_length: self.last_processed_event as u32,
-            jobs,
-        }
-    }
-
-    pub(crate) fn has_pending_jobs(&self) -> bool {
-        !self.drive_me.peek_pending_jobs().is_empty()
-    }
-
     fn set_current_time(&mut self, time: SystemTime) -> SystemTime {
         if self.current_wf_time.map_or(true, |t| t < time) {
             self.current_wf_time = Some(time);
         }
         self.current_wf_time
             .expect("We have just ensured this is populated")
-    }
-
-    /// Iterate the state machines, which consists of grabbing any pending outgoing commands from
-    /// the workflow code, handling them, and preparing them to be sent off to the server.
-    pub(crate) async fn iterate_machines(&mut self) -> Result<()> {
-        let results = self.drive_me.fetch_workflow_iteration_output().await;
-        self.handle_driven_results(results)?;
-        self.prepare_commands()?;
-        if self.workflow_is_finished() {
-            if let Some(rt) = self.total_runtime() {
-                self.metrics.wf_e2e_latency(rt);
-            }
-        }
-        Ok(())
-    }
-
-    /// Apply the next (unapplied) entire workflow task from history to these machines. Will replay
-    /// any events that need to be replayed until caught up to the newest WFT. May also fetch
-    /// history from server if needed.
-    pub(crate) async fn apply_next_wft_from_history(&mut self) -> Result<usize> {
-        // If we have already seen the terminal event for the entire workflow in a previous WFT,
-        // then we don't need to do anything here, and in fact we need to avoid re-applying the
-        // final WFT.
-        if self.have_seen_terminal_event {
-            return Ok(0);
-        }
-
-        let last_handled_wft_started_id = self.current_started_event_id;
-        let events = {
-            let mut evts = self
-                .last_history_from_server
-                .take_next_wft_sequence(last_handled_wft_started_id)
-                .await
-                .map_err(WFMachinesError::HistoryFetchingError)?;
-            // Do not re-process events we have already processed
-            evts.retain(|e| e.event_id > self.last_processed_event);
-            evts
-        };
-        let num_events_to_process = events.len();
-
-        // We're caught up on reply if there are no new events to process
-        // TODO: Probably this is unneeded if we evict whenever history is from non-sticky queue
-        if events.is_empty() {
-            self.replaying = false;
-        }
-        let replay_start = Instant::now();
-
-        if let Some(last_event) = events.last() {
-            if last_event.event_type == EventType::WorkflowTaskStarted as i32 {
-                self.next_started_event_id = last_event.event_id;
-            }
-        }
-
-        let mut history = events.into_iter().peekable();
-        while let Some(event) = history.next() {
-            if event.event_id != self.last_processed_event + 1 {
-                return Err(WFMachinesError::Fatal(format!(
-                    "History is out of order. Last processed event: {}, event id: {}",
-                    self.last_processed_event, event.event_id
-                )));
-            }
-            let next_event = history.peek();
-            let eid = event.event_id;
-            let etype = event.event_type;
-            self.handle_event(event, next_event.is_some())?;
-            self.last_processed_event = eid;
-            if etype == EventType::WorkflowTaskStarted as i32 && next_event.is_none() {
-                break;
-            }
-        }
-
-        // Scan through to the next WFT, searching for any patch markers, so that we can
-        // pre-resolve them.
-        for e in self.last_history_from_server.peek_next_wft_sequence() {
-            if let Some((patch_id, _)) = e.get_patch_marker_details() {
-                self.encountered_change_markers.insert(
-                    patch_id.clone(),
-                    ChangeInfo {
-                        created_command: false,
-                    },
-                );
-                // Found a patch marker
-                self.drive_me
-                    .send_job(workflow_activation_job::Variant::NotifyHasPatch(
-                        NotifyHasPatch { patch_id },
-                    ));
-            } else if e.is_local_activity_marker() {
-                self.local_activity_data.process_peekahead_marker(e)?;
-            }
-        }
-
-        if !self.replaying {
-            self.metrics.wf_task_replay_latency(replay_start.elapsed());
-        }
-
-        Ok(num_events_to_process)
     }
 
     /// Wrapper for calling [TemporalStateMachine::handle_event] which appropriately takes action
@@ -793,8 +772,6 @@ impl WorkflowMachines {
                     self.task_started(task_started_event_id, time)?;
                 }
                 MachineResponse::UpdateRunIdOnWorkflowReset { run_id: new_run_id } => {
-                    // TODO: Should this also update self.run_id? Should we track orig/current
-                    //   separately?
                     self.drive_me
                         .send_job(workflow_activation_job::Variant::UpdateRandomSeed(
                             UpdateRandomSeed {
@@ -885,6 +862,30 @@ impl WorkflowMachines {
                         self.set_current_time(t);
                     }
                 }
+            }
+        }
+        Ok(())
+    }
+
+    /// Called when a workflow task started event has triggered. Ensures we are tracking the ID
+    /// of the current started event as well as workflow time properly.
+    fn task_started(&mut self, task_started_event_id: i64, time: SystemTime) -> Result<()> {
+        self.current_started_event_id = task_started_event_id;
+        self.wft_start_time = Some(time);
+        self.set_current_time(time);
+
+        // Notify local activity machines that we started a non-replay WFT, which will allow any
+        // which were waiting for a marker to instead decide to execute the LA since it clearly
+        // will not be resolved via marker.
+        if !self.replaying {
+            let mut resps = vec![];
+            for (k, mach) in self.all_machines.iter_mut() {
+                if let Machines::LocalActivityMachine(lam) = mach {
+                    resps.push((k, lam.encountered_non_replay_wft()?));
+                }
+            }
+            for (mkey, resp_set) in resps {
+                self.process_machine_responses(mkey, resp_set)?;
             }
         }
         Ok(())

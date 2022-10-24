@@ -2054,3 +2054,36 @@ async fn continue_as_new_preserves_some_values() {
         .await
         .unwrap();
 }
+
+#[rstest]
+#[tokio::test]
+async fn ignorable_events_are_ok(#[values(true, false)] attribs_unset: bool) {
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    let id = t.add_get_event_id(
+        EventType::Unspecified,
+        Some(
+            history_event::Attributes::WorkflowPropertiesModifiedExternallyEventAttributes(
+                Default::default(),
+            ),
+        ),
+    );
+    t.modify_event(id, |e| e.worker_may_ignore = true);
+    if attribs_unset {
+        t.modify_event(id, |e| {
+            e.event_type = EventType::WorkflowPropertiesModifiedExternally as i32;
+            e.attributes = None;
+        });
+    }
+    t.add_workflow_task_scheduled_and_started();
+
+    let mock = mock_workflow_client();
+    let mock = single_hist_mock_sg("wheee", t, [ResponseType::AllHistory], mock, true);
+    let core = mock_worker(mock);
+
+    let act = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        act.jobs[0].variant,
+        Some(workflow_activation_job::Variant::StartWorkflow(_))
+    );
+}
