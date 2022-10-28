@@ -146,7 +146,7 @@ pub struct CoreLog {
     /// to include them in `span_contexts` instead, but there's probably not much value for log
     /// forwarding.
     pub fields: HashMap<String, serde_json::Value>,
-    // A list of the outermost to the innermost span names
+    /// A list of the outermost to the innermost span names
     pub span_contexts: Vec<String>,
 }
 
