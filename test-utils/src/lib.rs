@@ -24,8 +24,8 @@ use temporal_sdk_core::{
     init_replay_worker, init_worker,
     replay::HistoryForReplay,
     telemetry_init, ClientOptions, ClientOptionsBuilder, Logger, MetricsExporter,
-    OtelCollectorOptions, TelemetryOptions, TelemetryOptionsBuilder, TraceExporter, WorkerConfig,
-    WorkerConfigBuilder,
+    OtelCollectorOptions, TelemetryOptions, TelemetryOptionsBuilder, TraceExportConfig,
+    TraceExporter, WorkerConfig, WorkerConfigBuilder,
 };
 use temporal_sdk_core_api::Worker as CoreWorker;
 use temporal_sdk_core_protos::{
@@ -470,6 +470,8 @@ pub fn get_integ_server_options() -> ClientOptions {
 
 pub fn get_integ_telem_options() -> TelemetryOptions {
     let mut ob = TelemetryOptionsBuilder::default();
+    let filter_string =
+        env::var("RUST_LOG").unwrap_or_else(|_| "temporal_sdk_core=INFO".to_string());
     if let Some(url) = env::var(OTEL_URL_ENV_VAR)
         .ok()
         .map(|x| x.parse::<Url>().unwrap())
@@ -478,7 +480,10 @@ pub fn get_integ_telem_options() -> TelemetryOptions {
             url,
             headers: Default::default(),
         };
-        ob.tracing(TraceExporter::Otel(opts.clone()));
+        ob.tracing(TraceExportConfig {
+            filter: filter_string.clone(),
+            exporter: TraceExporter::Otel(opts.clone()),
+        });
         ob.metrics(MetricsExporter::Otel(opts));
     }
     if let Some(addr) = env::var(PROM_ENABLE_ENV_VAR)
@@ -487,10 +492,11 @@ pub fn get_integ_telem_options() -> TelemetryOptions {
     {
         ob.metrics(MetricsExporter::Prometheus(addr));
     }
-    ob.tracing_filter(env::var("RUST_LOG").unwrap_or_else(|_| "temporal_sdk_core=INFO".to_string()))
-        .logging(Logger::Console)
-        .build()
-        .unwrap()
+    ob.logging(Logger::Console {
+        filter: filter_string,
+    })
+    .build()
+    .unwrap()
 }
 
 pub fn default_cached_download() -> EphemeralExe {

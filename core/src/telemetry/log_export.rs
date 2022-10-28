@@ -147,12 +147,10 @@ impl<'a> tracing::field::Visit for JsonVisitor<'a> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        fetch_global_buffered_logs, telemetry::forward_at_level, telemetry_init, Logger,
+        construct_filter_string, fetch_global_buffered_logs, telemetry_init, Logger,
         TelemetryOptionsBuilder,
     };
-    use std::mem::size_of;
-    use temporal_sdk_core_api::CoreLog;
-    use tracing::{level_filters::LevelFilter, Level};
+    use tracing::Level;
 
     #[instrument(fields(bros = "brohemian"))]
     fn instrumented(thing: &str) {
@@ -164,10 +162,8 @@ mod tests {
     #[tokio::test]
     async fn test_forwarding_output() {
         let opts = TelemetryOptionsBuilder::default()
-            // .tracing_filter("TRACE".to_string())
             .logging(Logger::Forward {
-                core_level: Level::INFO,
-                others_level: Level::ERROR,
+                filter: construct_filter_string(Level::INFO, Level::WARN),
             })
             .build()
             .unwrap();

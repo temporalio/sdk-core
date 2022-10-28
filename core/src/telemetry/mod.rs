@@ -35,11 +35,10 @@ use std::{
 use temporal_sdk_core_api::CoreTelemetry;
 use tonic::metadata::MetadataMap;
 use tracing::Level;
-use tracing_subscriber::{filter::ParseError, layer::SubscriberExt, EnvFilter};
+use tracing_subscriber::{layer::SubscriberExt, EnvFilter, Layer};
 use url::Url;
 
 const TELEM_SERVICE_NAME: &str = "temporal-core-sdk";
-static DEFAULT_FILTER: &str = "temporal_sdk_core=INFO";
 static GLOBAL_TELEM_DAT: OnceCell<GlobalTelemDat> = OnceCell::new();
 static TELETM_MUTEX: Mutex<()> = const_mutex(());
 
@@ -61,7 +60,16 @@ pub struct OtelCollectorOptions {
     pub headers: HashMap<String, String>,
 }
 
-/// Control where traces are exported
+/// Configuration for the external export of traces
+#[derive(Debug, Clone)]
+pub struct TraceExportConfig {
+    /// An [EnvFilter] filter string.
+    pub filter: String,
+    /// Where they should go
+    pub exporter: TraceExporter,
+}
+
+/// Control where traces are exported.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum TraceExporter {
@@ -79,45 +87,39 @@ pub enum MetricsExporter {
     Prometheus(SocketAddr),
 }
 
+/// Help you construct an [EnvFilter] compatible filter string which will forward all core module
+/// traces at `core_level` and all others (from 3rd party modules, etc) at `other_levl.
+pub fn construct_filter_string(core_level: Level, other_level: Level) -> String {
+    format!(
+        "{o},temporal_sdk_core={l},temporal_client={l},temporal_sdk={l}",
+        o = other_level,
+        l = core_level
+    )
+}
+
 /// Control where logs go
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum Logger {
     /// Log directly to console.
-    Console,
+    Console {
+        /// An [EnvFilter] filter string.
+        filter: String,
+    },
     /// Forward logs to Lang - collectable with `fetch_global_buffered_logs`.
     Forward {
-        /// Forward traces from core modules at this level
-        core_level: Level,
-        /// Forward anything else (ex: 3rd part libs that use tracing) at this level.
-        /// Setting it to WARN or ERROR is advisable.
-        others_level: Level,
+        /// An [EnvFilter] filter string.
+        filter: String,
     },
-}
-
-fn forward_at_level(core_level: Level, others_level: Level) -> EnvFilter {
-    EnvFilter::builder()
-        .with_default_directive(others_level.into())
-        .parse(format!(
-            "temporal_sdk_core={l},temporal_client={l},temporal_sdk={l}",
-            l = core_level
-        ))
-        .expect("Env filter is constructed properly")
 }
 
 /// Telemetry configuration options. Construct with [TelemetryOptionsBuilder]
 #[derive(Debug, Clone, derive_builder::Builder)]
 #[non_exhaustive]
 pub struct TelemetryOptions {
-    /// A string in the [EnvFilter] format which specifies what tracing data is included in
-    /// telemetry, log forwarded to lang, or console output. May be overridden by the
-    /// `TEMPORAL_TRACING_FILTER` env variable.
-    #[builder(default = "DEFAULT_FILTER.to_string()")]
-    pub tracing_filter: String,
-
     /// Optional trace exporter - set as None to disable.
     #[builder(setter(into, strip_option), default)]
-    pub tracing: Option<TraceExporter>,
+    pub tracing: Option<TraceExportConfig>,
     /// Optional logger - set as None to disable.
     #[builder(setter(into, strip_option), default)]
     pub logging: Option<Logger>,
@@ -155,17 +157,6 @@ impl MetricTemporality {
                 aggregation::constant_temporality_selector(Temporality::Delta)
             }
         }
-    }
-}
-
-impl TelemetryOptions {
-    /// Construct an [EnvFilter] from given `tracing_filter`.
-    pub fn try_get_env_filter(&self) -> Result<EnvFilter, ParseError> {
-        EnvFilter::try_new(if self.tracing_filter.is_empty() {
-            DEFAULT_FILTER
-        } else {
-            &self.tracing_filter
-        })
     }
 }
 
@@ -208,42 +199,11 @@ impl CoreTelemetry for GlobalTelemDat {
     }
 }
 
-macro_rules! event_fmt {
-    ($($exts:tt)*) => {
-        tracing_subscriber::fmt::format()
-        $($exts)*
-        .with_source_location(false)
-    }
-}
-
-/// This macro exists to avoid needing to box up the different possible layer types, which normally
-/// I wouldn't care about, but this is a pretty hot path.
-macro_rules! make_console_logger {
-    ($opts:ident, $registry:expr) => {
-        if env::var("TEMPORAL_CORE_PRETTY_LOGS").is_ok() {
-            make_console_logger!($opts, $registry, .pretty());
-        } else {
-            make_console_logger!($opts, $registry, .compact());
-        }
-    };
-    ($opts:ident, $registry:expr, $($exts:tt)*) => {{
-        let reg = $registry.with($opts.try_get_env_filter()?).with(
-            tracing_subscriber::fmt::layer()
-                .with_target(false)
-                .event_format(event_fmt!($($exts)*)),
-        );
-        tracing::subscriber::set_global_default(reg)?;
-    }}
-}
-
 /// Initialize tracing subscribers/output and logging export. If this function is called more than
 /// once, subsequent calls do nothing.
 ///
 /// See [TelemetryOptions] docs for more on configuration.
 pub fn telemetry_init(opts: &TelemetryOptions) -> Result<&'static GlobalTelemDat, anyhow::Error> {
-    // TODO: Per-layer filtering has been implemented but does not yet support
-    //   env-filter. When it does, allow filtering logs/telemetry separately.
-
     // Ensure we don't pointlessly spawn threads that won't do anything or call telem dat's init 2x
     let guard = TELETM_MUTEX.lock();
     if let Some(gtd) = GLOBAL_TELEM_DAT.get() {
@@ -272,26 +232,43 @@ pub fn telemetry_init(opts: &TelemetryOptions) -> Result<&'static GlobalTelemDat
                 ..Default::default()
             };
 
+            let mut console_pretty_layer = None;
+            let mut console_compact_layer = None;
+            let mut forward_layer = None;
+            let mut export_layer = None;
+
             if let Some(ref logger) = opts.logging {
                 match logger {
-                    Logger::Console => {
-                        if opts.tracing.is_none() {
-                            let reg =
-                                tracing_subscriber::registry().with(opts.try_get_env_filter()?);
-                            make_console_logger!(opts, reg);
+                    Logger::Console { filter } => {
+                        // This is silly dupe but can't be avoided without boxing.
+                        if env::var("TEMPORAL_CORE_PRETTY_LOGS").is_ok() {
+                            console_pretty_layer = Some(
+                                tracing_subscriber::fmt::layer()
+                                    .with_target(false)
+                                    .event_format(
+                                        tracing_subscriber::fmt::format()
+                                            .pretty()
+                                            .with_source_location(false),
+                                    )
+                                    .with_filter(EnvFilter::new(filter)),
+                            )
+                        } else {
+                            console_compact_layer = Some(
+                                tracing_subscriber::fmt::layer()
+                                    .with_target(false)
+                                    .event_format(
+                                        tracing_subscriber::fmt::format()
+                                            .compact()
+                                            .with_source_location(false),
+                                    )
+                                    .with_filter(EnvFilter::new(filter)),
+                            )
                         }
                     }
-                    Logger::Forward {
-                        core_level,
-                        others_level,
-                    } => {
+                    Logger::Forward { filter } => {
                         let (export_layer, logs_out) = CoreLogExportLayer::new();
-                        let reg = tracing_subscriber::registry()
-                            .with(export_layer)
-                            .with(forward_at_level(*core_level, *others_level));
-                        // TODO: Need to combine this and real tracing, with per-layer filters
-                        tracing::subscriber::set_global_default(reg)?;
                         globaldat.logs_out = Some(Mutex::new(logs_out));
+                        forward_layer = Some(export_layer.with_filter(EnvFilter::new(filter)));
                     }
                 };
             };
@@ -331,7 +308,7 @@ pub fn telemetry_init(opts: &TelemetryOptions) -> Result<&'static GlobalTelemDat
             };
 
             if let Some(ref tracing) = opts.tracing {
-                match tracing {
+                match &tracing.exporter {
                     TraceExporter::Otel(OtelCollectorOptions { url, headers }) => {
                         runtime.block_on(async {
                             let tracer_cfg = Config::default().with_resource(default_resource());
@@ -348,26 +325,23 @@ pub fn telemetry_init(opts: &TelemetryOptions) -> Result<&'static GlobalTelemDat
                                 .with_trace_config(tracer_cfg)
                                 .install_batch(runtime::Tokio)?;
 
-                            let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+                            let opentelemetry = tracing_opentelemetry::layer()
+                                .with_tracer(tracer)
+                                .with_filter(EnvFilter::new(&tracing.filter));
 
-                            if let Some(Logger::Console) = opts.logging {
-                                let reg = tracing_subscriber::registry()
-                                    .with(opentelemetry)
-                                    .with(opts.try_get_env_filter()?);
-                                make_console_logger!(opts, reg);
-                            } else {
-                                let reg = tracing_subscriber::registry()
-                                    .with(opentelemetry)
-                                    .with(opts.try_get_env_filter()?);
-                                // Can't use try_init here as it will blow away our custom logger if
-                                // we do
-                                tracing::subscriber::set_global_default(reg)?;
-                            }
+                            export_layer = Some(opentelemetry);
                             Result::<(), anyhow::Error>::Ok(())
                         })?;
                     }
                 };
             };
+
+            let reg = tracing_subscriber::registry()
+                .with(console_pretty_layer)
+                .with(console_compact_layer)
+                .with(forward_layer)
+                .with(export_layer);
+            tracing::subscriber::set_global_default(reg)?;
 
             globaldat.runtime = Some(runtime);
             Ok(globaldat)
@@ -394,8 +368,9 @@ pub fn fetch_global_buffered_logs() -> Vec<CoreLog> {
 #[cfg(test)]
 pub(crate) fn test_telem_console() {
     telemetry_init(&TelemetryOptions {
-        tracing_filter: "temporal_sdk_core=DEBUG,temporal_sdk=DEBUG".to_string(),
-        logging: Some(Logger::Console),
+        logging: Some(Logger::Console {
+            filter: construct_filter_string(Level::DEBUG, Level::WARN),
+        }),
         tracing: None,
         metrics: None,
         no_temporal_prefix_for_metrics: false,
@@ -408,12 +383,16 @@ pub(crate) fn test_telem_console() {
 #[cfg(test)]
 pub(crate) fn test_telem_collector() {
     telemetry_init(&TelemetryOptions {
-        tracing_filter: "temporal_sdk_core=DEBUG,temporal_sdk=DEBUG".to_string(),
-        logging: Some(Logger::Console),
-        tracing: Some(TraceExporter::Otel(OtelCollectorOptions {
-            url: "grpc://localhost:4317".parse().unwrap(),
-            headers: Default::default(),
-        })),
+        logging: Some(Logger::Console {
+            filter: construct_filter_string(Level::DEBUG, Level::WARN),
+        }),
+        tracing: Some(TraceExportConfig {
+            filter: construct_filter_string(Level::DEBUG, Level::WARN),
+            exporter: TraceExporter::Otel(OtelCollectorOptions {
+                url: "grpc://localhost:4317".parse().unwrap(),
+                headers: Default::default(),
+            }),
+        }),
         metrics: None,
         no_temporal_prefix_for_metrics: false,
         metric_temporality: MetricTemporality::Cumulative,
