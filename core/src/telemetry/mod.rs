@@ -1,13 +1,16 @@
+mod log_export;
 pub(crate) mod metrics;
 mod prometheus_server;
 
 use crate::{
-    log_export::CoreExportLogger,
-    telemetry::{metrics::SDKAggSelector, prometheus_server::PromServer},
+    telemetry::{
+        log_export::{CoreLogExportLayer, CoreLogsOut},
+        metrics::SDKAggSelector,
+        prometheus_server::PromServer,
+    },
     CoreLog, METRIC_METER,
 };
 use itertools::Itertools;
-use log::LevelFilter;
 use once_cell::sync::OnceCell;
 use opentelemetry::{
     global,
@@ -31,6 +34,7 @@ use std::{
 };
 use temporal_sdk_core_api::CoreTelemetry;
 use tonic::metadata::MetadataMap;
+use tracing::Level;
 use tracing_subscriber::{filter::ParseError, layer::SubscriberExt, EnvFilter};
 use url::Url;
 
@@ -82,7 +86,23 @@ pub enum Logger {
     /// Log directly to console.
     Console,
     /// Forward logs to Lang - collectable with `fetch_global_buffered_logs`.
-    Forward(LevelFilter),
+    Forward {
+        /// Forward traces from core modules at this level
+        core_level: Level,
+        /// Forward anything else (ex: 3rd part libs that use tracing) at this level.
+        /// Setting it to WARN or ERROR is advisable.
+        others_level: Level,
+    },
+}
+
+fn forward_at_level(core_level: Level, others_level: Level) -> EnvFilter {
+    EnvFilter::builder()
+        .with_default_directive(others_level.into())
+        .parse(format!(
+            "temporal_sdk_core={l},temporal_client={l},temporal_sdk={l}",
+            l = core_level
+        ))
+        .expect("Env filter is constructed properly")
 }
 
 /// Telemetry configuration options. Construct with [TelemetryOptionsBuilder]
@@ -158,17 +178,14 @@ impl Default for TelemetryOptions {
 /// Things that need to not be dropped while telemetry is ongoing
 #[derive(Default)]
 pub struct GlobalTelemDat {
-    core_export_logger: Option<CoreExportLogger>,
     runtime: Option<tokio::runtime::Runtime>,
     prom_srv: Option<PromServer>,
     no_temporal_prefix_for_metrics: bool,
+    logs_out: Option<Mutex<CoreLogsOut>>,
 }
 
 impl GlobalTelemDat {
     fn init(&'static self) {
-        if let Some(loggr) = &self.core_export_logger {
-            let _ = log::set_logger(loggr);
-        }
         if let Some(srv) = &self.prom_srv {
             self.runtime
                 .as_ref()
@@ -264,9 +281,17 @@ pub fn telemetry_init(opts: &TelemetryOptions) -> Result<&'static GlobalTelemDat
                             make_console_logger!(opts, reg);
                         }
                     }
-                    Logger::Forward(filter) => {
-                        log::set_max_level(*filter);
-                        globaldat.core_export_logger = Some(CoreExportLogger::new(*filter));
+                    Logger::Forward {
+                        core_level,
+                        others_level,
+                    } => {
+                        let (export_layer, logs_out) = CoreLogExportLayer::new();
+                        let reg = tracing_subscriber::registry()
+                            .with(export_layer)
+                            .with(forward_at_level(*core_level, *others_level));
+                        // TODO: Need to combine this and real tracing, with per-layer filters
+                        tracing::subscriber::set_global_default(reg)?;
+                        globaldat.logs_out = Some(Mutex::new(logs_out));
                     }
                 };
             };
@@ -288,8 +313,8 @@ pub fn telemetry_init(opts: &TelemetryOptions) -> Result<&'static GlobalTelemDat
                                 .with_period(Duration::from_secs(1))
                                 .with_resource(default_resource())
                                 .with_exporter(
-                                    // No joke exporter builder literally not cloneable for some insane
-                                    // reason
+                                    // No joke exporter builder literally not cloneable for some
+                                    // insane reason
                                     opentelemetry_otlp::new_exporter()
                                         .tonic()
                                         .with_endpoint(url.to_string())
@@ -358,11 +383,8 @@ pub fn telemetry_init(opts: &TelemetryOptions) -> Result<&'static GlobalTelemDat
 /// Returned buffered logs for export to lang from the global logging instance.
 /// If [telemetry_init] has not been called, always returns an empty vec.
 pub fn fetch_global_buffered_logs() -> Vec<CoreLog> {
-    if let Some(loggr) = GLOBAL_TELEM_DAT
-        .get()
-        .and_then(|gd| gd.core_export_logger.as_ref())
-    {
-        loggr.drain()
+    if let Some(logs_out) = GLOBAL_TELEM_DAT.get().and_then(|gd| gd.logs_out.as_ref()) {
+        logs_out.lock().pop_iter().collect()
     } else {
         vec![]
     }

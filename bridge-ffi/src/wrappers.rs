@@ -1,9 +1,9 @@
-use log::LevelFilter;
 use std::{net::SocketAddr, str::FromStr};
 use temporal_sdk_core::{
     Logger, MetricsExporter, OtelCollectorOptions, TelemetryOptionsBuilder, TraceExporter, Url,
 };
 use temporal_sdk_core_protos::coresdk::bridge;
+use tracing::level_filters::LevelFilter;
 
 // Present for try-from only
 pub struct InitTelemetryRequest(pub bridge::InitTelemetryRequest);
@@ -27,12 +27,12 @@ impl TryFrom<InitTelemetryRequest> for temporal_sdk_core::TelemetryOptions {
                         bridge::LogLevel::Unspecified => {
                             return Err("Must specify log level".to_string())
                         }
-                        bridge::LogLevel::Off => LevelFilter::Off,
-                        bridge::LogLevel::Error => LevelFilter::Error,
-                        bridge::LogLevel::Warn => LevelFilter::Warn,
-                        bridge::LogLevel::Info => LevelFilter::Info,
-                        bridge::LogLevel::Debug => LevelFilter::Debug,
-                        bridge::LogLevel::Trace => LevelFilter::Trace,
+                        bridge::LogLevel::Off => LevelFilter::OFF,
+                        bridge::LogLevel::Error => LevelFilter::ERROR,
+                        bridge::LogLevel::Warn => LevelFilter::WARN,
+                        bridge::LogLevel::Info => LevelFilter::INFO,
+                        bridge::LogLevel::Debug => LevelFilter::DEBUG,
+                        bridge::LogLevel::Trace => LevelFilter::TRACE,
                     };
                     telemetry_opts.logging(Logger::Forward(level));
                 } else {
