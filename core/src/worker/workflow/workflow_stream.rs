@@ -724,7 +724,7 @@ impl WFStream {
                 EvictionRequestResult::EvictionAlreadyRequested(attempts)
             }
         } else {
-            warn!(run_id=%info.run_id, "Eviction requested for unknown run");
+            debug!(run_id=%info.run_id, "Eviction requested for unknown run");
             EvictionRequestResult::NotFound
         }
     }
