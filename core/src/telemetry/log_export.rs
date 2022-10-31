@@ -176,8 +176,20 @@ mod tests {
         info!("Donezo");
 
         let logs = fetch_global_buffered_logs();
-        for log in logs {
-            println!("{:?}", log);
-        }
+        // Verify debug log was not forwarded
+        assert!(logs
+            .iter()
+            .filter(|l| l.message == "debug")
+            .next()
+            .is_none());
+        assert_eq!(logs.len(), 4);
+        // Ensure fields are attached to events properly
+        let info_msg = &logs[2];
+        assert_eq!(info_msg.message, "info");
+        assert_eq!(info_msg.fields.len(), 4);
+        assert_eq!(info_msg.fields.get("huh"), Some(&"wat".into()));
+        assert_eq!(info_msg.fields.get("foo"), Some(&"bar".into()));
+        assert_eq!(info_msg.fields.get("bros"), Some(&"brohemian".into()));
+        assert_eq!(info_msg.fields.get("thing"), Some(&"hi".into()));
     }
 }
