@@ -177,11 +177,7 @@ mod tests {
 
         let logs = fetch_global_buffered_logs();
         // Verify debug log was not forwarded
-        assert!(logs
-            .iter()
-            .filter(|l| l.message == "debug")
-            .next()
-            .is_none());
+        assert!(!logs.iter().any(|l| l.message == "debug"));
         assert_eq!(logs.len(), 4);
         // Ensure fields are attached to events properly
         let info_msg = &logs[2];
