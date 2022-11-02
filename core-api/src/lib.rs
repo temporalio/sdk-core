@@ -5,13 +5,16 @@ use crate::{
     errors::{CompleteActivityError, CompleteWfError, PollActivityError, PollWfError},
     worker::WorkerConfig,
 };
-use log::Level;
 use opentelemetry::metrics::Meter;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{
+    collections::HashMap,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 use temporal_sdk_core_protos::coresdk::{
     activity_task::ActivityTask, workflow_activation::WorkflowActivation,
     workflow_completion::WorkflowActivationCompletion, ActivityHeartbeat, ActivityTaskCompletion,
 };
+use tracing_core::Level;
 
 /// This trait is the primary way by which language specific SDKs interact with the core SDK.
 /// It represents one worker, which has a (potentially shared) client for connecting to the service
@@ -131,13 +134,20 @@ pub trait CoreTelemetry {
 /// A log line (which ultimately came from a tracing event) exported from Core->Lang
 #[derive(Debug)]
 pub struct CoreLog {
+    /// The module within core this message originated from
+    pub target: String,
     /// Log message
     pub message: String,
     /// Time log was generated (not when it was exported to lang)
     pub timestamp: SystemTime,
     /// Message level
     pub level: Level,
-    // KV pairs aren't meaningfully exposed yet to the log interface by tracing
+    /// Arbitrary k/v pairs (span k/vs are collapsed with event k/vs here). We could change this
+    /// to include them in `span_contexts` instead, but there's probably not much value for log
+    /// forwarding.
+    pub fields: HashMap<String, serde_json::Value>,
+    /// A list of the outermost to the innermost span names
+    pub span_contexts: Vec<String>,
 }
 
 impl CoreLog {

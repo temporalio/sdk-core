@@ -59,7 +59,7 @@ tonic = { version = "0.8", features = ["tls", "tls-roots"] }
 tracing = { version = "0.1", features = ["log-always"] }
 tracing-futures = "0.2"
 tracing-opentelemetry = "0.18"
-tracing-subscriber = { version = "0.3", features = ["parking_lot", "env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["parking_lot", "env-filter", "registry"] }
 url = "2.2"
 uuid = { version = "1.1", features = ["v4"] }
 zip = "0.6"

@@ -1,7 +1,7 @@
-use log::LevelFilter;
 use std::{net::SocketAddr, str::FromStr};
 use temporal_sdk_core::{
-    Logger, MetricsExporter, OtelCollectorOptions, TelemetryOptionsBuilder, TraceExporter, Url,
+    Logger, MetricsExporter, OtelCollectorOptions, TelemetryOptionsBuilder, TraceExportConfig,
+    TraceExporter, Url,
 };
 use temporal_sdk_core_protos::coresdk::bridge;
 
@@ -13,28 +13,32 @@ impl TryFrom<InitTelemetryRequest> for temporal_sdk_core::TelemetryOptions {
 
     fn try_from(InitTelemetryRequest(req): InitTelemetryRequest) -> Result<Self, Self::Error> {
         let mut telemetry_opts = TelemetryOptionsBuilder::default();
-        telemetry_opts.tracing_filter(req.tracing_filter.clone());
         match req.logging {
             None => {}
             Some(bridge::init_telemetry_request::Logging::Console(_)) => {
-                telemetry_opts.logging(Logger::Console);
+                telemetry_opts.logging(Logger::Console {
+                    filter: req.tracing_filter.clone(),
+                });
             }
             Some(bridge::init_telemetry_request::Logging::Forward(
                 bridge::init_telemetry_request::ForwardLoggerOptions { level },
             )) => {
-                if let Some(level) = bridge::LogLevel::from_i32(level) {
-                    let level = match level {
-                        bridge::LogLevel::Unspecified => {
-                            return Err("Must specify log level".to_string())
-                        }
-                        bridge::LogLevel::Off => LevelFilter::Off,
-                        bridge::LogLevel::Error => LevelFilter::Error,
-                        bridge::LogLevel::Warn => LevelFilter::Warn,
-                        bridge::LogLevel::Info => LevelFilter::Info,
-                        bridge::LogLevel::Debug => LevelFilter::Debug,
-                        bridge::LogLevel::Trace => LevelFilter::Trace,
-                    };
-                    telemetry_opts.logging(Logger::Forward(level));
+                if let Some(_level) = bridge::LogLevel::from_i32(level) {
+                    // TODO: This is ignored now, but I'm not fixing since we may never use this.
+                    // let level = match level {
+                    //     bridge::LogLevel::Unspecified => {
+                    //         return Err("Must specify log level".to_string())
+                    //     }
+                    //     bridge::LogLevel::Off => LevelFilter::OFF,
+                    //     bridge::LogLevel::Error => LevelFilter::ERROR,
+                    //     bridge::LogLevel::Warn => LevelFilter::WARN,
+                    //     bridge::LogLevel::Info => LevelFilter::INFO,
+                    //     bridge::LogLevel::Debug => LevelFilter::DEBUG,
+                    //     bridge::LogLevel::Trace => LevelFilter::TRACE,
+                    // };
+                    telemetry_opts.logging(Logger::Forward {
+                        filter: req.tracing_filter.clone(),
+                    });
                 } else {
                     return Err(format!("Unknown LogLevel: {}", level));
                 }
@@ -68,12 +72,15 @@ impl TryFrom<InitTelemetryRequest> for temporal_sdk_core::TelemetryOptions {
             Some(bridge::init_telemetry_request::Tracing::OtelTracing(
                 bridge::init_telemetry_request::OtelCollectorOptions { url, headers },
             )) => {
-                telemetry_opts.tracing(TraceExporter::Otel(OtelCollectorOptions {
-                    url: Url::parse(&url).map_err(|err| {
-                        format!("invalid OpenTelemetry collector URL for tracing: {}", err)
-                    })?,
-                    headers,
-                }));
+                telemetry_opts.tracing(TraceExportConfig {
+                    filter: req.tracing_filter.clone(),
+                    exporter: TraceExporter::Otel(OtelCollectorOptions {
+                        url: Url::parse(&url).map_err(|err| {
+                            format!("invalid OpenTelemetry collector URL for tracing: {}", err)
+                        })?,
+                        headers,
+                    }),
+                });
             }
         }
 

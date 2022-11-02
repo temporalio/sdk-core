@@ -25,6 +25,7 @@ use temporal_sdk_core_protos::coresdk::{
     bridge,
     bridge::{CreateClientRequest, InitTelemetryRequest},
 };
+use tracing::Level;
 
 /// A set of bytes owned by Core. No fields within nor any bytes references must
 /// ever be mutated outside of Core. This must always be passed to
@@ -693,11 +694,11 @@ pub extern "C" fn tmprl_fetch_buffered_logs(
                 message: log.message,
                 timestamp: Some(log.timestamp.into()),
                 level: match log.level {
-                    log::Level::Error => bridge::LogLevel::Error.into(),
-                    log::Level::Warn => bridge::LogLevel::Warn.into(),
-                    log::Level::Info => bridge::LogLevel::Info.into(),
-                    log::Level::Debug => bridge::LogLevel::Debug.into(),
-                    log::Level::Trace => bridge::LogLevel::Trace.into(),
+                    Level::ERROR => bridge::LogLevel::Error.into(),
+                    Level::WARN => bridge::LogLevel::Warn.into(),
+                    Level::INFO => bridge::LogLevel::Info.into(),
+                    Level::DEBUG => bridge::LogLevel::Debug.into(),
+                    Level::TRACE => bridge::LogLevel::Trace.into(),
                 },
             })
             .collect(),
