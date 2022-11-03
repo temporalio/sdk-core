@@ -969,13 +969,13 @@ fn put_queries_in_act(act: &mut WorkflowActivation, wft: &mut OutstandingTask) {
         return;
     }
 
-    // TODO: Mark broken? Evict?
-    // let has_legacy = wft.has_pending_legacy_query();
-    // // Cannot dispatch legacy query if there are any other jobs - which can happen if, ex, a local
-    // // activity resolves while we've gotten a legacy query after heartbeating.
-    // if has_legacy && !act.jobs.is_empty() {
-    //     return;
-    // }
+    let has_legacy = wft.has_pending_legacy_query();
+    // Cannot dispatch legacy query if there are any other jobs - which can happen if, ex, a local
+    // activity resolves while we've gotten a legacy query after heartbeating.
+    if has_legacy && !act.jobs.is_empty() {
+        dbg_panic!("Should never try to attach legacy query to activation with other jobs");
+        return;
+    }
 
     debug!(queries=?wft.pending_queries, "Dispatching queries");
     let query_jobs = wft

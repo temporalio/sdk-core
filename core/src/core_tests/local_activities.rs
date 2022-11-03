@@ -515,8 +515,12 @@ async fn query_during_wft_heartbeat_doesnt_accidentally_fail_to_continue_heartbe
     tokio::join!(wf_fut, act_fut);
 }
 
+#[rstest::rstest]
+#[should_panic]
+#[case::impossible_query_in_task(true)]
+#[case::real_history(false)]
 #[tokio::test]
-async fn la_resolve_during_legacy_query_does_not_combine() {
+async fn la_resolve_during_legacy_query_does_not_combine(#[case] impossible_query_in_task: bool) {
     crate::telemetry::test_telem_console();
     // Ensures we do not send an activation with a legacy query and any other work, which should
     // never happen, but there was an issue where an LA resolving could trigger that.
@@ -564,19 +568,25 @@ async fn la_resolve_during_legacy_query_does_not_combine() {
                 ResponseType::UntilResolved(
                     async move {
                         barr_c.wait().await;
+                        // This sleep is the only not-incredibly-invasive way to ensure the LA
+                        // resolves & updates machines before we process this task
                         tokio::time::sleep(Duration::from_secs(1)).await;
                     }
                     .boxed(),
                     2,
                 ),
             );
-            // Strip history, we need to look like we hit the cache during the legacy query.
+            // Strip history, we need to look like we hit the cache
             pr.history = Some(History { events: vec![] });
-            pr.query = Some(WorkflowQuery {
-                query_type: "query-type".to_string(),
-                query_args: Some(b"hi".into()),
-                header: None,
-            });
+            // In the nonsense server response case, we attach a legacy query, otherwise this
+            // response looks like a normal response to a forced WFT heartbeat.
+            if impossible_query_in_task {
+                pr.query = Some(WorkflowQuery {
+                    query_type: "query-type".to_string(),
+                    query_args: Some(b"hi".into()),
+                    header: None,
+                });
+            }
             pr
         },
     ];
@@ -645,14 +655,6 @@ async fn la_resolve_during_legacy_query_does_not_combine() {
         );
         // Complete workflow
         core.complete_execution(&task.run_id).await;
-
-        let task = core.poll_workflow_activation().await.unwrap();
-        assert_matches!(
-            task.jobs.as_slice(),
-            [WorkflowActivationJob {
-                variant: Some(workflow_activation_job::Variant::QueryWorkflow(_)),
-            }]
-        );
     };
     let act_fut = async {
         let act_task = core.poll_activity_task().await.unwrap();
@@ -665,4 +667,5 @@ async fn la_resolve_during_legacy_query_does_not_combine() {
     };
 
     tokio::join!(wf_fut, act_fut);
+    core.shutdown().await;
 }
