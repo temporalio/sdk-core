@@ -57,13 +57,6 @@ use temporal_sdk_core_api::{
 };
 use temporal_sdk_core_protos::coresdk::ActivityHeartbeat;
 
-lazy_static::lazy_static! {
-    /// A process-wide unique string, which will be different on every startup
-    static ref PROCCESS_UNIQ_ID: String = {
-        uuid::Uuid::new_v4().simple().to_string()
-    };
-}
-
 /// Initialize a worker bound to a task queue.
 ///
 /// Lang implementations may pass in a [temporal_client::ConfiguredClient] directly (or a
@@ -128,6 +121,8 @@ where
     Ok(worker)
 }
 
+/// Creates a unique sticky queue name for a worker, iff the config allows for 1 or more cached
+/// workflows.
 pub(crate) fn sticky_q_name_for_worker(
     process_identity: &str,
     config: &WorkerConfig,
@@ -135,7 +130,9 @@ pub(crate) fn sticky_q_name_for_worker(
     if config.max_cached_workflows > 0 {
         Some(format!(
             "{}-{}-{}",
-            &process_identity, &config.task_queue, *PROCCESS_UNIQ_ID
+            &process_identity,
+            &config.task_queue,
+            uuid::Uuid::new_v4().simple()
         ))
     } else {
         None
