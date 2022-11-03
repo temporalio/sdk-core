@@ -167,6 +167,8 @@ mod tests {
             })
             .build()
             .unwrap();
+        // TODO: this breaks if other tests init telemetry. Should just bite the bullet & make
+        //   it nonglobal
         telemetry_init(&opts).unwrap();
 
         let top_span = span!(Level::INFO, "yayspan", huh = "wat");

@@ -521,7 +521,6 @@ async fn query_during_wft_heartbeat_doesnt_accidentally_fail_to_continue_heartbe
 #[case::real_history(false)]
 #[tokio::test]
 async fn la_resolve_during_legacy_query_does_not_combine(#[case] impossible_query_in_task: bool) {
-    crate::telemetry::test_telem_console();
     // Ensures we do not send an activation with a legacy query and any other work, which should
     // never happen, but there was an issue where an LA resolving could trigger that.
     let wfid = "fake_wf_id";
