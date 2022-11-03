@@ -651,7 +651,7 @@ async fn workflow_update_random_seed_on_workflow_reset() {
         timer_1_id.to_string().as_str(),
         new_run_id,
     );
-    let core = build_fake_worker(wfid, t, &[2]);
+    let core = build_fake_worker(wfid, t, [2]);
 
     poll_and_reply(
         &core,
@@ -705,7 +705,7 @@ async fn cancel_timer_before_sent_wf_bridge() {
     t.add_full_wf_task();
     t.add_workflow_execution_completed();
 
-    let core = build_fake_worker(wfid, t, &[1]);
+    let core = build_fake_worker(wfid, t, [1]);
 
     poll_and_reply(
         &core,
@@ -1120,7 +1120,7 @@ async fn complete_after_eviction() {
     let t = canned_histories::single_timer("1");
     let mut mock = mock_workflow_client();
     mock.expect_complete_workflow_task().times(0);
-    let mock = single_hist_mock_sg(wfid, t, &[2], mock, true);
+    let mock = single_hist_mock_sg(wfid, t, [2], mock, true);
     let core = mock_worker(mock);
 
     let activation = core.poll_workflow_activation().await.unwrap();
@@ -1162,7 +1162,7 @@ async fn sends_appropriate_sticky_task_queue_responses() {
         .times(1)
         .returning(|_| Ok(Default::default()));
     mock.expect_complete_workflow_task().times(0);
-    let mut mock = single_hist_mock_sg(wfid, t, &[1], mock, false);
+    let mut mock = single_hist_mock_sg(wfid, t, [1], mock, false);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
     let core = mock_worker(mock);
 
@@ -1180,7 +1180,7 @@ async fn sends_appropriate_sticky_task_queue_responses() {
 async fn new_server_work_while_eviction_outstanding_doesnt_overwrite_activation() {
     let wfid = "fake_wf_id";
     let t = canned_histories::single_timer("1");
-    let mock = single_hist_mock_sg(wfid, t, &[1, 2], mock_workflow_client(), false);
+    let mock = single_hist_mock_sg(wfid, t, [1, 2], mock_workflow_client(), false);
     let taskmap = mock.outstanding_task_map.clone().unwrap();
     let core = mock_worker(mock);
 
@@ -1443,7 +1443,7 @@ async fn tries_cancel_of_completed_activity() {
     t.add_workflow_task_scheduled_and_started();
 
     let mock = mock_workflow_client();
-    let mut mock = single_hist_mock_sg("fake_wf_id", t, &[1, 2], mock, true);
+    let mut mock = single_hist_mock_sg("fake_wf_id", t, [1, 2], mock, true);
     mock.worker_cfg(|cfg| cfg.max_cached_workflows = 1);
     let core = mock_worker(mock);
 
@@ -1822,7 +1822,7 @@ async fn eviction_waits_until_replay_finished() {
     let wfid = "fake_wf_id";
     let t = canned_histories::long_sequential_timers(3);
     let mock = mock_workflow_client();
-    let mock = single_hist_mock_sg(wfid, t, &[3], mock, true);
+    let mock = single_hist_mock_sg(wfid, t, [3], mock, true);
     let core = mock_worker(mock);
 
     let activation = core.poll_workflow_activation().await.unwrap();
@@ -1883,7 +1883,7 @@ async fn autocompletes_wft_no_work() {
     t.add_activity_task_completed(scheduled_event_id, started_event_id, Default::default());
     t.add_full_wf_task();
     let mock = mock_workflow_client();
-    let mut mock = single_hist_mock_sg(wfid, t, &[1, 2, 3, 4], mock, true);
+    let mut mock = single_hist_mock_sg(wfid, t, [1, 2, 3, 4], mock, true);
     mock.worker_cfg(|w| w.max_cached_workflows = 1);
     let core = mock_worker(mock);
 

@@ -515,6 +515,7 @@ enum CancelOrTimeout {
     },
 }
 
+#[allow(clippy::large_enum_variant)]
 enum NewOrCancel {
     New(NewOrRetry, OwnedMeteredSemPermit),
     Cancel(CancelOrTimeout),

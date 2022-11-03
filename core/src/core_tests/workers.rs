@@ -24,7 +24,7 @@ use tokio::sync::{watch, Barrier};
 #[tokio::test]
 async fn after_shutdown_of_worker_get_shutdown_err() {
     let t = canned_histories::single_timer("1");
-    let worker = build_fake_worker("fake_wf_id", t, &[1]);
+    let worker = build_fake_worker("fake_wf_id", t, [1]);
     let res = worker.poll_workflow_activation().await.unwrap();
     assert_eq!(res.jobs.len(), 1);
     let run_id = res.run_id;
@@ -53,7 +53,7 @@ async fn after_shutdown_of_worker_get_shutdown_err() {
 #[tokio::test]
 async fn shutdown_worker_can_complete_pending_activation() {
     let t = canned_histories::single_timer("1");
-    let worker = build_fake_worker("fake_wf_id", t, &[2]);
+    let worker = build_fake_worker("fake_wf_id", t, [2]);
     let res = worker.poll_workflow_activation().await.unwrap();
     assert_eq!(res.jobs.len(), 1);
     // Complete the timer, will queue PA

@@ -107,7 +107,7 @@ async fn timer_then_cancel_req_then_timer_then_cancelled() {
 async fn immediate_cancel() {
     let wfid = "fake_wf_id";
     let t = canned_histories::immediate_wf_cancel();
-    let core = build_fake_worker(wfid, t, &[1]);
+    let core = build_fake_worker(wfid, t, [1]);
 
     poll_and_reply(
         &core,

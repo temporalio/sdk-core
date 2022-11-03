@@ -182,7 +182,7 @@ impl Workflows {
                 }
                 stream.next().await.unwrap_or(Err(PollWfError::ShutDown))?
             };
-            Span::current().record("run_id", &r.run_id());
+            Span::current().record("run_id", r.run_id());
             match r {
                 ActivationOrAuto::LangActivation(act) | ActivationOrAuto::ReadyForQueries(act) => {
                     debug!(activation=%act, "Sending activation to lang");
