@@ -23,11 +23,15 @@ use temporal_sdk_core::{
     ephemeral_server::{EphemeralExe, EphemeralExeVersion},
     init_replay_worker, init_worker,
     replay::HistoryForReplay,
-    telemetry_init, ClientOptions, ClientOptionsBuilder, Logger, MetricsExporter,
-    OtelCollectorOptions, TelemetryOptions, TelemetryOptionsBuilder, TraceExportConfig,
-    TraceExporter, WorkerConfig, WorkerConfigBuilder,
+    telemetry_init, ClientOptions, ClientOptionsBuilder, WorkerConfig, WorkerConfigBuilder,
 };
-use temporal_sdk_core_api::Worker as CoreWorker;
+use temporal_sdk_core_api::{
+    worker::telemetry::{
+        Logger, MetricsExporter, OtelCollectorOptions, TelemetryOptions, TelemetryOptionsBuilder,
+        TraceExportConfig, TraceExporter,
+    },
+    Worker as CoreWorker,
+};
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_commands::{

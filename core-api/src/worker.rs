@@ -1,3 +1,6 @@
+pub mod telemetry;
+
+use crate::worker::telemetry::TelemetryOptions;
 use std::time::Duration;
 
 /// Defines per-worker configuration options
@@ -105,6 +108,9 @@ pub struct WorkerConfig {
     /// up during shutdown, setting this true saves some back-and-forth.
     #[builder(default = "false")]
     pub ignore_evicts_on_shutdown: bool,
+
+    #[builder(default)]
+    pub telemetry_options: TelemetryOptions,
 }
 
 impl WorkerConfig {

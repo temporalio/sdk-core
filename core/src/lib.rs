@@ -32,11 +32,7 @@ pub use pollers::{
     Client, ClientOptions, ClientOptionsBuilder, ClientTlsConfig, RetryClient, RetryConfig,
     TlsConfig, WorkflowClientTrait,
 };
-pub use telemetry::{
-    construct_filter_string, fetch_global_buffered_logs, telemetry_init, Logger, MetricTemporality,
-    MetricsExporter, OtelCollectorOptions, TelemetryOptions, TelemetryOptionsBuilder,
-    TraceExportConfig, TraceExporter,
-};
+pub use telemetry::{construct_filter_string, fetch_global_buffered_logs, telemetry_init};
 pub use temporal_sdk_core_api as api;
 pub use temporal_sdk_core_protos as protos;
 pub use temporal_sdk_core_protos::TaskToken;
@@ -53,7 +49,7 @@ use std::sync::Arc;
 use temporal_client::{ConfiguredClient, TemporalServiceClientWithMetrics};
 use temporal_sdk_core_api::{
     errors::{CompleteActivityError, PollActivityError, PollWfError},
-    CoreLog, Worker as WorkerTrait,
+    Worker as WorkerTrait,
 };
 use temporal_sdk_core_protos::coresdk::ActivityHeartbeat;
 

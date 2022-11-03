@@ -31,7 +31,7 @@ mod integ_tests {
         init_worker, telemetry_init, ClientOptionsBuilder, ClientTlsConfig, TlsConfig,
         WorkflowClientTrait,
     };
-    use temporal_sdk_core_api::{worker::WorkerConfigBuilder, CoreTelemetry};
+    use temporal_sdk_core_api::worker::{telemetry::CoreTelemetry, WorkerConfigBuilder};
     use temporal_sdk_core_protos::temporal::api::workflowservice::v1::ListNamespacesRequest;
     use temporal_sdk_core_test_utils::{
         get_integ_server_options, get_integ_telem_options, NAMESPACE,

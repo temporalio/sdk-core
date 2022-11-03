@@ -2,7 +2,8 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use futures::StreamExt;
 use std::time::Duration;
 use temporal_sdk::{WfContext, Worker, WorkflowFunction};
-use temporal_sdk_core::{replay::HistoryForReplay, telemetry_init, TelemetryOptionsBuilder};
+use temporal_sdk_core::{replay::HistoryForReplay, telemetry_init};
+use temporal_sdk_core_api::worker::telemetry::TelemetryOptionsBuilder;
 use temporal_sdk_core_protos::DEFAULT_WORKFLOW_TYPE;
 use temporal_sdk_core_test_utils::{canned_histories, init_core_replay_preloaded};
 

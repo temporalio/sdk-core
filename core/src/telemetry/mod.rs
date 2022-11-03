@@ -8,7 +8,7 @@ use crate::{
         metrics::SDKAggSelector,
         prometheus_server::PromServer,
     },
-    CoreLog, METRIC_METER,
+    METRIC_METER,
 };
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
@@ -25,18 +25,14 @@ use opentelemetry::{
 };
 use opentelemetry_otlp::WithExportConfig;
 use parking_lot::{const_mutex, Mutex};
-use std::{
-    collections::{HashMap, VecDeque},
-    convert::TryInto,
-    env,
-    net::SocketAddr,
-    time::Duration,
+use std::{collections::VecDeque, convert::TryInto, env, time::Duration};
+use temporal_sdk_core_api::worker::telemetry::{
+    CoreLog, CoreTelemetry, Logger, MetricTemporality, MetricsExporter, OtelCollectorOptions,
+    TelemetryOptions, TraceExporter,
 };
-use temporal_sdk_core_api::CoreTelemetry;
 use tonic::metadata::MetadataMap;
 use tracing::Level;
 use tracing_subscriber::{layer::SubscriberExt, EnvFilter, Layer};
-use url::Url;
 
 const TELEM_SERVICE_NAME: &str = "temporal-core-sdk";
 static GLOBAL_TELEM_DAT: OnceCell<GlobalTelemDat> = OnceCell::new();
@@ -50,41 +46,15 @@ fn default_resource() -> Resource {
     Resource::new(default_resource_kvs().iter().cloned())
 }
 
-/// Options for exporting to an OpenTelemetry Collector
-#[derive(Debug, Clone)]
-pub struct OtelCollectorOptions {
-    /// The url of the OTel collector to export telemetry and metrics to. Lang SDK should also
-    /// export to this same collector.
-    pub url: Url,
-    /// Optional set of HTTP headers to send to the Collector, e.g for authentication.
-    pub headers: HashMap<String, String>,
-}
-
-/// Configuration for the external export of traces
-#[derive(Debug, Clone)]
-pub struct TraceExportConfig {
-    /// An [EnvFilter] filter string.
-    pub filter: String,
-    /// Where they should go
-    pub exporter: TraceExporter,
-}
-
-/// Control where traces are exported.
-#[derive(Debug, Clone)]
-#[non_exhaustive]
-pub enum TraceExporter {
-    /// Export traces to an OpenTelemetry Collector <https://opentelemetry.io/docs/collector/>.
-    Otel(OtelCollectorOptions),
-}
-
-/// Control where metrics are exported
-#[derive(Debug, Clone)]
-#[non_exhaustive]
-pub enum MetricsExporter {
-    /// Export metrics to an OpenTelemetry Collector <https://opentelemetry.io/docs/collector/>.
-    Otel(OtelCollectorOptions),
-    /// Expose metrics directly via an embedded http server bound to the provided address.
-    Prometheus(SocketAddr),
+fn metric_temporality_to_selector(
+    t: MetricTemporality,
+) -> impl TemporalitySelector + Send + Sync + Clone {
+    match t {
+        MetricTemporality::Cumulative => {
+            aggregation::constant_temporality_selector(Temporality::Cumulative)
+        }
+        MetricTemporality::Delta => aggregation::constant_temporality_selector(Temporality::Delta),
+    }
 }
 
 /// Help you construct an [EnvFilter] compatible filter string which will forward all core module
@@ -95,75 +65,6 @@ pub fn construct_filter_string(core_level: Level, other_level: Level) -> String 
         o = other_level,
         l = core_level
     )
-}
-
-/// Control where logs go
-#[derive(Debug, Clone)]
-#[non_exhaustive]
-pub enum Logger {
-    /// Log directly to console.
-    Console {
-        /// An [EnvFilter] filter string.
-        filter: String,
-    },
-    /// Forward logs to Lang - collectable with `fetch_global_buffered_logs`.
-    Forward {
-        /// An [EnvFilter] filter string.
-        filter: String,
-    },
-}
-
-/// Telemetry configuration options. Construct with [TelemetryOptionsBuilder]
-#[derive(Debug, Clone, derive_builder::Builder)]
-#[non_exhaustive]
-pub struct TelemetryOptions {
-    /// Optional trace exporter - set as None to disable.
-    #[builder(setter(into, strip_option), default)]
-    pub tracing: Option<TraceExportConfig>,
-    /// Optional logger - set as None to disable.
-    #[builder(setter(into, strip_option), default)]
-    pub logging: Option<Logger>,
-    /// Optional metrics exporter - set as None to disable.
-    #[builder(setter(into, strip_option), default)]
-    pub metrics: Option<MetricsExporter>,
-
-    /// If set true, do not prefix metrics with `temporal_`. Will be removed eventually as
-    /// the prefix is consistent with other SDKs.
-    #[builder(default)]
-    pub no_temporal_prefix_for_metrics: bool,
-
-    /// Specifies the aggregation temporality for metric export. Defaults to cumulative.
-    #[builder(default = "MetricTemporality::Cumulative")]
-    pub metric_temporality: MetricTemporality,
-}
-
-/// Types of aggregation temporality for metric export.
-/// See: <https://github.com/open-telemetry/opentelemetry-specification/blob/ce50e4634efcba8da445cc23523243cb893905cb/specification/metrics/datamodel.md#temporality>
-#[derive(Debug, Clone, Copy)]
-pub enum MetricTemporality {
-    /// Successive data points repeat the starting timestamp
-    Cumulative,
-    /// Successive data points advance the starting timestamp
-    Delta,
-}
-
-impl MetricTemporality {
-    fn to_selector(self) -> impl TemporalitySelector + Send + Sync + Clone {
-        match self {
-            MetricTemporality::Cumulative => {
-                aggregation::constant_temporality_selector(Temporality::Cumulative)
-            }
-            MetricTemporality::Delta => {
-                aggregation::constant_temporality_selector(Temporality::Delta)
-            }
-        }
-    }
-}
-
-impl Default for TelemetryOptions {
-    fn default() -> Self {
-        TelemetryOptionsBuilder::default().build().unwrap()
-    }
 }
 
 /// Things that need to not be dropped while telemetry is ongoing
@@ -276,7 +177,10 @@ pub fn telemetry_init(opts: &TelemetryOptions) -> Result<&'static GlobalTelemDat
             if let Some(ref metrics) = opts.metrics {
                 match metrics {
                     MetricsExporter::Prometheus(addr) => {
-                        let srv = PromServer::new(*addr, opts.metric_temporality.to_selector())?;
+                        let srv = PromServer::new(
+                            *addr,
+                            metric_temporality_to_selector(opts.metric_temporality),
+                        )?;
                         globaldat.prom_srv = Some(srv);
                     }
                     MetricsExporter::Otel(OtelCollectorOptions { url, headers }) => {
@@ -284,7 +188,7 @@ pub fn telemetry_init(opts: &TelemetryOptions) -> Result<&'static GlobalTelemDat
                             let metrics = opentelemetry_otlp::new_pipeline()
                                 .metrics(
                                     SDKAggSelector,
-                                    opts.metric_temporality.to_selector(),
+                                    metric_temporality_to_selector(opts.metric_temporality),
                                     runtime::Tokio,
                                 )
                                 .with_period(Duration::from_secs(1))
@@ -364,41 +268,46 @@ pub fn fetch_global_buffered_logs() -> Vec<CoreLog> {
     }
 }
 
-#[allow(dead_code)] // Not always used, called to enable for debugging when needed
 #[cfg(test)]
-pub(crate) fn test_telem_console() {
-    telemetry_init(&TelemetryOptions {
-        logging: Some(Logger::Console {
-            filter: construct_filter_string(Level::DEBUG, Level::WARN),
-        }),
-        tracing: None,
-        metrics: None,
-        no_temporal_prefix_for_metrics: false,
-        metric_temporality: MetricTemporality::Cumulative,
-    })
-    .unwrap();
-}
+pub mod test_initters {
+    use super::*;
+    use temporal_sdk_core_api::worker::telemetry::{TelemetryOptionsBuilder, TraceExportConfig};
 
-#[allow(dead_code)] // Not always used, called to enable for debugging when needed
-#[cfg(test)]
-pub(crate) fn test_telem_collector() {
-    telemetry_init(&TelemetryOptions {
-        logging: Some(Logger::Console {
-            filter: construct_filter_string(Level::DEBUG, Level::WARN),
-        }),
-        tracing: Some(TraceExportConfig {
-            filter: construct_filter_string(Level::DEBUG, Level::WARN),
-            exporter: TraceExporter::Otel(OtelCollectorOptions {
-                url: "grpc://localhost:4317".parse().unwrap(),
-                headers: Default::default(),
-            }),
-        }),
-        metrics: None,
-        no_temporal_prefix_for_metrics: false,
-        metric_temporality: MetricTemporality::Cumulative,
-    })
-    .unwrap();
+    #[allow(dead_code)] // Not always used, called to enable for debugging when needed
+    pub fn test_telem_console() {
+        telemetry_init(
+            &TelemetryOptionsBuilder::default()
+                .logging(Logger::Console {
+                    filter: construct_filter_string(Level::DEBUG, Level::WARN),
+                })
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
+    }
+
+    #[allow(dead_code)] // Not always used, called to enable for debugging when needed
+    pub fn test_telem_collector() {
+        telemetry_init(
+            &TelemetryOptionsBuilder::default()
+                .logging(Logger::Console {
+                    filter: construct_filter_string(Level::DEBUG, Level::WARN),
+                })
+                .tracing(TraceExportConfig {
+                    filter: construct_filter_string(Level::DEBUG, Level::WARN),
+                    exporter: TraceExporter::Otel(OtelCollectorOptions {
+                        url: "grpc://localhost:4317".parse().unwrap(),
+                        headers: Default::default(),
+                    }),
+                })
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
+    }
 }
+#[cfg(test)]
+pub use test_initters::*;
 
 /// A trait for using [Display] on the contents of vecs, etc, which don't implement it.
 ///

@@ -1,7 +1,7 @@
 use parking_lot::Mutex;
 use ringbuf::{Consumer, HeapRb, Producer};
 use std::{collections::HashMap, sync::Arc, time::SystemTime};
-use temporal_sdk_core_api::CoreLog;
+use temporal_sdk_core_api::worker::telemetry::CoreLog;
 use tracing_subscriber::Layer;
 
 const RB_SIZE: usize = 2048;
@@ -146,10 +146,8 @@ impl<'a> tracing::field::Visit for JsonVisitor<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        construct_filter_string, fetch_global_buffered_logs, telemetry_init, Logger,
-        TelemetryOptionsBuilder,
-    };
+    use crate::{construct_filter_string, fetch_global_buffered_logs, telemetry_init};
+    use temporal_sdk_core_api::worker::telemetry::{Logger, TelemetryOptionsBuilder};
     use tracing::Level;
 
     #[instrument(fields(bros = "brohemian"))]
