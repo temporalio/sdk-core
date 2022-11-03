@@ -288,6 +288,7 @@ impl ManagedRun {
         match outcome {
             Ok((None, data, me)) => Ok(Some(me.prepare_complete_resp(resp_chan, data, false))),
             Ok((Some((chan, start_t, wft_timeout)), data, me)) => {
+                warn!("Thinks waiting on las");
                 if let Some(wola) = me.waiting_on_la.as_mut() {
                     wola.heartbeat_timeout_task.abort();
                 }
