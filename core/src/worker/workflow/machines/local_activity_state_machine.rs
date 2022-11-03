@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{
     protosext::{CompleteLocalActivityData, HistoryEventExt, ValidScheduleLA},
-    worker::LocalActivityExecutionResult,
+    worker::{workflow::OutgoingJob, LocalActivityExecutionResult},
 };
 use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
 use std::{
@@ -643,13 +643,14 @@ impl WFMachinesAdapter for LocalActivityMachine {
                     result.into()
                 };
                 let mut responses = vec![
-                    MachineResponse::PushWFJob(
-                        ResolveActivity {
+                    MachineResponse::PushWFJob(OutgoingJob {
+                        variant: ResolveActivity {
                             seq: self.shared_state.attrs.seq,
                             result: Some(resolution),
                         }
                         .into(),
-                    ),
+                        is_la_resolution: true,
+                    }),
                     MachineResponse::UpdateWFTime(complete_time),
                 ];
 

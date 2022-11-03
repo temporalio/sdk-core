@@ -546,7 +546,6 @@ async fn la_resolve_during_legacy_query_does_not_combine() {
         hist_to_poll_resp(&t, wfid.to_owned(), ResponseType::ToTaskNum(1)),
         {
             let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), ResponseType::OneTask(2));
-            dbg!(&pr.history);
             pr.queries = HashMap::new();
             pr.queries.insert(
                 "q1".to_string(),
@@ -583,13 +582,11 @@ async fn la_resolve_during_legacy_query_does_not_combine() {
     ];
     let mock = mock_workflow_client();
     let mut mock = single_hist_mock_sg(wfid, t, tasks, mock, true);
-    let tasksmap = mock.outstanding_task_map.clone().unwrap();
     mock.worker_cfg(|wc| wc.max_cached_workflows = 1);
     let core = mock_worker(mock);
 
     let wf_fut = async {
         let task = core.poll_workflow_activation().await.unwrap();
-        let rid = task.run_id.clone();
         assert_matches!(
             task.jobs.as_slice(),
             &[WorkflowActivationJob {
@@ -614,7 +611,6 @@ async fn la_resolve_during_legacy_query_does_not_combine() {
                 }
             ]
         );
-        // tasksmap.release_run(&rid);
         core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
             task.run_id,
             vec![

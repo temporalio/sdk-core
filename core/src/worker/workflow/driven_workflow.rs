@@ -1,10 +1,7 @@
-use crate::worker::workflow::{WFCommand, WorkflowStartedInfo};
+use crate::worker::workflow::{OutgoingJob, WFCommand, WorkflowStartedInfo};
 use prost_types::Timestamp;
 use temporal_sdk_core_protos::{
-    coresdk::workflow_activation::{
-        start_workflow_from_attribs, workflow_activation_job, CancelWorkflow, SignalWorkflow,
-        WorkflowActivationJob,
-    },
+    coresdk::workflow_activation::{start_workflow_from_attribs, WorkflowActivationJob},
     temporal::api::history::v1::WorkflowExecutionStartedEventAttributes,
     utilities::TryIntoOrNone,
 };
@@ -15,7 +12,7 @@ pub struct DrivenWorkflow {
     started_attrs: Option<WorkflowStartedInfo>,
     fetcher: Box<dyn WorkflowFetcher>,
     /// Outgoing activation jobs that need to be sent to the lang sdk
-    outgoing_wf_activation_jobs: Vec<workflow_activation_job::Variant>,
+    outgoing_wf_activation_jobs: Vec<OutgoingJob>,
 }
 
 impl<WF> From<Box<WF>> for DrivenWorkflow
@@ -63,12 +60,12 @@ impl DrivenWorkflow {
     }
 
     /// Enqueue a new job to be sent to the driven workflow
-    pub fn send_job(&mut self, job: workflow_activation_job::Variant) {
+    pub(super) fn send_job(&mut self, job: OutgoingJob) {
         self.outgoing_wf_activation_jobs.push(job);
     }
 
     /// Observe pending jobs
-    pub fn peek_pending_jobs(&self) -> &[workflow_activation_job::Variant] {
+    pub(super) fn peek_pending_jobs(&self) -> &[OutgoingJob] {
         self.outgoing_wf_activation_jobs.as_slice()
     }
 
@@ -78,16 +75,6 @@ impl DrivenWorkflow {
             .drain(..)
             .map(Into::into)
             .collect()
-    }
-
-    /// Signal the workflow
-    pub fn signal(&mut self, signal: SignalWorkflow) {
-        self.send_job(workflow_activation_job::Variant::SignalWorkflow(signal));
-    }
-
-    /// Cancel the workflow
-    pub fn cancel(&mut self, attribs: CancelWorkflow) {
-        self.send_job(workflow_activation_job::Variant::CancelWorkflow(attribs));
     }
 }
 

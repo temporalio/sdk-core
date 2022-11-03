@@ -48,7 +48,8 @@ use temporal_sdk_core_api::errors::{CompleteWfError, PollWfError};
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::{
-            remove_from_cache::EvictionReason, QueryWorkflow, WorkflowActivation,
+            remove_from_cache::EvictionReason, workflow_activation_job, QueryWorkflow,
+            WorkflowActivation, WorkflowActivationJob,
         },
         workflow_commands::*,
         workflow_completion,
@@ -1170,3 +1171,28 @@ pub struct WorkflowStartedInfo {
 
 type LocalActivityRequestSink =
     Arc<dyn Fn(Vec<LocalActRequest>) -> Vec<LocalActivityResolution> + Send + Sync>;
+
+/// Wraps outgoing activation job protos with some internal details core might care about
+#[derive(Debug, derive_more::Display)]
+#[display(fmt = "{}", variant)]
+struct OutgoingJob {
+    variant: workflow_activation_job::Variant,
+    /// Since LA resolutions are not distinguished from non-LA resolutions as far as lang is
+    /// concerned, but core cares about that sometimes, attach that info here.
+    is_la_resolution: bool,
+}
+impl<WA: Into<workflow_activation_job::Variant>> From<WA> for OutgoingJob {
+    fn from(wa: WA) -> Self {
+        Self {
+            variant: wa.into(),
+            is_la_resolution: false,
+        }
+    }
+}
+impl From<OutgoingJob> for WorkflowActivationJob {
+    fn from(og: OutgoingJob) -> Self {
+        Self {
+            variant: Some(og.variant),
+        }
+    }
+}
