@@ -4,7 +4,7 @@ error[E0277]: the trait bound `One: From<Two>` is not satisfied
 11  |     Two --(B)--> One;
     |                  ^^^ the trait `From<Two>` is not implemented for `One`
     |
-    = note: required because of the requirements on the impl of `Into<One>` for `Two`
+    = note: required for `Two` to implement `Into<One>`
 note: required by a bound in `TransitionResult::<Sm, Ds>::from`
    --> $WORKSPACE/fsm/rustfsm_trait/src/lib.rs
     |
