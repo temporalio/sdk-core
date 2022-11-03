@@ -459,32 +459,34 @@ impl Workflows {
         commands: &mut [Command],
     ) -> Vec<OwnedMeteredSemPermit> {
         let mut reserved = vec![];
-        if let Some(at_handle) = self.activity_tasks_handle.as_ref() {
-            for cmd in commands {
-                if let Some(Attributes::ScheduleActivityTaskCommandAttributes(attrs)) =
-                    cmd.attributes.as_mut()
-                {
-                    // If request_eager_execution was already false, that means lang explicitly
-                    // told us it didn't want to eagerly execute for some reason. So, we only
-                    // ever turn *off* eager execution if a slot is not available or the activity
-                    // is scheduled on a different task queue.
-                    if attrs.request_eager_execution {
-                        let same_task_queue = attrs
-                            .task_queue
+        for cmd in commands {
+            if let Some(Attributes::ScheduleActivityTaskCommandAttributes(attrs)) =
+                cmd.attributes.as_mut()
+            {
+                // If request_eager_execution was already false, that means lang explicitly
+                // told us it didn't want to eagerly execute for some reason. So, we only
+                // ever turn *off* eager execution if a slot is not available or the activity
+                // is scheduled on a different task queue.
+                if attrs.request_eager_execution {
+                    let same_task_queue = attrs
+                        .task_queue
+                        .as_ref()
+                        .map(|q| q.name == self.task_queue)
+                        .unwrap_or_default();
+                    if same_task_queue
+                        && reserved.len() < MAX_EAGER_ACTIVITY_RESERVATIONS_PER_WORKFLOW_TASK
+                    {
+                        if let Some(p) = self
+                            .activity_tasks_handle
                             .as_ref()
-                            .map(|q| q.name == self.task_queue)
-                            .unwrap_or_default();
-                        if same_task_queue
-                            && reserved.len() < MAX_EAGER_ACTIVITY_RESERVATIONS_PER_WORKFLOW_TASK
+                            .and_then(|h| h.reserve_slot())
                         {
-                            if let Some(p) = at_handle.reserve_slot() {
-                                reserved.push(p);
-                            } else {
-                                attrs.request_eager_execution = false;
-                            }
+                            reserved.push(p);
                         } else {
                             attrs.request_eager_execution = false;
                         }
+                    } else {
+                        attrs.request_eager_execution = false;
                     }
                 }
             }
