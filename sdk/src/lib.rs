@@ -10,8 +10,8 @@
 //! ```no_run
 //! use std::{str::FromStr, sync::Arc};
 //! use temporal_sdk::{sdk_client_options, ActContext, Worker};
-//! use temporal_sdk_core::{init_worker, telemetry_init, TelemetryOptionsBuilder, Url};
-//! use temporal_sdk_core_api::worker::WorkerConfigBuilder;
+//! use temporal_sdk_core::{init_worker, telemetry_init, Url, CoreRuntime};
+//! use temporal_sdk_core_api::{worker::WorkerConfigBuilder, telemetry::TelemetryOptionsBuilder};
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -20,14 +20,14 @@
 //!     let client = server_options.connect("default", None, None).await?;
 //!
 //!     let telemetry_options = TelemetryOptionsBuilder::default().build()?;
-//!     telemetry_init(&telemetry_options)?;
+//!     let runtime = CoreRuntime::new_assume_tokio(&telemetry_options)?;
 //!
 //!     let worker_config = WorkerConfigBuilder::default()
 //!         .namespace("default")
 //!         .task_queue("task_queue")
 //!         .build()?;
 //!
-//!     let core_worker = init_worker(worker_config, client);
+//!     let core_worker = init_worker(&runtime, worker_config, client)?;
 //!
 //!     let mut worker = Worker::new_from_core(Arc::new(core_worker), "task_queue");
 //!     worker.register_activity(

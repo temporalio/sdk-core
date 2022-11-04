@@ -1,4 +1,5 @@
 pub mod errors;
+pub mod telemetry;
 pub mod worker;
 
 use crate::{

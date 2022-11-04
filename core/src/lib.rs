@@ -41,7 +41,7 @@ pub use worker::{Worker, WorkerConfig, WorkerConfigBuilder};
 
 use crate::{
     replay::{mock_client_from_histories, Historator, HistoryForReplay},
-    telemetry::metrics::MetricsContext,
+    telemetry::{metrics::MetricsContext, TelemetryInstance},
     worker::client::WorkerClientBag,
 };
 use futures::Stream;
@@ -49,18 +49,25 @@ use std::sync::Arc;
 use temporal_client::{ConfiguredClient, TemporalServiceClientWithMetrics};
 use temporal_sdk_core_api::{
     errors::{CompleteActivityError, PollActivityError, PollWfError},
+    telemetry::TelemetryOptions,
     Worker as WorkerTrait,
 };
 use temporal_sdk_core_protos::coresdk::ActivityHeartbeat;
 
 /// Initialize a worker bound to a task queue.
 ///
+/// TODO: Note about runtime
+///
 /// Lang implementations may pass in a [temporal_client::ConfiguredClient] directly (or a
 /// [RetryClient] wrapping one, or a handful of other variants of the same idea). When they do so,
 /// this function will always overwrite the client retry configuration, force the client to use the
 /// namespace defined in the worker config, and set the client identity appropriately. IE: Use
 /// [ClientOptions::connect_no_namespace], not [ClientOptions::connect].
-pub fn init_worker<CT>(worker_config: WorkerConfig, client: CT) -> Result<Worker, anyhow::Error>
+pub fn init_worker<CT>(
+    runtime: &CoreRuntime,
+    worker_config: WorkerConfig,
+    client: CT,
+) -> Result<Worker, anyhow::Error>
 where
     CT: Into<sealed::AnyClient>,
 {
@@ -86,15 +93,15 @@ where
         worker_config.use_worker_versioning,
     ));
 
-    let telem = telemetry_init(&worker_config.telemetry_options)?;
-
-    let metrics = MetricsContext::top_level(worker_config.namespace.clone(), &telem)
+    let metrics = MetricsContext::top_level(worker_config.namespace.clone(), &runtime.telemetry)
         .with_task_q(worker_config.task_queue.clone());
     Ok(Worker::new(worker_config, sticky_q, client_bag, metrics))
 }
 
 /// Create a worker for replaying a specific history. It will auto-shutdown as soon as the history
 /// has finished being replayed.
+///
+/// TODO: Note about runtime
 pub fn init_replay_worker<I>(
     mut config: WorkerConfig,
     histories: I,
@@ -170,5 +177,62 @@ mod sealed {
         fn from(c: ConfiguredClient<TemporalServiceClientWithMetrics>) -> Self {
             Self(Box::new(c))
         }
+    }
+}
+
+pub struct CoreRuntime {
+    telemetry: TelemetryInstance,
+    runtime: Option<tokio::runtime::Runtime>,
+    runtime_handle: tokio::runtime::Handle,
+    telem_drop_guard: Option<tracing::subscriber::DefaultGuard>,
+}
+
+impl CoreRuntime {
+    /// Create a new core runtime with the provided telemetry options and tokio runtime builder.
+    /// Also initialize telemetry for the thread this is being called on.
+    ///
+    /// Note that this function will call the [runtime::Builder::enable_all] builder option on the
+    /// Tokio runtime builder.
+    ///
+    /// # Panics
+    /// If a tokio runtime has already been initialized. To re-use an existing runtime, call
+    /// [CoreRuntime::new_assume_tokio].
+    pub fn new(
+        telemetry_options: &TelemetryOptions,
+        mut tokio_builder: tokio::runtime::Builder,
+    ) -> Result<Self, anyhow::Error> {
+        let runtime = tokio_builder.enable_all().build()?;
+        let _rg = runtime.enter();
+        let mut me = Self::new_assume_tokio(telemetry_options)?;
+        me.runtime = Some(runtime);
+        Ok(me)
+    }
+
+    /// Initialize telemetry for the thread this is being called on.
+    ///
+    /// # Panics
+    /// If there is no currently active Tokio runtime
+    pub fn new_assume_tokio(telemetry_options: &TelemetryOptions) -> Result<Self, anyhow::Error> {
+        let telemetry = telemetry_init(telemetry_options)?;
+        let guard = tracing::subscriber::set_default(telemetry.trace_subscriber());
+        let me = Self {
+            telemetry,
+            runtime: None,
+            runtime_handle: tokio::runtime::Handle::current(),
+            telem_drop_guard: Some(guard),
+        };
+        Ok(me)
+    }
+
+    /// Get a handle to the tokio runtime used by this Core runtime.
+    pub fn tokio_handle(&self) -> tokio::runtime::Handle {
+        self.runtime_handle.clone()
+    }
+
+    /// Turns off the telemetry subscriber, thus disabling trace export and logging.
+    /// Metrics live inside workers/clients and will not be disabled if they were enabled when
+    /// those workers/clients were constructed.
+    pub fn disable_telemetry(&mut self) {
+        self.telem_drop_guard.take();
     }
 }

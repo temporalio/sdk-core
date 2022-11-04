@@ -11,7 +11,7 @@ use opentelemetry::{
     Context, KeyValue,
 };
 use std::{sync::Arc, time::Duration};
-use temporal_sdk_core_api::worker::telemetry::WorkerTelemetry;
+use temporal_sdk_core_api::telemetry::CoreTelemetry;
 
 /// Used to track context associated with metrics, and record/update them
 ///

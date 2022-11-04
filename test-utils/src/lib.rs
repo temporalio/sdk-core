@@ -23,10 +23,11 @@ use temporal_sdk_core::{
     ephemeral_server::{EphemeralExe, EphemeralExeVersion},
     init_replay_worker, init_worker,
     replay::HistoryForReplay,
-    telemetry_init, ClientOptions, ClientOptionsBuilder, WorkerConfig, WorkerConfigBuilder,
+    telemetry_init, ClientOptions, ClientOptionsBuilder, CoreRuntime, WorkerConfig,
+    WorkerConfigBuilder,
 };
 use temporal_sdk_core_api::{
-    worker::telemetry::{
+    telemetry::{
         Logger, MetricsExporter, OtelCollectorOptions, TelemetryOptions, TelemetryOptionsBuilder,
         TraceExportConfig, TraceExporter,
     },
@@ -254,14 +255,15 @@ impl CoreWfStarter {
     async fn get_or_init(&mut self) -> &InitializedWorker {
         self.initted_worker
             .get_or_init(|| async {
-                telemetry_init(&self.telemetry_options).expect("Telemetry inits cleanly");
                 let client = Arc::new(
                     get_integ_server_options()
                         .connect(self.worker_config.namespace.clone(), None, None)
                         .await
                         .expect("Must connect"),
                 );
-                let worker = init_worker(self.worker_config.clone(), client.clone())
+                let core_rt = CoreRuntime::new_assume_tokio(&self.telemetry_options)
+                    .expect("Core runtime inits cleanly");
+                let worker = init_worker(&core_rt, self.worker_config.clone(), client.clone())
                     .expect("Worker inits cleanly");
                 InitializedWorker {
                     worker: Arc::new(worker),

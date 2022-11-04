@@ -17,13 +17,12 @@ mod wrappers;
 use bridge::{init_response, CreateWorkerRequest, InitResponse};
 use prost::Message;
 use std::sync::Arc;
-use temporal_sdk_core::{telemetry_init, Client, ClientOptions, RetryClient};
-use temporal_sdk_core_api::Worker;
+use temporal_sdk_core::{telemetry_init, Client, ClientOptions, CoreRuntime, RetryClient};
+use temporal_sdk_core_api::{telemetry::TelemetryOptions, Worker};
 use temporal_sdk_core_protos::coresdk::{
     bridge,
     bridge::{CreateClientRequest, InitTelemetryRequest},
 };
-use tracing::Level;
 
 /// A set of bytes owned by Core. No fields within nor any bytes references must
 /// ever be mutated outside of Core. This must always be passed to
@@ -150,7 +149,7 @@ lazy_static::lazy_static! {
 /// currently OK, but that's an implementation detail.
 pub struct tmprl_runtime_t {
     // This is the same runtime shared with worker instances
-    tokio_runtime: Arc<tokio::runtime::Runtime>,
+    core_runtime: Arc<CoreRuntime>,
 }
 
 /// Create a new runtime. The result is never null and must be freed via
@@ -159,11 +158,12 @@ pub struct tmprl_runtime_t {
 pub extern "C" fn tmprl_runtime_new() -> *mut tmprl_runtime_t {
     Box::into_raw(Box::new(tmprl_runtime_t {
         // TODO(cretz): Options to configure thread pool?
-        tokio_runtime: Arc::new(
-            tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()
-                .unwrap(),
+        core_runtime: Arc::new(
+            CoreRuntime::new(
+                &TelemetryOptions::default(),
+                tokio::runtime::Builder::new_multi_thread(),
+            )
+            .expect("Core runtime must initialize"),
         ),
     }))
 }
@@ -181,7 +181,7 @@ pub extern "C" fn tmprl_runtime_free(runtime: *mut tmprl_runtime_t) {
 /// A worker instance owned by Core. This must be passed to [tmprl_worker_shutdown]
 /// when no longer in use which will free the resources.
 pub struct tmprl_worker_t {
-    tokio_runtime: Arc<tokio::runtime::Runtime>,
+    core_runtime: Arc<CoreRuntime>,
     // We are not concerned with the overhead of dynamic dispatch at this time
     worker: Arc<dyn Worker>,
 }
@@ -239,7 +239,7 @@ pub extern "C" fn tmprl_worker_init(
     };
     let user_data = UserDataHandle(user_data);
     match tmprl_worker_t::new(
-        runtime.tokio_runtime.clone(),
+        runtime.core_runtime.clone(),
         client.client.clone(),
         wrappers::WorkerConfig(req),
     ) {
@@ -286,7 +286,7 @@ pub extern "C" fn tmprl_worker_shutdown(
 ) {
     let worker = unsafe { Box::from_raw(worker) };
     let user_data = UserDataHandle(user_data);
-    worker.tokio_runtime.clone().spawn(async move {
+    worker.core_runtime.tokio_handle().spawn(async move {
         worker.shutdown().await;
         unsafe {
             callback(user_data.into(), &*DEFAULT_SHUTDOWN_WORKER_RESPONSE_BYTES);
@@ -395,7 +395,7 @@ pub extern "C" fn tmprl_client_init(
         };
 
     let user_data = UserDataHandle(user_data);
-    runtime.tokio_runtime.spawn(async move {
+    runtime.core_runtime.tokio_handle().spawn(async move {
         match req.connect(namespace, None, None).await {
             Ok(client) => unsafe {
                 callback(
@@ -448,7 +448,7 @@ pub extern "C" fn tmprl_poll_workflow_activation(
 ) {
     let worker = unsafe { &mut *worker };
     let user_data = UserDataHandle(user_data);
-    worker.tokio_runtime.clone().spawn(async move {
+    worker.core_runtime.tokio_handle().spawn(async move {
         let resp = bridge::PollWorkflowActivationResponse {
             response: Some(match worker.poll_workflow_activation().await {
                 Ok(act) => bridge::poll_workflow_activation_response::Response::Activation(act),
@@ -479,7 +479,7 @@ pub extern "C" fn tmprl_poll_activity_task(
 ) {
     let worker = unsafe { &mut *worker };
     let user_data = UserDataHandle(user_data);
-    worker.tokio_runtime.clone().spawn(async move {
+    worker.core_runtime.tokio_handle().spawn(async move {
         let resp = bridge::PollActivityTaskResponse {
             response: Some(match worker.poll_activity_task().await {
                 Ok(task) => bridge::poll_activity_task_response::Response::Task(task),
@@ -520,7 +520,7 @@ pub extern "C" fn tmprl_complete_workflow_activation(
         }
     };
     let user_data = UserDataHandle(user_data);
-    worker.tokio_runtime.clone().spawn(async move {
+    worker.core_runtime.tokio_handle().spawn(async move {
         match worker.complete_workflow_activation(req).await {
             Ok(()) => unsafe {
                 callback(
@@ -566,7 +566,7 @@ pub extern "C" fn tmprl_complete_activity_task(
         }
     };
     let user_data = UserDataHandle(user_data);
-    worker.tokio_runtime.clone().spawn(async move {
+    worker.core_runtime.tokio_handle().spawn(async move {
         match worker.complete_activity_task(req).await {
             Ok(()) => unsafe {
                 callback(
@@ -614,7 +614,7 @@ pub extern "C" fn tmprl_record_activity_heartbeat(
     let user_data = UserDataHandle(user_data);
     // We intentionally spawn even though the core call is not async so the
     // callback can be made in the tokio runtime
-    worker.tokio_runtime.clone().spawn(async move {
+    worker.core_runtime.tokio_handle().spawn(async move {
         worker.record_activity_heartbeat(req);
         unsafe {
             callback(
@@ -657,7 +657,7 @@ pub extern "C" fn tmprl_request_workflow_eviction(
     let user_data = UserDataHandle(user_data);
     // We intentionally spawn even though the core call is not async so the
     // callback can be made in the tokio runtime
-    worker.tokio_runtime.clone().spawn(async move {
+    worker.core_runtime.tokio_handle().spawn(async move {
         worker.request_workflow_eviction(req);
         unsafe {
             callback(
@@ -670,16 +670,17 @@ pub extern "C" fn tmprl_request_workflow_eviction(
 
 impl tmprl_worker_t {
     fn new(
-        tokio_runtime: Arc<tokio::runtime::Runtime>,
+        core_runtime: Arc<CoreRuntime>,
         client: Arc<RetryClient<Client>>,
         opts: wrappers::WorkerConfig,
     ) -> Result<tmprl_worker_t, String> {
+        let worker = Arc::new(
+            temporal_sdk_core::init_worker(&core_runtime, opts.try_into()?, client)
+                .map_err(|e| e.to_string())?,
+        );
         Ok(tmprl_worker_t {
-            tokio_runtime,
-            worker: Arc::new(
-                temporal_sdk_core::init_worker(opts.try_into()?, client)
-                    .map_err(|e| e.to_string())?,
-            ),
+            core_runtime,
+            worker,
         })
     }
 

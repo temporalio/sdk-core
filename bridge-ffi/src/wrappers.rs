@@ -1,6 +1,6 @@
 use std::{net::SocketAddr, str::FromStr};
 use temporal_sdk_core::Url;
-use temporal_sdk_core_api::worker::telemetry::{
+use temporal_sdk_core_api::telemetry::{
     Logger, MetricsExporter, OtelCollectorOptions, TelemetryOptions, TelemetryOptionsBuilder,
     TraceExportConfig, TraceExporter,
 };

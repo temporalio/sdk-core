@@ -23,34 +23,15 @@ use opentelemetry::{
 use opentelemetry_otlp::WithExportConfig;
 use parking_lot::Mutex;
 use std::{collections::VecDeque, convert::TryInto, env, sync::Arc, time::Duration};
-use temporal_sdk_core_api::worker::telemetry::{
-    CoreLog, Logger, MetricTemporality, MetricsExporter, OtelCollectorOptions, TelemetryOptions,
-    TraceExporter, WorkerTelemetry,
+use temporal_sdk_core_api::telemetry::{
+    CoreLog, CoreTelemetry, Logger, MetricTemporality, MetricsExporter, OtelCollectorOptions,
+    TelemetryOptions, TraceExporter,
 };
 use tonic::metadata::MetadataMap;
 use tracing::{Level, Subscriber};
 use tracing_subscriber::{layer::SubscriberExt, EnvFilter, Layer};
 
 const TELEM_SERVICE_NAME: &str = "temporal-core-sdk";
-
-fn default_resource_kvs() -> &'static [KeyValue] {
-    static INSTANCE: OnceCell<[KeyValue; 1]> = OnceCell::new();
-    INSTANCE.get_or_init(|| [KeyValue::new("service.name", TELEM_SERVICE_NAME)])
-}
-fn default_resource() -> Resource {
-    Resource::new(default_resource_kvs().iter().cloned())
-}
-
-fn metric_temporality_to_selector(
-    t: MetricTemporality,
-) -> impl TemporalitySelector + Send + Sync + Clone {
-    match t {
-        MetricTemporality::Cumulative => {
-            aggregation::constant_temporality_selector(Temporality::Cumulative)
-        }
-        MetricTemporality::Delta => aggregation::constant_temporality_selector(Temporality::Delta),
-    }
-}
 
 /// Help you construct an [EnvFilter] compatible filter string which will forward all core module
 /// traces at `core_level` and all others (from 3rd party modules, etc) at `other_levl.
@@ -62,10 +43,9 @@ pub fn construct_filter_string(core_level: Level, other_level: Level) -> String 
     )
 }
 
+// TODO: Un-pub?
 /// Things that need to not be dropped while telemetry is ongoing
 pub struct TelemetryInstance {
-    // TODO: Needed?
-    runtime: Option<tokio::runtime::Runtime>,
     metric_prefix: &'static str,
     logs_out: Option<Mutex<CoreLogsOut>>,
     metrics: Option<(BasicController, Meter)>,
@@ -89,13 +69,15 @@ impl TelemetryInstance {
             (mp, meter)
         });
         Self {
-            // TODO: Need to own, ever?
-            runtime: None,
             metric_prefix,
             logs_out,
             metrics,
             trace_subscriber,
         }
+    }
+
+    pub(crate) fn trace_subscriber(&self) -> Arc<dyn Subscriber + Send + Sync> {
+        self.trace_subscriber.clone()
     }
 }
 
@@ -107,7 +89,7 @@ fn metric_prefix(opts: &TelemetryOptions) -> &'static str {
     }
 }
 
-impl WorkerTelemetry for TelemetryInstance {
+impl CoreTelemetry for TelemetryInstance {
     fn fetch_buffered_logs(&self) -> Vec<CoreLog> {
         if let Some(logs_out) = self.logs_out.as_ref() {
             logs_out.lock().pop_iter().collect()
@@ -271,10 +253,29 @@ pub fn telemetry_init(opts: &TelemetryOptions) -> Result<TelemetryInstance, anyh
     .expect("Telemetry initialization panicked")
 }
 
+fn default_resource_kvs() -> &'static [KeyValue] {
+    static INSTANCE: OnceCell<[KeyValue; 1]> = OnceCell::new();
+    INSTANCE.get_or_init(|| [KeyValue::new("service.name", TELEM_SERVICE_NAME)])
+}
+fn default_resource() -> Resource {
+    Resource::new(default_resource_kvs().iter().cloned())
+}
+
+fn metric_temporality_to_selector(
+    t: MetricTemporality,
+) -> impl TemporalitySelector + Send + Sync + Clone {
+    match t {
+        MetricTemporality::Cumulative => {
+            aggregation::constant_temporality_selector(Temporality::Cumulative)
+        }
+        MetricTemporality::Delta => aggregation::constant_temporality_selector(Temporality::Delta),
+    }
+}
+
 #[cfg(test)]
 pub mod test_initters {
     use super::*;
-    use temporal_sdk_core_api::worker::telemetry::{TelemetryOptionsBuilder, TraceExportConfig};
+    use temporal_sdk_core_api::telemetry::{TelemetryOptionsBuilder, TraceExportConfig};
 
     #[allow(dead_code)] // Not always used, called to enable for debugging when needed
     pub fn test_telem_console() {
