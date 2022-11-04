@@ -2,41 +2,36 @@ mod log_export;
 pub(crate) mod metrics;
 mod prometheus_server;
 
-use crate::{
-    telemetry::{
-        log_export::{CoreLogExportLayer, CoreLogsOut},
-        metrics::SDKAggSelector,
-        prometheus_server::PromServer,
-    },
-    METRIC_METER,
+use crate::telemetry::{
+    log_export::{CoreLogExportLayer, CoreLogsOut},
+    metrics::SDKAggSelector,
+    prometheus_server::PromServer,
 };
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
 use opentelemetry::{
-    global,
-    metrics::Meter,
+    metrics::{Meter, MeterProvider},
     runtime,
     sdk::{
         export::metrics::aggregation::{self, Temporality, TemporalitySelector},
+        metrics::controllers::BasicController,
         trace::Config,
         Resource,
     },
     KeyValue,
 };
 use opentelemetry_otlp::WithExportConfig;
-use parking_lot::{const_mutex, Mutex};
-use std::{collections::VecDeque, convert::TryInto, env, time::Duration};
+use parking_lot::Mutex;
+use std::{collections::VecDeque, convert::TryInto, env, sync::Arc, time::Duration};
 use temporal_sdk_core_api::worker::telemetry::{
-    CoreLog, CoreTelemetry, Logger, MetricTemporality, MetricsExporter, OtelCollectorOptions,
-    TelemetryOptions, TraceExporter,
+    CoreLog, Logger, MetricTemporality, MetricsExporter, OtelCollectorOptions, TelemetryOptions,
+    TraceExporter, WorkerTelemetry,
 };
 use tonic::metadata::MetadataMap;
-use tracing::Level;
+use tracing::{Level, Subscriber};
 use tracing_subscriber::{layer::SubscriberExt, EnvFilter, Layer};
 
 const TELEM_SERVICE_NAME: &str = "temporal-core-sdk";
-static GLOBAL_TELEM_DAT: OnceCell<GlobalTelemDat> = OnceCell::new();
-static TELETM_MUTEX: Mutex<()> = const_mutex(());
 
 fn default_resource_kvs() -> &'static [KeyValue] {
     static INSTANCE: OnceCell<[KeyValue; 1]> = OnceCell::new();
@@ -68,35 +63,61 @@ pub fn construct_filter_string(core_level: Level, other_level: Level) -> String 
 }
 
 /// Things that need to not be dropped while telemetry is ongoing
-#[derive(Default)]
-pub struct GlobalTelemDat {
+pub struct TelemetryInstance {
+    // TODO: Needed?
     runtime: Option<tokio::runtime::Runtime>,
-    prom_srv: Option<PromServer>,
-    no_temporal_prefix_for_metrics: bool,
+    metric_prefix: &'static str,
     logs_out: Option<Mutex<CoreLogsOut>>,
+    metrics: Option<(BasicController, Meter)>,
+    trace_subscriber: Arc<dyn Subscriber + Send + Sync>,
 }
 
-impl GlobalTelemDat {
-    fn init(&'static self) {
-        if let Some(srv) = &self.prom_srv {
-            self.runtime
-                .as_ref()
-                .expect("Telemetry runtime is initted")
-                .spawn(srv.run());
+impl TelemetryInstance {
+    fn new(
+        runtime: &tokio::runtime::Runtime,
+        trace_subscriber: Arc<dyn Subscriber + Send + Sync>,
+        logs_out: Option<Mutex<CoreLogsOut>>,
+        metric_prefix: &'static str,
+        mut meter_provider: Option<BasicController>,
+        prom_srv: Option<PromServer>,
+    ) -> Self {
+        if let Some(srv) = prom_srv {
+            runtime.spawn(async move { srv.run().await });
+        }
+        let metrics = meter_provider.take().map(|mp| {
+            let meter = mp.meter(TELEM_SERVICE_NAME);
+            (mp, meter)
+        });
+        Self {
+            // TODO: Need to own, ever?
+            runtime: None,
+            metric_prefix,
+            logs_out,
+            metrics,
+            trace_subscriber,
         }
     }
 }
 
-impl CoreTelemetry for GlobalTelemDat {
+fn metric_prefix(opts: &TelemetryOptions) -> &'static str {
+    if opts.no_temporal_prefix_for_metrics {
+        ""
+    } else {
+        "temporal_"
+    }
+}
+
+impl WorkerTelemetry for TelemetryInstance {
     fn fetch_buffered_logs(&self) -> Vec<CoreLog> {
-        fetch_global_buffered_logs()
+        if let Some(logs_out) = self.logs_out.as_ref() {
+            logs_out.lock().pop_iter().collect()
+        } else {
+            vec![]
+        }
     }
 
     fn get_metric_meter(&self) -> Option<&Meter> {
-        if GLOBAL_TELEM_DAT.get().is_some() {
-            return Some(&METRIC_METER);
-        }
-        None
+        self.metrics.as_ref().map(|(_, m)| m)
     }
 }
 
@@ -104,13 +125,7 @@ impl CoreTelemetry for GlobalTelemDat {
 /// once, subsequent calls do nothing.
 ///
 /// See [TelemetryOptions] docs for more on configuration.
-pub fn telemetry_init(opts: &TelemetryOptions) -> Result<&'static GlobalTelemDat, anyhow::Error> {
-    // Ensure we don't pointlessly spawn threads that won't do anything or call telem dat's init 2x
-    let guard = TELETM_MUTEX.lock();
-    if let Some(gtd) = GLOBAL_TELEM_DAT.get() {
-        return Ok(gtd);
-    }
-
+pub fn telemetry_init(opts: &TelemetryOptions) -> Result<TelemetryInstance, anyhow::Error> {
     // This is a bit odd, but functional. It's desirable to create a separate tokio runtime for
     // metrics handling, since tests typically use a single-threaded runtime and initializing
     // pipeline requires us to know if the runtime is single or multithreaded, we will crash
@@ -119,153 +134,141 @@ pub fn telemetry_init(opts: &TelemetryOptions) -> Result<&'static GlobalTelemDat
     // way which is nice.
     let opts = opts.clone();
     std::thread::spawn(move || {
-        let res = GLOBAL_TELEM_DAT.get_or_try_init::<_, anyhow::Error>(move || {
-            // Ensure closure captures the mutex guard
-            let _ = &*guard;
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .thread_name("telemetry")
+            .worker_threads(2)
+            .enable_all()
+            .build()?;
+        // Parts of telem dat ====
+        let mut logs_out = None;
+        let metric_prefix = metric_prefix(&opts);
+        // =======================
 
-            let runtime = tokio::runtime::Builder::new_multi_thread()
-                .thread_name("telemetry")
-                .worker_threads(2)
-                .enable_all()
-                .build()?;
-            let mut globaldat = GlobalTelemDat {
-                no_temporal_prefix_for_metrics: opts.no_temporal_prefix_for_metrics,
-                ..Default::default()
+        // Tracing subscriber layers =========
+        let mut console_pretty_layer = None;
+        let mut console_compact_layer = None;
+        let mut forward_layer = None;
+        let mut export_layer = None;
+        // ===================================
+
+        if let Some(ref logger) = opts.logging {
+            match logger {
+                Logger::Console { filter } => {
+                    // This is silly dupe but can't be avoided without boxing.
+                    if env::var("TEMPORAL_CORE_PRETTY_LOGS").is_ok() {
+                        console_pretty_layer = Some(
+                            tracing_subscriber::fmt::layer()
+                                .with_target(false)
+                                .event_format(
+                                    tracing_subscriber::fmt::format()
+                                        .pretty()
+                                        .with_source_location(false),
+                                )
+                                .with_filter(EnvFilter::new(filter)),
+                        )
+                    } else {
+                        console_compact_layer = Some(
+                            tracing_subscriber::fmt::layer()
+                                .with_target(false)
+                                .event_format(
+                                    tracing_subscriber::fmt::format()
+                                        .compact()
+                                        .with_source_location(false),
+                                )
+                                .with_filter(EnvFilter::new(filter)),
+                        )
+                    }
+                }
+                Logger::Forward { filter } => {
+                    let (export_layer, lo) = CoreLogExportLayer::new();
+                    logs_out = Some(Mutex::new(lo));
+                    forward_layer = Some(export_layer.with_filter(EnvFilter::new(filter)));
+                }
             };
+        };
 
-            let mut console_pretty_layer = None;
-            let mut console_compact_layer = None;
-            let mut forward_layer = None;
-            let mut export_layer = None;
-
-            if let Some(ref logger) = opts.logging {
-                match logger {
-                    Logger::Console { filter } => {
-                        // This is silly dupe but can't be avoided without boxing.
-                        if env::var("TEMPORAL_CORE_PRETTY_LOGS").is_ok() {
-                            console_pretty_layer = Some(
-                                tracing_subscriber::fmt::layer()
-                                    .with_target(false)
-                                    .event_format(
-                                        tracing_subscriber::fmt::format()
-                                            .pretty()
-                                            .with_source_location(false),
-                                    )
-                                    .with_filter(EnvFilter::new(filter)),
+        let (meter_provider, prom_srv) = if let Some(ref metrics) = opts.metrics {
+            let aggregator = SDKAggSelector { metric_prefix };
+            match metrics {
+                MetricsExporter::Prometheus(addr) => {
+                    let srv = PromServer::new(
+                        *addr,
+                        aggregator,
+                        metric_temporality_to_selector(opts.metric_temporality),
+                    )?;
+                    (None, Some(srv))
+                }
+                MetricsExporter::Otel(OtelCollectorOptions { url, headers }) => {
+                    runtime.block_on(async {
+                        let metrics = opentelemetry_otlp::new_pipeline()
+                            .metrics(
+                                aggregator,
+                                metric_temporality_to_selector(opts.metric_temporality),
+                                runtime::Tokio,
                             )
-                        } else {
-                            console_compact_layer = Some(
-                                tracing_subscriber::fmt::layer()
-                                    .with_target(false)
-                                    .event_format(
-                                        tracing_subscriber::fmt::format()
-                                            .compact()
-                                            .with_source_location(false),
-                                    )
-                                    .with_filter(EnvFilter::new(filter)),
+                            .with_period(Duration::from_secs(1))
+                            .with_resource(default_resource())
+                            .with_exporter(
+                                // No joke exporter builder literally not cloneable for some
+                                // insane reason
+                                opentelemetry_otlp::new_exporter()
+                                    .tonic()
+                                    .with_endpoint(url.to_string())
+                                    .with_metadata(MetadataMap::from_headers(headers.try_into()?)),
                             )
-                        }
-                    }
-                    Logger::Forward { filter } => {
-                        let (export_layer, logs_out) = CoreLogExportLayer::new();
-                        globaldat.logs_out = Some(Mutex::new(logs_out));
-                        forward_layer = Some(export_layer.with_filter(EnvFilter::new(filter)));
-                    }
-                };
+                            .build()?;
+                        Ok::<_, anyhow::Error>((Some(metrics), None))
+                    })?
+                }
+            }
+        } else {
+            (None, None)
+        };
+
+        if let Some(ref tracing) = opts.tracing {
+            match &tracing.exporter {
+                TraceExporter::Otel(OtelCollectorOptions { url, headers }) => {
+                    runtime.block_on(async {
+                        let tracer_cfg = Config::default().with_resource(default_resource());
+                        let tracer = opentelemetry_otlp::new_pipeline()
+                            .tracing()
+                            .with_exporter(
+                                opentelemetry_otlp::new_exporter()
+                                    .tonic()
+                                    .with_endpoint(url.to_string())
+                                    .with_metadata(MetadataMap::from_headers(headers.try_into()?)),
+                            )
+                            .with_trace_config(tracer_cfg)
+                            .install_batch(runtime::Tokio)?;
+
+                        let opentelemetry = tracing_opentelemetry::layer()
+                            .with_tracer(tracer)
+                            .with_filter(EnvFilter::new(&tracing.filter));
+
+                        export_layer = Some(opentelemetry);
+                        Result::<(), anyhow::Error>::Ok(())
+                    })?;
+                }
             };
+        };
 
-            if let Some(ref metrics) = opts.metrics {
-                match metrics {
-                    MetricsExporter::Prometheus(addr) => {
-                        let srv = PromServer::new(
-                            *addr,
-                            metric_temporality_to_selector(opts.metric_temporality),
-                        )?;
-                        globaldat.prom_srv = Some(srv);
-                    }
-                    MetricsExporter::Otel(OtelCollectorOptions { url, headers }) => {
-                        runtime.block_on(async {
-                            let metrics = opentelemetry_otlp::new_pipeline()
-                                .metrics(
-                                    SDKAggSelector,
-                                    metric_temporality_to_selector(opts.metric_temporality),
-                                    runtime::Tokio,
-                                )
-                                .with_period(Duration::from_secs(1))
-                                .with_resource(default_resource())
-                                .with_exporter(
-                                    // No joke exporter builder literally not cloneable for some
-                                    // insane reason
-                                    opentelemetry_otlp::new_exporter()
-                                        .tonic()
-                                        .with_endpoint(url.to_string())
-                                        .with_metadata(MetadataMap::from_headers(
-                                            headers.try_into()?,
-                                        )),
-                                )
-                                .build()?;
-                            global::set_meter_provider(metrics);
-                            Result::<(), anyhow::Error>::Ok(())
-                        })?;
-                    }
-                };
-            };
+        let reg = tracing_subscriber::registry()
+            .with(console_pretty_layer)
+            .with(console_compact_layer)
+            .with(forward_layer)
+            .with(export_layer);
 
-            if let Some(ref tracing) = opts.tracing {
-                match &tracing.exporter {
-                    TraceExporter::Otel(OtelCollectorOptions { url, headers }) => {
-                        runtime.block_on(async {
-                            let tracer_cfg = Config::default().with_resource(default_resource());
-                            let tracer = opentelemetry_otlp::new_pipeline()
-                                .tracing()
-                                .with_exporter(
-                                    opentelemetry_otlp::new_exporter()
-                                        .tonic()
-                                        .with_endpoint(url.to_string())
-                                        .with_metadata(MetadataMap::from_headers(
-                                            headers.try_into()?,
-                                        )),
-                                )
-                                .with_trace_config(tracer_cfg)
-                                .install_batch(runtime::Tokio)?;
-
-                            let opentelemetry = tracing_opentelemetry::layer()
-                                .with_tracer(tracer)
-                                .with_filter(EnvFilter::new(&tracing.filter));
-
-                            export_layer = Some(opentelemetry);
-                            Result::<(), anyhow::Error>::Ok(())
-                        })?;
-                    }
-                };
-            };
-
-            let reg = tracing_subscriber::registry()
-                .with(console_pretty_layer)
-                .with(console_compact_layer)
-                .with(forward_layer)
-                .with(export_layer);
-            tracing::subscriber::set_global_default(reg)?;
-
-            globaldat.runtime = Some(runtime);
-            Ok(globaldat)
-        })?;
-
-        res.init();
-        Result::<_, anyhow::Error>::Ok(res)
+        Ok(TelemetryInstance::new(
+            &runtime,
+            Arc::new(reg),
+            logs_out,
+            metric_prefix,
+            meter_provider,
+            prom_srv,
+        ))
     })
     .join()
     .expect("Telemetry initialization panicked")
-}
-
-/// Returned buffered logs for export to lang from the global logging instance.
-/// If [telemetry_init] has not been called, always returns an empty vec.
-pub fn fetch_global_buffered_logs() -> Vec<CoreLog> {
-    if let Some(logs_out) = GLOBAL_TELEM_DAT.get().and_then(|gd| gd.logs_out.as_ref()) {
-        logs_out.lock().pop_iter().collect()
-    } else {
-        vec![]
-    }
 }
 
 #[cfg(test)]

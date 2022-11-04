@@ -179,7 +179,7 @@ impl LocalActivityManager {
         Self::new(
             max_concurrent,
             "fake_ns".to_string(),
-            MetricsContext::default(),
+            MetricsContext::no_op(),
         )
     }
 

@@ -234,16 +234,3 @@ void tmprl_request_workflow_eviction(struct tmprl_worker_t *worker,
                                      size_t req_proto_len,
                                      void *user_data,
                                      tmprl_callback callback);
-
-/**
- * Fetch buffered logs. Blocks until complete. This is still using the callback since we might
- * reasonably change log fetching to be async in the future.
- *
- * The `req_proto` and `req_proto_len` represent a byte array for a
- * [bridge::FetchBufferedLogsRequest] protobuf message. The callback is invoked on completion with
- * a [bridge::FetchBufferedLogsResponse] protobuf message.
- */
-void tmprl_fetch_buffered_logs(const uint8_t *req_proto,
-                               size_t req_proto_len,
-                               void *user_data,
-                               tmprl_callback callback);

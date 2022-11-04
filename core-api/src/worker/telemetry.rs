@@ -7,13 +7,13 @@ use std::{
 use tracing_core::Level;
 use url::Url;
 
-/// Should be backed by a process-wide singleton who is responsible for telemetry and logging
-/// management.
-pub trait CoreTelemetry {
-    /// Core buffers logs that should be shuttled over to lang so that they may be rendered with
-    /// the user's desired logging library. Use this function to grab the most recent buffered logs
-    /// since the last time it was called. A fixed number of such logs are retained at maximum, with
-    /// the oldest being dropped when full.
+/// Each worker has a telemetry subsystem associated with it, this trait defines the operations that
+/// lang might want to perform on that telemetry after it's initialized.
+pub trait WorkerTelemetry {
+    /// Each worker buffers logs that should be shuttled over to lang so that they may be rendered
+    /// with the user's desired logging library. Use this function to grab the most recent buffered
+    /// logs since the last time it was called. A fixed number of such logs are retained at maximum,
+    /// with the oldest being dropped when full.
     ///
     /// Returns the list of logs from oldest to newest. Returns an empty vec if the feature is not
     /// configured.

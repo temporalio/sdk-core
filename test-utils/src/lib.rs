@@ -261,7 +261,8 @@ impl CoreWfStarter {
                         .await
                         .expect("Must connect"),
                 );
-                let worker = init_worker(self.worker_config.clone(), client.clone());
+                let worker = init_worker(self.worker_config.clone(), client.clone())
+                    .expect("Worker inits cleanly");
                 InitializedWorker {
                     worker: Arc::new(worker),
                     client,

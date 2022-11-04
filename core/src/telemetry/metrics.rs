@@ -1,8 +1,6 @@
-use super::TELEM_SERVICE_NAME;
-use crate::telemetry::GLOBAL_TELEM_DAT;
+use crate::telemetry::TelemetryInstance;
 use opentelemetry::{
-    global,
-    metrics::{Counter, Histogram, Meter},
+    metrics::{noop::NoopMeterProvider, Counter, Histogram, Meter, MeterProvider},
     sdk::{
         export::metrics::AggregatorSelector,
         metrics::{
@@ -13,27 +11,62 @@ use opentelemetry::{
     Context, KeyValue,
 };
 use std::{sync::Arc, time::Duration};
+use temporal_sdk_core_api::worker::telemetry::WorkerTelemetry;
 
 /// Used to track context associated with metrics, and record/update them
 ///
 /// Possible improvement: make generic over some type tag so that methods are only exposed if the
 /// appropriate k/vs have already been set.
-#[derive(Default, Clone, Debug)]
+#[derive(Clone)]
 pub(crate) struct MetricsContext {
     ctx: Context,
     kvs: Arc<Vec<KeyValue>>,
+    instruments: Arc<Instruments>,
+}
+
+struct Instruments {
+    wf_completed_counter: Counter<u64>,
+    wf_canceled_counter: Counter<u64>,
+    wf_failed_counter: Counter<u64>,
+    wf_cont_counter: Counter<u64>,
+    wf_e2e_latency: Histogram<u64>,
+    wf_task_queue_poll_empty_counter: Counter<u64>,
+    wf_task_queue_poll_succeed_counter: Counter<u64>,
+    wf_task_execution_failure_counter: Counter<u64>,
+    wf_task_sched_to_start_latency: Histogram<u64>,
+    wf_task_replay_latency: Histogram<u64>,
+    wf_task_execution_latency: Histogram<u64>,
+    act_poll_no_task: Counter<u64>,
+    act_execution_failed: Counter<u64>,
+    act_sched_to_start_latency: Histogram<u64>,
+    act_exec_latency: Histogram<u64>,
+    worker_registered: Counter<u64>,
+    num_pollers: Histogram<u64>,
+    task_slots_available: Histogram<u64>,
+    sticky_cache_hit: Counter<u64>,
+    sticky_cache_miss: Counter<u64>,
+    sticky_cache_size: Histogram<u64>,
 }
 
 impl MetricsContext {
-    fn new(kvs: Vec<KeyValue>) -> Self {
+    pub(crate) fn no_op() -> Self {
         Self {
-            ctx: Context::current(),
-            kvs: Arc::new(kvs),
+            ctx: Default::default(),
+            kvs: Default::default(),
+            instruments: Arc::new(Instruments::new_explicit(
+                &NoopMeterProvider::new().meter("fakemeter"),
+                "fakemetrics",
+            )),
         }
     }
 
-    pub(crate) fn top_level(namespace: String) -> Self {
-        Self::new(vec![KeyValue::new(KEY_NAMESPACE, namespace)])
+    pub(crate) fn top_level(namespace: String, telemetry: &TelemetryInstance) -> Self {
+        let kvs = vec![KeyValue::new(KEY_NAMESPACE, namespace)];
+        Self {
+            ctx: Context::current(),
+            kvs: Arc::new(kvs),
+            instruments: Arc::new(Instruments::new(telemetry)),
+        }
     }
 
     pub(crate) fn with_task_q(mut self, tq: String) -> Self {
@@ -48,155 +81,211 @@ impl MetricsContext {
         Self {
             ctx: Context::current(),
             kvs,
+            instruments: self.instruments.clone(),
         }
     }
 
     /// A workflow task queue poll succeeded
     pub(crate) fn wf_tq_poll_ok(&self) {
-        WF_TASK_QUEUE_POLL_SUCCEED_COUNTER.add(&self.ctx, 1, &self.kvs);
+        self.instruments
+            .wf_task_queue_poll_succeed_counter
+            .add(&self.ctx, 1, &self.kvs);
     }
 
     /// A workflow task queue poll timed out / had empty response
     pub(crate) fn wf_tq_poll_empty(&self) {
-        WF_TASK_QUEUE_POLL_EMPTY_COUNTER.add(&self.ctx, 1, &self.kvs);
+        self.instruments
+            .wf_task_queue_poll_empty_counter
+            .add(&self.ctx, 1, &self.kvs);
     }
 
     /// A workflow task execution failed
     pub(crate) fn wf_task_failed(&self) {
-        WF_TASK_EXECUTION_FAILURE_COUNTER.add(&self.ctx, 1, &self.kvs);
+        self.instruments
+            .wf_task_execution_failure_counter
+            .add(&self.ctx, 1, &self.kvs);
     }
 
     /// A workflow completed successfully
     pub(crate) fn wf_completed(&self) {
-        WF_COMPLETED_COUNTER.add(&self.ctx, 1, &self.kvs);
+        self.instruments
+            .wf_completed_counter
+            .add(&self.ctx, 1, &self.kvs);
     }
 
     /// A workflow ended cancelled
     pub(crate) fn wf_canceled(&self) {
-        WF_CANCELED_COUNTER.add(&self.ctx, 1, &self.kvs);
+        self.instruments
+            .wf_canceled_counter
+            .add(&self.ctx, 1, &self.kvs);
     }
 
     /// A workflow ended failed
     pub(crate) fn wf_failed(&self) {
-        WF_FAILED_COUNTER.add(&self.ctx, 1, &self.kvs);
+        self.instruments
+            .wf_failed_counter
+            .add(&self.ctx, 1, &self.kvs);
     }
 
     /// A workflow continued as new
     pub(crate) fn wf_continued_as_new(&self) {
-        WF_CONT_COUNTER.add(&self.ctx, 1, &self.kvs);
+        self.instruments
+            .wf_cont_counter
+            .add(&self.ctx, 1, &self.kvs);
     }
 
     /// Record workflow total execution time in milliseconds
     pub(crate) fn wf_e2e_latency(&self, dur: Duration) {
-        WF_E2E_LATENCY.record(&self.ctx, dur.as_millis() as u64, &self.kvs);
+        self.instruments
+            .wf_e2e_latency
+            .record(&self.ctx, dur.as_millis() as u64, &self.kvs);
     }
 
     /// Record workflow task schedule to start time in millis
     pub(crate) fn wf_task_sched_to_start_latency(&self, dur: Duration) {
-        WF_TASK_SCHED_TO_START_LATENCY.record(&self.ctx, dur.as_millis() as u64, &self.kvs);
+        self.instruments.wf_task_sched_to_start_latency.record(
+            &self.ctx,
+            dur.as_millis() as u64,
+            &self.kvs,
+        );
     }
 
     /// Record workflow task execution time in milliseconds
     pub(crate) fn wf_task_latency(&self, dur: Duration) {
-        WF_TASK_EXECUTION_LATENCY.record(&self.ctx, dur.as_millis() as u64, &self.kvs);
+        self.instruments.wf_task_execution_latency.record(
+            &self.ctx,
+            dur.as_millis() as u64,
+            &self.kvs,
+        );
     }
 
     /// Record time it takes to catch up on replaying a WFT
     pub(crate) fn wf_task_replay_latency(&self, dur: Duration) {
-        WF_TASK_REPLAY_LATENCY.record(&self.ctx, dur.as_millis() as u64, &self.kvs);
+        self.instruments.wf_task_replay_latency.record(
+            &self.ctx,
+            dur.as_millis() as u64,
+            &self.kvs,
+        );
     }
 
     /// An activity long poll timed out
     pub(crate) fn act_poll_timeout(&self) {
-        ACT_POLL_NO_TASK.add(&self.ctx, 1, &self.kvs);
+        self.instruments
+            .act_poll_no_task
+            .add(&self.ctx, 1, &self.kvs);
     }
 
     /// An activity execution failed
     pub(crate) fn act_execution_failed(&self) {
-        ACT_EXECUTION_FAILED.add(&self.ctx, 1, &self.kvs);
+        self.instruments
+            .act_execution_failed
+            .add(&self.ctx, 1, &self.kvs);
     }
 
     /// Record activity task schedule to start time in millis
     pub(crate) fn act_sched_to_start_latency(&self, dur: Duration) {
-        ACT_SCHED_TO_START_LATENCY.record(&self.ctx, dur.as_millis() as u64, &self.kvs);
+        self.instruments.act_sched_to_start_latency.record(
+            &self.ctx,
+            dur.as_millis() as u64,
+            &self.kvs,
+        );
     }
 
     /// Record time it took to complete activity execution, from the time core generated the
     /// activity task, to the time lang responded with a completion (failure or success).
     pub(crate) fn act_execution_latency(&self, dur: Duration) {
-        ACT_EXEC_LATENCY.record(&self.ctx, dur.as_millis() as u64, &self.kvs);
+        self.instruments
+            .act_exec_latency
+            .record(&self.ctx, dur.as_millis() as u64, &self.kvs);
     }
 
     /// A worker was registered
     pub(crate) fn worker_registered(&self) {
-        WORKER_REGISTERED.add(&self.ctx, 1, &self.kvs);
+        self.instruments
+            .worker_registered
+            .add(&self.ctx, 1, &self.kvs);
     }
 
     /// Record current number of available task slots. Context should have worker type set.
     pub(crate) fn available_task_slots(&self, num: usize) {
-        TASK_SLOTS_AVAILABLE.record(&self.ctx, num as u64, &self.kvs)
+        self.instruments
+            .task_slots_available
+            .record(&self.ctx, num as u64, &self.kvs)
     }
 
     /// Record current number of pollers. Context should include poller type / task queue tag.
     pub(crate) fn record_num_pollers(&self, num: usize) {
-        NUM_POLLERS.record(&self.ctx, num as u64, &self.kvs);
+        self.instruments
+            .num_pollers
+            .record(&self.ctx, num as u64, &self.kvs);
     }
 
     /// A workflow task found a cached workflow to run against
     pub(crate) fn sticky_cache_hit(&self) {
-        STICKY_CACHE_HIT.add(&self.ctx, 1, &self.kvs);
+        self.instruments
+            .sticky_cache_hit
+            .add(&self.ctx, 1, &self.kvs);
     }
 
     /// A workflow task did not find a cached workflow
     pub(crate) fn sticky_cache_miss(&self) {
-        STICKY_CACHE_MISS.add(&self.ctx, 1, &self.kvs);
+        self.instruments
+            .sticky_cache_miss
+            .add(&self.ctx, 1, &self.kvs);
     }
 
     /// Record current cache size (in number of wfs, not bytes)
     pub(crate) fn cache_size(&self, size: u64) {
-        STICKY_CACHE_SIZE.record(&self.ctx, size, &self.kvs);
+        self.instruments
+            .sticky_cache_size
+            .record(&self.ctx, size, &self.kvs);
     }
 }
 
-lazy_static::lazy_static! {
-    pub(crate) static ref METRIC_METER: Meter = {
-        #[cfg(not(test))]
-        if crate::telemetry::GLOBAL_TELEM_DAT.get().is_none() {
-            panic!("Tried to use a metric but telemetry has not been initialized")
-        }
-        global::meter(TELEM_SERVICE_NAME)
-    };
-}
-fn metric_prefix() -> &'static str {
-    GLOBAL_TELEM_DAT
-        .get()
-        .map(|gtd| {
-            if gtd.no_temporal_prefix_for_metrics {
-                ""
-            } else {
-                "temporal_"
-            }
-        })
-        .unwrap_or("")
-}
+impl Instruments {
+    fn new(telem: &TelemetryInstance) -> Self {
+        let no_op_meter: Meter;
+        let meter = if let Some(meter) = telem.get_metric_meter() {
+            meter
+        } else {
+            no_op_meter = NoopMeterProvider::default().meter("no_op");
+            &no_op_meter
+        };
+        Self::new_explicit(meter, telem.metric_prefix)
+    }
 
-/// Define a temporal metric. All metrics are kept private to this file, and should be accessed
-/// through functions on the [MetricsContext]
-macro_rules! tm {
-    (ctr, $ident:ident, $name:expr) => {
-        lazy_static::lazy_static! {
-            static ref $ident: Counter<u64> = {
-                METRIC_METER.u64_counter(metric_prefix().to_string() + $name).init()
-            };
+    fn new_explicit(meter: &Meter, metric_prefix: &'static str) -> Self {
+        let ctr = |name: &'static str| -> Counter<u64> {
+            meter.u64_counter(metric_prefix.to_string() + name).init()
+        };
+        let hst = |name: &'static str| -> Histogram<u64> {
+            meter.u64_histogram(metric_prefix.to_string() + name).init()
+        };
+        Self {
+            wf_completed_counter: ctr("workflow_completed"),
+            wf_canceled_counter: ctr("workflow_canceled"),
+            wf_failed_counter: ctr("workflow_failed"),
+            wf_cont_counter: ctr("workflow_continue_as_new"),
+            wf_e2e_latency: hst(WF_E2E_LATENCY_NAME),
+            wf_task_queue_poll_empty_counter: ctr("workflow_task_queue_poll_empty"),
+            wf_task_queue_poll_succeed_counter: ctr("workflow_task_queue_poll_succeed"),
+            wf_task_execution_failure_counter: ctr("workflow_task_queue_poll_failed"),
+            wf_task_sched_to_start_latency: hst(WF_TASK_SCHED_TO_START_LATENCY_NAME),
+            wf_task_replay_latency: hst(WF_TASK_REPLAY_LATENCY_NAME),
+            wf_task_execution_latency: hst(WF_TASK_EXECUTION_LATENCY_NAME),
+            act_poll_no_task: ctr("activity_poll_no_task"),
+            act_execution_failed: ctr("activity_execution_failed"),
+            act_sched_to_start_latency: hst(ACT_SCHED_TO_START_LATENCY_NAME),
+            act_exec_latency: hst(ACT_EXEC_LATENCY_NAME),
+            // name kept as worker start for compat with old sdk / what users expect
+            worker_registered: ctr("worker_start"),
+            num_pollers: hst(NUM_POLLERS_NAME),
+            task_slots_available: hst(TASK_SLOTS_AVAILABLE_NAME),
+            sticky_cache_hit: ctr("sticky_cache_hit"),
+            sticky_cache_miss: ctr("sticky_cache_miss"),
+            sticky_cache_size: hst(STICKY_CACHE_SIZE_NAME),
         }
-    };
-    (vr_u64, $ident:ident, $name:expr) => {
-        lazy_static::lazy_static! {
-            static ref $ident: Histogram<u64> = {
-                METRIC_METER.u64_histogram(metric_prefix().to_string() + $name).init()
-            };
-        }
-    };
+    }
 }
 
 const KEY_NAMESPACE: &str = "namespace";
@@ -225,85 +314,24 @@ pub(crate) fn workflow_type(ty: String) -> KeyValue {
     KeyValue::new(KEY_WF_TYPE, ty)
 }
 pub(crate) fn workflow_worker_type() -> KeyValue {
-    KeyValue {
-        key: opentelemetry::Key::from_static_str(KEY_WORKER_TYPE),
-        value: opentelemetry::Value::String("WorkflowWorker".into()),
-    }
+    KeyValue::new(KEY_WORKER_TYPE, "WorkflowWorker")
 }
 pub(crate) fn activity_worker_type() -> KeyValue {
-    KeyValue {
-        key: opentelemetry::Key::from_static_str(KEY_WORKER_TYPE),
-        value: opentelemetry::Value::String("ActivityWorker".into()),
-    }
+    KeyValue::new(KEY_WORKER_TYPE, "ActivityWorker")
 }
 pub(crate) fn local_activity_worker_type() -> KeyValue {
-    KeyValue {
-        key: opentelemetry::Key::from_static_str(KEY_WORKER_TYPE),
-        value: opentelemetry::Value::String("LocalActivityWorker".into()),
-    }
+    KeyValue::new(KEY_WORKER_TYPE, "LocalActivityWorker")
 }
 
-tm!(ctr, WF_COMPLETED_COUNTER, "workflow_completed");
-tm!(ctr, WF_CANCELED_COUNTER, "workflow_canceled");
-tm!(ctr, WF_FAILED_COUNTER, "workflow_failed");
-tm!(ctr, WF_CONT_COUNTER, "workflow_continue_as_new");
 const WF_E2E_LATENCY_NAME: &str = "workflow_endtoend_latency";
-tm!(vr_u64, WF_E2E_LATENCY, WF_E2E_LATENCY_NAME);
-
-tm!(
-    ctr,
-    WF_TASK_QUEUE_POLL_EMPTY_COUNTER,
-    "workflow_task_queue_poll_empty"
-);
-tm!(
-    ctr,
-    WF_TASK_QUEUE_POLL_SUCCEED_COUNTER,
-    "workflow_task_queue_poll_succeed"
-);
-tm!(
-    ctr,
-    WF_TASK_EXECUTION_FAILURE_COUNTER,
-    "workflow_task_execution_failed"
-);
 const WF_TASK_SCHED_TO_START_LATENCY_NAME: &str = "workflow_task_schedule_to_start_latency";
-tm!(
-    vr_u64,
-    WF_TASK_SCHED_TO_START_LATENCY,
-    WF_TASK_SCHED_TO_START_LATENCY_NAME
-);
 const WF_TASK_REPLAY_LATENCY_NAME: &str = "workflow_task_replay_latency";
-tm!(vr_u64, WF_TASK_REPLAY_LATENCY, WF_TASK_REPLAY_LATENCY_NAME);
 const WF_TASK_EXECUTION_LATENCY_NAME: &str = "workflow_task_execution_latency";
-tm!(
-    vr_u64,
-    WF_TASK_EXECUTION_LATENCY,
-    WF_TASK_EXECUTION_LATENCY_NAME
-);
-
-tm!(ctr, ACT_POLL_NO_TASK, "activity_poll_no_task");
-tm!(ctr, ACT_EXECUTION_FAILED, "activity_execution_failed");
-// Act task unregistered can't be known by core right now since it's not well defined as an
-// activity result. We could add a flag to the failed activity result if desired.
 const ACT_SCHED_TO_START_LATENCY_NAME: &str = "activity_schedule_to_start_latency";
-tm!(
-    vr_u64,
-    ACT_SCHED_TO_START_LATENCY,
-    ACT_SCHED_TO_START_LATENCY_NAME
-);
 const ACT_EXEC_LATENCY_NAME: &str = "activity_execution_latency";
-tm!(vr_u64, ACT_EXEC_LATENCY, ACT_EXEC_LATENCY_NAME);
-
-// name kept as worker start for compat with old sdk / what users expect
-tm!(ctr, WORKER_REGISTERED, "worker_start");
 const NUM_POLLERS_NAME: &str = "num_pollers";
-tm!(vr_u64, NUM_POLLERS, NUM_POLLERS_NAME);
 const TASK_SLOTS_AVAILABLE_NAME: &str = "worker_task_slots_available";
-tm!(vr_u64, TASK_SLOTS_AVAILABLE, TASK_SLOTS_AVAILABLE_NAME);
-
-tm!(ctr, STICKY_CACHE_HIT, "sticky_cache_hit");
-tm!(ctr, STICKY_CACHE_MISS, "sticky_cache_miss");
 const STICKY_CACHE_SIZE_NAME: &str = "sticky_cache_size";
-tm!(vr_u64, STICKY_CACHE_SIZE, STICKY_CACHE_SIZE_NAME);
 
 /// Artisanal, handcrafted latency buckets for workflow e2e latency which should expose a useful
 /// set of buckets for < 1 day runtime workflows. Beyond that, this metric probably isn't very
@@ -345,7 +373,9 @@ pub(super) static DEFAULT_MS_BUCKETS: &[f64] = &[50., 100., 500., 1000., 2500., 
 
 /// Chooses appropriate aggregators for our metrics
 #[derive(Debug)]
-pub struct SDKAggSelector;
+pub struct SDKAggSelector {
+    pub metric_prefix: &'static str,
+}
 
 impl AggregatorSelector for SDKAggSelector {
     fn aggregator_for(&self, descriptor: &Descriptor) -> Option<Arc<dyn Aggregator + Send + Sync>> {
@@ -357,7 +387,7 @@ impl AggregatorSelector for SDKAggSelector {
         if *descriptor.instrument_kind() == InstrumentKind::Histogram {
             let dname = descriptor
                 .name()
-                .strip_prefix(metric_prefix())
+                .strip_prefix(self.metric_prefix)
                 .unwrap_or_else(|| descriptor.name());
             // Some recorders are just gauges
             match dname {

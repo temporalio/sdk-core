@@ -146,8 +146,10 @@ impl<'a> tracing::field::Visit for JsonVisitor<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{construct_filter_string, fetch_global_buffered_logs, telemetry_init};
-    use temporal_sdk_core_api::worker::telemetry::{Logger, TelemetryOptionsBuilder};
+    use crate::{construct_filter_string, telemetry_init};
+    use temporal_sdk_core_api::worker::telemetry::{
+        Logger, TelemetryOptionsBuilder, WorkerTelemetry,
+    };
     use tracing::Level;
 
     #[instrument(fields(bros = "brohemian"))]
@@ -165,27 +167,27 @@ mod tests {
             })
             .build()
             .unwrap();
-        // TODO: this breaks if other tests init telemetry. Should just bite the bullet & make
-        //   it nonglobal
-        telemetry_init(&opts).unwrap();
+        let instance = telemetry_init(&opts).unwrap();
 
-        let top_span = span!(Level::INFO, "yayspan", huh = "wat");
-        let _guard = top_span.enter();
-        info!("Whata?");
-        instrumented("hi");
-        info!("Donezo");
+        tracing::subscriber::with_default(instance.trace_subscriber.clone(), || {
+            let top_span = span!(Level::INFO, "yayspan", huh = "wat");
+            let _guard = top_span.enter();
+            info!("Whata?");
+            instrumented("hi");
+            info!("Donezo");
 
-        let logs = fetch_global_buffered_logs();
-        // Verify debug log was not forwarded
-        assert!(!logs.iter().any(|l| l.message == "debug"));
-        assert_eq!(logs.len(), 4);
-        // Ensure fields are attached to events properly
-        let info_msg = &logs[2];
-        assert_eq!(info_msg.message, "info");
-        assert_eq!(info_msg.fields.len(), 4);
-        assert_eq!(info_msg.fields.get("huh"), Some(&"wat".into()));
-        assert_eq!(info_msg.fields.get("foo"), Some(&"bar".into()));
-        assert_eq!(info_msg.fields.get("bros"), Some(&"brohemian".into()));
-        assert_eq!(info_msg.fields.get("thing"), Some(&"hi".into()));
+            let logs = instance.fetch_buffered_logs();
+            // Verify debug log was not forwarded
+            assert!(!logs.iter().any(|l| l.message == "debug"));
+            assert_eq!(logs.len(), 4);
+            // Ensure fields are attached to events properly
+            let info_msg = &logs[2];
+            assert_eq!(info_msg.message, "info");
+            assert_eq!(info_msg.fields.len(), 4);
+            assert_eq!(info_msg.fields.get("huh"), Some(&"wat".into()));
+            assert_eq!(info_msg.fields.get("foo"), Some(&"bar".into()));
+            assert_eq!(info_msg.fields.get("bros"), Some(&"brohemian".into()));
+            assert_eq!(info_msg.fields.get("thing"), Some(&"hi".into()));
+        })
     }
 }

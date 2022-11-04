@@ -449,7 +449,7 @@ mod tests {
             Some(2.0),
             poller,
             Arc::new(mock_manual_workflow_client()),
-            MetricsContext::default(),
+            MetricsContext::no_op(),
             Duration::from_secs(1),
             Duration::from_secs(1),
         );

@@ -32,7 +32,7 @@ pub use pollers::{
     Client, ClientOptions, ClientOptionsBuilder, ClientTlsConfig, RetryClient, RetryConfig,
     TlsConfig, WorkflowClientTrait,
 };
-pub use telemetry::{construct_filter_string, fetch_global_buffered_logs, telemetry_init};
+pub use telemetry::{construct_filter_string, telemetry_init};
 pub use temporal_sdk_core_api as api;
 pub use temporal_sdk_core_protos as protos;
 pub use temporal_sdk_core_protos::TaskToken;
@@ -41,7 +41,7 @@ pub use worker::{Worker, WorkerConfig, WorkerConfigBuilder};
 
 use crate::{
     replay::{mock_client_from_histories, Historator, HistoryForReplay},
-    telemetry::metrics::{MetricsContext, METRIC_METER},
+    telemetry::metrics::MetricsContext,
     worker::client::WorkerClientBag,
 };
 use futures::Stream;
@@ -60,7 +60,7 @@ use temporal_sdk_core_protos::coresdk::ActivityHeartbeat;
 /// this function will always overwrite the client retry configuration, force the client to use the
 /// namespace defined in the worker config, and set the client identity appropriately. IE: Use
 /// [ClientOptions::connect_no_namespace], not [ClientOptions::connect].
-pub fn init_worker<CT>(worker_config: WorkerConfig, client: CT) -> Worker
+pub fn init_worker<CT>(worker_config: WorkerConfig, client: CT) -> Result<Worker, anyhow::Error>
 where
     CT: Into<sealed::AnyClient>,
 {
@@ -86,9 +86,11 @@ where
         worker_config.use_worker_versioning,
     ));
 
-    let metrics = MetricsContext::top_level(worker_config.namespace.clone())
+    let telem = telemetry_init(&worker_config.telemetry_options)?;
+
+    let metrics = MetricsContext::top_level(worker_config.namespace.clone(), &telem)
         .with_task_q(worker_config.task_queue.clone());
-    Worker::new(worker_config, sticky_q, client_bag, metrics)
+    Ok(Worker::new(worker_config, sticky_q, client_bag, metrics))
 }
 
 /// Create a worker for replaying a specific history. It will auto-shutdown as soon as the history
@@ -111,7 +113,7 @@ where
     let post_activate = historator.get_post_activate_hook();
     let shutdown_tok = historator.get_shutdown_setter();
     let client = mock_client_from_histories(historator);
-    let mut worker = Worker::new(config, None, Arc::new(client), MetricsContext::default());
+    let mut worker = Worker::new(config, None, Arc::new(client), MetricsContext::no_op());
     worker.set_post_activate_hook(post_activate);
     shutdown_tok(worker.shutdown_token());
     Ok(worker)

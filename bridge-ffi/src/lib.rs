@@ -17,9 +17,7 @@ mod wrappers;
 use bridge::{init_response, CreateWorkerRequest, InitResponse};
 use prost::Message;
 use std::sync::Arc;
-use temporal_sdk_core::{
-    fetch_global_buffered_logs, telemetry_init, Client, ClientOptions, RetryClient,
-};
+use temporal_sdk_core::{telemetry_init, Client, ClientOptions, RetryClient};
 use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::coresdk::{
     bridge,
@@ -670,50 +668,6 @@ pub extern "C" fn tmprl_request_workflow_eviction(
     });
 }
 
-/// Fetch buffered logs. Blocks until complete. This is still using the callback since we might
-/// reasonably change log fetching to be async in the future.
-///
-/// The `req_proto` and `req_proto_len` represent a byte array for a
-/// [bridge::FetchBufferedLogsRequest] protobuf message. The callback is invoked on completion with
-/// a [bridge::FetchBufferedLogsResponse] protobuf message.
-#[no_mangle]
-pub extern "C" fn tmprl_fetch_buffered_logs(
-    #[allow(unused_variables)] // We intentionally ignore the request
-    req_proto: *const u8,
-    #[allow(unused_variables)] req_proto_len: libc::size_t,
-    user_data: *mut libc::c_void,
-    callback: tmprl_callback,
-) {
-    let user_data = UserDataHandle(user_data);
-    // We intentionally spawn even though the core call is not async so the
-    // callback can be made in the tokio runtime
-    let resp = bridge::FetchBufferedLogsResponse {
-        entries: fetch_global_buffered_logs()
-            .into_iter()
-            .map(|log| bridge::fetch_buffered_logs_response::LogEntry {
-                message: log.message,
-                timestamp: Some(log.timestamp.into()),
-                level: match log.level {
-                    Level::ERROR => bridge::LogLevel::Error.into(),
-                    Level::WARN => bridge::LogLevel::Warn.into(),
-                    Level::INFO => bridge::LogLevel::Info.into(),
-                    Level::DEBUG => bridge::LogLevel::Debug.into(),
-                    Level::TRACE => bridge::LogLevel::Trace.into(),
-                },
-            })
-            .collect(),
-    };
-
-    unsafe {
-        callback(
-            user_data.into(),
-            // TODO: Creates vec every time since no worker/core instance. Can be fixed with a
-            //   pool if optimizations needed.
-            tmprl_bytes_t::from_vec(resp.encode_to_vec()).into_raw(),
-        )
-    };
-}
-
 impl tmprl_worker_t {
     fn new(
         tokio_runtime: Arc<tokio::runtime::Runtime>,
@@ -722,7 +676,10 @@ impl tmprl_worker_t {
     ) -> Result<tmprl_worker_t, String> {
         Ok(tmprl_worker_t {
             tokio_runtime,
-            worker: Arc::new(temporal_sdk_core::init_worker(opts.try_into()?, client)),
+            worker: Arc::new(
+                temporal_sdk_core::init_worker(opts.try_into()?, client)
+                    .map_err(|e| e.to_string())?,
+            ),
         })
     }
 
@@ -793,6 +750,8 @@ impl tmprl_worker_t {
     fn request_workflow_eviction(&self, req: bridge::RequestWorkflowEvictionRequest) {
         self.worker.request_workflow_eviction(&req.run_id);
     }
+
+    // TODO: Fetch logs
 
     fn borrow_buf(&mut self) -> Vec<u8> {
         // We currently do not use a thread-safe byte pool, but if wanted, it
