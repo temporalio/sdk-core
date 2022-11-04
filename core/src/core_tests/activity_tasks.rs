@@ -614,6 +614,83 @@ async fn max_tq_acts_set_passed_to_poll_properly() {
     worker.poll_activity_task().await.unwrap();
 }
 
+/// This test doesn't test the real worker config since [mock_worker] bypasses the worker
+/// constructor, [mock_worker] will not pass an activity poller to the worker when
+/// `no_remote_activities` is set to `true`.
+#[tokio::test]
+async fn no_eager_activities_requested_when_worker_options_disable_remote_activities() {
+    let wfid = "fake_wf_id";
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    let scheduled_event_id = t.add_activity_task_scheduled("act_id");
+    let started_event_id = t.add_activity_task_started(scheduled_event_id);
+    t.add_activity_task_completed(scheduled_event_id, started_event_id, b"hi".into());
+    t.add_full_wf_task();
+    t.add_workflow_execution_completed();
+    let num_eager_requested = Arc::new(AtomicUsize::new(0));
+    // Clone it to move into the callback below
+    let num_eager_requested_clone = num_eager_requested.clone();
+
+    let mut mock = mock_workflow_client();
+    mock.expect_complete_workflow_task()
+        .times(1)
+        .returning(move |req| {
+            // Store the number of eager activities requested to be checked below
+            let count = req
+                .commands
+                .into_iter()
+                .filter(|c| match c.attributes {
+                    Some(Attributes::ScheduleActivityTaskCommandAttributes(
+                        ScheduleActivityTaskCommandAttributes {
+                            request_eager_execution,
+                            ..
+                        },
+                    )) => request_eager_execution,
+                    _ => false,
+                })
+                .count();
+            num_eager_requested_clone.store(count, Ordering::Relaxed);
+            Ok(RespondWorkflowTaskCompletedResponse {
+                workflow_task: None,
+                activity_tasks: vec![],
+            })
+        });
+    let mut mock = single_hist_mock_sg(wfid, t, [1], mock, true);
+    let mut mock_poller = mock_manual_poller();
+    mock_poller
+        .expect_poll()
+        .returning(|| futures::future::pending().boxed());
+    mock.set_act_poller(Box::new(mock_poller));
+    mock.worker_cfg(|wc| {
+        wc.max_cached_workflows = 2;
+        wc.no_remote_activities = true;
+    });
+    let core = mock_worker(mock);
+
+    // Test start
+    let wf_task = core.poll_workflow_activation().await.unwrap();
+    let cmds = vec![ScheduleActivity {
+        seq: 1,
+        activity_id: "act_id".to_string(),
+        task_queue: TEST_Q.to_string(),
+        cancellation_type: ActivityCancellationType::TryCancel as i32,
+        ..Default::default()
+    }
+    .into()];
+
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
+        wf_task.run_id,
+        cmds,
+    ))
+    .await
+    .unwrap();
+
+    core.shutdown().await;
+
+    assert_eq!(num_eager_requested.load(Ordering::Relaxed), 0);
+}
+
 /// This test verifies that activity tasks which come as replies to completing a WFT are properly
 /// delivered via polling.
 #[tokio::test]
