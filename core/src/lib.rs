@@ -49,7 +49,7 @@ use std::sync::Arc;
 use temporal_client::{ConfiguredClient, TemporalServiceClientWithMetrics};
 use temporal_sdk_core_api::{
     errors::{CompleteActivityError, PollActivityError, PollWfError},
-    telemetry::TelemetryOptions,
+    telemetry::{CoreTelemetry, TelemetryOptions},
     Worker as WorkerTrait,
 };
 use temporal_sdk_core_protos::coresdk::ActivityHeartbeat;
@@ -213,12 +213,13 @@ impl CoreRuntime {
     /// # Panics
     /// If there is no currently active Tokio runtime
     pub fn new_assume_tokio(telemetry_options: &TelemetryOptions) -> Result<Self, anyhow::Error> {
+        let runtime_handle = tokio::runtime::Handle::current();
         let telemetry = telemetry_init(telemetry_options)?;
         let guard = tracing::subscriber::set_default(telemetry.trace_subscriber());
         let me = Self {
             telemetry,
             runtime: None,
-            runtime_handle: tokio::runtime::Handle::current(),
+            runtime_handle,
             telem_drop_guard: Some(guard),
         };
         Ok(me)
@@ -227,6 +228,11 @@ impl CoreRuntime {
     /// Get a handle to the tokio runtime used by this Core runtime.
     pub fn tokio_handle(&self) -> tokio::runtime::Handle {
         self.runtime_handle.clone()
+    }
+
+    /// Returns the metric meter used for recording metrics, if they were enabled.
+    pub fn metric_meter(&self) -> Option<&opentelemetry::metrics::Meter> {
+        self.telemetry.get_metric_meter()
     }
 
     /// Turns off the telemetry subscriber, thus disabling trace export and logging.

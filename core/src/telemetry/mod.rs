@@ -76,7 +76,7 @@ impl TelemetryInstance {
         }
     }
 
-    pub(crate) fn trace_subscriber(&self) -> Arc<dyn Subscriber + Send + Sync> {
+    pub fn trace_subscriber(&self) -> Arc<dyn Subscriber + Send + Sync> {
         self.trace_subscriber.clone()
     }
 }
@@ -250,7 +250,7 @@ pub fn telemetry_init(opts: &TelemetryOptions) -> Result<TelemetryInstance, anyh
         ))
     })
     .join()
-    .expect("Telemetry initialization panicked")
+    .expect("Telemetry initialization thread join panicked")
 }
 
 fn default_resource_kvs() -> &'static [KeyValue] {

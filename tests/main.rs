@@ -28,10 +28,10 @@ mod integ_tests {
     use std::str::FromStr;
     use temporal_client::WorkflowService;
     use temporal_sdk_core::{
-        init_worker, telemetry_init, ClientOptionsBuilder, ClientTlsConfig, TlsConfig,
+        init_worker, ClientOptionsBuilder, ClientTlsConfig, CoreRuntime, TlsConfig,
         WorkflowClientTrait,
     };
-    use temporal_sdk_core_api::worker::{telemetry::WorkerTelemetry, WorkerConfigBuilder};
+    use temporal_sdk_core_api::worker::WorkerConfigBuilder;
     use temporal_sdk_core_protos::temporal::api::workflowservice::v1::ListNamespacesRequest;
     use temporal_sdk_core_test_utils::{
         get_integ_server_options, get_integ_telem_options, NAMESPACE,
@@ -43,13 +43,14 @@ mod integ_tests {
     #[ignore] // Really a compile time check more than anything
     async fn lang_bridge_example() {
         let opts = get_integ_server_options();
-        let telem_d = telemetry_init(&get_integ_telem_options()).unwrap();
+        let runtime = CoreRuntime::new_assume_tokio(&get_integ_telem_options()).unwrap();
         let mut retrying_client = opts
-            .connect_no_namespace(telem_d.get_metric_meter(), None)
+            .connect_no_namespace(runtime.metric_meter(), None)
             .await
             .unwrap();
 
         let _worker = init_worker(
+            &runtime,
             WorkerConfigBuilder::default()
                 .namespace("default")
                 .task_queue("Wheee!")

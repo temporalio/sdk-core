@@ -104,6 +104,7 @@ pub async fn history_from_proto_binary(path_from_root: &str) -> Result<History, 
 
 /// Implements a builder pattern to help integ tests initialize core and create workflows
 pub struct CoreWfStarter {
+    core_rt: CoreRuntime,
     /// Used for both the task queue and workflow id
     task_queue_name: String,
     telemetry_options: TelemetryOptions,
@@ -125,9 +126,12 @@ impl CoreWfStarter {
     }
 
     pub fn new_tq_name(task_queue: &str) -> Self {
+        let telemetry_options = get_integ_telem_options();
         Self {
+            core_rt: CoreRuntime::new_assume_tokio(&telemetry_options)
+                .expect("Core runtime inits cleanly"),
             task_queue_name: task_queue.to_owned(),
-            telemetry_options: get_integ_telem_options(),
+            telemetry_options,
             worker_config: WorkerConfigBuilder::default()
                 .namespace(NAMESPACE)
                 .task_queue(task_queue)
@@ -261,9 +265,7 @@ impl CoreWfStarter {
                         .await
                         .expect("Must connect"),
                 );
-                let core_rt = CoreRuntime::new_assume_tokio(&self.telemetry_options)
-                    .expect("Core runtime inits cleanly");
-                let worker = init_worker(&core_rt, self.worker_config.clone(), client.clone())
+                let worker = init_worker(&self.core_rt, self.worker_config.clone(), client.clone())
                     .expect("Worker inits cleanly");
                 InitializedWorker {
                     worker: Arc::new(worker),

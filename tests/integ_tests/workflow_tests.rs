@@ -42,8 +42,8 @@ use temporal_sdk_core_protos::{
     temporal::api::{failure::v1::Failure, history::v1::history_event},
 };
 use temporal_sdk_core_test_utils::{
-    history_from_proto_binary, init_core_and_create_wf, init_core_replay_preloaded,
-    schedule_activity_cmd, CoreWfStarter, WorkerTestHelpers,
+    get_integ_telem_options, history_from_proto_binary, init_core_and_create_wf,
+    init_core_replay_preloaded, schedule_activity_cmd, CoreWfStarter, WorkerTestHelpers,
 };
 use tokio::time::sleep;
 use uuid::Uuid;
@@ -104,6 +104,7 @@ async fn parallel_workflows_same_queue() {
     for handle in handles {
         handle.await.unwrap()
     }
+    core.shutdown().await;
 }
 
 static RUN_CT: AtomicUsize = AtomicUsize::new(0);
