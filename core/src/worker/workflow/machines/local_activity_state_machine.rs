@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{
     protosext::{CompleteLocalActivityData, HistoryEventExt, ValidScheduleLA},
-    worker::LocalActivityExecutionResult,
+    worker::{workflow::OutgoingJob, LocalActivityExecutionResult},
 };
 use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
 use std::{
@@ -286,6 +286,7 @@ impl SharedState {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, derive_more::Display)]
 pub(super) enum LocalActivityCommand {
     RequestActivityExecution(ValidScheduleLA),
@@ -643,13 +644,14 @@ impl WFMachinesAdapter for LocalActivityMachine {
                     result.into()
                 };
                 let mut responses = vec![
-                    MachineResponse::PushWFJob(
-                        ResolveActivity {
+                    MachineResponse::PushWFJob(OutgoingJob {
+                        variant: ResolveActivity {
                             seq: self.shared_state.attrs.seq,
                             result: Some(resolution),
                         }
                         .into(),
-                    ),
+                        is_la_resolution: true,
+                    }),
                     MachineResponse::UpdateWFTime(complete_time),
                 ];
 
@@ -936,7 +938,7 @@ mod tests {
         let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 0);
         let ready_to_execute_las = wfm.drain_queued_local_activities();
-        let num_queued = if !replay { 1 } else { 0 };
+        let num_queued = usize::from(!replay);
         assert_eq!(ready_to_execute_las.len(), num_queued);
 
         if !replay {
@@ -1112,7 +1114,7 @@ mod tests {
         let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 0);
         let ready_to_execute_las = wfm.drain_queued_local_activities();
-        let num_queued = if !replay { 1 } else { 0 };
+        let num_queued = usize::from(!replay);
         assert_eq!(ready_to_execute_las.len(), num_queued);
 
         if !replay {
@@ -1154,7 +1156,7 @@ mod tests {
             }]
         );
         let ready_to_execute_las = wfm.drain_queued_local_activities();
-        let num_queued = if !replay { 1 } else { 0 };
+        let num_queued = usize::from(!replay);
         assert_eq!(ready_to_execute_las.len(), num_queued);
         if !replay {
             wfm.complete_local_activity(2, ActivityExecutionResult::ok(b"Resolved".into()))
@@ -1379,7 +1381,7 @@ mod tests {
         assert_eq!(commands.len(), 1);
         assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
         let ready_to_execute_las = wfm.drain_queued_local_activities();
-        let num_queued = if !replay { 1 } else { 0 };
+        let num_queued = usize::from(!replay);
         assert_eq!(ready_to_execute_las.len(), num_queued);
 
         // Next activation timer fires and activity cancel will be requested

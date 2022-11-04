@@ -314,7 +314,7 @@ impl WFStream {
                             // If there are in-poll queries, insert jobs for those queries into the
                             // activation, but only if we hit the cache. If we didn't, those queries
                             // will need to be dealt with once replay is over
-                            if !wft.pending_queries.is_empty() && wft.hit_cache {
+                            if wft.hit_cache {
                                 put_queries_in_act(&mut activation, wft);
                             }
                         }
@@ -964,6 +964,19 @@ impl WFStream {
 
 /// Drains pending queries from the workflow task and appends them to the activation's jobs
 fn put_queries_in_act(act: &mut WorkflowActivation, wft: &mut OutstandingTask) {
+    // Nothing to do if there are no pending queries
+    if wft.pending_queries.is_empty() {
+        return;
+    }
+
+    let has_legacy = wft.has_pending_legacy_query();
+    // Cannot dispatch legacy query if there are any other jobs - which can happen if, ex, a local
+    // activity resolves while we've gotten a legacy query after heartbeating.
+    if has_legacy && !act.jobs.is_empty() {
+        dbg_panic!("Should never try to attach legacy query to activation with other jobs");
+        return;
+    }
+
     debug!(queries=?wft.pending_queries, "Dispatching queries");
     let query_jobs = wft
         .pending_queries

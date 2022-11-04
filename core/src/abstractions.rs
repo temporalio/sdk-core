@@ -112,7 +112,7 @@ where
 macro_rules! dbg_panic {
   ($($arg:tt)*) => {
       error!($($arg)*);
-      debug_assert!(true, $($arg)*);
+      debug_assert!(false, $($arg)*);
   };
 }
 pub(crate) use dbg_panic;

@@ -21,8 +21,8 @@ use crate::{
     worker::{
         workflow::{
             machines::modify_workflow_properties_state_machine::modify_workflow_properties,
-            CommandID, DrivenWorkflow, HistoryUpdate, LocalResolution, WFCommand, WorkflowFetcher,
-            WorkflowStartedInfo,
+            CommandID, DrivenWorkflow, HistoryUpdate, LocalResolution, OutgoingJob, WFCommand,
+            WorkflowFetcher, WorkflowStartedInfo,
         },
         ExecutingLAId, LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
     },
@@ -39,6 +39,7 @@ use std::{
 use temporal_sdk_core_protos::{
     coresdk::{
         common::NamespacedWorkflowExecution,
+        workflow_activation,
         workflow_activation::{
             workflow_activation_job, NotifyHasPatch, UpdateRandomSeed, WorkflowActivation,
         },
@@ -154,9 +155,9 @@ struct ChangeInfo {
 #[derive(Debug, derive_more::Display)]
 #[must_use]
 #[allow(clippy::large_enum_variant)]
-pub enum MachineResponse {
+pub(super) enum MachineResponse {
     #[display(fmt = "PushWFJob({})", "_0")]
-    PushWFJob(workflow_activation_job::Variant),
+    PushWFJob(OutgoingJob),
 
     /// Pushes a new command into the list that will be sent to server once we respond with the
     /// workflow task completion
@@ -197,7 +198,7 @@ where
     T: Into<workflow_activation_job::Variant>,
 {
     fn from(v: T) -> Self {
-        Self::PushWFJob(v.into())
+        Self::PushWFJob(v.into().into())
     }
 }
 
@@ -356,6 +357,13 @@ impl WorkflowMachines {
         !self.drive_me.peek_pending_jobs().is_empty()
     }
 
+    pub(crate) fn has_pending_la_resolutions(&self) -> bool {
+        self.drive_me
+            .peek_pending_jobs()
+            .iter()
+            .any(|v| v.is_la_resolution)
+    }
+
     /// Iterate the state machines, which consists of grabbing any pending outgoing commands from
     /// the workflow code, handling them, and preparing them to be sent off to the server.
     pub(crate) async fn iterate_machines(&mut self) -> Result<()> {
@@ -435,10 +443,10 @@ impl WorkflowMachines {
                     },
                 );
                 // Found a patch marker
-                self.drive_me
-                    .send_job(workflow_activation_job::Variant::NotifyHasPatch(
-                        NotifyHasPatch { patch_id },
-                    ));
+                self.drive_me.send_job(
+                    workflow_activation_job::Variant::NotifyHasPatch(NotifyHasPatch { patch_id })
+                        .into(),
+                );
             } else if e.is_local_activity_marker() {
                 self.local_activity_data.process_peekahead_marker(e)?;
             }
@@ -653,7 +661,8 @@ impl WorkflowMachines {
                     attrs,
                 )) = event.attributes
                 {
-                    self.drive_me.signal(attrs.into());
+                    self.drive_me
+                        .send_job(workflow_activation::SignalWorkflow::from(attrs).into());
                 } else {
                     // err
                 }
@@ -665,7 +674,8 @@ impl WorkflowMachines {
                     ),
                 ) = event.attributes
                 {
-                    self.drive_me.cancel(attrs.into());
+                    self.drive_me
+                        .send_job(workflow_activation::CancelWorkflow::from(attrs).into());
                 } else {
                     // err
                 }
@@ -772,12 +782,12 @@ impl WorkflowMachines {
                     self.task_started(task_started_event_id, time)?;
                 }
                 MachineResponse::UpdateRunIdOnWorkflowReset { run_id: new_run_id } => {
-                    self.drive_me
-                        .send_job(workflow_activation_job::Variant::UpdateRandomSeed(
-                            UpdateRandomSeed {
-                                randomness_seed: str_to_randomness_seed(&new_run_id),
-                            },
-                        ));
+                    self.drive_me.send_job(
+                        workflow_activation_job::Variant::UpdateRandomSeed(UpdateRandomSeed {
+                            randomness_seed: str_to_randomness_seed(&new_run_id),
+                        })
+                        .into(),
+                    );
                 }
                 MachineResponse::IssueNewCommand(c) => {
                     self.current_wf_task_commands.push_back(CommandAndMachine {

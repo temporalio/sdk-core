@@ -357,6 +357,7 @@ impl ManagedRun {
         let query_responses = data.query_responses;
         let has_query_responses = !query_responses.is_empty();
         let is_query_playback = data.has_pending_query && !has_query_responses;
+        let mut force_new_wft = due_to_heartbeat_timeout;
 
         // We only actually want to send commands back to the server if there are no more
         // pending activations and we are caught up on replay. We don't want to complete a wft
@@ -366,19 +367,26 @@ impl ManagedRun {
         // either.
         let no_commands_and_evicting =
             outgoing_cmds.commands.is_empty() && data.activation_was_only_eviction;
+        let should_respond = !(self.wfm.machines.has_pending_jobs()
+            || outgoing_cmds.replaying
+            || is_query_playback
+            || no_commands_and_evicting);
+        // If there are pending LA resolutions, and we're responding to a query here,
+        // we want to make sure to force a new task, as otherwise once we tell lang about
+        // the LA resolution there wouldn't be any task to reply to with the result of iterating
+        // the workflow.
+        if has_query_responses && self.wfm.machines.has_pending_la_resolutions() {
+            force_new_wft = true;
+        }
         let to_be_sent = ServerCommandsWithWorkflowInfo {
             task_token: data.task_token,
             action: ActivationAction::WftComplete {
-                force_new_wft: due_to_heartbeat_timeout,
+                force_new_wft,
                 commands: outgoing_cmds.commands,
                 query_responses,
             },
         };
 
-        let should_respond = !(self.wfm.machines.has_pending_jobs()
-            || outgoing_cmds.replaying
-            || is_query_playback
-            || no_commands_and_evicting);
         let outcome = if should_respond || has_query_responses {
             ActivationCompleteOutcome::ReportWFTSuccess(to_be_sent)
         } else {

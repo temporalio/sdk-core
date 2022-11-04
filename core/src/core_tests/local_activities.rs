@@ -29,11 +29,13 @@ use temporal_sdk_core_protos::{
         ActivityTaskCompletion, AsJsonPayloadExt,
     },
     temporal::api::{
-        common::v1::RetryPolicy, enums::v1::EventType, failure::v1::Failure,
+        common::v1::RetryPolicy, enums::v1::EventType, failure::v1::Failure, history::v1::History,
         query::v1::WorkflowQuery,
     },
 };
-use temporal_sdk_core_test_utils::{schedule_local_activity_cmd, WorkerTestHelpers};
+use temporal_sdk_core_test_utils::{
+    schedule_local_activity_cmd, start_timer_cmd, WorkerTestHelpers,
+};
 use tokio::sync::Barrier;
 
 async fn echo(_ctx: ActContext, e: String) -> anyhow::Result<String> {
@@ -511,4 +513,158 @@ async fn query_during_wft_heartbeat_doesnt_accidentally_fail_to_continue_heartbe
     };
 
     tokio::join!(wf_fut, act_fut);
+}
+
+#[rstest::rstest]
+#[should_panic]
+#[case::impossible_query_in_task(true)]
+#[case::real_history(false)]
+#[tokio::test]
+async fn la_resolve_during_legacy_query_does_not_combine(#[case] impossible_query_in_task: bool) {
+    // Ensures we do not send an activation with a legacy query and any other work, which should
+    // never happen, but there was an issue where an LA resolving could trigger that.
+    let wfid = "fake_wf_id";
+    let mut t = TestHistoryBuilder::default();
+    let wes_short_wft_timeout = default_wes_attribs();
+    t.add(
+        EventType::WorkflowExecutionStarted,
+        wes_short_wft_timeout.into(),
+    );
+    // Since we don't send queries with start workflow, need one workflow task of something else
+    // b/c we want to get an activation with a job and a nonlegacy query
+    t.add_full_wf_task();
+    let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+    t.add_timer_fired(timer_started_event_id, "1".to_string());
+
+    // nonlegacy query got here & LA started here
+    t.add_full_wf_task();
+    // legacy query got here, at the same time that the LA is resolved
+    t.add_local_activity_marker(1, "1", None, None, None);
+    t.add_workflow_execution_completed();
+
+    let barr = Arc::new(Barrier::new(2));
+    let barr_c = barr.clone();
+
+    let tasks = [
+        hist_to_poll_resp(&t, wfid.to_owned(), ResponseType::ToTaskNum(1)),
+        {
+            let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), ResponseType::OneTask(2));
+            pr.queries = HashMap::new();
+            pr.queries.insert(
+                "q1".to_string(),
+                WorkflowQuery {
+                    query_type: "query-type".to_string(),
+                    query_args: Some(b"hi".into()),
+                    header: None,
+                },
+            );
+            pr
+        },
+        {
+            let mut pr = hist_to_poll_resp(
+                &t,
+                wfid.to_owned(),
+                ResponseType::UntilResolved(
+                    async move {
+                        barr_c.wait().await;
+                        // This sleep is the only not-incredibly-invasive way to ensure the LA
+                        // resolves & updates machines before we process this task
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                    }
+                    .boxed(),
+                    2,
+                ),
+            );
+            // Strip history, we need to look like we hit the cache
+            pr.history = Some(History { events: vec![] });
+            // In the nonsense server response case, we attach a legacy query, otherwise this
+            // response looks like a normal response to a forced WFT heartbeat.
+            if impossible_query_in_task {
+                pr.query = Some(WorkflowQuery {
+                    query_type: "query-type".to_string(),
+                    query_args: Some(b"hi".into()),
+                    header: None,
+                });
+            }
+            pr
+        },
+    ];
+    let mock = mock_workflow_client();
+    let mut mock = single_hist_mock_sg(wfid, t, tasks, mock, true);
+    mock.worker_cfg(|wc| wc.max_cached_workflows = 1);
+    let core = mock_worker(mock);
+
+    let wf_fut = async {
+        let task = core.poll_workflow_activation().await.unwrap();
+        assert_matches!(
+            task.jobs.as_slice(),
+            &[WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::StartWorkflow(_)),
+            },]
+        );
+        core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+            task.run_id,
+            start_timer_cmd(1, Duration::from_secs(1)),
+        ))
+        .await
+        .unwrap();
+        let task = core.poll_workflow_activation().await.unwrap();
+        assert_matches!(
+            task.jobs.as_slice(),
+            &[
+                WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::FireTimer(_)),
+                },
+                WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::QueryWorkflow(_)),
+                }
+            ]
+        );
+        core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
+            task.run_id,
+            vec![
+                schedule_local_activity_cmd(
+                    1,
+                    "act-id",
+                    ActivityCancellationType::TryCancel,
+                    Duration::from_secs(60),
+                ),
+                QueryResult {
+                    query_id: "q1".to_string(),
+                    variant: Some(
+                        QuerySuccess {
+                            response: Some("whatev".into()),
+                        }
+                        .into(),
+                    ),
+                }
+                .into(),
+            ],
+        ))
+        .await
+        .unwrap();
+        barr.wait().await;
+        let task = core.poll_workflow_activation().await.unwrap();
+        // The next task needs to be resolve, since the LA is completed immediately
+        assert_matches!(
+            task.jobs.as_slice(),
+            [WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::ResolveActivity(_)),
+            }]
+        );
+        // Complete workflow
+        core.complete_execution(&task.run_id).await;
+    };
+    let act_fut = async {
+        let act_task = core.poll_activity_task().await.unwrap();
+        core.complete_activity_task(ActivityTaskCompletion {
+            task_token: act_task.task_token,
+            result: Some(ActivityExecutionResult::ok(vec![1].into())),
+        })
+        .await
+        .unwrap();
+    };
+
+    tokio::join!(wf_fut, act_fut);
+    core.shutdown().await;
 }
