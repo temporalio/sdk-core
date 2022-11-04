@@ -135,12 +135,17 @@ pub(crate) fn build_fake_worker(
 
 pub(crate) fn mock_worker(mocks: MocksHolder) -> Worker {
     let sticky_q = sticky_q_name_for_worker("unit-test", &mocks.inputs.config);
+    let act_poller = if mocks.inputs.config.no_remote_activities {
+        None
+    } else {
+        mocks.inputs.act_poller
+    };
     Worker::new_with_pollers(
         mocks.inputs.config,
         sticky_q,
         mocks.client,
         mocks.inputs.wft_stream,
-        mocks.inputs.act_poller,
+        act_poller,
         Default::default(),
         CancellationToken::new(),
     )
