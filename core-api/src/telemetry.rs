@@ -62,7 +62,7 @@ pub struct OtelCollectorOptions {
 /// Configuration for the external export of traces
 #[derive(Debug, Clone)]
 pub struct TraceExportConfig {
-    /// An [EnvFilter] filter string.
+    /// An [EnvFilter](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/struct.EnvFilter.html) filter string.
     pub filter: String,
     /// Where they should go
     pub exporter: TraceExporter,
@@ -89,12 +89,12 @@ pub enum MetricsExporter {
 pub enum Logger {
     /// Log directly to console.
     Console {
-        /// An [EnvFilter] filter string.
+        /// An [EnvFilter](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/struct.EnvFilter.html) filter string.
         filter: String,
     },
     /// Forward logs to Lang - collectable with `fetch_global_buffered_logs`.
     Forward {
-        /// An [EnvFilter] filter string.
+        /// An [EnvFilter](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/struct.EnvFilter.html) filter string.
         filter: String,
     },
 }

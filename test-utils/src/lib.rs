@@ -107,7 +107,6 @@ pub struct CoreWfStarter {
     core_rt: CoreRuntime,
     /// Used for both the task queue and workflow id
     task_queue_name: String,
-    telemetry_options: TelemetryOptions,
     pub worker_config: WorkerConfig,
     wft_timeout: Option<Duration>,
     initted_worker: OnceCell<InitializedWorker>,
@@ -131,7 +130,6 @@ impl CoreWfStarter {
             core_rt: CoreRuntime::new_assume_tokio(&telemetry_options)
                 .expect("Core runtime inits cleanly"),
             task_queue_name: task_queue.to_owned(),
-            telemetry_options,
             worker_config: WorkerConfigBuilder::default()
                 .namespace(NAMESPACE)
                 .task_queue(task_queue)

@@ -56,7 +56,9 @@ use temporal_sdk_core_protos::coresdk::ActivityHeartbeat;
 
 /// Initialize a worker bound to a task queue.
 ///
-/// TODO: Note about runtime
+/// You will need to have already initialized a [CoreRuntime] which will be used for this worker.
+/// After the worker is initialized, you should use [CoreRuntime::tokio_handle] to run the worker's
+/// async functions.
 ///
 /// Lang implementations may pass in a [temporal_client::ConfiguredClient] directly (or a
 /// [RetryClient] wrapping one, or a handful of other variants of the same idea). When they do so,
@@ -101,7 +103,9 @@ where
 /// Create a worker for replaying a specific history. It will auto-shutdown as soon as the history
 /// has finished being replayed.
 ///
-/// TODO: Note about runtime
+/// You will need to have already initialized a [CoreRuntime] which will be used for this worker.
+/// After the worker is initialized, you should use [CoreRuntime::tokio_handle] to run the worker's
+/// async functions.
 pub fn init_replay_worker<I>(
     mut config: WorkerConfig,
     histories: I,
@@ -180,6 +184,9 @@ mod sealed {
     }
 }
 
+/// Holds shared state/components needed to back instances of workers and clients. More than one
+/// may be instantiated, but typically only one is needed. More than one runtime instance may be
+/// useful if multiple different telemetry settings are required.
 pub struct CoreRuntime {
     telemetry: TelemetryInstance,
     runtime: Option<tokio::runtime::Runtime>,
@@ -191,8 +198,11 @@ impl CoreRuntime {
     /// Create a new core runtime with the provided telemetry options and tokio runtime builder.
     /// Also initialize telemetry for the thread this is being called on.
     ///
-    /// Note that this function will call the [runtime::Builder::enable_all] builder option on the
-    /// Tokio runtime builder.
+    /// Note that this function will call the [tokio::runtime::Builder::enable_all] builder option
+    /// on the Tokio runtime builder.
+    ///
+    /// **Important**: You need to call this *before* calling any async functions on workers or
+    /// clients, otherwise the tracing subscribers will not be properly attached.
     ///
     /// # Panics
     /// If a tokio runtime has already been initialized. To re-use an existing runtime, call
@@ -208,7 +218,8 @@ impl CoreRuntime {
         Ok(me)
     }
 
-    /// Initialize telemetry for the thread this is being called on.
+    /// Initialize telemetry for the thread this is being called on, assuming a tokio runtime is
+    /// already active and this call exists in its context. See [Self::new] for more.
     ///
     /// # Panics
     /// If there is no currently active Tokio runtime
