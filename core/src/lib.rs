@@ -246,6 +246,12 @@ impl CoreRuntime {
         self.telemetry.get_metric_meter()
     }
 
+    /// Return the trace subscriber associated with the telemetry options/instance. Can be used
+    /// to manually set the default for a thread or globally.
+    pub fn trace_subscriber(&self) -> Arc<dyn tracing::Subscriber + Send + Sync> {
+        self.telemetry.trace_subscriber()
+    }
+
     /// Turns off the telemetry subscriber, thus disabling trace export and logging.
     /// Metrics live inside workers/clients and will not be disabled if they were enabled when
     /// those workers/clients were constructed.

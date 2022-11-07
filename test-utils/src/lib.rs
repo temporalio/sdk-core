@@ -100,9 +100,9 @@ pub async fn history_from_proto_binary(path_from_root: &str) -> Result<History, 
     Ok(History::decode(&*bytes)?)
 }
 
+static INTEG_TESTS_RT: once_cell::sync::OnceCell<CoreRuntime> = once_cell::sync::OnceCell::new();
 /// Implements a builder pattern to help integ tests initialize core and create workflows
 pub struct CoreWfStarter {
-    core_rt: CoreRuntime,
     /// Used for both the task queue and workflow id
     task_queue_name: String,
     pub worker_config: WorkerConfig,
@@ -124,9 +124,13 @@ impl CoreWfStarter {
 
     pub fn new_tq_name(task_queue: &str) -> Self {
         let telemetry_options = get_integ_telem_options();
+        INTEG_TESTS_RT.get_or_init(|| {
+            let rt = CoreRuntime::new_assume_tokio(telemetry_options)
+                .expect("Core runtime inits cleanly");
+            let _ = tracing::subscriber::set_global_default(rt.trace_subscriber());
+            rt
+        });
         Self {
-            core_rt: CoreRuntime::new_assume_tokio(telemetry_options)
-                .expect("Core runtime inits cleanly"),
             task_queue_name: task_queue.to_owned(),
             worker_config: WorkerConfigBuilder::default()
                 .namespace(NAMESPACE)
@@ -261,8 +265,12 @@ impl CoreWfStarter {
                         .await
                         .expect("Must connect"),
                 );
-                let worker = init_worker(&self.core_rt, self.worker_config.clone(), client.clone())
-                    .expect("Worker inits cleanly");
+                let worker = init_worker(
+                    INTEG_TESTS_RT.get().unwrap(),
+                    self.worker_config.clone(),
+                    client.clone(),
+                )
+                .expect("Worker inits cleanly");
                 InitializedWorker {
                     worker: Arc::new(worker),
                     client,
