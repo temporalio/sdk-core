@@ -229,7 +229,7 @@ impl Worker {
 
     #[cfg(test)]
     pub(crate) fn new_test(config: WorkerConfig, client: impl WorkerClient + 'static) -> Self {
-        Self::new(config, None, Arc::new(client), Default::default())
+        Self::new(config, None, Arc::new(client), MetricsContext::no_op())
     }
 
     pub(crate) fn new_with_pollers(

@@ -23,11 +23,15 @@ use temporal_sdk_core::{
     ephemeral_server::{EphemeralExe, EphemeralExeVersion},
     init_replay_worker, init_worker,
     replay::HistoryForReplay,
-    telemetry_init, ClientOptions, ClientOptionsBuilder, Logger, MetricsExporter,
-    OtelCollectorOptions, TelemetryOptions, TelemetryOptionsBuilder, TraceExportConfig,
-    TraceExporter, WorkerConfig, WorkerConfigBuilder,
+    ClientOptions, ClientOptionsBuilder, CoreRuntime, WorkerConfig, WorkerConfigBuilder,
 };
-use temporal_sdk_core_api::Worker as CoreWorker;
+use temporal_sdk_core_api::{
+    telemetry::{
+        Logger, MetricsExporter, OtelCollectorOptions, TelemetryOptions, TelemetryOptionsBuilder,
+        TraceExportConfig, TraceExporter,
+    },
+    Worker as CoreWorker,
+};
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_commands::{
@@ -76,7 +80,6 @@ pub fn init_core_replay_stream<I>(test_name: &str, histories: I) -> (Arc<dyn Cor
 where
     I: Stream<Item = HistoryForReplay> + Send + 'static,
 {
-    telemetry_init(&get_integ_telem_options()).expect("Telemetry inits cleanly");
     let worker_cfg = WorkerConfigBuilder::default()
         .namespace(NAMESPACE)
         .task_queue(test_name)
@@ -97,11 +100,11 @@ pub async fn history_from_proto_binary(path_from_root: &str) -> Result<History, 
     Ok(History::decode(&*bytes)?)
 }
 
+static INTEG_TESTS_RT: once_cell::sync::OnceCell<CoreRuntime> = once_cell::sync::OnceCell::new();
 /// Implements a builder pattern to help integ tests initialize core and create workflows
 pub struct CoreWfStarter {
     /// Used for both the task queue and workflow id
     task_queue_name: String,
-    telemetry_options: TelemetryOptions,
     pub worker_config: WorkerConfig,
     wft_timeout: Option<Duration>,
     initted_worker: OnceCell<InitializedWorker>,
@@ -120,9 +123,15 @@ impl CoreWfStarter {
     }
 
     pub fn new_tq_name(task_queue: &str) -> Self {
+        let telemetry_options = get_integ_telem_options();
+        INTEG_TESTS_RT.get_or_init(|| {
+            let rt = CoreRuntime::new_assume_tokio(telemetry_options)
+                .expect("Core runtime inits cleanly");
+            let _ = tracing::subscriber::set_global_default(rt.trace_subscriber());
+            rt
+        });
         Self {
             task_queue_name: task_queue.to_owned(),
-            telemetry_options: get_integ_telem_options(),
             worker_config: WorkerConfigBuilder::default()
                 .namespace(NAMESPACE)
                 .task_queue(task_queue)
@@ -250,14 +259,18 @@ impl CoreWfStarter {
     async fn get_or_init(&mut self) -> &InitializedWorker {
         self.initted_worker
             .get_or_init(|| async {
-                telemetry_init(&self.telemetry_options).expect("Telemetry inits cleanly");
                 let client = Arc::new(
                     get_integ_server_options()
                         .connect(self.worker_config.namespace.clone(), None, None)
                         .await
                         .expect("Must connect"),
                 );
-                let worker = init_worker(self.worker_config.clone(), client.clone());
+                let worker = init_worker(
+                    INTEG_TESTS_RT.get().unwrap(),
+                    self.worker_config.clone(),
+                    client.clone(),
+                )
+                .expect("Worker inits cleanly");
                 InitializedWorker {
                     worker: Arc::new(worker),
                     client,
@@ -453,7 +466,6 @@ impl WorkerInterceptor for TestWorkerCompletionIceptor {
 
 /// Returns the client options used to connect to the server used for integration tests.
 pub fn get_integ_server_options() -> ClientOptions {
-    telemetry_init(&get_integ_telem_options()).expect("Telemetry inits cleanly");
     let temporal_server_address = match env::var(INTEG_SERVER_TARGET_ENV_VAR) {
         Ok(addr) => addr,
         Err(_) => "http://localhost:7233".to_owned(),

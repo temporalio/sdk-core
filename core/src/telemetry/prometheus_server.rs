@@ -1,4 +1,4 @@
-use crate::telemetry::{default_resource, metrics::SDKAggSelector};
+use crate::telemetry::default_resource;
 use hyper::{
     header::CONTENT_TYPE,
     service::{make_service_fn, service_fn},
@@ -7,7 +7,7 @@ use hyper::{
 use opentelemetry::{
     metrics::MetricsError,
     sdk::{
-        export::metrics::aggregation::TemporalitySelector,
+        export::metrics::{aggregation::TemporalitySelector, AggregatorSelector},
         metrics::{controllers, processors},
     },
 };
@@ -24,10 +24,11 @@ pub(super) struct PromServer {
 impl PromServer {
     pub fn new(
         addr: SocketAddr,
+        aggregation: impl AggregatorSelector + Send + Sync + 'static,
         temporality: impl TemporalitySelector + Send + Sync + 'static,
     ) -> Result<Self, MetricsError> {
         let controller =
-            controllers::basic(processors::factory(SDKAggSelector, temporality).with_memory(true))
+            controllers::basic(processors::factory(aggregation, temporality).with_memory(true))
                 .with_resource(default_resource())
                 .build();
         let exporter = ExporterBuilder::new(controller).try_init()?;
