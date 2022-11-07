@@ -43,9 +43,8 @@ pub fn construct_filter_string(core_level: Level, other_level: Level) -> String 
     )
 }
 
-// TODO: Un-pub?
 /// Things that need to not be dropped while telemetry is ongoing
-pub struct TelemetryInstance {
+pub(crate) struct TelemetryInstance {
     metric_prefix: &'static str,
     logs_out: Option<Mutex<CoreLogsOut>>,
     metrics: Option<(BasicController, Meter)>,
@@ -103,11 +102,11 @@ impl CoreTelemetry for TelemetryInstance {
     }
 }
 
-/// Initialize tracing subscribers/output and logging export. If this function is called more than
-/// once, subsequent calls do nothing.
+/// Initialize tracing subscribers/output and logging export, returning a [TelemetryInstance]
+/// which can be used to register default / global tracing subscribers.
 ///
 /// See [TelemetryOptions] docs for more on configuration.
-pub fn telemetry_init(opts: &TelemetryOptions) -> Result<TelemetryInstance, anyhow::Error> {
+pub(crate) fn telemetry_init(opts: &TelemetryOptions) -> Result<TelemetryInstance, anyhow::Error> {
     // This is a bit odd, but functional. It's desirable to create a separate tokio runtime for
     // metrics handling, since tests typically use a single-threaded runtime and initializing
     // pipeline requires us to know if the runtime is single or multithreaded, we will crash
@@ -253,6 +252,13 @@ pub fn telemetry_init(opts: &TelemetryOptions) -> Result<TelemetryInstance, anyh
     .expect("Telemetry initialization thread join panicked")
 }
 
+/// Initialize telemetry/tracing globally. Useful for testing.
+pub fn telemetry_init_global(opts: &TelemetryOptions) -> Result<(), anyhow::Error> {
+    let ti = telemetry_init(opts)?;
+    tracing::subscriber::set_global_default(ti.trace_subscriber())?;
+    Ok(())
+}
+
 fn default_resource_kvs() -> &'static [KeyValue] {
     static INSTANCE: OnceCell<[KeyValue; 1]> = OnceCell::new();
     INSTANCE.get_or_init(|| [KeyValue::new("service.name", TELEM_SERVICE_NAME)])
@@ -279,7 +285,7 @@ pub mod test_initters {
 
     #[allow(dead_code)] // Not always used, called to enable for debugging when needed
     pub fn test_telem_console() {
-        telemetry_init(
+        telemetry_init_global(
             &TelemetryOptionsBuilder::default()
                 .logging(Logger::Console {
                     filter: construct_filter_string(Level::DEBUG, Level::WARN),
@@ -292,7 +298,7 @@ pub mod test_initters {
 
     #[allow(dead_code)] // Not always used, called to enable for debugging when needed
     pub fn test_telem_collector() {
-        telemetry_init(
+        telemetry_init_global(
             &TelemetryOptionsBuilder::default()
                 .logging(Logger::Console {
                     filter: construct_filter_string(Level::DEBUG, Level::WARN),

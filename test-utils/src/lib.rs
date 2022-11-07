@@ -23,8 +23,7 @@ use temporal_sdk_core::{
     ephemeral_server::{EphemeralExe, EphemeralExeVersion},
     init_replay_worker, init_worker,
     replay::HistoryForReplay,
-    telemetry_init, ClientOptions, ClientOptionsBuilder, CoreRuntime, WorkerConfig,
-    WorkerConfigBuilder,
+    ClientOptions, ClientOptionsBuilder, CoreRuntime, WorkerConfig, WorkerConfigBuilder,
 };
 use temporal_sdk_core_api::{
     telemetry::{
@@ -81,7 +80,6 @@ pub fn init_core_replay_stream<I>(test_name: &str, histories: I) -> (Arc<dyn Cor
 where
     I: Stream<Item = HistoryForReplay> + Send + 'static,
 {
-    telemetry_init(&get_integ_telem_options()).expect("Telemetry inits cleanly");
     let worker_cfg = WorkerConfigBuilder::default()
         .namespace(NAMESPACE)
         .task_queue(test_name)
@@ -460,7 +458,6 @@ impl WorkerInterceptor for TestWorkerCompletionIceptor {
 
 /// Returns the client options used to connect to the server used for integration tests.
 pub fn get_integ_server_options() -> ClientOptions {
-    telemetry_init(&get_integ_telem_options()).expect("Telemetry inits cleanly");
     let temporal_server_address = match env::var(INTEG_SERVER_TARGET_ENV_VAR) {
         Ok(addr) => addr,
         Err(_) => "http://localhost:7233".to_owned(),

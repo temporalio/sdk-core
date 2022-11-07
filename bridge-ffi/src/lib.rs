@@ -17,12 +17,9 @@ mod wrappers;
 use bridge::{init_response, CreateWorkerRequest, InitResponse};
 use prost::Message;
 use std::sync::Arc;
-use temporal_sdk_core::{telemetry_init, Client, ClientOptions, CoreRuntime, RetryClient};
+use temporal_sdk_core::{Client, ClientOptions, CoreRuntime, RetryClient};
 use temporal_sdk_core_api::{telemetry::TelemetryOptions, Worker};
-use temporal_sdk_core_protos::coresdk::{
-    bridge,
-    bridge::{CreateClientRequest, InitTelemetryRequest},
-};
+use temporal_sdk_core_protos::coresdk::{bridge, bridge::CreateClientRequest};
 
 /// A set of bytes owned by Core. No fields within nor any bytes references must
 /// ever be mutated outside of Core. This must always be passed to
@@ -293,43 +290,6 @@ pub extern "C" fn tmprl_worker_shutdown(
         }
         drop(worker);
     });
-}
-
-/// Initialize process-wide telemetry. Should only be called once, subsequent calls will be ignored
-/// by core.
-///
-/// Unlike the other functions in this bridge, this blocks until initting is complete, as telemetry
-/// should typically be initialized before doing other work.
-///
-/// Returns a byte array for a [InitResponse] protobuf message which must be freed via
-/// tmprl_bytes_free.
-#[no_mangle]
-pub extern "C" fn tmprl_telemetry_init(
-    req_proto: *const u8,
-    req_proto_len: libc::size_t,
-) -> *const tmprl_bytes_t {
-    let req = match tmprl_worker_t::decode_proto::<InitTelemetryRequest>(req_proto, req_proto_len) {
-        Ok(req) => req,
-        Err(message) => {
-            let resp = InitResponse {
-                error: Some(init_response::Error { message }),
-            };
-            return tmprl_bytes_t::from_vec(resp.encode_to_vec()).into_raw();
-        }
-    };
-
-    match wrappers::InitTelemetryRequest(req)
-        .try_into()
-        .map(|opts| telemetry_init(&opts))
-    {
-        Ok(_) => &*DEFAULT_INIT_RESPONSE_BYTES,
-        Err(message) => {
-            let resp = InitResponse {
-                error: Some(init_response::Error { message }),
-            };
-            tmprl_bytes_t::from_vec(resp.encode_to_vec()).into_raw()
-        }
-    }
 }
 
 /// A client instance owned by Core. This must be passed to [tmprl_client_free]

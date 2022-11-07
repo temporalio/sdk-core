@@ -2,8 +2,7 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use futures::StreamExt;
 use std::time::Duration;
 use temporal_sdk::{WfContext, Worker, WorkflowFunction};
-use temporal_sdk_core::{replay::HistoryForReplay, telemetry_init};
-use temporal_sdk_core_api::telemetry::TelemetryOptionsBuilder;
+use temporal_sdk_core::replay::HistoryForReplay;
 use temporal_sdk_core_protos::DEFAULT_WORKFLOW_TYPE;
 use temporal_sdk_core_test_utils::{canned_histories, init_core_replay_preloaded};
 
@@ -12,7 +11,6 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         .enable_time()
         .build()
         .unwrap();
-    telemetry_init(&TelemetryOptionsBuilder::default().build().unwrap()).unwrap();
     let _g = tokio_runtime.enter();
 
     let num_timers = 10;

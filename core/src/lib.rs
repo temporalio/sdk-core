@@ -32,7 +32,7 @@ pub use pollers::{
     Client, ClientOptions, ClientOptionsBuilder, ClientTlsConfig, RetryClient, RetryConfig,
     TlsConfig, WorkflowClientTrait,
 };
-pub use telemetry::{construct_filter_string, telemetry_init};
+pub use telemetry::{construct_filter_string, telemetry_init_global};
 pub use temporal_sdk_core_api as api;
 pub use temporal_sdk_core_protos as protos;
 pub use temporal_sdk_core_protos::TaskToken;
@@ -41,7 +41,7 @@ pub use worker::{Worker, WorkerConfig, WorkerConfigBuilder};
 
 use crate::{
     replay::{mock_client_from_histories, Historator, HistoryForReplay},
-    telemetry::{metrics::MetricsContext, TelemetryInstance},
+    telemetry::{metrics::MetricsContext, telemetry_init, TelemetryInstance},
     worker::client::WorkerClientBag,
 };
 use futures::Stream;
@@ -103,9 +103,9 @@ where
 /// Create a worker for replaying a specific history. It will auto-shutdown as soon as the history
 /// has finished being replayed.
 ///
-/// You will need to have already initialized a [CoreRuntime] which will be used for this worker.
-/// After the worker is initialized, you should use [CoreRuntime::tokio_handle] to run the worker's
-/// async functions.
+/// You do not necessarily need a [CoreRuntime] for replay workers, but it's advisable to create
+/// one and use it to run the replay worker's async functions the same way you would for a normal
+/// worker.
 pub fn init_replay_worker<I>(
     mut config: WorkerConfig,
     histories: I,

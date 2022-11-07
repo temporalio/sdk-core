@@ -122,18 +122,6 @@ void tmprl_worker_shutdown(struct tmprl_worker_t *worker,
                            tmprl_callback callback);
 
 /**
- * Initialize process-wide telemetry. Should only be called once, subsequent calls will be ignored
- * by core.
- *
- * Unlike the other functions in this bridge, this blocks until initting is complete, as telemetry
- * should typically be initialized before doing other work.
- *
- * Returns a byte array for a [InitResponse] protobuf message which must be freed via
- * tmprl_bytes_free.
- */
-const struct tmprl_bytes_t *tmprl_telemetry_init(const uint8_t *req_proto, size_t req_proto_len);
-
-/**
  * Initialize a client connection to the Temporal service.
  *
  * The runtime is required and must outlive this instance. The `req_proto` and `req_proto_len`
