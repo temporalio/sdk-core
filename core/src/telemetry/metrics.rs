@@ -372,7 +372,7 @@ static TASK_SCHED_TO_START_MS_BUCKETS: &[f64] =
 pub(super) static DEFAULT_MS_BUCKETS: &[f64] = &[50., 100., 500., 1000., 2500., 10_000.];
 
 /// Chooses appropriate aggregators for our metrics
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SDKAggSelector {
     pub metric_prefix: &'static str,
 }

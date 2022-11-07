@@ -208,7 +208,7 @@ impl CoreRuntime {
     /// If a tokio runtime has already been initialized. To re-use an existing runtime, call
     /// [CoreRuntime::new_assume_tokio].
     pub fn new(
-        telemetry_options: &TelemetryOptions,
+        telemetry_options: TelemetryOptions,
         mut tokio_builder: tokio::runtime::Builder,
     ) -> Result<Self, anyhow::Error> {
         let runtime = tokio_builder.enable_all().build()?;
@@ -223,7 +223,7 @@ impl CoreRuntime {
     ///
     /// # Panics
     /// If there is no currently active Tokio runtime
-    pub fn new_assume_tokio(telemetry_options: &TelemetryOptions) -> Result<Self, anyhow::Error> {
+    pub fn new_assume_tokio(telemetry_options: TelemetryOptions) -> Result<Self, anyhow::Error> {
         let runtime_handle = tokio::runtime::Handle::current();
         let telemetry = telemetry_init(telemetry_options)?;
         let guard = tracing::subscriber::set_default(telemetry.trace_subscriber());

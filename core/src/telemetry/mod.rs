@@ -7,6 +7,7 @@ use crate::telemetry::{
     metrics::SDKAggSelector,
     prometheus_server::PromServer,
 };
+use crossbeam::channel::Receiver;
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
 use opentelemetry::{
@@ -14,7 +15,6 @@ use opentelemetry::{
     runtime,
     sdk::{
         export::metrics::aggregation::{self, Temporality, TemporalitySelector},
-        metrics::controllers::BasicController,
         trace::Config,
         Resource,
     },
@@ -47,22 +47,19 @@ pub fn construct_filter_string(core_level: Level, other_level: Level) -> String 
 pub(crate) struct TelemetryInstance {
     metric_prefix: &'static str,
     logs_out: Option<Mutex<CoreLogsOut>>,
-    metrics: Option<(BasicController, Meter)>,
+    metrics: Option<(Box<dyn MeterProvider + Send + Sync + 'static>, Meter)>,
     trace_subscriber: Arc<dyn Subscriber + Send + Sync>,
+    _keepalive_rx: Receiver<()>,
 }
 
 impl TelemetryInstance {
     fn new(
-        runtime: &tokio::runtime::Runtime,
         trace_subscriber: Arc<dyn Subscriber + Send + Sync>,
         logs_out: Option<Mutex<CoreLogsOut>>,
         metric_prefix: &'static str,
-        mut meter_provider: Option<BasicController>,
-        prom_srv: Option<PromServer>,
+        mut meter_provider: Option<Box<dyn MeterProvider + Send + Sync + 'static>>,
+        keepalive_rx: Receiver<()>,
     ) -> Self {
-        if let Some(srv) = prom_srv {
-            runtime.spawn(async move { srv.run().await });
-        }
         let metrics = meter_provider.take().map(|mp| {
             let meter = mp.meter(TELEM_SERVICE_NAME);
             (mp, meter)
@@ -72,6 +69,7 @@ impl TelemetryInstance {
             logs_out,
             metrics,
             trace_subscriber,
+            _keepalive_rx: keepalive_rx,
         }
     }
 
@@ -106,15 +104,16 @@ impl CoreTelemetry for TelemetryInstance {
 /// which can be used to register default / global tracing subscribers.
 ///
 /// See [TelemetryOptions] docs for more on configuration.
-pub(crate) fn telemetry_init(opts: &TelemetryOptions) -> Result<TelemetryInstance, anyhow::Error> {
+pub(crate) fn telemetry_init(opts: TelemetryOptions) -> Result<TelemetryInstance, anyhow::Error> {
     // This is a bit odd, but functional. It's desirable to create a separate tokio runtime for
     // metrics handling, since tests typically use a single-threaded runtime and initializing
     // pipeline requires us to know if the runtime is single or multithreaded, we will crash
     // in one case or the other. There does not seem to be a way to tell from the current runtime
     // handle if it is single or multithreaded. Additionally, we can isolate metrics work this
     // way which is nice.
-    let opts = opts.clone();
-    std::thread::spawn(move || {
+    let (tx, rx) = crossbeam::channel::bounded(0);
+    let (keepalive_tx, keepalive_rx) = crossbeam::channel::bounded(0);
+    let jh = std::thread::spawn(move || -> Result<(), anyhow::Error> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .thread_name("telemetry")
             .worker_threads(2)
@@ -168,7 +167,7 @@ pub(crate) fn telemetry_init(opts: &TelemetryOptions) -> Result<TelemetryInstanc
             };
         };
 
-        let (meter_provider, prom_srv) = if let Some(ref metrics) = opts.metrics {
+        let meter_provider = if let Some(ref metrics) = opts.metrics {
             let aggregator = SDKAggSelector { metric_prefix };
             match metrics {
                 MetricsExporter::Prometheus(addr) => {
@@ -177,7 +176,9 @@ pub(crate) fn telemetry_init(opts: &TelemetryOptions) -> Result<TelemetryInstanc
                         aggregator,
                         metric_temporality_to_selector(opts.metric_temporality),
                     )?;
-                    (None, Some(srv))
+                    let mp = srv.exporter.meter_provider()?;
+                    runtime.spawn(async move { srv.run().await });
+                    Some(Box::new(mp) as Box<dyn MeterProvider + Send + Sync>)
                 }
                 MetricsExporter::Otel(OtelCollectorOptions { url, headers }) => {
                     runtime.block_on(async {
@@ -190,20 +191,20 @@ pub(crate) fn telemetry_init(opts: &TelemetryOptions) -> Result<TelemetryInstanc
                             .with_period(Duration::from_secs(1))
                             .with_resource(default_resource())
                             .with_exporter(
-                                // No joke exporter builder literally not cloneable for some
-                                // insane reason
                                 opentelemetry_otlp::new_exporter()
                                     .tonic()
                                     .with_endpoint(url.to_string())
                                     .with_metadata(MetadataMap::from_headers(headers.try_into()?)),
                             )
                             .build()?;
-                        Ok::<_, anyhow::Error>((Some(metrics), None))
+                        Ok::<_, anyhow::Error>(Some(
+                            Box::new(metrics) as Box<dyn MeterProvider + Send + Sync>
+                        ))
                     })?
                 }
             }
         } else {
-            (None, None)
+            None
         };
 
         if let Some(ref tracing) = opts.tracing {
@@ -239,21 +240,32 @@ pub(crate) fn telemetry_init(opts: &TelemetryOptions) -> Result<TelemetryInstanc
             .with(forward_layer)
             .with(export_layer);
 
-        Ok(TelemetryInstance::new(
-            &runtime,
+        tx.send(TelemetryInstance::new(
             Arc::new(reg),
             logs_out,
             metric_prefix,
             meter_provider,
-            prom_srv,
+            keepalive_rx,
         ))
-    })
-    .join()
-    .expect("Telemetry initialization thread join panicked")
+        .expect("Must be able to send telem instance out of thread");
+        // Now keep the thread alive until the telemetry instance is dropped by trying to send
+        // something forever
+        let _ = keepalive_tx.send(());
+        Ok(())
+    });
+    match rx.recv() {
+        Ok(ti) => Ok(ti),
+        Err(_) => {
+            // Immediately join the thread since something went wrong in it
+            jh.join().expect("Telemetry must init cleanly")?;
+            // This can't happen. The rx channel can't be dropped unless the thread errored.
+            unreachable!("Impossible error in telemetry init thread");
+        }
+    }
 }
 
 /// Initialize telemetry/tracing globally. Useful for testing.
-pub fn telemetry_init_global(opts: &TelemetryOptions) -> Result<(), anyhow::Error> {
+pub fn telemetry_init_global(opts: TelemetryOptions) -> Result<(), anyhow::Error> {
     let ti = telemetry_init(opts)?;
     tracing::subscriber::set_global_default(ti.trace_subscriber())?;
     Ok(())
@@ -286,7 +298,7 @@ pub mod test_initters {
     #[allow(dead_code)] // Not always used, called to enable for debugging when needed
     pub fn test_telem_console() {
         telemetry_init_global(
-            &TelemetryOptionsBuilder::default()
+            TelemetryOptionsBuilder::default()
                 .logging(Logger::Console {
                     filter: construct_filter_string(Level::DEBUG, Level::WARN),
                 })
@@ -299,7 +311,7 @@ pub mod test_initters {
     #[allow(dead_code)] // Not always used, called to enable for debugging when needed
     pub fn test_telem_collector() {
         telemetry_init_global(
-            &TelemetryOptionsBuilder::default()
+            TelemetryOptionsBuilder::default()
                 .logging(Logger::Console {
                     filter: construct_filter_string(Level::DEBUG, Level::WARN),
                 })

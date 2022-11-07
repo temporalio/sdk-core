@@ -125,7 +125,7 @@ impl CoreWfStarter {
     pub fn new_tq_name(task_queue: &str) -> Self {
         let telemetry_options = get_integ_telem_options();
         Self {
-            core_rt: CoreRuntime::new_assume_tokio(&telemetry_options)
+            core_rt: CoreRuntime::new_assume_tokio(telemetry_options)
                 .expect("Core runtime inits cleanly"),
             task_queue_name: task_queue.to_owned(),
             worker_config: WorkerConfigBuilder::default()

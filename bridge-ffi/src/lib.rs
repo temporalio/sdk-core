@@ -157,7 +157,7 @@ pub extern "C" fn tmprl_runtime_new() -> *mut tmprl_runtime_t {
         // TODO(cretz): Options to configure thread pool?
         core_runtime: Arc::new(
             CoreRuntime::new(
-                &TelemetryOptions::default(),
+                TelemetryOptions::default(),
                 tokio::runtime::Builder::new_multi_thread(),
             )
             .expect("Core runtime must initialize"),
