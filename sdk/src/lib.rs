@@ -10,7 +10,7 @@
 //! ```no_run
 //! use std::{str::FromStr, sync::Arc};
 //! use temporal_sdk::{sdk_client_options, ActContext, Worker};
-//! use temporal_sdk_core::{init_worker, telemetry_init, Url, CoreRuntime};
+//! use temporal_sdk_core::{init_worker, Url, CoreRuntime};
 //! use temporal_sdk_core_api::{worker::WorkerConfigBuilder, telemetry::TelemetryOptionsBuilder};
 //!
 //! #[tokio::main]
@@ -20,7 +20,7 @@
 //!     let client = server_options.connect("default", None, None).await?;
 //!
 //!     let telemetry_options = TelemetryOptionsBuilder::default().build()?;
-//!     let runtime = CoreRuntime::new_assume_tokio(&telemetry_options)?;
+//!     let runtime = CoreRuntime::new_assume_tokio(telemetry_options)?;
 //!
 //!     let worker_config = WorkerConfigBuilder::default()
 //!         .namespace("default")
