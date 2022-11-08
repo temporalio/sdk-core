@@ -1,7 +1,7 @@
 use parking_lot::Mutex;
 use ringbuf::{Consumer, HeapRb, Producer};
 use std::{collections::HashMap, sync::Arc, time::SystemTime};
-use temporal_sdk_core_api::CoreLog;
+use temporal_sdk_core_api::telemetry::CoreLog;
 use tracing_subscriber::Layer;
 
 const RB_SIZE: usize = 2048;
@@ -146,10 +146,8 @@ impl<'a> tracing::field::Visit for JsonVisitor<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        construct_filter_string, fetch_global_buffered_logs, telemetry_init, Logger,
-        TelemetryOptionsBuilder,
-    };
+    use crate::{construct_filter_string, telemetry_init};
+    use temporal_sdk_core_api::telemetry::{CoreTelemetry, Logger, TelemetryOptionsBuilder};
     use tracing::Level;
 
     #[instrument(fields(bros = "brohemian"))]
@@ -167,9 +165,8 @@ mod tests {
             })
             .build()
             .unwrap();
-        // TODO: this breaks if other tests init telemetry. Should just bite the bullet & make
-        //   it nonglobal
-        telemetry_init(&opts).unwrap();
+        let instance = telemetry_init(opts).unwrap();
+        let _g = tracing::subscriber::set_default(instance.trace_subscriber.clone());
 
         let top_span = span!(Level::INFO, "yayspan", huh = "wat");
         let _guard = top_span.enter();
@@ -177,7 +174,7 @@ mod tests {
         instrumented("hi");
         info!("Donezo");
 
-        let logs = fetch_global_buffered_logs();
+        let logs = instance.fetch_buffered_logs();
         // Verify debug log was not forwarded
         assert!(!logs.iter().any(|l| l.message == "debug"));
         assert_eq!(logs.len(), 4);

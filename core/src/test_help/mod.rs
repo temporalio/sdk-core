@@ -5,6 +5,7 @@ use crate::{
     protosext::ValidPollWFTQResponse,
     replay::TestHistoryBuilder,
     sticky_q_name_for_worker,
+    telemetry::metrics::MetricsContext,
     worker::{
         client::{
             mocks::mock_workflow_client, MockWorkerClient, WorkerClient, WorkflowTaskCompletion,
@@ -146,7 +147,7 @@ pub(crate) fn mock_worker(mocks: MocksHolder) -> Worker {
         mocks.client,
         mocks.inputs.wft_stream,
         act_poller,
-        Default::default(),
+        MetricsContext::no_op(),
         CancellationToken::new(),
     )
 }
@@ -216,7 +217,7 @@ impl MockWorkerInputs {
     }
     pub fn new_from_poller(wf_poller: BoxedWFPoller) -> Self {
         Self {
-            wft_stream: new_wft_poller(wf_poller, Default::default()).boxed(),
+            wft_stream: new_wft_poller(wf_poller, MetricsContext::no_op()).boxed(),
             act_poller: None,
             config: test_worker_cfg().build().unwrap(),
         }

@@ -69,7 +69,7 @@ mod tests {
             .times(1)
             .returning(|| Some(Ok(PollWorkflowTaskQueueResponse::default())));
         mock_poller.expect_poll().times(1).returning(|| None);
-        let stream = new_wft_poller(Box::new(mock_poller), Default::default());
+        let stream = new_wft_poller(Box::new(mock_poller), MetricsContext::no_op());
         pin_mut!(stream);
         assert_matches!(stream.next().await, None);
     }
@@ -81,7 +81,7 @@ mod tests {
             .expect_poll()
             .times(1)
             .returning(|| Some(Err(tonic::Status::internal("ahhh"))));
-        let stream = new_wft_poller(Box::new(mock_poller), Default::default());
+        let stream = new_wft_poller(Box::new(mock_poller), MetricsContext::no_op());
         pin_mut!(stream);
         assert_matches!(stream.next().await, Some(Err(_)));
     }

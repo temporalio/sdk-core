@@ -122,18 +122,6 @@ void tmprl_worker_shutdown(struct tmprl_worker_t *worker,
                            tmprl_callback callback);
 
 /**
- * Initialize process-wide telemetry. Should only be called once, subsequent calls will be ignored
- * by core.
- *
- * Unlike the other functions in this bridge, this blocks until initting is complete, as telemetry
- * should typically be initialized before doing other work.
- *
- * Returns a byte array for a [InitResponse] protobuf message which must be freed via
- * tmprl_bytes_free.
- */
-const struct tmprl_bytes_t *tmprl_telemetry_init(const uint8_t *req_proto, size_t req_proto_len);
-
-/**
  * Initialize a client connection to the Temporal service.
  *
  * The runtime is required and must outlive this instance. The `req_proto` and `req_proto_len`
@@ -234,16 +222,3 @@ void tmprl_request_workflow_eviction(struct tmprl_worker_t *worker,
                                      size_t req_proto_len,
                                      void *user_data,
                                      tmprl_callback callback);
-
-/**
- * Fetch buffered logs. Blocks until complete. This is still using the callback since we might
- * reasonably change log fetching to be async in the future.
- *
- * The `req_proto` and `req_proto_len` represent a byte array for a
- * [bridge::FetchBufferedLogsRequest] protobuf message. The callback is invoked on completion with
- * a [bridge::FetchBufferedLogsResponse] protobuf message.
- */
-void tmprl_fetch_buffered_logs(const uint8_t *req_proto,
-                               size_t req_proto_len,
-                               void *user_data,
-                               tmprl_callback callback);

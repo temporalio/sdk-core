@@ -87,7 +87,7 @@ impl ManagedWFFunc {
             "runid".to_string(),
             hist,
             Box::new(driver).into(),
-            Default::default(),
+            MetricsContext::no_op(),
         );
         let mgr = WorkflowManager::new_from_machines(state_machines);
         Self {

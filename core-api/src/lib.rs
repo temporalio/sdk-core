@@ -1,20 +1,15 @@
 pub mod errors;
+pub mod telemetry;
 pub mod worker;
 
 use crate::{
     errors::{CompleteActivityError, CompleteWfError, PollActivityError, PollWfError},
     worker::WorkerConfig,
 };
-use opentelemetry::metrics::Meter;
-use std::{
-    collections::HashMap,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
 use temporal_sdk_core_protos::coresdk::{
     activity_task::ActivityTask, workflow_activation::WorkflowActivation,
     workflow_completion::WorkflowActivationCompletion, ActivityHeartbeat, ActivityTaskCompletion,
 };
-use tracing_core::Level;
 
 /// This trait is the primary way by which language specific SDKs interact with the core SDK.
 /// It represents one worker, which has a (potentially shared) client for connecting to the service
@@ -111,51 +106,4 @@ pub trait Worker: Send + Sync {
     ///
     /// This should be called only after [Worker::shutdown] has resolved.
     async fn finalize_shutdown(self);
-}
-
-/// Should be backed by a process-wide singleton who is responsible for telemetry and logging
-/// management.
-pub trait CoreTelemetry {
-    /// Core buffers logs that should be shuttled over to lang so that they may be rendered with
-    /// the user's desired logging library. Use this function to grab the most recent buffered logs
-    /// since the last time it was called. A fixed number of such logs are retained at maximum, with
-    /// the oldest being dropped when full.
-    ///
-    /// Returns the list of logs from oldest to newest. Returns an empty vec if the feature is not
-    /// configured.
-    fn fetch_buffered_logs(&self) -> Vec<CoreLog>;
-
-    /// If metrics gathering is enabled, returns the OTel meter for core telemetry, which can be
-    /// used to create metrics instruments, or passed to things that create/record metrics (ex:
-    /// clients).
-    fn get_metric_meter(&self) -> Option<&Meter>;
-}
-
-/// A log line (which ultimately came from a tracing event) exported from Core->Lang
-#[derive(Debug)]
-pub struct CoreLog {
-    /// The module within core this message originated from
-    pub target: String,
-    /// Log message
-    pub message: String,
-    /// Time log was generated (not when it was exported to lang)
-    pub timestamp: SystemTime,
-    /// Message level
-    pub level: Level,
-    /// Arbitrary k/v pairs (span k/vs are collapsed with event k/vs here). We could change this
-    /// to include them in `span_contexts` instead, but there's probably not much value for log
-    /// forwarding.
-    pub fields: HashMap<String, serde_json::Value>,
-    /// A list of the outermost to the innermost span names
-    pub span_contexts: Vec<String>,
-}
-
-impl CoreLog {
-    /// Return timestamp as ms since epoch
-    pub fn millis_since_epoch(&self) -> u128 {
-        self.timestamp
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or(Duration::ZERO)
-            .as_millis()
-    }
 }

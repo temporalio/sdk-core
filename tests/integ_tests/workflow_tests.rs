@@ -104,6 +104,7 @@ async fn parallel_workflows_same_queue() {
     for handle in handles {
         handle.await.unwrap()
     }
+    core.shutdown().await;
 }
 
 static RUN_CT: AtomicUsize = AtomicUsize::new(0);

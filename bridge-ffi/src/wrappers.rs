@@ -1,14 +1,15 @@
 use std::{net::SocketAddr, str::FromStr};
-use temporal_sdk_core::{
-    Logger, MetricsExporter, OtelCollectorOptions, TelemetryOptionsBuilder, TraceExportConfig,
-    TraceExporter, Url,
+use temporal_sdk_core::Url;
+use temporal_sdk_core_api::telemetry::{
+    Logger, MetricsExporter, OtelCollectorOptions, TelemetryOptions, TelemetryOptionsBuilder,
+    TraceExportConfig, TraceExporter,
 };
 use temporal_sdk_core_protos::coresdk::bridge;
 
 // Present for try-from only
 pub struct InitTelemetryRequest(pub bridge::InitTelemetryRequest);
 
-impl TryFrom<InitTelemetryRequest> for temporal_sdk_core::TelemetryOptions {
+impl TryFrom<InitTelemetryRequest> for TelemetryOptions {
     type Error = String;
 
     fn try_from(InitTelemetryRequest(req): InitTelemetryRequest) -> Result<Self, Self::Error> {
