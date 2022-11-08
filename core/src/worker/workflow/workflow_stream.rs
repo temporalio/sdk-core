@@ -973,7 +973,6 @@ fn put_queries_in_act(act: &mut WorkflowActivation, wft: &mut OutstandingTask) {
     // Cannot dispatch legacy query if there are any other jobs - which can happen if, ex, a local
     // activity resolves while we've gotten a legacy query after heartbeating.
     if has_legacy && !act.jobs.is_empty() {
-        dbg_panic!("Should never try to attach legacy query to activation with other jobs");
         return;
     }
 

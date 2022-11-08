@@ -23,15 +23,17 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::{
         common::v1::Payload,
+        enums::v1::EventType,
         failure::v1::Failure,
-        history::v1::History,
+        history::v1::{history_event, ActivityTaskCancelRequestedEventAttributes, History},
         query::v1::WorkflowQuery,
         workflowservice::v1::{
             GetWorkflowExecutionHistoryResponse, RespondWorkflowTaskCompletedResponse,
         },
     },
+    TestHistoryBuilder,
 };
-use temporal_sdk_core_test_utils::{schedule_activity_cmd, start_timer_cmd};
+use temporal_sdk_core_test_utils::{schedule_activity_cmd, start_timer_cmd, WorkerTestHelpers};
 
 #[rstest::rstest]
 #[case::with_history(true)]
@@ -755,4 +757,138 @@ async fn new_query_fail() {
     ))
     .await
     .unwrap();
+}
+
+/// This test verifies that if we get a task with a legacy query in it while in the middle of
+/// processing some local-only work (in this case, resolving an activity as soon as it was
+/// cancelled) that we do not combine the legacy query with the resolve job.
+#[tokio::test]
+async fn legacy_query_combined_with_timer_fire_repro() {
+    let wfid = "fake_wf_id";
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    let scheduled_event_id = t.add_activity_task_scheduled("1");
+    let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+    t.add_timer_fired(timer_started_event_id, "1".to_string());
+    t.add_full_wf_task();
+    t.add(
+        EventType::ActivityTaskCancelRequested,
+        history_event::Attributes::ActivityTaskCancelRequestedEventAttributes(
+            ActivityTaskCancelRequestedEventAttributes {
+                scheduled_event_id,
+                ..Default::default()
+            },
+        ),
+    );
+
+    let tasks = [
+        hist_to_poll_resp(&t, wfid.to_owned(), ResponseType::ToTaskNum(1)),
+        {
+            // One task is super important here - as we need to look like we hit the cache
+            // to apply this query right away
+            let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), ResponseType::OneTask(2));
+            pr.queries = HashMap::new();
+            pr.queries.insert(
+                "the-query".to_string(),
+                WorkflowQuery {
+                    query_type: "query-type".to_string(),
+                    query_args: Some(b"hi".into()),
+                    header: None,
+                },
+            );
+            pr
+        },
+        {
+            let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), ResponseType::ToTaskNum(2));
+            // Strip history, we need to look like we hit the cache for a legacy query
+            pr.history = Some(History { events: vec![] });
+            pr.query = Some(WorkflowQuery {
+                query_type: "query-type".to_string(),
+                query_args: Some(b"hi".into()),
+                header: None,
+            });
+            pr
+        },
+    ];
+    let mut mock = mock_workflow_client();
+    mock.expect_respond_legacy_query()
+        .times(1)
+        .returning(move |_, _| Ok(Default::default()));
+    let mut mock = single_hist_mock_sg(wfid, t, tasks, mock, true);
+    mock.worker_cfg(|wc| wc.max_cached_workflows = 1);
+    let core = mock_worker(mock);
+
+    let task = core.poll_workflow_activation().await.unwrap();
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
+        task.run_id,
+        vec![
+            schedule_activity_cmd(
+                1,
+                "whatever",
+                "1",
+                ActivityCancellationType::TryCancel,
+                Duration::from_secs(60),
+                Duration::from_secs(60),
+            ),
+            start_timer_cmd(1, Duration::from_secs(1)),
+        ],
+    ))
+    .await
+    .unwrap();
+
+    let task = core.poll_workflow_activation().await.unwrap();
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
+        task.run_id,
+        vec![
+            RequestCancelActivity { seq: 1 }.into(),
+            QueryResult {
+                query_id: "the-query".to_string(),
+                variant: Some(
+                    QuerySuccess {
+                        response: Some("whatever".into()),
+                    }
+                    .into(),
+                ),
+            }
+            .into(),
+        ],
+    ))
+    .await
+    .unwrap();
+
+    // First should get the activity resolve
+    let task = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        task.jobs.as_slice(),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::ResolveActivity(_)),
+        }]
+    );
+    core.complete_execution(&task.run_id).await;
+
+    // Then the query
+    let task = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        task.jobs.as_slice(),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::QueryWorkflow(_)),
+        }]
+    );
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+        task.run_id,
+        QueryResult {
+            query_id: LEGACY_QUERY_ID.to_string(),
+            variant: Some(
+                QuerySuccess {
+                    response: Some("whatever".into()),
+                }
+                .into(),
+            ),
+        }
+        .into(),
+    ))
+    .await
+    .unwrap();
+    core.shutdown().await;
 }

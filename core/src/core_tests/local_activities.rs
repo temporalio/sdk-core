@@ -5,7 +5,7 @@ use crate::{
         hist_to_poll_resp, mock_sdk, mock_sdk_cfg, mock_worker, single_hist_mock_sg, MockPollCfg,
         ResponseType,
     },
-    worker::client::mocks::mock_workflow_client,
+    worker::{client::mocks::mock_workflow_client, LEGACY_QUERY_ID},
 };
 use anyhow::anyhow;
 use futures::{future::join_all, FutureExt};
@@ -516,7 +516,6 @@ async fn query_during_wft_heartbeat_doesnt_accidentally_fail_to_continue_heartbe
 }
 
 #[rstest::rstest]
-#[should_panic]
 #[case::impossible_query_in_task(true)]
 #[case::real_history(false)]
 #[tokio::test]
@@ -589,7 +588,12 @@ async fn la_resolve_during_legacy_query_does_not_combine(#[case] impossible_quer
             pr
         },
     ];
-    let mock = mock_workflow_client();
+    let mut mock = mock_workflow_client();
+    if impossible_query_in_task {
+        mock.expect_respond_legacy_query()
+            .times(1)
+            .returning(move |_, _| Ok(Default::default()));
+    }
     let mut mock = single_hist_mock_sg(wfid, t, tasks, mock, true);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 1);
     let core = mock_worker(mock);
@@ -654,6 +658,25 @@ async fn la_resolve_during_legacy_query_does_not_combine(#[case] impossible_quer
         );
         // Complete workflow
         core.complete_execution(&task.run_id).await;
+        if impossible_query_in_task {
+            // finish last query
+            let task = core.poll_workflow_activation().await.unwrap();
+            core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
+                task.run_id,
+                vec![QueryResult {
+                    query_id: LEGACY_QUERY_ID.to_string(),
+                    variant: Some(
+                        QuerySuccess {
+                            response: Some("whatev".into()),
+                        }
+                        .into(),
+                    ),
+                }
+                .into()],
+            ))
+            .await
+            .unwrap();
+        }
     };
     let act_fut = async {
         let act_task = core.poll_activity_task().await.unwrap();
