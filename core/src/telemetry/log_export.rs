@@ -146,7 +146,7 @@ impl<'a> tracing::field::Visit for JsonVisitor<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{construct_filter_string, telemetry_init};
+    use crate::{telemetry::construct_filter_string, telemetry_init};
     use temporal_sdk_core_api::telemetry::{CoreTelemetry, Logger, TelemetryOptionsBuilder};
     use tracing::Level;
 
