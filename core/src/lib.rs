@@ -17,7 +17,7 @@ mod pollers;
 mod protosext;
 pub mod replay;
 pub(crate) mod retry_logic;
-pub(crate) mod telemetry;
+pub mod telemetry;
 mod worker;
 
 #[cfg(test)]
@@ -32,7 +32,6 @@ pub use pollers::{
     Client, ClientOptions, ClientOptionsBuilder, ClientTlsConfig, RetryClient, RetryConfig,
     TlsConfig, WorkflowClientTrait,
 };
-pub use telemetry::{construct_filter_string, telemetry_init_global};
 pub use temporal_sdk_core_api as api;
 pub use temporal_sdk_core_protos as protos;
 pub use temporal_sdk_core_protos::TaskToken;
@@ -41,7 +40,10 @@ pub use worker::{Worker, WorkerConfig, WorkerConfigBuilder};
 
 use crate::{
     replay::{mock_client_from_histories, Historator, HistoryForReplay},
-    telemetry::{metrics::MetricsContext, telemetry_init, TelemetryInstance},
+    telemetry::{
+        metrics::MetricsContext, remove_trace_subscriber_for_current_thread,
+        set_trace_subscriber_for_current_thread, telemetry_init, TelemetryInstance,
+    },
     worker::client::WorkerClientBag,
 };
 use futures::Stream;
@@ -191,7 +193,6 @@ pub struct CoreRuntime {
     telemetry: TelemetryInstance,
     runtime: Option<tokio::runtime::Runtime>,
     runtime_handle: tokio::runtime::Handle,
-    telem_drop_guard: Option<tracing::subscriber::DefaultGuard>,
 }
 
 impl CoreRuntime {
@@ -226,12 +227,11 @@ impl CoreRuntime {
     pub fn new_assume_tokio(telemetry_options: TelemetryOptions) -> Result<Self, anyhow::Error> {
         let runtime_handle = tokio::runtime::Handle::current();
         let telemetry = telemetry_init(telemetry_options)?;
-        let guard = tracing::subscriber::set_default(telemetry.trace_subscriber());
+        set_trace_subscriber_for_current_thread(telemetry.trace_subscriber());
         let me = Self {
             telemetry,
             runtime: None,
             runtime_handle,
-            telem_drop_guard: Some(guard),
         };
         Ok(me)
     }
@@ -247,15 +247,15 @@ impl CoreRuntime {
     }
 
     /// Return the trace subscriber associated with the telemetry options/instance. Can be used
-    /// to manually set the default for a thread or globally.
+    /// to manually set the default for a thread or globally using the `tracing` crate, or with
+    /// [set_trace_subscriber_for_current_thread]
     pub fn trace_subscriber(&self) -> Arc<dyn tracing::Subscriber + Send + Sync> {
         self.telemetry.trace_subscriber()
     }
+}
 
-    /// Turns off the telemetry subscriber, thus disabling trace export and logging.
-    /// Metrics live inside workers/clients and will not be disabled if they were enabled when
-    /// those workers/clients were constructed.
-    pub fn disable_telemetry(&mut self) {
-        self.telem_drop_guard.take();
+impl Drop for CoreRuntime {
+    fn drop(&mut self) {
+        remove_trace_subscriber_for_current_thread();
     }
 }

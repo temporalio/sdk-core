@@ -1,3 +1,6 @@
+//! This module helps with the initialization and management of telemetry. IE: Metrics and tracing.
+//! Logs from core are all traces, which may be exported to the console, in memory, or externally.
+
 mod log_export;
 pub(crate) mod metrics;
 mod prometheus_server;
@@ -22,7 +25,7 @@ use opentelemetry::{
 };
 use opentelemetry_otlp::WithExportConfig;
 use parking_lot::Mutex;
-use std::{collections::VecDeque, convert::TryInto, env, sync::Arc, time::Duration};
+use std::{cell::RefCell, collections::VecDeque, convert::TryInto, env, sync::Arc, time::Duration};
 use temporal_sdk_core_api::telemetry::{
     CoreLog, CoreTelemetry, Logger, MetricTemporality, MetricsExporter, OtelCollectorOptions,
     TelemetryOptions, TraceExporter,
@@ -43,8 +46,8 @@ pub fn construct_filter_string(core_level: Level, other_level: Level) -> String 
     )
 }
 
-/// Things that need to not be dropped while telemetry is ongoing
-pub(crate) struct TelemetryInstance {
+/// Holds initialized tracing/metrics exporters, etc
+pub struct TelemetryInstance {
     metric_prefix: &'static str,
     logs_out: Option<Mutex<CoreLogsOut>>,
     metrics: Option<(Box<dyn MeterProvider + Send + Sync + 'static>, Meter)>,
@@ -73,9 +76,33 @@ impl TelemetryInstance {
         }
     }
 
+    /// Returns a trace subscriber which can be used with the tracing crate, or with our own
+    /// [set_trace_subscriber_for_current_thread] function.
     pub fn trace_subscriber(&self) -> Arc<dyn Subscriber + Send + Sync> {
         self.trace_subscriber.clone()
     }
+}
+
+thread_local! {
+    static SUB_GUARD: RefCell<Option<tracing::subscriber::DefaultGuard>> = RefCell::new(None);
+}
+/// Set the trace subscriber for the current thread. This must be done in every thread which uses
+/// core stuff, otherwise traces/logs will not be collected on that thread. For example, if using
+/// a multithreaded Tokio runtime, you should ensure that said runtime uses
+/// [on_thread_start](https://docs.rs/tokio/latest/tokio/runtime/struct.Builder.html#method.on_thread_start)
+/// or a similar mechanism to call this for each thread within the runtime.
+pub fn set_trace_subscriber_for_current_thread(sub: impl Subscriber + Send + Sync + 'static) {
+    SUB_GUARD.with(|sg| {
+        if sg.borrow().is_none() {
+            let g = tracing::subscriber::set_default(sub);
+            *sg.borrow_mut() = Some(g);
+        }
+    })
+}
+
+/// Undoes [set_trace_subscriber_for_current_thread]
+pub fn remove_trace_subscriber_for_current_thread() {
+    SUB_GUARD.with(|sg| sg.take());
 }
 
 fn metric_prefix(opts: &TelemetryOptions) -> &'static str {
@@ -103,8 +130,10 @@ impl CoreTelemetry for TelemetryInstance {
 /// Initialize tracing subscribers/output and logging export, returning a [TelemetryInstance]
 /// which can be used to register default / global tracing subscribers.
 ///
+/// You should only call this once per unique [TelemetryOptions]
+///
 /// See [TelemetryOptions] docs for more on configuration.
-pub(crate) fn telemetry_init(opts: TelemetryOptions) -> Result<TelemetryInstance, anyhow::Error> {
+pub fn telemetry_init(opts: TelemetryOptions) -> Result<TelemetryInstance, anyhow::Error> {
     // This is a bit odd, but functional. It's desirable to create a separate tokio runtime for
     // metrics handling, since tests typically use a single-threaded runtime and initializing
     // pipeline requires us to know if the runtime is single or multithreaded, we will crash
