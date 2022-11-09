@@ -200,7 +200,8 @@ impl CoreRuntime {
     /// Also initialize telemetry for the thread this is being called on.
     ///
     /// Note that this function will call the [tokio::runtime::Builder::enable_all] builder option
-    /// on the Tokio runtime builder.
+    /// on the Tokio runtime builder, and will call [tokio::runtime::Builder::on_thread_start] to
+    /// ensure telemetry subscribers are set on every tokio thread.
     ///
     /// **Important**: You need to call this *before* calling any async functions on workers or
     /// clients, otherwise the tracing subscribers will not be properly attached.
@@ -212,9 +213,16 @@ impl CoreRuntime {
         telemetry_options: TelemetryOptions,
         mut tokio_builder: tokio::runtime::Builder,
     ) -> Result<Self, anyhow::Error> {
-        let runtime = tokio_builder.enable_all().build()?;
+        let telemetry = telemetry_init(telemetry_options)?;
+        let subscriber = telemetry.trace_subscriber();
+        let runtime = tokio_builder
+            .enable_all()
+            .on_thread_start(move || {
+                set_trace_subscriber_for_current_thread(subscriber.clone());
+            })
+            .build()?;
         let _rg = runtime.enter();
-        let mut me = Self::new_assume_tokio(telemetry_options)?;
+        let mut me = Self::new_assume_tokio_initialized_telem(telemetry);
         me.runtime = Some(runtime);
         Ok(me)
     }
@@ -225,15 +233,23 @@ impl CoreRuntime {
     /// # Panics
     /// If there is no currently active Tokio runtime
     pub fn new_assume_tokio(telemetry_options: TelemetryOptions) -> Result<Self, anyhow::Error> {
-        let runtime_handle = tokio::runtime::Handle::current();
         let telemetry = telemetry_init(telemetry_options)?;
+        Ok(Self::new_assume_tokio_initialized_telem(telemetry))
+    }
+
+    /// Construct a runtime from an already-initialized telemetry instance, assuming a tokio runtime
+    /// is already active and this call exists in its context. See [Self::new] for more.
+    ///
+    /// # Panics
+    /// If there is no currently active Tokio runtime
+    pub fn new_assume_tokio_initialized_telem(telemetry: TelemetryInstance) -> Self {
+        let runtime_handle = tokio::runtime::Handle::current();
         set_trace_subscriber_for_current_thread(telemetry.trace_subscriber());
-        let me = Self {
+        Self {
             telemetry,
             runtime: None,
             runtime_handle,
-        };
-        Ok(me)
+        }
     }
 
     /// Get a handle to the tokio runtime used by this Core runtime.
