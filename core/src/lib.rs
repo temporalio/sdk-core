@@ -268,6 +268,11 @@ impl CoreRuntime {
     pub fn trace_subscriber(&self) -> Arc<dyn tracing::Subscriber + Send + Sync> {
         self.telemetry.trace_subscriber()
     }
+
+    /// Return a reference to the owned [TelemetryInstance]
+    pub fn telemetry(&self) -> &TelemetryInstance {
+        &self.telemetry
+    }
 }
 
 impl Drop for CoreRuntime {
