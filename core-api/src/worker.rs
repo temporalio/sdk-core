@@ -124,6 +124,9 @@ impl WorkerConfigBuilder {
         if self.max_concurrent_wft_polls == Some(0) {
             return Err("`max_concurrent_wft_polls` must be at least 1".to_owned());
         }
+        if self.max_concurrent_at_polls == Some(0) {
+            return Err("`max_concurrent_at_polls` must be at least 1".to_owned());
+        }
         if self.max_cached_workflows > Some(0)
             && self.max_outstanding_workflow_tasks > self.max_cached_workflows
         {
