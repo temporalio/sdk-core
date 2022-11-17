@@ -7,6 +7,7 @@ pub(crate) use local_activities::{
     LocalInFlightActInfo, NewLocalAct,
 };
 
+use crate::telemetry::metrics::eager;
 use crate::{
     abstractions::{MeteredSemaphore, OwnedMeteredSemPermit},
     pollers::BoxedActPoller,
@@ -42,7 +43,6 @@ use temporal_sdk_core_protos::{
 };
 use tokio::sync::Notify;
 use tracing::Span;
-use crate::telemetry::metrics::eager;
 
 #[derive(Debug, derive_more::Constructor)]
 struct PendingActivityCancel {
@@ -378,11 +378,13 @@ impl WorkerActivityTasks {
     fn about_to_issue_task(&self, task: PermittedTqResp, is_eager: bool) -> ActivityTask {
         if let Some(ref act_type) = task.resp.activity_type {
             if let Some(ref wf_type) = task.resp.workflow_type {
-                self.metrics.with_new_attrs([
-                    activity_type(act_type.name.clone()),
-                    workflow_type(wf_type.name.clone()),
-                    eager(is_eager),
-                ]).act_task_received();
+                self.metrics
+                    .with_new_attrs([
+                        activity_type(act_type.name.clone()),
+                        workflow_type(wf_type.name.clone()),
+                        eager(is_eager),
+                    ])
+                    .act_task_received();
             }
         }
         // There could be an else statement here but since the response should always contain both
