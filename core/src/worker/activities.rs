@@ -42,6 +42,7 @@ use temporal_sdk_core_protos::{
 };
 use tokio::sync::Notify;
 use tracing::Span;
+use crate::telemetry::metrics::eager;
 
 #[derive(Debug, derive_more::Constructor)]
 struct PendingActivityCancel {
@@ -205,7 +206,7 @@ impl WorkerActivityTasks {
                 cancel_task
             }
             task = self.non_poll_tasks.next() => {
-                Ok(Some(self.about_to_issue_task(task)))
+                Ok(Some(self.about_to_issue_task(task, true)))
             }
             (work, permit) = poll_with_semaphore => {
                 match work {
@@ -217,7 +218,7 @@ impl WorkerActivityTasks {
                         }
                         let work = self.about_to_issue_task(PermittedTqResp {
                            resp: work, permit
-                        });
+                        }, false);
                         Ok(Some(work))
                     }
                     None => {
@@ -374,7 +375,19 @@ impl WorkerActivityTasks {
     }
 
     /// Called when there is a new act task about to be bubbled up out of the manager
-    fn about_to_issue_task(&self, task: PermittedTqResp) -> ActivityTask {
+    fn about_to_issue_task(&self, task: PermittedTqResp, is_eager: bool) -> ActivityTask {
+        if let Some(ref act_type) = task.resp.activity_type {
+            if let Some(ref wf_type) = task.resp.workflow_type {
+                self.metrics.with_new_attrs([
+                    activity_type(act_type.name.clone()),
+                    workflow_type(wf_type.name.clone()),
+                    eager(is_eager),
+                ]).act_task_received();
+            }
+        }
+        // There could be an else statement here but since the response should always contain both
+        // activity_type and workflow_type, we won't bother.
+
         if let Some(dur) = task.resp.sched_to_start() {
             self.metrics.act_sched_to_start_latency(dur);
         };
@@ -411,6 +424,8 @@ impl ActivitiesFromWFTsHandle {
     /// from WFT completion)
     pub(crate) fn add_tasks(&self, tasks: impl IntoIterator<Item = PermittedTqResp>) {
         for t in tasks.into_iter() {
+            // Technically we should be reporting `activity_task_received` here, but for simplicity
+            // and time insensitivity, that metric is tracked in `about_to_issue_task`.
             self.tx.try_send(t).expect("Receive half cannot be dropped");
         }
     }
