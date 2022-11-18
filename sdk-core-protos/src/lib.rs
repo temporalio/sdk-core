@@ -1837,12 +1837,12 @@ pub mod temporal {
                 tonic::include_proto!("temporal.api.workflowservice.v1");
 
                 macro_rules! sched_to_start_impl {
-                    () => {
-                        /// Return the duration of the task schedule time to its start time if both
-                        /// are set and time went forward.
+                    ($sched_field:ident) => {
+                        /// Return the duration of the task schedule time (current attempt) to its
+                        /// start time if both are set and time went forward.
                         pub fn sched_to_start(&self) -> Option<Duration> {
                             if let Some((sch, st)) =
-                                self.scheduled_time.clone().zip(self.started_time.clone())
+                                self.$sched_field.clone().zip(self.started_time.clone())
                             {
                                 let sch: Result<SystemTime, _> = sch.try_into();
                                 let st: Result<SystemTime, _> = st.try_into();
@@ -1856,7 +1856,7 @@ pub mod temporal {
                 }
 
                 impl PollWorkflowTaskQueueResponse {
-                    sched_to_start_impl!();
+                    sched_to_start_impl!(scheduled_time);
                 }
 
                 impl Display for PollWorkflowTaskQueueResponse {
@@ -1898,7 +1898,7 @@ pub mod temporal {
                 }
 
                 impl PollActivityTaskQueueResponse {
-                    sched_to_start_impl!();
+                    sched_to_start_impl!(current_attempt_scheduled_time);
                 }
 
                 impl QueryWorkflowResponse {
