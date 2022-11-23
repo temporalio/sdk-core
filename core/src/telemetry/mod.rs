@@ -209,28 +209,30 @@ pub fn telemetry_init(opts: TelemetryOptions) -> Result<TelemetryInstance, anyho
                     runtime.spawn(async move { srv.run().await });
                     Some(Box::new(mp) as Box<dyn MeterProvider + Send + Sync>)
                 }
-                MetricsExporter::Otel(OtelCollectorOptions { url, headers }) => {
-                    runtime.block_on(async {
-                        let metrics = opentelemetry_otlp::new_pipeline()
-                            .metrics(
-                                aggregator,
-                                metric_temporality_to_selector(opts.metric_temporality),
-                                runtime::Tokio,
-                            )
-                            .with_period(Duration::from_secs(1))
-                            .with_resource(default_resource())
-                            .with_exporter(
-                                opentelemetry_otlp::new_exporter()
-                                    .tonic()
-                                    .with_endpoint(url.to_string())
-                                    .with_metadata(MetadataMap::from_headers(headers.try_into()?)),
-                            )
-                            .build()?;
-                        Ok::<_, anyhow::Error>(Some(
-                            Box::new(metrics) as Box<dyn MeterProvider + Send + Sync>
-                        ))
-                    })?
-                }
+                MetricsExporter::Otel(OtelCollectorOptions {
+                    url,
+                    headers,
+                    metric_periodicity,
+                }) => runtime.block_on(async {
+                    let metrics = opentelemetry_otlp::new_pipeline()
+                        .metrics(
+                            aggregator,
+                            metric_temporality_to_selector(opts.metric_temporality),
+                            runtime::Tokio,
+                        )
+                        .with_period(metric_periodicity.unwrap_or_else(|| Duration::from_secs(1)))
+                        .with_resource(default_resource())
+                        .with_exporter(
+                            opentelemetry_otlp::new_exporter()
+                                .tonic()
+                                .with_endpoint(url.to_string())
+                                .with_metadata(MetadataMap::from_headers(headers.try_into()?)),
+                        )
+                        .build()?;
+                    Ok::<_, anyhow::Error>(Some(
+                        Box::new(metrics) as Box<dyn MeterProvider + Send + Sync>
+                    ))
+                })?,
             }
         } else {
             None
@@ -238,7 +240,7 @@ pub fn telemetry_init(opts: TelemetryOptions) -> Result<TelemetryInstance, anyho
 
         if let Some(ref tracing) = opts.tracing {
             match &tracing.exporter {
-                TraceExporter::Otel(OtelCollectorOptions { url, headers }) => {
+                TraceExporter::Otel(OtelCollectorOptions { url, headers, .. }) => {
                     runtime.block_on(async {
                         let tracer_cfg = Config::default().with_resource(default_resource());
                         let tracer = opentelemetry_otlp::new_pipeline()
@@ -349,6 +351,7 @@ pub mod test_initters {
                     exporter: TraceExporter::Otel(OtelCollectorOptions {
                         url: "grpc://localhost:4317".parse().unwrap(),
                         headers: Default::default(),
+                        metric_periodicity: None,
                     }),
                 })
                 .build()

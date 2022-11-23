@@ -57,6 +57,8 @@ pub struct OtelCollectorOptions {
     pub url: Url,
     /// Optional set of HTTP headers to send to the Collector, e.g for authentication.
     pub headers: HashMap<String, String>,
+    /// Optionally specify how frequently metrics should be exported. Defaults to 1 second.
+    pub metric_periodicity: Option<Duration>,
 }
 
 /// Configuration for the external export of traces
