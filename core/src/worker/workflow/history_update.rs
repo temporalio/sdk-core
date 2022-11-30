@@ -305,7 +305,6 @@ impl HistoryUpdate {
             // command on completion), where we may need to skip events we already handled.
             if e.event_id > from_event_id {
                 if !should_pop(&e) {
-                    info!("Next state, {:?}", next_wft_state);
                     if next_wft_state == NextWftState::SeenCompleted {
                         // We have seen the wft completed event, but decided to exit. We don't
                         // want to return that event as part of this sequence, so include it for

@@ -4,9 +4,8 @@ use futures_util::stream::{FuturesUnordered, StreamExt};
 use std::time::Duration;
 use temporal_client::{WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{
-    interceptors::{FailOnNondeterminismInterceptor, WorkerInterceptor},
-    ActContext, ActivityCancelledError, ActivityOptions, CancellableFuture, LocalActivityOptions,
-    WfContext, WorkflowResult,
+    interceptors::WorkerInterceptor, ActContext, ActivityCancelledError, ActivityOptions,
+    CancellableFuture, LocalActivityOptions, WfContext, WorkflowResult,
 };
 use temporal_sdk_core::replay::HistoryForReplay;
 use temporal_sdk_core_protos::{
