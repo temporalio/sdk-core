@@ -20,7 +20,7 @@ async-trait = "0.1"
 base64 = "0.13"
 crossbeam = "0.8"
 dashmap = "5.0"
-derive_builder = "0.11"
+derive_builder = "0.12"
 derive_more = "0.99"
 enum_dispatch = "0.3"
 flate2 = "1.0"
@@ -34,7 +34,7 @@ lazy_static = "1.4"
 log = "0.4"
 lru = "0.8"
 mockall = "0.11"
-nix = "0.25"
+nix = "0.26"
 once_cell = "1.5"
 opentelemetry = { version = "0.18", features = ["rt-tokio"] }
 opentelemetry-otlp = { version = "0.11", features = ["tokio", "metrics"] }
@@ -86,7 +86,7 @@ version = "0.1"
 assert_matches = "1.4"
 bimap = "0.6.1"
 criterion = "0.4"
-rstest = "0.15"
+rstest = "0.16"
 temporal-sdk-core-test-utils = { path = "../test-utils" }
 temporal-sdk = { path = "../sdk" }
 
