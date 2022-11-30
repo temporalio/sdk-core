@@ -65,6 +65,7 @@ impl TryFrom<InitTelemetryRequest> for TelemetryOptions {
                         format!("invalid OpenTelemetry collector URL for metrics: {}", err)
                     })?,
                     headers,
+                    metric_periodicity: None,
                 }));
             }
         }
@@ -80,6 +81,7 @@ impl TryFrom<InitTelemetryRequest> for TelemetryOptions {
                             format!("invalid OpenTelemetry collector URL for tracing: {}", err)
                         })?,
                         headers,
+                        metric_periodicity: None,
                     }),
                 });
             }

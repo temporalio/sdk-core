@@ -37,6 +37,7 @@ struct Instruments {
     wf_task_replay_latency: Histogram<u64>,
     wf_task_execution_latency: Histogram<u64>,
     act_poll_no_task: Counter<u64>,
+    act_task_received_counter: Counter<u64>,
     act_execution_failed: Counter<u64>,
     act_sched_to_start_latency: Histogram<u64>,
     act_exec_latency: Histogram<u64>,
@@ -175,6 +176,13 @@ impl MetricsContext {
             .add(&self.ctx, 1, &self.kvs);
     }
 
+    /// A count of activity tasks received
+    pub(crate) fn act_task_received(&self) {
+        self.instruments
+            .act_task_received_counter
+            .add(&self.ctx, 1, &self.kvs);
+    }
+
     /// An activity execution failed
     pub(crate) fn act_execution_failed(&self) {
         self.instruments
@@ -274,6 +282,7 @@ impl Instruments {
             wf_task_replay_latency: hst(WF_TASK_REPLAY_LATENCY_NAME),
             wf_task_execution_latency: hst(WF_TASK_EXECUTION_LATENCY_NAME),
             act_poll_no_task: ctr("activity_poll_no_task"),
+            act_task_received_counter: ctr("activity_task_received"),
             act_execution_failed: ctr("activity_execution_failed"),
             act_sched_to_start_latency: hst(ACT_SCHED_TO_START_LATENCY_NAME),
             act_exec_latency: hst(ACT_EXEC_LATENCY_NAME),
@@ -294,6 +303,7 @@ const KEY_TASK_QUEUE: &str = "task_queue";
 const KEY_ACT_TYPE: &str = "activity_type";
 const KEY_POLLER_TYPE: &str = "poller_type";
 const KEY_WORKER_TYPE: &str = "worker_type";
+const KEY_EAGER: &str = "eager";
 
 pub(crate) fn workflow_poller() -> KeyValue {
     KeyValue::new(KEY_POLLER_TYPE, "workflow_task")
@@ -321,6 +331,9 @@ pub(crate) fn activity_worker_type() -> KeyValue {
 }
 pub(crate) fn local_activity_worker_type() -> KeyValue {
     KeyValue::new(KEY_WORKER_TYPE, "LocalActivityWorker")
+}
+pub(crate) fn eager(is_eager: bool) -> KeyValue {
+    KeyValue::new(KEY_EAGER, is_eager)
 }
 
 const WF_E2E_LATENCY_NAME: &str = "workflow_endtoend_latency";

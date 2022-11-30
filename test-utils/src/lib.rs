@@ -514,6 +514,7 @@ pub fn get_integ_telem_options() -> TelemetryOptions {
         let opts = OtelCollectorOptions {
             url,
             headers: Default::default(),
+            metric_periodicity: None,
         };
         ob.tracing(TraceExportConfig {
             filter: filter_string.clone(),
