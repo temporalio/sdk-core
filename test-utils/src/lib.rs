@@ -101,6 +101,16 @@ pub async fn history_from_proto_binary(path_from_root: &str) -> Result<History, 
 }
 
 static INTEG_TESTS_RT: once_cell::sync::OnceCell<CoreRuntime> = once_cell::sync::OnceCell::new();
+pub fn init_integ_telem() {
+    INTEG_TESTS_RT.get_or_init(|| {
+        let telemetry_options = get_integ_telem_options();
+        let rt =
+            CoreRuntime::new_assume_tokio(telemetry_options).expect("Core runtime inits cleanly");
+        let _ = tracing::subscriber::set_global_default(rt.trace_subscriber());
+        rt
+    });
+}
+
 /// Implements a builder pattern to help integ tests initialize core and create workflows
 pub struct CoreWfStarter {
     /// Used for both the task queue and workflow id
@@ -123,13 +133,7 @@ impl CoreWfStarter {
     }
 
     pub fn new_tq_name(task_queue: &str) -> Self {
-        let telemetry_options = get_integ_telem_options();
-        INTEG_TESTS_RT.get_or_init(|| {
-            let rt = CoreRuntime::new_assume_tokio(telemetry_options)
-                .expect("Core runtime inits cleanly");
-            let _ = tracing::subscriber::set_global_default(rt.trace_subscriber());
-            rt
-        });
+        init_integ_telem();
         Self {
             task_queue_name: task_queue.to_owned(),
             worker_config: WorkerConfigBuilder::default()
