@@ -18,7 +18,10 @@ use std::{
 use temporal_client::{
     Client, RetryClient, WorkflowClientTrait, WorkflowExecutionInfo, WorkflowOptions,
 };
-use temporal_sdk::{interceptors::WorkerInterceptor, IntoActivityFunc, Worker, WorkflowFunction};
+use temporal_sdk::{
+    interceptors::{FailOnNondeterminismInterceptor, WorkerInterceptor},
+    IntoActivityFunc, Worker, WorkflowFunction,
+};
 use temporal_sdk_core::{
     ephemeral_server::{EphemeralExe, EphemeralExeVersion},
     init_replay_worker, init_worker,
@@ -67,16 +70,15 @@ pub async fn init_core_and_create_wf(test_name: &str) -> CoreWfStarter {
     starter
 }
 
-/// Create a worker replay instance preloaded with provided histories. Returns the worker impl
-/// and the task queue name.
-pub fn init_core_replay_preloaded<I>(test_name: &str, histories: I) -> (Arc<dyn CoreWorker>, String)
+/// Create a worker replay instance preloaded with provided histories. Returns the worker impl.
+pub fn init_core_replay_preloaded<I>(test_name: &str, histories: I) -> Arc<dyn CoreWorker>
 where
     I: IntoIterator<Item = HistoryForReplay> + 'static,
     <I as IntoIterator>::IntoIter: Send,
 {
     init_core_replay_stream(test_name, stream::iter(histories))
 }
-pub fn init_core_replay_stream<I>(test_name: &str, histories: I) -> (Arc<dyn CoreWorker>, String)
+pub fn init_core_replay_stream<I>(test_name: &str, histories: I) -> Arc<dyn CoreWorker>
 where
     I: Stream<Item = HistoryForReplay> + Send + 'static,
 {
@@ -88,7 +90,23 @@ where
         .expect("Configuration options construct properly");
     let worker =
         init_replay_worker(worker_cfg, histories).expect("Replay worker must init properly");
-    (Arc::new(worker), test_name.to_string())
+    Arc::new(worker)
+}
+pub fn replay_sdk_worker<I>(histories: I) -> Worker
+where
+    I: IntoIterator<Item = HistoryForReplay> + 'static,
+    <I as IntoIterator>::IntoIter: Send,
+{
+    replay_sdk_worker_stream(stream::iter(histories))
+}
+pub fn replay_sdk_worker_stream<I>(histories: I) -> Worker
+where
+    I: Stream<Item = HistoryForReplay> + Send + 'static,
+{
+    let core = init_core_replay_stream("replay_worker_test", histories);
+    let mut worker = Worker::new_from_core(core, "replay_q".to_string());
+    worker.set_worker_interceptor(Box::new(FailOnNondeterminismInterceptor {}));
+    worker
 }
 
 /// Load history from a file containing the protobuf serialization of it
@@ -216,8 +234,9 @@ impl CoreWfStarter {
             .history
             .expect("history field must be populated");
         let with_id = HistoryForReplay::new(history, wf_id);
-        let (replay_worker, _) = init_core_replay_preloaded(worker.task_queue(), [with_id]);
+        let replay_worker = init_core_replay_preloaded(worker.task_queue(), [with_id]);
         worker.with_new_core_worker(replay_worker);
+        worker.set_worker_interceptor(Box::new(FailOnNondeterminismInterceptor {}));
         worker.run().await.unwrap();
         Ok(())
     }

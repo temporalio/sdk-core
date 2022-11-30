@@ -6,7 +6,7 @@ use temporal_client::{WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{
     interceptors::{FailOnNondeterminismInterceptor, WorkerInterceptor},
     ActContext, ActivityCancelledError, ActivityOptions, CancellableFuture, LocalActivityOptions,
-    WfContext, Worker, WorkflowResult,
+    WfContext, WorkflowResult,
 };
 use temporal_sdk_core::replay::HistoryForReplay;
 use temporal_sdk_core_protos::{
@@ -18,7 +18,7 @@ use temporal_sdk_core_protos::{
     TestHistoryBuilder,
 };
 use temporal_sdk_core_test_utils::{
-    history_from_proto_binary, init_core_replay_preloaded, init_integ_telem, CoreWfStarter,
+    history_from_proto_binary, init_integ_telem, replay_sdk_worker, CoreWfStarter,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -640,7 +640,7 @@ async fn repro_nondeterminism_with_timer_bug() {
 }
 
 async fn la_problem_workflow(ctx: WfContext) -> WorkflowResult<()> {
-    let r1 = ctx.local_activity(LocalActivityOptions {
+    ctx.local_activity(LocalActivityOptions {
         activity_type: "delay".to_string(),
         input: "hi".as_json_payload().expect("serializes fine"),
         retry_policy: RetryPolicy {
@@ -652,20 +652,19 @@ async fn la_problem_workflow(ctx: WfContext) -> WorkflowResult<()> {
         },
         timer_backoff_threshold: Some(Duration::from_secs(1)),
         ..Default::default()
-    });
-    dbg!(r1.await);
-    dbg!(
-        ctx.activity(ActivityOptions {
-            activity_type: "delay".to_string(),
-            start_to_close_timeout: Some(Duration::from_secs(20)),
-            input: "hi!".as_json_payload().expect("serializes fine"),
-            ..Default::default()
-        })
-        .await
-    );
+    })
+    .await;
+    ctx.activity(ActivityOptions {
+        activity_type: "delay".to_string(),
+        start_to_close_timeout: Some(Duration::from_secs(20)),
+        input: "hi!".as_json_payload().expect("serializes fine"),
+        ..Default::default()
+    })
+    .await;
     Ok(().into())
 }
 
+// Expensive to run - worth enabling on a stress/regression pipeline.
 #[ignore]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn evict_while_la_running_no_interference() {
@@ -737,11 +736,7 @@ async fn weird_la_nondeterminism_repro(#[values(true, false)] fix_hist: bool) {
         hist = thb.get_full_history_info().unwrap().into();
     }
 
-    let (core, _) = init_core_replay_preloaded(
-        "timer_workflow_replay",
-        [HistoryForReplay::new(hist, "fake".to_owned())],
-    );
-    let mut worker = Worker::new_from_core(core, "replay_q".to_string());
+    let mut worker = replay_sdk_worker([HistoryForReplay::new(hist, "fake".to_owned())]);
     worker.register_wf(
         "evict_while_la_running_no_interference",
         la_problem_workflow,
@@ -750,8 +745,6 @@ async fn weird_la_nondeterminism_repro(#[values(true, false)] fix_hist: bool) {
         tokio::time::sleep(Duration::from_secs(15)).await;
         Ok(())
     });
-    // TODO: Make this automatic for "replay" workers?
-    worker.set_worker_interceptor(Box::new(FailOnNondeterminismInterceptor {}));
     worker.run().await.unwrap();
 }
 
@@ -770,11 +763,7 @@ async fn second_weird_la_nondeterminism_repro() {
     thb.add_workflow_execution_completed();
     hist = thb.get_full_history_info().unwrap().into();
 
-    let (core, _) = init_core_replay_preloaded(
-        "timer_workflow_replay",
-        [HistoryForReplay::new(hist, "fake".to_owned())],
-    );
-    let mut worker = Worker::new_from_core(core, "replay_q".to_string());
+    let mut worker = replay_sdk_worker([HistoryForReplay::new(hist, "fake".to_owned())]);
     worker.register_wf(
         "evict_while_la_running_no_interference",
         la_problem_workflow,
@@ -783,7 +772,5 @@ async fn second_weird_la_nondeterminism_repro() {
         tokio::time::sleep(Duration::from_secs(15)).await;
         Ok(())
     });
-    // TODO: Make this automatic for "replay" workers?
-    worker.set_worker_interceptor(Box::new(FailOnNondeterminismInterceptor {}));
     worker.run().await.unwrap();
 }

@@ -233,7 +233,7 @@ impl HistoryUpdate {
     }
 
     /// Retrieve the next WFT sequence, first from buffered events and then from the real stream.
-    /// Returns (events up to the next logical wft sequence, an extra event that was taken but
+    /// Returns (events up to the next logical wft sequence, extra events that were taken but
     /// should be re-appended to the end of the buffer).
     async fn take_next_wft_sequence_impl(
         &mut self,

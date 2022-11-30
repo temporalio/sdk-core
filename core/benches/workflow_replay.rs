@@ -1,10 +1,10 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use futures::StreamExt;
 use std::time::Duration;
-use temporal_sdk::{WfContext, Worker, WorkflowFunction};
+use temporal_sdk::{WfContext, WorkflowFunction};
 use temporal_sdk_core::replay::HistoryForReplay;
 use temporal_sdk_core_protos::DEFAULT_WORKFLOW_TYPE;
-use temporal_sdk_core_test_utils::{canned_histories, init_core_replay_preloaded};
+use temporal_sdk_core_test_utils::{canned_histories, replay_sdk_worker};
 
 pub fn criterion_benchmark(c: &mut Criterion) {
     let tokio_runtime = tokio::runtime::Builder::new_current_thread()
@@ -24,8 +24,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         b.iter(|| {
             tokio_runtime.block_on(async {
                 let func = timers_wf(num_timers);
-                let (worker, _) = init_core_replay_preloaded("replay_bench", [hist.clone()]);
-                let mut worker = Worker::new_from_core(worker, "replay_bench".to_string());
+                let mut worker = replay_sdk_worker([hist.clone()]);
                 worker.register_wf(DEFAULT_WORKFLOW_TYPE, func);
                 worker.run().await.unwrap();
             })
@@ -43,8 +42,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         b.iter(|| {
             tokio_runtime.block_on(async {
                 let func = big_signals_wf(num_tasks);
-                let (worker, _) = init_core_replay_preloaded("large_hist_bench", [hist.clone()]);
-                let mut worker = Worker::new_from_core(worker, "large_hist_bench".to_string());
+                let mut worker = replay_sdk_worker([hist.clone()]);
                 worker.register_wf(DEFAULT_WORKFLOW_TYPE, func);
                 worker.run().await.unwrap();
             })
