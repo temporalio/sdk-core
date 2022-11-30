@@ -1,7 +1,6 @@
 use crate::{
     prost_dur,
     replay::{default_wes_attribs, TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE},
-    telemetry::test_telem_console,
     test_help::{
         hist_to_poll_resp, mock_sdk, mock_sdk_cfg, mock_worker, single_hist_mock_sg, MockPollCfg,
         ResponseType,
@@ -403,20 +402,20 @@ async fn local_act_null_result() {
 
 #[tokio::test]
 async fn local_act_command_immediately_follows_la_marker() {
-    test_telem_console();
+    // This repro only works both when cache is off, and there is at least one heartbeat wft
+    // before the marker & next command are recorded.
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
+    t.add_full_wf_task();
     t.add_local_activity_marker(1, "1", None, None, None);
-    let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+    t.add_get_event_id(EventType::TimerStarted, None);
     t.add_full_wf_task();
-    t.add_timer_fired(timer_started_event_id, "1".to_string());
-    t.add_full_wf_task();
-    t.add_workflow_execution_completed();
 
     let wf_id = "fakeid";
     let mock = mock_workflow_client();
-    let mh = MockPollCfg::from_resp_batches(wf_id, t, [ResponseType::AllHistory], mock);
+    // Bug only repros when seeing history up to third wft
+    let mh = MockPollCfg::from_resp_batches(wf_id, t, [3], mock);
     let mut worker = mock_sdk_cfg(mh, |w| w.max_cached_workflows = 0);
 
     worker.register_wf(

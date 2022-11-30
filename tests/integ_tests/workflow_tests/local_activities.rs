@@ -666,6 +666,7 @@ async fn la_problem_workflow(ctx: WfContext) -> WorkflowResult<()> {
     Ok(().into())
 }
 
+#[ignore]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn evict_while_la_running_no_interference() {
     let wf_name = "evict_while_la_running_no_interference";
