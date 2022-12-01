@@ -1664,20 +1664,25 @@ pub mod temporal {
 
                 impl History {
                     pub fn extract_run_id_from_start(&self) -> Result<&str, anyhow::Error> {
-                        if let Some(
-                            history_event::Attributes::WorkflowExecutionStartedEventAttributes(wes),
-                        ) = self.events.get(0).and_then(|x| x.attributes.as_ref())
-                        {
-                            Ok(&wes.original_execution_run_id)
-                        } else {
-                            bail!("First event is not WorkflowExecutionStarted?!?")
-                        }
+                        extract_original_run_id_from_events(&self.events)
                     }
 
                     /// Returns the event id of the final event in the history. Will return 0 if
                     /// there are no events.
                     pub fn last_event_id(&self) -> i64 {
                         self.events.last().map(|e| e.event_id).unwrap_or_default()
+                    }
+                }
+
+                pub fn extract_original_run_id_from_events(
+                    events: &[HistoryEvent],
+                ) -> Result<&str, anyhow::Error> {
+                    if let Some(Attributes::WorkflowExecutionStartedEventAttributes(wes)) =
+                        events.get(0).and_then(|x| x.attributes.as_ref())
+                    {
+                        Ok(&wes.original_execution_run_id)
+                    } else {
+                        bail!("First event is not WorkflowExecutionStarted?!?")
                     }
                 }
 

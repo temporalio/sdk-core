@@ -279,6 +279,9 @@ impl Worker {
                         }
                         o => o?,
                     };
+                    if let Some(ref i) = common.worker_interceptor {
+                        i.on_workflow_activation(&activation).await?;
+                    }
                     if let Some(wf_fut) = wf_half.workflow_activation_handler(
                         common,
                         shutdown_token.clone(),

@@ -195,8 +195,7 @@ async fn fail_wf_task(#[values(true, false)] replay: bool) {
             attrs.first_execution_run_id = "run2".to_string();
         }
         let hist2 = HistoryForReplay::new(hist_proto, "fake".to_string());
-        let (core, _) = init_core_replay_preloaded("fail_wf_task", [hist, hist2]);
-        core
+        init_core_replay_preloaded("fail_wf_task", [hist, hist2])
     } else {
         let mut starter = init_core_and_create_wf("fail_wf_task").await;
         starter.get_worker().await

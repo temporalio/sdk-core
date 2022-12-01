@@ -79,6 +79,10 @@ fsm! {
     // even though we already resolved the activity.
     WaitingMarkerEventPreResolved --(MarkerRecorded(CompleteLocalActivityData),
                                      shared on_marker_recorded) --> MarkerCommandRecorded;
+    // Ignore cancellations when waiting for the marker after being pre-resolved
+    WaitingMarkerEventPreResolved --(Cancel) --> WaitingMarkerEventPreResolved;
+    WaitingMarkerEventPreResolved --(NoWaitCancel(ActivityCancellationType))
+                                     --> WaitingMarkerEventPreResolved;
 
     // Ignore cancellation in final state
     MarkerCommandRecorded --(Cancel, on_cancel_requested) --> MarkerCommandRecorded;
@@ -1208,16 +1212,11 @@ mod tests {
         let histinfo = t.get_full_history_info().unwrap().into();
         let mut wfm = ManagedWFFunc::new_from_update(histinfo, func, vec![]);
 
-        // First activation will request to run the LA, but it will *not* be queued for execution
-        // yet as we're still replaying.
+        // First activation will request to run the LA since the heartbeat & wft failure are skipped
+        // over
         wfm.get_next_activation().await.unwrap();
         let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 0);
-        let ready_to_execute_las = wfm.drain_queued_local_activities();
-        assert_eq!(ready_to_execute_las.len(), 0);
-
-        // On the *next* activation, we are no longer replaying and the activity should be queued
-        wfm.get_next_activation().await.unwrap();
         let ready_to_execute_las = wfm.drain_queued_local_activities();
         assert_eq!(ready_to_execute_las.len(), 1);
         // We can happily complete it now

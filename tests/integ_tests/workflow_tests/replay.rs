@@ -13,8 +13,8 @@ use temporal_sdk_core_protos::{
     TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE,
 };
 use temporal_sdk_core_test_utils::{
-    canned_histories, history_from_proto_binary, init_core_replay_preloaded,
-    init_core_replay_stream, WorkerTestHelpers,
+    canned_histories, history_from_proto_binary, init_core_replay_preloaded, replay_sdk_worker,
+    replay_sdk_worker_stream, WorkerTestHelpers,
 };
 use tokio::join;
 
@@ -25,7 +25,7 @@ fn test_hist_to_replay(t: TestHistoryBuilder) -> HistoryForReplay {
 
 #[tokio::test]
 async fn timer_workflow_replay() {
-    let (core, _) = init_core_replay_preloaded(
+    let core = init_core_replay_preloaded(
         "timer_workflow_replay",
         [HistoryForReplay::new(
             history_from_proto_binary("histories/timer_workflow_history.bin")
@@ -83,7 +83,7 @@ async fn timer_workflow_replay() {
 
 #[tokio::test]
 async fn workflow_nondeterministic_replay() {
-    let (core, _) = init_core_replay_preloaded(
+    let core = init_core_replay_preloaded(
         "timer_workflow_replay",
         [HistoryForReplay::new(
             history_from_proto_binary("histories/timer_workflow_history.bin")
@@ -124,8 +124,7 @@ async fn replay_using_wf_function() {
     let num_timers = 10;
     let t = canned_histories::long_sequential_timers(num_timers as usize);
     let func = timers_wf(num_timers);
-    let (worker, _) = init_core_replay_preloaded("replay_bench", [test_hist_to_replay(t)]);
-    let mut worker = Worker::new_from_core(worker, "replay_bench".to_string());
+    let mut worker = replay_sdk_worker([test_hist_to_replay(t)]);
     worker.register_wf(DEFAULT_WORKFLOW_TYPE, func);
     worker.run().await.unwrap();
 }
@@ -138,9 +137,7 @@ async fn replay_ok_ending_with_terminated_or_timed_out() {
     t2.add_workflow_execution_timed_out();
     for t in [t1, t2] {
         let func = timers_wf(1);
-        let (worker, _) =
-            init_core_replay_preloaded("replay_ok_terminate", [test_hist_to_replay(t)]);
-        let mut worker = Worker::new_from_core(worker, "replay_ok_terminate".to_string());
+        let mut worker = replay_sdk_worker([test_hist_to_replay(t)]);
         worker.register_wf(DEFAULT_WORKFLOW_TYPE, func);
         worker.run().await.unwrap();
     }
@@ -157,18 +154,14 @@ async fn multiple_histories_replay(#[values(false, true)] use_feeder: bool) {
     let mut seq_timer_hist = canned_histories::long_sequential_timers(num_timers as usize);
     seq_timer_hist.set_wf_type("seqtimer");
     let (feeder, stream) = HistoryFeeder::new(1);
-    let (worker, _) = if use_feeder {
-        init_core_replay_stream("multiple_hist_replay", stream)
+    let mut worker = if use_feeder {
+        replay_sdk_worker_stream(stream)
     } else {
-        init_core_replay_preloaded(
-            "multiple_hist_replay",
-            [
-                test_hist_to_replay(one_timer_hist.clone()),
-                test_hist_to_replay(seq_timer_hist.clone()),
-            ],
-        )
+        replay_sdk_worker([
+            test_hist_to_replay(one_timer_hist.clone()),
+            test_hist_to_replay(seq_timer_hist.clone()),
+        ])
     };
-    let mut worker = Worker::new_from_core(worker, "replay_ok_terminate".to_string());
     let runs_ctr_i = UniqueRunsCounter::default();
     let runs_ctr = runs_ctr_i.runs.clone();
     worker.set_worker_interceptor(Box::new(runs_ctr_i));
@@ -198,15 +191,11 @@ async fn multiple_histories_replay(#[values(false, true)] use_feeder: bool) {
 async fn multiple_histories_can_handle_dupe_run_ids() {
     let mut hist1 = canned_histories::single_timer("1");
     hist1.set_wf_type("onetimer");
-    let (worker, _) = init_core_replay_preloaded(
-        "multiple_hist_replay",
-        [
-            test_hist_to_replay(hist1.clone()),
-            test_hist_to_replay(hist1.clone()),
-            test_hist_to_replay(hist1),
-        ],
-    );
-    let mut worker = Worker::new_from_core(worker, "replay_dupe_ids".to_string());
+    let mut worker = replay_sdk_worker([
+        test_hist_to_replay(hist1.clone()),
+        test_hist_to_replay(hist1.clone()),
+        test_hist_to_replay(hist1),
+    ]);
     worker.register_wf("onetimer", timers_wf(1));
     worker.run().await.unwrap();
 }

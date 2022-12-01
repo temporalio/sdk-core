@@ -1,19 +1,24 @@
 use anyhow::anyhow;
 use futures::future::join_all;
+use futures_util::stream::{FuturesUnordered, StreamExt};
 use std::time::Duration;
-use temporal_client::WorkflowOptions;
+use temporal_client::{WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{
-    interceptors::WorkerInterceptor, ActContext, ActivityCancelledError, CancellableFuture,
-    LocalActivityOptions, WfContext, WorkflowResult,
+    interceptors::WorkerInterceptor, ActContext, ActivityCancelledError, ActivityOptions,
+    CancellableFuture, LocalActivityOptions, WfContext, WorkflowResult,
 };
+use temporal_sdk_core::replay::HistoryForReplay;
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_commands::ActivityCancellationType,
         workflow_completion::WorkflowActivationCompletion, AsJsonPayloadExt,
     },
     temporal::api::common::v1::RetryPolicy,
+    TestHistoryBuilder,
 };
-use temporal_sdk_core_test_utils::CoreWfStarter;
+use temporal_sdk_core_test_utils::{
+    history_from_proto_binary, init_integ_telem, replay_sdk_worker, CoreWfStarter,
+};
 use tokio_util::sync::CancellationToken;
 
 pub async fn echo(_ctx: ActContext, e: String) -> anyhow::Result<String> {
@@ -631,4 +636,140 @@ async fn repro_nondeterminism_with_timer_bug() {
         .fetch_history_and_replay(wf_name, run_id, worker.inner_mut())
         .await
         .unwrap();
+}
+
+async fn la_problem_workflow(ctx: WfContext) -> WorkflowResult<()> {
+    ctx.local_activity(LocalActivityOptions {
+        activity_type: "delay".to_string(),
+        input: "hi".as_json_payload().expect("serializes fine"),
+        retry_policy: RetryPolicy {
+            initial_interval: Some(prost_dur!(from_micros(15))),
+            backoff_coefficient: 1_000.,
+            maximum_interval: Some(prost_dur!(from_millis(1500))),
+            maximum_attempts: 4,
+            non_retryable_error_types: vec![],
+        },
+        timer_backoff_threshold: Some(Duration::from_secs(1)),
+        ..Default::default()
+    })
+    .await;
+    ctx.activity(ActivityOptions {
+        activity_type: "delay".to_string(),
+        start_to_close_timeout: Some(Duration::from_secs(20)),
+        input: "hi!".as_json_payload().expect("serializes fine"),
+        ..Default::default()
+    })
+    .await;
+    Ok(().into())
+}
+
+// Expensive to run - worth enabling on a stress/regression pipeline.
+#[ignore]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn evict_while_la_running_no_interference() {
+    let wf_name = "evict_while_la_running_no_interference";
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter.max_local_at(20);
+    starter.max_cached_workflows(20);
+    let mut worker = starter.worker().await;
+
+    worker.register_wf(wf_name.to_owned(), la_problem_workflow);
+    worker.register_activity("delay", |_: ActContext, _: String| async {
+        tokio::time::sleep(Duration::from_secs(15)).await;
+        Ok(())
+    });
+
+    let client = starter.get_client().await;
+    let subfs = FuturesUnordered::new();
+    for i in 1..100 {
+        let wf_id = format!("{}-{}", wf_name, i);
+        let run_id = worker
+            .submit_wf(
+                &wf_id,
+                wf_name.to_owned(),
+                vec![],
+                WorkflowOptions::default(),
+            )
+            .await
+            .unwrap();
+        let cw = worker.core_worker.clone();
+        let client = client.clone();
+        subfs.push(async move {
+            // Evict the workflow
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            cw.request_workflow_eviction(&run_id);
+            // Wake up workflow by sending signal
+            client
+                .signal_workflow_execution(
+                    wf_id,
+                    run_id.clone(),
+                    "whaatever".to_string(),
+                    None,
+                    None,
+                )
+                .await
+                .unwrap();
+        });
+    }
+    let runf = async {
+        worker.run_until_done().await.unwrap();
+    };
+    tokio::join!(subfs.collect::<Vec<_>>(), runf);
+}
+
+#[rstest::rstest]
+#[tokio::test]
+async fn weird_la_nondeterminism_repro(#[values(true, false)] fix_hist: bool) {
+    init_integ_telem();
+    let mut hist = history_from_proto_binary(
+        "histories/evict_while_la_running_no_interference-85_history.bin",
+    )
+    .await
+    .unwrap();
+    if fix_hist {
+        // Replace broken ending with accurate ending
+        hist.events.truncate(20);
+        let mut thb = TestHistoryBuilder::from_history(hist.events);
+        thb.add_workflow_task_completed();
+        thb.add_workflow_execution_completed();
+        hist = thb.get_full_history_info().unwrap().into();
+    }
+
+    let mut worker = replay_sdk_worker([HistoryForReplay::new(hist, "fake".to_owned())]);
+    worker.register_wf(
+        "evict_while_la_running_no_interference",
+        la_problem_workflow,
+    );
+    worker.register_activity("delay", |_: ActContext, _: String| async {
+        tokio::time::sleep(Duration::from_secs(15)).await;
+        Ok(())
+    });
+    worker.run().await.unwrap();
+}
+
+#[tokio::test]
+async fn second_weird_la_nondeterminism_repro() {
+    init_integ_telem();
+    let mut hist = history_from_proto_binary(
+        "histories/evict_while_la_running_no_interference-23_history.bin",
+    )
+    .await
+    .unwrap();
+    // Chop off uninteresting ending
+    hist.events.truncate(24);
+    let mut thb = TestHistoryBuilder::from_history(hist.events);
+    // thb.add_workflow_task_completed();
+    thb.add_workflow_execution_completed();
+    hist = thb.get_full_history_info().unwrap().into();
+
+    let mut worker = replay_sdk_worker([HistoryForReplay::new(hist, "fake".to_owned())]);
+    worker.register_wf(
+        "evict_while_la_running_no_interference",
+        la_problem_workflow,
+    );
+    worker.register_activity("delay", |_: ActContext, _: String| async {
+        tokio::time::sleep(Duration::from_secs(15)).await;
+        Ok(())
+    });
+    worker.run().await.unwrap();
 }

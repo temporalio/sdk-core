@@ -39,6 +39,27 @@ pub struct TestHistoryBuilder {
 }
 
 impl TestHistoryBuilder {
+    pub fn from_history(events: Vec<HistoryEvent>) -> Self {
+        let find_matching_id = |etype: EventType| {
+            events
+                .iter()
+                .rev()
+                .find(|e| e.event_type() == etype)
+                .map(|e| e.event_id)
+                .unwrap_or_default()
+        };
+        Self {
+            current_event_id: events.last().map(|e| e.event_id).unwrap_or_default(),
+            workflow_task_scheduled_event_id: find_matching_id(EventType::WorkflowTaskScheduled),
+            final_workflow_task_started_event_id: find_matching_id(EventType::WorkflowTaskStarted),
+            previous_task_completed_id: find_matching_id(EventType::WorkflowTaskCompleted),
+            original_run_id: extract_original_run_id_from_events(&events)
+                .expect("Run id must be discoverable")
+                .to_string(),
+            events,
+        }
+    }
+
     /// Add an event by type with attributes. Bundles both into a [HistoryEvent] with an id that is
     /// incremented on each call to add.
     pub fn add(&mut self, event_type: EventType, attribs: Attributes) {

@@ -424,15 +424,15 @@ impl WorkflowMachines {
             }
             let next_event = history.peek();
             let eid = event.event_id;
-            let etype = event.event_type;
+            let etype = event.event_type();
             self.handle_event(event, next_event.is_some())?;
             self.last_processed_event = eid;
-            if etype == EventType::WorkflowTaskStarted as i32 && next_event.is_none() {
+            if etype == EventType::WorkflowTaskStarted && next_event.is_none() {
                 break;
             }
         }
 
-        // Scan through to the next WFT, searching for any patch markers, so that we can
+        // Scan through to the next WFT, searching for any patch / la markers, so that we can
         // pre-resolve them.
         for e in self.last_history_from_server.peek_next_wft_sequence() {
             if let Some((patch_id, _)) = e.get_patch_marker_details() {

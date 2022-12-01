@@ -204,20 +204,20 @@ impl HistoryUpdate {
         &mut self,
         from_wft_started_id: i64,
     ) -> Result<Vec<HistoryEvent>, tonic::Status> {
-        let (next_wft_events, maybe_bonus_event) = self
+        let (next_wft_events, maybe_bonus_events) = self
             .take_next_wft_sequence_impl(from_wft_started_id)
             .await?;
-        if let Some(be) = maybe_bonus_event {
-            self.buffered.push_back(be);
+        if !maybe_bonus_events.is_empty() {
+            self.buffered.extend(maybe_bonus_events);
         }
 
         if let Some(last_event_id) = next_wft_events.last().map(|he| he.event_id) {
             // Always attempt to fetch the *next* WFT sequence as well, to buffer it for lookahead
-            let (buffer_these_events, maybe_bonus_event) =
+            let (buffer_these_events, maybe_bonus_events) =
                 self.take_next_wft_sequence_impl(last_event_id).await?;
             self.buffered.extend(buffer_these_events);
-            if let Some(be) = maybe_bonus_event {
-                self.buffered.push_back(be);
+            if !maybe_bonus_events.is_empty() {
+                self.buffered.extend(maybe_bonus_events);
             }
         }
 
@@ -232,44 +232,61 @@ impl HistoryUpdate {
         self.buffered.iter()
     }
 
+    /// Retrieve the next WFT sequence, first from buffered events and then from the real stream.
+    /// Returns (events up to the next logical wft sequence, extra events that were taken but
+    /// should be re-appended to the end of the buffer).
     async fn take_next_wft_sequence_impl(
         &mut self,
         from_event_id: i64,
-    ) -> Result<(Vec<HistoryEvent>, Option<HistoryEvent>), tonic::Status> {
+    ) -> Result<(Vec<HistoryEvent>, Vec<HistoryEvent>), tonic::Status> {
         let mut events_to_next_wft_started: Vec<HistoryEvent> = vec![];
 
         // This flag tracks if, while determining events to be returned, we have seen the next
         // logically significant WFT started event which follows the one that was passed in as a
-        // parameter. If a WFT fails or times out, it is not significant. So we will stop returning
-        // events (exclusive) as soon as we see an event following a WFT started that is *not*
-        // failed or timed out.
-        let mut saw_next_wft = false;
+        // parameter. If a WFT fails, times out, or is devoid of commands (ie: a heartbeat) it is
+        // not significant. So we will stop returning events (exclusive) as soon as we see an event
+        // following a WFT started that is *not* failed, timed out, or completed with a command.
+        let mut next_wft_state = NextWftState::NotSeen;
         let mut should_pop = |e: &HistoryEvent| {
             if e.event_id <= from_event_id {
                 return true;
-            } else if e.event_type == EventType::WorkflowTaskStarted as i32 {
-                saw_next_wft = true;
+            } else if e.event_type() == EventType::WorkflowTaskStarted {
+                next_wft_state = NextWftState::Seen;
                 return true;
             }
 
-            if saw_next_wft {
-                // Must ignore failures and timeouts
-                if e.event_type == EventType::WorkflowTaskFailed as i32
-                    || e.event_type == EventType::WorkflowTaskTimedOut as i32
-                {
-                    saw_next_wft = false;
-                    return true;
+            match next_wft_state {
+                NextWftState::Seen => {
+                    // Must ignore failures and timeouts
+                    if e.event_type() == EventType::WorkflowTaskFailed
+                        || e.event_type() == EventType::WorkflowTaskTimedOut
+                    {
+                        next_wft_state = NextWftState::NotSeen;
+                        return true;
+                    } else if e.event_type() == EventType::WorkflowTaskCompleted {
+                        next_wft_state = NextWftState::SeenCompleted;
+                        return true;
+                    }
+                    false
                 }
-                return false;
+                NextWftState::SeenCompleted => {
+                    // If we've seen the WFT be completed, and this event is another scheduled, then
+                    // this was an empty heartbeat we should ignore.
+                    if e.event_type() == EventType::WorkflowTaskScheduled {
+                        next_wft_state = NextWftState::NotSeen;
+                        return true;
+                    }
+                    // Otherwise, we're done here
+                    false
+                }
+                NextWftState::NotSeen => true,
             }
-
-            true
         };
 
         // Fetch events from the buffer first, then from the network
         let mut event_q = stream::iter(self.buffered.drain(..).map(Ok)).chain(&mut self.events);
 
-        let mut extra_e = None;
+        let mut extra_e = vec![];
         let mut last_seen_id = None;
         while let Some(e) = event_q.next().await {
             let e = e?;
@@ -288,7 +305,17 @@ impl HistoryUpdate {
             // command on completion), where we may need to skip events we already handled.
             if e.event_id > from_event_id {
                 if !should_pop(&e) {
-                    extra_e = Some(e);
+                    if next_wft_state == NextWftState::SeenCompleted {
+                        // We have seen the wft completed event, but decided to exit. We don't
+                        // want to return that event as part of this sequence, so include it for
+                        // re-buffering along with the event we're currently on.
+                        extra_e.push(
+                            events_to_next_wft_started
+                                .pop()
+                                .expect("There is an element here by definition"),
+                        );
+                    }
+                    extra_e.push(e);
                     break;
                 }
                 events_to_next_wft_started.push(e);
@@ -297,6 +324,13 @@ impl HistoryUpdate {
 
         Ok((events_to_next_wft_started, extra_e))
     }
+}
+
+#[derive(Eq, PartialEq, Debug)]
+enum NextWftState {
+    NotSeen,
+    Seen,
+    SeenCompleted,
 }
 
 impl From<HistoryInfo> for HistoryUpdate {
@@ -364,6 +398,46 @@ pub mod tests {
         let seq_2 = update.take_next_wft_sequence(3).await.unwrap();
         assert_eq!(seq_2.len(), 5);
         assert_eq!(seq_2.last().unwrap().event_id, 8);
+    }
+
+    #[tokio::test]
+    async fn history_ends_abruptly() {
+        let mut timer_hist = canned_histories::single_timer("t");
+        timer_hist.add_workflow_execution_terminated();
+        let mut update = timer_hist.as_history_update();
+        let seq_2 = update.take_next_wft_sequence(3).await.unwrap();
+        assert_eq!(seq_2.len(), 5);
+        assert_eq!(seq_2.last().unwrap().event_id, 8);
+    }
+
+    #[tokio::test]
+    async fn heartbeats_skipped() {
+        let mut t = TestHistoryBuilder::default();
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        t.add_full_wf_task();
+        t.add_full_wf_task();
+        t.add_get_event_id(EventType::TimerStarted, None);
+        t.add_full_wf_task();
+        t.add_full_wf_task();
+        t.add_full_wf_task();
+        t.add_full_wf_task();
+        t.add_get_event_id(EventType::TimerStarted, None);
+        t.add_full_wf_task();
+        t.add_we_signaled("whee", vec![]);
+        t.add_full_wf_task();
+        t.add_workflow_execution_completed();
+
+        let mut update = t.as_history_update();
+        let seq = update.take_next_wft_sequence(0).await.unwrap();
+        assert_eq!(seq.len(), 6);
+        let seq = update.take_next_wft_sequence(6).await.unwrap();
+        assert_eq!(seq.len(), 13);
+        let seq = update.take_next_wft_sequence(19).await.unwrap();
+        assert_eq!(seq.len(), 4);
+        let seq = update.take_next_wft_sequence(23).await.unwrap();
+        assert_eq!(seq.len(), 4);
+        let seq = update.take_next_wft_sequence(27).await.unwrap();
+        assert_eq!(seq.len(), 2);
     }
 
     #[tokio::test]
