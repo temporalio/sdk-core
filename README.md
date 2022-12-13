@@ -17,7 +17,6 @@ This repo is composed of multiple crates:
 * temporal-sdk-core-api `./core-api` - Defines the API surface exposed by Core
 * temporal-sdk-core `./core` - The Core implementation
 * temporal-sdk `./sdk` - A (currently prototype) Rust SDK built on top of Core. Used for testing.
-* temporal-sdk-core-bridge-ffi `./bridge-ffi` - C API wrapper for Core
 * rustfsm `./fsm` - Implements a procedural macro used by core for defining state machines
     (contains subcrates). It is temporal agnostic.
 
@@ -52,9 +51,7 @@ it for a test, insert the below snippet at the start of the test. By default, tr
 to stdout in a (reasonably) pretty manner.
 
 ```rust
-crate::telemetry::telemetry_init(Default::default());
-let s = info_span!("Test start");
-let _enter = s.enter();
+crate::telemetry::test_telem_console();
 ```
 
 The passed in options to initialization can be customized to export to an OTel collector, etc.

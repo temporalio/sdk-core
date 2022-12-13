@@ -11,7 +11,7 @@ path = "src/histfetch.rs"
 [dependencies]
 anyhow = "1.0"
 async-trait = "0.1"
-base64 = "0.13"
+base64 = "0.20"
 futures = "0.3"
 log = "0.4"
 once_cell = "1.16"
