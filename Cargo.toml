@@ -1,2 +1,2 @@
 [workspace]
-members = ["bridge-ffi", "core", "client", "core-api", "fsm", "test-utils", "sdk-core-protos", "sdk"]
+members = ["core", "client", "core-api", "fsm", "test-utils", "sdk-core-protos", "sdk"]
