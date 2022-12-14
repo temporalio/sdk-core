@@ -498,7 +498,7 @@ impl Worker {
                 runtime: info.dispatch_time.elapsed(),
                 attempt: info.attempt,
                 backoff,
-                original_schedule_time: Some(info.la_info.schedule_time),
+                original_schedule_time: info.la_info.schedule_cmd.original_schedule_time,
             }),
         )
     }

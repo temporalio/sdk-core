@@ -13,7 +13,10 @@ use temporal_sdk_core_protos::{
         workflow_completion::WorkflowActivationCompletion,
         ActivityHeartbeat, ActivityTaskCompletion, AsJsonPayloadExt, IntoCompletion,
     },
-    temporal::api::common::v1::{Payload, RetryPolicy},
+    temporal::api::{
+        common::v1::{Payload, RetryPolicy},
+        enums::v1::TimeoutType,
+    },
 };
 use temporal_sdk_core_test_utils::{
     init_core_and_create_wf, schedule_activity_cmd, CoreWfStarter, WorkerTestHelpers,
@@ -196,7 +199,7 @@ async fn activity_doesnt_heartbeat_hits_timeout_then_completes() {
                 ..Default::default()
             })
             .await;
-        assert!(res.timed_out());
+        assert_eq!(res.timed_out(), Some(TimeoutType::Heartbeat));
         Ok(().into())
     });
 

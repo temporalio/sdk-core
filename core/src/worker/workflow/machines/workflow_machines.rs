@@ -849,7 +849,7 @@ impl WorkflowMachines {
                                 Duration::from_secs(0),
                                 removed_act.attempt,
                                 None,
-                                None,
+                                removed_act.original_schedule_time,
                             )?;
                             self.process_machine_responses(smk, more_responses)?;
                         } else {

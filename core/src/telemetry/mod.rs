@@ -25,7 +25,17 @@ use opentelemetry::{
 };
 use opentelemetry_otlp::WithExportConfig;
 use parking_lot::Mutex;
-use std::{cell::RefCell, collections::VecDeque, convert::TryInto, env, sync::Arc, time::Duration};
+use std::{
+    cell::RefCell,
+    collections::VecDeque,
+    convert::TryInto,
+    env,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 use temporal_sdk_core_api::telemetry::{
     CoreLog, CoreTelemetry, Logger, MetricTemporality, MetricsExporter, OtelCollectorOptions,
     TelemetryOptions, TraceExporter,
@@ -295,10 +305,17 @@ pub fn telemetry_init(opts: TelemetryOptions) -> Result<TelemetryInstance, anyho
     }
 }
 
-/// Initialize telemetry/tracing globally. Useful for testing.
+/// Initialize telemetry/tracing globally. Useful for testing. Only takes affect when called
+/// the first time. Subsequent calls are ignored.
 pub fn telemetry_init_global(opts: TelemetryOptions) -> Result<(), anyhow::Error> {
-    let ti = telemetry_init(opts)?;
-    tracing::subscriber::set_global_default(ti.trace_subscriber())?;
+    static INITTED: AtomicBool = AtomicBool::new(false);
+    if INITTED
+        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+        .is_ok()
+    {
+        let ti = telemetry_init(opts)?;
+        tracing::subscriber::set_global_default(ti.trace_subscriber())?;
+    }
     Ok(())
 }
 

@@ -1,7 +1,10 @@
 use anyhow::anyhow;
 use futures::future::join_all;
 use futures_util::stream::{FuturesUnordered, StreamExt};
-use std::time::Duration;
+use std::{
+    sync::atomic::{AtomicU8, Ordering},
+    time::Duration,
+};
 use temporal_client::{WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{
     interceptors::WorkerInterceptor, ActContext, ActivityCancelledError, ActivityOptions,
@@ -13,7 +16,7 @@ use temporal_sdk_core_protos::{
         workflow_commands::ActivityCancellationType,
         workflow_completion::WorkflowActivationCompletion, AsJsonPayloadExt,
     },
-    temporal::api::common::v1::RetryPolicy,
+    temporal::api::{common::v1::RetryPolicy, enums::v1::TimeoutType},
     TestHistoryBuilder,
 };
 use temporal_sdk_core_test_utils::{
@@ -408,6 +411,11 @@ async fn x_to_close_timeout(#[case] is_schedule: bool) {
     } else {
         (None, Some(Duration::from_secs(2)))
     };
+    let timeout_type = if is_schedule {
+        TimeoutType::ScheduleToClose
+    } else {
+        TimeoutType::StartToClose
+    };
 
     worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| async move {
         let res = ctx
@@ -427,7 +435,7 @@ async fn x_to_close_timeout(#[case] is_schedule: bool) {
                 ..Default::default()
             })
             .await;
-        assert!(res.timed_out());
+        assert_eq!(res.timed_out(), Some(timeout_type));
         Ok(().into())
     });
     worker.register_activity("echo", |ctx: ActContext, _: String| async move {
@@ -472,21 +480,23 @@ async fn schedule_to_close_timeout_across_timer_backoff(#[case] cached: bool) {
                 activity_type: "echo".to_string(),
                 input: "hi".as_json_payload().expect("serializes fine"),
                 retry_policy: RetryPolicy {
-                    initial_interval: Some(prost_dur!(from_micros(15))),
+                    initial_interval: Some(prost_dur!(from_millis(15))),
                     backoff_coefficient: 1_000.,
-                    maximum_interval: Some(prost_dur!(from_millis(1500))),
+                    maximum_interval: Some(prost_dur!(from_millis(1000))),
                     maximum_attempts: 40,
                     non_retryable_error_types: vec![],
                 },
-                timer_backoff_threshold: Some(Duration::from_secs(1)),
-                schedule_to_close_timeout: Some(Duration::from_secs(3)),
+                timer_backoff_threshold: Some(Duration::from_millis(500)),
+                schedule_to_close_timeout: Some(Duration::from_secs(2)),
                 ..Default::default()
             })
             .await;
-        assert!(res.timed_out());
+        assert_eq!(res.timed_out(), Some(TimeoutType::ScheduleToClose));
         Ok(().into())
     });
-    worker.register_activity("echo", |_: ActContext, _: String| async {
+    let num_attempts: &'static _ = Box::leak(Box::new(AtomicU8::new(0)));
+    worker.register_activity("echo", move |_: ActContext, _: String| async {
+        num_attempts.fetch_add(1, Ordering::Relaxed);
         Result::<(), _>::Err(anyhow!("Oh no I failed!"))
     });
 
@@ -500,6 +510,9 @@ async fn schedule_to_close_timeout_across_timer_backoff(#[case] cached: bool) {
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
+    // 3 attempts b/c first backoff is very small, then the next 2 attempts take at least 2 seconds
+    // b/c of timer backoff.
+    assert_eq!(3, num_attempts.load(Ordering::Relaxed));
 }
 
 #[rstest::rstest]

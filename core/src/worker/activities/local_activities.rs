@@ -323,11 +323,12 @@ impl LocalActivityManager {
             }
             NewOrRetry::Retry { in_flight, attempt } => (in_flight, attempt),
         };
-        let orig = new_la.clone();
+        let la_info_for_in_flight_map = new_la.clone();
         let id = ExecutingLAId {
             run_id: new_la.workflow_exec_info.run_id.clone(),
             seq_num: new_la.schedule_cmd.seq,
         };
+        let orig_sched_time = new_la.schedule_cmd.original_schedule_time;
         let sa = new_la.schedule_cmd;
 
         let mut dat = self.dat.lock();
@@ -348,7 +349,7 @@ impl LocalActivityManager {
                         runtime: sat_for,
                         attempt,
                         backoff: None,
-                        original_schedule_time: Some(new_la.schedule_time),
+                        original_schedule_time: orig_sched_time,
                     },
                     task: None,
                 });
@@ -363,7 +364,7 @@ impl LocalActivityManager {
         dat.outstanding_activity_tasks.insert(
             tt.clone(),
             LocalInFlightActInfo {
-                la_info: orig,
+                la_info: la_info_for_in_flight_map,
                 dispatch_time: Instant::now(),
                 attempt,
                 _permit: permit,
@@ -567,17 +568,21 @@ impl TimeoutBag {
         let (schedule_to_close, start_to_close) =
             new_la.schedule_cmd.close_timeouts.into_sched_and_start();
 
+        let sched_time = new_la
+            .schedule_cmd
+            .original_schedule_time
+            .unwrap_or(new_la.schedule_time);
         let resolution = LocalActivityResolution {
             seq: new_la.schedule_cmd.seq,
             result: LocalActivityExecutionResult::timeout(TimeoutType::ScheduleToClose),
             runtime: Default::default(),
             attempt: new_la.schedule_cmd.attempt,
             backoff: None,
-            original_schedule_time: Some(new_la.schedule_time),
+            original_schedule_time: new_la.schedule_cmd.original_schedule_time,
         };
         // Remove any time already elapsed since the scheduling time
         let schedule_to_close = schedule_to_close
-            .map(|s2c| s2c.saturating_sub(new_la.schedule_time.elapsed().unwrap_or_default()));
+            .map(|s2c| s2c.saturating_sub(sched_time.elapsed().unwrap_or_default()));
         if let Some(ref s2c) = schedule_to_close {
             if s2c.is_zero() {
                 return Err(resolution);
