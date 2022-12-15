@@ -135,7 +135,7 @@ impl From<CompleteLocalActivityData> for ResolveDat {
 /// must resolve before we send a record marker command. A [MachineResponse] may be produced,
 /// to queue the LA for execution if it needs to be.
 pub(super) fn new_local_activity(
-    attrs: ValidScheduleLA,
+    mut attrs: ValidScheduleLA,
     replaying_when_invoked: bool,
     maybe_pre_resolved: Option<ResolveDat>,
     wf_time: Option<SystemTime>,
@@ -154,6 +154,11 @@ pub(super) fn new_local_activity(
         }
         Executing {}.into()
     };
+
+    // If the scheduled LA doesn't already have an "original" schedule time, assign one.
+    attrs
+        .original_schedule_time
+        .get_or_insert(SystemTime::now());
 
     let mut machine = LocalActivityMachine {
         state: initial_state,

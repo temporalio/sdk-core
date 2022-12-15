@@ -25,9 +25,7 @@ pub(super) struct LocalActivityData {
 }
 
 impl LocalActivityData {
-    pub(super) fn enqueue(&mut self, mut act: ValidScheduleLA) {
-        // If the scheduled LA doesn't already have an "original" schedule time, assign one.
-        act.original_schedule_time.get_or_insert(SystemTime::now());
+    pub(super) fn enqueue(&mut self, act: ValidScheduleLA) {
         self.new_requests.push(act);
     }
 
