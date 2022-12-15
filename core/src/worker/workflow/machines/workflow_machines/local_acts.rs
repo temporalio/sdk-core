@@ -53,7 +53,7 @@ impl LocalActivityData {
             .chain(self.new_requests.drain(..).map(|sa| {
                 self.executing.insert(sa.seq);
                 LocalActRequest::New(NewLocalAct {
-                    schedule_time: sa.original_schedule_time.unwrap_or_else(SystemTime::now),
+                    schedule_time: SystemTime::now(),
                     schedule_cmd: sa,
                     workflow_type: wf_type.to_string(),
                     workflow_exec_info: WorkflowExecution {

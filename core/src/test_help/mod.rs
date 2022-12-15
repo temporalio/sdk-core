@@ -379,6 +379,7 @@ pub(crate) struct MockPollCfg {
     /// early with no work, since we cannot know the exact number of times polling will happen.
     /// Instead, they will just block forever.
     pub using_rust_sdk: bool,
+    pub make_poll_stream_interminable: bool,
 }
 
 impl MockPollCfg {
@@ -396,6 +397,7 @@ impl MockPollCfg {
             expect_fail_wft_matcher: Box::new(|_, _, _| true),
             completion_asserts: None,
             using_rust_sdk: false,
+            make_poll_stream_interminable: false,
         }
     }
     pub fn from_resp_batches(
@@ -417,6 +419,7 @@ impl MockPollCfg {
             expect_fail_wft_matcher: Box::new(|_, _, _| true),
             completion_asserts: None,
             using_rust_sdk: false,
+            make_poll_stream_interminable: false,
         }
     }
 }
@@ -612,11 +615,15 @@ pub(crate) fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder {
             Ok(Default::default())
         });
 
-    MocksHolder {
+    let mut mh = MocksHolder {
         client: Arc::new(cfg.mock_client),
         inputs: mock_worker,
         outstanding_task_map: Some(outstanding_wf_task_tokens),
+    };
+    if cfg.make_poll_stream_interminable {
+        mh.make_wft_stream_interminable();
     }
+    mh
 }
 
 pub struct QueueResponse<T> {

@@ -292,22 +292,21 @@ impl TestHistoryBuilder {
         activity_id: &str,
         payload: Option<Payload>,
         failure: Option<Failure>,
-        complete_time: Option<Timestamp>,
+        detail_mutator: impl FnOnce(&mut LocalActivityMarkerData),
     ) {
+        let mut lamd = LocalActivityMarkerData {
+            seq,
+            attempt: 1,
+            activity_id: activity_id.to_string(),
+            activity_type: "some_act_type".to_string(),
+            complete_time: None,
+            backoff: None,
+            original_schedule_time: None,
+        };
+        detail_mutator(&mut lamd);
         let attrs = MarkerRecordedEventAttributes {
             marker_name: LOCAL_ACTIVITY_MARKER_NAME.to_string(),
-            details: build_local_activity_marker_details(
-                LocalActivityMarkerData {
-                    seq,
-                    attempt: 1,
-                    activity_id: activity_id.to_string(),
-                    activity_type: "some_act_type".to_string(),
-                    complete_time,
-                    backoff: None,
-                    original_schedule_time: None,
-                },
-                payload,
-            ),
+            details: build_local_activity_marker_details(lamd, payload),
             workflow_task_completed_event_id: self.previous_task_completed_id,
             failure,
             ..Default::default()
@@ -321,7 +320,7 @@ impl TestHistoryBuilder {
         activity_id: &str,
         payload: Payload,
     ) {
-        self.add_local_activity_marker(seq, activity_id, Some(payload), None, None);
+        self.add_local_activity_marker(seq, activity_id, Some(payload), None, |_| {});
     }
 
     pub fn add_local_activity_result_marker_with_time(
@@ -331,7 +330,9 @@ impl TestHistoryBuilder {
         payload: Payload,
         complete_time: Timestamp,
     ) {
-        self.add_local_activity_marker(seq, activity_id, Some(payload), None, Some(complete_time));
+        self.add_local_activity_marker(seq, activity_id, Some(payload), None, |d| {
+            d.complete_time = Some(complete_time)
+        });
     }
 
     pub fn add_local_activity_fail_marker(
@@ -340,7 +341,7 @@ impl TestHistoryBuilder {
         activity_id: &str,
         failure: Failure,
     ) {
-        self.add_local_activity_marker(seq, activity_id, None, Some(failure), None);
+        self.add_local_activity_marker(seq, activity_id, None, Some(failure), |_| {});
     }
 
     pub fn add_local_activity_cancel_marker(&mut self, seq: u32, activity_id: &str) {
@@ -358,7 +359,7 @@ impl TestHistoryBuilder {
                 )),
                 encoded_attributes: Default::default(),
             }),
-            None,
+            |_| {},
         );
     }
 

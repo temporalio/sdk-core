@@ -15,7 +15,7 @@ categories = ["development-tools"]
 [dependencies]
 async-trait = "0.1"
 anyhow = "1.0"
-base64 = "0.13"
+base64 = "0.20"
 crossbeam = "0.8"
 derive_more = "0.99"
 futures = "0.3"
