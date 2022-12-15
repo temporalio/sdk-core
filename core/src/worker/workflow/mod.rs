@@ -399,6 +399,7 @@ impl Workflows {
             span: Span::current(),
         }) {
             if print_err {
+                // TODO: Too noisy - now it's expected to see LA completes after cancel b/c eviction
                 warn!(
                     "Tried to interact with workflow state after it shut down. This may be benign \
                      when processing evictions during shutdown. When sending {:?}",

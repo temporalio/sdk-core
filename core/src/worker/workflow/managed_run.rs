@@ -316,6 +316,19 @@ impl ManagedRun {
         has_pending_queries: bool,
         has_wft: bool,
     ) -> Result<Option<ActivationOrAuto>, RunUpdateErr> {
+        // TODO: Dedupe if this works
+        if want_to_evict.is_some() {
+            warn!("CANcel all the las!");
+            let immediate_resolutions =
+                (self.local_activity_request_sink)(vec![LocalActRequest::CancelAllInRun(
+                    self.wfm.machines.run_id.clone(),
+                )]);
+            for resolution in immediate_resolutions {
+                self.wfm
+                    .notify_of_local_result(LocalResolution::LocalActivity(resolution))?;
+            }
+        }
+
         if !has_wft {
             // It doesn't make sense to do work unless we have a WFT
             return Ok(None);

@@ -923,3 +923,61 @@ async fn test_schedule_to_close_timeout_based_on_original_time() {
         .unwrap();
     worker.run_until_done().await.unwrap();
 }
+
+#[tokio::test]
+async fn wft_failure_cancels_running_las() {
+    crate::telemetry::test_telem_console();
+    let mut t = TestHistoryBuilder::default();
+    // TODO: Dedupe short timeouts
+    let wft_timeout = Duration::from_millis(200);
+    let mut wes_short_wft_timeout = default_wes_attribs();
+    wes_short_wft_timeout.workflow_task_timeout = Some(wft_timeout.try_into().unwrap());
+    t.add(
+        EventType::WorkflowExecutionStarted,
+        wes_short_wft_timeout.into(),
+    );
+    t.add_full_wf_task();
+    let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+    t.add_timer_fired(timer_started_event_id, "1".to_string());
+    t.add_workflow_task_scheduled_and_started();
+
+    let wf_id = "fakeid";
+    let mock = mock_workflow_client();
+    let mut mh = MockPollCfg::from_resp_batches(wf_id, t, [1, 2], mock);
+    mh.num_expected_fails = 1;
+    let mut worker = mock_sdk_cfg(mh, |w| w.max_cached_workflows = 1);
+
+    worker.register_wf(
+        DEFAULT_WORKFLOW_TYPE.to_owned(),
+        |ctx: WfContext| async move {
+            let la_handle = ctx.local_activity(LocalActivityOptions {
+                activity_type: "echo".to_string(),
+                input: "hi".as_json_payload().expect("serializes fine"),
+                ..Default::default()
+            });
+            tokio::join!(
+                async {
+                    ctx.timer(Duration::from_secs(1)).await;
+                    panic!("ahhh I'm failing wft")
+                },
+                la_handle
+            );
+            Ok(().into())
+        },
+    );
+    worker.register_activity("echo", move |ctx: ActContext, _: String| async move {
+        ctx.cancelled().await;
+        dbg!("DOne been cancelled");
+        Ok(())
+    });
+    worker
+        .submit_wf(
+            wf_id.to_owned(),
+            DEFAULT_WORKFLOW_TYPE.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+}

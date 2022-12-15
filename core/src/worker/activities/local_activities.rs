@@ -6,7 +6,7 @@ use crate::{
 };
 use parking_lot::Mutex;
 use std::{
-    collections::HashMap,
+    collections::{hash_map::Entry, HashMap},
     fmt::{Debug, Formatter},
     time::{Duration, Instant, SystemTime},
 };
@@ -96,6 +96,7 @@ impl Debug for NewLocalAct {
 pub(crate) enum LocalActRequest {
     New(NewLocalAct),
     Cancel(ExecutingLAId),
+    CancelAllInRun(String),
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
@@ -121,14 +122,21 @@ pub(crate) struct LocalActivityManager {
     dat: Mutex<LAMData>,
 }
 
+struct LocalActivityInfo {
+    task_token: TaskToken,
+    /// Tasks for the current backoff until the next retry, if any.
+    backing_off_task: Option<JoinHandle<()>>,
+    /// Tasks / info about timeouts associated with this LA. May be empty for very brief periods
+    /// while the LA id has been generated, but it has not yet been scheduled.
+    timeout_bag: Option<TimeoutBag>,
+}
+
 struct LAMData {
+    /// Maps local activity identifiers to information about them
+    la_info: HashMap<ExecutingLAId, LocalActivityInfo>,
+    // TODO: Can... also remove?
     /// Activities that have been issued to lang but not yet completed
     outstanding_activity_tasks: HashMap<TaskToken, LocalInFlightActInfo>,
-    id_to_tt: HashMap<ExecutingLAId, TaskToken>,
-    /// Tasks for activities which are currently backing off. May be used to cancel retrying them.
-    backing_off_tasks: HashMap<ExecutingLAId, JoinHandle<()>>,
-    /// Tasks for timing out activities which are currently in the queue or dispatched.
-    timeout_tasks: HashMap<ExecutingLAId, TimeoutBag>,
     next_tt_num: u32,
 }
 
@@ -166,9 +174,7 @@ impl LocalActivityManager {
             shutdown_complete_tok,
             dat: Mutex::new(LAMData {
                 outstanding_activity_tasks: Default::default(),
-                id_to_tt: Default::default(),
-                backing_off_tasks: Default::default(),
-                timeout_tasks: Default::default(),
+                la_info: Default::default(),
                 next_tt_num: 0,
             }),
         }
@@ -190,7 +196,12 @@ impl LocalActivityManager {
 
     #[cfg(test)]
     fn num_in_backoff(&self) -> usize {
-        self.dat.lock().backing_off_tasks.len()
+        self.dat
+            .lock()
+            .la_info
+            .values()
+            .filter(|lai| lai.backing_off_task.is_some())
+            .count()
     }
 
     pub(crate) fn enqueue(
@@ -207,59 +218,61 @@ impl LocalActivityManager {
                         seq_num: act.schedule_cmd.seq,
                     };
                     let mut dlock = self.dat.lock();
-                    if dlock.id_to_tt.contains_key(&id) {
-                        // Do not queue local activities which are in fact already executing.
-                        // This can happen during evictions.
-                        debug!("Tried to queue already-executing local activity {:?}", &id);
-                        continue;
-                    }
-                    // Pre-generate and insert the task token now, before we may or may not dispatch
-                    // the activity, so we can enforce idempotency. Prevents two identical LAs
-                    // ending up in the queue at once.
                     let tt = dlock.gen_next_token();
-                    dlock.id_to_tt.insert(id.clone(), tt);
-
-                    // Set up timeouts for the new activity
-                    match TimeoutBag::new(&act, self.cancels_req_tx.clone()) {
-                        Ok(tb) => {
-                            dlock.timeout_tasks.insert(id, tb);
-
-                            self.act_req_tx
-                                .send(NewOrRetry::New(act))
-                                .expect("Receive half of LA request channel cannot be dropped");
+                    match dlock.la_info.entry(id) {
+                        Entry::Occupied(o) => {
+                            // Do not queue local activities which are in fact already executing.
+                            // This can happen during evictions.
+                            debug!(
+                                "Tried to queue already-executing local activity {:?}",
+                                o.key()
+                            );
+                            continue;
                         }
-                        Err(res) => immediate_resolutions.push(res),
+                        Entry::Vacant(ve) => {
+                            // Insert the task token now, before we may or may not dispatch the
+                            // activity, so we can enforce idempotency. Prevents two identical LAs
+                            // ending up in the queue at once.
+                            let lai = ve.insert(LocalActivityInfo {
+                                task_token: tt,
+                                backing_off_task: None,
+                                timeout_bag: None,
+                            });
+
+                            // Set up timeouts for the new activity
+                            match TimeoutBag::new(&act, self.cancels_req_tx.clone()) {
+                                Ok(tb) => {
+                                    lai.timeout_bag = Some(tb);
+
+                                    self.act_req_tx.send(NewOrRetry::New(act)).expect(
+                                        "Receive half of LA request channel cannot be dropped",
+                                    );
+                                }
+                                Err(res) => immediate_resolutions.push(res),
+                            }
+                        }
                     }
                 }
                 LocalActRequest::Cancel(id) => {
                     let mut dlock = self.dat.lock();
-
-                    // First check if this ID is currently backing off, if so abort the backoff
-                    // task
-                    if let Some(t) = dlock.backing_off_tasks.remove(&id) {
-                        t.abort();
-                        immediate_resolutions.push(LocalActivityResolution {
-                            seq: id.seq_num,
-                            result: LocalActivityExecutionResult::Cancelled(
-                                Cancellation::from_details(None),
-                            ),
-                            runtime: Duration::from_secs(0),
-                            attempt: 0,
-                            backoff: None,
-                            original_schedule_time: None,
-                        });
-                        continue;
+                    if let Some(lai) = dlock.la_info.get_mut(&id) {
+                        if let Some(immediate_res) = self.cancel_one_la(id.seq_num, lai) {
+                            immediate_resolutions.push(immediate_res);
+                        }
                     }
-
-                    if let Some(tt) = dlock.id_to_tt.get(&id) {
-                        self.cancels_req_tx
-                            .send(CancelOrTimeout::Cancel(ActivityTask {
-                                task_token: tt.0.clone(),
-                                variant: Some(activity_task::Variant::Cancel(Cancel {
-                                    reason: ActivityCancelReason::Cancelled as i32,
-                                })),
-                            }))
-                            .expect("Receive half of LA cancel channel cannot be dropped");
+                }
+                LocalActRequest::CancelAllInRun(run_id) => {
+                    let mut dlock = self.dat.lock();
+                    // Even if we've got 100k+ LAs this should only take a ms or two. Not worth
+                    // adding another map to keep in sync.
+                    let las_for_run = dlock
+                        .la_info
+                        .iter_mut()
+                        .filter(|(id, _)| id.run_id == run_id);
+                    for (laid, lainf) in las_for_run {
+                        if let Some(immediate_res) = self.cancel_one_la(laid.seq_num, lainf) {
+                            immediate_resolutions.push(immediate_res);
+                        }
                     }
                 }
             }
@@ -283,16 +296,17 @@ impl LocalActivityManager {
                             let tt = self
                                 .dat
                                 .lock()
-                                .id_to_tt
+                                .la_info
                                 .get(&ExecutingLAId {
                                     run_id: run_id.clone(),
                                     seq_num: resolution.seq,
                                 })
-                                .map(Clone::clone);
+                                .as_ref()
+                                .map(|lai| lai.task_token.clone());
                             if let Some(task_token) = tt {
                                 self.complete(&task_token, &resolution.result);
                                 Some(ActivityTask {
-                                    task_token: task_token.0,
+                                    task_token: task_token.0.clone(),
                                     variant: Some(activity_task::Variant::Cancel(Cancel {
                                         reason: ActivityCancelReason::TimedOut as i32,
                                     })),
@@ -335,7 +349,9 @@ impl LocalActivityManager {
         // If this request originated from a local backoff task, clear the entry for it. We
         // don't await the handle because we know it must already be done, and there's no
         // meaningful value.
-        dat.backing_off_tasks.remove(&id);
+        dat.la_info
+            .get_mut(&id)
+            .map(|lai| lai.backing_off_task.take());
 
         // If this task sat in the queue for too long, return a timeout for it instead
         if let Some(s2s) = sa.schedule_to_start_timeout.as_ref() {
@@ -356,11 +372,11 @@ impl LocalActivityManager {
             }
         }
 
-        let tt = dat
-            .id_to_tt
-            .get(&id)
-            .expect("Task token must exist")
-            .clone();
+        let la_info = dat.la_info.get_mut(&id).expect("Activity must exist");
+        let tt = la_info.task_token.clone();
+        if let Some(to) = la_info.timeout_bag.as_mut() {
+            to.mark_started();
+        }
         dat.outstanding_activity_tasks.insert(
             tt.clone(),
             LocalInFlightActInfo {
@@ -370,9 +386,6 @@ impl LocalActivityManager {
                 _permit: permit,
             },
         );
-        if let Some(to) = dat.timeout_tasks.get_mut(&id) {
-            to.mark_started();
-        }
 
         let (schedule_to_close, start_to_close) = sa.close_timeouts.into_sched_and_start();
         Some(DispatchOrTimeoutLA::Dispatch(ActivityTask {
@@ -411,7 +424,7 @@ impl LocalActivityManager {
                 run_id: info.la_info.workflow_exec_info.run_id.clone(),
                 seq_num: info.la_info.schedule_cmd.seq,
             };
-            dlock.id_to_tt.remove(&exec_id);
+            let maybe_old_lai = dlock.la_info.remove(&exec_id);
 
             match status {
                 LocalActivityExecutionResult::Completed(_)
@@ -447,8 +460,6 @@ impl LocalActivityManager {
                         }
                         // Immediately create a new task token for the to-be-retried LA
                         let tt = dlock.gen_next_token();
-                        dlock.id_to_tt.insert(exec_id.clone(), tt);
-
                         // Send the retry request after waiting the backoff duration
                         let send_chan = self.act_req_tx.clone();
                         let jh = tokio::spawn(async move {
@@ -461,7 +472,16 @@ impl LocalActivityManager {
                                 })
                                 .expect("Receive half of LA request channel cannot be dropped");
                         });
-                        dlock.backing_off_tasks.insert(exec_id, jh);
+                        // TODO: SHould I abort any existing backoff? SHouldn't exist?
+                        dlock.la_info.insert(
+                            exec_id,
+                            LocalActivityInfo {
+                                task_token: tt,
+                                backing_off_task: Some(jh),
+                                // TODO: This should always exist, no?
+                                timeout_bag: maybe_old_lai.and_then(|old| old.timeout_bag),
+                            },
+                        );
 
                         LACompleteAction::WillBeRetried
                     } else {
@@ -479,6 +499,36 @@ impl LocalActivityManager {
             self.complete_notify.notified().await;
         }
         self.shutdown_complete_tok.cancel();
+    }
+
+    fn cancel_one_la(
+        &self,
+        seq: u32,
+        lai: &mut LocalActivityInfo,
+    ) -> Option<LocalActivityResolution> {
+        // First check if this ID is currently backing off, if so abort the backoff
+        // task
+        if let Some(t) = lai.backing_off_task.take() {
+            t.abort();
+            return Some(LocalActivityResolution {
+                seq,
+                result: LocalActivityExecutionResult::Cancelled(Cancellation::from_details(None)),
+                runtime: Duration::from_secs(0),
+                attempt: 0,
+                backoff: None,
+                original_schedule_time: None,
+            });
+        }
+
+        self.cancels_req_tx
+            .send(CancelOrTimeout::Cancel(ActivityTask {
+                task_token: lai.task_token.0.clone(),
+                variant: Some(activity_task::Variant::Cancel(Cancel {
+                    reason: ActivityCancelReason::Cancelled as i32,
+                })),
+            }))
+            .expect("Receive half of LA cancel channel cannot be dropped");
+        None
     }
 }
 
@@ -531,6 +581,7 @@ struct RcvChans {
 }
 
 impl RcvChans {
+    // TODO: This could be better with stream combinators
     async fn next(&mut self, new_sem: &MeteredSemaphore) -> Option<NewOrCancel> {
         tokio::select! {
             cancel = async { self.cancels_req_rx.recv().await } => {
