@@ -24,7 +24,6 @@ use std::{
 use temporal_client::WorkflowOptions;
 use temporal_sdk::{ActivityOptions, WfContext};
 use temporal_sdk_core_api::{errors::CompleteActivityError, Worker as WorkerTrait};
-use temporal_sdk_core_protos::temporal::api::command::v1::ScheduleActivityTaskCommandAttributes;
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{
@@ -41,7 +40,7 @@ use temporal_sdk_core_protos::{
         ActivityTaskCompletion,
     },
     temporal::api::{
-        command::v1::command::Attributes,
+        command::v1::{command::Attributes, ScheduleActivityTaskCommandAttributes},
         enums::v1::EventType,
         workflowservice::v1::{
             PollActivityTaskQueueResponse, RecordActivityTaskHeartbeatResponse,
@@ -654,6 +653,7 @@ async fn no_eager_activities_requested_when_worker_options_disable_remote_activi
             Ok(RespondWorkflowTaskCompletedResponse {
                 workflow_task: None,
                 activity_tasks: vec![],
+                reset_history_event_id: 0,
             })
         });
     let mut mock = single_hist_mock_sg(wfid, t, [1], mock, true);
@@ -746,6 +746,7 @@ async fn activity_tasks_from_completion_are_delivered() {
                         ..Default::default()
                     })
                     .collect_vec(),
+                reset_history_event_id: 0,
             })
         });
     mock.expect_complete_activity_task()

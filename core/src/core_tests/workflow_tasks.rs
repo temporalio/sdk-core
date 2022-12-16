@@ -1655,6 +1655,7 @@ async fn tasks_from_completion_are_delivered() {
     let complete_resp = RespondWorkflowTaskCompletedResponse {
         workflow_task: Some(hist_to_poll_resp(&t, wfid.to_owned(), 2.into()).resp),
         activity_tasks: vec![],
+        reset_history_event_id: 0,
     };
     mock.expect_complete_workflow_task()
         .times(1)
