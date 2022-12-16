@@ -28,8 +28,8 @@ option go_package = "go.temporal.io/api/common/v1;common";
 option java_package = "io.temporal.api.common.v1";
 option java_multiple_files = true;
 option java_outer_classname = "MessageProto";
-option ruby_package = "Temporal::Api::Common::V1";
-option csharp_namespace = "Temporal.Api.Common.V1";
+option ruby_package = "Temporalio::Api::Common::V1";
+option csharp_namespace = "Temporalio.Api.Common.V1";
 
 import "google/protobuf/duration.proto";
 

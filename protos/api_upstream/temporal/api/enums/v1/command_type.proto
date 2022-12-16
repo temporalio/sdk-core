@@ -28,8 +28,8 @@ option go_package = "go.temporal.io/api/enums/v1;enums";
 option java_package = "io.temporal.api.enums.v1";
 option java_multiple_files = true;
 option java_outer_classname = "CommandTypeProto";
-option ruby_package = "Temporal::Api::Enums::V1";
-option csharp_namespace = "Temporal.Api.Enums.V1";
+option ruby_package = "Temporalio::Api::Enums::V1";
+option csharp_namespace = "Temporalio.Api.Enums.V1";
 
 // Whenever this list of command types is changed do change the function shouldBufferEvent in mutableStateBuilder.go to make sure to do the correct event ordering.
 enum CommandType {
@@ -53,4 +53,5 @@ enum CommandType {
     // failure outcome of said update.
     COMMAND_TYPE_COMPLETE_WORKFLOW_UPDATE = 15;
     COMMAND_TYPE_MODIFY_WORKFLOW_PROPERTIES = 16;
+    COMMAND_TYPE_REJECT_WORKFLOW_UPDATE = 17;
 }

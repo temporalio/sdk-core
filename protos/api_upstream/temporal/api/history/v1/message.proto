@@ -28,8 +28,8 @@ option go_package = "go.temporal.io/api/history/v1;history";
 option java_package = "io.temporal.api.history.v1";
 option java_multiple_files = true;
 option java_outer_classname = "MessageProto";
-option ruby_package = "Temporal::Api::History::V1";
-option csharp_namespace = "Temporal.Api.History.V1";
+option ruby_package = "Temporalio::Api::History::V1";
+option csharp_namespace = "Temporalio.Api.History.V1";
 
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
@@ -41,8 +41,8 @@ import "temporal/api/enums/v1/failed_cause.proto";
 import "temporal/api/enums/v1/workflow.proto";
 import "temporal/api/common/v1/message.proto";
 import "temporal/api/failure/v1/message.proto";
+import "temporal/api/interaction/v1/message.proto";
 import "temporal/api/taskqueue/v1/message.proto";
-import "temporal/api/update/v1/message.proto";
 import "temporal/api/workflow/v1/message.proto";
 
 // Always the first event in workflow history
@@ -647,25 +647,19 @@ message ChildWorkflowExecutionTerminatedEventAttributes {
     int64 started_event_id = 5;
 }
 
-message WorkflowUpdateRequestedEventAttributes {
-    temporal.api.common.v1.Header header = 1;
-    string request_id = 2;
-    string update_id = 3;
-    temporal.api.update.v1.WorkflowUpdate update = 4;
-}
-
 message WorkflowUpdateAcceptedEventAttributes {
-    temporal.api.common.v1.Header header = 1;
-    string update_id = 2;
+    temporal.api.interaction.v1.Meta meta = 1;
+    temporal.api.interaction.v1.Input input = 2;
 }
 
 message WorkflowUpdateCompletedEventAttributes {
-    temporal.api.common.v1.Header system_header = 1;
-    string update_id = 3;
-    oneof result {
-        temporal.api.common.v1.Payloads success = 4;
-        temporal.api.failure.v1.Failure failure = 5;
-    }
+    temporal.api.interaction.v1.Meta meta = 1;
+    temporal.api.interaction.v1.Output output = 2;
+}
+
+message WorkflowUpdateRejectedEventAttributes {
+    temporal.api.interaction.v1.Meta meta = 1;
+    temporal.api.failure.v1.Failure failure = 2;
 }
 
 message WorkflowPropertiesModifiedExternallyEventAttributes {
@@ -750,7 +744,7 @@ message HistoryEvent {
         SignalExternalWorkflowExecutionFailedEventAttributes signal_external_workflow_execution_failed_event_attributes = 43;
         ExternalWorkflowExecutionSignaledEventAttributes external_workflow_execution_signaled_event_attributes = 44;
         UpsertWorkflowSearchAttributesEventAttributes upsert_workflow_search_attributes_event_attributes = 45;
-        WorkflowUpdateRequestedEventAttributes workflow_update_requested_event_attributes = 46;
+        WorkflowUpdateRejectedEventAttributes workflow_update_rejected_event_attributes = 46;
         WorkflowUpdateAcceptedEventAttributes workflow_update_accepted_event_attributes = 47;
         WorkflowUpdateCompletedEventAttributes workflow_update_completed_event_attributes = 48;
         WorkflowPropertiesModifiedExternallyEventAttributes workflow_properties_modified_externally_event_attributes = 49;

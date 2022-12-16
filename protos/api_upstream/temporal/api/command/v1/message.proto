@@ -28,8 +28,8 @@ option go_package = "go.temporal.io/api/command/v1;command";
 option java_package = "io.temporal.api.command.v1";
 option java_multiple_files = true;
 option java_outer_classname = "MessageProto";
-option ruby_package = "Temporal::Api::Command::V1";
-option csharp_namespace = "Temporal.Api.Command.V1";
+option ruby_package = "Temporalio::Api::Command::V1";
+option csharp_namespace = "Temporalio.Api.Command.V1";
 
 import "google/protobuf/duration.proto";
 
@@ -37,9 +37,9 @@ import "dependencies/gogoproto/gogo.proto";
 
 import "temporal/api/enums/v1/workflow.proto";
 import "temporal/api/enums/v1/command_type.proto";
-import "temporal/api/enums/v1/update.proto";
 import "temporal/api/common/v1/message.proto";
 import "temporal/api/failure/v1/message.proto";
+import "temporal/api/interaction/v1/message.proto";
 import "temporal/api/taskqueue/v1/message.proto";
 
 message ScheduleActivityTaskCommandAttributes {
@@ -222,26 +222,18 @@ message StartChildWorkflowExecutionCommandAttributes {
 }
 
 message AcceptWorkflowUpdateCommandAttributes {
-    // A unique identifier for an update within a given workflow context
-    string update_id = 1;
+    temporal.api.interaction.v1.Meta meta = 1;
+    temporal.api.interaction.v1.Input input = 2;
 }
 
 message CompleteWorkflowUpdateCommandAttributes {
-    // A unique identifier for an update within a given workflow context
-    string update_id = 1;
+    temporal.api.interaction.v1.Meta meta = 1;
+    temporal.api.interaction.v1.Output output = 2;
+}
 
-    // Whether the server should attempt to bypass making this update rejection
-    // durable in history. This field is only consulted when the result field
-    // indicates failure. Leaving this field in its default state (i.e.
-    // UPDATE_WORKFLOW_REJECTION_DURABILITY_PREFERENCE_UNSPECIFIED) will result
-    // in making the rejection durable.
-    temporal.api.enums.v1.WorkflowUpdateDurabilityPreference durability_preference = 2;
-
-    // The success or failure output of the update
-    oneof result {
-        temporal.api.common.v1.Payloads success = 3;
-        temporal.api.failure.v1.Failure failure = 4;
-    }
+message RejectWorkflowUpdateCommandAttributes {
+    temporal.api.interaction.v1.Meta meta = 1;
+    temporal.api.failure.v1.Failure failure = 2;
 }
 
 message Command {
@@ -263,5 +255,6 @@ message Command {
         AcceptWorkflowUpdateCommandAttributes accept_workflow_update_command_attributes = 15;
         CompleteWorkflowUpdateCommandAttributes complete_workflow_update_command_attributes = 16;
         ModifyWorkflowPropertiesCommandAttributes modify_workflow_properties_command_attributes = 17;
+        RejectWorkflowUpdateCommandAttributes reject_workflow_update_command_attributes = 18;
     }
 }

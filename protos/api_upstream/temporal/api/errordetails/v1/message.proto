@@ -31,8 +31,8 @@ option go_package = "go.temporal.io/api/errordetails/v1;errordetails";
 option java_package = "io.temporal.api.errordetails.v1";
 option java_multiple_files = true;
 option java_outer_classname = "MessageProto";
-option ruby_package = "Temporal::Api::ErrorDetails::V1";
-option csharp_namespace = "Temporal.Api.ErrorDetails.V1";
+option ruby_package = "Temporalio::Api::ErrorDetails::V1";
+option csharp_namespace = "Temporalio.Api.ErrorDetails.V1";
 
 import "temporal/api/common/v1/message.proto";
 

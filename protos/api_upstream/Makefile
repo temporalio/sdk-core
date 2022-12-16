@@ -23,7 +23,7 @@ PROTO_ROOT := .
 PROTO_FILES = $(shell find $(PROTO_ROOT) -name "*.proto")
 PROTO_DIRS = $(sort $(dir $(PROTO_FILES)))
 PROTO_OUT := .gen
-PROTO_IMPORTS := -I=$(PROTO_ROOT) -I=$(GOPATH)/src/github.com/temporalio/gogo-protobuf/protobuf
+PROTO_IMPORTS = -I=$(PROTO_ROOT) -I=$(shell go list -modfile build/go.mod -m -f '{{.Dir}}' github.com/temporalio/gogo-protobuf)/protobuf
 
 $(PROTO_OUT):
 	mkdir $(PROTO_OUT)
@@ -45,21 +45,21 @@ fix-path:
 ##### Plugins & tools #####
 grpc-install: gogo-protobuf-install
 	printf $(COLOR) "Install/update gRPC plugins..."
-	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.2.0
+	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
 
 gogo-protobuf-install: go-protobuf-install
-	GO111MODULE=off go get github.com/temporalio/gogo-protobuf/protoc-gen-gogoslick
+	go install -modfile build/go.mod github.com/temporalio/gogo-protobuf/protoc-gen-gogoslick
 
 go-protobuf-install:
 	go install github.com/golang/protobuf/protoc-gen-go@v1.5.2
 
 api-linter-install:
 	printf $(COLOR) "Install/update api-linter..."
-	go install github.com/googleapis/api-linter/cmd/api-linter@v1.31.0
+	go install github.com/googleapis/api-linter/cmd/api-linter@v1.32.3
 
 buf-install:
 	printf $(COLOR) "Install/update buf..."
-	go install github.com/bufbuild/buf/cmd/buf@v1.4.0
+	go install github.com/bufbuild/buf/cmd/buf@v1.6.0
 
 ##### Linters #####
 api-linter:

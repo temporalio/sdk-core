@@ -28,8 +28,8 @@ option go_package = "go.temporal.io/api/enums/v1;enums";
 option java_package = "io.temporal.api.enums.v1";
 option java_multiple_files = true;
 option java_outer_classname = "NamespaceProto";
-option ruby_package = "Temporal::Api::Enums::V1";
-option csharp_namespace = "Temporal.Api.Enums.V1";
+option ruby_package = "Temporalio::Api::Enums::V1";
+option csharp_namespace = "Temporalio.Api.Enums.V1";
 
 enum NamespaceState {
     NAMESPACE_STATE_UNSPECIFIED = 0;

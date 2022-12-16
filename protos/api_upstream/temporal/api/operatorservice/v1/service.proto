@@ -28,8 +28,8 @@ option go_package = "go.temporal.io/api/operatorservice/v1;operatorservice";
 option java_package = "io.temporal.api.operatorservice.v1";
 option java_multiple_files = true;
 option java_outer_classname = "ServiceProto";
-option ruby_package = "Temporal::Api::OperatorService::V1";
-option csharp_namespace = "Temporal.Api.OperatorService.V1";
+option ruby_package = "Temporalio::Api::OperatorService::V1";
+option csharp_namespace = "Temporalio.Api.OperatorService.V1";
 
 
 import "temporal/api/operatorservice/v1/request_response.proto";

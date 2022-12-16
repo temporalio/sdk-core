@@ -28,8 +28,8 @@ option go_package = "go.temporal.io/api/testservice/v1;testservice";
 option java_package = "io.temporal.api.testservice.v1";
 option java_multiple_files = true;
 option java_outer_classname = "ServiceProto";
-option ruby_package = "Temporal::Api::TestService::V1";
-option csharp_namespace = "Temporal.Api.TestService.V1";
+option ruby_package = "Temporalio::Api::TestService::V1";
+option csharp_namespace = "Temporalio.Api.TestService.V1";
 
 import "temporal/api/testservice/v1/request_response.proto";
 import "google/protobuf/empty.proto";
