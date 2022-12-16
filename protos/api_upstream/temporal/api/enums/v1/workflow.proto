@@ -28,8 +28,8 @@ option go_package = "go.temporal.io/api/enums/v1;enums";
 option java_package = "io.temporal.api.enums.v1";
 option java_multiple_files = true;
 option java_outer_classname = "WorkflowProto";
-option ruby_package = "Temporal::Api::Enums::V1";
-option csharp_namespace = "Temporal.Api.Enums.V1";
+option ruby_package = "Temporalio::Api::Enums::V1";
+option csharp_namespace = "Temporalio.Api.Enums.V1";
 
 // Defines how new runs of a workflow with a particular ID may or may not be allowed. Note that
 // it is *never* valid to have two actively running instances of the same workflow id.

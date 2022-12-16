@@ -33,8 +33,8 @@ option go_package = "go.temporal.io/api/schedule/v1;schedule";
 option java_package = "io.temporal.api.schedule.v1";
 option java_multiple_files = true;
 option java_outer_classname = "MessageProto";
-option ruby_package = "Temporal::Api::Schedule::V1";
-option csharp_namespace = "Temporal.Api.Schedule.V1";
+option ruby_package = "Temporalio::Api::Schedule::V1";
+option csharp_namespace = "Temporalio.Api.Schedule.V1";
 
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";

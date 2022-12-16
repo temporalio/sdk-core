@@ -28,8 +28,8 @@ option go_package = "go.temporal.io/api/taskqueue/v1;taskqueue";
 option java_package = "io.temporal.api.taskqueue.v1";
 option java_multiple_files = true;
 option java_outer_classname = "MessageProto";
-option ruby_package = "Temporal::Api::TaskQueue::V1";
-option csharp_namespace = "Temporal.Api.TaskQueue.V1";
+option ruby_package = "Temporalio::Api::TaskQueue::V1";
+option csharp_namespace = "Temporalio.Api.TaskQueue.V1";
 
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";

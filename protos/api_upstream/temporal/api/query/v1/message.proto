@@ -28,8 +28,8 @@ option go_package = "go.temporal.io/api/query/v1;query";
 option java_package = "io.temporal.api.query.v1";
 option java_multiple_files = true;
 option java_outer_classname = "MessageProto";
-option ruby_package = "Temporal::Api::Query::V1";
-option csharp_namespace = "Temporal.Api.Query.V1";
+option ruby_package = "Temporalio::Api::Query::V1";
+option csharp_namespace = "Temporalio.Api.Query.V1";
 
 import "temporal/api/enums/v1/query.proto";
 import "temporal/api/enums/v1/workflow.proto";

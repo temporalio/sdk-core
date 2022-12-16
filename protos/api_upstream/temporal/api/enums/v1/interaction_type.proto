@@ -22,25 +22,18 @@
 
 syntax = "proto3";
 
-package temporal.api.update.v1;
+package temporal.api.enums.v1;
 
-option go_package = "go.temporal.io/api/update/v1;update";
-option java_package = "io.temporal.api.update.v1";
+option go_package = "go.temporal.io/api/enums/v1;enums";
+option java_package = "io.temporal.api.enums.v1";
 option java_multiple_files = true;
-option java_outer_classname = "MessageProto";
-option ruby_package = "Temporal::Api::Update::V1";
-option csharp_namespace = "Temporal.Api.Update.V1";
+option java_outer_classname = "InteractionTypeProto";
+option ruby_package = "Temporalio::Api::Enums::V1";
+option csharp_namespace = "Temporalio.Api.Enums.V1";
 
-import "temporal/api/common/v1/message.proto";
-
-message WorkflowUpdate {
-    // Headers that are passed with the update to the processing workflow.
-    // These can include things like auth or tracing tokens.
-    temporal.api.common.v1.Header header = 1;
-
-    // The name of the update function to invoke on the target workflow.
-    string name = 2;
-
-    // The arguments to pass to the named update function.
-    temporal.api.common.v1.Payloads args = 3;
+enum InteractionType {
+   INTERACTION_TYPE_UNSPECIFIED = 0;
+   INTERACTION_TYPE_WORKFLOW_QUERY = 1;
+   INTERACTION_TYPE_WORKFLOW_UPDATE = 2;
+   INTERACTION_TYPE_WORKFLOW_SIGNAL = 3;
 }

@@ -28,8 +28,8 @@ option go_package = "go.temporal.io/api/enums/v1;enums";
 option java_package = "io.temporal.api.enums.v1";
 option java_multiple_files = true;
 option java_outer_classname = "CommonProto";
-option ruby_package = "Temporal::Api::Enums::V1";
-option csharp_namespace = "Temporal.Api.Enums.V1";
+option ruby_package = "Temporalio::Api::Enums::V1";
+option csharp_namespace = "Temporalio.Api.Enums.V1";
 
 enum EncodingType {
     ENCODING_TYPE_UNSPECIFIED = 0;
@@ -45,6 +45,7 @@ enum IndexedValueType {
     INDEXED_VALUE_TYPE_DOUBLE = 4;
     INDEXED_VALUE_TYPE_BOOL = 5;
     INDEXED_VALUE_TYPE_DATETIME = 6;
+    INDEXED_VALUE_TYPE_KEYWORD_LIST = 7;
 }
 
 enum Severity {

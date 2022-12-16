@@ -28,8 +28,8 @@ option go_package = "go.temporal.io/api/batch/v1;batch";
 option java_package = "io.temporal.api.batch.v1";
 option java_multiple_files = true;
 option java_outer_classname = "MessageProto";
-option ruby_package = "Temporal::Api::Batch::V1";
-option csharp_namespace = "Temporal.Api.Batch.V1";
+option ruby_package = "Temporalio::Api::Batch::V1";
+option csharp_namespace = "Temporalio.Api.Batch.V1";
 
 import "dependencies/gogoproto/gogo.proto";
 import "google/protobuf/timestamp.proto";
@@ -77,6 +77,13 @@ message BatchOperationSignal {
 // Keep the parameter in sync with temporal.api.workflowservice.v1.RequestCancelWorkflowExecutionRequest.
 // Ignore first_execution_run_id because this is used for single workflow operation.
 message BatchOperationCancellation {
+  // The identity of the worker/client
+  string identity = 1;
+}
+
+// BatchOperationDeletion sends deletion requests to batch workflows.
+// Keep the parameter in sync with temporal.api.workflowservice.v1.DeleteWorkflowExecutionRequest.
+message BatchOperationDeletion {
   // The identity of the worker/client
   string identity = 1;
 }

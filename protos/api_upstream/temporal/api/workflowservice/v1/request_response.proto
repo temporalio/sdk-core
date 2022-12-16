@@ -28,8 +28,8 @@ option go_package = "go.temporal.io/api/workflowservice/v1;workflowservice";
 option java_package = "io.temporal.api.workflowservice.v1";
 option java_multiple_files = true;
 option java_outer_classname = "RequestResponseProto";
-option ruby_package = "Temporal::Api::WorkflowService::V1";
-option csharp_namespace = "Temporal.Api.WorkflowService.V1";
+option ruby_package = "Temporalio::Api::WorkflowService::V1";
+option csharp_namespace = "Temporalio.Api.WorkflowService.V1";
 
 import "temporal/api/enums/v1/batch_operation.proto";
 import "temporal/api/enums/v1/workflow.proto";
@@ -42,6 +42,7 @@ import "temporal/api/enums/v1/task_queue.proto";
 import "temporal/api/enums/v1/update.proto";
 import "temporal/api/common/v1/message.proto";
 import "temporal/api/history/v1/message.proto";
+import "temporal/api/interaction/v1/message.proto";
 import "temporal/api/workflow/v1/message.proto";
 import "temporal/api/command/v1/message.proto";
 import "temporal/api/failure/v1/message.proto";
@@ -51,7 +52,6 @@ import "temporal/api/query/v1/message.proto";
 import "temporal/api/replication/v1/message.proto";
 import "temporal/api/schedule/v1/message.proto";
 import "temporal/api/taskqueue/v1/message.proto";
-import "temporal/api/update/v1/message.proto";
 import "temporal/api/version/v1/message.proto";
 import "temporal/api/batch/v1/message.proto";
 
@@ -267,6 +267,8 @@ message PollWorkflowTaskQueueResponse {
     // Queries that should be executed after applying the history in this task. Responses should be
     // attached to `RespondWorkflowTaskCompletedRequest::query_results`
     map<string, temporal.api.query.v1.WorkflowQuery> queries = 14;
+
+    repeated temporal.api.interaction.v1.Invocation interactions = 15;
 }
 
 message RespondWorkflowTaskCompletedRequest {
@@ -304,6 +306,8 @@ message RespondWorkflowTaskCompletedResponse {
     PollWorkflowTaskQueueResponse workflow_task = 1;
     // See `ScheduleActivityTaskCommandAttributes::request_start`
     repeated PollActivityTaskQueueResponse activity_tasks = 2;
+
+    int64 reset_history_event_id = 3;
 }
 
 message RespondWorkflowTaskFailedRequest {
@@ -1067,9 +1071,12 @@ message UpdateWorkflowRequest {
     // part of the same execution chain as this id.
     string first_execution_run_id = 5;
 
+    // A string identifying the agent that requested this interaction.
+    string identity = 6;
+
     // The name under which the workflow update function is registered and the
     // arguments to pass to said function.
-    temporal.api.update.v1.WorkflowUpdate update = 6;
+    temporal.api.interaction.v1.Input input = 7;
 }
 
 message UpdateWorkflowResponse {
@@ -1077,10 +1084,7 @@ message UpdateWorkflowResponse {
     // polling if it is not returned as part of the gRPC response
     bytes update_token = 1;
     // The success or failure status of the update
-    oneof result {
-        temporal.api.common.v1.Payloads success = 2;
-        temporal.api.failure.v1.Failure failure = 3;
-    }
+    temporal.api.interaction.v1.Output output = 2;
 }
 
 message StartBatchOperationRequest {
@@ -1097,6 +1101,7 @@ message StartBatchOperationRequest {
         temporal.api.batch.v1.BatchOperationTermination termination_operation = 10;
         temporal.api.batch.v1.BatchOperationSignal signal_operation = 11;
         temporal.api.batch.v1.BatchOperationCancellation cancellation_operation = 12;
+        temporal.api.batch.v1.BatchOperationDeletion deletion_operation = 13;
     }
 }
 

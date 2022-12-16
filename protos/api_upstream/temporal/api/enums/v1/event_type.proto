@@ -28,8 +28,8 @@ option go_package = "go.temporal.io/api/enums/v1;enums";
 option java_package = "io.temporal.api.enums.v1";
 option java_multiple_files = true;
 option java_outer_classname = "EventTypeProto";
-option ruby_package = "Temporal::Api::Enums::V1";
-option csharp_namespace = "Temporal.Api.Enums.V1";
+option ruby_package = "Temporalio::Api::Enums::V1";
+option csharp_namespace = "Temporalio.Api.Enums.V1";
 
 // Whenever this list of events is changed do change the function shouldBufferEvent in mutableStateBuilder.go to make sure to do the correct event ordering
 enum EventType {
@@ -152,7 +152,7 @@ enum EventType {
     // Workflow search attributes should be updated and synchronized with the visibility store
     EVENT_TYPE_UPSERT_WORKFLOW_SEARCH_ATTRIBUTES = 40;
     // Workflow update request has been received
-    EVENT_TYPE_WORKFLOW_UPDATE_REQUESTED = 41;
+    EVENT_TYPE_WORKFLOW_UPDATE_REJECTED = 41;
     // Workflow update request has been accepted by user workflow code
     EVENT_TYPE_WORKFLOW_UPDATE_ACCEPTED = 42;
     // Workflow update has been completed

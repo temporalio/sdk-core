@@ -1774,6 +1774,11 @@ pub mod temporal {
                 }
             }
         }
+        pub mod interaction {
+            pub mod v1 {
+                tonic::include_proto!("temporal.api.interaction.v1");
+            }
+        }
         pub mod namespace {
             pub mod v1 {
                 tonic::include_proto!("temporal.api.namespace.v1");
@@ -1817,11 +1822,6 @@ pub mod temporal {
         pub mod testservice {
             pub mod v1 {
                 tonic::include_proto!("temporal.api.testservice.v1");
-            }
-        }
-        pub mod update {
-            pub mod v1 {
-                tonic::include_proto!("temporal.api.update.v1");
             }
         }
         pub mod version {
