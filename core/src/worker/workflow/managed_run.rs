@@ -248,12 +248,7 @@ impl ManagedRun {
                 self.wfm.apply_next_task_if_ready().await?;
             }
             let new_local_acts = self.wfm.drain_queued_local_activities();
-
-            let immediate_resolutions = (self.local_activity_request_sink)(new_local_acts);
-            for resolution in immediate_resolutions {
-                self.wfm
-                    .notify_of_local_result(LocalResolution::LocalActivity(resolution))?;
-            }
+            self.sink_la_requests(new_local_acts)?;
 
             let data = CompletionDataForWFT {
                 task_token: completion.task_token,
@@ -316,23 +311,18 @@ impl ManagedRun {
         has_pending_queries: bool,
         has_wft: bool,
     ) -> Result<Option<ActivationOrAuto>, RunUpdateErr> {
-        // TODO: Dedupe if this works
+        // In the event it's time to evict this run, cancel any outstanding LAs
         if want_to_evict.is_some() {
-            warn!("CANcel all the las!");
-            let immediate_resolutions =
-                (self.local_activity_request_sink)(vec![LocalActRequest::CancelAllInRun(
-                    self.wfm.machines.run_id.clone(),
-                )]);
-            for resolution in immediate_resolutions {
-                self.wfm
-                    .notify_of_local_result(LocalResolution::LocalActivity(resolution))?;
-            }
+            self.sink_la_requests(vec![LocalActRequest::CancelAllInRun(
+                self.wfm.machines.run_id.clone(),
+            )])?;
         }
 
         if !has_wft {
-            // It doesn't make sense to do work unless we have a WFT
+            // It doesn't make sense to do workflow work unless we have a WFT
             return Ok(None);
         }
+
         if self.wfm.machines.has_pending_jobs() && !self.am_broken {
             Ok(Some(ActivationOrAuto::LangActivation(
                 self.wfm.get_next_activation().await?,
@@ -434,6 +424,20 @@ impl ManagedRun {
             }
         }
         Ok(None)
+    }
+
+    /// Pump some local activity requests into the sink, applying any immediate results to the
+    /// workflow machines.
+    fn sink_la_requests(
+        &mut self,
+        new_local_acts: Vec<LocalActRequest>,
+    ) -> Result<(), WFMachinesError> {
+        let immediate_resolutions = (self.local_activity_request_sink)(new_local_acts);
+        for resolution in immediate_resolutions {
+            self.wfm
+                .notify_of_local_result(LocalResolution::LocalActivity(resolution))?;
+        }
+        Ok(())
     }
 
     /// Returns `true` if autocompletion should be issued, which will actually cause us to end up

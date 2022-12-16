@@ -30,7 +30,7 @@ use crate::{
             wft_poller::validate_wft,
             workflow_stream::{LocalInput, LocalInputs, WFStream},
         },
-        LocalActRequest, LocalActivityResolution,
+        LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
     },
     MetricsContext,
 };
@@ -393,13 +393,16 @@ impl Workflows {
     /// successfully.
     fn send_local(&self, msg: impl Into<LocalInputs>) -> bool {
         let msg = msg.into();
-        let print_err = !matches!(msg, LocalInputs::GetStateInfo(_));
+        let print_err = match &msg {
+            LocalInputs::GetStateInfo(_) => false,
+            LocalInputs::LocalResolution(lr) if lr.res.is_la_cancel_confirmation() => false,
+            _ => true,
+        };
         if let Err(e) = self.local_tx.send(LocalInput {
             input: msg,
             span: Span::current(),
         }) {
             if print_err {
-                // TODO: Too noisy - now it's expected to see LA completes after cancel b/c eviction
                 warn!(
                     "Tried to interact with workflow state after it shut down. This may be benign \
                      when processing evictions during shutdown. When sending {:?}",
@@ -1071,6 +1074,15 @@ pub struct OutgoingServerCommands {
 #[derive(Debug)]
 pub(crate) enum LocalResolution {
     LocalActivity(LocalActivityResolution),
+}
+impl LocalResolution {
+    pub fn is_la_cancel_confirmation(&self) -> bool {
+        match self {
+            LocalResolution::LocalActivity(lar) => {
+                matches!(lar.result, LocalActivityExecutionResult::Cancelled(_))
+            }
+        }
+    }
 }
 
 #[derive(thiserror::Error, Debug, derive_more::From)]

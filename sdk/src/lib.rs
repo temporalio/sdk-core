@@ -306,22 +306,17 @@ impl Worker {
             // makes tests which use mocks dramatically more manageable.
             async {
                 if !act_half.activity_fns.is_empty() {
-                    let shutdown_token = shutdown_token.clone();
                     loop {
-                        tokio::select! {
-                            activity = common.worker.poll_activity_task() => {
-                                if matches!(activity, Err(PollActivityError::ShutDown)) {
-                                    break;
-                                }
-                                act_half.activity_task_handler(
-                                    common.worker.clone(),
-                                    safe_app_data.clone(),
-                                    common.task_queue.clone(),
-                                    activity?
-                                )?;
-                            },
-                            _ = shutdown_token.cancelled() => { break }
+                        let activity = common.worker.poll_activity_task().await;
+                        if matches!(activity, Err(PollActivityError::ShutDown)) {
+                            break;
                         }
+                        act_half.activity_task_handler(
+                            common.worker.clone(),
+                            safe_app_data.clone(),
+                            common.task_queue.clone(),
+                            activity?,
+                        )?;
                     }
                 };
                 Result::<_, anyhow::Error>::Ok(())
@@ -335,6 +330,7 @@ impl Worker {
             i.on_shutdown(self);
         }
         self.common.worker.shutdown().await;
+        debug!("Worker shutdown complete");
         self.app_data = Some(
             Arc::try_unwrap(safe_app_data)
                 .map_err(|_| anyhow!("some references of AppData exist on worker shutdown"))?,
@@ -747,6 +743,14 @@ pub struct ActivityFunction {
 #[derive(Debug, Default)]
 pub struct ActivityCancelledError {
     details: Option<Payload>,
+}
+impl ActivityCancelledError {
+    /// Include some details as part of concluding the activity as cancelled
+    pub fn with_details(payload: Payload) -> Self {
+        Self {
+            details: Some(payload),
+        }
+    }
 }
 impl std::error::Error for ActivityCancelledError {}
 impl Display for ActivityCancelledError {

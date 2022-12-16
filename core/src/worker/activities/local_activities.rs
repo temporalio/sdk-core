@@ -1,13 +1,17 @@
 use crate::{
-    abstractions::{MeteredSemaphore, OwnedMeteredSemPermit},
+    abstractions::{dbg_panic, MeteredSemaphore, OwnedMeteredSemPermit},
     protosext::ValidScheduleLA,
     retry_logic::RetryPolicyExt,
     MetricsContext, TaskToken,
 };
-use parking_lot::Mutex;
+use futures::{stream::BoxStream, Stream};
+use futures_util::{stream, StreamExt};
+use parking_lot::{Mutex, MutexGuard};
 use std::{
     collections::{hash_map::Entry, HashMap},
     fmt::{Debug, Formatter},
+    pin::Pin,
+    task::{Context, Poll},
     time::{Duration, Instant, SystemTime},
 };
 use temporal_sdk_core_protos::{
@@ -25,6 +29,7 @@ use tokio::{
     task::JoinHandle,
     time::sleep,
 };
+use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
 
 #[allow(clippy::large_enum_variant)] // Timeouts are relatively rare
@@ -108,14 +113,15 @@ pub(crate) struct ExecutingLAId {
 pub(crate) struct LocalActivityManager {
     /// Just so we can provide activity tasks the same namespace as the worker
     namespace: String,
-    /// Constrains number of currently executing local activities
-    semaphore: MeteredSemaphore,
     /// Sink for new activity execution requests
     act_req_tx: UnboundedSender<NewOrRetry>,
     /// Cancels need a different queue since they should be taken first, and don't take a permit
     cancels_req_tx: UnboundedSender<CancelOrTimeout>,
     /// Wakes every time a complete is processed
     complete_notify: Notify,
+    /// Set once workflows have finished shutting down, and thus we know we will no longer receive
+    /// any requests to spawn new LAs
+    workflows_have_shut_down: CancellationToken,
 
     rcvs: tokio::sync::Mutex<RcvChans>,
     shutdown_complete_tok: CancellationToken,
@@ -134,7 +140,6 @@ struct LocalActivityInfo {
 struct LAMData {
     /// Maps local activity identifiers to information about them
     la_info: HashMap<ExecutingLAId, LocalActivityInfo>,
-    // TODO: Can... also remove?
     /// Activities that have been issued to lang but not yet completed
     outstanding_activity_tasks: HashMap<TaskToken, LocalInFlightActInfo>,
     next_tt_num: u32,
@@ -156,27 +161,29 @@ impl LocalActivityManager {
         let (act_req_tx, act_req_rx) = unbounded_channel();
         let (cancels_req_tx, cancels_req_rx) = unbounded_channel();
         let shutdown_complete_tok = CancellationToken::new();
+        let semaphore = MeteredSemaphore::new(
+            max_concurrent,
+            metrics_context,
+            MetricsContext::available_task_slots,
+        );
         Self {
             namespace,
-            semaphore: MeteredSemaphore::new(
-                max_concurrent,
-                metrics_context,
-                MetricsContext::available_task_slots,
-            ),
+            rcvs: tokio::sync::Mutex::new(RcvChans::new(
+                act_req_rx,
+                semaphore,
+                cancels_req_rx,
+                shutdown_complete_tok.clone(),
+            )),
             act_req_tx,
             cancels_req_tx,
             complete_notify: Notify::new(),
-            rcvs: tokio::sync::Mutex::new(RcvChans {
-                act_req_rx,
-                cancels_req_rx,
-                shutdown: shutdown_complete_tok.clone(),
-            }),
             shutdown_complete_tok,
             dat: Mutex::new(LAMData {
                 outstanding_activity_tasks: Default::default(),
                 la_info: Default::default(),
                 next_tt_num: 0,
             }),
+            workflows_have_shut_down: Default::default(),
         }
     }
 
@@ -208,6 +215,10 @@ impl LocalActivityManager {
         &self,
         reqs: impl IntoIterator<Item = LocalActRequest>,
     ) -> Vec<LocalActivityResolution> {
+        if self.workflows_have_shut_down.is_cancelled() {
+            dbg_panic!("Tried to enqueue local activity after workflows were shut down");
+            return vec![];
+        }
         let mut immediate_resolutions = vec![];
         for req in reqs {
             debug!(local_activity = ?req, "Queuing local activity");
@@ -283,7 +294,7 @@ impl LocalActivityManager {
     /// Returns the next pending local-activity related action, or None if shutdown has initiated
     /// and there are no more remaining actions to take.
     pub(crate) async fn next_pending(&self) -> Option<DispatchOrTimeoutLA> {
-        let (new_or_retry, permit) = match self.rcvs.lock().await.next(&self.semaphore).await? {
+        let (new_or_retry, permit) = match self.rcvs.lock().await.next().await? {
             NewOrCancel::Cancel(c) => {
                 return match c {
                     CancelOrTimeout::Cancel(c) => Some(DispatchOrTimeoutLA::Dispatch(c)),
@@ -306,7 +317,7 @@ impl LocalActivityManager {
                             if let Some(task_token) = tt {
                                 self.complete(&task_token, &resolution.result);
                                 Some(ActivityTask {
-                                    task_token: task_token.0.clone(),
+                                    task_token: task_token.0,
                                     variant: Some(activity_task::Variant::Cancel(Cancel {
                                         reason: ActivityCancelReason::TimedOut as i32,
                                     })),
@@ -420,11 +431,23 @@ impl LocalActivityManager {
     ) -> LACompleteAction {
         let mut dlock = self.dat.lock();
         if let Some(info) = dlock.outstanding_activity_tasks.remove(task_token) {
+            if self.workflows_have_shut_down.is_cancelled() {
+                // If workflows are already shut down, the results of all this don't matter.
+                // Just say we're done if there's nothing outstanding any more.
+                self.set_shutdown_complete_if_ready(&mut dlock);
+            }
+
             let exec_id = ExecutingLAId {
                 run_id: info.la_info.workflow_exec_info.run_id.clone(),
                 seq_num: info.la_info.schedule_cmd.seq,
             };
             let maybe_old_lai = dlock.la_info.remove(&exec_id);
+            if let Some(ref oldlai) = maybe_old_lai {
+                if let Some(ref bot) = oldlai.backing_off_task {
+                    dbg_panic!("Just-resolved LA should not have backoff task");
+                    bot.abort();
+                }
+            }
 
             match status {
                 LocalActivityExecutionResult::Completed(_)
@@ -472,13 +495,11 @@ impl LocalActivityManager {
                                 })
                                 .expect("Receive half of LA request channel cannot be dropped");
                         });
-                        // TODO: SHould I abort any existing backoff? SHouldn't exist?
                         dlock.la_info.insert(
                             exec_id,
                             LocalActivityInfo {
                                 task_token: tt,
                                 backing_off_task: Some(jh),
-                                // TODO: This should always exist, no?
                                 timeout_bag: maybe_old_lai.and_then(|old| old.timeout_bag),
                             },
                         );
@@ -494,11 +515,24 @@ impl LocalActivityManager {
         }
     }
 
-    pub(crate) async fn shutdown_and_wait_all_finished(&self) {
-        while !self.dat.lock().outstanding_activity_tasks.is_empty() {
+    pub(crate) fn workflows_have_shutdown(&self) {
+        // TODO: Cancel _all_ outstanding las
+        self.workflows_have_shut_down.cancel();
+        self.set_shutdown_complete_if_ready(&mut self.dat.lock());
+    }
+
+    pub(crate) async fn wait_all_outstanding_tasks_finished(&self) {
+        while !self.set_shutdown_complete_if_ready(&mut self.dat.lock()) {
             self.complete_notify.notified().await;
         }
-        self.shutdown_complete_tok.cancel();
+    }
+
+    fn set_shutdown_complete_if_ready(&self, dlock: &mut MutexGuard<LAMData>) -> bool {
+        let nothing_outstanding = dlock.outstanding_activity_tasks.is_empty();
+        if nothing_outstanding {
+            self.shutdown_complete_tok.cancel();
+        }
+        nothing_outstanding
     }
 
     fn cancel_one_la(
@@ -572,31 +606,43 @@ enum NewOrCancel {
     Cancel(CancelOrTimeout),
 }
 
+#[pin_project::pin_project]
 struct RcvChans {
-    /// Activities that need to be executed by lang
-    act_req_rx: UnboundedReceiver<NewOrRetry>,
-    /// Cancels to send to lang or apply internally
-    cancels_req_rx: UnboundedReceiver<CancelOrTimeout>,
-    shutdown: CancellationToken,
+    #[pin]
+    inner: BoxStream<'static, NewOrCancel>,
 }
 
 impl RcvChans {
-    // TODO: This could be better with stream combinators
-    async fn next(&mut self, new_sem: &MeteredSemaphore) -> Option<NewOrCancel> {
-        tokio::select! {
-            cancel = async { self.cancels_req_rx.recv().await } => {
-                Some(NewOrCancel::Cancel(cancel.expect("Send halves of LA manager are not dropped")))
-            }
-            (maybe_new_or_retry, perm) = async {
-                // Wait for a permit to take a task and forget it. Permits are removed until a
-                // completion.
-                let perm = new_sem.acquire_owned().await.expect("is never closed");
-                (self.act_req_rx.recv().await, perm)
-            } => Some(NewOrCancel::New(
-                maybe_new_or_retry.expect("Send halves of LA manager are not dropped"), perm
-            )),
-            _ = self.shutdown.cancelled() => None
+    fn new(
+        new_reqs: UnboundedReceiver<NewOrRetry>,
+        new_sem: MeteredSemaphore,
+        cancels: UnboundedReceiver<CancelOrTimeout>,
+        shutdown_completed: CancellationToken,
+    ) -> Self {
+        let cancel_stream = UnboundedReceiverStream::new(cancels).map(NewOrCancel::Cancel);
+        let new_stream = UnboundedReceiverStream::new(new_reqs)
+            // Get a permit for each new activity request
+            .zip(stream::unfold(new_sem, |new_sem| async move {
+                let permit = new_sem
+                    .acquire_owned()
+                    .await
+                    .expect("Local activity semaphore is never closed");
+                Some((permit, new_sem))
+            }))
+            .map(|(req, permit)| NewOrCancel::New(req, permit));
+        Self {
+            inner: tokio_stream::StreamExt::merge(cancel_stream, new_stream)
+                .take_until(async move { shutdown_completed.cancelled().await })
+                .boxed(),
         }
+    }
+}
+impl Stream for RcvChans {
+    type Item = NewOrCancel;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.project();
+        this.inner.poll_next(cx)
     }
 }
 
@@ -696,11 +742,12 @@ impl Drop for TimeoutBag {
 mod tests {
     use super::*;
     use crate::{prost_dur, protosext::LACloseTimeouts};
+    use futures_util::FutureExt;
     use temporal_sdk_core_protos::temporal::api::{
         common::v1::RetryPolicy,
         failure::v1::{failure::FailureInfo, ApplicationFailureInfo, Failure},
     };
-    use tokio::{sync::mpsc::error::TryRecvError, task::yield_now};
+    use tokio::task::yield_now;
 
     impl DispatchOrTimeoutLA {
         fn unwrap(self) -> ActivityTask {
@@ -1082,18 +1129,12 @@ mod tests {
         lam.next_pending().await.unwrap().unwrap();
         assert_eq!(lam.num_outstanding(), 1);
         // There should be nothing else in the queue
-        assert_eq!(
-            lam.rcvs.lock().await.act_req_rx.try_recv().unwrap_err(),
-            TryRecvError::Empty
-        );
+        assert!(lam.rcvs.lock().await.next().now_or_never().is_none());
 
         // Verify that if we now enqueue the same act again, after the task is outstanding, we still
         // don't add it.
         lam.enqueue([new_la.into()]);
         assert_eq!(lam.num_outstanding(), 1);
-        assert_eq!(
-            lam.rcvs.lock().await.act_req_rx.try_recv().unwrap_err(),
-            TryRecvError::Empty
-        );
+        assert!(lam.rcvs.lock().await.next().now_or_never().is_none());
     }
 }

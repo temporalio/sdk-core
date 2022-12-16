@@ -32,7 +32,7 @@ use crate::{
 };
 use activities::{LocalInFlightActInfo, WorkerActivityTasks};
 use futures::Stream;
-use std::{convert::TryInto, sync::Arc};
+use std::{convert::TryInto, future, sync::Arc};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::activity_execution_result,
@@ -259,6 +259,9 @@ impl Worker {
                 config.default_heartbeat_throttle_interval,
             )
         });
+        if at_task_mgr.is_none() {
+            info!("Activity polling is disabled for this worker");
+        }
         Self {
             wf_client: client.clone(),
             workflows: Workflows::new(
@@ -304,7 +307,9 @@ impl Worker {
         self.initiate_shutdown();
         // Next we need to wait for all local activities to finish so no more workflow task
         // heartbeats will be generated
-        self.local_act_mgr.shutdown_and_wait_all_finished().await;
+        self.local_act_mgr
+            .wait_all_outstanding_tasks_finished()
+            .await;
         // Wait for workflows to finish
         self.workflows
             .shutdown()
@@ -365,9 +370,10 @@ impl Worker {
             if let Some(ref act_mgr) = self.at_task_mgr {
                 act_mgr.poll().await
             } else {
-                info!("Activity polling is disabled for this worker");
-                self.shutdown_token.cancelled().await;
-                Err(PollActivityError::ShutDown)
+                // We expect the local activity branch below to produce shutdown when appropriate if
+                // there are no activity pollers.
+                future::pending::<()>().await;
+                unreachable!()
             }
         };
 
@@ -448,7 +454,15 @@ impl Worker {
 
     #[instrument(skip(self), fields(run_id, workflow_id, task_queue=%self.config.task_queue))]
     pub(crate) async fn next_workflow_activation(&self) -> Result<WorkflowActivation, PollWfError> {
-        self.workflows.next_workflow_activation().await
+        let r = self.workflows.next_workflow_activation().await;
+        // In the event workflows are shutdown, begin shutdown of everything else, since that's
+        // about to happen anyway. Tell the local activity manager that, so that it can know to
+        // cancel any remaining outstanding LAs and shutdown.
+        if matches!(r, Err(PollWfError::ShutDown)) {
+            self.initiate_shutdown();
+            self.local_act_mgr.workflows_have_shutdown();
+        }
+        r
     }
 
     #[instrument(skip(self, completion),
