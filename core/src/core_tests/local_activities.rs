@@ -11,11 +11,12 @@ use anyhow::anyhow;
 use futures::{future::join_all, FutureExt};
 use std::{
     collections::HashMap,
+    ops::Sub,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 use temporal_client::WorkflowOptions;
 use temporal_sdk::{ActContext, LocalActivityOptions, WfContext, WorkflowResult};
@@ -29,7 +30,10 @@ use temporal_sdk_core_protos::{
         ActivityTaskCompletion, AsJsonPayloadExt,
     },
     temporal::api::{
-        common::v1::RetryPolicy, enums::v1::EventType, failure::v1::Failure, history::v1::History,
+        common::v1::RetryPolicy,
+        enums::v1::{EventType, TimeoutType},
+        failure::v1::Failure,
+        history::v1::History,
         query::v1::WorkflowQuery,
     },
 };
@@ -367,7 +371,7 @@ async fn local_act_null_result() {
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
-    t.add_local_activity_marker(1, "1", None, None, None);
+    t.add_local_activity_marker(1, "1", None, None, |_| {});
     t.add_workflow_execution_completed();
 
     let wf_id = "fakeid";
@@ -408,7 +412,7 @@ async fn local_act_command_immediately_follows_la_marker() {
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
     t.add_full_wf_task();
-    t.add_local_activity_marker(1, "1", None, None, None);
+    t.add_local_activity_result_marker(1, "1", "done".into());
     t.add_get_event_id(EventType::TimerStarted, None);
     t.add_full_wf_task();
 
@@ -457,7 +461,7 @@ async fn query_during_wft_heartbeat_doesnt_accidentally_fail_to_continue_heartbe
     t.add_full_wf_task();
     // get query here
     t.add_full_wf_task();
-    t.add_local_activity_marker(1, "1", None, None, None);
+    t.add_local_activity_result_marker(1, "1", "done".into());
     t.add_workflow_execution_completed();
 
     let query_with_hist_task = {
@@ -582,7 +586,7 @@ async fn la_resolve_during_legacy_query_does_not_combine(#[case] impossible_quer
     // nonlegacy query got here & LA started here
     t.add_full_wf_task();
     // legacy query got here, at the same time that the LA is resolved
-    t.add_local_activity_marker(1, "1", None, None, None);
+    t.add_local_activity_result_marker(1, "1", "whatever".into());
     t.add_workflow_execution_completed();
 
     let barr = Arc::new(Barrier::new(2));
@@ -734,4 +738,188 @@ async fn la_resolve_during_legacy_query_does_not_combine(#[case] impossible_quer
 
     tokio::join!(wf_fut, act_fut);
     core.shutdown().await;
+}
+
+#[tokio::test]
+async fn test_schedule_to_start_timeout() {
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+
+    let wf_id = "fakeid";
+    let mock = mock_workflow_client();
+    let mh = MockPollCfg::from_resp_batches(wf_id, t, [ResponseType::ToTaskNum(1)], mock);
+    let mut worker = mock_sdk_cfg(mh, |w| w.max_cached_workflows = 1);
+
+    worker.register_wf(
+        DEFAULT_WORKFLOW_TYPE.to_owned(),
+        |ctx: WfContext| async move {
+            let la_res = ctx
+                .local_activity(LocalActivityOptions {
+                    activity_type: "echo".to_string(),
+                    input: "hi".as_json_payload().expect("serializes fine"),
+                    // Impossibly small timeout so we timeout in the queue
+                    schedule_to_start_timeout: prost_dur!(from_nanos(1)),
+                    ..Default::default()
+                })
+                .await;
+            assert_eq!(la_res.timed_out(), Some(TimeoutType::ScheduleToStart));
+            Ok(().into())
+        },
+    );
+    worker.register_activity(
+        "echo",
+        move |_ctx: ActContext, _: String| async move { Ok(()) },
+    );
+    worker
+        .submit_wf(
+            wf_id.to_owned(),
+            DEFAULT_WORKFLOW_TYPE.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+}
+
+#[tokio::test]
+async fn test_schedule_to_start_timeout_not_based_on_original_time() {
+    // We used to carry over the schedule time of LAs from the "original" schedule time if these LAs
+    // created newly after backing off across a timer. That was a mistake, since schedule-to-start
+    // timeouts should apply to when the new attempt was scheduled. This test verifies we don't
+    // time out on s-t-s timeouts because of that.
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    let orig_sched = SystemTime::now().sub(Duration::from_secs(60 * 20));
+    t.add_local_activity_marker(
+        1,
+        "1",
+        None,
+        Some(Failure::application_failure("la failed".to_string(), false)),
+        |deets| {
+            // Really old schedule time, which should _not_ count against schedule_to_start
+            deets.original_schedule_time = Some(orig_sched.into());
+            // Backoff value must be present since we're simulating timer backoff
+            deets.backoff = Some(prost_dur!(from_secs(100)));
+        },
+    );
+    let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+    t.add_timer_fired(timer_started_event_id, "1".to_string());
+    t.add_workflow_task_scheduled_and_started();
+
+    let wf_id = "fakeid";
+    let mock = mock_workflow_client();
+    let mh = MockPollCfg::from_resp_batches(wf_id, t, [ResponseType::AllHistory], mock);
+    let mut worker = mock_sdk_cfg(mh, |w| w.max_cached_workflows = 1);
+
+    worker.register_wf(
+        DEFAULT_WORKFLOW_TYPE.to_owned(),
+        |ctx: WfContext| async move {
+            let la_res = ctx
+                .local_activity(LocalActivityOptions {
+                    activity_type: "echo".to_string(),
+                    input: "hi".as_json_payload().expect("serializes fine"),
+                    retry_policy: RetryPolicy {
+                        initial_interval: Some(prost_dur!(from_millis(50))),
+                        backoff_coefficient: 1.2,
+                        maximum_interval: None,
+                        maximum_attempts: 5,
+                        non_retryable_error_types: vec![],
+                    },
+                    schedule_to_start_timeout: Some(Duration::from_secs(60)),
+                    schedule_to_close_timeout: Some(Duration::from_secs(60 * 60)),
+                    ..Default::default()
+                })
+                .await;
+            assert!(la_res.completed_ok());
+            Ok(().into())
+        },
+    );
+    worker.register_activity(
+        "echo",
+        move |_ctx: ActContext, _: String| async move { Ok(()) },
+    );
+    worker
+        .submit_wf(
+            wf_id.to_owned(),
+            DEFAULT_WORKFLOW_TYPE.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+}
+
+#[tokio::test]
+async fn test_schedule_to_close_timeout_based_on_original_time() {
+    // We used to carry over the schedule time of LAs from the "original" schedule time if these LAs
+    // created newly after backing off across a timer. That was a mistake, since schedule-to-start
+    // timeouts should apply to when the new attempt was scheduled. This test verifies we don't
+    // time out on s-t-s timeouts because of that.
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    let orig_sched = SystemTime::now().sub(Duration::from_secs(60 * 20));
+    t.add_local_activity_marker(
+        1,
+        "1",
+        None,
+        Some(Failure::application_failure("la failed".to_string(), false)),
+        |deets| {
+            // Really old schedule time, which should _not_ count against schedule_to_start
+            deets.original_schedule_time = Some(orig_sched.into());
+            // Backoff value must be present since we're simulating timer backoff
+            deets.backoff = Some(prost_dur!(from_secs(100)));
+        },
+    );
+    let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+    t.add_timer_fired(timer_started_event_id, "1".to_string());
+    t.add_workflow_task_scheduled_and_started();
+
+    let wf_id = "fakeid";
+    let mock = mock_workflow_client();
+    let mh = MockPollCfg::from_resp_batches(wf_id, t, [ResponseType::AllHistory], mock);
+    let mut worker = mock_sdk_cfg(mh, |w| w.max_cached_workflows = 1);
+
+    worker.register_wf(
+        DEFAULT_WORKFLOW_TYPE.to_owned(),
+        |ctx: WfContext| async move {
+            let la_res = ctx
+                .local_activity(LocalActivityOptions {
+                    activity_type: "echo".to_string(),
+                    input: "hi".as_json_payload().expect("serializes fine"),
+                    retry_policy: RetryPolicy {
+                        initial_interval: Some(prost_dur!(from_millis(50))),
+                        backoff_coefficient: 1.2,
+                        maximum_interval: None,
+                        maximum_attempts: 5,
+                        non_retryable_error_types: vec![],
+                    },
+                    // This 10 minute timeout will have already elapsed according to the original
+                    // schedule time in the history.
+                    schedule_to_close_timeout: Some(Duration::from_secs(10 * 60)),
+                    ..Default::default()
+                })
+                .await;
+            assert_eq!(la_res.timed_out(), Some(TimeoutType::ScheduleToClose));
+            Ok(().into())
+        },
+    );
+    worker.register_activity(
+        "echo",
+        move |_ctx: ActContext, _: String| async move { Ok(()) },
+    );
+    worker
+        .submit_wf(
+            wf_id.to_owned(),
+            DEFAULT_WORKFLOW_TYPE.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
 }

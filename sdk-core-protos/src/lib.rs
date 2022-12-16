@@ -197,11 +197,15 @@ pub mod coresdk {
                 matches!(self.status, Some(activity_resolution::Status::Failed(_)))
             }
 
-            pub fn timed_out(&self) -> bool {
-                matches!(self.status, Some(activity_resolution::Status::Failed(Failure {
-                    failure: Some(ref f)
-                })) if f.is_timeout()
-                    || f.cause.as_ref().map(|c| c.is_timeout()).unwrap_or_default())
+            pub fn timed_out(&self) -> Option<crate::temporal::api::enums::v1::TimeoutType> {
+                match self.status {
+                    Some(activity_resolution::Status::Failed(Failure {
+                        failure: Some(ref f),
+                    })) => f
+                        .is_timeout()
+                        .or_else(|| f.cause.as_ref().and_then(|c| c.is_timeout())),
+                    _ => None,
+                }
             }
 
             pub fn cancelled(&self) -> bool {
@@ -1103,8 +1107,11 @@ pub mod coresdk {
     }
 
     impl Failure {
-        pub fn is_timeout(&self) -> bool {
-            matches!(self.failure_info, Some(FailureInfo::TimeoutFailureInfo(_)))
+        pub fn is_timeout(&self) -> Option<crate::temporal::api::enums::v1::TimeoutType> {
+            match &self.failure_info {
+                Some(FailureInfo::TimeoutFailureInfo(ti)) => Some(ti.timeout_type()),
+                _ => None,
+            }
         }
 
         pub fn application_failure(message: String, non_retryable: bool) -> Self {

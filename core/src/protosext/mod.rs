@@ -274,7 +274,7 @@ impl TryFrom<activity_execution_result::Status> for LocalActivityExecutionResult
             Status::Failed(f)
                 if f.failure
                     .as_ref()
-                    .map(|fail| fail.is_timeout())
+                    .map(|fail| fail.is_timeout().is_some())
                     .unwrap_or_default() =>
             {
                 Ok(LocalActivityExecutionResult::TimedOut(f))
