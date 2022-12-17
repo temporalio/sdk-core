@@ -217,7 +217,7 @@ where
     <SM as StateMachine>::State: Display,
 {
     if !commands.is_empty() {
-        debug!(commands=%commands.display(), state=%machine.state(),
+        trace!(commands=%commands.display(), state=%machine.state(),
                machine_name=%TemporalStateMachine::name(machine), "Machine produced commands");
     }
     let mut machine_responses = vec![];

@@ -238,10 +238,25 @@ impl ManagedRun {
             .take()
             .expect("Completion response channel must be populated");
 
+        let data = CompletionDataForWFT {
+            task_token: completion.task_token,
+            query_responses: completion.query_responses,
+            has_pending_query: completion.has_pending_query,
+            activation_was_only_eviction: completion.activation_was_only_eviction,
+        };
+
+        // If this is just bookkeeping after a reply to an only-eviction activation, we can bypass
+        // everything, since there is no reason to continue trying to update machines.
+        if completion.activation_was_only_eviction {
+            return Ok(Some(self.prepare_complete_resp(resp_chan, data, false)));
+        }
+
         let outcome = async move {
             // Send commands from lang into the machines then check if the workflow run
             // needs another activation and mark it if so
-            self.wfm.push_commands(completion.commands).await?;
+            self.wfm
+                .push_commands_and_iterate(completion.commands)
+                .await?;
             // Don't bother applying the next task if we're evicting at the end of
             // this activation
             if !completion.activation_was_eviction {
@@ -250,12 +265,6 @@ impl ManagedRun {
             let new_local_acts = self.wfm.drain_queued_local_activities();
             self.sink_la_requests(new_local_acts)?;
 
-            let data = CompletionDataForWFT {
-                task_token: completion.task_token,
-                query_responses: completion.query_responses,
-                has_pending_query: completion.has_pending_query,
-                activation_was_only_eviction: completion.activation_was_only_eviction,
-            };
             if self.wfm.machines.outstanding_local_activity_count() == 0 {
                 Ok((None, data, self))
             } else {
@@ -368,6 +377,8 @@ impl ManagedRun {
         // express purpose of fulfilling a query. If the activation we sent was *only* an
         // eviction, and there were no commands produced during iteration, don't send that
         // either.
+        // TODO: Seemingly, we should _never_ have iterated and had any commands if the activation
+        //   was only an eviction
         let no_commands_and_evicting =
             outgoing_cmds.commands.is_empty() && data.activation_was_only_eviction;
         let should_respond = !(self.wfm.machines.has_pending_jobs()
@@ -660,7 +671,7 @@ impl WorkflowManager {
 
     /// Feed the workflow machines new commands issued by the executing workflow code, and iterate
     /// the machines.
-    async fn push_commands(&mut self, cmds: Vec<WFCommand>) -> Result<()> {
+    async fn push_commands_and_iterate(&mut self, cmds: Vec<WFCommand>) -> Result<()> {
         if let Some(cs) = self.command_sink.as_mut() {
             cs.send(cmds).map_err(|_| {
                 WFMachinesError::Fatal("Internal error buffering workflow commands".to_string())

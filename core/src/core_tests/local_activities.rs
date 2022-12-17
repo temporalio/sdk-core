@@ -33,7 +33,7 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::{
         common::v1::RetryPolicy,
-        enums::v1::{EventType, TimeoutType},
+        enums::v1::{EventType, TimeoutType, WorkflowTaskFailedCause},
         failure::v1::Failure,
         history::v1::History,
         query::v1::WorkflowQuery,
@@ -126,6 +126,7 @@ pub async fn local_act_fanout_wf(ctx: WfContext) -> WorkflowResult<()> {
 
 #[tokio::test]
 async fn local_act_many_concurrent() {
+    crate::telemetry::test_telem_console();
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
@@ -917,4 +918,59 @@ async fn wft_failure_cancels_running_las() {
     worker.run_until_done().await.unwrap();
 }
 
-// TODO: add test for calling shutdown while activity is running LAs kills them
+#[tokio::test]
+async fn resolved_las_not_recorded_if_wft_fails_many_times() {
+    crate::telemetry::test_telem_console();
+    // We shouldn't record any LA results if the workflow activation is repeatedly failing. There
+    // was an issue that, because we stop reporting WFT failures after 2 tries, this meant the WFT
+    // was not marked as "completed" and the WFT could accidentally be replied to with LA results.
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_workflow_task_scheduled_and_started();
+    t.add_workflow_task_failed_with_failure(
+        WorkflowTaskFailedCause::Unspecified,
+        Default::default(),
+    );
+    t.add_workflow_task_scheduled_and_started();
+
+    let wf_id = "fakeid";
+    let mock = mock_workflow_client();
+    let mut mh = MockPollCfg::from_resp_batches(
+        wf_id,
+        t,
+        [1.into(), ResponseType::AllHistory, ResponseType::AllHistory],
+        mock,
+    );
+    mh.num_expected_fails = 2;
+    mh.completion_asserts = Some(Box::new(|_| {
+        panic!("should never successfully complete a WFT");
+    }));
+    let mut worker = mock_sdk_cfg(mh, |w| w.max_cached_workflows = 1);
+
+    worker.register_wf(
+        DEFAULT_WORKFLOW_TYPE.to_owned(),
+        |ctx: WfContext| async move {
+            ctx.local_activity(LocalActivityOptions {
+                activity_type: "echo".to_string(),
+                input: "hi".as_json_payload().expect("serializes fine"),
+                ..Default::default()
+            })
+            .await;
+            panic!("Oh nooooo")
+        },
+    );
+    worker.register_activity(
+        "echo",
+        move |_: ActContext, _: String| async move { Ok(()) },
+    );
+    worker
+        .submit_wf(
+            wf_id.to_owned(),
+            DEFAULT_WORKFLOW_TYPE.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+}

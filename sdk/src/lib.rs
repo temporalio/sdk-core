@@ -66,10 +66,12 @@ use anyhow::{anyhow, bail, Context};
 use app_data::AppData;
 use futures::{future::BoxFuture, FutureExt, StreamExt, TryFutureExt, TryStreamExt};
 use std::{
+    any::{Any, TypeId},
     cell::RefCell,
     collections::HashMap,
     fmt::{Debug, Display, Formatter},
     future::Future,
+    panic::AssertUnwindSafe,
     sync::Arc,
 };
 use temporal_client::ClientOptionsBuilder;
@@ -481,13 +483,19 @@ impl ActivityHalf {
                     start,
                 );
                 tokio::spawn(async move {
-                    let output = (act_fn.act_func)(ctx, arg).await;
+                    let output = AssertUnwindSafe((act_fn.act_func)(ctx, arg))
+                        .catch_unwind()
+                        .await;
                     let result = match output {
-                        Ok(ActExitValue::Normal(p)) => ActivityExecutionResult::ok(p),
-                        Ok(ActExitValue::WillCompleteAsync) => {
+                        Err(e) => ActivityExecutionResult::fail(Failure::application_failure(
+                            format!("Activity function panicked: {}", panic_formatter(e)),
+                            true,
+                        )),
+                        Ok(Ok(ActExitValue::Normal(p))) => ActivityExecutionResult::ok(p),
+                        Ok(Ok(ActExitValue::WillCompleteAsync)) => {
                             ActivityExecutionResult::will_complete_async()
                         }
-                        Err(err) => match err.downcast::<ActivityCancelledError>() {
+                        Ok(Err(err)) => match err.downcast::<ActivityCancelledError>() {
                             Ok(ce) => ActivityExecutionResult::cancel_from_details(ce.details),
                             Err(other_err) => ActivityExecutionResult::fail(other_err.into()),
                         },
@@ -795,4 +803,40 @@ where
         };
         Arc::new(wrapper)
     }
+}
+
+/// Attempts to turn caught panics into something printable
+fn panic_formatter(panic: Box<dyn Any>) -> Box<dyn Display> {
+    _panic_formatter::<&str>(panic)
+}
+fn _panic_formatter<T: 'static + PrintablePanicType>(panic: Box<dyn Any>) -> Box<dyn Display> {
+    match panic.downcast::<T>() {
+        Ok(d) => d,
+        Err(orig) => {
+            if TypeId::of::<<T as PrintablePanicType>::NextType>()
+                == TypeId::of::<EndPrintingAttempts>()
+            {
+                return Box::new("Couldn't turn panic into a string");
+            }
+            _panic_formatter::<T::NextType>(orig)
+        }
+    }
+}
+trait PrintablePanicType: Display {
+    type NextType: PrintablePanicType;
+}
+impl PrintablePanicType for &str {
+    type NextType = String;
+}
+impl PrintablePanicType for String {
+    type NextType = EndPrintingAttempts;
+}
+struct EndPrintingAttempts {}
+impl Display for EndPrintingAttempts {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Will never be printed")
+    }
+}
+impl PrintablePanicType for EndPrintingAttempts {
+    type NextType = EndPrintingAttempts;
 }
