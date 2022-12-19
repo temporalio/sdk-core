@@ -1,7 +1,6 @@
 use crate::{
-    conversions::anyhow_to_fail, workflow_context::WfContextSharedData, CancellableID, RustWfCmd,
-    SignalData, TimerResult, UnblockEvent, WfContext, WfExitValue, WorkflowFunction,
-    WorkflowResult,
+    workflow_context::WfContextSharedData, CancellableID, RustWfCmd, SignalData, TimerResult,
+    UnblockEvent, WfContext, WfExitValue, WorkflowFunction, WorkflowResult,
 };
 use anyhow::{anyhow, bail, Context as AnyhowContext, Error};
 use crossbeam::channel::Receiver;
@@ -132,10 +131,7 @@ impl WorkflowFuture {
     fn fail_wft(&self, run_id: String, fail: Error) {
         warn!("Workflow task failed for {}: {}", run_id, fail);
         self.outgoing_completions
-            .send(WorkflowActivationCompletion::fail(
-                run_id,
-                anyhow_to_fail(fail),
-            ))
+            .send(WorkflowActivationCompletion::fail(run_id, fail.into()))
             .expect("Completion channel intact");
     }
 

@@ -1197,7 +1197,22 @@ pub mod coresdk {
 
     impl From<anyhow::Error> for Failure {
         fn from(ae: anyhow::Error) -> Self {
-            Failure::application_failure(ae.to_string(), false)
+            Self {
+                failure_info: Some(FailureInfo::ApplicationFailureInfo(
+                    ApplicationFailureInfo {
+                        ..Default::default()
+                    },
+                )),
+                ..ae.chain()
+                    .rfold(None, |cause, e| {
+                        Some(Self {
+                            message: e.to_string(),
+                            cause: cause.map(Box::new),
+                            ..Default::default()
+                        })
+                    })
+                    .unwrap_or_default()
+            }
         }
     }
 
@@ -1931,5 +1946,25 @@ pub mod grpc {
         pub mod v1 {
             tonic::include_proto!("grpc.health.v1");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::temporal::api::failure::v1::Failure;
+    use anyhow::anyhow;
+
+    #[test]
+    fn anyhow_to_failure_conversion() {
+        let no_causes: Failure = anyhow!("no causes").into();
+        assert_eq!(no_causes.cause, None);
+        assert_eq!(no_causes.message, "no causes");
+        let orig = anyhow!("fail 1");
+        let mid = orig.context("fail 2");
+        let top = mid.context("fail 3");
+        let as_fail: Failure = top.into();
+        assert_eq!(as_fail.message, "fail 3");
+        assert_eq!(as_fail.cause.as_ref().unwrap().message, "fail 2");
+        assert_eq!(as_fail.cause.unwrap().cause.unwrap().message, "fail 1");
     }
 }
