@@ -1197,7 +1197,22 @@ pub mod coresdk {
 
     impl From<anyhow::Error> for Failure {
         fn from(ae: anyhow::Error) -> Self {
-            Failure::application_failure(ae.to_string(), false)
+            Self {
+                failure_info: Some(FailureInfo::ApplicationFailureInfo(
+                    ApplicationFailureInfo {
+                        ..Default::default()
+                    },
+                )),
+                ..ae.chain()
+                    .rfold(None, |cause, e| {
+                        Some(Self {
+                            message: e.to_string(),
+                            cause: cause.map(Box::new),
+                            ..Default::default()
+                        })
+                    })
+                    .expect("there is always at least one element in the error chain")
+            }
         }
     }
 
