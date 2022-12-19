@@ -136,7 +136,6 @@ impl ManagedRun {
                     }
                     RunActions::LocalResolution(r) => me
                         .local_resolution(r)
-                        .await
                         .map(RunActionOutcome::AfterLocalResolution),
                     RunActions::HeartbeatTimeout => {
                         let maybe_act = if me.heartbeat_timeout() {
@@ -254,9 +253,7 @@ impl ManagedRun {
         let outcome = async move {
             // Send commands from lang into the machines then check if the workflow run
             // needs another activation and mark it if so
-            self.wfm
-                .push_commands_and_iterate(completion.commands)
-                .await?;
+            self.wfm.push_commands_and_iterate(completion.commands)?;
             // Don't bother applying the next task if we're evicting at the end of
             // this activation
             if !completion.activation_was_eviction {
@@ -416,7 +413,7 @@ impl ManagedRun {
         }
     }
 
-    async fn local_resolution(
+    fn local_resolution(
         &mut self,
         res: LocalResolution,
     ) -> Result<Option<FulfillableActivationComplete>, RunUpdateErr> {
@@ -672,13 +669,13 @@ impl WorkflowManager {
 
     /// Feed the workflow machines new commands issued by the executing workflow code, and iterate
     /// the machines.
-    async fn push_commands_and_iterate(&mut self, cmds: Vec<WFCommand>) -> Result<()> {
+    fn push_commands_and_iterate(&mut self, cmds: Vec<WFCommand>) -> Result<()> {
         if let Some(cs) = self.command_sink.as_mut() {
             cs.send(cmds).map_err(|_| {
                 WFMachinesError::Fatal("Internal error buffering workflow commands".to_string())
             })?;
         }
-        self.machines.iterate_machines().await?;
+        self.machines.iterate_machines()?;
         Ok(())
     }
 }

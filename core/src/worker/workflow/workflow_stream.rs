@@ -453,31 +453,21 @@ impl WFStream {
 
         let mut did_miss_cache = !poll_resp_is_incremental;
 
-        let page_token = if !self.runs.has_run(&run_id) && poll_resp_is_incremental {
+        if !self.runs.has_run(&run_id) && poll_resp_is_incremental {
             debug!(run_id=?run_id, "Workflow task has partial history, but workflow is not in \
                    cache. Will fetch history");
             self.metrics.sticky_cache_miss();
             did_miss_cache = true;
-            NextPageToken::FetchFromStart
-        } else {
-            work.next_page_token.into()
-        };
-        let history_update = HistoryUpdate::new(
-            HistoryPaginator::new(
-                work.history,
-                work.workflow_execution.workflow_id.clone(),
-                run_id.clone(),
-                page_token,
-                self.client.clone(),
-            ),
-            work.previous_started_event_id,
-        );
+            // NextPageToken::FetchFromStart
+            // TODO: Need to return early here or, ideally lift this up higher.
+            unimplemented!()
+        }
         let legacy_query_from_poll = work
             .legacy_query
             .take()
             .map(|q| query_to_job(LEGACY_QUERY_ID.to_string(), q));
 
-        let mut pending_queries = work.query_requests.into_iter().collect::<Vec<_>>();
+        let mut pending_queries = work.query_requests;
         if !pending_queries.is_empty() && legacy_query_from_poll.is_some() {
             error!(
                 "Server issued both normal and legacy queries. This should not happen. Please \
@@ -499,7 +489,7 @@ impl WFStream {
             &run_id,
             &work.workflow_execution.workflow_id,
             &work.workflow_type,
-            history_update,
+            HistoryUpdate::new_from_events(work.history.events, work.previous_started_event_id),
             start_time,
         );
         run_handle.wft = Some(OutstandingTask {

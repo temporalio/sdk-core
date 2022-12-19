@@ -25,11 +25,9 @@ impl WorkflowBridge {
     }
 }
 
-#[async_trait::async_trait]
 impl WorkflowFetcher for WorkflowBridge {
-    async fn fetch_workflow_iteration_output(&mut self) -> Vec<WFCommand> {
+    fn fetch_workflow_iteration_output(&mut self) -> Vec<WFCommand> {
         let in_cmds = self.incoming_commands.try_recv();
-
         let in_cmds = in_cmds.unwrap_or_else(|_| vec![WFCommand::NoCommandsFromLang]);
         debug!(in_cmds = %in_cmds.display(), "wf bridge iteration fetch");
         in_cmds

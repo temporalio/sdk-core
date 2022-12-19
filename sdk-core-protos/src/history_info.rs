@@ -136,6 +136,10 @@ impl HistoryInfo {
         &self.events
     }
 
+    pub fn into_events(self) -> Vec<HistoryEvent> {
+        self.events
+    }
+
     /// Extract run id from the workflow execution started attributes.
     pub fn orig_run_id(&self) -> &str {
         &self.wf_exe_started_attrs.original_execution_run_id

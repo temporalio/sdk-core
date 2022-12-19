@@ -78,16 +78,14 @@ impl DrivenWorkflow {
     }
 }
 
-#[async_trait::async_trait]
 impl WorkflowFetcher for DrivenWorkflow {
-    async fn fetch_workflow_iteration_output(&mut self) -> Vec<WFCommand> {
-        self.fetcher.fetch_workflow_iteration_output().await
+    fn fetch_workflow_iteration_output(&mut self) -> Vec<WFCommand> {
+        self.fetcher.fetch_workflow_iteration_output()
     }
 }
 
 /// Implementors of this trait represent a way to fetch output from executing/iterating some
 /// workflow code (or a mocked workflow).
-#[async_trait::async_trait]
 pub trait WorkflowFetcher: Send {
     /// Obtain any output from the workflow's recent execution(s). Because the lang sdk is
     /// responsible for calling workflow code as a result of receiving tasks from
@@ -97,5 +95,5 @@ pub trait WorkflowFetcher: Send {
     ///
     /// In the case of the real [WorkflowBridge] implementation, commands are simply pulled from
     /// a buffer that the language side sinks into when it calls [crate::Core::complete_task]
-    async fn fetch_workflow_iteration_output(&mut self) -> Vec<WFCommand>;
+    fn fetch_workflow_iteration_output(&mut self) -> Vec<WFCommand>;
 }

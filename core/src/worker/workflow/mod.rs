@@ -13,7 +13,7 @@ mod workflow_stream;
 
 pub(crate) use bridge::WorkflowBridge;
 pub(crate) use driven_workflow::{DrivenWorkflow, WorkflowFetcher};
-pub(crate) use history_update::{HistoryPaginator, HistoryUpdate};
+pub(crate) use history_update::HistoryUpdate;
 pub(crate) use machines::WFMachinesError;
 #[cfg(test)]
 pub(crate) use managed_run::ManagedWFFunc;

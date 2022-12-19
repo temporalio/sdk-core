@@ -366,8 +366,8 @@ impl WorkflowMachines {
 
     /// Iterate the state machines, which consists of grabbing any pending outgoing commands from
     /// the workflow code, handling them, and preparing them to be sent off to the server.
-    pub(crate) async fn iterate_machines(&mut self) -> Result<()> {
-        let results = self.drive_me.fetch_workflow_iteration_output().await;
+    pub(crate) fn iterate_machines(&mut self) -> Result<()> {
+        let results = self.drive_me.fetch_workflow_iteration_output();
         self.handle_driven_results(results)?;
         self.prepare_commands()?;
         if self.workflow_is_finished() {
@@ -393,9 +393,7 @@ impl WorkflowMachines {
         let events = {
             let mut evts = self
                 .last_history_from_server
-                .take_next_wft_sequence(last_handled_wft_started_id)
-                .await
-                .map_err(WFMachinesError::HistoryFetchingError)?;
+                .take_next_wft_sequence(last_handled_wft_started_id);
             // Do not re-process events we have already processed
             evts.retain(|e| e.event_id > self.last_processed_event);
             evts
