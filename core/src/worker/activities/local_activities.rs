@@ -516,7 +516,6 @@ impl LocalActivityManager {
     }
 
     pub(crate) fn workflows_have_shutdown(&self) {
-        // TODO: Cancel _all_ outstanding las
         self.workflows_have_shut_down.cancel();
         self.set_shutdown_complete_if_ready(&mut self.dat.lock());
     }

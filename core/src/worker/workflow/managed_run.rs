@@ -366,25 +366,27 @@ impl ManagedRun {
         due_to_heartbeat_timeout: bool,
     ) -> FulfillableActivationComplete {
         let outgoing_cmds = self.wfm.get_server_commands();
+        if data.activation_was_only_eviction && !outgoing_cmds.commands.is_empty() {
+            dbg_panic!(
+                "There should not be any outgoing commands when preparing a completion response \
+                 if the activation was only an eviction. This is an SDK bug."
+            );
+        }
+
         let query_responses = data.query_responses;
         let has_query_responses = !query_responses.is_empty();
         let is_query_playback = data.has_pending_query && !has_query_responses;
         let mut force_new_wft = due_to_heartbeat_timeout;
 
-        // We only actually want to send commands back to the server if there are no more
-        // pending activations and we are caught up on replay. We don't want to complete a wft
-        // if we already saw the final event in the workflow, or if we are playing back for the
-        // express purpose of fulfilling a query. If the activation we sent was *only* an
-        // eviction, and there were no commands produced during iteration, don't send that
+        // We only actually want to send commands back to the server if there are no more pending
+        // activations and we are caught up on replay. We don't want to complete a wft if we already
+        // saw the final event in the workflow, or if we are playing back for the express purpose of
+        // fulfilling a query. If the activation we sent was *only* an eviction, don't send that
         // either.
-        // TODO: Seemingly, we should _never_ have iterated and had any commands if the activation
-        //   was only an eviction
-        let no_commands_and_evicting =
-            outgoing_cmds.commands.is_empty() && data.activation_was_only_eviction;
         let should_respond = !(self.wfm.machines.has_pending_jobs()
             || outgoing_cmds.replaying
             || is_query_playback
-            || no_commands_and_evicting);
+            || data.activation_was_only_eviction);
         // If there are pending LA resolutions, and we're responding to a query here,
         // we want to make sure to force a new task, as otherwise once we tell lang about
         // the LA resolution there wouldn't be any task to reply to with the result of iterating
@@ -392,17 +394,16 @@ impl ManagedRun {
         if has_query_responses && self.wfm.machines.has_pending_la_resolutions() {
             force_new_wft = true;
         }
-        let to_be_sent = ServerCommandsWithWorkflowInfo {
-            task_token: data.task_token,
-            action: ActivationAction::WftComplete {
-                force_new_wft,
-                commands: outgoing_cmds.commands,
-                query_responses,
-            },
-        };
 
         let outcome = if should_respond || has_query_responses {
-            ActivationCompleteOutcome::ReportWFTSuccess(to_be_sent)
+            ActivationCompleteOutcome::ReportWFTSuccess(ServerCommandsWithWorkflowInfo {
+                task_token: data.task_token,
+                action: ActivationAction::WftComplete {
+                    force_new_wft,
+                    commands: outgoing_cmds.commands,
+                    query_responses,
+                },
+            })
         } else {
             ActivationCompleteOutcome::DoNothing
         };

@@ -882,6 +882,8 @@ enum ActivationCompleteOutcome {
 #[derive(Debug)]
 enum WFTReportStatus {
     Reported,
+    /// The WFT completion was not reported when finishing the activation, because there's still
+    /// work to be done. EX: Running LAs.
     NotReported,
     /// We didn't report, but we want to clear the outstanding workflow task anyway. See
     /// [ActivationCompleteOutcome::WFTFailedDontReport]
