@@ -1127,6 +1127,26 @@ pub mod coresdk {
             }
         }
 
+        pub fn application_failure_from_error(ae: anyhow::Error, non_retryable: bool) -> Self {
+            Self {
+                failure_info: Some(FailureInfo::ApplicationFailureInfo(
+                    ApplicationFailureInfo {
+                        non_retryable,
+                        ..Default::default()
+                    },
+                )),
+                ..ae.chain()
+                    .rfold(None, |cause, e| {
+                        Some(Self {
+                            message: e.to_string(),
+                            cause: cause.map(Box::new),
+                            ..Default::default()
+                        })
+                    })
+                    .unwrap_or_default()
+            }
+        }
+
         /// Extracts an ApplicationFailureInfo from a Failure instance if it exists
         pub fn maybe_application_failure(&self) -> Option<&ApplicationFailureInfo> {
             if let Failure {
@@ -1197,22 +1217,7 @@ pub mod coresdk {
 
     impl From<anyhow::Error> for Failure {
         fn from(ae: anyhow::Error) -> Self {
-            Self {
-                failure_info: Some(FailureInfo::ApplicationFailureInfo(
-                    ApplicationFailureInfo {
-                        ..Default::default()
-                    },
-                )),
-                ..ae.chain()
-                    .rfold(None, |cause, e| {
-                        Some(Self {
-                            message: e.to_string(),
-                            cause: cause.map(Box::new),
-                            ..Default::default()
-                        })
-                    })
-                    .unwrap_or_default()
-            }
+            Failure::application_failure_from_error(ae, false)
         }
     }
 
