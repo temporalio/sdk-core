@@ -255,10 +255,10 @@ impl WorkflowMachines {
             .and_then(|(st, et)| et.duration_since(st).ok())
     }
 
-    pub(crate) async fn new_history_from_server(&mut self, update: HistoryUpdate) -> Result<()> {
+    pub(crate) fn new_history_from_server(&mut self, update: HistoryUpdate) -> Result<()> {
         self.last_history_from_server = update;
         self.replaying = self.last_history_from_server.previous_started_event_id > 0;
-        self.apply_next_wft_from_history().await?;
+        self.apply_next_wft_from_history()?;
         Ok(())
     }
 
@@ -381,7 +381,7 @@ impl WorkflowMachines {
     /// Apply the next (unapplied) entire workflow task from history to these machines. Will replay
     /// any events that need to be replayed until caught up to the newest WFT. May also fetch
     /// history from server if needed.
-    pub(crate) async fn apply_next_wft_from_history(&mut self) -> Result<usize> {
+    pub(crate) fn apply_next_wft_from_history(&mut self) -> Result<usize> {
         // If we have already seen the terminal event for the entire workflow in a previous WFT,
         // then we don't need to do anything here, and in fact we need to avoid re-applying the
         // final WFT.

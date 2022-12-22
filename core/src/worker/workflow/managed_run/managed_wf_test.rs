@@ -107,7 +107,7 @@ impl ManagedWFFunc {
 
     #[instrument(skip(self))]
     pub(crate) async fn get_next_activation(&mut self) -> Result<WorkflowActivation> {
-        let res = self.mgr.get_next_activation().await?;
+        let res = self.mgr.get_next_activation()?;
         debug!("Managed wf next activation: {}", &res);
         self.push_activation_to_wf(&res).await?;
         Ok(res)
@@ -128,7 +128,7 @@ impl ManagedWFFunc {
         &mut self,
         update: HistoryUpdate,
     ) -> Result<WorkflowActivation> {
-        let res = self.mgr.feed_history_from_server(update).await?;
+        let res = self.mgr.feed_history_from_server(update)?;
         self.push_activation_to_wf(&res).await?;
         Ok(res)
     }

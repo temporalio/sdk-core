@@ -112,15 +112,15 @@ impl ManagedRun {
             let span = action.trace_span;
             let action = action.action;
             let mut no_wft = false;
+            // TODO: Async not needed any longer. Also can figure out how eliminate channels here,
+            //    tho heartbeat might be a slight challenge
             async move {
                 let res = match action {
-                    RunActions::NewIncomingWFT(wft) => me
-                        .incoming_wft(wft)
-                        .await
-                        .map(RunActionOutcome::AfterNewWFT),
+                    RunActions::NewIncomingWFT(wft) => {
+                        me.incoming_wft(wft).map(RunActionOutcome::AfterNewWFT)
+                    }
                     RunActions::ActivationCompletion(completion) => me
                         .completion(completion, &heartbeat_tx)
-                        .await
                         .map(RunActionOutcome::AfterCompletion),
                     RunActions::CheckMoreWork {
                         want_to_evict,
@@ -131,7 +131,6 @@ impl ManagedRun {
                             no_wft = true;
                         }
                         me.check_more_work(want_to_evict, has_pending_queries, has_wft)
-                            .await
                             .map(RunActionOutcome::AfterCheckWork)
                     }
                     RunActions::LocalResolution(r) => me
@@ -174,14 +173,14 @@ impl ManagedRun {
         .await;
     }
 
-    async fn incoming_wft(
+    fn incoming_wft(
         &mut self,
         wft: NewIncomingWFT,
     ) -> Result<Option<ActivationOrAuto>, RunUpdateErr> {
         let activation = if let Some(h) = wft.history_update {
-            self.wfm.feed_history_from_server(h).await?
+            self.wfm.feed_history_from_server(h)?
         } else {
-            let r = self.wfm.get_next_activation().await?;
+            let r = self.wfm.get_next_activation()?;
             if r.jobs.is_empty() {
                 return Err(RunUpdateErr {
                     source: WFMachinesError::Fatal(format!(
@@ -227,7 +226,7 @@ impl ManagedRun {
         Ok(Some(ActivationOrAuto::LangActivation(activation)))
     }
 
-    async fn completion(
+    fn completion(
         &mut self,
         mut completion: RunActivationCompletion,
         heartbeat_tx: &UnboundedSender<Span>,
@@ -250,14 +249,14 @@ impl ManagedRun {
             return Ok(Some(self.prepare_complete_resp(resp_chan, data, false)));
         }
 
-        let outcome = async move {
+        let outcome = {
             // Send commands from lang into the machines then check if the workflow run
             // needs another activation and mark it if so
             self.wfm.push_commands_and_iterate(completion.commands)?;
             // Don't bother applying the next task if we're evicting at the end of
             // this activation
             if !completion.activation_was_eviction {
-                self.wfm.apply_next_task_if_ready().await?;
+                self.wfm.apply_next_task_if_ready()?;
             }
             let new_local_acts = self.wfm.drain_queued_local_activities();
             self.sink_la_requests(new_local_acts)?;
@@ -283,8 +282,7 @@ impl ManagedRun {
                     self,
                 ))
             }
-        }
-        .await;
+        };
 
         match outcome {
             Ok((None, data, me)) => Ok(Some(me.prepare_complete_resp(resp_chan, data, false))),
@@ -311,7 +309,7 @@ impl ManagedRun {
         }
     }
 
-    async fn check_more_work(
+    fn check_more_work(
         &mut self,
         want_to_evict: Option<RequestEvictMsg>,
         has_pending_queries: bool,
@@ -331,7 +329,7 @@ impl ManagedRun {
 
         if self.wfm.machines.has_pending_jobs() && !self.am_broken {
             Ok(Some(ActivationOrAuto::LangActivation(
-                self.wfm.get_next_activation().await?,
+                self.wfm.get_next_activation()?,
             )))
         } else {
             if has_pending_queries && !self.am_broken {
@@ -597,12 +595,9 @@ impl WorkflowManager {
     ///
     /// Should only be called when a workflow has caught up on replay (or is just beginning). It
     /// will return a workflow activation if one is needed.
-    async fn feed_history_from_server(
-        &mut self,
-        update: HistoryUpdate,
-    ) -> Result<WorkflowActivation> {
-        self.machines.new_history_from_server(update).await?;
-        self.get_next_activation().await
+    fn feed_history_from_server(&mut self, update: HistoryUpdate) -> Result<WorkflowActivation> {
+        self.machines.new_history_from_server(update)?;
+        self.get_next_activation()
     }
 
     /// Let this workflow know that something we've been waiting locally on has resolved, like a
@@ -619,14 +614,14 @@ impl WorkflowManager {
     ///
     /// Callers may also need to call [get_server_commands] after this to issue any pending commands
     /// to the server.
-    async fn get_next_activation(&mut self) -> Result<WorkflowActivation> {
+    fn get_next_activation(&mut self) -> Result<WorkflowActivation> {
         // First check if there are already some pending jobs, which can be a result of replay.
         let activation = self.machines.get_wf_activation();
         if !activation.jobs.is_empty() {
             return Ok(activation);
         }
 
-        self.machines.apply_next_wft_from_history().await?;
+        self.machines.apply_next_wft_from_history()?;
         Ok(self.machines.get_wf_activation())
     }
 
@@ -634,12 +629,12 @@ impl WorkflowManager {
     /// again if there are any jobs. Importantly, does not *drain* jobs.
     ///
     /// Returns true if there are jobs (before or after applying the next WFT).
-    async fn apply_next_task_if_ready(&mut self) -> Result<bool> {
+    fn apply_next_task_if_ready(&mut self) -> Result<bool> {
         if self.machines.has_pending_jobs() {
             return Ok(true);
         }
         loop {
-            let consumed_events = self.machines.apply_next_wft_from_history().await?;
+            let consumed_events = self.machines.apply_next_wft_from_history()?;
 
             if consumed_events == 0 || !self.machines.replaying || self.machines.has_pending_jobs()
             {
