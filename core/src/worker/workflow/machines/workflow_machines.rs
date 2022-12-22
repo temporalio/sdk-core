@@ -412,6 +412,7 @@ impl WorkflowMachines {
             }
         }
 
+        info!(events = %events.display(), "Next seq events");
         let mut history = events.into_iter().peekable();
         while let Some(event) = history.next() {
             if event.event_id != self.last_processed_event + 1 {
@@ -432,7 +433,10 @@ impl WorkflowMachines {
 
         // Scan through to the next WFT, searching for any patch / la markers, so that we can
         // pre-resolve them.
-        for e in self.last_history_from_server.peek_next_wft_sequence() {
+        for e in self
+            .last_history_from_server
+            .peek_next_wft_sequence(last_handled_wft_started_id)
+        {
             if let Some((patch_id, _)) = e.get_patch_marker_details() {
                 self.encountered_change_markers.insert(
                     patch_id.clone(),

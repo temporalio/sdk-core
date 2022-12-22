@@ -25,11 +25,8 @@ use tracing::Instrument;
 /// by [WorkflowManager]. History events are expected to be consumed from it and applied to the
 /// state machines.
 pub struct HistoryUpdate {
-    events: VecDeque<HistoryEvent>,
+    events: Vec<HistoryEvent>,
     pub previous_started_event_id: i64,
-    /// The last event id in the WFT returned the last time [HistoryUpdate::take_next_wft_sequence]
-    /// was called. Used to enable [HistoryUpdate::peek_next_wft_sequence]
-    last_wft_final_event_id: i64,
 }
 impl Debug for HistoryUpdate {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -112,36 +109,30 @@ impl HistoryPaginator {
         &mut self,
         last_processed_event_id: i64,
     ) -> Result<HistoryUpdate, tonic::Status> {
-        // If the existing event queue contains enough events for this WFT and the next, just
-        // take that wholesale. (Assuming we don't need to fetch from start).
-
-        self.get_next_page_if_needed().await?;
+        self.get_next_page().await?;
         let current_events = mem::take(&mut self.event_queue);
-        Ok(HistoryUpdate::new_from_events(
-            current_events,
-            last_processed_event_id,
-        ))
+        // If there are some events at the end of the fetched events which represent only a portion
+        // of a complete WFT, retain them to be used in the next extraction.
+        let (update, extra) = HistoryUpdate::from_events(current_events, last_processed_event_id);
+        self.event_queue = extra.into();
+        Ok(update)
     }
 
-    async fn get_next_page_if_needed(&mut self) -> Result<(), tonic::Status> {
-        if self.event_queue.is_empty() {
-            let npt = match mem::replace(&mut self.next_page_token, NextPageToken::Done) {
-                // If there's no open request and the last page token we got was empty, we're done.
-                NextPageToken::Done => return Ok(()),
-                NextPageToken::FetchFromStart => vec![],
-                NextPageToken::Next(v) => v,
-            };
-            debug!(run_id=%self.run_id, "Fetching new history page");
-            let gw = self.client.clone();
-            let wid = self.wf_id.clone();
-            let rid = self.run_id.clone();
-            let fetch_res = gw
-                .get_workflow_execution_history(wid, Some(rid), npt)
-                .instrument(span!(tracing::Level::TRACE, "fetch_history_in_paginator"))
-                .await?;
+    async fn get_next_page(&mut self) -> Result<(), tonic::Status> {
+        let npt = match mem::replace(&mut self.next_page_token, NextPageToken::Done) {
+            // If there's no open request and the last page token we got was empty, we're done.
+            NextPageToken::Done => return Ok(()),
+            NextPageToken::FetchFromStart => vec![],
+            NextPageToken::Next(v) => v,
+        };
+        debug!(run_id=%self.run_id, "Fetching new history page");
+        let fetch_res = self
+            .client
+            .get_workflow_execution_history(self.wf_id.clone(), Some(self.run_id.clone()), npt)
+            .instrument(span!(tracing::Level::TRACE, "fetch_history_in_paginator"))
+            .await?;
 
-            self.extend_queue_with_new_page(fetch_res);
-        }
+        self.extend_queue_with_new_page(fetch_res);
         Ok(())
     }
 
@@ -193,7 +184,7 @@ impl Stream for StreamingHistoryPaginator {
             // SAFETY: This is safe because the inner paginator cannot be dropped before the future,
             //   and the future won't be moved from out of this struct.
             this.open_history_request.set(Some(unsafe {
-                transmute(HistoryPaginator::get_next_page_if_needed(this.inner).boxed())
+                transmute(HistoryPaginator::get_next_page(this.inner).boxed())
             }));
         }
         let history_req = this.open_history_request.as_mut().as_pin_mut().unwrap();
@@ -212,7 +203,43 @@ impl Stream for StreamingHistoryPaginator {
 }
 
 impl HistoryUpdate {
-    /// Create an instance of an update directly from events - should only be used for replaying.
+    /// Create an instance of an update directly from events. If the passed in event iterator has a
+    /// partial WFT sequence at the end, all events after the last complete WFT sequence (ending
+    /// with WFT started) are returned back to the caller, since the history update only works in
+    /// terms of complete WFT sequences.
+    pub fn from_events<I: IntoIterator<Item = HistoryEvent>>(
+        events: I,
+        previous_wft_started_id: i64,
+    ) -> (Self, Vec<HistoryEvent>)
+    where
+        <I as IntoIterator>::IntoIter: Send + 'static,
+    {
+        let mut all_events: Vec<_> = events.into_iter().collect();
+        let mut last_end = find_end_index_of_next_wft_seq(all_events.as_slice(), 0);
+        while let NextWFTSeqEndIndex::Complete(next_end_ix) = last_end {
+            let next_end_eid = all_events[next_end_ix].event_id;
+            // TODO: can pass portion of slice to skip already scanned events
+            let next_end = find_end_index_of_next_wft_seq(&all_events, next_end_eid);
+            if matches!(next_end, NextWFTSeqEndIndex::Incomplete(_)) {
+                break;
+            }
+            last_end = next_end;
+        }
+        let remaining_events = all_events.split_off(last_end.index() + 1);
+
+        (
+            Self {
+                events: all_events,
+                previous_started_event_id: previous_wft_started_id,
+            },
+            remaining_events,
+        )
+    }
+
+    // TODO: Can I eliminate this? Probably still needed for some tests
+    /// Create an instance of an update directly from events. The passed in events *must* consist
+    /// of one or more complete WFT sequences. IE: The event iterator must not end in the middle
+    /// of a WFT sequence.
     pub fn new_from_events<I: IntoIterator<Item = HistoryEvent>>(
         events: I,
         previous_wft_started_id: i64,
@@ -223,7 +250,6 @@ impl HistoryUpdate {
         Self {
             events: events.into_iter().collect(),
             previous_started_event_id: previous_wft_started_id,
-            last_wft_final_event_id: 0,
         }
     }
 
@@ -237,46 +263,40 @@ impl HistoryUpdate {
     /// vec, indicating more pages will need to be fetched.
     pub fn take_next_wft_sequence(&mut self, from_wft_started_id: i64) -> Vec<HistoryEvent> {
         // First, drop any events from the queue which are earlier than the passed-in id.
-        if let Some((ix_first_relevant, _)) = self
-            .events
-            .iter()
-            .find_position(|e| e.event_id > from_wft_started_id)
-        {
+        if let Some(ix_first_relevant) = self.starting_index_after_skipping(from_wft_started_id) {
             self.events.drain(0..ix_first_relevant);
         }
-        let next_wft_ix = self
-            .find_end_index_of_next_wft_sequence(from_wft_started_id)
-            .index();
+        let next_wft_ix = find_end_index_of_next_wft_seq(&self.events, from_wft_started_id).index();
         if next_wft_ix == 0 {
             return vec![];
         }
-        let next_wft_events: Vec<_> = self.events.drain(0..=next_wft_ix).collect();
-        self.last_wft_final_event_id = next_wft_events
-            .last()
-            .map(|he| he.event_id)
-            .unwrap_or(i64::MAX);
-
-        next_wft_events
+        self.events.drain(0..=next_wft_ix).collect()
     }
-
     /// Lets the caller peek ahead at the next WFT sequence that will be returned by
     /// [take_next_wft_sequence]. Will always return the first available WFT sequence if that has
     /// not been called first. May also return an empty iterator or incomplete sequence if we are at
     /// the end of history.
-    pub fn peek_next_wft_sequence(&self) -> impl Iterator<Item = &HistoryEvent> {
-        self.events.iter().take(
-            self.find_end_index_of_next_wft_sequence(self.last_wft_final_event_id)
-                .index()
-                + 1,
-        )
+    pub fn peek_next_wft_sequence(&self, from_wft_started_id: i64) -> &[HistoryEvent] {
+        let ix_first_relevant = self
+            .starting_index_after_skipping(from_wft_started_id)
+            .unwrap_or_default();
+        let relevant_events = &self.events[ix_first_relevant..];
+        if relevant_events.len() == 0 {
+            return relevant_events;
+        }
+        let ix_end = find_end_index_of_next_wft_seq(relevant_events, from_wft_started_id).index();
+        &relevant_events[0..=ix_end]
     }
 
-    /// Discovers the index of the last event in next WFT sequence within the event queue.
-    fn find_end_index_of_next_wft_sequence(&self, from_event_id: i64) -> NextWFTSeqEndIndex {
-        find_end_index_of_next_wft_seq_in_iterator(self.events.iter(), from_event_id)
+    fn starting_index_after_skipping(&self, from_wft_started_id: i64) -> Option<usize> {
+        self.events
+            .iter()
+            .find_position(|e| e.event_id > from_wft_started_id)
+            .map(|(ix, _)| ix)
     }
 }
 
+#[derive(Debug, Copy, Clone)]
 enum NextWFTSeqEndIndex {
     /// The next WFT sequence is completely contained within the passed-in iterator
     Complete(usize),
@@ -292,54 +312,19 @@ impl NextWFTSeqEndIndex {
     }
 }
 
-/// Discovers the index of the last event in next WFT sequence within the passed-in iterator
-fn find_end_index_of_next_wft_seq_in_iterator<'a>(
-    events: impl Iterator<Item = &'a HistoryEvent>,
+/// Discovers the index of the last event in next WFT sequence within the passed-in slice
+fn find_end_index_of_next_wft_seq(
+    events: &[HistoryEvent],
     from_event_id: i64,
 ) -> NextWFTSeqEndIndex {
-    // This flag tracks if, while determining events to be returned, we have seen the next
-    // logically significant WFT started event which follows the one that was passed in as a
-    // parameter. If a WFT fails, times out, or is devoid of commands (ie: a heartbeat) it is
-    // not significant. So we will stop returning events (exclusive) as soon as we see an event
-    // following a WFT started that is *not* failed, timed out, or completed with a command.
-    let mut next_wft_state = NextWftState::NotSeen;
-    let mut should_pop = |e: &HistoryEvent| {
-        if e.event_type() == EventType::WorkflowTaskStarted {
-            next_wft_state = NextWftState::Seen;
-            return true;
-        }
-
-        match next_wft_state {
-            NextWftState::Seen => {
-                // Must ignore failures and timeouts
-                if e.event_type() == EventType::WorkflowTaskFailed
-                    || e.event_type() == EventType::WorkflowTaskTimedOut
-                {
-                    next_wft_state = NextWftState::NotSeen;
-                    return true;
-                } else if e.event_type() == EventType::WorkflowTaskCompleted {
-                    next_wft_state = NextWftState::SeenCompleted;
-                    return true;
-                }
-                false
-            }
-            NextWftState::SeenCompleted => {
-                // If we've seen the WFT be completed, and this event is another scheduled, then
-                // this was an empty heartbeat we should ignore.
-                if e.event_type() == EventType::WorkflowTaskScheduled {
-                    next_wft_state = NextWftState::NotSeen;
-                    return true;
-                }
-                // Otherwise, we're done here
-                false
-            }
-            NextWftState::NotSeen => true,
-        }
-    };
-
+    if events.is_empty() {
+        return NextWFTSeqEndIndex::Incomplete(0);
+    }
     let mut last_seen_id = None;
     let mut last_index = 0;
-    for (ix, e) in events.enumerate() {
+    let mut saw_any_non_wft_event = false;
+    // let mut saw_any_non_wft_event_besides_execution_start = false;
+    for (ix, e) in events.iter().enumerate() {
         // This little block prevents us from infinitely fetching work from the server in the
         // event that, for whatever reason, it keeps returning stuff we've already seen.
         // TODO: This may not make sense any more?
@@ -354,27 +339,50 @@ fn find_end_index_of_next_wft_seq_in_iterator<'a>(
 
         // It's possible to have gotten a new history update without eviction (ex: unhandled
         // command on completion), where we may need to skip events we already handled.
-        if e.event_id > from_event_id {
-            if !should_pop(&e) {
-                if next_wft_state == NextWftState::SeenCompleted {
-                    // We have seen the wft completed event, but decided to exit. We don't
-                    // want to return that event as part of this sequence, so we step back one
-                    // event
-                    return NextWFTSeqEndIndex::Complete(ix - 2);
+        if e.event_id <= from_event_id {
+            continue;
+        }
+
+        if !matches!(
+            e.event_type(),
+            EventType::WorkflowTaskFailed
+                | EventType::WorkflowTaskTimedOut
+                | EventType::WorkflowTaskScheduled
+                | EventType::WorkflowTaskStarted
+                | EventType::WorkflowTaskCompleted
+        ) {
+            saw_any_non_wft_event = true;
+        }
+
+        if e.event_type() == EventType::WorkflowTaskStarted {
+            // If the next event is WFT timeout or fail, that doesn't conclude a WFT sequence
+            if let Some(next_event) = events.get(ix + 1) {
+                let et = next_event.event_type();
+                if et == EventType::WorkflowTaskFailed || et == EventType::WorkflowTaskTimedOut {
+                    continue;
                 }
-                return NextWFTSeqEndIndex::Complete(ix - 1);
+                // If we've never seen an interesting event and the next two events are a completion
+                // followed immediately again by scheduled, then this is a WFT heartbeat and also
+                // doesn't conclude the sequence
+                else if et == EventType::WorkflowTaskCompleted {
+                    // The <= 2 check here ensures that if the first WFT is a heartbeat, we skip
+                    // that too, since the execution started event counts as "non-wft".
+                    if !saw_any_non_wft_event || ix <= 2 {
+                        if let Some(next_next_event) = events.get(ix + 2) {
+                            if next_next_event.event_type() == EventType::WorkflowTaskScheduled {
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+            if saw_any_non_wft_event {
+                return NextWFTSeqEndIndex::Complete(ix);
             }
         }
     }
 
     NextWFTSeqEndIndex::Incomplete(last_index)
-}
-
-#[derive(Eq, PartialEq, Debug)]
-enum NextWftState {
-    NotSeen,
-    Seen,
-    SeenCompleted,
 }
 
 impl From<HistoryInfo> for HistoryUpdate {
@@ -397,10 +405,10 @@ impl TestHBExt for TestHistoryBuilder {
 pub mod tests {
     use super::*;
     use crate::{test_help::canned_histories, worker::client::mocks::mock_workflow_client};
-    use futures_util::{StreamExt, TryStreamExt};
+    use futures_util::TryStreamExt;
 
     fn next_check_peek(update: &mut HistoryUpdate, from_id: i64) -> Vec<HistoryEvent> {
-        let seq_peeked = update.peek_next_wft_sequence().cloned().collect::<Vec<_>>();
+        let seq_peeked = update.peek_next_wft_sequence(from_id).to_vec();
         let seq = update.take_next_wft_sequence(from_id);
         assert_eq!(seq, seq_peeked);
         seq
@@ -413,7 +421,7 @@ pub mod tests {
         let seq_1 = next_check_peek(&mut update, 0);
         assert_eq!(seq_1.len(), 3);
         assert_eq!(seq_1.last().unwrap().event_id, 3);
-        let seq_2_peeked = update.peek_next_wft_sequence().cloned().collect::<Vec<_>>();
+        let seq_2_peeked = update.peek_next_wft_sequence(0).to_vec();
         let seq_2 = next_check_peek(&mut update, 3);
         assert_eq!(seq_2, seq_2_peeked);
         assert_eq!(seq_2.len(), 5);
@@ -469,14 +477,14 @@ pub mod tests {
         let mut t = TestHistoryBuilder::default();
         t.add_by_type(EventType::WorkflowExecutionStarted);
         t.add_full_wf_task();
-        t.add_full_wf_task();
+        t.add_full_wf_task(); // wft started 6
         t.add_get_event_id(EventType::TimerStarted, None);
+        t.add_full_wf_task(); // wft started 10
         t.add_full_wf_task();
         t.add_full_wf_task();
-        t.add_full_wf_task();
-        t.add_full_wf_task();
+        t.add_full_wf_task(); // wft started 19
         t.add_get_event_id(EventType::TimerStarted, None);
-        t.add_full_wf_task();
+        t.add_full_wf_task(); // wft started 23
         t.add_we_signaled("whee", vec![]);
         t.add_full_wf_task();
         t.add_workflow_execution_completed();
@@ -485,19 +493,39 @@ pub mod tests {
         let seq = next_check_peek(&mut update, 0);
         assert_eq!(seq.len(), 6);
         let seq = next_check_peek(&mut update, 6);
-        assert_eq!(seq.len(), 13);
-        let seq = next_check_peek(&mut update, 19);
         assert_eq!(seq.len(), 4);
+        let seq = next_check_peek(&mut update, 10);
+        dbg!(&seq);
+        assert_eq!(seq.len(), 13);
         let seq = next_check_peek(&mut update, 23);
         assert_eq!(seq.len(), 4);
         let seq = next_check_peek(&mut update, 27);
         assert_eq!(seq.len(), 2);
     }
 
-    fn paginator_setup(wft_count: usize) -> HistoryPaginator {
-        let long_hist = canned_histories::long_sequential_timers(wft_count);
+    #[test]
+    fn heartbeat_marker_end() {
+        let mut t = TestHistoryBuilder::default();
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        t.add_full_wf_task();
+        t.add_full_wf_task();
+        t.add_local_activity_result_marker(1, "1", "done".into());
+        t.add_workflow_execution_completed();
+
+        // TODO: repros query_during_wft_heartbeat_doesnt_accidentally_fail_to_continue_heartbeat
+        //  "fixed" wft sequencing logic has problem with LA FSM, but maybe the machine should
+        //  be fixed
+        let mut update = t.as_history_update();
+        let seq = next_check_peek(&mut update, 3);
+        // completed, sched, started
+        assert_eq!(seq.len(), 3);
+        let seq = next_check_peek(&mut update, 6);
+        assert_eq!(seq.len(), 3);
+    }
+
+    fn paginator_setup(history: TestHistoryBuilder) -> HistoryPaginator {
         let chunk_size = 10;
-        let full_hist = long_hist.get_full_history_info().unwrap().into_events();
+        let full_hist = history.get_full_history_info().unwrap().into_events();
         let initial_hist = full_hist.chunks(chunk_size).nth(0).unwrap().to_vec();
         let mut mock_client = mock_workflow_client();
 
@@ -538,7 +566,7 @@ pub mod tests {
     #[tokio::test]
     async fn paginator_extracts_updates() {
         let wft_count = 100;
-        let mut paginator = paginator_setup(wft_count);
+        let mut paginator = paginator_setup(canned_histories::long_sequential_timers(wft_count));
         let mut update = paginator.extract_next_update(0).await.unwrap();
 
         let seq = update.take_next_wft_sequence(0);
@@ -568,13 +596,62 @@ pub mod tests {
     #[tokio::test]
     async fn paginator_streams() {
         let wft_count = 10;
-        let paginator = StreamingHistoryPaginator::new(paginator_setup(wft_count));
+        let paginator = StreamingHistoryPaginator::new(paginator_setup(
+            canned_histories::long_sequential_timers(wft_count),
+        ));
         let everything: Vec<_> = paginator.try_collect().await.unwrap();
         assert_eq!(everything.len(), (wft_count + 1) * 5);
         everything.iter().fold(1, |event_id, e| {
             assert_eq!(event_id, e.event_id);
             e.event_id + 1
         });
+    }
+
+    fn three_wfts_then_heartbeats() -> TestHistoryBuilder {
+        let mut t = TestHistoryBuilder::default();
+        // Start with two complete normal WFTs
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        t.add_full_wf_task(); // wft start - 3
+        t.add_get_event_id(EventType::TimerStarted, None);
+        t.add_full_wf_task(); // wft start - 7
+        t.add_get_event_id(EventType::TimerStarted, None);
+        t.add_full_wf_task(); // wft start - 11
+        for _ in 1..50 {
+            // Add a bunch of heartbeats with no commands, which count as one task
+            t.add_full_wf_task();
+        }
+        t.add_workflow_execution_completed();
+        t
+    }
+
+    #[tokio::test]
+    async fn extract_update_one_wft_on_multiple_pages() {
+        let t = three_wfts_then_heartbeats();
+        let mut ends_in_middle_of_seq = t.as_history_update().events;
+        ends_in_middle_of_seq.truncate(20);
+        // The update should contain the first two complete WFTs, ending on the 11th event which
+        // is WFT started. The remaining events should be returned.
+        let (update, remaining) = HistoryUpdate::from_events(ends_in_middle_of_seq, 0);
+        assert_eq!(update.events.last().unwrap().event_id, 11);
+        assert_eq!(remaining[0].event_id, 12);
+    }
+
+    #[tokio::test]
+    async fn task_just_before_heartbeat_chain_is_taken() {
+        let t = three_wfts_then_heartbeats();
+        let mut update = t.as_history_update();
+        let seq = update.take_next_wft_sequence(0);
+        assert_eq!(seq.last().unwrap().event_id, 3);
+        let seq = update.take_next_wft_sequence(3);
+        assert_eq!(seq.last().unwrap().event_id, 7);
+        let seq = update.take_next_wft_sequence(7);
+        assert_eq!(seq.last().unwrap().event_id, 11);
+        let seq = update.take_next_wft_sequence(11);
+        assert_eq!(seq.last().unwrap().event_id, 160);
+        assert_eq!(
+            seq.last().unwrap().event_type(),
+            EventType::WorkflowExecutionCompleted
+        );
     }
 
     #[tokio::test]
