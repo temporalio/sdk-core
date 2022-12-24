@@ -394,6 +394,9 @@ impl WorkflowMachines {
             let mut evts = self
                 .last_history_from_server
                 .take_next_wft_sequence(last_handled_wft_started_id);
+            // TODO: If evts is empty here that can potentially mean we need to fetch more pages.
+            //  Should return something more explicit in that case, so reaching end of replay
+            //  if more obvious
             // Do not re-process events we have already processed
             evts.retain(|e| e.event_id > self.last_processed_event);
             evts

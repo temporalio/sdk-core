@@ -26,6 +26,7 @@ use crate::{
         activities::{ActivitiesFromWFTsHandle, PermittedTqResp},
         client::{WorkerClient, WorkflowTaskCompletion},
         workflow::{
+            history_update::HistoryPaginator,
             managed_run::{ManagedRun, WorkflowManager},
             wft_poller::validate_wft,
             workflow_stream::{LocalInput, LocalInputs, WFStream},
@@ -36,7 +37,7 @@ use crate::{
 };
 use futures::{stream::BoxStream, Stream, StreamExt};
 use std::{
-    collections::HashSet,
+    collections::{HashSet, VecDeque},
     fmt::{Debug, Display, Formatter},
     future::Future,
     ops::DerefMut,
@@ -59,8 +60,9 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::{
         command::v1::{command::Attributes, Command as ProtoCommand, Command},
-        common::v1::{Memo, RetryPolicy, SearchAttributes},
+        common::v1::{Memo, RetryPolicy, SearchAttributes, WorkflowExecution},
         enums::v1::WorkflowTaskFailedCause,
+        query::v1::WorkflowQuery,
         taskqueue::v1::StickyExecutionAttributes,
         workflowservice::v1::PollActivityTaskQueueResponse,
     },
@@ -82,7 +84,7 @@ pub(crate) const LEGACY_QUERY_ID: &str = "legacy_query";
 const MAX_EAGER_ACTIVITY_RESERVATIONS_PER_WORKFLOW_TASK: usize = 3;
 
 type Result<T, E = WFMachinesError> = result::Result<T, E>;
-type BoxedActivationStream = BoxStream<'static, Result<ActivationOrAuto, PollWfError>>;
+type BoxedActivationStream = BoxStream<'static, Result<WFStreamOutput, PollWfError>>;
 
 /// Centralizes all state related to workflows and workflow tasks
 pub(crate) struct Workflows {
@@ -182,18 +184,25 @@ impl Workflows {
                 }
                 stream.next().await.unwrap_or(Err(PollWfError::ShutDown))?
             };
-            Span::current().record("run_id", r.run_id());
-            match r {
-                ActivationOrAuto::LangActivation(act) | ActivationOrAuto::ReadyForQueries(act) => {
-                    debug!(activation=%act, "Sending activation to lang");
-                    break Ok(act);
-                }
-                ActivationOrAuto::Autocomplete { run_id } => {
-                    self.activation_completed(WorkflowActivationCompletion {
-                        run_id,
-                        status: Some(workflow_completion::Success::from_variants(vec![]).into()),
-                    })
-                    .await?;
+            // TODO: Submit history fetch requests somewhere
+
+            if let Some(al) = r.activation {
+                Span::current().record("run_id", al.run_id());
+                match al {
+                    ActivationOrAuto::LangActivation(act)
+                    | ActivationOrAuto::ReadyForQueries(act) => {
+                        debug!(activation=%act, "Sending activation to lang");
+                        break Ok(act);
+                    }
+                    ActivationOrAuto::Autocomplete { run_id } => {
+                        self.activation_completed(WorkflowActivationCompletion {
+                            run_id,
+                            status: Some(
+                                workflow_completion::Success::from_variants(vec![]).into(),
+                            ),
+                        })
+                        .await?;
+                    }
                 }
             }
         }
@@ -305,10 +314,20 @@ impl Workflows {
             ActivationCompleteOutcome::DoNothing => WFTReportStatus::NotReported,
         };
 
+        // TODO: Combine with other place paginator is created, probably lift that into here
+        let maybe_pwft = if let Some(wft) = wft_from_complete {
+            let (paginator, pwft) = WFTPaginator::from_poll(wft, self.client.clone(), 0)
+                .await
+                .expect("TODO: Handle error");
+            Some(pwft)
+        } else {
+            None
+        };
+
         self.post_activation(PostActivationMsg {
             run_id,
             wft_report_status,
-            wft_from_complete,
+            wft_from_complete: maybe_pwft,
         });
 
         Ok(completion_outcome.most_recently_processed_event)
@@ -696,6 +715,25 @@ impl ManagedRunHandle {
     }
 }
 
+// Bubbled up from calls to update workflow state if history needs fetching for a workflow
+#[derive(Debug, derive_more::Display)]
+#[display(
+    fmt = "HistoryFetchReq(workflow_id: {}, run_id: {})",
+    "workflow_id",
+    "run_id"
+)]
+#[must_use]
+struct HistoryFetchReq {
+    workflow_id: String,
+    run_id: String,
+}
+
+#[derive(Debug)]
+struct WFStreamOutput {
+    activation: Option<ActivationOrAuto>,
+    fetch_histories: VecDeque<HistoryFetchReq>,
+}
+
 #[derive(Debug, derive_more::Display)]
 enum ActivationOrAuto {
     LangActivation(WorkflowActivation),
@@ -716,11 +754,59 @@ impl ActivationOrAuto {
     }
 }
 
+/// A processed WFT which has been validated and had a history update extracted from it
 #[derive(derive_more::DebugCustom)]
-#[debug(fmt = "PermittedWft {{ {:?} }}", wft)]
+#[debug(fmt = "PermittedWft({:?})", work)]
 pub(crate) struct PermittedWFT {
-    wft: ValidPollWFTQResponse,
+    work: PreparedWFT,
     permit: OwnedMeteredSemPermit,
+}
+#[derive(Debug)]
+struct PreparedWFT {
+    task_token: TaskToken,
+    attempt: u32,
+    execution: WorkflowExecution,
+    workflow_type: String,
+    legacy_query: Option<WorkflowQuery>,
+    query_requests: Vec<QueryWorkflow>,
+    // TODO: make either leg query or update?
+    update: HistoryUpdate,
+}
+
+struct WFTPaginator {
+    paginator: HistoryPaginator,
+}
+
+impl WFTPaginator {
+    /// Use a new poll response to create a new [WFTPaginator], returning it and the
+    /// [PreparedWFT] extracted from it that can be fed into workflow state.
+    async fn from_poll(
+        wft: ValidPollWFTQResponse,
+        client: Arc<dyn WorkerClient>,
+        last_processed_event_id: i64,
+    ) -> Result<(Self, PreparedWFT), tonic::Status> {
+        let hist = wft.history;
+        let mut paginator = HistoryPaginator::new(
+            hist,
+            wft.workflow_execution.workflow_id.clone(),
+            wft.workflow_execution.run_id.clone(),
+            wft.next_page_token,
+            client,
+        );
+        let first_update = paginator
+            .extract_next_update(last_processed_event_id)
+            .await?;
+        let prepared = PreparedWFT {
+            task_token: wft.task_token,
+            attempt: wft.attempt,
+            execution: wft.workflow_execution,
+            workflow_type: wft.workflow_type,
+            legacy_query: wft.legacy_query,
+            query_requests: wft.query_requests,
+            update: first_update,
+        };
+        Ok((Self { paginator }, prepared))
+    }
 }
 
 #[derive(Debug)]
@@ -845,7 +931,7 @@ struct LocalResolutionMsg {
 struct PostActivationMsg {
     run_id: String,
     wft_report_status: WFTReportStatus,
-    wft_from_complete: Option<ValidPollWFTQResponse>,
+    wft_from_complete: Option<PreparedWFT>,
 }
 #[derive(Debug, Clone)]
 struct RequestEvictMsg {

@@ -21,9 +21,8 @@ use temporal_sdk_core_protos::temporal::api::{
 };
 use tracing::Instrument;
 
-/// A slimmed down version of a poll workflow task response which includes just the info needed
-/// by [WorkflowManager]. History events are expected to be consumed from it and applied to the
-/// state machines.
+/// Represents one or more complete WFT sequences. History events are expected to be consumed from
+/// it and applied to the state machines via [HistoryUpdate::take_next_wft_sequence]
 pub struct HistoryUpdate {
     events: Vec<HistoryEvent>,
     pub previous_started_event_id: i64,
@@ -35,6 +34,14 @@ impl Debug for HistoryUpdate {
             "HistoryUpdate(previous_started_event_id: {})",
             self.previous_started_event_id
         )
+    }
+}
+impl HistoryUpdate {
+    pub fn first_event_id(&self) -> Option<i64> {
+        self.events.get(0).map(|e| e.event_id)
+    }
+    pub fn history_length(&self) -> usize {
+        self.events.len()
     }
 }
 
@@ -105,7 +112,7 @@ impl HistoryPaginator {
     ///
     /// If there are insufficient events to constitute two WFTs, then we will fetch pages until
     /// we have two, or until we are at the end of history.
-    async fn extract_next_update(
+    pub(crate) async fn extract_next_update(
         &mut self,
         last_processed_event_id: i64,
     ) -> Result<HistoryUpdate, tonic::Status> {
@@ -225,7 +232,11 @@ impl HistoryUpdate {
             }
             last_end = next_end;
         }
-        let remaining_events = all_events.split_off(last_end.index() + 1);
+        let remaining_events = if all_events.is_empty() {
+            vec![]
+        } else {
+            all_events.split_off(last_end.index() + 1)
+        };
 
         (
             Self {
@@ -253,9 +264,8 @@ impl HistoryUpdate {
         }
     }
 
-    /// Given a workflow task started id, return all events starting at that number (inclusive) to
-    /// the next WFT started event (inclusive). If there is no subsequent WFT started event,
-    /// remaining history is returned.
+    /// Given a workflow task started id, return all events starting at that number (exclusive) to
+    /// the next WFT started event (inclusive).
     ///
     /// Events are *consumed* by this process, to keep things efficient in workflow machines.
     ///

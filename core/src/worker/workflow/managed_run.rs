@@ -249,7 +249,8 @@ impl ManagedRun {
             return Ok(Some(self.prepare_complete_resp(resp_chan, data, false)));
         }
 
-        let outcome = {
+        // TODO: Probably func-ify this rather than inline closure
+        let outcome = (|| {
             // Send commands from lang into the machines then check if the workflow run
             // needs another activation and mark it if so
             self.wfm.push_commands_and_iterate(completion.commands)?;
@@ -282,7 +283,7 @@ impl ManagedRun {
                     self,
                 ))
             }
-        };
+        })();
 
         match outcome {
             Ok((None, data, me)) => Ok(Some(me.prepare_complete_resp(resp_chan, data, false))),

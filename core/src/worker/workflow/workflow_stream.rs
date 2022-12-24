@@ -3,7 +3,7 @@ use crate::{
     protosext::ValidPollWFTQResponse,
     telemetry::metrics::workflow_worker_type,
     worker::{
-        workflow::{history_update::NextPageToken, run_cache::RunCache, *},
+        workflow::{run_cache::RunCache, *},
         LocalActRequest, LocalActivityResolution, LEGACY_QUERY_ID,
     },
     MetricsContext,
@@ -34,9 +34,9 @@ pub(crate) struct WFStream {
     runs: RunCache,
     /// Buffered polls for new runs which need a cache slot to open up before we can handle them
     buffered_polls_need_cache_slot: VecDeque<PermittedWFT>,
-
-    /// Client for accessing server for history pagination etc.
-    client: Arc<dyn WorkerClient>,
+    /// Is filled with runs that we decided need to have their history fetched during state
+    /// manipulation. Must be drained by the
+    runs_needing_fetching: VecDeque<HistoryFetchReq>,
 
     /// Ensures we stay at or below this worker's maximum concurrent workflow task limit
     wft_semaphore: MeteredSemaphore,
@@ -153,7 +153,8 @@ impl WFStream {
             + Send
             + Sync
             + 'static,
-    ) -> impl Stream<Item = Result<ActivationOrAuto, PollWfError>> {
+        // TODO: Should probably be able to avoid ever returning any errors now?
+    ) -> impl Stream<Item = Result<WFStreamOutput, PollWfError>> {
         let wft_semaphore = MeteredSemaphore::new(
             basics.max_outstanding_wfts,
             basics.metrics.with_new_attrs([workflow_worker_type()]),
@@ -172,9 +173,28 @@ impl WFStream {
         let all_inputs = stream::select_with_strategy(
             local_rx,
             poller_wfts
-                .map(|(wft, permit)| match wft {
-                    Ok(wft) => ExternalPollerInputs::NewWft(PermittedWFT { wft, permit }),
-                    Err(e) => ExternalPollerInputs::PollerError(e),
+                // TODO: Then probably not good, need concurrency. Make a little
+                //   helper for this whole part.
+                .then(move |(wft, permit)| {
+                    let client = client.clone();
+                    async move {
+                        match wft {
+                            Ok(wft) => {
+                                // TODO: Get last processed ID somehow
+                                match WFTPaginator::from_poll(wft, client, 0).await {
+                                    // TODO: store paginator
+                                    Ok((paginator, pwft)) => {
+                                        ExternalPollerInputs::NewWft(PermittedWFT {
+                                            work: pwft,
+                                            permit,
+                                        })
+                                    }
+                                    Err(e) => ExternalPollerInputs::PollerError(e),
+                                }
+                            }
+                            Err(e) => ExternalPollerInputs::PollerError(e),
+                        }
+                    }
                 })
                 .chain(stream::once(async { ExternalPollerInputs::PollerDead }))
                 .map(Into::into)
@@ -182,6 +202,8 @@ impl WFStream {
             // Priority always goes to the local stream
             |_: &mut ()| PollNext::Left,
         );
+        // TODO: All async stuff above can be moved somewhere else, actual changes to state can
+        //  just be made into calls
         let mut state = WFStream {
             buffered_polls_need_cache_slot: Default::default(),
             runs: RunCache::new(
@@ -191,11 +213,11 @@ impl WFStream {
                 Arc::new(local_activity_request_sink),
                 basics.metrics.clone(),
             ),
-            client,
             wft_semaphore,
             shutdown_token: basics.shutdown_token,
             ignore_evicts_on_shutdown: basics.ignore_evicts_on_shutdown,
             metrics: basics.metrics,
+            runs_needing_fetching: Default::default(),
         };
         all_inputs
             .map(move |action| {
@@ -204,7 +226,7 @@ impl WFStream {
 
                 let maybe_activation = match action {
                     WFStreamInput::NewWft(pwft) => {
-                        debug!(run_id=%pwft.wft.workflow_execution.run_id, "New WFT");
+                        debug!(run_id=%pwft.work.execution.run_id, "New WFT");
                         state.instantiate_or_update(pwft);
                         None
                     }
@@ -266,22 +288,20 @@ impl WFStream {
                     return Err(PollWfError::ShutDown);
                 }
 
-                Ok(maybe_activation)
+                Ok(WFStreamOutput {
+                    activation: maybe_activation,
+                    fetch_histories: std::mem::take(&mut state.runs_needing_fetching),
+                })
             })
-            .filter_map(|o| {
-                future::ready(match o {
-                    Ok(None) => None,
-                    Ok(Some(v)) => Some(Ok(v)),
-                    Err(e) => {
-                        if !matches!(e, PollWfError::ShutDown) {
-                            error!(
+            .inspect(|o| {
+                if let Some(e) = o.as_ref().err() {
+                    if !matches!(e, PollWfError::ShutDown) {
+                        error!(
                             "Workflow processing encountered fatal error and must shut down {:?}",
                             e
-                            );
-                        }
-                        Some(Err(e))
+                        );
                     }
-                })
+                }
             })
             // Stop the stream once we have shut down
             .take_while(|o| future::ready(!matches!(o, Err(PollWfError::ShutDown))))
@@ -408,30 +428,37 @@ impl WFStream {
             }
         }
     }
-
-    #[instrument(skip(self, pwft),
-                 fields(run_id=%pwft.wft.workflow_execution.run_id,
-                        workflow_id=%pwft.wft.workflow_execution.workflow_id))]
+    #[instrument(skip(self, pwft)
+        fields(run_id=%pwft.work.execution.run_id,
+               workflow_id=%pwft.work.execution.workflow_id))]
     fn instantiate_or_update(&mut self, pwft: PermittedWFT) {
-        let (mut work, permit) = if let Some(w) = self.buffer_resp_if_outstanding_work(pwft) {
-            (w.wft, w.permit)
+        if let Err(histfetch) = self._instantiate_or_update(pwft) {
+            self.runs_needing_fetching.push_back(histfetch);
+        }
+    }
+
+    /// Implementation of [instantiate_or_update]. Returns early with error if the run cannot be
+    /// updated because the WFT is partial and it is not present in the cache.
+    fn _instantiate_or_update(&mut self, pwft: PermittedWFT) -> Result<(), HistoryFetchReq> {
+        let (work, permit) = if let Some(w) = self.buffer_resp_if_outstanding_work(pwft) {
+            (w.work, w.permit)
         } else {
-            return;
+            return Ok(());
         };
 
-        let run_id = work.workflow_execution.run_id.clone();
+        let run_id = work.execution.run_id.clone();
         // If our cache is full and this WFT is for an unseen run we must first evict a run before
         // we can deal with this task. So, buffer the task in that case.
         if !self.runs.has_run(&run_id) && self.runs.is_full() {
-            self.buffer_resp_on_full_cache(PermittedWFT { wft: work, permit });
-            return;
+            self.buffer_resp_on_full_cache(PermittedWFT { work, permit });
+            return Ok(());
         }
 
-        let start_event_id = work.history.events.first().map(|e| e.event_id);
+        let start_event_id = work.update.first_event_id();
         debug!(
             run_id = %run_id,
             task_token = %&work.task_token,
-            history_length = %work.history.events.len(),
+            history_length = %work.update.history_length(),
             start_event_id = ?start_event_id,
             has_legacy_query = %work.legacy_query.is_some(),
             attempt = %work.attempt,
@@ -441,30 +468,27 @@ impl WFStream {
         let wft_info = WorkflowTaskInfo {
             attempt: work.attempt,
             task_token: work.task_token,
-            wf_id: work.workflow_execution.workflow_id.clone(),
+            wf_id: work.execution.workflow_id.clone(),
         };
-        let poll_resp_is_incremental = work
-            .history
-            .events
-            .get(0)
-            .map(|ev| ev.event_id > 1)
-            .unwrap_or_default();
-        let poll_resp_is_incremental = poll_resp_is_incremental || work.history.events.is_empty();
+        let poll_resp_is_incremental = start_event_id.map(|eid| eid > 1).unwrap_or_default();
+        let poll_resp_is_incremental = poll_resp_is_incremental || start_event_id.is_none();
 
-        let mut did_miss_cache = !poll_resp_is_incremental;
+        let did_miss_cache = !poll_resp_is_incremental;
 
+        // This check can't really be lifted up higher since we could EX: See it's in the cache,
+        // not fetch more history, send the task, see cache is full, buffer it, then evict that
+        // run, and now we still have a cache miss.
         if !self.runs.has_run(&run_id) && poll_resp_is_incremental {
             debug!(run_id=?run_id, "Workflow task has partial history, but workflow is not in \
                    cache. Will fetch history");
             self.metrics.sticky_cache_miss();
-            did_miss_cache = true;
-            // NextPageToken::FetchFromStart
-            // TODO: Need to return early here or, ideally lift this up higher.
-            unimplemented!()
+            return Err(HistoryFetchReq {
+                workflow_id: work.execution.workflow_id,
+                run_id,
+            });
         }
         let legacy_query_from_poll = work
             .legacy_query
-            .take()
             .map(|q| query_to_job(LEGACY_QUERY_ID.to_string(), q));
 
         let mut pending_queries = work.query_requests;
@@ -478,7 +502,7 @@ impl WFStream {
                 message: "Server issued both normal and legacy query".to_string(),
                 reason: EvictionReason::Fatal,
             });
-            return;
+            return Ok(());
         }
         if let Some(lq) = legacy_query_from_poll {
             pending_queries.push(lq);
@@ -487,9 +511,9 @@ impl WFStream {
         let start_time = Instant::now();
         let run_handle = self.runs.instantiate_or_update(
             &run_id,
-            &work.workflow_execution.workflow_id,
+            &work.execution.workflow_id,
             &work.workflow_type,
-            HistoryUpdate::new_from_events(work.history.events, work.previous_started_event_id),
+            work.update,
             start_time,
         );
         run_handle.wft = Some(OutstandingTask {
@@ -498,7 +522,8 @@ impl WFStream {
             pending_queries,
             start_time,
             permit,
-        })
+        });
+        Ok(())
     }
 
     fn process_completion(&mut self, complete: WFActCompleteMsg) {
@@ -673,12 +698,12 @@ impl WFStream {
         };
 
         if let Some(wft) = report.wft_from_complete {
-            debug!(run_id=%wft.workflow_execution.run_id, "New WFT from completion");
+            debug!(run_id=%wft.execution.run_id, "New WFT from completion");
             if let Some(t) = maybe_t {
                 self.instantiate_or_update(PermittedWFT {
-                    wft,
+                    work: wft,
                     permit: t.permit,
-                })
+                });
             }
         }
 
@@ -815,7 +840,7 @@ impl WFStream {
     /// Stores some work if there is any outstanding WFT or activation for the run. If there was
     /// not, returns the work back out inside the option.
     fn buffer_resp_if_outstanding_work(&mut self, work: PermittedWFT) -> Option<PermittedWFT> {
-        let run_id = &work.wft.workflow_execution.run_id;
+        let run_id = &work.work.execution.run_id;
         if let Some(mut run) = self.runs.get_mut(run_id) {
             let about_to_issue_evict = run.trying_to_evict.is_some() && !run.last_action_acked;
             let has_wft = run.wft.is_some();
@@ -839,12 +864,12 @@ impl WFStream {
     }
 
     fn buffer_resp_on_full_cache(&mut self, work: PermittedWFT) {
-        debug!(run_id=%work.wft.workflow_execution.run_id, "Buffering WFT because cache is full");
+        debug!(run_id=%work.work.execution.run_id, "Buffering WFT because cache is full");
         // If there's already a buffered poll for the run, replace it.
         if let Some(rh) = self
             .buffered_polls_need_cache_slot
             .iter_mut()
-            .find(|w| w.wft.workflow_execution.run_id == work.wft.workflow_execution.run_id)
+            .find(|w| w.work.execution.run_id == work.work.execution.run_id)
         {
             *rh = work;
         } else {
@@ -904,16 +929,21 @@ impl WFStream {
     }
 
     fn shutdown_done(&self) -> bool {
-        let all_runs_ready = self
-            .runs
-            .handles()
-            .all(|r| !r.has_any_pending_work(self.ignore_evicts_on_shutdown, false));
-        if self.shutdown_token.is_cancelled() && all_runs_ready {
-            info!("Workflow shutdown is done");
-            true
-        } else {
-            false
+        if self.shutdown_token.is_cancelled() {
+            if !self.runs_needing_fetching.is_empty() {
+                // Don't exit early due to cache misses
+                return false;
+            }
+            let all_runs_ready = self
+                .runs
+                .handles()
+                .all(|r| !r.has_any_pending_work(self.ignore_evicts_on_shutdown, false));
+            if all_runs_ready {
+                info!("Workflow shutdown is done");
+                return true;
+            }
         }
+        false
     }
 
     fn get_task(&mut self, run_id: &str) -> Option<&OutstandingTask> {
