@@ -116,13 +116,17 @@ impl HistoryPaginator {
         &mut self,
         last_processed_event_id: i64,
     ) -> Result<HistoryUpdate, tonic::Status> {
+        // loop {
         self.get_next_page().await?;
         let current_events = mem::take(&mut self.event_queue);
         // If there are some events at the end of the fetched events which represent only a portion
         // of a complete WFT, retain them to be used in the next extraction.
         let (update, extra) = HistoryUpdate::from_events(current_events, last_processed_event_id);
         self.event_queue = extra.into();
-        Ok(update)
+        // if !update.events.is_empty() {
+        return Ok(update);
+        // }
+        // }
     }
 
     async fn get_next_page(&mut self) -> Result<(), tonic::Status> {
@@ -170,6 +174,8 @@ struct StreamingHistoryPaginator {
 }
 
 impl StreamingHistoryPaginator {
+    // Kept since can be used for history downloading
+    #[cfg(test)]
     pub fn new(inner: HistoryPaginator) -> Self {
         Self {
             inner,

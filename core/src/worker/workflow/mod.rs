@@ -8,6 +8,7 @@ mod history_update;
 mod machines;
 mod managed_run;
 mod run_cache;
+mod wft_extraction;
 pub(crate) mod wft_poller;
 mod workflow_stream;
 
@@ -28,6 +29,7 @@ use crate::{
         workflow::{
             history_update::HistoryPaginator,
             managed_run::{ManagedRun, WorkflowManager},
+            wft_extraction::WFTExtractor,
             wft_poller::validate_wft,
             workflow_stream::{LocalInput, LocalInputs, WFStream},
         },
@@ -90,6 +92,7 @@ type BoxedActivationStream = BoxStream<'static, Result<WFStreamOutput, PollWfErr
 pub(crate) struct Workflows {
     task_queue: String,
     local_tx: UnboundedSender<LocalInput>,
+    fetch_tx: UnboundedSender<HistoryFetchReq>,
     processing_task: tokio::sync::Mutex<Option<JoinHandle<()>>>,
     activation_stream: tokio::sync::Mutex<(
         BoxedActivationStream,
@@ -127,13 +130,18 @@ impl Workflows {
         activity_tasks_handle: Option<ActivitiesFromWFTsHandle>,
     ) -> Self {
         let (local_tx, local_rx) = unbounded_channel();
+        let (fetch_tx, fetch_rx) = unbounded_channel();
         let shutdown_tok = basics.shutdown_token.clone();
         let task_queue = basics.task_queue.clone();
+        let extracted_wft_stream = WFTExtractor::new(
+            client.clone(),
+            wft_stream,
+            UnboundedReceiverStream::new(fetch_rx),
+        );
         let mut stream = WFStream::build(
             basics,
-            wft_stream,
+            extracted_wft_stream,
             UnboundedReceiverStream::new(local_rx),
-            client.clone(),
             local_activity_request_sink,
         );
         let (activation_tx, activation_rx) = unbounded_channel();
@@ -163,6 +171,7 @@ impl Workflows {
         Self {
             task_queue,
             local_tx,
+            fetch_tx,
             processing_task: tokio::sync::Mutex::new(Some(processing_task)),
             activation_stream: tokio::sync::Mutex::new((
                 UnboundedReceiverStream::new(activation_rx).boxed(),
@@ -184,7 +193,15 @@ impl Workflows {
                 }
                 stream.next().await.unwrap_or(Err(PollWfError::ShutDown))?
             };
-            // TODO: Submit history fetch requests somewhere
+            // TODO: Extract this probably
+            if !r.fetch_histories.is_empty() {
+                warn!("Got history fetch requests!");
+                for fetchreq in r.fetch_histories {
+                    self.fetch_tx
+                        .send(fetchreq)
+                        .expect("History fetch stream exists");
+                }
+            }
 
             if let Some(al) = r.activation {
                 Span::current().record("run_id", al.run_id());

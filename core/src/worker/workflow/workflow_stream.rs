@@ -1,9 +1,8 @@
 use crate::{
     abstractions::{dbg_panic, stream_when_allowed, MeteredSemaphore},
-    protosext::ValidPollWFTQResponse,
     telemetry::metrics::workflow_worker_type,
     worker::{
-        workflow::{run_cache::RunCache, *},
+        workflow::{run_cache::RunCache, wft_extraction::WFTExtractorOutput, *},
         LocalActRequest, LocalActivityResolution, LEGACY_QUERY_ID,
     },
     MetricsContext,
@@ -146,9 +145,8 @@ impl WFStream {
     /// [RunAction]s and receiving [RunUpdateResponse]s via its [ManagedRunHandle].
     pub(super) fn build(
         basics: WorkflowBasics,
-        external_wfts: impl Stream<Item = Result<ValidPollWFTQResponse, tonic::Status>> + Send + 'static,
+        external_wfts: impl Stream<Item = Result<WFTExtractorOutput, tonic::Status>> + Send + 'static,
         local_rx: impl Stream<Item = LocalInput> + Send + 'static,
-        client: Arc<dyn WorkerClient>,
         local_activity_request_sink: impl Fn(Vec<LocalActRequest>) -> Vec<LocalActivityResolution>
             + Send
             + Sync
@@ -173,28 +171,14 @@ impl WFStream {
         let all_inputs = stream::select_with_strategy(
             local_rx,
             poller_wfts
-                // TODO: Then probably not good, need concurrency. Make a little
-                //   helper for this whole part.
-                .then(move |(wft, permit)| {
-                    let client = client.clone();
-                    async move {
-                        match wft {
-                            Ok(wft) => {
-                                // TODO: Get last processed ID somehow
-                                match WFTPaginator::from_poll(wft, client, 0).await {
-                                    // TODO: store paginator
-                                    Ok((paginator, pwft)) => {
-                                        ExternalPollerInputs::NewWft(PermittedWFT {
-                                            work: pwft,
-                                            permit,
-                                        })
-                                    }
-                                    Err(e) => ExternalPollerInputs::PollerError(e),
-                                }
-                            }
-                            Err(e) => ExternalPollerInputs::PollerError(e),
-                        }
+                .map(move |(wft, permit)| match wft {
+                    Ok(WFTExtractorOutput::NewWFT(pwft)) => {
+                        ExternalPollerInputs::NewWft(PermittedWFT { work: pwft, permit })
                     }
+                    Ok(WFTExtractorOutput::FetchResult { run_id, update }) => {
+                        todo!("Handle fetch update")
+                    }
+                    Err(e) => ExternalPollerInputs::PollerError(e),
                 })
                 .chain(stream::once(async { ExternalPollerInputs::PollerDead }))
                 .map(Into::into)
