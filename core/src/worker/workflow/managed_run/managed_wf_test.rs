@@ -4,7 +4,8 @@ use crate::{
     test_help::TEST_Q,
     worker::{
         workflow::{
-            history_update::TestHBExt, machines::WorkflowMachines, WFCommand, WorkflowFetcher,
+            history_update::tests::TestHBExt, machines::WorkflowMachines, WFCommand,
+            WorkflowFetcher,
         },
         LocalActRequest, LocalActivityResolution,
     },

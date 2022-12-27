@@ -1572,6 +1572,8 @@ async fn cache_miss_will_fetch_history() {
         .times(1)
         .returning(move |_, _, _| Ok(get_exec_resp.clone()));
     let mut mock = build_mock_pollers(mh);
+    // TODO: Remove if I don't terminate wft stream until fetch reqs done
+    mock.make_wft_stream_interminable();
     mock.worker_cfg(|cfg| {
         cfg.max_cached_workflows = 1;
     });

@@ -20,6 +20,7 @@ use crate::{
     telemetry::{metrics::MetricsContext, VecDisplayer},
     worker::{
         workflow::{
+            history_update::NextWFT,
             machines::modify_workflow_properties_state_machine::modify_workflow_properties,
             CommandID, DrivenWorkflow, HistoryUpdate, LocalResolution, OutgoingJob, WFCommand,
             WorkflowFetcher, WorkflowStartedInfo,
@@ -390,16 +391,21 @@ impl WorkflowMachines {
         }
 
         let last_handled_wft_started_id = self.current_started_event_id;
-        let events = {
-            let mut evts = self
-                .last_history_from_server
-                .take_next_wft_sequence(last_handled_wft_started_id);
-            // TODO: If evts is empty here that can potentially mean we need to fetch more pages.
-            //  Should return something more explicit in that case, so reaching end of replay
-            //  if more obvious
-            // Do not re-process events we have already processed
-            evts.retain(|e| e.event_id > self.last_processed_event);
-            evts
+        let events = match self
+            .last_history_from_server
+            .take_next_wft_sequence(last_handled_wft_started_id)
+        {
+            NextWFT::ReplayOver => {
+                vec![]
+            }
+            NextWFT::WFT(mut evts) => {
+                // Do not re-process events we have already processed
+                evts.retain(|e| e.event_id > self.last_processed_event);
+                evts
+            }
+            NextWFT::NeedFetch => {
+                todo!("Need to bubble up fetch more request");
+            }
         };
         let num_events_to_process = events.len();
 

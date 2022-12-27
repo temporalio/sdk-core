@@ -2,7 +2,7 @@ use crate::{
     protosext::ValidPollWFTQResponse,
     worker::{
         client::WorkerClient,
-        workflow::{HistoryFetchReq, HistoryUpdate, PreparedWFT, WFTPaginator},
+        workflow::{HistoryFetchReq, PermittedWFT, PreparedWFT, WFTPaginator},
     },
 };
 use futures::Stream;
@@ -19,16 +19,21 @@ pub(super) struct WFTExtractor {
 
 #[derive(derive_more::From)]
 enum WFTExtractorInput {
-    New(Result<(WFTPaginator, PreparedWFT), tonic::Status>),
-    FetchReq(HistoryFetchReq),
+    New((WFTPaginator, PreparedWFT)),
+    FetchResult((WFTPaginator, PermittedWFT)),
+    FatalPollErr(tonic::Status),
+    /// If paginating or history fetching fails, we don't want to consider that a fatal polling
+    /// error
+    #[from(ignore)]
+    FetchErr {
+        run_id: String,
+        err: tonic::Status,
+    },
 }
 
 pub(super) enum WFTExtractorOutput {
     NewWFT(PreparedWFT),
-    FetchResult {
-        run_id: String,
-        update: HistoryUpdate,
-    },
+    FetchResult(PermittedWFT),
 }
 
 impl WFTExtractor {
@@ -42,63 +47,92 @@ impl WFTExtractor {
         };
         let stop_tok = CancellationToken::new();
         let wft_stream_end_stopper = stop_tok.clone();
+        let fetch_client = client.clone();
         let wft_stream = wft_stream
             .map(move |wft| {
                 let client = client.clone();
                 async move {
                     match wft {
                         Ok(wft) => {
-                            // TODO: Get last processed ID somehow - not sure it can even work here
-                            //  since it might change by the time it makes it in -- maybe just wait
-                            //  to drop until actually applying.
-                            WFTPaginator::from_poll(wft, client, 0).await.into()
+                            let prev_id = wft.previous_started_event_id;
+                            let run_id = wft.workflow_execution.run_id.clone();
+                            match WFTPaginator::from_poll(wft, client, prev_id).await {
+                                Ok(r) => r.into(),
+                                Err(err) => WFTExtractorInput::FetchErr { run_id, err },
+                            }
                         }
-                        Err(e) => Err(e).into(),
+                        Err(e) => e.into(),
                     }
                 }
                 .left_future()
             })
-            // We want the whole stream to end once the wft inputs die
             .chain(stream::poll_fn(move |_| {
                 wft_stream_end_stopper.cancel();
                 Poll::Pending
             }));
         stream::select(
             wft_stream,
-            fetch_stream.map(|fetchreq| future::ready(fetchreq.into()).right_future()),
+            fetch_stream.map(move |fetchreq| {
+                let client = fetch_client.clone();
+                let run_id = fetchreq.original_wft.work.execution.run_id.clone();
+                async move {
+                    match WFTPaginator::from_fetchreq(fetchreq, client).await {
+                        Ok(r) => r.into(),
+                        Err(err) => WFTExtractorInput::FetchErr { run_id, err },
+                    }
+                }
+                .right_future()
+            }),
         )
+        // TODO: This will drop any in-progress cache misses or pagination.
+        //   It would be fine to drop cache misses, but pagination requests should probably
+        //   go through. Could attach
+        //   Could send a poller shutdown item from stream, then keep polling
+        //   fetch pipe until somehow closing send side after wf stream acks shutdown and flushes
+        //   requests.
         .take_until(async move { stop_tok.cancelled().await })
         // TODO:  Configurable.
         .buffer_unordered(25)
-        .scan(extractor, |ex, extinput| {
-            match extinput {
-                WFTExtractorInput::New(Ok((paginator, pwft))) => {
-                    ex.paginators
-                        .insert(pwft.execution.run_id.clone(), paginator);
-                    future::ready(Some(Ok(WFTExtractorOutput::NewWFT(pwft)))).left_future()
-                }
-                WFTExtractorInput::New(Err(e)) => future::ready(Some(Err(e))).left_future(),
-                WFTExtractorInput::FetchReq(req) => {
-                    if let Some(mut pg) = ex.paginators.remove(&req.run_id) {
-                        async move {
-                            Some(
-                                // TODO: Pass last processed id in fetchreq
-                                match pg.paginator.extract_next_update(0).await {
-                                    Ok(update) => Ok(WFTExtractorOutput::FetchResult {
-                                        run_id: req.run_id,
-                                        update,
-                                    }),
-                                    Err(e) => Err(e),
-                                },
-                            )
-                        }
-                        .right_future()
-                    } else {
-                        error!(run_id=%req.run_id, "WFT paginator not found");
-                        todo!("SKip here");
-                    }
-                }
+        .scan(extractor, |ex, extinput| match extinput {
+            WFTExtractorInput::New((paginator, pwft)) => {
+                ex.paginators
+                    .insert(pwft.execution.run_id.clone(), paginator);
+                future::ready(Some(Ok(WFTExtractorOutput::NewWFT(pwft))))
             }
+            WFTExtractorInput::FetchResult((paginator, pwft)) => {
+                ex.paginators
+                    .insert(pwft.work.execution.run_id.clone(), paginator);
+                future::ready(Some(Ok(WFTExtractorOutput::FetchResult(pwft))))
+            }
+            WFTExtractorInput::FatalPollErr(e) => future::ready(Some(Err(e))),
+            WFTExtractorInput::FetchErr { run_id, err } => todo!("deal with fetch errors"),
+            //     WFTExtractorInput::FetchReq(req) => {
+            //         let rid = &req.original_wft.work.execution.run_id;
+            //         if let Some(mut pg) = ex.paginators.remove(rid) {
+            //             async move {
+            //                 Some(
+            //                     match pg
+            //                         .paginator
+            //                         .extract_next_update(
+            //                             req.original_wft.work.update.previous_started_event_id,
+            //                         )
+            //                         .await
+            //                     {
+            //                         Ok(update) => {
+            //                             let mut updated_wft = req.original_wft;
+            //                             updated_wft.work.update = update;
+            //                             Ok(WFTExtractorOutput::FetchResult { updated_wft })
+            //                         }
+            //                         Err(e) => Err(e),
+            //                     },
+            //                 )
+            //             }
+            //             .right_future()
+            //         } else {
+            //             error!(run_id=%rid, "WFT paginator not found");
+            //             todo!("SKip here");
+            //         }
+            //     }
         })
     }
 }

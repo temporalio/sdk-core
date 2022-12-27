@@ -110,12 +110,13 @@ impl LocalInputs {
         })
     }
 }
-#[derive(Debug, derive_more::From)]
+#[derive(Debug)]
 #[allow(clippy::large_enum_variant)] // PollerDead only ever gets used once, so not important.
 enum ExternalPollerInputs {
     NewWft(PermittedWFT),
     PollerDead,
     PollerError(tonic::Status),
+    FetchedUpdate(PermittedWFT),
 }
 impl From<ExternalPollerInputs> for WFStreamInput {
     fn from(l: ExternalPollerInputs) -> Self {
@@ -123,6 +124,7 @@ impl From<ExternalPollerInputs> for WFStreamInput {
             ExternalPollerInputs::NewWft(v) => WFStreamInput::NewWft(v),
             ExternalPollerInputs::PollerDead => WFStreamInput::PollerDead,
             ExternalPollerInputs::PollerError(e) => WFStreamInput::PollerError(e),
+            ExternalPollerInputs::FetchedUpdate(wft) => WFStreamInput::NewWft(wft),
         }
     }
 }
@@ -175,11 +177,12 @@ impl WFStream {
                     Ok(WFTExtractorOutput::NewWFT(pwft)) => {
                         ExternalPollerInputs::NewWft(PermittedWFT { work: pwft, permit })
                     }
-                    Ok(WFTExtractorOutput::FetchResult { run_id, update }) => {
-                        todo!("Handle fetch update")
+                    Ok(WFTExtractorOutput::FetchResult(updated_wft)) => {
+                        ExternalPollerInputs::FetchedUpdate(updated_wft)
                     }
                     Err(e) => ExternalPollerInputs::PollerError(e),
                 })
+                // TODO: Rename poller/fetching dead or w/e
                 .chain(stream::once(async { ExternalPollerInputs::PollerDead }))
                 .map(Into::into)
                 .boxed(),
@@ -278,6 +281,7 @@ impl WFStream {
                 })
             })
             .inspect(|o| {
+                info!("Aiee {:?}", o);
                 if let Some(e) = o.as_ref().err() {
                     if !matches!(e, PollWfError::ShutDown) {
                         error!(
@@ -449,11 +453,6 @@ impl WFStream {
             "Applying new workflow task from server"
         );
 
-        let wft_info = WorkflowTaskInfo {
-            attempt: work.attempt,
-            task_token: work.task_token,
-            wf_id: work.execution.workflow_id.clone(),
-        };
         let poll_resp_is_incremental = start_event_id.map(|eid| eid > 1).unwrap_or_default();
         let poll_resp_is_incremental = poll_resp_is_incremental || start_event_id.is_none();
 
@@ -467,10 +466,16 @@ impl WFStream {
                    cache. Will fetch history");
             self.metrics.sticky_cache_miss();
             return Err(HistoryFetchReq {
-                workflow_id: work.execution.workflow_id,
-                run_id,
+                original_wft: PermittedWFT { work, permit },
             });
         }
+
+        let wft_info = WorkflowTaskInfo {
+            attempt: work.attempt,
+            task_token: work.task_token,
+            wf_id: work.execution.workflow_id.clone(),
+        };
+
         let legacy_query_from_poll = work
             .legacy_query
             .map(|q| query_to_job(LEGACY_QUERY_ID.to_string(), q));

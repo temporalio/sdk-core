@@ -27,7 +27,7 @@ use crate::{
         activities::{ActivitiesFromWFTsHandle, PermittedTqResp},
         client::{WorkerClient, WorkflowTaskCompletion},
         workflow::{
-            history_update::HistoryPaginator,
+            history_update::{HistoryPaginator, NextPageToken},
             managed_run::{ManagedRun, WorkflowManager},
             wft_extraction::WFTExtractor,
             wft_poller::validate_wft,
@@ -197,9 +197,9 @@ impl Workflows {
             if !r.fetch_histories.is_empty() {
                 warn!("Got history fetch requests!");
                 for fetchreq in r.fetch_histories {
-                    self.fetch_tx
-                        .send(fetchreq)
-                        .expect("History fetch stream exists");
+                    if self.fetch_tx.send(fetchreq).is_err() {
+                        error!("Some history fetch requests were dropped while shutting down");
+                    }
                 }
             }
 
@@ -735,14 +735,12 @@ impl ManagedRunHandle {
 // Bubbled up from calls to update workflow state if history needs fetching for a workflow
 #[derive(Debug, derive_more::Display)]
 #[display(
-    fmt = "HistoryFetchReq(workflow_id: {}, run_id: {})",
-    "workflow_id",
-    "run_id"
+    fmt = "HistoryFetchReq(run_id: {})",
+    "original_wft.work.execution.run_id"
 )]
 #[must_use]
 struct HistoryFetchReq {
-    workflow_id: String,
-    run_id: String,
+    original_wft: PermittedWFT,
 }
 
 #[derive(Debug)]
@@ -802,9 +800,8 @@ impl WFTPaginator {
         client: Arc<dyn WorkerClient>,
         last_processed_event_id: i64,
     ) -> Result<(Self, PreparedWFT), tonic::Status> {
-        let hist = wft.history;
         let mut paginator = HistoryPaginator::new(
-            hist,
+            wft.history,
             wft.workflow_execution.workflow_id.clone(),
             wft.workflow_execution.run_id.clone(),
             wft.next_page_token,
@@ -823,6 +820,23 @@ impl WFTPaginator {
             update: first_update,
         };
         Ok((Self { paginator }, prepared))
+    }
+    async fn from_fetchreq(
+        mut req: HistoryFetchReq,
+        client: Arc<dyn WorkerClient>,
+    ) -> Result<(Self, PermittedWFT), tonic::Status> {
+        let mut paginator = HistoryPaginator::new(
+            Default::default(),
+            req.original_wft.work.execution.workflow_id.clone(),
+            req.original_wft.work.execution.run_id.clone(),
+            NextPageToken::FetchFromStart,
+            client,
+        );
+        let first_update = paginator
+            .extract_next_update(req.original_wft.work.update.previous_started_event_id)
+            .await?;
+        req.original_wft.work.update = first_update;
+        Ok((Self { paginator }, req.original_wft))
     }
 }
 
