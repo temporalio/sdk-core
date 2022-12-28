@@ -1,4 +1,10 @@
-use crate::worker::client::WorkerClient;
+use crate::{
+    protosext::ValidPollWFTQResponse,
+    worker::{
+        client::WorkerClient,
+        workflow::{HistoryFetchReq, PermittedWFT, PreparedWFT},
+    },
+};
 use futures::{future::BoxFuture, FutureExt, Stream};
 use itertools::Itertools;
 use std::{
@@ -86,6 +92,60 @@ impl From<Vec<u8>> for NextPageToken {
 }
 
 impl HistoryPaginator {
+    /// Use a new poll response to create a new [WFTPaginator], returning it and the
+    /// [PreparedWFT] extracted from it that can be fed into workflow state.
+    pub(super) async fn from_poll(
+        wft: ValidPollWFTQResponse,
+        client: Arc<dyn WorkerClient>,
+        last_processed_event_id: i64,
+    ) -> Result<(Self, PreparedWFT), tonic::Status> {
+        let empty_hist = wft.history.events.is_empty();
+        let npt = if empty_hist {
+            NextPageToken::FetchFromStart
+        } else {
+            wft.next_page_token.into()
+        };
+        let mut paginator = HistoryPaginator::new(
+            wft.history,
+            wft.workflow_execution.workflow_id.clone(),
+            wft.workflow_execution.run_id.clone(),
+            npt,
+            client,
+        );
+        let update = if empty_hist {
+            HistoryUpdate::from_events([], 0, true).0
+        } else {
+            paginator
+                .extract_next_update(last_processed_event_id)
+                .await?
+        };
+        let prepared = PreparedWFT {
+            task_token: wft.task_token,
+            attempt: wft.attempt,
+            execution: wft.workflow_execution,
+            workflow_type: wft.workflow_type,
+            legacy_query: wft.legacy_query,
+            query_requests: wft.query_requests,
+            update,
+        };
+        Ok((paginator, prepared))
+    }
+
+    pub(super) async fn from_fetchreq(
+        mut req: HistoryFetchReq,
+        client: Arc<dyn WorkerClient>,
+    ) -> Result<(Self, PermittedWFT), tonic::Status> {
+        let mut paginator = HistoryPaginator::from_start(
+            req.original_wft.work.execution.workflow_id.clone(),
+            req.original_wft.work.execution.run_id.clone(),
+            client,
+        );
+        let first_update = paginator
+            .extract_next_update(req.original_wft.work.update.previous_started_event_id)
+            .await?;
+        req.original_wft.work.update = first_update;
+        Ok((paginator, req.original_wft))
+    }
     pub(crate) fn new(
         initial_history: History,
         wf_id: String,
@@ -107,6 +167,16 @@ impl HistoryPaginator {
             run_id,
             next_page_token,
             final_events,
+        }
+    }
+    pub(crate) fn from_start(wf_id: String, run_id: String, client: Arc<dyn WorkerClient>) -> Self {
+        Self {
+            client,
+            event_queue: Default::default(),
+            wf_id,
+            run_id,
+            next_page_token: NextPageToken::FetchFromStart,
+            final_events: vec![],
         }
     }
 

@@ -2,7 +2,7 @@ use crate::{
     protosext::ValidPollWFTQResponse,
     worker::{
         client::WorkerClient,
-        workflow::{HistoryFetchReq, PermittedWFT, PreparedWFT, WFTPaginator},
+        workflow::{history_update::HistoryPaginator, HistoryFetchReq, PermittedWFT, PreparedWFT},
     },
 };
 use futures::Stream;
@@ -14,13 +14,13 @@ use tokio_util::sync::CancellationToken;
 /// for application to workflow state
 pub(super) struct WFTExtractor {
     /// Maps run ids to their associated paginator
-    paginators: HashMap<String, WFTPaginator>,
+    paginators: HashMap<String, HistoryPaginator>,
 }
 
 #[derive(derive_more::From)]
 enum WFTExtractorInput {
-    New((WFTPaginator, PreparedWFT)),
-    FetchResult((WFTPaginator, PermittedWFT)),
+    New((HistoryPaginator, PreparedWFT)),
+    FetchResult((HistoryPaginator, PermittedWFT)),
     FatalPollErr(tonic::Status),
     /// If paginating or history fetching fails, we don't want to consider that a fatal polling
     /// error
@@ -56,7 +56,7 @@ impl WFTExtractor {
                         Ok(wft) => {
                             let prev_id = wft.previous_started_event_id;
                             let run_id = wft.workflow_execution.run_id.clone();
-                            match WFTPaginator::from_poll(wft, client, prev_id).await {
+                            match HistoryPaginator::from_poll(wft, client, prev_id).await {
                                 Ok(r) => r.into(),
                                 Err(err) => WFTExtractorInput::FetchErr { run_id, err },
                             }
@@ -76,7 +76,7 @@ impl WFTExtractor {
                 let client = fetch_client.clone();
                 let run_id = fetchreq.original_wft.work.execution.run_id.clone();
                 async move {
-                    match WFTPaginator::from_fetchreq(fetchreq, client).await {
+                    match HistoryPaginator::from_fetchreq(fetchreq, client).await {
                         Ok(r) => r.into(),
                         Err(err) => WFTExtractorInput::FetchErr { run_id, err },
                     }
