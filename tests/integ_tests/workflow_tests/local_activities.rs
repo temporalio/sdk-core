@@ -684,6 +684,9 @@ async fn evict_while_la_running_no_interference() {
     let mut starter = CoreWfStarter::new(wf_name);
     starter.max_local_at(20);
     starter.max_cached_workflows(20);
+    // Though it doesn't make sense to set wft higher than cached workflows, commenting this out
+    // introduces more instability that can be useful in the test.
+    // starter.max_wft(20);
     let mut worker = starter.worker().await;
 
     worker.register_wf(wf_name.to_owned(), la_problem_workflow);
@@ -771,8 +774,31 @@ async fn second_weird_la_nondeterminism_repro() {
     // Chop off uninteresting ending
     hist.events.truncate(24);
     let mut thb = TestHistoryBuilder::from_history(hist.events);
-    // thb.add_workflow_task_completed();
     thb.add_workflow_execution_completed();
+    hist = thb.get_full_history_info().unwrap().into();
+
+    let mut worker = replay_sdk_worker([HistoryForReplay::new(hist, "fake".to_owned())]);
+    worker.register_wf(
+        "evict_while_la_running_no_interference",
+        la_problem_workflow,
+    );
+    worker.register_activity("delay", |_: ActContext, _: String| async {
+        tokio::time::sleep(Duration::from_secs(15)).await;
+        Ok(())
+    });
+    worker.run().await.unwrap();
+}
+
+#[tokio::test]
+async fn third_weird_la_nondeterminism_repro() {
+    init_integ_telem();
+    let mut hist = history_from_proto_binary(
+        "histories/evict_while_la_running_no_interference-16_history.bin",
+    )
+    .await
+    .unwrap();
+    let mut thb = TestHistoryBuilder::from_history(hist.events);
+    thb.add_workflow_task_scheduled_and_started();
     hist = thb.get_full_history_info().unwrap().into();
 
     let mut worker = replay_sdk_worker([HistoryForReplay::new(hist, "fake".to_owned())]);

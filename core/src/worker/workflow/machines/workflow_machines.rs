@@ -441,6 +441,8 @@ impl WorkflowMachines {
 
         // Scan through to the next WFT, searching for any patch / la markers, so that we can
         // pre-resolve them.
+        // TODO: Extract
+        let mut wake_las = vec![];
         for e in self
             .last_history_from_server
             .peek_next_wft_sequence(last_handled_wft_started_id)
@@ -458,7 +460,32 @@ impl WorkflowMachines {
                         .into(),
                 );
             } else if e.is_local_activity_marker() {
-                self.local_activity_data.process_peekahead_marker(e)?;
+                if let Some(la_dat) = e.clone().into_local_activity_marker_details() {
+                    if let Ok(mk) =
+                        self.get_machine_key(CommandID::LocalActivity(la_dat.marker_dat.seq))
+                    {
+                        wake_las.push((mk, la_dat));
+                    } else {
+                        self.local_activity_data.insert_peeked_marker(la_dat);
+                    }
+                } else {
+                    return Err(WFMachinesError::Fatal(format!(
+                        "Local activity marker was unparsable: {:?}",
+                        e
+                    )));
+                }
+            }
+        }
+        for (mk, la_dat) in wake_las {
+            let mach = self.machine_mut(mk);
+            if let Machines::LocalActivityMachine(ref mut lam) = *mach {
+                if lam.will_accept_resolve_marker() {
+                    error!("Trying resovle");
+                    let resps = lam.try_resolve_with_dat(la_dat.into())?;
+                    self.process_machine_responses(mk, resps)?;
+                } else {
+                    self.local_activity_data.insert_peeked_marker(la_dat);
+                }
             }
         }
 

@@ -129,18 +129,23 @@ async fn replay_using_wf_function() {
     worker.run().await.unwrap();
 }
 
+async fn replay_abrupt_ending(t: TestHistoryBuilder) {
+    let func = timers_wf(1);
+    let mut worker = replay_sdk_worker([test_hist_to_replay(t)]);
+    worker.register_wf(DEFAULT_WORKFLOW_TYPE, func);
+    worker.run().await.unwrap();
+}
 #[tokio::test]
-async fn replay_ok_ending_with_terminated_or_timed_out() {
+async fn replay_ok_ending_with_terminated() {
     let mut t1 = canned_histories::single_timer("1");
     t1.add_workflow_execution_terminated();
+    replay_abrupt_ending(t1).await;
+}
+#[tokio::test]
+async fn replay_ok_ending_with_timed_out() {
     let mut t2 = canned_histories::single_timer("1");
     t2.add_workflow_execution_timed_out();
-    for t in [t1, t2] {
-        let func = timers_wf(1);
-        let mut worker = replay_sdk_worker([test_hist_to_replay(t)]);
-        worker.register_wf(DEFAULT_WORKFLOW_TYPE, func);
-        worker.run().await.unwrap();
-    }
+    replay_abrupt_ending(t2).await;
 }
 
 #[rstest::rstest]

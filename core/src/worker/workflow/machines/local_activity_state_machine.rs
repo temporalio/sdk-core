@@ -59,15 +59,17 @@ fsm! {
       --> MarkerCommandRecorded;
 
     // Replay path ================================================================================
-    // LAs on the replay path should never have handle result explicitly called on them, but do need
-    // to eventually see the marker
+    // LAs on the replay path always need to eventually see the marker
     WaitingMarkerEvent --(MarkerRecorded(CompleteLocalActivityData), shared on_marker_recorded)
       --> MarkerCommandRecorded;
     // If we are told to cancel while waiting for the marker, we still need to wait for the marker.
-    WaitingMarkerEvent --(Cancel, on_cancel_requested) --> WaitingMarkerEventCancelled;
+    WaitingMarkerEvent --(Cancel, on_cancel_requested) --> WaitingMarkerEvent;
+    // Because there could be non-heartbeat WFTs (ex: signals being received) between scheduling
+    // the LA and the marker being recorded, peekahead might not always resolve the LA *before*
+    // scheduling it. This transition accounts for that.
+    WaitingMarkerEvent --(HandleKnownResult(ResolveDat), on_handle_result) --> WaitingMarkerEvent;
     WaitingMarkerEvent --(NoWaitCancel(ActivityCancellationType),
-                          on_no_wait_cancel) --> WaitingMarkerEventCancelled;
-    WaitingMarkerEventCancelled --(HandleResult(ResolveDat), on_handle_result) --> WaitingMarkerEvent;
+                          on_no_wait_cancel) --> WaitingMarkerEvent;
 
     // It is entirely possible to have started the LA while replaying, only to find that we have
     // reached a new WFT and there still was no marker. In such cases we need to execute the LA.
@@ -202,6 +204,12 @@ impl LocalActivityMachine {
         }
     }
 
+    /// Returns true if the machine will willingly accept data from a marker in its current state.
+    /// IE: Calling [Self::try_resolve_with_dat] makes sense.
+    pub(super) fn will_accept_resolve_marker(&self) -> bool {
+        matches!(self.state, LocalActivityMachineState::WaitingMarkerEvent(_))
+    }
+
     /// Must be called if the workflow encounters a non-replay workflow task
     pub(super) fn encountered_non_replay_wft(
         &mut self,
@@ -240,28 +248,46 @@ impl LocalActivityMachine {
         backoff: Option<prost_types::Duration>,
         original_schedule_time: Option<SystemTime>,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
-        self.try_resolve_with_dat(ResolveDat {
-            result,
-            complete_time: self.shared_state.wf_time_when_started.map(|t| t + runtime),
-            attempt,
-            backoff,
-            original_schedule_time,
-        })
+        self._try_resolve(
+            ResolveDat {
+                result,
+                complete_time: self.shared_state.wf_time_when_started.map(|t| t + runtime),
+                attempt,
+                backoff,
+                original_schedule_time,
+            },
+            false,
+        )
     }
+
     /// Attempt to resolve the local activity with already known data, ex pre-resolved data
     pub(super) fn try_resolve_with_dat(
         &mut self,
         dat: ResolveDat,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
-        let res = OnEventWrapper::on_event_mut(self, LocalActivityMachineEvents::HandleResult(dat))
-            .map_err(|e| match e {
-                MachineError::InvalidTransition => WFMachinesError::Fatal(format!(
-                    "Invalid transition resolving local activity (seq {}) in {}",
-                    self.shared_state.attrs.seq,
-                    self.state(),
-                )),
-                MachineError::Underlying(e) => e,
-            })?;
+        dbg!(self.state.to_string());
+        self._try_resolve(dat, true)
+    }
+
+    fn _try_resolve(
+        &mut self,
+        dat: ResolveDat,
+        from_marker: bool,
+    ) -> Result<Vec<MachineResponse>, WFMachinesError> {
+        let evt = if from_marker {
+            LocalActivityMachineEvents::HandleKnownResult(dat)
+        } else {
+            LocalActivityMachineEvents::HandleResult(dat)
+        };
+        let res = OnEventWrapper::on_event_mut(self, evt).map_err(|e| match e {
+            MachineError::InvalidTransition => WFMachinesError::Fatal(format!(
+                "Invalid transition resolving local activity (seq {}, from marker: {}) in {}",
+                self.shared_state.attrs.seq,
+                from_marker,
+                self.state(),
+            )),
+            MachineError::Underlying(e) => e,
+        })?;
 
         Ok(res
             .into_iter()
@@ -510,6 +536,17 @@ impl WaitingMarkerEvent {
             })
         )
     }
+    fn on_handle_result(
+        self,
+        dat: ResolveDat,
+    ) -> LocalActivityMachineTransition<WaitingMarkerEvent> {
+        TransitionResult::ok(
+            [LocalActivityCommand::Resolved(dat)],
+            WaitingMarkerEvent {
+                already_resolved: true,
+            },
+        )
+    }
     pub(super) fn on_started_non_replay_wft(
         self,
         mut dat: SharedState,
@@ -525,38 +562,19 @@ impl WaitingMarkerEvent {
         )
     }
 
-    fn on_cancel_requested(self) -> LocalActivityMachineTransition<WaitingMarkerEventCancelled> {
+    fn on_cancel_requested(self) -> LocalActivityMachineTransition<WaitingMarkerEvent> {
         // We still "request a cancel" even though we know the local activity should not be running
         // because the data might be in the pre-resolved list.
-        TransitionResult::ok(
-            [LocalActivityCommand::RequestCancel],
-            WaitingMarkerEventCancelled {},
-        )
+        TransitionResult::ok([LocalActivityCommand::RequestCancel], self)
     }
 
     fn on_no_wait_cancel(
         self,
         _: ActivityCancellationType,
-    ) -> LocalActivityMachineTransition<WaitingMarkerEventCancelled> {
+    ) -> LocalActivityMachineTransition<WaitingMarkerEvent> {
         // Markers are always recorded when cancelling, so this is the same as a normal cancel on
         // the replay path
         self.on_cancel_requested()
-    }
-}
-
-#[derive(Default, Clone)]
-pub(super) struct WaitingMarkerEventCancelled {}
-impl WaitingMarkerEventCancelled {
-    fn on_handle_result(
-        self,
-        dat: ResolveDat,
-    ) -> LocalActivityMachineTransition<WaitingMarkerEvent> {
-        TransitionResult::ok(
-            [LocalActivityCommand::Resolved(dat)],
-            WaitingMarkerEvent {
-                already_resolved: true,
-            },
-        )
     }
 }
 
@@ -1339,6 +1357,7 @@ mod tests {
         )]
         cancel_type: ActivityCancellationType,
     ) {
+        crate::telemetry::test_telem_console();
         let func = WorkflowFunction::new(move |ctx| async move {
             let la = ctx.local_activity(LocalActivityOptions {
                 cancel_type,
@@ -1408,8 +1427,9 @@ mod tests {
             assert_eq!(commands[1].command_type, CommandType::StartTimer as i32);
         }
 
-        if replay {
-            wfm.get_next_activation().await.unwrap()
+        let commands = if replay {
+            wfm.get_next_activation().await.unwrap();
+            wfm.get_server_commands().commands
         } else {
             // On non replay, there's an additional activation, because completing with the cancel
             // wants to wake up the workflow to see if resolving the LA as cancelled did anything.
@@ -1434,11 +1454,11 @@ mod tests {
 
             wfm.new_history(t.get_history_info(3).unwrap().into())
                 .await
-                .unwrap()
+                .unwrap();
+            wfm.get_next_activation().await.unwrap();
+            wfm.get_server_commands().commands
         };
 
-        wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().commands;
         assert_eq!(commands.len(), 1);
         assert_eq!(
             commands[0].command_type,

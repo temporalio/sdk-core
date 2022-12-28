@@ -503,25 +503,34 @@ fn find_end_index_of_next_wft_seq(
         ) {
             saw_any_non_wft_event = true;
         }
+        if e.is_final_wf_execution_event() {
+            return NextWFTSeqEndIndex::Complete(last_index);
+        }
 
         if e.event_type() == EventType::WorkflowTaskStarted {
-            // If the next event is WFT timeout or fail, that doesn't conclude a WFT sequence
             if let Some(next_event) = events.get(ix + 1) {
                 let et = next_event.event_type();
-                if et == EventType::WorkflowTaskFailed || et == EventType::WorkflowTaskTimedOut {
+                // If the next event is WFT timeout or fail, or abrupt WF execution end, that
+                // doesn't conclude a WFT sequence.
+                if matches!(
+                    et,
+                    EventType::WorkflowTaskFailed
+                        | EventType::WorkflowTaskTimedOut
+                        | EventType::WorkflowExecutionTimedOut
+                        | EventType::WorkflowExecutionTerminated
+                        | EventType::WorkflowExecutionCanceled
+                ) {
                     continue;
                 }
                 // If we've never seen an interesting event and the next two events are a completion
                 // followed immediately again by scheduled, then this is a WFT heartbeat and also
-                // doesn't conclude the sequence
+                // doesn't conclude the sequence.
                 else if et == EventType::WorkflowTaskCompleted {
-                    // The <= 2 check here ensures that if the first WFT is a heartbeat, we skip
-                    // that too, since the execution started event counts as "non-wft".
-                    if !saw_any_non_wft_event || ix <= 2 {
-                        if let Some(next_next_event) = events.get(ix + 2) {
-                            if next_next_event.event_type() == EventType::WorkflowTaskScheduled {
-                                continue;
-                            }
+                    if let Some(next_next_event) = events.get(ix + 2) {
+                        if next_next_event.event_type() == EventType::WorkflowTaskScheduled {
+                            continue;
+                        } else {
+                            saw_any_non_wft_event = true;
                         }
                     }
                 }
@@ -565,7 +574,7 @@ pub mod tests {
         fn unwrap_events(self) -> Vec<HistoryEvent> {
             match self {
                 NextWFT::WFT(e) => e,
-                _ => panic!("Must be complete WFT"),
+                o => panic!("Must be complete WFT: {:?}", o),
             }
         }
     }
@@ -631,8 +640,8 @@ pub mod tests {
         timer_hist.add_workflow_execution_terminated();
         let mut update = timer_hist.as_history_update();
         let seq_2 = update.take_next_wft_sequence(3).unwrap_events();
-        assert_eq!(seq_2.len(), 5);
-        assert_eq!(seq_2.last().unwrap().event_id, 8);
+        assert_eq!(seq_2.len(), 6);
+        assert_eq!(seq_2.last().unwrap().event_id, 9);
     }
 
     #[test]
@@ -656,10 +665,9 @@ pub mod tests {
         let seq = next_check_peek(&mut update, 0);
         assert_eq!(seq.len(), 6);
         let seq = next_check_peek(&mut update, 6);
-        assert_eq!(seq.len(), 4);
-        let seq = next_check_peek(&mut update, 10);
-        dbg!(&seq);
         assert_eq!(seq.len(), 13);
+        let seq = next_check_peek(&mut update, 19);
+        assert_eq!(seq.len(), 4);
         let seq = next_check_peek(&mut update, 23);
         assert_eq!(seq.len(), 4);
         let seq = next_check_peek(&mut update, 27);
@@ -675,9 +683,6 @@ pub mod tests {
         t.add_local_activity_result_marker(1, "1", "done".into());
         t.add_workflow_execution_completed();
 
-        // TODO: repros query_during_wft_heartbeat_doesnt_accidentally_fail_to_continue_heartbeat
-        //  "fixed" wft sequencing logic has problem with LA FSM, but maybe the machine should
-        //  be fixed
         let mut update = t.as_history_update();
         let seq = next_check_peek(&mut update, 3);
         // completed, sched, started
@@ -686,8 +691,7 @@ pub mod tests {
         assert_eq!(seq.len(), 3);
     }
 
-    fn paginator_setup(history: TestHistoryBuilder) -> HistoryPaginator {
-        let chunk_size = 10;
+    fn paginator_setup(history: TestHistoryBuilder, chunk_size: usize) -> HistoryPaginator {
         let full_hist = history.get_full_history_info().unwrap().into_events();
         let initial_hist = full_hist.chunks(chunk_size).nth(0).unwrap().to_vec();
         let mut mock_client = mock_workflow_client();
@@ -697,10 +701,10 @@ pub mod tests {
             .expect_get_workflow_execution_history()
             .returning(move |_, _, passed_npt| {
                 assert_eq!(passed_npt, vec![npt]);
-                let mut hist_chunks = full_hist.chunks(10);
+                let mut hist_chunks = full_hist.chunks(chunk_size).peekable();
                 let next_chunks = hist_chunks.nth(npt.into()).unwrap_or_default();
                 npt += 1;
-                let next_page_token = if next_chunks.is_empty() {
+                let next_page_token = if hist_chunks.peek().is_none() {
                     vec![]
                 } else {
                     vec![npt]
@@ -726,10 +730,14 @@ pub mod tests {
         )
     }
 
+    #[rstest::rstest]
     #[tokio::test]
-    async fn paginator_extracts_updates() {
+    async fn paginator_extracts_updates(#[values(10, 11, 12, 13, 14)] chunk_size: usize) {
         let wft_count = 100;
-        let mut paginator = paginator_setup(canned_histories::long_sequential_timers(wft_count));
+        let mut paginator = paginator_setup(
+            canned_histories::long_sequential_timers(wft_count),
+            chunk_size,
+        );
         let mut update = paginator.extract_next_update(0).await.unwrap();
 
         let seq = update.take_next_wft_sequence(0).unwrap_events();
@@ -767,6 +775,7 @@ pub mod tests {
         let wft_count = 10;
         let paginator = StreamingHistoryPaginator::new(paginator_setup(
             canned_histories::long_sequential_timers(wft_count),
+            10,
         ));
         let everything: Vec<_> = paginator.try_collect().await.unwrap();
         assert_eq!(everything.len(), (wft_count + 1) * 5);
@@ -794,29 +803,51 @@ pub mod tests {
     }
 
     #[tokio::test]
-    async fn needs_fetch_if_ending_in_wft_seq() {
+    async fn needs_fetch_if_ending_in_middle_of_wft_seq() {
         let t = three_wfts_then_heartbeats();
         let mut ends_in_middle_of_seq = t.as_history_update().events;
-        ends_in_middle_of_seq.truncate(20);
-        // The update should contain the first two complete WFTs, ending on the 11th event which
+        ends_in_middle_of_seq.truncate(19);
+        // The update should contain the first two complete WFTs, ending on the 8th event which
         // is WFT started. The remaining events should be returned. False flags means the creator
         // knows there are more events, so we should return need fetch
         let (mut update, remaining) = HistoryUpdate::from_events(ends_in_middle_of_seq, 0, false);
-        assert_eq!(remaining[0].event_id, 12);
+        assert_eq!(remaining[0].event_id, 8);
+        assert_eq!(remaining.last().unwrap().event_id, 19);
+        let seq = update.take_next_wft_sequence(0).unwrap_events();
+        assert_eq!(seq.last().unwrap().event_id, 3);
+        let seq = update.take_next_wft_sequence(3).unwrap_events();
+        assert_eq!(seq.last().unwrap().event_id, 7);
+        let next = update.take_next_wft_sequence(7);
+        assert_matches!(next, NextWFT::NeedFetch);
+    }
+
+    // Like the above, but if the history happens to be cut off at a wft boundary, (even though
+    // there may have been many heartbeats after we have no way of knowing about), it's going to
+    // count events 7-20 as a WFT since there is started, completed, timer command, ..heartbeats..
+    #[tokio::test]
+    async fn needs_fetch_after_complete_seq_with_heartbeats() {
+        let t = three_wfts_then_heartbeats();
+        let mut ends_in_middle_of_seq = t.as_history_update().events;
+        ends_in_middle_of_seq.truncate(20);
+        let (mut update, remaining) = HistoryUpdate::from_events(ends_in_middle_of_seq, 0, false);
+        assert!(remaining.is_empty());
         let seq = update.take_next_wft_sequence(0).unwrap_events();
         assert_eq!(seq.last().unwrap().event_id, 3);
         let seq = update.take_next_wft_sequence(3).unwrap_events();
         assert_eq!(seq.last().unwrap().event_id, 7);
         let seq = update.take_next_wft_sequence(7).unwrap_events();
-        assert_eq!(seq.last().unwrap().event_id, 11);
-        let next = update.take_next_wft_sequence(11);
+        assert_eq!(seq.last().unwrap().event_id, 20);
+        let next = update.take_next_wft_sequence(20);
         assert_matches!(next, NextWFT::NeedFetch);
     }
 
+    #[rstest::rstest]
     #[tokio::test]
-    async fn paginator_works_with_wft_over_multiple_pages() {
+    async fn paginator_works_with_wft_over_multiple_pages(
+        #[values(10, 11, 12, 13, 14)] chunk_size: usize,
+    ) {
         let t = three_wfts_then_heartbeats();
-        let mut paginator = paginator_setup(t);
+        let mut paginator = paginator_setup(t, chunk_size);
         let mut update = paginator.extract_next_update(0).await.unwrap();
         let mut last_id = 0;
         loop {
@@ -843,8 +874,8 @@ pub mod tests {
         let seq = update.take_next_wft_sequence(3).unwrap_events();
         assert_eq!(seq.last().unwrap().event_id, 7);
         let seq = update.take_next_wft_sequence(7).unwrap_events();
-        assert_eq!(seq.last().unwrap().event_id, 11);
-        let seq = update.take_next_wft_sequence(11).unwrap_events();
+        assert_eq!(seq.last().unwrap().event_id, 158);
+        let seq = update.take_next_wft_sequence(158).unwrap_events();
         assert_eq!(seq.last().unwrap().event_id, 160);
         assert_eq!(
             seq.last().unwrap().event_type(),
@@ -883,5 +914,32 @@ pub mod tests {
         // Verify anything extra (which should only ever be WFT started) was re-appended to the
         // end of the event iteration after fetching the old history.
         assert_eq!(seq.last().unwrap().event_id, 8);
+    }
+
+    #[test]
+    fn la_marker_chunking() {
+        let mut t = TestHistoryBuilder::default();
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        t.add_full_wf_task();
+        t.add_we_signaled("whatever", vec![]);
+        t.add_full_wf_task(); // started - 7
+        t.add_local_activity_result_marker(1, "hi", Default::default());
+        let act_s = t.add_activity_task_scheduled("1");
+        let act_st = t.add_activity_task_started(act_s);
+        t.add_activity_task_completed(act_s, act_st, Default::default());
+        t.add_workflow_task_scheduled_and_started();
+        t.add_workflow_task_timed_out();
+        t.add_workflow_task_scheduled_and_started();
+        t.add_workflow_task_timed_out();
+        t.add_workflow_task_scheduled_and_started();
+
+        let mut update = t.as_history_update();
+        let seq = next_check_peek(&mut update, 0);
+        assert_eq!(seq.len(), 3);
+        let seq = next_check_peek(&mut update, 3);
+        assert_eq!(seq.len(), 4);
+        let seq = next_check_peek(&mut update, 7);
+        assert_eq!(seq.len(), 13);
+        dbg!(seq);
     }
 }

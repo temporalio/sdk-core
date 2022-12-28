@@ -1,15 +1,13 @@
-use super::super::{local_activity_state_machine::ResolveDat, WFMachinesError};
+use super::super::local_activity_state_machine::ResolveDat;
 use crate::{
-    protosext::{HistoryEventExt, ValidScheduleLA},
+    protosext::{CompleteLocalActivityData, ValidScheduleLA},
     worker::{ExecutingLAId, LocalActRequest, NewLocalAct},
 };
 use std::{
     collections::{HashMap, HashSet},
     time::SystemTime,
 };
-use temporal_sdk_core_protos::temporal::api::{
-    common::v1::WorkflowExecution, history::v1::HistoryEvent,
-};
+use temporal_sdk_core_protos::temporal::api::common::v1::WorkflowExecution;
 
 #[derive(Default)]
 pub(super) struct LocalActivityData {
@@ -70,17 +68,8 @@ impl LocalActivityData {
         self.executing.len() + self.new_requests.len()
     }
 
-    pub(super) fn process_peekahead_marker(&mut self, e: &HistoryEvent) -> super::Result<()> {
-        if let Some(la_dat) = e.clone().into_local_activity_marker_details() {
-            self.preresolutions
-                .insert(la_dat.marker_dat.seq, la_dat.into());
-        } else {
-            return Err(WFMachinesError::Fatal(format!(
-                "Local activity marker was unparsable: {:?}",
-                e
-            )));
-        }
-        Ok(())
+    pub(super) fn insert_peeked_marker(&mut self, dat: CompleteLocalActivityData) {
+        self.preresolutions.insert(dat.marker_dat.seq, dat.into());
     }
 
     pub(super) fn take_preresolution(&mut self, seq: u32) -> Option<ResolveDat> {

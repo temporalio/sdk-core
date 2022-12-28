@@ -207,7 +207,6 @@ impl Workflows {
             };
             // TODO: Extract this probably
             if !r.fetch_histories.is_empty() {
-                warn!("Got history fetch requests!");
                 for fetchreq in r.fetch_histories {
                     if self.fetch_tx.send(fetchreq).is_err() {
                         error!("Some history fetch requests were dropped while shutting down");

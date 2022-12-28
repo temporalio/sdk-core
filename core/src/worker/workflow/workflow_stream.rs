@@ -36,6 +36,7 @@ pub(crate) struct WFStream {
     /// manipulation. Must be drained by the
     runs_needing_fetching: VecDeque<HistoryFetchReq>,
 
+    // TODO: Probably lift up
     /// Ensures we stay at or below this worker's maximum concurrent workflow task limit
     wft_semaphore: MeteredSemaphore,
     shutdown_token: CancellationToken,
