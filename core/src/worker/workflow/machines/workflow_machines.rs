@@ -421,7 +421,6 @@ impl WorkflowMachines {
             }
         }
 
-        info!(events = %events.display(), "Next seq events");
         let mut history = events.into_iter().peekable();
         while let Some(event) = history.next() {
             if event.event_id != self.last_processed_event + 1 {

@@ -1,6 +1,5 @@
 use crate::{
-    abstractions::{dbg_panic, stream_when_allowed, MeteredSemaphore},
-    telemetry::metrics::workflow_worker_type,
+    abstractions::{dbg_panic, MeteredSemaphore},
     worker::{
         workflow::{run_cache::RunCache, wft_extraction::WFTExtractorOutput, *},
         LocalActRequest, LocalActivityResolution, LEGACY_QUERY_ID,
@@ -147,6 +146,7 @@ impl WFStream {
     /// [RunAction]s and receiving [RunUpdateResponse]s via its [ManagedRunHandle].
     pub(super) fn build(
         basics: WorkflowBasics,
+        wft_semaphore: MeteredSemaphore,
         external_wfts: impl Stream<Item = Result<WFTExtractorOutput, tonic::Status>> + Send + 'static,
         local_rx: impl Stream<Item = LocalInput> + Send + 'static,
         local_activity_request_sink: impl Fn(Vec<LocalActRequest>) -> Vec<LocalActivityResolution>
@@ -155,16 +155,6 @@ impl WFStream {
             + 'static,
         // TODO: Should probably be able to avoid ever returning any errors now?
     ) -> impl Stream<Item = Result<WFStreamOutput, PollWfError>> {
-        let wft_semaphore = MeteredSemaphore::new(
-            basics.max_outstanding_wfts,
-            basics.metrics.with_new_attrs([workflow_worker_type()]),
-            MetricsContext::available_task_slots,
-        );
-        let wft_sem_clone = wft_semaphore.clone();
-        let proceeder = stream::unfold(wft_sem_clone, |sem| async move {
-            Some((sem.acquire_owned().await.unwrap(), sem))
-        });
-        let poller_wfts = stream_when_allowed(external_wfts, proceeder);
         let (run_update_tx, run_update_rx) = unbounded_channel();
         let local_rx = stream::select(
             local_rx.map(Into::into),
@@ -172,11 +162,9 @@ impl WFStream {
         );
         let all_inputs = stream::select_with_strategy(
             local_rx,
-            poller_wfts
-                .map(move |(wft, permit)| match wft {
-                    Ok(WFTExtractorOutput::NewWFT(pwft)) => {
-                        ExternalPollerInputs::NewWft(PermittedWFT { work: pwft, permit })
-                    }
+            external_wfts
+                .map(move |wft| match wft {
+                    Ok(WFTExtractorOutput::NewWFT(pwft)) => ExternalPollerInputs::NewWft(pwft),
                     Ok(WFTExtractorOutput::FetchResult(updated_wft)) => {
                         ExternalPollerInputs::FetchedUpdate(updated_wft)
                     }
@@ -281,7 +269,6 @@ impl WFStream {
                 })
             })
             .inspect(|o| {
-                info!("Aiee {:?}", o);
                 if let Some(e) = o.as_ref().err() {
                     if !matches!(e, PollWfError::ShutDown) {
                         error!(

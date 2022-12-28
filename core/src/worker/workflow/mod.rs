@@ -20,9 +20,9 @@ pub(crate) use machines::WFMachinesError;
 pub(crate) use managed_run::ManagedWFFunc;
 
 use crate::{
-    abstractions::OwnedMeteredSemPermit,
+    abstractions::{stream_when_allowed, MeteredSemaphore, OwnedMeteredSemPermit},
     protosext::{legacy_query_failure, ValidPollWFTQResponse, WorkflowActivationExt},
-    telemetry::VecDisplayer,
+    telemetry::{metrics::workflow_worker_type, VecDisplayer},
     worker::{
         activities::{ActivitiesFromWFTsHandle, PermittedTqResp},
         client::{WorkerClient, WorkflowTaskCompletion},
@@ -38,6 +38,7 @@ use crate::{
     MetricsContext,
 };
 use futures::{stream::BoxStream, Stream, StreamExt};
+use futures_util::stream;
 use std::{
     collections::{HashSet, VecDeque},
     fmt::{Debug, Display, Formatter},
@@ -133,6 +134,16 @@ impl Workflows {
         let (fetch_tx, fetch_rx) = unbounded_channel();
         let shutdown_tok = basics.shutdown_token.clone();
         let task_queue = basics.task_queue.clone();
+        let wft_semaphore = MeteredSemaphore::new(
+            basics.max_outstanding_wfts,
+            basics.metrics.with_new_attrs([workflow_worker_type()]),
+            MetricsContext::available_task_slots,
+        );
+        // Only allow polling of the new WFT stream if there are available task slots
+        let proceeder = stream::unfold(wft_semaphore.clone(), |sem| async move {
+            Some((sem.acquire_owned().await.unwrap(), sem))
+        });
+        let wft_stream = stream_when_allowed(wft_stream, proceeder);
         let extracted_wft_stream = WFTExtractor::new(
             client.clone(),
             wft_stream,
@@ -140,6 +151,7 @@ impl Workflows {
         );
         let mut stream = WFStream::build(
             basics,
+            wft_semaphore,
             extracted_wft_stream,
             UnboundedReceiverStream::new(local_rx),
             local_activity_request_sink,

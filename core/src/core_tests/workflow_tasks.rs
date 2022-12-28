@@ -1576,6 +1576,8 @@ async fn cache_miss_will_fetch_history() {
     mock.make_wft_stream_interminable();
     mock.worker_cfg(|cfg| {
         cfg.max_cached_workflows = 1;
+        // Also verifies tying the WFT permit to the fetch request doesn't get us stuck
+        cfg.max_outstanding_workflow_tasks = 1;
     });
     let worker = mock_worker(mock);
 

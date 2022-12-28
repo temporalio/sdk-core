@@ -1,8 +1,9 @@
 use crate::{
+    abstractions::OwnedMeteredSemPermit,
     protosext::ValidPollWFTQResponse,
     worker::{
         client::WorkerClient,
-        workflow::{history_update::HistoryPaginator, HistoryFetchReq, PermittedWFT, PreparedWFT},
+        workflow::{history_update::HistoryPaginator, HistoryFetchReq, PermittedWFT},
     },
 };
 use futures::Stream;
@@ -10,21 +11,19 @@ use futures_util::{future, stream, FutureExt, StreamExt};
 use std::{collections::HashMap, sync::Arc, task::Poll};
 use tokio_util::sync::CancellationToken;
 
-/// Transforms incoming validated WFTs and history fetching requests into [PreparedWFT]s ready
+/// Transforms incoming validated WFTs and history fetching requests into [PermittedWFT]s ready
 /// for application to workflow state
 pub(super) struct WFTExtractor {
     /// Maps run ids to their associated paginator
     paginators: HashMap<String, HistoryPaginator>,
 }
 
-#[derive(derive_more::From)]
 enum WFTExtractorInput {
-    New((HistoryPaginator, PreparedWFT)),
+    New((HistoryPaginator, PermittedWFT)),
     FetchResult((HistoryPaginator, PermittedWFT)),
     FatalPollErr(tonic::Status),
     /// If paginating or history fetching fails, we don't want to consider that a fatal polling
     /// error
-    #[from(ignore)]
     FetchErr {
         run_id: String,
         err: tonic::Status,
@@ -32,14 +31,18 @@ enum WFTExtractorInput {
 }
 
 pub(super) enum WFTExtractorOutput {
-    NewWFT(PreparedWFT),
+    NewWFT(PermittedWFT),
     FetchResult(PermittedWFT),
 }
 
+type WFTStreamIn = (
+    Result<ValidPollWFTQResponse, tonic::Status>,
+    OwnedMeteredSemPermit,
+);
 impl WFTExtractor {
     pub(super) fn new(
         client: Arc<dyn WorkerClient>,
-        wft_stream: impl Stream<Item = Result<ValidPollWFTQResponse, tonic::Status>> + Send + 'static,
+        wft_stream: impl Stream<Item = WFTStreamIn> + Send + 'static,
         fetch_stream: impl Stream<Item = HistoryFetchReq> + Send + 'static,
     ) -> impl Stream<Item = Result<WFTExtractorOutput, tonic::Status>> + Send + 'static {
         let extractor = Self {
@@ -49,7 +52,7 @@ impl WFTExtractor {
         let wft_stream_end_stopper = stop_tok.clone();
         let fetch_client = client.clone();
         let wft_stream = wft_stream
-            .map(move |wft| {
+            .map(move |(wft, permit)| {
                 let client = client.clone();
                 async move {
                     match wft {
@@ -57,11 +60,14 @@ impl WFTExtractor {
                             let prev_id = wft.previous_started_event_id;
                             let run_id = wft.workflow_execution.run_id.clone();
                             match HistoryPaginator::from_poll(wft, client, prev_id).await {
-                                Ok(r) => r.into(),
+                                Ok((pag, prep)) => WFTExtractorInput::New((
+                                    pag,
+                                    PermittedWFT { work: prep, permit },
+                                )),
                                 Err(err) => WFTExtractorInput::FetchErr { run_id, err },
                             }
                         }
-                        Err(e) => e.into(),
+                        Err(e) => WFTExtractorInput::FatalPollErr(e),
                     }
                 }
                 .left_future()
@@ -77,7 +83,7 @@ impl WFTExtractor {
                 let run_id = fetchreq.original_wft.work.execution.run_id.clone();
                 async move {
                     match HistoryPaginator::from_fetchreq(fetchreq, client).await {
-                        Ok(r) => r.into(),
+                        Ok(r) => WFTExtractorInput::FetchResult(r),
                         Err(err) => WFTExtractorInput::FetchErr { run_id, err },
                     }
                 }
@@ -96,7 +102,7 @@ impl WFTExtractor {
         .scan(extractor, |ex, extinput| match extinput {
             WFTExtractorInput::New((paginator, pwft)) => {
                 ex.paginators
-                    .insert(pwft.execution.run_id.clone(), paginator);
+                    .insert(pwft.work.execution.run_id.clone(), paginator);
                 future::ready(Some(Ok(WFTExtractorOutput::NewWFT(pwft))))
             }
             WFTExtractorInput::FetchResult((paginator, pwft)) => {
