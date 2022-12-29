@@ -265,7 +265,6 @@ impl LocalActivityMachine {
         &mut self,
         dat: ResolveDat,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
-        dbg!(self.state.to_string());
         self._try_resolve(dat, true)
     }
 

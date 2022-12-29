@@ -1546,9 +1546,8 @@ async fn failing_wft_doesnt_eat_permit_forever() {
         ))
         .await
         .unwrap();
-    assert_eq!(worker.available_wft_permits().await, 2);
-
     worker.shutdown().await;
+    assert_eq!(worker.available_wft_permits().await, 2);
 }
 
 #[tokio::test]

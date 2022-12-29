@@ -1,8 +1,8 @@
 use crate::{
     telemetry::metrics::workflow_type,
     worker::workflow::{
-        managed_run::WorkflowManager, HistoryUpdate, LocalActivityRequestSink, ManagedRunHandle,
-        NewIncomingWFT, RunUpdateResponse,
+        managed_run::WorkflowManager, HeartbeatTimeoutMsg, HistoryUpdate, LocalActivityRequestSink,
+        ManagedRunHandle, NewIncomingWFT, RunUpdateResponseKind,
     },
     MetricsContext,
 };
@@ -13,10 +13,14 @@ use tokio::sync::mpsc::UnboundedSender;
 pub(super) struct RunCache {
     max: usize,
     namespace: String,
-    run_update_tx: UnboundedSender<RunUpdateResponse>,
     /// Run id -> Data
     runs: LruCache<String, ManagedRunHandle>,
+    // TODO: eliminate & make return value
     local_activity_request_sink: LocalActivityRequestSink,
+    // Used to feed heartbeat timeout events back into the workflow inputs.
+    // TODO: Ideally, we wouldn't spawn tasks inside here now that this is tokio-free-ish.
+    //   Instead, `Workflows` can spawn them itself if there are any LAs.
+    heartbeat_tx: UnboundedSender<HeartbeatTimeoutMsg>,
 
     metrics: MetricsContext,
 }
@@ -25,8 +29,8 @@ impl RunCache {
     pub fn new(
         max_cache_size: usize,
         namespace: String,
-        run_update_tx: UnboundedSender<RunUpdateResponse>,
         local_activity_request_sink: LocalActivityRequestSink,
+        heartbeat_tx: UnboundedSender<HeartbeatTimeoutMsg>,
         metrics: MetricsContext,
     ) -> Self {
         // The cache needs room for at least one run, otherwise we couldn't do anything. In
@@ -39,11 +43,11 @@ impl RunCache {
         Self {
             max: max_cache_size,
             namespace,
-            run_update_tx,
             runs: LruCache::new(
                 NonZeroUsize::new(lru_size).expect("LRU size is guaranteed positive"),
             ),
             local_activity_request_sink,
+            heartbeat_tx,
             metrics,
         }
     }
@@ -55,7 +59,7 @@ impl RunCache {
         wf_type: &str,
         history_update: HistoryUpdate,
         start_time: Instant,
-    ) -> &mut ManagedRunHandle {
+    ) -> (&mut ManagedRunHandle, RunUpdateResponseKind) {
         let cur_num_cached_runs = self.runs.len();
 
         if self.runs.contains(run_id) {
@@ -65,12 +69,12 @@ impl RunCache {
             let run_handle = self.runs.get_mut(run_id).unwrap();
 
             run_handle.metrics.sticky_cache_hit();
-            run_handle.incoming_wft(NewIncomingWFT {
+            let rur = run_handle.incoming_wft(NewIncomingWFT {
                 history_update: Some(history_update),
                 start_time,
             });
             self.metrics.cache_size(cur_num_cached_runs as u64);
-            return run_handle;
+            return (run_handle, rur);
         }
 
         // Create a new workflow machines instance for this workflow, initialize it, and
@@ -88,11 +92,11 @@ impl RunCache {
         );
         let mut mrh = ManagedRunHandle::new(
             wfm,
-            self.run_update_tx.clone(),
             self.local_activity_request_sink.clone(),
+            self.heartbeat_tx.clone(),
             metrics,
         );
-        mrh.incoming_wft(NewIncomingWFT {
+        let rur = mrh.incoming_wft(NewIncomingWFT {
             history_update: None,
             start_time,
         });
@@ -101,7 +105,7 @@ impl RunCache {
         }
         self.metrics.cache_size(cur_num_cached_runs as u64 + 1);
         // This is safe, we just inserted.
-        self.runs.get_mut(run_id).unwrap()
+        (self.runs.get_mut(run_id).unwrap(), rur)
     }
     pub fn remove(&mut self, k: &str) -> Option<ManagedRunHandle> {
         let r = self.runs.pop(k);

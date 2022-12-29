@@ -221,9 +221,9 @@ impl LocalActivityManager {
         }
         let mut immediate_resolutions = vec![];
         for req in reqs {
-            debug!(local_activity = ?req, "Queuing local activity");
             match req {
                 LocalActRequest::New(act) => {
+                    debug!(local_activity=?act, "Queuing local activity");
                     let id = ExecutingLAId {
                         run_id: act.workflow_exec_info.run_id.clone(),
                         seq_num: act.schedule_cmd.seq,
@@ -265,6 +265,7 @@ impl LocalActivityManager {
                     }
                 }
                 LocalActRequest::Cancel(id) => {
+                    debug!(id=?id, "Cancelling local activity");
                     let mut dlock = self.dat.lock();
                     if let Some(lai) = dlock.la_info.get_mut(&id) {
                         if let Some(immediate_res) = self.cancel_one_la(id.seq_num, lai) {
@@ -273,6 +274,7 @@ impl LocalActivityManager {
                     }
                 }
                 LocalActRequest::CancelAllInRun(run_id) => {
+                    debug!(run_id=%run_id, "Cancelling all local activities for run");
                     let mut dlock = self.dat.lock();
                     // Even if we've got 100k+ LAs this should only take a ms or two. Not worth
                     // adding another map to keep in sync.

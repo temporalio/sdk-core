@@ -351,13 +351,9 @@ impl Worker {
             .unwrap_or_default()
     }
 
-    #[cfg(test)]
+    #[allow(unused)]
     pub(crate) async fn available_wft_permits(&self) -> usize {
-        self.workflows
-            .get_state_info()
-            .await
-            .expect("You can only check for available permits before shutdown")
-            .available_wft_permits
+        self.workflows.available_wft_permits()
     }
 
     /// Get new activity tasks (may be local or nonlocal). Local activities are returned first

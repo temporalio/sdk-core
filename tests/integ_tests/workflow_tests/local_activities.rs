@@ -684,7 +684,7 @@ async fn evict_while_la_running_no_interference() {
     let mut starter = CoreWfStarter::new(wf_name);
     starter.max_local_at(20);
     starter.max_cached_workflows(20);
-    // Though it doesn't make sense to set wft higher than cached workflows, commenting this out
+    // Though it doesn't make sense to set wft higher than cached workflows, leaving this commented
     // introduces more instability that can be useful in the test.
     // starter.max_wft(20);
     let mut worker = starter.worker().await;
