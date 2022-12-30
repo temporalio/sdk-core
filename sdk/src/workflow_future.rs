@@ -1,6 +1,6 @@
 use crate::{
-    workflow_context::WfContextSharedData, CancellableID, RustWfCmd, SignalData, TimerResult,
-    UnblockEvent, WfContext, WfExitValue, WorkflowFunction, WorkflowResult,
+    panic_formatter, workflow_context::WfContextSharedData, CancellableID, RustWfCmd, SignalData,
+    TimerResult, UnblockEvent, WfContext, WfExitValue, WorkflowFunction, WorkflowResult,
 };
 use anyhow::{anyhow, bail, Context as AnyhowContext, Error};
 use crossbeam::channel::Receiver;
@@ -279,11 +279,7 @@ impl Future for WorkflowFuture {
                 .poll_unpin(cx)
             {
                 Poll::Ready(Err(e)) => {
-                    let errmsg = format!(
-                        "Workflow function panicked: {:?}",
-                        // Panics are typically strings
-                        e.downcast::<String>()
-                    );
+                    let errmsg = format!("Workflow function panicked: {}", panic_formatter(e));
                     warn!("{}", errmsg);
                     self.outgoing_completions
                         .send(WorkflowActivationCompletion::fail(

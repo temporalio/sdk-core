@@ -238,29 +238,33 @@ impl ManagedRun {
             .take()
             .expect("Completion response channel must be populated");
 
+        let data = CompletionDataForWFT {
+            task_token: completion.task_token,
+            query_responses: completion.query_responses,
+            has_pending_query: completion.has_pending_query,
+            activation_was_only_eviction: completion.activation_was_only_eviction,
+        };
+
+        // If this is just bookkeeping after a reply to an only-eviction activation, we can bypass
+        // everything, since there is no reason to continue trying to update machines.
+        if completion.activation_was_only_eviction {
+            return Ok(Some(self.prepare_complete_resp(resp_chan, data, false)));
+        }
+
         let outcome = async move {
             // Send commands from lang into the machines then check if the workflow run
             // needs another activation and mark it if so
-            self.wfm.push_commands(completion.commands).await?;
+            self.wfm
+                .push_commands_and_iterate(completion.commands)
+                .await?;
             // Don't bother applying the next task if we're evicting at the end of
             // this activation
             if !completion.activation_was_eviction {
                 self.wfm.apply_next_task_if_ready().await?;
             }
             let new_local_acts = self.wfm.drain_queued_local_activities();
+            self.sink_la_requests(new_local_acts)?;
 
-            let immediate_resolutions = (self.local_activity_request_sink)(new_local_acts);
-            for resolution in immediate_resolutions {
-                self.wfm
-                    .notify_of_local_result(LocalResolution::LocalActivity(resolution))?;
-            }
-
-            let data = CompletionDataForWFT {
-                task_token: completion.task_token,
-                query_responses: completion.query_responses,
-                has_pending_query: completion.has_pending_query,
-                activation_was_only_eviction: completion.activation_was_only_eviction,
-            };
             if self.wfm.machines.outstanding_local_activity_count() == 0 {
                 Ok((None, data, self))
             } else {
@@ -316,10 +320,18 @@ impl ManagedRun {
         has_pending_queries: bool,
         has_wft: bool,
     ) -> Result<Option<ActivationOrAuto>, RunUpdateErr> {
+        // In the event it's time to evict this run, cancel any outstanding LAs
+        if want_to_evict.is_some() {
+            self.sink_la_requests(vec![LocalActRequest::CancelAllInRun(
+                self.wfm.machines.run_id.clone(),
+            )])?;
+        }
+
         if !has_wft {
-            // It doesn't make sense to do work unless we have a WFT
+            // It doesn't make sense to do workflow work unless we have a WFT
             return Ok(None);
         }
+
         if self.wfm.machines.has_pending_jobs() && !self.am_broken {
             Ok(Some(ActivationOrAuto::LangActivation(
                 self.wfm.get_next_activation().await?,
@@ -354,23 +366,27 @@ impl ManagedRun {
         due_to_heartbeat_timeout: bool,
     ) -> FulfillableActivationComplete {
         let outgoing_cmds = self.wfm.get_server_commands();
+        if data.activation_was_only_eviction && !outgoing_cmds.commands.is_empty() {
+            dbg_panic!(
+                "There should not be any outgoing commands when preparing a completion response \
+                 if the activation was only an eviction. This is an SDK bug."
+            );
+        }
+
         let query_responses = data.query_responses;
         let has_query_responses = !query_responses.is_empty();
         let is_query_playback = data.has_pending_query && !has_query_responses;
         let mut force_new_wft = due_to_heartbeat_timeout;
 
-        // We only actually want to send commands back to the server if there are no more
-        // pending activations and we are caught up on replay. We don't want to complete a wft
-        // if we already saw the final event in the workflow, or if we are playing back for the
-        // express purpose of fulfilling a query. If the activation we sent was *only* an
-        // eviction, and there were no commands produced during iteration, don't send that
+        // We only actually want to send commands back to the server if there are no more pending
+        // activations and we are caught up on replay. We don't want to complete a wft if we already
+        // saw the final event in the workflow, or if we are playing back for the express purpose of
+        // fulfilling a query. If the activation we sent was *only* an eviction, don't send that
         // either.
-        let no_commands_and_evicting =
-            outgoing_cmds.commands.is_empty() && data.activation_was_only_eviction;
         let should_respond = !(self.wfm.machines.has_pending_jobs()
             || outgoing_cmds.replaying
             || is_query_playback
-            || no_commands_and_evicting);
+            || data.activation_was_only_eviction);
         // If there are pending LA resolutions, and we're responding to a query here,
         // we want to make sure to force a new task, as otherwise once we tell lang about
         // the LA resolution there wouldn't be any task to reply to with the result of iterating
@@ -378,17 +394,16 @@ impl ManagedRun {
         if has_query_responses && self.wfm.machines.has_pending_la_resolutions() {
             force_new_wft = true;
         }
-        let to_be_sent = ServerCommandsWithWorkflowInfo {
-            task_token: data.task_token,
-            action: ActivationAction::WftComplete {
-                force_new_wft,
-                commands: outgoing_cmds.commands,
-                query_responses,
-            },
-        };
 
         let outcome = if should_respond || has_query_responses {
-            ActivationCompleteOutcome::ReportWFTSuccess(to_be_sent)
+            ActivationCompleteOutcome::ReportWFTSuccess(ServerCommandsWithWorkflowInfo {
+                task_token: data.task_token,
+                action: ActivationAction::WftComplete {
+                    force_new_wft,
+                    commands: outgoing_cmds.commands,
+                    query_responses,
+                },
+            })
         } else {
             ActivationCompleteOutcome::DoNothing
         };
@@ -421,6 +436,20 @@ impl ManagedRun {
             }
         }
         Ok(None)
+    }
+
+    /// Pump some local activity requests into the sink, applying any immediate results to the
+    /// workflow machines.
+    fn sink_la_requests(
+        &mut self,
+        new_local_acts: Vec<LocalActRequest>,
+    ) -> Result<(), WFMachinesError> {
+        let immediate_resolutions = (self.local_activity_request_sink)(new_local_acts);
+        for resolution in immediate_resolutions {
+            self.wfm
+                .notify_of_local_result(LocalResolution::LocalActivity(resolution))?;
+        }
+        Ok(())
     }
 
     /// Returns `true` if autocompletion should be issued, which will actually cause us to end up
@@ -643,7 +672,7 @@ impl WorkflowManager {
 
     /// Feed the workflow machines new commands issued by the executing workflow code, and iterate
     /// the machines.
-    async fn push_commands(&mut self, cmds: Vec<WFCommand>) -> Result<()> {
+    async fn push_commands_and_iterate(&mut self, cmds: Vec<WFCommand>) -> Result<()> {
         if let Some(cs) = self.command_sink.as_mut() {
             cs.send(cmds).map_err(|_| {
                 WFMachinesError::Fatal("Internal error buffering workflow commands".to_string())
