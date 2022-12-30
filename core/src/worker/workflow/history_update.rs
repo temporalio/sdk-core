@@ -37,17 +37,28 @@ impl Debug for HistoryUpdate {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "HistoryUpdate(previous_started_event_id: {})",
-            self.previous_started_event_id
+            "HistoryUpdate(previous_started_event_id: {}, length: {}, first_event_id: {})",
+            self.previous_started_event_id,
+            self.events.len(),
+            self.events.first().map(|e| e.event_id).unwrap_or(-1)
         )
     }
 }
 impl HistoryUpdate {
+    /// Sometimes it's useful to take an update out of something without needing to use an option
+    /// field. Use this to replace the field with an empty update.
+    pub fn dummy() -> Self {
+        Self {
+            events: vec![],
+            previous_started_event_id: -1,
+            has_last_wft: false,
+        }
+    }
+    pub fn is_real(&self) -> bool {
+        self.previous_started_event_id >= 0
+    }
     pub fn first_event_id(&self) -> Option<i64> {
         self.events.get(0).map(|e| e.event_id)
-    }
-    pub fn history_length(&self) -> usize {
-        self.events.len()
     }
 }
 

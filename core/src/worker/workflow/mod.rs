@@ -20,15 +20,15 @@ pub(crate) use machines::WFMachinesError;
 pub(crate) use managed_run::ManagedWFFunc;
 
 use crate::{
-    abstractions::{dbg_panic, stream_when_allowed, MeteredSemaphore, OwnedMeteredSemPermit},
-    protosext::{legacy_query_failure, ValidPollWFTQResponse, WorkflowActivationExt},
+    abstractions::{stream_when_allowed, MeteredSemaphore, OwnedMeteredSemPermit},
+    protosext::{legacy_query_failure, ValidPollWFTQResponse},
     telemetry::{metrics::workflow_worker_type, VecDisplayer},
     worker::{
         activities::{ActivitiesFromWFTsHandle, PermittedTqResp},
         client::{WorkerClient, WorkflowTaskCompletion},
         workflow::{
             history_update::HistoryPaginator,
-            managed_run::{RunUpdateErr, WorkflowManager},
+            managed_run::RunUpdateResp,
             wft_extraction::WFTExtractor,
             wft_poller::validate_wft,
             workflow_stream::{LocalInput, LocalInputs, WFStream},
@@ -41,10 +41,10 @@ use crossbeam::queue::SegQueue;
 use futures::{stream::BoxStream, Stream, StreamExt};
 use futures_util::stream;
 use std::{
-    collections::{HashSet, VecDeque},
-    fmt::{Debug, Display, Formatter},
+    collections::VecDeque,
+    fmt::Debug,
     future::Future,
-    ops::{Add, DerefMut},
+    ops::DerefMut,
     result,
     sync::Arc,
     time::{Duration, Instant},
@@ -54,7 +54,7 @@ use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::{
             remove_from_cache::EvictionReason, workflow_activation_job, QueryWorkflow,
-            RemoveFromCache, WorkflowActivation, WorkflowActivationJob,
+            WorkflowActivation, WorkflowActivationJob,
         },
         workflow_commands::*,
         workflow_completion,
@@ -581,571 +581,6 @@ impl Workflows {
     }
 }
 
-// TODO: Rename to just managedrun after combining -- put in own module & fix visibility
-/// Manages access to a specific workflow run, and contains various bookkeeping information that the
-/// [WFStream] may need to access quickly.
-#[derive(derive_more::DebugCustom)]
-#[debug(
-    fmt = "ManagedRunHandle {{ wft: {:?}, activation: {:?}, buffered_resp: {:?} \
-           have_seen_terminal_event: {}, most_recently_processed_event: {}, more_pending_work: {}, \
-           trying_to_evict: {} }}",
-    wft,
-    activation,
-    buffered_resp,
-    have_seen_terminal_event,
-    most_recently_processed_event_number,
-    more_pending_work,
-    "trying_to_evict.is_some()"
-)]
-struct ManagedRunHandle {
-    // TODO: Eliminate now duped fields
-    wfm: WorkflowManager,
-    local_activity_request_sink: LocalActivityRequestSink,
-    waiting_on_la: Option<WaitingOnLAs>,
-    // Is set to true if the machines encounter an error and the only subsequent thing we should
-    // do is be evicted.
-    am_broken: bool,
-    /// If set, the WFT this run is currently/will be processing.
-    wft: Option<OutstandingTask>,
-    /// An outstanding activation to lang
-    activation: Option<OutstandingActivation>,
-    /// If set, it indicates there is a buffered poll response from the server that applies to this
-    /// run. This can happen when lang takes too long to complete a task and the task times out, for
-    /// example. Upon next completion, the buffered response will be removed and can be made ready
-    /// to be returned from polling
-    buffered_resp: Option<PermittedWFT>,
-    /// True if this machine has seen an event which ends the execution
-    have_seen_terminal_event: bool,
-    /// The most recently processed event id this machine has seen. 0 means it has seen nothing.
-    most_recently_processed_event_number: usize,
-    /// Is set true when the machines indicate that there is additional known work to be processed
-    more_pending_work: bool,
-    /// Is set if an eviction has been requested for this run
-    trying_to_evict: Option<RequestEvictMsg>,
-    // Used to feed heartbeat timeout events back into the workflow inputs.
-    // TODO: Ideally, we wouldn't spawn tasks inside here now that this is tokio-free-ish.
-    //   Instead, `Workflows` can spawn them itself if there are any LAs.
-    heartbeat_tx: UnboundedSender<HeartbeatTimeoutMsg>,
-
-    /// We track if we have recorded useful debugging values onto a certain span yet, to overcome
-    /// duplicating field values. Remove this once https://github.com/tokio-rs/tracing/issues/2334
-    /// is fixed.
-    recorded_span_ids: HashSet<tracing::Id>,
-    metrics: MetricsContext,
-}
-impl ManagedRunHandle {
-    fn new(
-        wfm: WorkflowManager,
-        local_activity_request_sink: LocalActivityRequestSink,
-        heartbeat_tx: UnboundedSender<HeartbeatTimeoutMsg>,
-        metrics: MetricsContext,
-    ) -> Self {
-        Self {
-            wfm,
-            local_activity_request_sink,
-            waiting_on_la: None,
-            am_broken: false,
-            wft: None,
-            activation: None,
-            buffered_resp: None,
-            have_seen_terminal_event: false,
-            most_recently_processed_event_number: 0,
-            more_pending_work: false,
-            trying_to_evict: None,
-            heartbeat_tx,
-            recorded_span_ids: Default::default(),
-            metrics,
-        }
-    }
-
-    // TODO: Collapse all these wrapper funcs
-    fn incoming_wft(&mut self, wft: NewIncomingWFT) -> RunUpdateResponseKind {
-        let res = self._incoming_wft(wft);
-        self.run_update_to_response(res.map(Into::into), true)
-    }
-
-    fn _incoming_wft(
-        &mut self,
-        wft: NewIncomingWFT,
-    ) -> Result<Option<ActivationOrAuto>, RunUpdateErr> {
-        if self.wft.is_some() {
-            error!("Trying to send a new WFT for a run which already has one!");
-        }
-        let activation = if let Some(h) = wft.history_update {
-            self.wfm.feed_history_from_server(h)?
-        } else {
-            let r = self.wfm.get_next_activation()?;
-            if r.jobs.is_empty() {
-                return Err(RunUpdateErr {
-                    source: WFMachinesError::Fatal(format!(
-                        "Machines created for {} with no jobs",
-                        self.wfm.machines.run_id
-                    )),
-                    complete_resp_chan: None,
-                });
-            }
-            r
-        };
-
-        if activation.jobs.is_empty() {
-            if self.wfm.machines.outstanding_local_activity_count() > 0 {
-                // If the activation has no jobs but there are outstanding LAs, we need to restart
-                // the WFT heartbeat.
-                if let Some(ref mut lawait) = self.waiting_on_la {
-                    if lawait.completion_dat.is_some() {
-                        panic!("Should not have completion dat when getting new wft & empty jobs")
-                    }
-                    lawait.heartbeat_timeout_task.abort();
-                    lawait.heartbeat_timeout_task = start_heartbeat_timeout_task(
-                        self.wfm.machines.run_id.clone(),
-                        self.heartbeat_tx.clone(),
-                        wft.start_time,
-                        lawait.wft_timeout,
-                    );
-                    // No activation needs to be sent to lang. We just need to wait for another
-                    // heartbeat timeout or LAs to resolve
-                    return Ok(None);
-                } else {
-                    panic!(
-                        "Got a new WFT while there are outstanding local activities, but there \
-                     was no waiting on LA info."
-                    )
-                }
-            } else {
-                return Ok(Some(ActivationOrAuto::Autocomplete {
-                    run_id: self.wfm.machines.run_id.clone(),
-                }));
-            }
-        }
-
-        Ok(Some(ActivationOrAuto::LangActivation(activation)))
-    }
-
-    // TODO: Collapse all these wrapper funcs
-    fn check_more_activations(&mut self) -> RunUpdateResponseKind {
-        let res = self._check_more_activations();
-        self.run_update_to_response(res.map(Into::into), false)
-    }
-
-    fn _check_more_activations(&mut self) -> Result<Option<ActivationOrAuto>, RunUpdateErr> {
-        // No point in checking for more activations if there's already an outstanding activation.
-        if self.activation.is_some() {
-            return Ok(None);
-        }
-        let has_pending_queries = self
-            .wft
-            .as_ref()
-            .map(|wft| !wft.pending_queries.is_empty())
-            .unwrap_or_default();
-        // In the event it's time to evict this run, cancel any outstanding LAs
-        if self.trying_to_evict.is_some() {
-            self.sink_la_requests(vec![LocalActRequest::CancelAllInRun(
-                self.wfm.machines.run_id.clone(),
-            )])?;
-        }
-
-        if !self.wft.is_some() {
-            // It doesn't make sense to do workflow work unless we have a WFT
-            return Ok(None);
-        }
-
-        if self.wfm.machines.has_pending_jobs() && !self.am_broken {
-            Ok(Some(ActivationOrAuto::LangActivation(
-                self.wfm.get_next_activation()?,
-            )))
-        } else {
-            if has_pending_queries && !self.am_broken {
-                return Ok(Some(ActivationOrAuto::ReadyForQueries(
-                    self.wfm.machines.get_wf_activation(),
-                )));
-            }
-            if let Some(wte) = self.trying_to_evict.clone() {
-                let mut act = self.wfm.machines.get_wf_activation();
-                // No other jobs make any sense to send if we encountered an error.
-                if self.am_broken {
-                    act.jobs = vec![];
-                }
-                act.append_evict_job(RemoveFromCache {
-                    message: wte.message,
-                    reason: wte.reason as i32,
-                });
-                Ok(Some(ActivationOrAuto::LangActivation(act)))
-            } else {
-                Ok(None)
-            }
-        }
-    }
-
-    // TODO: Collapse all these wrapper funcs
-    fn send_completion(&mut self, completion: RunActivationCompletion) -> RunUpdateResponseKind {
-        let res = self._send_completion(completion);
-        self.run_update_to_response(res.map(Into::into), false)
-    }
-
-    fn _send_completion(
-        &mut self,
-        mut completion: RunActivationCompletion,
-    ) -> Result<Option<FulfillableActivationComplete>, RunUpdateErr> {
-        let resp_chan = completion
-            .resp_chan
-            .take()
-            .expect("Completion response channel must be populated");
-
-        let data = CompletionDataForWFT {
-            task_token: completion.task_token,
-            query_responses: completion.query_responses,
-            has_pending_query: completion.has_pending_query,
-            activation_was_only_eviction: completion.activation_was_only_eviction,
-        };
-
-        // If this is just bookkeeping after a reply to an only-eviction activation, we can bypass
-        // everything, since there is no reason to continue trying to update machines.
-        if completion.activation_was_only_eviction {
-            return Ok(Some(self.prepare_complete_resp(resp_chan, data, false)));
-        }
-
-        // TODO: Probably func-ify this rather than inline closure
-        let outcome = (|| {
-            // Send commands from lang into the machines then check if the workflow run
-            // needs another activation and mark it if so
-            self.wfm.push_commands_and_iterate(completion.commands)?;
-            // Don't bother applying the next task if we're evicting at the end of
-            // this activation
-            if !completion.activation_was_eviction {
-                self.wfm.apply_next_task_if_ready()?;
-            }
-            let new_local_acts = self.wfm.drain_queued_local_activities();
-            self.sink_la_requests(new_local_acts)?;
-
-            if self.wfm.machines.outstanding_local_activity_count() == 0 {
-                Ok((None, data, self))
-            } else {
-                let wft_timeout: Duration = self
-                    .wfm
-                    .machines
-                    .get_started_info()
-                    .and_then(|attrs| attrs.workflow_task_timeout)
-                    .ok_or_else(|| {
-                        WFMachinesError::Fatal(
-                            "Workflow's start attribs were missing a well formed task timeout"
-                                .to_string(),
-                        )
-                    })?;
-                Ok((Some((completion.start_time, wft_timeout)), data, self))
-            }
-        })();
-
-        match outcome {
-            Ok((None, data, me)) => Ok(Some(me.prepare_complete_resp(resp_chan, data, false))),
-            Ok((Some((start_t, wft_timeout)), data, me)) => {
-                if let Some(wola) = me.waiting_on_la.as_mut() {
-                    wola.heartbeat_timeout_task.abort();
-                }
-                me.waiting_on_la = Some(WaitingOnLAs {
-                    wft_timeout,
-                    completion_dat: Some((data, resp_chan)),
-                    heartbeat_timeout_task: start_heartbeat_timeout_task(
-                        me.wfm.machines.run_id.clone(),
-                        me.heartbeat_tx.clone(),
-                        start_t,
-                        wft_timeout,
-                    ),
-                });
-                Ok(None)
-            }
-            Err(e) => Err(RunUpdateErr {
-                source: e,
-                complete_resp_chan: Some(resp_chan),
-            }),
-        }
-    }
-
-    // TODO: Collapse all these wrapper funcs
-    fn local_resolution(&mut self, res: LocalResolution) -> RunUpdateResponseKind {
-        let res = self._local_resolution(res);
-        self.run_update_to_response(res.map(Into::into), false)
-    }
-
-    fn _local_resolution(
-        &mut self,
-        res: LocalResolution,
-    ) -> Result<Option<FulfillableActivationComplete>, RunUpdateErr> {
-        debug!(resolution=?res, "Applying local resolution");
-        self.wfm.notify_of_local_result(res)?;
-        if self.wfm.machines.outstanding_local_activity_count() == 0 {
-            if let Some(mut wait_dat) = self.waiting_on_la.take() {
-                // Cancel the heartbeat timeout
-                wait_dat.heartbeat_timeout_task.abort();
-                if let Some((completion_dat, resp_chan)) = wait_dat.completion_dat.take() {
-                    return Ok(Some(self.prepare_complete_resp(
-                        resp_chan,
-                        completion_dat,
-                        false,
-                    )));
-                }
-            }
-        }
-        Ok(None)
-    }
-
-    fn heartbeat_timeout(&mut self) -> RunUpdateResponseKind {
-        let maybe_act = if self._heartbeat_timeout() {
-            Some(ActivationOrAuto::Autocomplete {
-                run_id: self.wfm.machines.run_id.clone(),
-            })
-        } else {
-            None
-        };
-        self.run_update_to_response(Ok(maybe_act).map(Into::into), false)
-    }
-    /// Returns `true` if autocompletion should be issued, which will actually cause us to end up
-    /// in [completion] again, at which point we'll start a new heartbeat timeout, which will
-    /// immediately trigger and thus finish the completion, forcing a new task as it should.
-    fn _heartbeat_timeout(&mut self) -> bool {
-        if let Some(ref mut wait_dat) = self.waiting_on_la {
-            // Cancel the heartbeat timeout
-            wait_dat.heartbeat_timeout_task.abort();
-            if let Some((completion_dat, resp_chan)) = wait_dat.completion_dat.take() {
-                let compl = self.prepare_complete_resp(resp_chan, completion_dat, true);
-                // Immediately fulfill the completion since the run update will already have
-                // been replied to
-                compl.fulfill();
-            } else {
-                // Auto-reply WFT complete
-                return true;
-            }
-        } else {
-            // If a heartbeat timeout happened, we should always have been waiting on LAs
-            dbg_panic!("WFT heartbeat timeout fired but we were not waiting on any LAs");
-        }
-        false
-    }
-
-    fn insert_outstanding_activation(&mut self, act: &ActivationOrAuto) {
-        let act_type = match &act {
-            ActivationOrAuto::LangActivation(act) | ActivationOrAuto::ReadyForQueries(act) => {
-                if act.is_legacy_query() {
-                    OutstandingActivation::LegacyQuery
-                } else {
-                    OutstandingActivation::Normal {
-                        contains_eviction: act.eviction_index().is_some(),
-                        num_jobs: act.jobs.len(),
-                    }
-                }
-            }
-            ActivationOrAuto::Autocomplete { .. } => OutstandingActivation::Autocomplete,
-        };
-        if let Some(old_act) = self.activation {
-            // This is a panic because we have screwed up core logic if this is violated. It must be
-            // upheld.
-            panic!(
-                "Attempted to insert a new outstanding activation {:?}, but there already was \
-                 one outstanding: {:?}",
-                act, old_act
-            );
-        }
-        self.activation = Some(act_type);
-    }
-
-    /// Returns true if the managed run has any form of pending work
-    /// If `ignore_evicts` is true, pending evictions do not count as pending work.
-    /// If `ignore_buffered` is true, buffered workflow tasks do not count as pending work.
-    fn has_any_pending_work(&self, ignore_evicts: bool, ignore_buffered: bool) -> bool {
-        let evict_work = if ignore_evicts {
-            false
-        } else {
-            self.trying_to_evict.is_some()
-        };
-        let act_work = if ignore_evicts {
-            if let Some(ref act) = self.activation {
-                !act.has_only_eviction()
-            } else {
-                false
-            }
-        } else {
-            self.activation.is_some()
-        };
-        let buffered = if ignore_buffered {
-            false
-        } else {
-            self.buffered_resp.is_some()
-        };
-        trace!(wft=self.wft.is_some(), buffered=?buffered, more_work=?self.more_pending_work,
-               act_work, evict_work, "Does run have pending work?");
-        self.wft.is_some() || buffered || self.more_pending_work || act_work || evict_work
-    }
-
-    /// Returns true if the handle is currently processing a WFT which contains a legacy query.
-    fn pending_work_is_legacy_query(&self) -> bool {
-        // Either we know because there is a pending legacy query, or it's already been drained and
-        // sent as an activation.
-        matches!(self.activation, Some(OutstandingActivation::LegacyQuery))
-            || self
-                .wft
-                .as_ref()
-                .map(|t| t.has_pending_legacy_query())
-                .unwrap_or_default()
-    }
-
-    // TODO: Collapse a bunch of this stuff after seeing it work
-    fn run_update_to_response(
-        &mut self,
-        outcome: Result<ActOrFulfill, RunUpdateErr>,
-        in_response_to_wft: bool,
-    ) -> RunUpdateResponseKind {
-        match outcome {
-            Err(e) => self.fail_resp(e),
-            Ok(act_or_fulfull) => {
-                let (mut outgoing_activation, fulfillable_complete) = match act_or_fulfull {
-                    ActOrFulfill::OutgoingAct(a) => (a, None),
-                    ActOrFulfill::FulfillableComplete(c) => (None, c),
-                };
-                let mut more_pending_work = self.wfm.machines.has_pending_jobs();
-                // We don't want to consider there to be more local-only work to be done if there is
-                // no workflow task associated with the run right now. This can happen if, ex, we
-                // complete a local activity while waiting for server to send us the next WFT.
-                // Activating lang would be harmful at this stage, as there might be work returned
-                // in that next WFT which should be part of the next activation.
-                if self.wft.is_none() {
-                    more_pending_work = false;
-                }
-                // If there's no activation but is pending work, check and possibly assign one
-                if more_pending_work && outgoing_activation.is_none() {
-                    match self._check_more_activations() {
-                        Ok(oa) => outgoing_activation = oa,
-                        Err(e) => return self.fail_resp(e),
-                    }
-                }
-                RunUpdateResponseKind::Good(GoodRunUpdate {
-                    run_id: self.wfm.machines.run_id.clone(),
-                    outgoing_activation,
-                    fulfillable_complete,
-                    have_seen_terminal_event: self.wfm.machines.have_seen_terminal_event,
-                    more_pending_work,
-                    most_recently_processed_event_number: self.wfm.machines.last_processed_event
-                        as usize,
-                    in_response_to_wft,
-                })
-            }
-        }
-    }
-    fn fail_resp(&mut self, e: RunUpdateErr) -> RunUpdateResponseKind {
-        self.am_broken = true;
-        RunUpdateResponseKind::Fail(FailRunUpdate {
-            run_id: self.wfm.machines.run_id.clone(),
-            err: e.source,
-            completion_resp: e.complete_resp_chan,
-        })
-    }
-
-    fn prepare_complete_resp(
-        &mut self,
-        resp_chan: oneshot::Sender<ActivationCompleteResult>,
-        data: CompletionDataForWFT,
-        due_to_heartbeat_timeout: bool,
-    ) -> FulfillableActivationComplete {
-        let outgoing_cmds = self.wfm.get_server_commands();
-        if data.activation_was_only_eviction && !outgoing_cmds.commands.is_empty() {
-            dbg_panic!(
-                "There should not be any outgoing commands when preparing a completion response \
-                 if the activation was only an eviction. This is an SDK bug."
-            );
-        }
-
-        let query_responses = data.query_responses;
-        let has_query_responses = !query_responses.is_empty();
-        let is_query_playback = data.has_pending_query && !has_query_responses;
-        let mut force_new_wft = due_to_heartbeat_timeout;
-
-        // We only actually want to send commands back to the server if there are no more pending
-        // activations and we are caught up on replay. We don't want to complete a wft if we already
-        // saw the final event in the workflow, or if we are playing back for the express purpose of
-        // fulfilling a query. If the activation we sent was *only* an eviction, don't send that
-        // either.
-        let should_respond = !(self.wfm.machines.has_pending_jobs()
-            || outgoing_cmds.replaying
-            || is_query_playback
-            || data.activation_was_only_eviction);
-        // If there are pending LA resolutions, and we're responding to a query here,
-        // we want to make sure to force a new task, as otherwise once we tell lang about
-        // the LA resolution there wouldn't be any task to reply to with the result of iterating
-        // the workflow.
-        if has_query_responses && self.wfm.machines.has_pending_la_resolutions() {
-            force_new_wft = true;
-        }
-
-        let outcome = if should_respond || has_query_responses {
-            ActivationCompleteOutcome::ReportWFTSuccess(ServerCommandsWithWorkflowInfo {
-                task_token: data.task_token,
-                action: ActivationAction::WftComplete {
-                    force_new_wft,
-                    commands: outgoing_cmds.commands,
-                    query_responses,
-                },
-            })
-        } else {
-            ActivationCompleteOutcome::DoNothing
-        };
-        FulfillableActivationComplete {
-            result: ActivationCompleteResult {
-                most_recently_processed_event: self.wfm.machines.last_processed_event as usize,
-                outcome,
-            },
-            resp_chan,
-        }
-    }
-
-    /// Pump some local activity requests into the sink, applying any immediate results to the
-    /// workflow machines.
-    fn sink_la_requests(
-        &mut self,
-        new_local_acts: Vec<LocalActRequest>,
-    ) -> Result<(), WFMachinesError> {
-        let immediate_resolutions = (self.local_activity_request_sink)(new_local_acts);
-        for resolution in immediate_resolutions {
-            self.wfm
-                .notify_of_local_result(LocalResolution::LocalActivity(resolution))?;
-        }
-        Ok(())
-    }
-}
-
-fn start_heartbeat_timeout_task(
-    run_id: String,
-    chan: UnboundedSender<HeartbeatTimeoutMsg>,
-    wft_start_time: Instant,
-    wft_timeout: Duration,
-) -> JoinHandle<()> {
-    // The heartbeat deadline is 80% of the WFT timeout
-    let wft_heartbeat_deadline =
-        wft_start_time.add(wft_timeout.mul_f32(WFT_HEARTBEAT_TIMEOUT_FRACTION));
-    task::spawn(async move {
-        tokio::time::sleep_until(wft_heartbeat_deadline.into()).await;
-        let _ = chan.send(HeartbeatTimeoutMsg { run_id });
-    })
-}
-
-/// If an activation completion needed to wait on LA completions (or heartbeat timeout) we use
-/// this struct to store the data we need to finish the completion once that has happened
-struct WaitingOnLAs {
-    wft_timeout: Duration,
-    /// If set, we are waiting for LAs to complete as part of a just-finished workflow activation.
-    /// If unset, we already had a heartbeat timeout and got a new WFT without any new work while
-    /// there are still incomplete LAs.
-    completion_dat: Option<(
-        CompletionDataForWFT,
-        oneshot::Sender<ActivationCompleteResult>,
-    )>,
-    heartbeat_timeout_task: JoinHandle<()>,
-}
-#[derive(Debug)]
-struct CompletionDataForWFT {
-    task_token: TaskToken,
-    query_responses: Vec<QueryResult>,
-    has_pending_query: bool,
-    activation_was_only_eviction: bool,
-}
-
 // Bubbled up from calls to update workflow state if history needs fetching for a workflow
 #[derive(Debug, derive_more::Display)]
 #[display(
@@ -1199,8 +634,16 @@ struct PreparedWFT {
     workflow_type: String,
     legacy_query: Option<WorkflowQuery>,
     query_requests: Vec<QueryWorkflow>,
-    // TODO: make either leg query or update?
     update: HistoryUpdate,
+}
+impl PreparedWFT {
+    /// Returns true if the contained history update is incremental (IE: expects to hit a cached
+    /// workflow)
+    pub fn is_incremental(&self) -> bool {
+        let start_event_id = self.update.first_event_id();
+        let poll_resp_is_incremental = start_event_id.map(|eid| eid > 1).unwrap_or_default();
+        poll_resp_is_incremental || start_event_id.is_none()
+    }
 }
 
 #[derive(Debug)]
@@ -1298,16 +741,16 @@ pub(crate) enum ActivationAction {
 
 #[derive(Debug)]
 enum EvictionRequestResult {
-    EvictionRequested(Option<u32>, RunUpdateResponseKind),
+    EvictionRequested(Option<u32>, RunUpdateResp),
     NotFound,
     EvictionAlreadyRequested(Option<u32>),
 }
 impl EvictionRequestResult {
-    fn into_run_update_resp(self) -> Option<RunUpdateResponseKind> {
+    fn into_run_update_resp(self) -> RunUpdateResp {
         match self {
-            EvictionRequestResult::EvictionRequested(_, resp) => Some(resp),
+            EvictionRequestResult::EvictionRequested(_, resp) => resp,
             EvictionRequestResult::NotFound
-            | EvictionRequestResult::EvictionAlreadyRequested(_) => None,
+            | EvictionRequestResult::EvictionAlreadyRequested(_) => vec![],
         }
     }
 }
@@ -1467,14 +910,6 @@ impl ValidatedCompletion {
 }
 
 #[derive(Debug)]
-struct NewIncomingWFT {
-    /// This field is only populated if the machines already exist. Otherwise the machines
-    /// are instantiated with the workflow history.
-    history_update: Option<HistoryUpdate>,
-    /// Wft start time
-    start_time: Instant,
-}
-#[derive(Debug)]
 struct RunActivationCompletion {
     task_token: TaskToken,
     start_time: Instant,
@@ -1493,58 +928,6 @@ enum ActOrFulfill {
     FulfillableComplete(Option<FulfillableActivationComplete>),
 }
 
-#[derive(Debug, derive_more::Display)]
-#[must_use]
-#[allow(clippy::large_enum_variant)]
-enum RunUpdateResponseKind {
-    Good(GoodRunUpdate),
-    Fail(FailRunUpdate),
-}
-
-#[derive(Debug)]
-struct GoodRunUpdate {
-    run_id: String,
-    outgoing_activation: Option<ActivationOrAuto>,
-    fulfillable_complete: Option<FulfillableActivationComplete>,
-    have_seen_terminal_event: bool,
-    /// Is true if there are more jobs that need to be sent to lang
-    more_pending_work: bool,
-    most_recently_processed_event_number: usize,
-    /// Is true if this update was in response to a new WFT
-    in_response_to_wft: bool,
-}
-impl Display for GoodRunUpdate {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "GoodRunUpdate(run_id: {}, outgoing_activation: {}, more_pending_work: {})",
-            self.run_id,
-            if let Some(og) = self.outgoing_activation.as_ref() {
-                format!("{}", og)
-            } else {
-                "None".to_string()
-            },
-            self.more_pending_work
-        )
-    }
-}
-#[derive(Debug)]
-pub(crate) struct FailRunUpdate {
-    run_id: String,
-    err: WFMachinesError,
-    /// This is populated if the run update failed while processing a completion - and thus we
-    /// must respond down it when handling the failure.
-    completion_resp: Option<oneshot::Sender<ActivationCompleteResult>>,
-}
-impl Display for FailRunUpdate {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "FailRunUpdate(run_id: {}, error: {:?})",
-            self.run_id, self.err
-        )
-    }
-}
 #[derive(Debug)]
 pub struct OutgoingServerCommands {
     pub commands: Vec<ProtoCommand>,
