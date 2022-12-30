@@ -2091,3 +2091,41 @@ async fn ignorable_events_are_ok(#[values(true, false)] attribs_unset: bool) {
         Some(workflow_activation_job::Variant::StartWorkflow(_))
     );
 }
+
+#[tokio::test]
+async fn fetching_error_evicts_wf() {
+    let mut mock_client = mock_workflow_client();
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_workflow_task_scheduled_and_started();
+    t.add_workflow_task_completed();
+    let mut need_fetch_resp =
+        hist_to_poll_resp(&t, "wfid".to_owned(), ResponseType::AllHistory).resp;
+    need_fetch_resp.next_page_token = vec![1];
+    let tasks = vec![
+        ResponseType::ToTaskNum(1),
+        ResponseType::Raw(need_fetch_resp),
+    ];
+    mock_client
+        .expect_get_workflow_execution_history()
+        .returning(move |_, _, _| Err(tonic::Status::not_found("Ahh broken")))
+        .times(1);
+    let mut mock = single_hist_mock_sg("wfid", t, tasks, mock_client, true);
+    mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
+    let core = mock_worker(mock);
+    let act = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        act.jobs[0].variant,
+        Some(workflow_activation_job::Variant::StartWorkflow(_))
+    );
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(act.run_id))
+        .await
+        .unwrap();
+    let evict_act = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        evict_act.jobs.as_slice(),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::RemoveFromCache(r)),
+        }] => r.message.contains("Fetching history failed")
+    );
+}

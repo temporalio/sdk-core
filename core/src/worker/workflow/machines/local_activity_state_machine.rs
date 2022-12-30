@@ -1356,7 +1356,6 @@ mod tests {
         )]
         cancel_type: ActivityCancellationType,
     ) {
-        crate::telemetry::test_telem_console();
         let func = WorkflowFunction::new(move |ctx| async move {
             let la = ctx.local_activity(LocalActivityOptions {
                 cancel_type,

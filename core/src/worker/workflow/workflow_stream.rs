@@ -70,15 +70,10 @@ enum WFStreamInput {
     /// The stream given to us which represents the poller (or a mock) encountered a non-retryable
     /// error while polling
     PollerError(tonic::Status),
-}
-impl WFStreamInput {
-    fn run_id(&self) -> Option<&str> {
-        match self {
-            WFStreamInput::NewWft(wft) => Some(&wft.work.execution.run_id),
-            WFStreamInput::Local(local) => local.input.run_id(),
-            WFStreamInput::PollerDead | WFStreamInput::PollerError(_) => None,
-        }
-    }
+    FailedFetch {
+        run_id: String,
+        err: tonic::Status,
+    },
 }
 
 /// A non-poller-received input to the [WFStream]
@@ -118,6 +113,7 @@ enum ExternalPollerInputs {
     PollerDead,
     PollerError(tonic::Status),
     FetchedUpdate(PermittedWFT),
+    FailedFetch { run_id: String, err: tonic::Status },
 }
 impl From<ExternalPollerInputs> for WFStreamInput {
     fn from(l: ExternalPollerInputs) -> Self {
@@ -126,6 +122,23 @@ impl From<ExternalPollerInputs> for WFStreamInput {
             ExternalPollerInputs::PollerDead => WFStreamInput::PollerDead,
             ExternalPollerInputs::PollerError(e) => WFStreamInput::PollerError(e),
             ExternalPollerInputs::FetchedUpdate(wft) => WFStreamInput::NewWft(wft),
+            ExternalPollerInputs::FailedFetch { run_id, err } => {
+                WFStreamInput::FailedFetch { run_id, err }
+            }
+        }
+    }
+}
+impl From<Result<WFTExtractorOutput, tonic::Status>> for ExternalPollerInputs {
+    fn from(v: Result<WFTExtractorOutput, tonic::Status>) -> Self {
+        match v {
+            Ok(WFTExtractorOutput::NewWFT(pwft)) => ExternalPollerInputs::NewWft(pwft),
+            Ok(WFTExtractorOutput::FetchResult(updated_wft)) => {
+                ExternalPollerInputs::FetchedUpdate(updated_wft)
+            }
+            Ok(WFTExtractorOutput::FailedFetch { run_id, err }) => {
+                ExternalPollerInputs::FailedFetch { run_id, err }
+            }
+            Err(e) => ExternalPollerInputs::PollerError(e),
         }
     }
 }
@@ -150,7 +163,6 @@ impl WFStream {
             + Send
             + Sync
             + 'static,
-        // TODO: Should probably be able to avoid ever returning any errors now?
     ) -> impl Stream<Item = Result<WFStreamOutput, PollWfError>> {
         let (heartbeat_tx, heartbeat_rx) = unbounded_channel();
         let hb_stream = UnboundedReceiverStream::new(heartbeat_rx)
@@ -164,13 +176,7 @@ impl WFStream {
         let all_inputs = stream::select_with_strategy(
             local_rx,
             external_wfts
-                .map(move |wft| match wft {
-                    Ok(WFTExtractorOutput::NewWFT(pwft)) => ExternalPollerInputs::NewWft(pwft),
-                    Ok(WFTExtractorOutput::FetchResult(updated_wft)) => {
-                        ExternalPollerInputs::FetchedUpdate(updated_wft)
-                    }
-                    Err(e) => ExternalPollerInputs::PollerError(e),
-                })
+                .map(Into::into)
                 // TODO: Rename poller/fetching dead or w/e
                 .chain(stream::once(async { ExternalPollerInputs::PollerDead }))
                 .map(Into::into)
@@ -200,7 +206,6 @@ impl WFStream {
                 let span = span!(Level::DEBUG, "new_stream_input", action=?action);
                 let _span_g = span.enter();
 
-                let action_run_id = action.run_id().map(|rid| rid.to_owned());
                 let run_update_resp: Option<RunUpdateResponseKind> = match action {
                     WFStreamInput::NewWft(pwft) => {
                         debug!(run_id=%pwft.work.execution.run_id, "New WFT");
@@ -234,6 +239,13 @@ impl WFStream {
                             }
                         }
                     }
+                    WFStreamInput::FailedFetch { run_id, err } => state
+                        .request_eviction(RequestEvictMsg {
+                            run_id,
+                            message: format!("Fetching history failed: {:?}", err),
+                            reason: EvictionReason::Fatal,
+                        })
+                        .into_run_update_resp(),
                     WFStreamInput::PollerDead => {
                         debug!("WFT poller died, shutting down");
                         state.shutdown_token.cancel();

@@ -920,7 +920,6 @@ async fn wft_failure_cancels_running_las() {
 
 #[tokio::test]
 async fn resolved_las_not_recorded_if_wft_fails_many_times() {
-    crate::telemetry::test_telem_console();
     // We shouldn't record any LA results if the workflow activation is repeatedly failing. There
     // was an issue that, because we stop reporting WFT failures after 2 tries, this meant the WFT
     // was not marked as "completed" and the WFT could accidentally be replied to with LA results.
