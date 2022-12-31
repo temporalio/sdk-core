@@ -41,7 +41,7 @@ type WFTStreamIn = (
     OwnedMeteredSemPermit,
 );
 impl WFTExtractor {
-    pub(super) fn new(
+    pub(super) fn build(
         client: Arc<dyn WorkerClient>,
         wft_stream: impl Stream<Item = WFTStreamIn> + Send + 'static,
         fetch_stream: impl Stream<Item = HistoryFetchReq> + Send + 'static,

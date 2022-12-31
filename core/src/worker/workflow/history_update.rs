@@ -304,7 +304,7 @@ impl Stream for StreamingHistoryPaginator {
         }
         let history_req = this.open_history_request.as_mut().as_pin_mut().unwrap();
 
-        return match Future::poll(history_req, cx) {
+        match Future::poll(history_req, cx) {
             Poll::Ready(resp) => {
                 this.open_history_request.set(None);
                 match resp {
@@ -313,7 +313,7 @@ impl Stream for StreamingHistoryPaginator {
                 }
             }
             Poll::Pending => Poll::Pending,
-        };
+        }
     }
 }
 
@@ -442,7 +442,7 @@ impl HistoryUpdate {
             .starting_index_after_skipping(from_wft_started_id)
             .unwrap_or_default();
         let relevant_events = &self.events[ix_first_relevant..];
-        if relevant_events.len() == 0 {
+        if relevant_events.is_empty() {
             return relevant_events;
         }
         let ix_end = find_end_index_of_next_wft_seq(relevant_events, from_wft_started_id).index();
@@ -704,7 +704,7 @@ pub mod tests {
 
     fn paginator_setup(history: TestHistoryBuilder, chunk_size: usize) -> HistoryPaginator {
         let full_hist = history.get_full_history_info().unwrap().into_events();
-        let initial_hist = full_hist.chunks(chunk_size).nth(0).unwrap().to_vec();
+        let initial_hist = full_hist.chunks(chunk_size).next().unwrap().to_vec();
         let mut mock_client = mock_workflow_client();
 
         let mut npt = 1;

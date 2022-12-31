@@ -643,5 +643,5 @@ fn merge_transition_dests(transitions: Vec<Transition>) -> Vec<Transition> {
             }
         }
     }
-    map.into_iter().map(|(_, v)| v).collect()
+    map.into_values().collect()
 }

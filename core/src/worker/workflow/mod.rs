@@ -155,7 +155,7 @@ impl Workflows {
             Some((sem.acquire_owned().await.unwrap(), sem))
         });
         let wft_stream = stream_when_allowed(wft_stream, proceeder);
-        let extracted_wft_stream = WFTExtractor::new(
+        let extracted_wft_stream = WFTExtractor::build(
             client.clone(),
             wft_stream,
             UnboundedReceiverStream::new(fetch_rx),

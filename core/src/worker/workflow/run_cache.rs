@@ -82,7 +82,7 @@ impl RunCache {
         );
         let run_id = run_id.to_string();
         let rur = mrh.incoming_wft(pwft);
-        if self.runs.push(run_id.clone(), mrh).is_some() {
+        if self.runs.push(run_id, mrh).is_some() {
             panic!("Overflowed run cache! Cache owner is expected to avoid this!");
         }
         self.metrics.cache_size(cur_num_cached_runs as u64 + 1);

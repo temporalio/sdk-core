@@ -276,7 +276,7 @@ impl ManagedRun {
             )])?;
         }
 
-        if !self.wft.is_some() {
+        if self.wft.is_none() {
             // It doesn't make sense to do workflow work unless we have a WFT
             return Ok(None);
         }

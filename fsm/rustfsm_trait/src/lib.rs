@@ -207,10 +207,14 @@ where
             new_state: Ds::default(),
         }
     }
+}
 
-    /// Produce a transition with no commands relying on [Default] for the destination state's
-    /// value
-    pub fn default() -> Self {
+impl<Sm, Ds> Default for TransitionResult<Sm, Ds>
+where
+    Sm: StateMachine,
+    Ds: Into<Sm::State> + Default,
+{
+    fn default() -> Self {
         Self::OkNoShare {
             commands: vec![],
             new_state: Ds::default(),
