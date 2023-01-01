@@ -2,7 +2,7 @@ use crate::{
     protosext::ValidPollWFTQResponse,
     worker::{
         client::WorkerClient,
-        workflow::{HistoryFetchReq, PermittedWFT, PreparedWFT},
+        workflow::{CacheMissFetchReq, PermittedWFT, PreparedWFT},
     },
 };
 use futures::{future::BoxFuture, FutureExt, Stream};
@@ -69,12 +69,13 @@ pub enum NextWFT {
     NeedFetch,
 }
 
+#[derive(derive_more::DebugCustom)]
+#[debug(fmt = "HistoryPaginator(run_id: {})", run_id)]
 pub struct HistoryPaginator {
-    // Potentially this could actually be a ref w/ lifetime here
     client: Arc<dyn WorkerClient>,
     event_queue: VecDeque<HistoryEvent>,
-    wf_id: String,
-    run_id: String,
+    pub(crate) wf_id: String,
+    pub(crate) run_id: String,
     next_page_token: NextPageToken,
     /// These are events that should be returned once pagination has finished. This only happens
     /// during cache misses, where we got a partial task but need to fetch history from the start.
@@ -143,9 +144,9 @@ impl HistoryPaginator {
     }
 
     pub(super) async fn from_fetchreq(
-        mut req: HistoryFetchReq,
+        mut req: CacheMissFetchReq,
         client: Arc<dyn WorkerClient>,
-    ) -> Result<(Self, PermittedWFT), tonic::Status> {
+    ) -> Result<PermittedWFT, tonic::Status> {
         let mut paginator = HistoryPaginator::from_start(
             req.original_wft.work.execution.workflow_id.clone(),
             req.original_wft.work.execution.run_id.clone(),
@@ -155,7 +156,8 @@ impl HistoryPaginator {
             .extract_next_update(req.original_wft.work.update.previous_started_event_id)
             .await?;
         req.original_wft.work.update = first_update;
-        Ok((paginator, req.original_wft))
+        req.original_wft.paginator = paginator;
+        Ok(req.original_wft)
     }
     pub(crate) fn new(
         initial_history: History,
@@ -424,7 +426,6 @@ impl HistoryUpdate {
                             "HistoryUpdate was created with an incomplete WFT. This is an SDK bug."
                         );
                     }
-                    debug!("No more valid WFT sequences in HistoryUpdate, must fetch more events.");
                     NextWFT::NeedFetch
                 }
             }
@@ -433,6 +434,7 @@ impl HistoryUpdate {
             }
         }
     }
+
     /// Lets the caller peek ahead at the next WFT sequence that will be returned by
     /// [take_next_wft_sequence]. Will always return the first available WFT sequence if that has
     /// not been called first. May also return an empty iterator or incomplete sequence if we are at
@@ -447,6 +449,18 @@ impl HistoryUpdate {
         }
         let ix_end = find_end_index_of_next_wft_seq(relevant_events, from_wft_started_id).index();
         &relevant_events[0..=ix_end]
+    }
+
+    /// Returns true if this update has the next needed WFT sequence, false if events will need to
+    /// be fetched in order to create a complete update with the entire next WFT sequence.
+    pub fn can_take_next_wft_sequence(&self, from_wft_started_id: i64) -> bool {
+        let next_wft_ix = find_end_index_of_next_wft_seq(&self.events, from_wft_started_id);
+        if let NextWFTSeqEndIndex::Incomplete(_) = next_wft_ix {
+            if !self.has_last_wft {
+                return false;
+            }
+        }
+        true
     }
 
     fn starting_index_after_skipping(&self, from_wft_started_id: i64) -> Option<usize> {
@@ -481,21 +495,9 @@ fn find_end_index_of_next_wft_seq(
     if events.is_empty() {
         return NextWFTSeqEndIndex::Incomplete(0);
     }
-    let mut last_seen_id = None;
     let mut last_index = 0;
     let mut saw_any_non_wft_event = false;
-    // let mut saw_any_non_wft_event_besides_execution_start = false;
     for (ix, e) in events.iter().enumerate() {
-        // This little block prevents us from infinitely fetching work from the server in the
-        // event that, for whatever reason, it keeps returning stuff we've already seen.
-        // TODO: This may not make sense any more?
-        if let Some(last_id) = last_seen_id {
-            if e.event_id <= last_id {
-                error!("Server returned history event IDs that went backwards!");
-                return NextWFTSeqEndIndex::Complete(ix);
-            }
-        }
-        last_seen_id = Some(e.event_id);
         last_index = ix;
 
         // It's possible to have gotten a new history update without eviction (ex: unhandled
@@ -951,6 +953,5 @@ pub mod tests {
         assert_eq!(seq.len(), 4);
         let seq = next_check_peek(&mut update, 7);
         assert_eq!(seq.len(), 13);
-        dbg!(seq);
     }
 }

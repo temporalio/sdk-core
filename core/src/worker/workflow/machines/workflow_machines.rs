@@ -1,7 +1,5 @@
 mod local_acts;
 
-pub(crate) use temporal_sdk_core_api::errors::WFMachinesError;
-
 use super::{
     activity_state_machine::new_activity, cancel_external_state_machine::new_external_cancel,
     cancel_workflow_state_machine::cancel_workflow,
@@ -23,7 +21,7 @@ use crate::{
             history_update::NextWFT,
             machines::modify_workflow_properties_state_machine::modify_workflow_properties,
             CommandID, DrivenWorkflow, HistoryUpdate, LocalResolution, OutgoingJob, WFCommand,
-            WorkflowFetcher, WorkflowStartedInfo,
+            WFMachinesError, WorkflowFetcher, WorkflowStartedInfo,
         },
         ExecutingLAId, LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
     },
@@ -379,9 +377,15 @@ impl WorkflowMachines {
         Ok(())
     }
 
+    /// Returns true if machines are ready to apply the next WFT sequence, false if events will need
+    /// to be fetched in order to create a complete update with the entire next WFT sequence.
+    pub(crate) fn ready_to_apply_next_wft(&self) -> bool {
+        self.last_history_from_server
+            .can_take_next_wft_sequence(self.current_started_event_id)
+    }
+
     /// Apply the next (unapplied) entire workflow task from history to these machines. Will replay
-    /// any events that need to be replayed until caught up to the newest WFT. May also fetch
-    /// history from server if needed.
+    /// any events that need to be replayed until caught up to the newest WFT.
     pub(crate) fn apply_next_wft_from_history(&mut self) -> Result<usize> {
         // If we have already seen the terminal event for the entire workflow in a previous WFT,
         // then we don't need to do anything here, and in fact we need to avoid re-applying the
@@ -391,22 +395,25 @@ impl WorkflowMachines {
         }
 
         let last_handled_wft_started_id = self.current_started_event_id;
-        let events = match self
-            .last_history_from_server
-            .take_next_wft_sequence(last_handled_wft_started_id)
-        {
-            NextWFT::ReplayOver => {
-                vec![]
-            }
-            NextWFT::WFT(mut evts) => {
-                // Do not re-process events we have already processed
-                evts.retain(|e| e.event_id > self.last_processed_event);
-                evts
-            }
-            NextWFT::NeedFetch => {
-                todo!("Need to bubble up fetch more request");
-            }
-        };
+        let events =
+            match self
+                .last_history_from_server
+                .take_next_wft_sequence(last_handled_wft_started_id)
+            {
+                NextWFT::ReplayOver => {
+                    vec![]
+                }
+                NextWFT::WFT(mut evts) => {
+                    // Do not re-process events we have already processed
+                    evts.retain(|e| e.event_id > self.last_processed_event);
+                    evts
+                }
+                NextWFT::NeedFetch => return Err(WFMachinesError::Fatal(
+                    "Need to fetch history events to continue applying workflow task, but this \
+                     should be prevented ahead of time! This is a Core SDK bug."
+                        .to_string(),
+                )),
+            };
         let num_events_to_process = events.len();
 
         // We're caught up on reply if there are no new events to process
@@ -441,7 +448,6 @@ impl WorkflowMachines {
 
         // Scan through to the next WFT, searching for any patch / la markers, so that we can
         // pre-resolve them.
-        // TODO: Extract
         let mut wake_las = vec![];
         for e in self
             .last_history_from_server

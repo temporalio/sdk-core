@@ -2,7 +2,10 @@ use crate::{
     abstractions::dbg_panic,
     worker::{
         workflow::{
-            managed_run::RunUpdateResp, run_cache::RunCache, wft_extraction::WFTExtractorOutput, *,
+            managed_run::RunUpdateActs,
+            run_cache::RunCache,
+            wft_extraction::{HistoryFetchReq, WFTExtractorOutput},
+            *,
         },
         LocalActRequest, LocalActivityResolution,
     },
@@ -36,106 +39,6 @@ pub(crate) struct WFStream {
     metrics: MetricsContext,
 }
 impl WFStream {
-    fn record_span_fields(&mut self, run_id: &str, span: &Span) {
-        if let Some(run_handle) = self.runs.get_mut(run_id) {
-            if let Some(spid) = span.id() {
-                if run_handle.recorded_span_ids.contains(&spid) {
-                    return;
-                }
-                run_handle.recorded_span_ids.insert(spid);
-
-                if let Some(wid) = run_handle.wft.as_ref().map(|wft| &wft.info.wf_id) {
-                    span.record("workflow_id", wid.as_str());
-                }
-            }
-        }
-    }
-}
-
-/// All possible inputs to the [WFStream]
-#[derive(derive_more::From, Debug)]
-enum WFStreamInput {
-    NewWft(PermittedWFT),
-    Local(LocalInput),
-    /// The stream given to us which represents the poller (or a mock) terminated.
-    PollerDead,
-    /// The stream given to us which represents the poller (or a mock) encountered a non-retryable
-    /// error while polling
-    PollerError(tonic::Status),
-    FailedFetch {
-        run_id: String,
-        err: tonic::Status,
-    },
-}
-
-/// A non-poller-received input to the [WFStream]
-#[derive(derive_more::DebugCustom)]
-#[debug(fmt = "LocalInput {{ {:?} }}", input)]
-pub(super) struct LocalInput {
-    pub input: LocalInputs,
-    pub span: Span,
-}
-/// Everything that _isn't_ a poll which may affect workflow state. Always higher priority than
-/// new polls.
-#[derive(Debug, derive_more::From)]
-pub(super) enum LocalInputs {
-    Completion(WFActCompleteMsg),
-    LocalResolution(LocalResolutionMsg),
-    PostActivation(PostActivationMsg),
-    RequestEviction(RequestEvictMsg),
-    HeartbeatTimeout(HeartbeatTimeoutMsg),
-    GetStateInfo(GetStateInfoMsg),
-}
-impl LocalInputs {
-    fn run_id(&self) -> Option<&str> {
-        Some(match self {
-            LocalInputs::Completion(c) => c.completion.run_id(),
-            LocalInputs::LocalResolution(lr) => &lr.run_id,
-            LocalInputs::PostActivation(pa) => &pa.run_id,
-            LocalInputs::RequestEviction(re) => &re.run_id,
-            LocalInputs::HeartbeatTimeout(hb) => &hb.run_id,
-            LocalInputs::GetStateInfo(_) => return None,
-        })
-    }
-}
-#[derive(Debug)]
-#[allow(clippy::large_enum_variant)] // PollerDead only ever gets used once, so not important.
-enum ExternalPollerInputs {
-    NewWft(PermittedWFT),
-    PollerDead,
-    PollerError(tonic::Status),
-    FetchedUpdate(PermittedWFT),
-    FailedFetch { run_id: String, err: tonic::Status },
-}
-impl From<ExternalPollerInputs> for WFStreamInput {
-    fn from(l: ExternalPollerInputs) -> Self {
-        match l {
-            ExternalPollerInputs::NewWft(v) => WFStreamInput::NewWft(v),
-            ExternalPollerInputs::PollerDead => WFStreamInput::PollerDead,
-            ExternalPollerInputs::PollerError(e) => WFStreamInput::PollerError(e),
-            ExternalPollerInputs::FetchedUpdate(wft) => WFStreamInput::NewWft(wft),
-            ExternalPollerInputs::FailedFetch { run_id, err } => {
-                WFStreamInput::FailedFetch { run_id, err }
-            }
-        }
-    }
-}
-impl From<Result<WFTExtractorOutput, tonic::Status>> for ExternalPollerInputs {
-    fn from(v: Result<WFTExtractorOutput, tonic::Status>) -> Self {
-        match v {
-            Ok(WFTExtractorOutput::NewWFT(pwft)) => ExternalPollerInputs::NewWft(pwft),
-            Ok(WFTExtractorOutput::FetchResult(updated_wft)) => {
-                ExternalPollerInputs::FetchedUpdate(updated_wft)
-            }
-            Ok(WFTExtractorOutput::FailedFetch { run_id, err }) => {
-                ExternalPollerInputs::FailedFetch { run_id, err }
-            }
-            Err(e) => ExternalPollerInputs::PollerError(e),
-        }
-    }
-}
-
-impl WFStream {
     /// Constructs workflow state management and returns a stream which outputs activations.
     ///
     /// * `external_wfts` is a stream of validated poll responses as returned by a poller (or mock)
@@ -149,7 +52,7 @@ impl WFStream {
     /// action on those inputs, and then may yield activations.
     pub(super) fn build(
         basics: WorkflowBasics,
-        external_wfts: impl Stream<Item = Result<WFTExtractorOutput, tonic::Status>> + Send + 'static,
+        wft_stream: impl Stream<Item = Result<WFTExtractorOutput, tonic::Status>> + Send + 'static,
         local_rx: impl Stream<Item = LocalInput> + Send + 'static,
         local_activity_request_sink: impl Fn(Vec<LocalActRequest>) -> Vec<LocalActivityResolution>
             + Send
@@ -167,9 +70,8 @@ impl WFStream {
         let local_rx = stream::select(hb_stream, local_rx).map(Into::into);
         let all_inputs = stream::select_with_strategy(
             local_rx,
-            external_wfts
+            wft_stream
                 .map(Into::into)
-                // TODO: Rename poller/fetching dead or w/e
                 .chain(stream::once(async { ExternalPollerInputs::PollerDead }))
                 .map(Into::into)
                 .boxed(),
@@ -209,8 +111,12 @@ impl WFStream {
                         }
                         match local_input.input {
                             LocalInputs::Completion(completion) => {
-                                state.process_completion(completion)
+                                state.process_completion(NewOrFetchedComplete::New(completion))
                             }
+                            LocalInputs::FetchedPageCompletion { paginator, update } => state
+                                .process_completion(NewOrFetchedComplete::Fetched(
+                                    update, paginator,
+                                )),
                             LocalInputs::PostActivation(report) => {
                                 state.process_post_activation(report)
                             }
@@ -249,7 +155,9 @@ impl WFStream {
                 };
 
                 activations.extend(state.reconcile_buffered());
+
                 if state.shutdown_done() {
+                    info!("Workflow shutdown is done");
                     return Err(PollWfError::ShutDown);
                 }
 
@@ -272,10 +180,11 @@ impl WFStream {
             .take_while(|o| future::ready(!matches!(o, Err(PollWfError::ShutDown))))
     }
 
+    /// Instantiate or update run machines with a new WFT
     #[instrument(skip(self, pwft)
-        fields(run_id=%pwft.work.execution.run_id,
-               workflow_id=%pwft.work.execution.workflow_id))]
-    fn instantiate_or_update(&mut self, pwft: PermittedWFT) -> RunUpdateResp {
+                 fields(run_id=%pwft.work.execution.run_id,
+                        workflow_id=%pwft.work.execution.workflow_id))]
+    fn instantiate_or_update(&mut self, pwft: PermittedWFT) -> RunUpdateActs {
         match self._instantiate_or_update(pwft) {
             Err(histfetch) => {
                 self.runs_needing_fetching.push_back(histfetch);
@@ -285,73 +194,79 @@ impl WFStream {
         }
     }
 
-    /// Implementation of [instantiate_or_update]. Returns early with error if the run cannot be
-    /// updated because the WFT is partial and it is not present in the cache.
     fn _instantiate_or_update(
         &mut self,
         pwft: PermittedWFT,
-    ) -> Result<RunUpdateResp, HistoryFetchReq> {
-        let (work, permit) = if let Some(w) = self.buffer_resp_if_outstanding_work(pwft) {
-            (w.work, w.permit)
+    ) -> Result<Vec<ActivationOrAuto>, HistoryFetchReq> {
+        let pwft = if let Some(w) = self.buffer_resp_if_outstanding_work(pwft) {
+            w
         } else {
             return Ok(vec![]);
         };
 
-        let run_id = work.execution.run_id.clone();
+        let run_id = pwft.work.execution.run_id.clone();
         // If our cache is full and this WFT is for an unseen run we must first evict a run before
         // we can deal with this task. So, buffer the task in that case.
         if !self.runs.has_run(&run_id) && self.runs.is_full() {
-            self.buffer_resp_on_full_cache(PermittedWFT { work, permit });
+            self.buffer_resp_on_full_cache(pwft);
             return Ok(vec![]);
         }
 
         // This check can't really be lifted up higher since we could EX: See it's in the cache,
         // not fetch more history, send the task, see cache is full, buffer it, then evict that
         // run, and now we still have a cache miss.
-        if !self.runs.has_run(&run_id) && work.is_incremental() {
+        if !self.runs.has_run(&run_id) && pwft.work.is_incremental() {
             debug!(run_id=?run_id, "Workflow task has partial history, but workflow is not in \
                    cache. Will fetch history");
             self.metrics.sticky_cache_miss();
-            return Err(HistoryFetchReq {
-                original_wft: PermittedWFT { work, permit },
-            });
+            return Err(CacheMissFetchReq { original_wft: pwft }.into());
         }
 
-        let rur = self
-            .runs
-            .instantiate_or_update(PermittedWFT { work, permit });
+        let rur = self.runs.instantiate_or_update(pwft);
         Ok(rur)
     }
 
-    fn process_completion(&mut self, complete: WFActCompleteMsg) -> RunUpdateResp {
-        let rh = if let Some(rh) = self.runs.get_mut(complete.completion.run_id()) {
+    fn process_completion(&mut self, complete: NewOrFetchedComplete) -> RunUpdateActs {
+        let rh = if let Some(rh) = self.runs.get_mut(complete.run_id()) {
             rh
         } else {
             dbg_panic!("Run missing during completion {:?}", complete);
             return vec![];
         };
-        let mut rur = match complete.completion {
-            ValidatedCompletion::Success { commands, .. } => {
-                rh.successful_completion(commands, complete.response_tx)
+        let mut acts = match complete {
+            NewOrFetchedComplete::New(complete) => match complete.completion {
+                ValidatedCompletion::Success { commands, .. } => {
+                    match rh.successful_completion(commands, complete.response_tx) {
+                        Ok(acts) => acts,
+                        Err(npr) => {
+                            self.runs_needing_fetching
+                                .push_back(HistoryFetchReq::NextPage(npr));
+                            vec![]
+                        }
+                    }
+                }
+                ValidatedCompletion::Fail { failure, .. } => rh.failed_completion(
+                    WorkflowTaskFailedCause::Unspecified,
+                    EvictionReason::LangFail,
+                    failure,
+                    complete.response_tx,
+                ),
+            },
+            NewOrFetchedComplete::Fetched(update, paginator) => {
+                rh.fetched_page_completion(update, paginator)
             }
-            ValidatedCompletion::Fail { failure, .. } => rh.failed_completion(
-                WorkflowTaskFailedCause::Unspecified,
-                EvictionReason::LangFail,
-                failure,
-                complete.response_tx,
-            ),
         };
         // Always queue evictions after completion when we have a zero-size cache
         if self.runs.cache_capacity() == 0 {
-            rur.extend(self.request_eviction_of_lru_run().into_run_update_resp())
+            acts.extend(self.request_eviction_of_lru_run().into_run_update_resp())
         }
-        rur
+        acts
     }
 
-    fn process_post_activation(&mut self, report: PostActivationMsg) -> RunUpdateResp {
+    fn process_post_activation(&mut self, report: PostActivationMsg) -> Vec<ActivationOrAuto> {
         let run_id = &report.run_id;
         let wft_from_complete = report.wft_from_complete;
-        if let Some(ref wft) = wft_from_complete {
+        if let Some((wft, _)) = &wft_from_complete {
             if &wft.execution.run_id != run_id {
                 dbg_panic!(
                     "Server returned a WFT on completion for a different run ({}) than the \
@@ -398,12 +313,13 @@ impl WFStream {
             }
         };
 
-        if let Some(wft) = wft_from_complete {
+        if let Some((wft, pag)) = wft_from_complete {
             debug!(run_id=%wft.execution.run_id, "New WFT from completion");
             if let Some(t) = maybe_t {
                 res = self.instantiate_or_update(PermittedWFT {
                     work: wft,
                     permit: t.permit,
+                    paginator: pag,
                 });
             }
         }
@@ -417,7 +333,7 @@ impl WFStream {
         res
     }
 
-    fn local_resolution(&mut self, msg: LocalResolutionMsg) -> RunUpdateResp {
+    fn local_resolution(&mut self, msg: LocalResolutionMsg) -> RunUpdateActs {
         let run_id = msg.run_id;
         if let Some(rh) = self.runs.get_mut(&run_id) {
             rh.local_resolution(msg.res)
@@ -426,15 +342,15 @@ impl WFStream {
             // This can happen if an activity reports a timeout after we stopped caring about it.
             debug!(run_id = %run_id,
                    "Tried to resolve a local activity for a run we are no longer tracking");
-            Default::default()
+            vec![]
         }
     }
 
-    fn process_heartbeat_timeout(&mut self, run_id: String) -> RunUpdateResp {
+    fn process_heartbeat_timeout(&mut self, run_id: String) -> RunUpdateActs {
         if let Some(rh) = self.runs.get_mut(&run_id) {
             rh.heartbeat_timeout()
         } else {
-            Default::default()
+            vec![]
         }
     }
 
@@ -551,7 +467,7 @@ impl WFStream {
 
     /// Makes sure we have enough pending evictions to fulfill the needs of buffered WFTs who are
     /// waiting on a cache slot
-    fn reconcile_buffered(&mut self) -> RunUpdateResp {
+    fn reconcile_buffered(&mut self) -> RunUpdateActs {
         // We must ensure that there are at least as many pending evictions as there are tasks
         // that we might need to un-buffer (skipping runs which already have buffered tasks for
         // themselves)
@@ -597,7 +513,6 @@ impl WFStream {
                 .handles()
                 .all(|r| !r.has_any_pending_work(self.ignore_evicts_on_shutdown, false));
             if all_runs_ready {
-                info!("Workflow shutdown is done");
                 return true;
             }
         }
@@ -620,6 +535,147 @@ impl WFStream {
                   trying_to_evict=r.trying_to_evict.is_some(), more_work=r.more_pending_work());
         } else {
             info!(run_id, "Run not found");
+        }
+    }
+
+    fn record_span_fields(&mut self, run_id: &str, span: &Span) {
+        if let Some(run_handle) = self.runs.get_mut(run_id) {
+            if let Some(spid) = span.id() {
+                if run_handle.recorded_span_ids.contains(&spid) {
+                    return;
+                }
+                run_handle.recorded_span_ids.insert(spid);
+
+                if let Some(wid) = run_handle.wft.as_ref().map(|wft| &wft.info.wf_id) {
+                    span.record("workflow_id", wid.as_str());
+                }
+            }
+        }
+    }
+}
+
+/// All possible inputs to the [WFStream]
+#[derive(derive_more::From, Debug)]
+enum WFStreamInput {
+    NewWft(PermittedWFT),
+    Local(LocalInput),
+    /// The stream given to us which represents the poller (or a mock) terminated.
+    PollerDead,
+    /// The stream given to us which represents the poller (or a mock) encountered a non-retryable
+    /// error while polling
+    PollerError(tonic::Status),
+    FailedFetch {
+        run_id: String,
+        err: tonic::Status,
+    },
+}
+
+/// A non-poller-received input to the [WFStream]
+#[derive(derive_more::DebugCustom)]
+#[debug(fmt = "LocalInput {{ {:?} }}", input)]
+pub(super) struct LocalInput {
+    pub input: LocalInputs,
+    pub span: Span,
+}
+/// Everything that _isn't_ a poll which may affect workflow state. Always higher priority than
+/// new polls.
+#[derive(Debug, derive_more::From)]
+pub(super) enum LocalInputs {
+    Completion(WFActCompleteMsg),
+    FetchedPageCompletion {
+        paginator: HistoryPaginator,
+        update: HistoryUpdate,
+    },
+    LocalResolution(LocalResolutionMsg),
+    PostActivation(PostActivationMsg),
+    RequestEviction(RequestEvictMsg),
+    HeartbeatTimeout(HeartbeatTimeoutMsg),
+    GetStateInfo(GetStateInfoMsg),
+}
+impl LocalInputs {
+    fn run_id(&self) -> Option<&str> {
+        Some(match self {
+            LocalInputs::Completion(c) => c.completion.run_id(),
+            LocalInputs::FetchedPageCompletion { paginator, .. } => &paginator.run_id,
+            LocalInputs::LocalResolution(lr) => &lr.run_id,
+            LocalInputs::PostActivation(pa) => &pa.run_id,
+            LocalInputs::RequestEviction(re) => &re.run_id,
+            LocalInputs::HeartbeatTimeout(hb) => &hb.run_id,
+            LocalInputs::GetStateInfo(_) => return None,
+        })
+    }
+}
+#[derive(Debug)]
+#[allow(clippy::large_enum_variant)] // PollerDead only ever gets used once, so not important.
+enum ExternalPollerInputs {
+    NewWft(PermittedWFT),
+    PollerDead,
+    PollerError(tonic::Status),
+    FetchedUpdate(PermittedWFT),
+    NextPage {
+        paginator: HistoryPaginator,
+        update: HistoryUpdate,
+        span: Span,
+    },
+    FailedFetch {
+        run_id: String,
+        err: tonic::Status,
+    },
+}
+impl From<ExternalPollerInputs> for WFStreamInput {
+    fn from(l: ExternalPollerInputs) -> Self {
+        match l {
+            ExternalPollerInputs::NewWft(v) => WFStreamInput::NewWft(v),
+            ExternalPollerInputs::PollerDead => WFStreamInput::PollerDead,
+            ExternalPollerInputs::PollerError(e) => WFStreamInput::PollerError(e),
+            ExternalPollerInputs::FetchedUpdate(wft) => WFStreamInput::NewWft(wft),
+            ExternalPollerInputs::FailedFetch { run_id, err } => {
+                WFStreamInput::FailedFetch { run_id, err }
+            }
+            ExternalPollerInputs::NextPage {
+                paginator,
+                update,
+                span,
+            } => WFStreamInput::Local(LocalInput {
+                input: LocalInputs::FetchedPageCompletion { paginator, update },
+                span,
+            }),
+        }
+    }
+}
+impl From<Result<WFTExtractorOutput, tonic::Status>> for ExternalPollerInputs {
+    fn from(v: Result<WFTExtractorOutput, tonic::Status>) -> Self {
+        match v {
+            Ok(WFTExtractorOutput::NewWFT(pwft)) => ExternalPollerInputs::NewWft(pwft),
+            Ok(WFTExtractorOutput::FetchResult(updated_wft)) => {
+                ExternalPollerInputs::FetchedUpdate(updated_wft)
+            }
+            Ok(WFTExtractorOutput::NextPage {
+                paginator,
+                update,
+                span,
+            }) => ExternalPollerInputs::NextPage {
+                paginator,
+                update,
+                span,
+            },
+            Ok(WFTExtractorOutput::FailedFetch { run_id, err }) => {
+                ExternalPollerInputs::FailedFetch { run_id, err }
+            }
+            Err(e) => ExternalPollerInputs::PollerError(e),
+        }
+    }
+}
+#[derive(Debug)]
+enum NewOrFetchedComplete {
+    New(WFActCompleteMsg),
+    Fetched(HistoryUpdate, HistoryPaginator),
+}
+impl NewOrFetchedComplete {
+    fn run_id(&self) -> &str {
+        match self {
+            NewOrFetchedComplete::New(c) => c.completion.run_id(),
+            NewOrFetchedComplete::Fetched(_, p) => &p.run_id,
         }
     }
 }

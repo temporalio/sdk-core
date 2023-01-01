@@ -1,9 +1,10 @@
 #![allow(clippy::large_enum_variant)]
 
 use super::{
-    workflow_machines::{MachineResponse, WFMachinesError},
-    Cancellable, EventInfo, NewMachineWithCommand, OnEventWrapper, WFMachinesAdapter,
+    workflow_machines::MachineResponse, Cancellable, EventInfo, NewMachineWithCommand,
+    OnEventWrapper, WFMachinesAdapter,
 };
+use crate::worker::workflow::WFMachinesError;
 use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
 use std::convert::TryFrom;
 use temporal_sdk_core_protos::{

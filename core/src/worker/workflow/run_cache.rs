@@ -1,8 +1,8 @@
 use crate::{
     telemetry::metrics::workflow_type,
     worker::workflow::{
-        managed_run::ManagedRun, ActivationOrAuto, HeartbeatTimeoutMsg, HistoryUpdate,
-        LocalActivityRequestSink, PermittedWFT,
+        managed_run::{ManagedRun, RunUpdateActs},
+        HeartbeatTimeoutMsg, HistoryUpdate, LocalActivityRequestSink, PermittedWFT,
     },
     MetricsContext,
 };
@@ -15,7 +15,6 @@ pub(super) struct RunCache {
     namespace: String,
     /// Run id -> Data
     runs: LruCache<String, ManagedRun>,
-    // TODO: eliminate & make return value
     local_activity_request_sink: LocalActivityRequestSink,
     // Used to feed heartbeat timeout events back into the workflow inputs.
     // TODO: Ideally, we wouldn't spawn tasks inside here now that this is tokio-free-ish.
@@ -52,7 +51,7 @@ impl RunCache {
         }
     }
 
-    pub fn instantiate_or_update(&mut self, mut pwft: PermittedWFT) -> Vec<ActivationOrAuto> {
+    pub fn instantiate_or_update(&mut self, mut pwft: PermittedWFT) -> RunUpdateActs {
         let cur_num_cached_runs = self.runs.len();
         let run_id = &pwft.work.execution.run_id;
 

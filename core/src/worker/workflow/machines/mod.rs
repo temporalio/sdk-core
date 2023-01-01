@@ -18,9 +18,9 @@ mod workflow_task_state_machine;
 #[cfg(test)]
 mod transition_coverage;
 
-pub(crate) use workflow_machines::{WFMachinesError, WorkflowMachines};
+pub(crate) use workflow_machines::WorkflowMachines;
 
-use crate::telemetry::VecDisplayer;
+use crate::{telemetry::VecDisplayer, worker::workflow::WFMachinesError};
 use activity_state_machine::ActivityMachine;
 use cancel_external_state_machine::CancelExternalMachine;
 use cancel_workflow_state_machine::CancelWorkflowMachine;

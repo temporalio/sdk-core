@@ -1,10 +1,6 @@
 //! Error types exposed by public APIs
 
-use prost_types::TimestampError;
-use temporal_sdk_core_protos::coresdk::{
-    activity_result::ActivityExecutionResult,
-    workflow_activation::remove_from_cache::EvictionReason,
-};
+use temporal_sdk_core_protos::coresdk::activity_result::ActivityExecutionResult;
 
 /// Errors thrown by [crate::Worker::poll_workflow_activation]
 #[derive(thiserror::Error, Debug)]
@@ -63,33 +59,4 @@ pub enum CompleteActivityError {
         /// The completion, which may not be included to avoid unnecessary copies.
         completion: Option<ActivityExecutionResult>,
     },
-}
-
-/// Errors thrown inside of workflow machines
-#[derive(thiserror::Error, Debug)]
-pub enum WFMachinesError {
-    #[error("Nondeterminism error: {0}")]
-    Nondeterminism(String),
-    #[error("Fatal error in workflow machines: {0}")]
-    Fatal(String),
-
-    #[error("Unrecoverable network error while fetching history: {0}")]
-    HistoryFetchingError(tonic::Status),
-}
-
-impl WFMachinesError {
-    pub fn evict_reason(&self) -> EvictionReason {
-        match self {
-            WFMachinesError::Nondeterminism(_) => EvictionReason::Nondeterminism,
-            WFMachinesError::Fatal(_) | WFMachinesError::HistoryFetchingError(_) => {
-                EvictionReason::Fatal
-            }
-        }
-    }
-}
-
-impl From<TimestampError> for WFMachinesError {
-    fn from(_: TimestampError) -> Self {
-        Self::Fatal("Could not decode timestamp".to_string())
-    }
 }

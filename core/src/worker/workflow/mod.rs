@@ -15,7 +15,6 @@ mod workflow_stream;
 pub(crate) use bridge::WorkflowBridge;
 pub(crate) use driven_workflow::{DrivenWorkflow, WorkflowFetcher};
 pub(crate) use history_update::HistoryUpdate;
-pub(crate) use machines::WFMachinesError;
 #[cfg(test)]
 pub(crate) use managed_run::ManagedWFFunc;
 
@@ -28,8 +27,8 @@ use crate::{
         client::{WorkerClient, WorkflowTaskCompletion},
         workflow::{
             history_update::HistoryPaginator,
-            managed_run::RunUpdateResp,
-            wft_extraction::WFTExtractor,
+            managed_run::RunUpdateActs,
+            wft_extraction::{HistoryFetchReq, WFTExtractor},
             wft_poller::validate_wft,
             workflow_stream::{LocalInput, LocalInputs, WFStream},
         },
@@ -37,9 +36,9 @@ use crate::{
     },
     MetricsContext,
 };
-use crossbeam::queue::SegQueue;
 use futures::{stream::BoxStream, Stream, StreamExt};
 use futures_util::stream;
+use prost_types::TimestampError;
 use std::{
     collections::VecDeque,
     fmt::Debug,
@@ -91,19 +90,13 @@ const WFT_HEARTBEAT_TIMEOUT_FRACTION: f32 = 0.8;
 const MAX_EAGER_ACTIVITY_RESERVATIONS_PER_WORKFLOW_TASK: usize = 3;
 
 type Result<T, E = WFMachinesError> = result::Result<T, E>;
-type BoxedActivationStream = BoxStream<'static, Result<WFStreamOutput, PollWfError>>;
+type BoxedActivationStream = BoxStream<'static, Result<ActivationOrAuto, PollWfError>>;
 
 /// Centralizes all state related to workflows and workflow tasks
 pub(crate) struct Workflows {
     task_queue: String,
     local_tx: UnboundedSender<LocalInput>,
-    fetch_tx: UnboundedSender<HistoryFetchReq>,
     processing_task: tokio::sync::Mutex<Option<JoinHandle<()>>>,
-    /// Because inputs may trigger activations for more than one run (ex: An activation for the
-    /// run the input is associated with, and an activation to evict a different run because the
-    /// cache is full), there is a need to buffer activations sometimes. They are pulled from
-    /// first before
-    buffered_activations: SegQueue<ActivationOrAuto>,
     activation_stream: tokio::sync::Mutex<(
         BoxedActivationStream,
         // Used to indicate polling may begin
@@ -184,18 +177,30 @@ impl Workflows {
             if !do_poll {
                 return;
             }
-            while let Some(act) = stream.next().await {
-                activation_tx
-                    .send(act)
-                    .expect("Activation processor channel not dropped");
+            while let Some(output) = stream.next().await {
+                match output {
+                    Ok(o) => {
+                        for fetchreq in o.fetch_histories {
+                            fetch_tx
+                                .send(fetchreq)
+                                .expect("Fetch channel must not be dropped");
+                        }
+                        for act in o.activations {
+                            activation_tx
+                                .send(Ok(act))
+                                .expect("Activation processor channel not dropped");
+                        }
+                    }
+                    Err(e) => activation_tx
+                        .send(Err(e))
+                        .expect("Activation processor channel not dropped"),
+                }
             }
         });
         Self {
             task_queue,
             local_tx,
-            fetch_tx,
             processing_task: tokio::sync::Mutex::new(Some(processing_task)),
-            buffered_activations: Default::default(),
             activation_stream: tokio::sync::Mutex::new((
                 UnboundedReceiverStream::new(activation_rx).boxed(),
                 Some(start_polling_tx),
@@ -208,27 +213,8 @@ impl Workflows {
     }
 
     pub async fn next_workflow_activation(&self) -> Result<WorkflowActivation, PollWfError> {
-        let activation = loop {
-            if let Some(act) = self.buffered_activations.pop() {
-                Span::current().record("run_id", act.run_id());
-                match act {
-                    ActivationOrAuto::LangActivation(act)
-                    | ActivationOrAuto::ReadyForQueries(act) => {
-                        break act;
-                    }
-                    ActivationOrAuto::Autocomplete { run_id } => {
-                        self.activation_completed(WorkflowActivationCompletion {
-                            run_id,
-                            status: Some(
-                                workflow_completion::Success::from_variants(vec![]).into(),
-                            ),
-                        })
-                        .await?;
-                        continue;
-                    }
-                }
-            }
-            let r = {
+        loop {
+            let al = {
                 let mut lock = self.activation_stream.lock().await;
                 let (ref mut stream, ref mut beginner) = lock.deref_mut();
                 if let Some(beginner) = beginner.take() {
@@ -236,20 +222,21 @@ impl Workflows {
                 }
                 stream.next().await.unwrap_or(Err(PollWfError::ShutDown))?
             };
-            // TODO: Extract this probably
-            if !r.fetch_histories.is_empty() {
-                for fetchreq in r.fetch_histories {
-                    if self.fetch_tx.send(fetchreq).is_err() {
-                        error!("Some history fetch requests were dropped while shutting down");
-                    }
+            Span::current().record("run_id", al.run_id());
+            match al {
+                ActivationOrAuto::LangActivation(act) | ActivationOrAuto::ReadyForQueries(act) => {
+                    debug!(activation=%act, "Sending activation to lang");
+                    break Ok(act);
+                }
+                ActivationOrAuto::Autocomplete { run_id } => {
+                    self.activation_completed(WorkflowActivationCompletion {
+                        run_id,
+                        status: Some(workflow_completion::Success::from_variants(vec![]).into()),
+                    })
+                    .await?;
                 }
             }
-            for act in r.activations {
-                self.buffered_activations.push(act);
-            }
-        };
-        debug!(activation=%activation, "Sending activation to lang");
-        Ok(activation)
+        }
     }
 
     /// Queue an activation completion for processing, returning a future that will resolve with
@@ -358,12 +345,13 @@ impl Workflows {
             ActivationCompleteOutcome::DoNothing => WFTReportStatus::NotReported,
         };
 
-        // TODO: Combine with other place paginator is created, probably lift that into here, test.
+        // TODO: Should probably be spawned as a task that sends the post activation msg
+        //  when done w/ paginator, to avoid blocking complete for long.
         let maybe_pwft = if let Some(wft) = wft_from_complete {
             let (paginator, pwft) = HistoryPaginator::from_poll(wft, self.client.clone(), 0)
                 .await
                 .expect("TODO: Handle error");
-            Some(pwft)
+            Some((pwft, paginator))
         } else {
             None
         };
@@ -581,15 +569,25 @@ impl Workflows {
     }
 }
 
-// Bubbled up from calls to update workflow state if history needs fetching for a workflow
+/// Returned when a cache miss happens and we need to fetch history from the beginning to
+/// replay a run
 #[derive(Debug, derive_more::Display)]
 #[display(
     fmt = "HistoryFetchReq(run_id: {})",
     "original_wft.work.execution.run_id"
 )]
 #[must_use]
-struct HistoryFetchReq {
+struct CacheMissFetchReq {
     original_wft: PermittedWFT,
+}
+/// Bubbled up from inside workflow state if we're trying to apply the next workflow task but it
+/// isn't in memory
+#[derive(Debug)]
+#[must_use]
+struct NextPageReq {
+    last_processed_id: i64,
+    paginator: HistoryPaginator,
+    span: Span,
 }
 
 #[derive(Debug)]
@@ -625,6 +623,7 @@ impl ActivationOrAuto {
 pub(crate) struct PermittedWFT {
     work: PreparedWFT,
     permit: OwnedMeteredSemPermit,
+    paginator: HistoryPaginator,
 }
 #[derive(Debug)]
 struct PreparedWFT {
@@ -741,12 +740,12 @@ pub(crate) enum ActivationAction {
 
 #[derive(Debug)]
 enum EvictionRequestResult {
-    EvictionRequested(Option<u32>, RunUpdateResp),
+    EvictionRequested(Option<u32>, RunUpdateActs),
     NotFound,
     EvictionAlreadyRequested(Option<u32>),
 }
 impl EvictionRequestResult {
-    fn into_run_update_resp(self) -> RunUpdateResp {
+    fn into_run_update_resp(self) -> RunUpdateActs {
         match self {
             EvictionRequestResult::EvictionRequested(_, resp) => resp,
             EvictionRequestResult::NotFound
@@ -776,7 +775,7 @@ struct LocalResolutionMsg {
 struct PostActivationMsg {
     run_id: String,
     wft_report_status: WFTReportStatus,
-    wft_from_complete: Option<PreparedWFT>,
+    wft_from_complete: Option<(PreparedWFT, HistoryPaginator)>,
 }
 #[derive(Debug, Clone)]
 struct RequestEvictMsg {
@@ -823,16 +822,6 @@ enum WFTReportStatus {
     /// We didn't report, but we want to clear the outstanding workflow task anyway. See
     /// [ActivationCompleteOutcome::WFTFailedDontReport]
     DropWft,
-}
-#[derive(Debug)]
-struct FulfillableActivationComplete {
-    result: ActivationCompleteResult,
-    resp_chan: oneshot::Sender<ActivationCompleteResult>,
-}
-impl FulfillableActivationComplete {
-    fn fulfill(self) {
-        let _ = self.resp_chan.send(self.result);
-    }
 }
 
 fn validate_completion(
@@ -907,25 +896,6 @@ impl ValidatedCompletion {
             ValidatedCompletion::Fail { run_id, .. } => run_id,
         }
     }
-}
-
-#[derive(Debug)]
-struct RunActivationCompletion {
-    task_token: TaskToken,
-    start_time: Instant,
-    commands: Vec<WFCommand>,
-    activation_was_eviction: bool,
-    activation_was_only_eviction: bool,
-    has_pending_query: bool,
-    query_responses: Vec<QueryResult>,
-    /// Used to notify the worker when the completion is done processing and the completion can
-    /// unblock. Must always be `Some` when initialized.
-    resp_chan: Option<oneshot::Sender<ActivationCompleteResult>>,
-}
-#[derive(Debug, derive_more::From)]
-enum ActOrFulfill {
-    OutgoingAct(Option<ActivationOrAuto>),
-    FulfillableComplete(Option<FulfillableActivationComplete>),
 }
 
 #[derive(Debug)]
@@ -1072,5 +1042,29 @@ impl From<OutgoingJob> for WorkflowActivationJob {
         Self {
             variant: Some(og.variant),
         }
+    }
+}
+
+/// Errors thrown inside of workflow machines
+#[derive(thiserror::Error, Debug)]
+pub(crate) enum WFMachinesError {
+    #[error("Nondeterminism error: {0}")]
+    Nondeterminism(String),
+    #[error("Fatal error in workflow machines: {0}")]
+    Fatal(String),
+}
+
+impl WFMachinesError {
+    pub fn evict_reason(&self) -> EvictionReason {
+        match self {
+            WFMachinesError::Nondeterminism(_) => EvictionReason::Nondeterminism,
+            WFMachinesError::Fatal(_) => EvictionReason::Fatal,
+        }
+    }
+}
+
+impl From<TimestampError> for WFMachinesError {
+    fn from(_: TimestampError) -> Self {
+        Self::Fatal("Could not decode timestamp".to_string())
     }
 }

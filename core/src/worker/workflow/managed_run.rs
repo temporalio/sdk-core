@@ -9,12 +9,12 @@ use crate::{
     protosext::WorkflowActivationExt,
     worker::{
         workflow::{
-            machines::WorkflowMachines, ActOrFulfill, ActivationAction, ActivationCompleteOutcome,
-            ActivationCompleteResult, ActivationOrAuto, EvictionRequestResult,
-            FailedActivationWFTReport, FulfillableActivationComplete, HeartbeatTimeoutMsg,
-            HistoryUpdate, LocalActivityRequestSink, LocalResolution, OutgoingServerCommands,
+            history_update::HistoryPaginator, machines::WorkflowMachines, ActivationAction,
+            ActivationCompleteOutcome, ActivationCompleteResult, ActivationOrAuto,
+            EvictionRequestResult, FailedActivationWFTReport, HeartbeatTimeoutMsg, HistoryUpdate,
+            LocalActivityRequestSink, LocalResolution, NextPageReq, OutgoingServerCommands,
             OutstandingActivation, OutstandingTask, PermittedWFT, RequestEvictMsg,
-            RunActivationCompletion, ServerCommandsWithWorkflowInfo, WFCommand, WorkflowBridge,
+            ServerCommandsWithWorkflowInfo, WFCommand, WFMachinesError, WorkflowBridge,
             WorkflowTaskInfo, WFT_HEARTBEAT_TIMEOUT_FRACTION,
         },
         LocalActRequest, LEGACY_QUERY_ID,
@@ -27,7 +27,6 @@ use std::{
     sync::mpsc::Sender,
     time::{Duration, Instant},
 };
-use temporal_sdk_core_api::errors::WFMachinesError;
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::{
@@ -45,9 +44,10 @@ use tokio::{
     task,
     task::JoinHandle,
 };
+use tracing::Span;
 
 type Result<T, E = WFMachinesError> = std::result::Result<T, E>;
-pub(super) type RunUpdateResp = Vec<ActivationOrAuto>;
+pub(super) type RunUpdateActs = Vec<ActivationOrAuto>;
 
 /// Manages access to a specific workflow run, and contains various bookkeeping information that the
 /// [WFStream] may need to access quickly.
@@ -62,10 +62,17 @@ pub(super) type RunUpdateResp = Vec<ActivationOrAuto>;
 )]
 pub(super) struct ManagedRun {
     wfm: WorkflowManager,
+    /// Called when the machines need to produce local activity requests. This can't really be
+    /// lifted up sensibly as a return value, because sometimes local activity requests trigger
+    /// immediate resolutions (ex: too many attempts). Thus lifting it up creates a lot of unneeded
+    /// complexity pushing things out and then directly back in. The downside is this is the only
+    /// "impure" part of the in/out nature of workflow state management. If there's ever a sensible
+    /// way to lift it up, that'd be nice.
     local_activity_request_sink: LocalActivityRequestSink,
+    /// Set if the run is currently waiting on the execution of some local activities.
     waiting_on_la: Option<WaitingOnLAs>,
-    // Is set to true if the machines encounter an error and the only subsequent thing we should
-    // do is be evicted.
+    /// Is set to true if the machines encounter an error and the only subsequent thing we should
+    /// do is be evicted.
     am_broken: bool,
     /// If set, the WFT this run is currently/will be processing.
     pub(super) wft: Option<OutstandingTask>,
@@ -78,7 +85,7 @@ pub(super) struct ManagedRun {
     pub(super) buffered_resp: Option<PermittedWFT>,
     /// Is set if an eviction has been requested for this run
     pub(super) trying_to_evict: Option<RequestEvictMsg>,
-    // Used to feed heartbeat timeout events back into the workflow inputs.
+    /// Used to feed heartbeat timeout events back into the workflow inputs.
     // TODO: Ideally, we wouldn't spawn tasks inside here now that this is tokio-free-ish.
     //   Instead, `Workflows` can spawn them itself if there are any LAs.
     heartbeat_tx: UnboundedSender<HeartbeatTimeoutMsg>,
@@ -88,8 +95,12 @@ pub(super) struct ManagedRun {
     /// is fixed.
     pub(super) recorded_span_ids: HashSet<tracing::Id>,
     pub(super) metrics: MetricsContext,
+    /// We store the paginator used for our own run's history fetching
+    paginator: Option<HistoryPaginator>,
+    completion_waiting_on_page_fetch: Option<RunActivationCompletion>,
 }
 impl ManagedRun {
+    #[allow(clippy::too_many_arguments)] // Ok with this here. Nothing reusable to extract.
     pub(super) fn new(
         history_update: HistoryUpdate,
         namespace: String,
@@ -120,9 +131,12 @@ impl ManagedRun {
             heartbeat_tx,
             recorded_span_ids: Default::default(),
             metrics,
+            paginator: None,
+            completion_waiting_on_page_fetch: None,
         }
     }
 
+    /// Returns true if there are pending jobs that need to be sent to lang.
     pub(super) fn more_pending_work(&self) -> bool {
         let mut more_pending_work = self.wfm.machines.has_pending_jobs();
         // We don't want to consider there to be more local-only work to be done if there is
@@ -136,15 +150,12 @@ impl ManagedRun {
         more_pending_work
     }
 
-    pub(super) fn most_recently_processed_event_number(&self) -> i64 {
-        self.wfm.machines.last_processed_event
-    }
-
     pub(super) fn have_seen_terminal_event(&self) -> bool {
         self.wfm.machines.have_seen_terminal_event
     }
 
-    pub(super) fn incoming_wft(&mut self, pwft: PermittedWFT) -> RunUpdateResp {
+    /// Called whenever a new workflow task is obtained for this run
+    pub(super) fn incoming_wft(&mut self, pwft: PermittedWFT) -> RunUpdateActs {
         let res = self._incoming_wft(pwft);
         self.update_to_acts(res.map(Into::into), true)
     }
@@ -194,6 +205,7 @@ impl ManagedRun {
         if let Some(lq) = legacy_query_from_poll {
             pending_queries.push(lq);
         }
+        self.paginator = Some(pwft.paginator);
         self.wft = Some(OutstandingTask {
             info: wft_info,
             hit_cache: !did_miss_cache,
@@ -254,7 +266,8 @@ impl ManagedRun {
         Ok(Some(ActivationOrAuto::LangActivation(activation)))
     }
 
-    pub(super) fn check_more_activations(&mut self) -> RunUpdateResp {
+    /// Checks if any further activations need to go out for this run and produces them if so.
+    pub(super) fn check_more_activations(&mut self) -> RunUpdateActs {
         let res = self._check_more_activations();
         self.update_to_acts(res.map(Into::into), false)
     }
@@ -269,6 +282,7 @@ impl ManagedRun {
             .as_ref()
             .map(|wft| !wft.pending_queries.is_empty())
             .unwrap_or_default();
+
         // In the event it's time to evict this run, cancel any outstanding LAs
         if self.trying_to_evict.is_some() {
             self.sink_la_requests(vec![LocalActRequest::CancelAllInRun(
@@ -308,93 +322,17 @@ impl ManagedRun {
         }
     }
 
-    fn process_completion(&mut self, completion: RunActivationCompletion) -> RunUpdateResp {
-        let res = self._process_completion(completion);
-        self.update_to_acts(res.map(Into::into), false)
-    }
-
-    fn _process_completion(
-        &mut self,
-        mut completion: RunActivationCompletion,
-    ) -> Result<Option<FulfillableActivationComplete>, RunUpdateErr> {
-        let resp_chan = completion
-            .resp_chan
-            .take()
-            .expect("Completion response channel must be populated");
-
-        let data = CompletionDataForWFT {
-            task_token: completion.task_token,
-            query_responses: completion.query_responses,
-            has_pending_query: completion.has_pending_query,
-            activation_was_only_eviction: completion.activation_was_only_eviction,
-        };
-
-        // If this is just bookkeeping after a reply to an only-eviction activation, we can bypass
-        // everything, since there is no reason to continue trying to update machines.
-        if completion.activation_was_only_eviction {
-            return Ok(Some(self.prepare_complete_resp(resp_chan, data, false)));
-        }
-
-        let outcome = (|| {
-            // Send commands from lang into the machines then check if the workflow run
-            // needs another activation and mark it if so
-            self.wfm.push_commands_and_iterate(completion.commands)?;
-            // Don't bother applying the next task if we're evicting at the end of
-            // this activation
-            if !completion.activation_was_eviction {
-                self.wfm.apply_next_task_if_ready()?;
-            }
-            let new_local_acts = self.wfm.drain_queued_local_activities();
-            self.sink_la_requests(new_local_acts)?;
-
-            if self.wfm.machines.outstanding_local_activity_count() == 0 {
-                Ok((None, data, self))
-            } else {
-                let wft_timeout: Duration = self
-                    .wfm
-                    .machines
-                    .get_started_info()
-                    .and_then(|attrs| attrs.workflow_task_timeout)
-                    .ok_or_else(|| {
-                        WFMachinesError::Fatal(
-                            "Workflow's start attribs were missing a well formed task timeout"
-                                .to_string(),
-                        )
-                    })?;
-                Ok((Some((completion.start_time, wft_timeout)), data, self))
-            }
-        })();
-
-        match outcome {
-            Ok((None, data, me)) => Ok(Some(me.prepare_complete_resp(resp_chan, data, false))),
-            Ok((Some((start_t, wft_timeout)), data, me)) => {
-                if let Some(wola) = me.waiting_on_la.as_mut() {
-                    wola.heartbeat_timeout_task.abort();
-                }
-                me.waiting_on_la = Some(WaitingOnLAs {
-                    wft_timeout,
-                    completion_dat: Some((data, resp_chan)),
-                    heartbeat_timeout_task: start_heartbeat_timeout_task(
-                        me.wfm.machines.run_id.clone(),
-                        me.heartbeat_tx.clone(),
-                        start_t,
-                        wft_timeout,
-                    ),
-                });
-                Ok(None)
-            }
-            Err(e) => Err(RunUpdateErr {
-                source: e,
-                complete_resp_chan: Some(resp_chan),
-            }),
-        }
-    }
-
+    /// Called whenever lang successfully completes a workflow activation. Commands produced by the
+    /// activation are passed in. `resp_chan` will be used to unblock the completion call when
+    /// everything we need to do to fulfill it has happened.
+    ///
+    /// Can return an error in the event that another page of history needs to be fetched before
+    /// the completion can proceed.
     pub(super) fn successful_completion(
         &mut self,
         mut commands: Vec<WFCommand>,
         resp_chan: oneshot::Sender<ActivationCompleteResult>,
-    ) -> RunUpdateResp {
+    ) -> Result<Vec<ActivationOrAuto>, NextPageReq> {
         let activation_was_only_eviction = self.activation_has_only_eviction();
         let (task_token, has_pending_query, start_time) = if let Some(entry) = self.wft.as_ref() {
             (
@@ -412,7 +350,7 @@ impl ManagedRun {
                 );
             }
             self.reply_to_complete(ActivationCompleteOutcome::DoNothing, resp_chan);
-            return vec![];
+            return Ok(vec![]);
         };
 
         // If the only command from the activation is a legacy query response, that means we need
@@ -433,7 +371,7 @@ impl ManagedRun {
                 }),
                 resp_chan,
             );
-            vec![]
+            Ok(vec![])
         } else {
             // First strip out query responses from other commands that actually affect machines
             // Would be prettier with `drain_filter`
@@ -453,27 +391,80 @@ impl ManagedRun {
                 dbg_panic!("Reply to an eviction only containing an eviction included commands");
             }
 
-            let activation_was_eviction = self.activation_has_eviction();
-            self.process_completion(RunActivationCompletion {
+            let rac = RunActivationCompletion {
                 task_token,
                 start_time,
                 commands,
-                activation_was_eviction,
+                activation_was_eviction: self.activation_has_eviction(),
                 activation_was_only_eviction,
                 has_pending_query,
                 query_responses,
                 resp_chan: Some(resp_chan),
-            })
+            };
+
+            // Verify we can actually apply the next workflow task, which will happen as part of
+            // applying the completion to machines. If we can't, return early indicating we need
+            // to fetch a page.
+            if !self.wfm.ready_to_apply_next_wft() {
+                debug!("Need to fetch a history page before next WFT can be applied");
+                self.completion_waiting_on_page_fetch = Some(rac);
+                return Err(NextPageReq {
+                    last_processed_id: self.most_recently_processed_event_number(),
+                    paginator: self
+                        .paginator
+                        .take()
+                        .expect("TODO: Handle missing paginator"),
+                    span: Span::current(),
+                });
+            }
+
+            Ok(self.process_completion(rac))
         }
     }
 
+    /// Called after the higher-up machinery has fetched more pages of event history needed to apply
+    /// the next workflow task. The history update and paginator used to perform the fetch are
+    /// passed in, with the update being used to apply the task, and the paginator stored to be
+    /// attached with another fetch request if needed.
+    pub(super) fn fetched_page_completion(
+        &mut self,
+        update: HistoryUpdate,
+        paginator: HistoryPaginator,
+    ) -> RunUpdateActs {
+        let res = self._fetched_page_completion(update, paginator);
+        self.update_to_acts(res.map(Into::into), false)
+    }
+    fn _fetched_page_completion(
+        &mut self,
+        update: HistoryUpdate,
+        paginator: HistoryPaginator,
+    ) -> Result<Option<FulfillableActivationComplete>, RunUpdateErr> {
+        self.paginator = Some(paginator);
+        if let Some(d) = self.completion_waiting_on_page_fetch.take() {
+            self._process_completion(d, Some(update))
+        } else {
+            dbg_panic!(
+                "Shouldn't be possible to be applying a next-page-fetch update when \
+                        doing anything other than completing an activation."
+            );
+            Err(RunUpdateErr::from(WFMachinesError::Fatal(
+                "Tried to apply next-page-fetch update to a run that wasn't handling a completion"
+                    .to_string(),
+            )))
+        }
+    }
+
+    /// Called whenever either core lang cannot complete a workflow activation. EX: Nondeterminism
+    /// or user code threw/panicked, respectively. The `cause` and `reason` fields are determined
+    /// inside core always. The `failure` field may come from lang. `resp_chan` will be used to
+    /// unblock the completion call when everything we need to do to fulfill it has happened.
     pub(super) fn failed_completion(
         &mut self,
         cause: WorkflowTaskFailedCause,
         reason: EvictionReason,
         failure: workflow_completion::Failure,
         resp_chan: oneshot::Sender<ActivationCompleteResult>,
-    ) -> RunUpdateResp {
+    ) -> RunUpdateActs {
         let tt = if let Some(tt) = self.wft.as_ref().map(|t| t.info.task_token.clone()) {
             tt
         } else {
@@ -515,9 +506,96 @@ impl ManagedRun {
         rur
     }
 
-    pub(super) fn local_resolution(&mut self, res: LocalResolution) -> RunUpdateResp {
+    /// Called when local activities resolve
+    pub(super) fn local_resolution(&mut self, res: LocalResolution) -> RunUpdateActs {
         let res = self._local_resolution(res);
         self.update_to_acts(res.map(Into::into), false)
+    }
+
+    fn process_completion(&mut self, completion: RunActivationCompletion) -> RunUpdateActs {
+        let res = self._process_completion(completion, None);
+        self.update_to_acts(res.map(Into::into), false)
+    }
+
+    fn _process_completion(
+        &mut self,
+        mut completion: RunActivationCompletion,
+        new_update: Option<HistoryUpdate>,
+    ) -> Result<Option<FulfillableActivationComplete>, RunUpdateErr> {
+        let resp_chan = completion
+            .resp_chan
+            .take()
+            .expect("Completion response channel must be populated");
+
+        let data = CompletionDataForWFT {
+            task_token: completion.task_token,
+            query_responses: completion.query_responses,
+            has_pending_query: completion.has_pending_query,
+            activation_was_only_eviction: completion.activation_was_only_eviction,
+        };
+
+        // If this is just bookkeeping after a reply to an only-eviction activation, we can bypass
+        // everything, since there is no reason to continue trying to update machines.
+        if completion.activation_was_only_eviction {
+            return Ok(Some(self.prepare_complete_resp(resp_chan, data, false)));
+        }
+
+        let outcome = (|| {
+            // Send commands from lang into the machines then check if the workflow run needs
+            // another activation and mark it if so
+            self.wfm.push_commands_and_iterate(completion.commands)?;
+            // If there was a new update included as part of the completion, apply it.
+            if let Some(update) = new_update {
+                self.wfm.feed_history_from_new_page(update)?;
+            }
+            // Don't bother applying the next task if we're evicting at the end of this activation
+            if !completion.activation_was_eviction {
+                self.wfm.apply_next_task_if_ready()?;
+            }
+            let new_local_acts = self.wfm.drain_queued_local_activities();
+            self.sink_la_requests(new_local_acts)?;
+
+            if self.wfm.machines.outstanding_local_activity_count() == 0 {
+                Ok(None)
+            } else {
+                let wft_timeout: Duration = self
+                    .wfm
+                    .machines
+                    .get_started_info()
+                    .and_then(|attrs| attrs.workflow_task_timeout)
+                    .ok_or_else(|| {
+                        WFMachinesError::Fatal(
+                            "Workflow's start attribs were missing a well formed task timeout"
+                                .to_string(),
+                        )
+                    })?;
+                Ok(Some((completion.start_time, wft_timeout)))
+            }
+        })();
+
+        match outcome {
+            Ok(None) => Ok(Some(self.prepare_complete_resp(resp_chan, data, false))),
+            Ok(Some((start_t, wft_timeout))) => {
+                if let Some(wola) = self.waiting_on_la.as_mut() {
+                    wola.heartbeat_timeout_task.abort();
+                }
+                self.waiting_on_la = Some(WaitingOnLAs {
+                    wft_timeout,
+                    completion_dat: Some((data, resp_chan)),
+                    heartbeat_timeout_task: start_heartbeat_timeout_task(
+                        self.wfm.machines.run_id.clone(),
+                        self.heartbeat_tx.clone(),
+                        start_t,
+                        wft_timeout,
+                    ),
+                });
+                Ok(None)
+            }
+            Err(e) => Err(RunUpdateErr {
+                source: e,
+                complete_resp_chan: Some(resp_chan),
+            }),
+        }
     }
 
     fn _local_resolution(
@@ -542,7 +620,7 @@ impl ManagedRun {
         Ok(None)
     }
 
-    pub(super) fn heartbeat_timeout(&mut self) -> RunUpdateResp {
+    pub(super) fn heartbeat_timeout(&mut self) -> RunUpdateActs {
         let maybe_act = if self._heartbeat_timeout() {
             Some(ActivationOrAuto::Autocomplete {
                 run_id: self.wfm.machines.run_id.clone(),
@@ -603,18 +681,6 @@ impl ManagedRun {
         self.wft.is_some() || buffered || self.more_pending_work() || act_work || evict_work
     }
 
-    /// Returns true if the handle is currently processing a WFT which contains a legacy query.
-    pub(super) fn pending_work_is_legacy_query(&self) -> bool {
-        // Either we know because there is a pending legacy query, or it's already been drained and
-        // sent as an activation.
-        matches!(self.activation, Some(OutstandingActivation::LegacyQuery))
-            || self
-                .wft
-                .as_ref()
-                .map(|t| t.has_pending_legacy_query())
-                .unwrap_or_default()
-    }
-
     pub(super) fn request_eviction(&mut self, info: RequestEvictMsg) -> EvictionRequestResult {
         let attempts = self.wft.as_ref().map(|wt| wt.info.attempt);
         if !self.activation_has_eviction() && self.trying_to_evict.is_none() {
@@ -632,7 +698,8 @@ impl ManagedRun {
         &mut self,
         outcome: Result<ActOrFulfill, RunUpdateErr>,
         in_response_to_wft: bool,
-    ) -> RunUpdateResp {
+    ) -> RunUpdateActs {
+        // TODO: It shouldn't reaaaaaly be possible to return more than one thing here?
         let mut activations = vec![];
         match outcome {
             Ok(act_or_fulfill) => {
@@ -861,6 +928,22 @@ impl ManagedRun {
         .expect("Rcv half of activation reply not dropped");
     }
 
+    /// Returns true if the handle is currently processing a WFT which contains a legacy query.
+    fn pending_work_is_legacy_query(&self) -> bool {
+        // Either we know because there is a pending legacy query, or it's already been drained and
+        // sent as an activation.
+        matches!(self.activation, Some(OutstandingActivation::LegacyQuery))
+            || self
+                .wft
+                .as_ref()
+                .map(|t| t.has_pending_legacy_query())
+                .unwrap_or_default()
+    }
+
+    fn most_recently_processed_event_number(&self) -> i64 {
+        self.wfm.machines.last_processed_event
+    }
+
     fn activation_has_eviction(&mut self) -> bool {
         self.activation
             .map(OutstandingActivation::has_eviction)
@@ -988,6 +1071,12 @@ impl WorkflowManager {
         self.get_next_activation()
     }
 
+    /// Update the machines with some events from fetching another page of history. Does *not*
+    /// attempt to pull the next activation, unlike [Self::feed_history_from_server].
+    fn feed_history_from_new_page(&mut self, update: HistoryUpdate) -> Result<()> {
+        self.machines.new_history_from_server(update)
+    }
+
     /// Let this workflow know that something we've been waiting locally on has resolved, like a
     /// local activity or side effect
     ///
@@ -1011,6 +1100,12 @@ impl WorkflowManager {
 
         self.machines.apply_next_wft_from_history()?;
         Ok(self.machines.get_wf_activation())
+    }
+
+    /// Returns true if machines are ready to apply the next WFT sequence, false if events will need
+    /// to be fetched in order to create a complete update with the entire next WFT sequence.
+    pub(crate) fn ready_to_apply_next_wft(&self) -> bool {
+        self.machines.ready_to_apply_next_wft()
     }
 
     /// If there are no pending jobs for the workflow, apply the next workflow task and check
@@ -1061,6 +1156,36 @@ impl WorkflowManager {
         self.machines.iterate_machines()?;
         Ok(())
     }
+}
+
+#[derive(Debug)]
+struct FulfillableActivationComplete {
+    result: ActivationCompleteResult,
+    resp_chan: oneshot::Sender<ActivationCompleteResult>,
+}
+impl FulfillableActivationComplete {
+    fn fulfill(self) {
+        let _ = self.resp_chan.send(self.result);
+    }
+}
+
+#[derive(Debug)]
+struct RunActivationCompletion {
+    task_token: TaskToken,
+    start_time: Instant,
+    commands: Vec<WFCommand>,
+    activation_was_eviction: bool,
+    activation_was_only_eviction: bool,
+    has_pending_query: bool,
+    query_responses: Vec<QueryResult>,
+    /// Used to notify the worker when the completion is done processing and the completion can
+    /// unblock. Must always be `Some` when initialized.
+    resp_chan: Option<oneshot::Sender<ActivationCompleteResult>>,
+}
+#[derive(Debug, derive_more::From)]
+enum ActOrFulfill {
+    OutgoingAct(Option<ActivationOrAuto>),
+    FulfillableComplete(Option<FulfillableActivationComplete>),
 }
 
 #[derive(derive_more::DebugCustom)]
