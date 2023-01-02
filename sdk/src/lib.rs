@@ -493,10 +493,16 @@ impl ActivityHalf {
                         }
                         Err(err) => match err.downcast::<ActivityCancelledError>() {
                             Ok(ce) => ActivityExecutionResult::cancel_from_details(ce.details),
-                            Err(other_err) => match other_err.downcast::<NonRetryableActivityError>() {
-                                Ok(nre) => ActivityExecutionResult::fail(Failure::application_failure_from_error(nre.into(), true)),
-                                Err(other_err) => ActivityExecutionResult::fail(Failure::application_failure_from_error(other_err, false))
-                            },
+                            Err(other_err) => {
+                                match other_err.downcast::<NonRetryableActivityError>() {
+                                    Ok(nre) => ActivityExecutionResult::fail(
+                                        Failure::application_failure_from_error(nre.into(), true),
+                                    ),
+                                    Err(other_err) => ActivityExecutionResult::fail(
+                                        Failure::application_failure_from_error(other_err, false),
+                                    ),
+                                }
+                            }
                         },
                     };
                     worker
@@ -758,7 +764,6 @@ impl Display for ActivityCancelledError {
     }
 }
 
-
 /// Return this error to indicate that your activity non-retryable
 /// this is a transparent wrapper around anyhow Error so essentially any type of error
 /// could be used here.
@@ -774,7 +779,6 @@ pub trait IntoActivityFunc<Args, Res, Out> {
     /// Consume the closure or fn pointer and turned it into a boxed activity function
     fn into_activity_fn(self) -> BoxActFn;
 }
-
 
 impl<A, Rf, R, O, F> IntoActivityFunc<A, Rf, O> for F
 where

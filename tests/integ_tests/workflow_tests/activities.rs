@@ -1,6 +1,6 @@
+use anyhow::anyhow;
 use assert_matches::assert_matches;
 use std::time::Duration;
-use anyhow::anyhow;
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowExecutionResult, WorkflowOptions};
 use temporal_sdk::{
     ActContext, ActExitValue, ActivityOptions, CancellableFuture, WfContext, WorkflowResult,
@@ -223,10 +223,10 @@ async fn activity_non_retryable_failure_with_error() {
             Duration::from_secs(60),
             Duration::from_secs(60),
         )
-            .into_completion(task.run_id),
+        .into_completion(task.run_id),
     )
-        .await
-        .unwrap();
+    .await
+    .unwrap();
     // Poll activity and verify that it's been scheduled with correct parameters
     let task = core.poll_activity_task().await.unwrap();
     assert_matches!(
@@ -241,8 +241,8 @@ async fn activity_non_retryable_failure_with_error() {
         task_token: task.task_token,
         result: Some(ActivityExecutionResult::fail(failure.clone())),
     })
-        .await
-        .unwrap();
+    .await
+    .unwrap();
     // Poll workflow task and verify that activity has failed.
     let task = core.poll_workflow_activation().await.unwrap();
     assert_matches!(
@@ -277,7 +277,6 @@ async fn activity_non_retryable_failure_with_error() {
     );
     core.complete_execution(&task.run_id).await;
 }
-
 
 #[tokio::test]
 async fn activity_retry() {
@@ -353,7 +352,6 @@ async fn activity_retry() {
     );
     core.complete_execution(&task.run_id).await;
 }
-
 
 #[tokio::test]
 async fn activity_cancellation_try_cancel() {
