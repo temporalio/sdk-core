@@ -593,6 +593,10 @@ impl WFStream {
                 }
             }
 
+            if activation_was_only_eviction && !commands.is_empty() {
+                dbg_panic!("Reply to an eviction only containing an eviction included commands");
+            }
+
             let activation_was_eviction = self.activation_has_eviction(&run_id);
             if let Some(rh) = self.runs.get_mut(&run_id) {
                 rh.send_completion(RunActivationCompletion {
@@ -659,7 +663,7 @@ impl WFStream {
                 tt, cause, failure,
             ))
         } else {
-            ActivationCompleteOutcome::DoNothing
+            ActivationCompleteOutcome::WFTFailedDontReport
         };
         self.reply_to_complete(&run_id, outcome, resp_chan);
     }
@@ -668,7 +672,7 @@ impl WFStream {
         let run_id = &report.run_id;
 
         // If we reported to server, we always want to mark it complete.
-        let maybe_t = self.complete_wft(run_id, report.reported_wft_to_server);
+        let maybe_t = self.complete_wft(run_id, report.wft_report_status);
 
         if self
             .get_activation(run_id)
@@ -772,7 +776,7 @@ impl WFStream {
     fn complete_wft(
         &mut self,
         run_id: &str,
-        reported_wft_to_server: bool,
+        wft_report_status: WFTReportStatus,
     ) -> Option<OutstandingTask> {
         // If the WFT completion wasn't sent to the server, but we did see the final event, we still
         // want to clear the workflow task. This can really only happen in replay testing, where we
@@ -784,7 +788,7 @@ impl WFStream {
             .get(run_id)
             .map(|r| r.have_seen_terminal_event)
             .unwrap_or_default();
-        if !saw_final && !reported_wft_to_server {
+        if !saw_final && matches!(wft_report_status, WFTReportStatus::NotReported) {
             return None;
         }
 
@@ -802,11 +806,16 @@ impl WFStream {
 
             debug!("Marking WFT completed");
             let retme = rh.wft.take();
-            if let Some(ot) = &retme {
-                if let Some(m) = self.run_metrics(run_id) {
-                    m.wf_task_latency(ot.start_time.elapsed());
+
+            // Only record latency metrics if we genuinely reported to server
+            if matches!(wft_report_status, WFTReportStatus::Reported) {
+                if let Some(ot) = &retme {
+                    if let Some(m) = self.run_metrics(run_id) {
+                        m.wf_task_latency(ot.start_time.elapsed());
+                    }
                 }
             }
+
             retme
         } else {
             None

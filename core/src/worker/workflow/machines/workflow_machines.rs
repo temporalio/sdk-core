@@ -756,7 +756,7 @@ impl WorkflowMachines {
     ) -> Result<()> {
         let sm = self.machine(smk);
         if !machine_responses.is_empty() {
-            debug!(responses = %machine_responses.display(), machine_name = %sm.name(),
+            trace!(responses = %machine_responses.display(), machine_name = %sm.name(),
                    "Machine produced responses");
         }
         self.process_machine_resps_impl(smk, machine_responses)

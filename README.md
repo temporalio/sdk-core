@@ -1,6 +1,13 @@
 [![Build status](https://badge.buildkite.com/c23f47f4a827f04daece909963bd3a248496f0cdbabfbecee4.svg?branch=master)](https://buildkite.com/temporal/core-sdk?branch=master)
 
-Core SDK that can be used as a base for all other Temporal SDKs.
+Core SDK that can be used as a base for other Temporal SDKs. It is currently used as the base of:
+
+- [TypeScript SDK](https://github.com/temporalio/sdk-typescript/)
+- [Python SDK](https://github.com/temporalio/sdk-python/)
+
+For the reasoning behind the Core SDK, see: 
+
+- [Why Rust powers Temporal’s new Core SDK](https://temporal.io/blog/why-rust-powers-core-sdk).
 
 # Getting started
 

@@ -19,7 +19,9 @@ use std::{
     time::{Duration, SystemTime},
 };
 use temporal_client::WorkflowOptions;
-use temporal_sdk::{ActContext, LocalActivityOptions, WfContext, WorkflowResult};
+use temporal_sdk::{
+    ActContext, ActivityCancelledError, LocalActivityOptions, WfContext, WorkflowResult,
+};
 use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -31,7 +33,7 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::{
         common::v1::RetryPolicy,
-        enums::v1::{EventType, TimeoutType},
+        enums::v1::{EventType, TimeoutType, WorkflowTaskFailedCause},
         failure::v1::Failure,
         history::v1::History,
         query::v1::WorkflowQuery,
@@ -124,6 +126,7 @@ pub async fn local_act_fanout_wf(ctx: WfContext) -> WorkflowResult<()> {
 
 #[tokio::test]
 async fn local_act_many_concurrent() {
+    crate::telemetry::test_telem_console();
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
@@ -168,12 +171,7 @@ async fn local_act_many_concurrent() {
 async fn local_act_heartbeat(#[case] shutdown_middle: bool) {
     let mut t = TestHistoryBuilder::default();
     let wft_timeout = Duration::from_millis(200);
-    let mut wes_short_wft_timeout = default_wes_attribs();
-    wes_short_wft_timeout.workflow_task_timeout = Some(wft_timeout.try_into().unwrap());
-    t.add(
-        EventType::WorkflowExecutionStarted,
-        wes_short_wft_timeout.into(),
-    );
+    t.add_wfe_started_with_wft_timeout(wft_timeout);
     t.add_full_wf_task();
     // Task created by WFT heartbeat
     t.add_full_wf_task();
@@ -452,12 +450,7 @@ async fn local_act_command_immediately_follows_la_marker() {
 async fn query_during_wft_heartbeat_doesnt_accidentally_fail_to_continue_heartbeat() {
     let wfid = "fake_wf_id";
     let mut t = TestHistoryBuilder::default();
-    let mut wes_short_wft_timeout = default_wes_attribs();
-    wes_short_wft_timeout.workflow_task_timeout = Some(prost_dur!(from_millis(200)));
-    t.add(
-        EventType::WorkflowExecutionStarted,
-        wes_short_wft_timeout.into(),
-    );
+    t.add_wfe_started_with_wft_timeout(Duration::from_millis(200));
     t.add_full_wf_task();
     // get query here
     t.add_full_wf_task();
@@ -783,12 +776,19 @@ async fn test_schedule_to_start_timeout() {
     worker.run_until_done().await.unwrap();
 }
 
+#[rstest::rstest]
+#[case::sched_to_start(true)]
+#[case::sched_to_close(false)]
 #[tokio::test]
-async fn test_schedule_to_start_timeout_not_based_on_original_time() {
+async fn test_schedule_to_start_timeout_not_based_on_original_time(
+    #[case] is_sched_to_start: bool,
+) {
     // We used to carry over the schedule time of LAs from the "original" schedule time if these LAs
     // created newly after backing off across a timer. That was a mistake, since schedule-to-start
-    // timeouts should apply to when the new attempt was scheduled. This test verifies we don't
-    // time out on s-t-s timeouts because of that.
+    // timeouts should apply to when the new attempt was scheduled. This test verifies:
+    // * we don't time out on s-t-s timeouts because of that, when the param is true.
+    // * we do properly time out on s-t-c timeouts when the param is false
+
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
@@ -814,9 +814,18 @@ async fn test_schedule_to_start_timeout_not_based_on_original_time() {
     let mh = MockPollCfg::from_resp_batches(wf_id, t, [ResponseType::AllHistory], mock);
     let mut worker = mock_sdk_cfg(mh, |w| w.max_cached_workflows = 1);
 
+    let schedule_to_close_timeout = Some(if is_sched_to_start {
+        // This 60 minute timeout will not have elapsed according to the original
+        // schedule time in the history.
+        Duration::from_secs(60 * 60)
+    } else {
+        // This 10 minute timeout will have already elapsed
+        Duration::from_secs(10 * 60)
+    });
+
     worker.register_wf(
         DEFAULT_WORKFLOW_TYPE.to_owned(),
-        |ctx: WfContext| async move {
+        move |ctx: WfContext| async move {
             let la_res = ctx
                 .local_activity(LocalActivityOptions {
                     activity_type: "echo".to_string(),
@@ -829,11 +838,15 @@ async fn test_schedule_to_start_timeout_not_based_on_original_time() {
                         non_retryable_error_types: vec![],
                     },
                     schedule_to_start_timeout: Some(Duration::from_secs(60)),
-                    schedule_to_close_timeout: Some(Duration::from_secs(60 * 60)),
+                    schedule_to_close_timeout,
                     ..Default::default()
                 })
                 .await;
-            assert!(la_res.completed_ok());
+            if is_sched_to_start {
+                assert!(la_res.completed_ok());
+            } else {
+                assert_eq!(la_res.timed_out(), Some(TimeoutType::ScheduleToClose));
+            }
             Ok(().into())
         },
     );
@@ -854,63 +867,101 @@ async fn test_schedule_to_start_timeout_not_based_on_original_time() {
 }
 
 #[tokio::test]
-async fn test_schedule_to_close_timeout_based_on_original_time() {
-    // We used to carry over the schedule time of LAs from the "original" schedule time if these LAs
-    // created newly after backing off across a timer. That was a mistake, since schedule-to-start
-    // timeouts should apply to when the new attempt was scheduled. This test verifies we don't
-    // time out on s-t-s timeouts because of that.
+async fn wft_failure_cancels_running_las() {
     let mut t = TestHistoryBuilder::default();
-    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_wfe_started_with_wft_timeout(Duration::from_millis(200));
     t.add_full_wf_task();
-    let orig_sched = SystemTime::now().sub(Duration::from_secs(60 * 20));
-    t.add_local_activity_marker(
-        1,
-        "1",
-        None,
-        Some(Failure::application_failure("la failed".to_string(), false)),
-        |deets| {
-            // Really old schedule time, which should _not_ count against schedule_to_start
-            deets.original_schedule_time = Some(orig_sched.into());
-            // Backoff value must be present since we're simulating timer backoff
-            deets.backoff = Some(prost_dur!(from_secs(100)));
-        },
-    );
     let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
     t.add_timer_fired(timer_started_event_id, "1".to_string());
     t.add_workflow_task_scheduled_and_started();
 
     let wf_id = "fakeid";
     let mock = mock_workflow_client();
-    let mh = MockPollCfg::from_resp_batches(wf_id, t, [ResponseType::AllHistory], mock);
+    let mut mh = MockPollCfg::from_resp_batches(wf_id, t, [1, 2], mock);
+    mh.num_expected_fails = 1;
     let mut worker = mock_sdk_cfg(mh, |w| w.max_cached_workflows = 1);
 
     worker.register_wf(
         DEFAULT_WORKFLOW_TYPE.to_owned(),
         |ctx: WfContext| async move {
-            let la_res = ctx
-                .local_activity(LocalActivityOptions {
-                    activity_type: "echo".to_string(),
-                    input: "hi".as_json_payload().expect("serializes fine"),
-                    retry_policy: RetryPolicy {
-                        initial_interval: Some(prost_dur!(from_millis(50))),
-                        backoff_coefficient: 1.2,
-                        maximum_interval: None,
-                        maximum_attempts: 5,
-                        non_retryable_error_types: vec![],
-                    },
-                    // This 10 minute timeout will have already elapsed according to the original
-                    // schedule time in the history.
-                    schedule_to_close_timeout: Some(Duration::from_secs(10 * 60)),
-                    ..Default::default()
-                })
-                .await;
-            assert_eq!(la_res.timed_out(), Some(TimeoutType::ScheduleToClose));
+            let la_handle = ctx.local_activity(LocalActivityOptions {
+                activity_type: "echo".to_string(),
+                input: "hi".as_json_payload().expect("serializes fine"),
+                ..Default::default()
+            });
+            tokio::join!(
+                async {
+                    ctx.timer(Duration::from_secs(1)).await;
+                    panic!("ahhh I'm failing wft")
+                },
+                la_handle
+            );
             Ok(().into())
+        },
+    );
+    worker.register_activity("echo", move |ctx: ActContext, _: String| async move {
+        let res = tokio::time::timeout(Duration::from_millis(500), ctx.cancelled()).await;
+        if res.is_err() {
+            panic!("Activity must be cancelled!!!!");
+        }
+        Result::<(), _>::Err(ActivityCancelledError::default().into())
+    });
+    worker
+        .submit_wf(
+            wf_id.to_owned(),
+            DEFAULT_WORKFLOW_TYPE.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+}
+
+#[tokio::test]
+async fn resolved_las_not_recorded_if_wft_fails_many_times() {
+    crate::telemetry::test_telem_console();
+    // We shouldn't record any LA results if the workflow activation is repeatedly failing. There
+    // was an issue that, because we stop reporting WFT failures after 2 tries, this meant the WFT
+    // was not marked as "completed" and the WFT could accidentally be replied to with LA results.
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_workflow_task_scheduled_and_started();
+    t.add_workflow_task_failed_with_failure(
+        WorkflowTaskFailedCause::Unspecified,
+        Default::default(),
+    );
+    t.add_workflow_task_scheduled_and_started();
+
+    let wf_id = "fakeid";
+    let mock = mock_workflow_client();
+    let mut mh = MockPollCfg::from_resp_batches(
+        wf_id,
+        t,
+        [1.into(), ResponseType::AllHistory, ResponseType::AllHistory],
+        mock,
+    );
+    mh.num_expected_fails = 2;
+    mh.completion_asserts = Some(Box::new(|_| {
+        panic!("should never successfully complete a WFT");
+    }));
+    let mut worker = mock_sdk_cfg(mh, |w| w.max_cached_workflows = 1);
+
+    worker.register_wf(
+        DEFAULT_WORKFLOW_TYPE.to_owned(),
+        |ctx: WfContext| async move {
+            ctx.local_activity(LocalActivityOptions {
+                activity_type: "echo".to_string(),
+                input: "hi".as_json_payload().expect("serializes fine"),
+                ..Default::default()
+            })
+            .await;
+            panic!("Oh nooooo")
         },
     );
     worker.register_activity(
         "echo",
-        move |_ctx: ActContext, _: String| async move { Ok(()) },
+        move |_: ActContext, _: String| async move { Ok(()) },
     );
     worker
         .submit_wf(

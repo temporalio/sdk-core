@@ -30,7 +30,7 @@ use crate::{
             wft_poller::validate_wft,
             workflow_stream::{LocalInput, LocalInputs, WFStream},
         },
-        LocalActRequest, LocalActivityResolution,
+        LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
     },
     MetricsContext,
 };
@@ -230,7 +230,7 @@ impl Workflows {
             .await
             .expect("Send half of activation complete response not dropped");
         let mut wft_from_complete = None;
-        let reported_wft_to_server = match completion_outcome.outcome {
+        let wft_report_status = match completion_outcome.outcome {
             ActivationCompleteOutcome::ReportWFTSuccess(report) => match report {
                 ServerCommandsWithWorkflowInfo {
                     task_token,
@@ -273,14 +273,14 @@ impl Workflows {
                         Ok(())
                     })
                     .await;
-                    true
+                    WFTReportStatus::Reported
                 }
                 ServerCommandsWithWorkflowInfo {
                     task_token,
                     action: ActivationAction::RespondLegacyQuery { result },
                 } => {
                     self.respond_legacy_query(task_token, *result).await;
-                    true
+                    WFTReportStatus::Reported
                 }
             },
             ActivationCompleteOutcome::ReportWFTFail(outcome) => match outcome {
@@ -292,21 +292,22 @@ impl Workflows {
                             .await
                     })
                     .await;
-                    true
+                    WFTReportStatus::Reported
                 }
                 FailedActivationWFTReport::ReportLegacyQueryFailure(task_token, failure) => {
                     warn!(run_id=%run_id, failure=?failure, "Failing legacy query request");
                     self.respond_legacy_query(task_token, legacy_query_failure(failure))
                         .await;
-                    true
+                    WFTReportStatus::Reported
                 }
             },
-            ActivationCompleteOutcome::DoNothing => false,
+            ActivationCompleteOutcome::WFTFailedDontReport => WFTReportStatus::DropWft,
+            ActivationCompleteOutcome::DoNothing => WFTReportStatus::NotReported,
         };
 
         self.post_activation(PostActivationMsg {
             run_id,
-            reported_wft_to_server,
+            wft_report_status,
             wft_from_complete,
         });
 
@@ -393,7 +394,11 @@ impl Workflows {
     /// successfully.
     fn send_local(&self, msg: impl Into<LocalInputs>) -> bool {
         let msg = msg.into();
-        let print_err = !matches!(msg, LocalInputs::GetStateInfo(_));
+        let print_err = match &msg {
+            LocalInputs::GetStateInfo(_) => false,
+            LocalInputs::LocalResolution(lr) if lr.res.is_la_cancel_confirmation() => false,
+            _ => true,
+        };
         if let Err(e) = self.local_tx.send(LocalInput {
             input: msg,
             span: Span::current(),
@@ -839,7 +844,7 @@ struct LocalResolutionMsg {
 #[derive(Debug)]
 struct PostActivationMsg {
     run_id: String,
-    reported_wft_to_server: bool,
+    wft_report_status: WFTReportStatus,
     wft_from_complete: Option<ValidPollWFTQResponse>,
 }
 #[derive(Debug, Clone)]
@@ -869,6 +874,20 @@ enum ActivationCompleteOutcome {
     ReportWFTFail(FailedActivationWFTReport),
     /// There's nothing to do right now. EX: The workflow needs to keep replaying.
     DoNothing,
+    /// The workflow task failed, but we shouldn't report it. EX: We have failed 2 or more attempts
+    /// in a row.
+    WFTFailedDontReport,
+}
+/// Did we report, or not, completion of a WFT to server?
+#[derive(Debug)]
+enum WFTReportStatus {
+    Reported,
+    /// The WFT completion was not reported when finishing the activation, because there's still
+    /// work to be done. EX: Running LAs.
+    NotReported,
+    /// We didn't report, but we want to clear the outstanding workflow task anyway. See
+    /// [ActivationCompleteOutcome::WFTFailedDontReport]
+    DropWft,
 }
 #[derive(Debug)]
 struct FulfillableActivationComplete {
@@ -1070,6 +1089,15 @@ pub struct OutgoingServerCommands {
 #[derive(Debug)]
 pub(crate) enum LocalResolution {
     LocalActivity(LocalActivityResolution),
+}
+impl LocalResolution {
+    pub fn is_la_cancel_confirmation(&self) -> bool {
+        match self {
+            LocalResolution::LocalActivity(lar) => {
+                matches!(lar.result, LocalActivityExecutionResult::Cancelled(_))
+            }
+        }
+    }
 }
 
 #[derive(thiserror::Error, Debug, derive_more::From)]

@@ -442,6 +442,12 @@ impl TestHistoryBuilder {
         );
     }
 
+    pub fn add_wfe_started_with_wft_timeout(&mut self, dur: Duration) {
+        let mut wesattrs = default_wes_attribs();
+        wesattrs.workflow_task_timeout = Some(dur.try_into().unwrap());
+        self.add(EventType::WorkflowExecutionStarted, wesattrs.into());
+    }
+
     pub fn get_orig_run_id(&self) -> &str {
         &self.original_run_id
     }
@@ -466,7 +472,7 @@ impl TestHistoryBuilder {
     }
 
     /// Return most recent wft start time or panic if unset
-    pub fn wft_start_time(&self) -> prost_types::Timestamp {
+    pub fn wft_start_time(&self) -> Timestamp {
         self.events[(self.workflow_task_scheduled_event_id + 1) as usize]
             .event_time
             .clone()
