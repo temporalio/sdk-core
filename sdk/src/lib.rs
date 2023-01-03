@@ -497,7 +497,16 @@ impl ActivityHalf {
                         }
                         Ok(Err(err)) => match err.downcast::<ActivityCancelledError>() {
                             Ok(ce) => ActivityExecutionResult::cancel_from_details(ce.details),
-                            Err(other_err) => ActivityExecutionResult::fail(other_err.into()),
+                            Err(other_err) => {
+                                match other_err.downcast::<NonRetryableActivityError>() {
+                                    Ok(nre) => ActivityExecutionResult::fail(
+                                        Failure::application_failure_from_error(nre.into(), true),
+                                    ),
+                                    Err(other_err) => ActivityExecutionResult::fail(
+                                        Failure::application_failure_from_error(other_err, false),
+                                    ),
+                                }
+                            }
                         },
                     };
                     worker
@@ -766,6 +775,16 @@ impl Display for ActivityCancelledError {
         write!(f, "Activity cancelled")
     }
 }
+
+/// Return this error to indicate that your activity non-retryable
+/// this is a transparent wrapper around anyhow Error so essentially any type of error
+/// could be used here.
+///
+/// In your activity function. Return something along the lines of:
+/// `Err(NonRetryableActivityError(anyhow::anyhow!("This should *not* be retried")).into())`
+#[derive(Debug, thiserror::Error)]
+#[error(transparent)]
+pub struct NonRetryableActivityError(pub anyhow::Error);
 
 /// Closures / functions which can be turned into activity functions implement this trait
 pub trait IntoActivityFunc<Args, Res, Out> {

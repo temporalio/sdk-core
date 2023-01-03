@@ -1,3 +1,4 @@
+use anyhow::anyhow;
 use assert_matches::assert_matches;
 use std::time::Duration;
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowExecutionResult, WorkflowOptions};
@@ -164,6 +165,78 @@ async fn activity_non_retryable_failure() {
     );
     // Fail activity with non-retryable error
     let failure = Failure::application_failure("activity failed".to_string(), true);
+    core.complete_activity_task(ActivityTaskCompletion {
+        task_token: task.task_token,
+        result: Some(ActivityExecutionResult::fail(failure.clone())),
+    })
+    .await
+    .unwrap();
+    // Poll workflow task and verify that activity has failed.
+    let task = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        task.jobs.as_slice(),
+        [
+            WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::ResolveActivity(
+                    ResolveActivity {seq, result: Some(ActivityResolution{
+                    status: Some(act_res::Status::Failed(activity_result::Failure{
+                        failure: Some(f),
+                    }))})}
+                )),
+            },
+        ] => {
+            assert_eq!(*seq, 0);
+            assert_eq!(f, &Failure{
+                message: "Activity task failed".to_owned(),
+                cause: Some(Box::new(failure)),
+                failure_info: Some(FailureInfo::ActivityFailureInfo(ActivityFailureInfo{
+                    activity_id: "act-1".to_owned(),
+                    activity_type: Some(ActivityType {
+                        name: "test_activity".to_owned(),
+                    }),
+                    scheduled_event_id: 5,
+                    started_event_id: 6,
+                    identity: "integ_tester".to_owned(),
+                    retry_state: RetryState::NonRetryableFailure as i32,
+                })),
+                ..Default::default()
+            });
+        }
+    );
+    core.complete_execution(&task.run_id).await;
+}
+
+#[tokio::test]
+async fn activity_non_retryable_failure_with_error() {
+    let mut starter = init_core_and_create_wf("activity_non_retryable_failure").await;
+    let core = starter.get_worker().await;
+    let task_q = starter.get_task_queue();
+    let activity_id = "act-1";
+    let task = core.poll_workflow_activation().await.unwrap();
+    // Complete workflow task and schedule activity
+    core.complete_workflow_activation(
+        schedule_activity_cmd(
+            0,
+            task_q,
+            activity_id,
+            ActivityCancellationType::TryCancel,
+            Duration::from_secs(60),
+            Duration::from_secs(60),
+        )
+        .into_completion(task.run_id),
+    )
+    .await
+    .unwrap();
+    // Poll activity and verify that it's been scheduled with correct parameters
+    let task = core.poll_activity_task().await.unwrap();
+    assert_matches!(
+        task.variant,
+        Some(act_task::Variant::Start(start_activity)) => {
+            assert_eq!(start_activity.activity_type, "test_activity".to_string())
+        }
+    );
+    // Fail activity with non-retryable error
+    let failure = Failure::application_failure_from_error(anyhow!("activity failed"), true);
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: task.task_token,
         result: Some(ActivityExecutionResult::fail(failure.clone())),
