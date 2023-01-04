@@ -1,7 +1,7 @@
 use assert_matches::assert_matches;
 use futures::future::join_all;
 use std::time::Duration;
-use temporal_client::WorkflowOptions;
+use temporal_client::{WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{WfContext, WorkflowResult};
 use temporal_sdk_core_protos::coresdk::{
     activity_task::activity_task as act_task,
@@ -98,9 +98,9 @@ async fn out_of_order_completion_doesnt_hang() {
 }
 
 pub async fn many_parallel_timers_longhist(ctx: WfContext) -> WorkflowResult<()> {
-    for _ in 0..20 {
+    for _ in 0..120 {
         let mut futs = vec![];
-        for _ in 0..1000 {
+        for _ in 0..100 {
             futs.push(ctx.timer(Duration::from_millis(100)));
         }
         join_all(futs).await;
@@ -108,8 +108,7 @@ pub async fn many_parallel_timers_longhist(ctx: WfContext) -> WorkflowResult<()>
     Ok(().into())
 }
 
-// Ignored for now because I can't actually get this to produce pages. Need to generate some
-// large payloads I think.
+// Ignored because this takes a rather long time to run. Add to stress suite when made.
 #[tokio::test]
 #[ignore]
 async fn can_paginate_long_history() {
@@ -120,7 +119,7 @@ async fn can_paginate_long_history() {
 
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), many_parallel_timers_longhist);
-    worker
+    let run_id = worker
         .submit_wf(
             wf_name.to_owned(),
             wf_name.to_owned(),
@@ -129,5 +128,23 @@ async fn can_paginate_long_history() {
         )
         .await
         .unwrap();
+    let client = starter.get_client().await;
+    tokio::spawn(async move {
+        loop {
+            for _ in 0..10 {
+                client
+                    .signal_workflow_execution(
+                        wf_name.to_owned(),
+                        run_id.clone(),
+                        "sig".to_string(),
+                        None,
+                        None,
+                    )
+                    .await
+                    .unwrap();
+            }
+            tokio::time::sleep(Duration::from_secs(3)).await;
+        }
+    });
     worker.run_until_done().await.unwrap();
 }
