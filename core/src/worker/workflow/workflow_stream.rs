@@ -60,12 +60,12 @@ impl WFStream {
             + 'static,
     ) -> impl Stream<Item = Result<WFStreamOutput, PollWfError>> {
         let (heartbeat_tx, heartbeat_rx) = unbounded_channel();
-        let hb_stream = UnboundedReceiverStream::new(heartbeat_rx)
-            .map(LocalInputs::HeartbeatTimeout)
-            .map(|input| LocalInput {
-                input,
-                // TODO: Makes no sense
-                span: Span::current(),
+        let hb_stream =
+            UnboundedReceiverStream::new(heartbeat_rx).map(|input: HeartbeatTimeoutMsg| {
+                LocalInput {
+                    input: LocalInputs::HeartbeatTimeout(input.run_id),
+                    span: input.span,
+                }
             });
         let local_rx = stream::select(hb_stream, local_rx).map(Into::into);
         let all_inputs = stream::select_with_strategy(
@@ -122,7 +122,7 @@ impl WFStream {
                             }
                             LocalInputs::LocalResolution(res) => state.local_resolution(res),
                             LocalInputs::HeartbeatTimeout(hbt) => {
-                                state.process_heartbeat_timeout(hbt.run_id)
+                                state.process_heartbeat_timeout(hbt)
                             }
                             LocalInputs::RequestEviction(evict) => {
                                 state.request_eviction(evict).into_run_update_resp()
@@ -589,7 +589,7 @@ pub(super) enum LocalInputs {
     LocalResolution(LocalResolutionMsg),
     PostActivation(PostActivationMsg),
     RequestEviction(RequestEvictMsg),
-    HeartbeatTimeout(HeartbeatTimeoutMsg),
+    HeartbeatTimeout(String),
     GetStateInfo(GetStateInfoMsg),
 }
 impl LocalInputs {
@@ -600,7 +600,7 @@ impl LocalInputs {
             LocalInputs::LocalResolution(lr) => &lr.run_id,
             LocalInputs::PostActivation(pa) => &pa.run_id,
             LocalInputs::RequestEviction(re) => &re.run_id,
-            LocalInputs::HeartbeatTimeout(hb) => &hb.run_id,
+            LocalInputs::HeartbeatTimeout(hb) => hb,
             LocalInputs::GetStateInfo(_) => return None,
         })
     }

@@ -786,6 +786,7 @@ struct RequestEvictMsg {
 #[derive(Debug)]
 struct HeartbeatTimeoutMsg {
     run_id: String,
+    span: Span,
 }
 #[derive(Debug)]
 struct GetStateInfoMsg {

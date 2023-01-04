@@ -993,7 +993,10 @@ fn start_heartbeat_timeout_task(
         wft_start_time.add(wft_timeout.mul_f32(WFT_HEARTBEAT_TIMEOUT_FRACTION));
     task::spawn(async move {
         tokio::time::sleep_until(wft_heartbeat_deadline.into()).await;
-        let _ = chan.send(HeartbeatTimeoutMsg { run_id });
+        let _ = chan.send(HeartbeatTimeoutMsg {
+            run_id,
+            span: Span::current(),
+        });
     })
 }
 
