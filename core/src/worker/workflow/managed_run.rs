@@ -406,16 +406,26 @@ impl ManagedRun {
             // applying the completion to machines. If we can't, return early indicating we need
             // to fetch a page.
             if !self.wfm.ready_to_apply_next_wft() {
-                debug!("Need to fetch a history page before next WFT can be applied");
-                self.completion_waiting_on_page_fetch = Some(rac);
-                return Err(NextPageReq {
-                    last_processed_id: self.most_recently_processed_event_number(),
-                    paginator: self
-                        .paginator
-                        .take()
-                        .expect("TODO: Handle missing paginator"),
-                    span: Span::current(),
-                });
+                return if let Some(paginator) = self.paginator.take() {
+                    debug!("Need to fetch a history page before next WFT can be applied");
+                    self.completion_waiting_on_page_fetch = Some(rac);
+                    Err(NextPageReq {
+                        last_processed_id: self.most_recently_processed_event_number(),
+                        paginator,
+                        span: Span::current(),
+                    })
+                } else {
+                    Ok(self.update_to_acts(
+                        Err(RunUpdateErr {
+                            source: WFMachinesError::Fatal(format!(
+                                "Run's paginator was absent when attempting to fetch next history \
+                                page. This is a Core SDK bug."
+                            )),
+                            complete_resp_chan: rac.resp_chan,
+                        }),
+                        false,
+                    ))
+                };
             }
 
             Ok(self.process_completion(rac))

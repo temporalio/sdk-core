@@ -242,7 +242,7 @@ impl Workflows {
     /// Queue an activation completion for processing, returning a future that will resolve with
     /// the outcome of that completion. See [ActivationCompletedOutcome].
     ///
-    /// Returns the most-recently-processed event number for the run
+    /// Returns the most-recently-processed event number for the run.
     pub async fn activation_completed(
         &self,
         completion: WorkflowActivationCompletion,
@@ -345,13 +345,18 @@ impl Workflows {
             ActivationCompleteOutcome::DoNothing => WFTReportStatus::NotReported,
         };
 
-        // TODO: Should probably be spawned as a task that sends the post activation msg
-        //  when done w/ paginator, to avoid blocking complete for long.
         let maybe_pwft = if let Some(wft) = wft_from_complete {
-            let (paginator, pwft) = HistoryPaginator::from_poll(wft, self.client.clone(), 0)
-                .await
-                .expect("TODO: Handle error");
-            Some((pwft, paginator))
+            match HistoryPaginator::from_poll(wft, self.client.clone(), 0).await {
+                Ok((paginator, pwft)) => Some((pwft, paginator)),
+                Err(e) => {
+                    self.request_eviction(
+                        &run_id,
+                        format!("Failed to paginate workflow task from completion: {:?}", e),
+                        EvictionReason::Fatal,
+                    );
+                    None
+                }
+            }
         } else {
             None
         };
