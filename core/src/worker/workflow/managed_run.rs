@@ -21,6 +21,7 @@ use crate::{
     },
     MetricsContext,
 };
+use futures_util::future::AbortHandle;
 use std::{
     collections::HashSet,
     ops::Add,
@@ -39,18 +40,14 @@ use temporal_sdk_core_protos::{
     temporal::api::{enums::v1::WorkflowTaskFailedCause, failure::v1::Failure},
     TaskToken,
 };
-use tokio::{
-    sync::{mpsc::UnboundedSender, oneshot},
-    task,
-    task::JoinHandle,
-};
+use tokio::sync::oneshot;
 use tracing::Span;
 
 type Result<T, E = WFMachinesError> = std::result::Result<T, E>;
 pub(super) type RunUpdateActs = Vec<ActivationOrAuto>;
 
-/// Manages access to a specific workflow run, and contains various bookkeeping information that the
-/// [WFStream] may need to access quickly.
+/// Manages access to a specific workflow run. Everything inside is entirely synchronous and should
+/// remain that way.
 #[derive(derive_more::DebugCustom)]
 #[debug(
     fmt = "ManagedRun {{ wft: {:?}, activation: {:?}, buffered_resp: {:?} \
@@ -62,12 +59,12 @@ pub(super) type RunUpdateActs = Vec<ActivationOrAuto>;
 )]
 pub(super) struct ManagedRun {
     wfm: WorkflowManager,
-    /// Called when the machines need to produce local activity requests. This can't really be
-    /// lifted up sensibly as a return value, because sometimes local activity requests trigger
-    /// immediate resolutions (ex: too many attempts). Thus lifting it up creates a lot of unneeded
-    /// complexity pushing things out and then directly back in. The downside is this is the only
-    /// "impure" part of the in/out nature of workflow state management. If there's ever a sensible
-    /// way to lift it up, that'd be nice.
+    /// Called when the machines need to produce local activity requests. This can't be lifted up
+    /// easily as return values, because sometimes local activity requests trigger immediate
+    /// resolutions (ex: too many attempts). Thus lifting it up creates a lot of unneeded complexity
+    /// pushing things out and then directly back in. The downside is this is the only "impure" part
+    /// of the in/out nature of workflow state management. If there's ever a sensible way to lift it
+    /// up, that'd be nice.
     local_activity_request_sink: LocalActivityRequestSink,
     /// Set if the run is currently waiting on the execution of some local activities.
     waiting_on_la: Option<WaitingOnLAs>,
@@ -85,10 +82,6 @@ pub(super) struct ManagedRun {
     pub(super) buffered_resp: Option<PermittedWFT>,
     /// Is set if an eviction has been requested for this run
     pub(super) trying_to_evict: Option<RequestEvictMsg>,
-    /// Used to feed heartbeat timeout events back into the workflow inputs.
-    // TODO: Ideally, we wouldn't spawn tasks inside here now that this is tokio-free-ish.
-    //   Instead, `Workflows` can spawn them itself if there are any LAs.
-    heartbeat_tx: UnboundedSender<HeartbeatTimeoutMsg>,
 
     /// We track if we have recorded useful debugging values onto a certain span yet, to overcome
     /// duplicating field values. Remove this once https://github.com/tokio-rs/tracing/issues/2334
@@ -108,7 +101,6 @@ impl ManagedRun {
         workflow_type: String,
         run_id: String,
         local_activity_request_sink: LocalActivityRequestSink,
-        heartbeat_tx: UnboundedSender<HeartbeatTimeoutMsg>,
         metrics: MetricsContext,
     ) -> Self {
         let wfm = WorkflowManager::new(
@@ -128,7 +120,6 @@ impl ManagedRun {
             activation: None,
             buffered_resp: None,
             trying_to_evict: None,
-            heartbeat_tx,
             recorded_span_ids: Default::default(),
             metrics,
             paginator: None,
@@ -240,10 +231,10 @@ impl ManagedRun {
                     if lawait.completion_dat.is_some() {
                         panic!("Should not have completion dat when getting new wft & empty jobs")
                     }
-                    lawait.heartbeat_timeout_task.abort();
-                    lawait.heartbeat_timeout_task = start_heartbeat_timeout_task(
+                    lawait.hb_timeout_handle.abort();
+                    lawait.hb_timeout_handle = sink_heartbeat_timeout_start(
                         self.wfm.machines.run_id.clone(),
-                        self.heartbeat_tx.clone(),
+                        &self.local_activity_request_sink,
                         start_time,
                         lawait.wft_timeout,
                     );
@@ -417,10 +408,11 @@ impl ManagedRun {
                 } else {
                     Ok(self.update_to_acts(
                         Err(RunUpdateErr {
-                            source: WFMachinesError::Fatal(format!(
+                            source: WFMachinesError::Fatal(
                                 "Run's paginator was absent when attempting to fetch next history \
                                 page. This is a Core SDK bug."
-                            )),
+                                    .to_string(),
+                            ),
                             complete_resp_chan: rac.resp_chan,
                         }),
                         false,
@@ -587,14 +579,14 @@ impl ManagedRun {
             Ok(None) => Ok(Some(self.prepare_complete_resp(resp_chan, data, false))),
             Ok(Some((start_t, wft_timeout))) => {
                 if let Some(wola) = self.waiting_on_la.as_mut() {
-                    wola.heartbeat_timeout_task.abort();
+                    wola.hb_timeout_handle.abort();
                 }
                 self.waiting_on_la = Some(WaitingOnLAs {
                     wft_timeout,
                     completion_dat: Some((data, resp_chan)),
-                    heartbeat_timeout_task: start_heartbeat_timeout_task(
-                        self.wfm.machines.run_id.clone(),
-                        self.heartbeat_tx.clone(),
+                    hb_timeout_handle: sink_heartbeat_timeout_start(
+                        self.run_id().to_string(),
+                        &self.local_activity_request_sink,
                         start_t,
                         wft_timeout,
                     ),
@@ -617,7 +609,7 @@ impl ManagedRun {
         if self.wfm.machines.outstanding_local_activity_count() == 0 {
             if let Some(mut wait_dat) = self.waiting_on_la.take() {
                 // Cancel the heartbeat timeout
-                wait_dat.heartbeat_timeout_task.abort();
+                wait_dat.hb_timeout_handle.abort();
                 if let Some((completion_dat, resp_chan)) = wait_dat.completion_dat.take() {
                     return Ok(Some(self.prepare_complete_resp(
                         resp_chan,
@@ -646,7 +638,7 @@ impl ManagedRun {
     fn _heartbeat_timeout(&mut self) -> bool {
         if let Some(ref mut wait_dat) = self.waiting_on_la {
             // Cancel the heartbeat timeout
-            wait_dat.heartbeat_timeout_task.abort();
+            wait_dat.hb_timeout_handle.abort();
             if let Some((completion_dat, resp_chan)) = wait_dat.completion_dat.take() {
                 let compl = self.prepare_complete_resp(resp_chan, completion_dat, true);
                 // Immediately fulfill the completion since the run update will already have
@@ -992,22 +984,24 @@ fn put_queries_in_act(act: &mut WorkflowActivation, wft: &mut OutstandingTask) {
         .map(|q| workflow_activation_job::Variant::QueryWorkflow(q).into());
     act.jobs.extend(query_jobs);
 }
-fn start_heartbeat_timeout_task(
+fn sink_heartbeat_timeout_start(
     run_id: String,
-    chan: UnboundedSender<HeartbeatTimeoutMsg>,
+    sink: &LocalActivityRequestSink,
     wft_start_time: Instant,
     wft_timeout: Duration,
-) -> JoinHandle<()> {
+) -> AbortHandle {
     // The heartbeat deadline is 80% of the WFT timeout
-    let wft_heartbeat_deadline =
-        wft_start_time.add(wft_timeout.mul_f32(WFT_HEARTBEAT_TIMEOUT_FRACTION));
-    task::spawn(async move {
-        tokio::time::sleep_until(wft_heartbeat_deadline.into()).await;
-        let _ = chan.send(HeartbeatTimeoutMsg {
+    let deadline = wft_start_time.add(wft_timeout.mul_f32(WFT_HEARTBEAT_TIMEOUT_FRACTION));
+    let (abort_handle, abort_reg) = AbortHandle::new_pair();
+    (sink)(vec![LocalActRequest::StartHeartbeatTimeout {
+        send_on_elapse: HeartbeatTimeoutMsg {
             run_id,
             span: Span::current(),
-        });
-    })
+        },
+        deadline,
+        abort_reg,
+    }]);
+    abort_handle
 }
 
 /// If an activation completion needed to wait on LA completions (or heartbeat timeout) we use
@@ -1021,7 +1015,8 @@ struct WaitingOnLAs {
         CompletionDataForWFT,
         oneshot::Sender<ActivationCompleteResult>,
     )>,
-    heartbeat_timeout_task: JoinHandle<()>,
+    /// Can be used to abort heartbeat timeouts
+    hb_timeout_handle: AbortHandle,
 }
 #[derive(Debug)]
 struct CompletionDataForWFT {

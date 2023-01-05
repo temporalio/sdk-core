@@ -2,13 +2,12 @@ use crate::{
     telemetry::metrics::workflow_type,
     worker::workflow::{
         managed_run::{ManagedRun, RunUpdateActs},
-        HeartbeatTimeoutMsg, HistoryUpdate, LocalActivityRequestSink, PermittedWFT,
+        HistoryUpdate, LocalActivityRequestSink, PermittedWFT,
     },
     MetricsContext,
 };
 use lru::LruCache;
 use std::{mem, num::NonZeroUsize};
-use tokio::sync::mpsc::UnboundedSender;
 
 pub(super) struct RunCache {
     max: usize,
@@ -16,10 +15,6 @@ pub(super) struct RunCache {
     /// Run id -> Data
     runs: LruCache<String, ManagedRun>,
     local_activity_request_sink: LocalActivityRequestSink,
-    // Used to feed heartbeat timeout events back into the workflow inputs.
-    // TODO: Ideally, we wouldn't spawn tasks inside here now that this is tokio-free-ish.
-    //   Instead, `Workflows` can spawn them itself if there are any LAs.
-    heartbeat_tx: UnboundedSender<HeartbeatTimeoutMsg>,
 
     metrics: MetricsContext,
 }
@@ -29,7 +24,6 @@ impl RunCache {
         max_cache_size: usize,
         namespace: String,
         local_activity_request_sink: LocalActivityRequestSink,
-        heartbeat_tx: UnboundedSender<HeartbeatTimeoutMsg>,
         metrics: MetricsContext,
     ) -> Self {
         // The cache needs room for at least one run, otherwise we couldn't do anything. In
@@ -46,7 +40,6 @@ impl RunCache {
                 NonZeroUsize::new(lru_size).expect("LRU size is guaranteed positive"),
             ),
             local_activity_request_sink,
-            heartbeat_tx,
             metrics,
         }
     }
@@ -76,7 +69,6 @@ impl RunCache {
             pwft.work.workflow_type.clone(),
             pwft.work.execution.run_id.clone(),
             self.local_activity_request_sink.clone(),
-            self.heartbeat_tx.clone(),
             metrics,
         );
         let run_id = run_id.to_string();

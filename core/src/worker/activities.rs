@@ -7,11 +7,12 @@ pub(crate) use local_activities::{
     LocalInFlightActInfo, NewLocalAct,
 };
 
-use crate::telemetry::metrics::eager;
 use crate::{
     abstractions::{MeteredSemaphore, OwnedMeteredSemPermit},
     pollers::BoxedActPoller,
-    telemetry::metrics::{activity_type, activity_worker_type, workflow_type, MetricsContext},
+    telemetry::metrics::{
+        activity_type, activity_worker_type, eager, workflow_type, MetricsContext,
+    },
     worker::{
         activities::activity_heartbeat_manager::ActivityHeartbeatError, client::WorkerClient,
     },

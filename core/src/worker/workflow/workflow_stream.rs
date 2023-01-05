@@ -54,8 +54,10 @@ impl WFStream {
     /// activations.
     ///
     /// Importantly, nothing async happens while actually mutating state. This means all changes to
-    /// all workflow state can be represented purely via the stream of inputs, and the calls/retvals
-    /// from the LA request sink.
+    /// all workflow state can be represented purely via the stream of inputs, plus the
+    /// calls/retvals from the LA request sink, which is the last unfortunate bit of impurity in
+    /// the design. Eliminating it would be nice, so that all inputs come from the passed-in streams
+    /// and all outputs flow from the return stream.
     pub(super) fn build(
         basics: WorkflowBasics,
         wft_stream: impl Stream<Item = Result<WFTExtractorOutput, tonic::Status>> + Send + 'static,
@@ -65,17 +67,8 @@ impl WFStream {
             + Sync
             + 'static,
     ) -> impl Stream<Item = Result<WFStreamOutput, PollWfError>> {
-        let (heartbeat_tx, heartbeat_rx) = unbounded_channel();
-        let hb_stream =
-            UnboundedReceiverStream::new(heartbeat_rx).map(|input: HeartbeatTimeoutMsg| {
-                LocalInput {
-                    input: LocalInputs::HeartbeatTimeout(input.run_id),
-                    span: input.span,
-                }
-            });
-        let local_rx = stream::select(hb_stream, local_rx).map(Into::into);
         let all_inputs = stream::select_with_strategy(
-            local_rx,
+            local_rx.map(Into::into),
             wft_stream
                 .map(Into::into)
                 .chain(stream::once(async { ExternalPollerInputs::PollerDead }))
@@ -90,7 +83,6 @@ impl WFStream {
                 basics.max_cached_workflows,
                 basics.namespace.clone(),
                 Arc::new(local_activity_request_sink),
-                heartbeat_tx,
                 basics.metrics.clone(),
             ),
             shutdown_token: basics.shutdown_token,
@@ -587,6 +579,14 @@ enum WFStreamInput {
 pub(super) struct LocalInput {
     pub input: LocalInputs,
     pub span: Span,
+}
+impl From<HeartbeatTimeoutMsg> for LocalInput {
+    fn from(hb: HeartbeatTimeoutMsg) -> Self {
+        Self {
+            input: LocalInputs::HeartbeatTimeout(hb.run_id),
+            span: hb.span,
+        }
+    }
 }
 /// Everything that _isn't_ a poll which may affect workflow state. Always higher priority than
 /// new polls.

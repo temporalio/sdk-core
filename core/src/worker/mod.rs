@@ -48,6 +48,7 @@ use temporal_sdk_core_protos::{
     },
     TaskToken,
 };
+use tokio::sync::mpsc::unbounded_channel;
 use tokio_util::sync::CancellationToken;
 
 /// A worker polls on a certain task queue
@@ -241,9 +242,11 @@ impl Worker {
         metrics: MetricsContext,
         shutdown_token: CancellationToken,
     ) -> Self {
+        let (hb_tx, hb_rx) = unbounded_channel();
         let local_act_mgr = Arc::new(LocalActivityManager::new(
             config.max_outstanding_local_activities,
             config.namespace.clone(),
+            hb_tx,
             metrics.with_new_attrs([local_activity_worker_type()]),
         ));
         let lam_clone = local_act_mgr.clone();
@@ -290,6 +293,7 @@ impl Worker {
                 client,
                 wft_stream,
                 local_act_req_sink,
+                hb_rx,
                 at_task_mgr
                     .as_ref()
                     .map(|mgr| mgr.get_handle_for_workflows()),

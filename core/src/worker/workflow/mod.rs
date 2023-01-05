@@ -73,7 +73,7 @@ use temporal_sdk_core_protos::{
 };
 use tokio::{
     sync::{
-        mpsc::{unbounded_channel, UnboundedSender},
+        mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
         oneshot,
     },
     task,
@@ -133,6 +133,7 @@ impl Workflows {
             + Send
             + Sync
             + 'static,
+        heartbeat_timeout_rx: UnboundedReceiver<HeartbeatTimeoutMsg>,
         activity_tasks_handle: Option<ActivitiesFromWFTsHandle>,
     ) -> Self {
         let (local_tx, local_rx) = unbounded_channel();
@@ -155,10 +156,14 @@ impl Workflows {
             wft_stream,
             UnboundedReceiverStream::new(fetch_rx),
         );
+        let locals_stream = stream::select(
+            UnboundedReceiverStream::new(local_rx),
+            UnboundedReceiverStream::new(heartbeat_timeout_rx).map(Into::into),
+        );
         let mut stream = WFStream::build(
             basics,
             extracted_wft_stream,
-            UnboundedReceiverStream::new(local_rx),
+            locals_stream,
             local_activity_request_sink,
         );
         let (activation_tx, activation_rx) = unbounded_channel();
@@ -791,9 +796,9 @@ struct RequestEvictMsg {
     reason: EvictionReason,
 }
 #[derive(Debug)]
-struct HeartbeatTimeoutMsg {
-    run_id: String,
-    span: Span,
+pub(crate) struct HeartbeatTimeoutMsg {
+    pub(crate) run_id: String,
+    pub(crate) span: Span,
 }
 #[derive(Debug)]
 struct GetStateInfoMsg {
