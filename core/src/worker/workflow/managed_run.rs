@@ -44,7 +44,7 @@ use tokio::sync::oneshot;
 use tracing::Span;
 
 type Result<T, E = WFMachinesError> = std::result::Result<T, E>;
-pub(super) type RunUpdateActs = Vec<ActivationOrAuto>;
+pub(super) type RunUpdateAct = Option<ActivationOrAuto>;
 
 /// Manages access to a specific workflow run. Everything inside is entirely synchronous and should
 /// remain that way.
@@ -146,7 +146,7 @@ impl ManagedRun {
     }
 
     /// Called whenever a new workflow task is obtained for this run
-    pub(super) fn incoming_wft(&mut self, pwft: PermittedWFT) -> RunUpdateActs {
+    pub(super) fn incoming_wft(&mut self, pwft: PermittedWFT) -> RunUpdateAct {
         let res = self._incoming_wft(pwft);
         self.update_to_acts(res.map(Into::into), true)
     }
@@ -258,7 +258,7 @@ impl ManagedRun {
     }
 
     /// Checks if any further activations need to go out for this run and produces them if so.
-    pub(super) fn check_more_activations(&mut self) -> RunUpdateActs {
+    pub(super) fn check_more_activations(&mut self) -> RunUpdateAct {
         let res = self._check_more_activations();
         self.update_to_acts(res.map(Into::into), false)
     }
@@ -323,7 +323,7 @@ impl ManagedRun {
         &mut self,
         mut commands: Vec<WFCommand>,
         resp_chan: oneshot::Sender<ActivationCompleteResult>,
-    ) -> Result<Vec<ActivationOrAuto>, NextPageReq> {
+    ) -> Result<RunUpdateAct, NextPageReq> {
         let activation_was_only_eviction = self.activation_has_only_eviction();
         let (task_token, has_pending_query, start_time) = if let Some(entry) = self.wft.as_ref() {
             (
@@ -341,7 +341,7 @@ impl ManagedRun {
                 );
             }
             self.reply_to_complete(ActivationCompleteOutcome::DoNothing, resp_chan);
-            return Ok(vec![]);
+            return Ok(None);
         };
 
         // If the only command from the activation is a legacy query response, that means we need
@@ -362,7 +362,7 @@ impl ManagedRun {
                 }),
                 resp_chan,
             );
-            Ok(vec![])
+            Ok(None)
         } else {
             // First strip out query responses from other commands that actually affect machines
             // Would be prettier with `drain_filter`
@@ -432,7 +432,7 @@ impl ManagedRun {
         &mut self,
         update: HistoryUpdate,
         paginator: HistoryPaginator,
-    ) -> RunUpdateActs {
+    ) -> RunUpdateAct {
         let res = self._fetched_page_completion(update, paginator);
         self.update_to_acts(res.map(Into::into), false)
     }
@@ -466,7 +466,7 @@ impl ManagedRun {
         reason: EvictionReason,
         failure: workflow_completion::Failure,
         resp_chan: oneshot::Sender<ActivationCompleteResult>,
-    ) -> RunUpdateActs {
+    ) -> RunUpdateAct {
         let tt = if let Some(tt) = self.wft.as_ref().map(|t| t.info.task_token.clone()) {
             tt
         } else {
@@ -475,7 +475,7 @@ impl ManagedRun {
                 self.run_id()
             );
             self.reply_to_complete(ActivationCompleteOutcome::DoNothing, resp_chan);
-            return vec![];
+            return None;
         };
 
         self.metrics.wf_task_failed();
@@ -509,12 +509,12 @@ impl ManagedRun {
     }
 
     /// Called when local activities resolve
-    pub(super) fn local_resolution(&mut self, res: LocalResolution) -> RunUpdateActs {
+    pub(super) fn local_resolution(&mut self, res: LocalResolution) -> RunUpdateAct {
         let res = self._local_resolution(res);
         self.update_to_acts(res.map(Into::into), false)
     }
 
-    fn process_completion(&mut self, completion: RunActivationCompletion) -> RunUpdateActs {
+    fn process_completion(&mut self, completion: RunActivationCompletion) -> RunUpdateAct {
         let res = self._process_completion(completion, None);
         self.update_to_acts(res.map(Into::into), false)
     }
@@ -622,7 +622,7 @@ impl ManagedRun {
         Ok(None)
     }
 
-    pub(super) fn heartbeat_timeout(&mut self) -> RunUpdateActs {
+    pub(super) fn heartbeat_timeout(&mut self) -> RunUpdateAct {
         let maybe_act = if self._heartbeat_timeout() {
             Some(ActivationOrAuto::Autocomplete {
                 run_id: self.wfm.machines.run_id.clone(),
@@ -700,9 +700,7 @@ impl ManagedRun {
         &mut self,
         outcome: Result<ActOrFulfill, RunUpdateErr>,
         in_response_to_wft: bool,
-    ) -> RunUpdateActs {
-        // TODO: It shouldn't reaaaaaly be possible to return more than one thing here?
-        let mut activations = vec![];
+    ) -> RunUpdateAct {
         match outcome {
             Ok(act_or_fulfill) => {
                 let (mut maybe_act, maybe_fulfill) = match act_or_fulfill {
@@ -779,15 +777,16 @@ impl ManagedRun {
                         if !self.has_any_pending_work(false, true) =>
                     {
                         if let Some(bufft) = self.buffered_resp.take() {
-                            let rur = self.incoming_wft(bufft);
-                            activations.extend(rur);
+                            self.incoming_wft(bufft)
+                        } else {
+                            None
                         }
                     }
                     Some(r) => {
                         self.insert_outstanding_activation(&r);
-                        activations.push(r);
+                        Some(r)
                     }
-                    None => {}
+                    None => None,
                 }
             }
             Err(fail) => {
@@ -815,10 +814,9 @@ impl ManagedRun {
                     })
                     .into_run_update_resp()
                 };
-                activations.extend(rur);
+                rur
             }
         }
-        activations
     }
 
     fn insert_outstanding_activation(&mut self, act: &ActivationOrAuto) {

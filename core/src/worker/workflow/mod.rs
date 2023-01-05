@@ -27,7 +27,7 @@ use crate::{
         client::{WorkerClient, WorkflowTaskCompletion},
         workflow::{
             history_update::HistoryPaginator,
-            managed_run::RunUpdateActs,
+            managed_run::RunUpdateAct,
             wft_extraction::{HistoryFetchReq, WFTExtractor},
             wft_poller::validate_wft,
             workflow_stream::{LocalInput, LocalInputs, WFStream},
@@ -752,16 +752,16 @@ pub(crate) enum ActivationAction {
 
 #[derive(Debug)]
 enum EvictionRequestResult {
-    EvictionRequested(Option<u32>, RunUpdateActs),
+    EvictionRequested(Option<u32>, RunUpdateAct),
     NotFound,
     EvictionAlreadyRequested(Option<u32>),
 }
 impl EvictionRequestResult {
-    fn into_run_update_resp(self) -> RunUpdateActs {
+    fn into_run_update_resp(self) -> RunUpdateAct {
         match self {
             EvictionRequestResult::EvictionRequested(_, resp) => resp,
             EvictionRequestResult::NotFound
-            | EvictionRequestResult::EvictionAlreadyRequested(_) => vec![],
+            | EvictionRequestResult::EvictionAlreadyRequested(_) => None,
         }
     }
 }

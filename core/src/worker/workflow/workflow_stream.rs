@@ -2,7 +2,7 @@ use crate::{
     abstractions::dbg_panic,
     worker::{
         workflow::{
-            managed_run::RunUpdateActs,
+            managed_run::RunUpdateAct,
             run_cache::RunCache,
             wft_extraction::{HistfetchRC, HistoryFetchReq, WFTExtractorOutput},
             *,
@@ -96,7 +96,8 @@ impl WFStream {
                 let span = span!(Level::DEBUG, "new_stream_input", action=?action);
                 let _span_g = span.enter();
 
-                let mut activations = match action {
+                let mut activations = vec![];
+                let maybe_act = match action {
                     WFStreamInput::NewWft(pwft) => {
                         debug!(run_id=%pwft.work.execution.run_id, "New WFT");
                         state.instantiate_or_update(pwft)
@@ -108,12 +109,17 @@ impl WFStream {
                         }
                         match local_input.input {
                             LocalInputs::Completion(completion) => {
-                                state.process_completion(NewOrFetchedComplete::New(completion))
+                                activations.extend(
+                                    state.process_completion(NewOrFetchedComplete::New(completion)),
+                                );
+                                None // completions can return more than one activation
                             }
-                            LocalInputs::FetchedPageCompletion { paginator, update } => state
-                                .process_completion(NewOrFetchedComplete::Fetched(
-                                    update, paginator,
-                                )),
+                            LocalInputs::FetchedPageCompletion { paginator, update } => {
+                                activations.extend(state.process_completion(
+                                    NewOrFetchedComplete::Fetched(update, paginator),
+                                ));
+                                None // completions can return more than one activation
+                            }
                             LocalInputs::PostActivation(report) => {
                                 state.process_post_activation(report)
                             }
@@ -129,7 +135,7 @@ impl WFStream {
                                     cached_workflows: state.runs.len(),
                                     outstanding_wft: state.outstanding_wfts(),
                                 });
-                                vec![]
+                                None
                             }
                         }
                     }
@@ -143,7 +149,7 @@ impl WFStream {
                     WFStreamInput::PollerDead => {
                         debug!("WFT poller died, beginning shutdown");
                         state.shutdown_token.cancel();
-                        vec![]
+                        None
                     }
                     WFStreamInput::PollerError(e) => {
                         warn!("WFT poller errored, shutting down");
@@ -151,6 +157,7 @@ impl WFStream {
                     }
                 };
 
+                activations.extend(maybe_act.into_iter());
                 activations.extend(state.reconcile_buffered());
 
                 if state.shutdown_done() {
@@ -181,7 +188,7 @@ impl WFStream {
     #[instrument(skip(self, pwft)
                  fields(run_id=%pwft.work.execution.run_id,
                         workflow_id=%pwft.work.execution.workflow_id))]
-    fn instantiate_or_update(&mut self, pwft: PermittedWFT) -> RunUpdateActs {
+    fn instantiate_or_update(&mut self, pwft: PermittedWFT) -> RunUpdateAct {
         match self._instantiate_or_update(pwft) {
             Err(histfetch) => {
                 self.runs_needing_fetching.push_back(histfetch);
@@ -194,11 +201,11 @@ impl WFStream {
     fn _instantiate_or_update(
         &mut self,
         pwft: PermittedWFT,
-    ) -> Result<Vec<ActivationOrAuto>, HistoryFetchReq> {
+    ) -> Result<RunUpdateAct, HistoryFetchReq> {
         let pwft = if let Some(w) = self.buffer_resp_if_outstanding_work(pwft) {
             w
         } else {
-            return Ok(vec![]);
+            return Ok(None);
         };
 
         let run_id = pwft.work.execution.run_id.clone();
@@ -206,7 +213,7 @@ impl WFStream {
         // we can deal with this task. So, buffer the task in that case.
         if !self.runs.has_run(&run_id) && self.runs.is_full() {
             self.buffer_resp_on_full_cache(pwft);
-            return Ok(vec![]);
+            return Ok(None);
         }
 
         // This check can't really be lifted up higher since we could EX: See it's in the cache,
@@ -226,14 +233,14 @@ impl WFStream {
         Ok(rur)
     }
 
-    fn process_completion(&mut self, complete: NewOrFetchedComplete) -> RunUpdateActs {
+    fn process_completion(&mut self, complete: NewOrFetchedComplete) -> Vec<ActivationOrAuto> {
         let rh = if let Some(rh) = self.runs.get_mut(complete.run_id()) {
             rh
         } else {
             dbg_panic!("Run missing during completion {:?}", complete);
             return vec![];
         };
-        let mut acts = match complete {
+        let mut acts: Vec<_> = match complete {
             NewOrFetchedComplete::New(complete) => match complete.completion {
                 ValidatedCompletion::Success { commands, .. } => {
                     match rh.successful_completion(commands, complete.response_tx) {
@@ -244,7 +251,7 @@ impl WFStream {
                                     npr,
                                     self.history_fetch_refcounter.clone(),
                                 ));
-                            vec![]
+                            None
                         }
                     }
                 }
@@ -258,7 +265,9 @@ impl WFStream {
             NewOrFetchedComplete::Fetched(update, paginator) => {
                 rh.fetched_page_completion(update, paginator)
             }
-        };
+        }
+        .into_iter()
+        .collect();
         // Always queue evictions after completion when we have a zero-size cache
         if self.runs.cache_capacity() == 0 {
             acts.extend(self.request_eviction_of_lru_run().into_run_update_resp())
@@ -266,7 +275,7 @@ impl WFStream {
         acts
     }
 
-    fn process_post_activation(&mut self, report: PostActivationMsg) -> Vec<ActivationOrAuto> {
+    fn process_post_activation(&mut self, report: PostActivationMsg) -> RunUpdateAct {
         let run_id = &report.run_id;
         let wft_from_complete = report.wft_from_complete;
         if let Some((wft, _)) = &wft_from_complete {
@@ -280,7 +289,7 @@ impl WFStream {
             }
         }
 
-        let mut res = vec![];
+        let mut res = None;
 
         // If we reported to server, we always want to mark it complete.
         let maybe_t = self.complete_wft(run_id, report.wft_report_status);
@@ -327,7 +336,7 @@ impl WFStream {
             }
         }
 
-        if res.is_empty() {
+        if res.is_none() {
             if let Some(rh) = self.runs.get_mut(run_id) {
                 // Attempt to produce the next activation if needed
                 res = rh.check_more_activations();
@@ -336,7 +345,7 @@ impl WFStream {
         res
     }
 
-    fn local_resolution(&mut self, msg: LocalResolutionMsg) -> RunUpdateActs {
+    fn local_resolution(&mut self, msg: LocalResolutionMsg) -> RunUpdateAct {
         let run_id = msg.run_id;
         if let Some(rh) = self.runs.get_mut(&run_id) {
             rh.local_resolution(msg.res)
@@ -345,15 +354,15 @@ impl WFStream {
             // This can happen if an activity reports a timeout after we stopped caring about it.
             debug!(run_id = %run_id,
                    "Tried to resolve a local activity for a run we are no longer tracking");
-            vec![]
+            None
         }
     }
 
-    fn process_heartbeat_timeout(&mut self, run_id: String) -> RunUpdateActs {
+    fn process_heartbeat_timeout(&mut self, run_id: String) -> RunUpdateAct {
         if let Some(rh) = self.runs.get_mut(&run_id) {
             rh.heartbeat_timeout()
         } else {
-            vec![]
+            None
         }
     }
 
@@ -470,7 +479,7 @@ impl WFStream {
 
     /// Makes sure we have enough pending evictions to fulfill the needs of buffered WFTs who are
     /// waiting on a cache slot
-    fn reconcile_buffered(&mut self) -> RunUpdateActs {
+    fn reconcile_buffered(&mut self) -> Vec<ActivationOrAuto> {
         // We must ensure that there are at least as many pending evictions as there are tasks
         // that we might need to un-buffer (skipping runs which already have buffered tasks for
         // themselves)

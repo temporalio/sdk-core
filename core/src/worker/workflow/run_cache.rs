@@ -1,7 +1,7 @@
 use crate::{
     telemetry::metrics::workflow_type,
     worker::workflow::{
-        managed_run::{ManagedRun, RunUpdateActs},
+        managed_run::{ManagedRun, RunUpdateAct},
         HistoryUpdate, LocalActivityRequestSink, PermittedWFT,
     },
     MetricsContext,
@@ -44,7 +44,7 @@ impl RunCache {
         }
     }
 
-    pub fn instantiate_or_update(&mut self, mut pwft: PermittedWFT) -> RunUpdateActs {
+    pub fn instantiate_or_update(&mut self, mut pwft: PermittedWFT) -> RunUpdateAct {
         let cur_num_cached_runs = self.runs.len();
         let run_id = &pwft.work.execution.run_id;
 
