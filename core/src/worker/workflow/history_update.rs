@@ -358,8 +358,10 @@ impl HistoryUpdate {
         }
         while let NextWFTSeqEndIndex::Complete(next_end_ix) = last_end {
             let next_end_eid = all_events[next_end_ix].event_id;
-            // TODO: can pass portion of slice to skip already scanned events
-            let next_end = find_end_index_of_next_wft_seq(&all_events, next_end_eid);
+            // To save skipping all events at the front of this slice, only pass the relevant
+            // portion, but that means the returned index must be adjusted, hence the addition.
+            let next_end = find_end_index_of_next_wft_seq(&all_events[next_end_ix..], next_end_eid)
+                .add(next_end_ix);
             if matches!(next_end, NextWFTSeqEndIndex::Incomplete(_)) {
                 break;
             }
@@ -483,6 +485,12 @@ impl NextWFTSeqEndIndex {
     fn index(self) -> usize {
         match self {
             NextWFTSeqEndIndex::Complete(ix) | NextWFTSeqEndIndex::Incomplete(ix) => ix,
+        }
+    }
+    fn add(self, val: usize) -> Self {
+        match self {
+            NextWFTSeqEndIndex::Complete(ix) => NextWFTSeqEndIndex::Complete(ix + val),
+            NextWFTSeqEndIndex::Incomplete(ix) => NextWFTSeqEndIndex::Incomplete(ix + val),
         }
     }
 }
