@@ -11,8 +11,7 @@ use crate::{
 };
 use futures::Stream;
 use futures_util::{stream, stream::PollNext, FutureExt, StreamExt};
-use std::{sync::Arc, task::Poll};
-use tokio_util::sync::CancellationToken;
+use std::{future, sync::Arc};
 use tracing::Span;
 
 /// Transforms incoming validated WFTs and history fetching requests into [PermittedWFT]s ready
@@ -21,16 +20,18 @@ pub(super) struct WFTExtractor {}
 
 pub(super) enum WFTExtractorOutput {
     NewWFT(PermittedWFT),
-    FetchResult(PermittedWFT),
+    FetchResult(PermittedWFT, Arc<HistfetchRC>),
     NextPage {
         paginator: HistoryPaginator,
         update: HistoryUpdate,
         span: Span,
+        rc: Arc<HistfetchRC>,
     },
     FailedFetch {
         run_id: String,
         err: tonic::Status,
     },
+    PollerDead,
 }
 
 type WFTStreamIn = (
@@ -39,18 +40,20 @@ type WFTStreamIn = (
 );
 #[derive(derive_more::From, Debug)]
 pub(super) enum HistoryFetchReq {
-    Full(CacheMissFetchReq),
-    NextPage(NextPageReq),
+    Full(CacheMissFetchReq, Arc<HistfetchRC>),
+    NextPage(NextPageReq, Arc<HistfetchRC>),
 }
+/// Used inside of `Arc`s to ensure we don't shutdown while there are outstanding fetches.
+#[derive(Debug)]
+pub(super) struct HistfetchRC {}
 
 impl WFTExtractor {
     pub(super) fn build(
         client: Arc<dyn WorkerClient>,
+        max_fetch_concurrency: usize,
         wft_stream: impl Stream<Item = WFTStreamIn> + Send + 'static,
         fetch_stream: impl Stream<Item = HistoryFetchReq> + Send + 'static,
     ) -> impl Stream<Item = Result<WFTExtractorOutput, tonic::Status>> + Send + 'static {
-        let stop_tok = CancellationToken::new();
-        let wft_stream_end_stopper = stop_tok.clone();
         let fetch_client = client.clone();
         let wft_stream = wft_stream
             .map(move |(wft, permit)| {
@@ -74,12 +77,15 @@ impl WFTExtractor {
                         Err(e) => Err(e),
                     }
                 }
+                // This is... unattractive, but lets us avoid boxing all the futs in the stream
+                .left_future()
                 .left_future()
             })
-            .chain(stream::poll_fn(move |_| {
-                wft_stream_end_stopper.cancel();
-                Poll::Pending
-            }));
+            .chain(stream::iter([future::ready(Ok(
+                WFTExtractorOutput::PollerDead,
+            ))
+            .right_future()
+            .left_future()]));
 
         stream::select_with_strategy(
             wft_stream,
@@ -87,14 +93,16 @@ impl WFTExtractor {
                 let client = fetch_client.clone();
                 async move {
                     Ok(match fetchreq {
-                        HistoryFetchReq::Full(req) => {
+                        // It's OK to simply drop the refcounters in the event of fetch
+                        // failure. We'll just proceed with shutdown.
+                        HistoryFetchReq::Full(req, rc) => {
                             let run_id = req.original_wft.work.execution.run_id.clone();
                             match HistoryPaginator::from_fetchreq(req, client).await {
-                                Ok(r) => WFTExtractorOutput::FetchResult(r),
+                                Ok(r) => WFTExtractorOutput::FetchResult(r, rc),
                                 Err(err) => WFTExtractorOutput::FailedFetch { run_id, err },
                             }
                         }
-                        HistoryFetchReq::NextPage(mut req) => {
+                        HistoryFetchReq::NextPage(mut req, rc) => {
                             match req
                                 .paginator
                                 .extract_next_update(req.last_processed_id)
@@ -104,6 +112,7 @@ impl WFTExtractor {
                                     paginator: req.paginator,
                                     update,
                                     span: req.span,
+                                    rc,
                                 },
                                 Err(err) => WFTExtractorOutput::FailedFetch {
                                     run_id: req.paginator.run_id,
@@ -118,14 +127,6 @@ impl WFTExtractor {
             // Priority always goes to the fetching stream
             |_: &mut ()| PollNext::Right,
         )
-        // TODO: This will drop any in-progress cache misses or pagination.
-        //   It would be fine to drop cache misses, but pagination requests should probably
-        //   go through. Could attach
-        //   Could send a poller shutdown item from stream, then keep polling
-        //   fetch pipe until somehow closing send side after wf stream acks shutdown and flushes
-        //   requests.
-        .take_until(async move { stop_tok.cancelled().await })
-        // TODO:  Configurable.
-        .buffer_unordered(25)
+        .buffer_unordered(max_fetch_concurrency)
     }
 }

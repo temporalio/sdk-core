@@ -1571,8 +1571,6 @@ async fn cache_miss_will_fetch_history() {
         .times(1)
         .returning(move |_, _, _| Ok(get_exec_resp.clone()));
     let mut mock = build_mock_pollers(mh);
-    // TODO: Remove if I don't terminate wft stream until fetch reqs done
-    mock.make_wft_stream_interminable();
     mock.worker_cfg(|cfg| {
         cfg.max_cached_workflows = 1;
         // Also verifies tying the WFT permit to the fetch request doesn't get us stuck
@@ -2190,7 +2188,6 @@ async fn fetching_to_continue_replay_works() {
         .returning(move |_, _, _| Ok(final_fetch_resp.clone()))
         .times(1);
     let mut mock = single_hist_mock_sg("wfid", t, tasks, mock_client, true);
-    mock.make_wft_stream_interminable();
     mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
     let core = mock_worker(mock);
     let act = core.poll_workflow_activation().await.unwrap();

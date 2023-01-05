@@ -273,6 +273,7 @@ impl Worker {
                     namespace: config.namespace.clone(),
                     task_queue: config.task_queue.clone(),
                     ignore_evicts_on_shutdown: config.ignore_evicts_on_shutdown,
+                    fetching_concurrency: config.fetching_concurrency,
                 },
                 sticky_queue_name.map(|sq| StickyExecutionAttributes {
                     worker_task_queue: Some(TaskQueue {

@@ -420,7 +420,6 @@ enum QueryHists {
 async fn query_cache_miss_causes_page_fetch_dont_reply_wft_too_early(
     #[values(QueryHists::Empty, QueryHists::Full, QueryHists::Partial)] hist_type: QueryHists,
 ) {
-    crate::telemetry::test_telem_console();
     let wfid = "fake_wf_id";
     let query_resp = "response";
     let t = canned_histories::single_timer("1");
@@ -474,8 +473,6 @@ async fn query_cache_miss_causes_page_fetch_dont_reply_wft_too_early(
         });
 
     let mut mock = single_hist_mock_sg(wfid, t, tasks, mock_client, true);
-    // TODO: Remove if I don't terminate wft stream until fetch reqs done
-    mock.make_wft_stream_interminable();
     mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
     let core = mock_worker(mock);
     let task = core.poll_workflow_activation().await.unwrap();

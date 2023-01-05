@@ -4,7 +4,7 @@ use crate::{
         workflow::{
             managed_run::RunUpdateActs,
             run_cache::RunCache,
-            wft_extraction::{HistoryFetchReq, WFTExtractorOutput},
+            wft_extraction::{HistfetchRC, HistoryFetchReq, WFTExtractorOutput},
             *,
         },
         LocalActRequest, LocalActivityResolution,
@@ -33,6 +33,7 @@ pub(crate) struct WFStream {
     /// manipulation. Must be drained after handling each input.
     runs_needing_fetching: VecDeque<HistoryFetchReq>,
 
+    history_fetch_refcounter: Arc<HistfetchRC>,
     shutdown_token: CancellationToken,
     ignore_evicts_on_shutdown: bool,
 
@@ -41,15 +42,20 @@ pub(crate) struct WFStream {
 impl WFStream {
     /// Constructs workflow state management and returns a stream which outputs activations.
     ///
-    /// * `external_wfts` is a stream of validated poll responses as returned by a poller (or mock)
-    /// * `wfts_from_complete` is the recv side of a channel that new WFTs from completions should
-    ///   come down.
+    /// * `wft_stream` is a stream of validated poll responses and fetched history pages as returned
+    ///    by a poller (or mock), via [WFTExtractor].
     /// * `local_rx` is a stream of actions that workflow state needs to see. Things like
-    ///   completions, local activities finishing, etc. See [LocalInputs].
+    ///    completions, local activities finishing, etc. See [LocalInputs].
+    /// * `local_activity_request_sink` is used to handle outgoing requests to start or cancel
+    ///    local activities, and may return resolutions that need to be handled immediately.
     ///
-    /// These inputs are combined, along with an internal feedback channel for run-specific updates,
-    /// to form the inputs to a stream of [WFActStreamInput]s. The stream processor then takes
-    /// action on those inputs, and then may yield activations.
+    /// The stream inputs are combined into a stream of [WFActStreamInput]s. The stream processor
+    /// then takes action on those inputs, mutating the [WFStream] state, and then may yield
+    /// activations.
+    ///
+    /// Importantly, nothing async happens while actually mutating state. This means all changes to
+    /// all workflow state can be represented purely via the stream of inputs, and the calls/retvals
+    /// from the LA request sink.
     pub(super) fn build(
         basics: WorkflowBasics,
         wft_stream: impl Stream<Item = Result<WFTExtractorOutput, tonic::Status>> + Send + 'static,
@@ -78,8 +84,6 @@ impl WFStream {
             // Priority always goes to the local stream
             |_: &mut ()| PollNext::Left,
         );
-        // TODO: All async stuff above can be moved somewhere else, actual changes to state can
-        //  just be made into calls
         let mut state = WFStream {
             buffered_polls_need_cache_slot: Default::default(),
             runs: RunCache::new(
@@ -93,6 +97,7 @@ impl WFStream {
             ignore_evicts_on_shutdown: basics.ignore_evicts_on_shutdown,
             metrics: basics.metrics,
             runs_needing_fetching: Default::default(),
+            history_fetch_refcounter: Arc::new(HistfetchRC {}),
         };
         all_inputs
             .map(move |action: WFStreamInput| {
@@ -144,7 +149,7 @@ impl WFStream {
                         })
                         .into_run_update_resp(),
                     WFStreamInput::PollerDead => {
-                        debug!("WFT poller died, shutting down");
+                        debug!("WFT poller died, beginning shutdown");
                         state.shutdown_token.cancel();
                         vec![]
                     }
@@ -219,7 +224,10 @@ impl WFStream {
             debug!(run_id=?run_id, "Workflow task has partial history, but workflow is not in \
                    cache. Will fetch history");
             self.metrics.sticky_cache_miss();
-            return Err(CacheMissFetchReq { original_wft: pwft }.into());
+            return Err(HistoryFetchReq::Full(
+                CacheMissFetchReq { original_wft: pwft },
+                self.history_fetch_refcounter.clone(),
+            ));
         }
 
         let rur = self.runs.instantiate_or_update(pwft);
@@ -240,7 +248,10 @@ impl WFStream {
                         Ok(acts) => acts,
                         Err(npr) => {
                             self.runs_needing_fetching
-                                .push_back(HistoryFetchReq::NextPage(npr));
+                                .push_back(HistoryFetchReq::NextPage(
+                                    npr,
+                                    self.history_fetch_refcounter.clone(),
+                                ));
                             vec![]
                         }
                     }
@@ -504,8 +515,8 @@ impl WFStream {
 
     fn shutdown_done(&self) -> bool {
         if self.shutdown_token.is_cancelled() {
-            if !self.runs_needing_fetching.is_empty() {
-                // Don't exit early due to cache misses
+            if Arc::strong_count(&self.history_fetch_refcounter) > 1 {
+                // Don't exit if there are outstanding fetch requests
                 return false;
             }
             let all_runs_ready = self
@@ -647,13 +658,14 @@ impl From<Result<WFTExtractorOutput, tonic::Status>> for ExternalPollerInputs {
     fn from(v: Result<WFTExtractorOutput, tonic::Status>) -> Self {
         match v {
             Ok(WFTExtractorOutput::NewWFT(pwft)) => ExternalPollerInputs::NewWft(pwft),
-            Ok(WFTExtractorOutput::FetchResult(updated_wft)) => {
+            Ok(WFTExtractorOutput::FetchResult(updated_wft, _)) => {
                 ExternalPollerInputs::FetchedUpdate(updated_wft)
             }
             Ok(WFTExtractorOutput::NextPage {
                 paginator,
                 update,
                 span,
+                rc: _rc,
             }) => ExternalPollerInputs::NextPage {
                 paginator,
                 update,
@@ -662,6 +674,7 @@ impl From<Result<WFTExtractorOutput, tonic::Status>> for ExternalPollerInputs {
             Ok(WFTExtractorOutput::FailedFetch { run_id, err }) => {
                 ExternalPollerInputs::FailedFetch { run_id, err }
             }
+            Ok(WFTExtractorOutput::PollerDead) => ExternalPollerInputs::PollerDead,
             Err(e) => ExternalPollerInputs::PollerError(e),
         }
     }

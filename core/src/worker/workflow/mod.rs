@@ -120,6 +120,7 @@ pub(super) struct WorkflowBasics {
     pub namespace: String,
     pub task_queue: String,
     pub ignore_evicts_on_shutdown: bool,
+    pub fetching_concurrency: usize,
 }
 
 impl Workflows {
@@ -150,6 +151,7 @@ impl Workflows {
         let wft_stream = stream_when_allowed(wft_stream, proceeder);
         let extracted_wft_stream = WFTExtractor::build(
             client.clone(),
+            basics.fetching_concurrency,
             wft_stream,
             UnboundedReceiverStream::new(fetch_rx),
         );
