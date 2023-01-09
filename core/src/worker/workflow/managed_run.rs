@@ -129,16 +129,12 @@ impl ManagedRun {
 
     /// Returns true if there are pending jobs that need to be sent to lang.
     pub(super) fn more_pending_work(&self) -> bool {
-        let mut more_pending_work = self.wfm.machines.has_pending_jobs();
         // We don't want to consider there to be more local-only work to be done if there is
         // no workflow task associated with the run right now. This can happen if, ex, we
         // complete a local activity while waiting for server to send us the next WFT.
         // Activating lang would be harmful at this stage, as there might be work returned
         // in that next WFT which should be part of the next activation.
-        if self.wft.is_none() {
-            more_pending_work = false;
-        }
-        more_pending_work
+        self.wft.is_some() && self.wfm.machines.has_pending_jobs()
     }
 
     pub(super) fn have_seen_terminal_event(&self) -> bool {
@@ -268,12 +264,6 @@ impl ManagedRun {
         if self.activation.is_some() {
             return Ok(None);
         }
-        let has_pending_queries = self
-            .wft
-            .as_ref()
-            .map(|wft| !wft.pending_queries.is_empty())
-            .unwrap_or_default();
-
         // In the event it's time to evict this run, cancel any outstanding LAs
         if self.trying_to_evict.is_some() {
             self.sink_la_requests(vec![LocalActRequest::CancelAllInRun(
@@ -291,10 +281,17 @@ impl ManagedRun {
                 self.wfm.get_next_activation()?,
             )))
         } else {
-            if has_pending_queries && !self.am_broken {
-                return Ok(Some(ActivationOrAuto::ReadyForQueries(
-                    self.wfm.machines.get_wf_activation(),
-                )));
+            if !self.am_broken {
+                let has_pending_queries = self
+                    .wft
+                    .as_ref()
+                    .map(|wft| !wft.pending_queries.is_empty())
+                    .unwrap_or_default();
+                if has_pending_queries {
+                    return Ok(Some(ActivationOrAuto::ReadyForQueries(
+                        self.wfm.machines.get_wf_activation(),
+                    )));
+                }
             }
             if let Some(wte) = self.trying_to_evict.clone() {
                 let mut act = self.wfm.machines.get_wf_activation();
