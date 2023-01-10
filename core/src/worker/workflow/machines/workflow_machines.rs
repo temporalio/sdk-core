@@ -486,7 +486,6 @@ impl WorkflowMachines {
             let mach = self.machine_mut(mk);
             if let Machines::LocalActivityMachine(ref mut lam) = *mach {
                 if lam.will_accept_resolve_marker() {
-                    error!("Trying resovle");
                     let resps = lam.try_resolve_with_dat(la_dat.into())?;
                     self.process_machine_responses(mk, resps)?;
                 } else {
