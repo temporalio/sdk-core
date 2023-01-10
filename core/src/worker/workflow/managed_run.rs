@@ -14,8 +14,8 @@ use crate::{
             EvictionRequestResult, FailedActivationWFTReport, HeartbeatTimeoutMsg, HistoryUpdate,
             LocalActivityRequestSink, LocalResolution, NextPageReq, OutgoingServerCommands,
             OutstandingActivation, OutstandingTask, PermittedWFT, RequestEvictMsg,
-            ServerCommandsWithWorkflowInfo, WFCommand, WFMachinesError, WorkflowBridge,
-            WorkflowTaskInfo, WFT_HEARTBEAT_TIMEOUT_FRACTION,
+            ServerCommandsWithWorkflowInfo, WFCommand, WFMachinesError, WFTReportStatus,
+            WorkflowBridge, WorkflowTaskInfo, WFT_HEARTBEAT_TIMEOUT_FRACTION,
         },
         LocalActRequest, LEGACY_QUERY_ID,
     },
@@ -72,22 +72,22 @@ pub(super) struct ManagedRun {
     /// do is be evicted.
     am_broken: bool,
     /// If set, the WFT this run is currently/will be processing.
-    pub(super) wft: Option<OutstandingTask>,
+    wft: Option<OutstandingTask>,
     /// An outstanding activation to lang
-    pub(super) activation: Option<OutstandingActivation>,
+    activation: Option<OutstandingActivation>,
     /// If set, it indicates there is a buffered poll response from the server that applies to this
     /// run. This can happen when lang takes too long to complete a task and the task times out, for
     /// example. Upon next completion, the buffered response will be removed and can be made ready
     /// to be returned from polling
-    pub(super) buffered_resp: Option<PermittedWFT>,
+    buffered_resp: Option<PermittedWFT>,
     /// Is set if an eviction has been requested for this run
-    pub(super) trying_to_evict: Option<RequestEvictMsg>,
+    trying_to_evict: Option<RequestEvictMsg>,
 
     /// We track if we have recorded useful debugging values onto a certain span yet, to overcome
     /// duplicating field values. Remove this once https://github.com/tokio-rs/tracing/issues/2334
     /// is fixed.
-    pub(super) recorded_span_ids: HashSet<tracing::Id>,
-    pub(super) metrics: MetricsContext,
+    recorded_span_ids: HashSet<tracing::Id>,
+    metrics: MetricsContext,
     /// We store the paginator used for our own run's history fetching
     paginator: Option<HistoryPaginator>,
     completion_waiting_on_page_fetch: Option<RunActivationCompletion>,
@@ -139,6 +139,21 @@ impl ManagedRun {
 
     pub(super) fn have_seen_terminal_event(&self) -> bool {
         self.wfm.machines.have_seen_terminal_event
+    }
+
+    /// Returns a ref to info about the currently tracked workflow task, if any.
+    pub(super) fn wft(&self) -> Option<&OutstandingTask> {
+        self.wft.as_ref()
+    }
+
+    /// Returns a ref to info about the currently tracked workflow activation, if any.
+    pub(super) fn activation(&self) -> Option<&OutstandingActivation> {
+        self.activation.as_ref()
+    }
+
+    /// Returns true if this run has already been told it will be evicted.
+    pub(super) fn is_trying_to_evict(&self) -> bool {
+        self.trying_to_evict.is_some()
     }
 
     /// Called whenever a new workflow task is obtained for this run
@@ -251,6 +266,25 @@ impl ManagedRun {
         }
 
         Ok(Some(ActivationOrAuto::LangActivation(activation)))
+    }
+
+    /// Deletes the currently tracked WFT & records latency metrics. Should be called after it has
+    /// been responded to (server has been told). Returns the WFT if there was one.
+    pub(super) fn mark_wft_complete(
+        &mut self,
+        report_status: WFTReportStatus,
+    ) -> Option<OutstandingTask> {
+        debug!("Marking WFT completed");
+        let retme = self.wft.take();
+
+        // Only record latency metrics if we genuinely reported to server
+        if matches!(report_status, WFTReportStatus::Reported) {
+            if let Some(ot) = &retme {
+                self.metrics.wf_task_latency(ot.start_time.elapsed());
+            }
+        }
+
+        retme
     }
 
     /// Checks if any further activations need to go out for this run and produces them if so.
@@ -505,6 +539,12 @@ impl ManagedRun {
         rur
     }
 
+    /// Delete the currently tracked workflow activation and return it, if any. Should be called
+    /// after the processing of the activation completion, and WFT reporting.
+    pub(super) fn delete_activation(&mut self) -> Option<OutstandingActivation> {
+        self.activation.take()
+    }
+
     /// Called when local activities resolve
     pub(super) fn local_resolution(&mut self, res: LocalResolution) -> RunUpdateAct {
         let res = self._local_resolution(res);
@@ -680,6 +720,35 @@ impl ManagedRun {
         self.wft.is_some() || buffered || self.more_pending_work() || act_work || evict_work
     }
 
+    /// Stores some work if there is any outstanding WFT or activation for the run. If there was
+    /// not, returns the work back out inside the option.
+    pub(super) fn buffer_wft_if_outstanding_work(
+        &mut self,
+        work: PermittedWFT,
+    ) -> Option<PermittedWFT> {
+        let about_to_issue_evict = self.trying_to_evict.is_some();
+        let has_wft = self.wft().is_some();
+        let has_activation = self.activation().is_some();
+        if has_wft || has_activation || about_to_issue_evict || self.more_pending_work() {
+            debug!(run_id = %self.run_id(),
+                   "Got new WFT for a run with outstanding work, buffering it");
+            self.buffered_resp = Some(work);
+            None
+        } else {
+            Some(work)
+        }
+    }
+
+    /// Returns true if there is a buffered workflow task for this run.
+    pub(super) fn has_buffered_wft(&self) -> bool {
+        self.buffered_resp.is_some()
+    }
+
+    /// Removes and returns the buffered workflow task, if any.
+    pub(super) fn take_buffered_wft(&mut self) -> Option<PermittedWFT> {
+        self.buffered_resp.take()
+    }
+
     pub(super) fn request_eviction(&mut self, info: RequestEvictMsg) -> EvictionRequestResult {
         let attempts = self.wft.as_ref().map(|wt| wt.info.attempt);
         if !self.activation_has_eviction() && self.trying_to_evict.is_none() {
@@ -688,6 +757,19 @@ impl ManagedRun {
             EvictionRequestResult::EvictionRequested(attempts, self.check_more_activations())
         } else {
             EvictionRequestResult::EvictionAlreadyRequested(attempts)
+        }
+    }
+
+    pub(super) fn record_span_fields(&mut self, span: &Span) {
+        if let Some(spid) = span.id() {
+            if self.recorded_span_ids.contains(&spid) {
+                return;
+            }
+            self.recorded_span_ids.insert(spid);
+
+            if let Some(wid) = self.wft().map(|wft| &wft.info.wf_id) {
+                span.record("workflow_id", wid.as_str());
+            }
         }
     }
 

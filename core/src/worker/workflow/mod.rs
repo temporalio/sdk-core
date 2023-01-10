@@ -826,7 +826,7 @@ enum ActivationCompleteOutcome {
     WFTFailedDontReport,
 }
 /// Did we report, or not, completion of a WFT to server?
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 enum WFTReportStatus {
     Reported,
     /// The WFT completion was not reported when finishing the activation, because there's still

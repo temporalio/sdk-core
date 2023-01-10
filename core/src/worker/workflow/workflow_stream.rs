@@ -105,7 +105,9 @@ impl WFStream {
                     WFStreamInput::Local(local_input) => {
                         let _span_g = local_input.span.enter();
                         if let Some(rid) = local_input.input.run_id() {
-                            state.record_span_fields(rid, &local_input.span);
+                            if let Some(rh) = state.runs.get_mut(rid) {
+                                rh.record_span_fields(&local_input.span);
+                            }
                         }
                         match local_input.input {
                             LocalInputs::Completion(completion) => {
@@ -202,10 +204,16 @@ impl WFStream {
         &mut self,
         pwft: PermittedWFT,
     ) -> Result<RunUpdateAct, HistoryFetchReq> {
-        let pwft = if let Some(w) = self.buffer_resp_if_outstanding_work(pwft) {
-            w
+        // If the run already exists, possibly buffer the work and return early if we can't handle
+        // it yet.
+        let pwft = if let Some(rh) = self.runs.get_mut(&pwft.work.execution.run_id) {
+            if let Some(w) = rh.buffer_wft_if_outstanding_work(pwft) {
+                w
+            } else {
+                return Ok(None);
+            }
         } else {
-            return Ok(None);
+            pwft
         };
 
         let run_id = pwft.work.execution.run_id.clone();
@@ -297,7 +305,7 @@ impl WFStream {
         let activation = self
             .runs
             .get_mut(run_id)
-            .and_then(|rh| rh.activation.take());
+            .and_then(|rh| rh.delete_activation());
 
         // Evict the run if the activation contained an eviction
         let mut applied_buffered_poll_for_this_run = false;
@@ -305,7 +313,7 @@ impl WFStream {
             debug!(run_id=%run_id, "Evicting run");
 
             if let Some(mut rh) = self.runs.remove(run_id) {
-                if let Some(buff) = rh.buffered_resp.take() {
+                if let Some(buff) = rh.take_buffered_wft() {
                     // Don't try to apply a buffered poll for this run if we just got a new WFT
                     // from completing, because by definition that buffered poll is now an
                     // out-of-date WFT.
@@ -415,50 +423,16 @@ impl WFStream {
             // Can't mark the WFT complete if there are pending queries, as doing so would destroy
             // them.
             if rh
-                .wft
-                .as_ref()
+                .wft()
                 .map(|wft| !wft.pending_queries.is_empty())
                 .unwrap_or_default()
             {
                 return None;
             }
 
-            debug!("Marking WFT completed");
-            let retme = rh.wft.take();
-
-            // Only record latency metrics if we genuinely reported to server
-            if matches!(wft_report_status, WFTReportStatus::Reported) {
-                if let Some(ot) = &retme {
-                    if let Some(m) = self.run_metrics(run_id) {
-                        m.wf_task_latency(ot.start_time.elapsed());
-                    }
-                }
-            }
-
-            retme
+            rh.mark_wft_complete(wft_report_status)
         } else {
             None
-        }
-    }
-
-    /// Stores some work if there is any outstanding WFT or activation for the run. If there was
-    /// not, returns the work back out inside the option.
-    fn buffer_resp_if_outstanding_work(&mut self, work: PermittedWFT) -> Option<PermittedWFT> {
-        let run_id = &work.work.execution.run_id;
-        if let Some(mut run) = self.runs.get_mut(run_id) {
-            let about_to_issue_evict = run.trying_to_evict.is_some();
-            let has_wft = run.wft.is_some();
-            let has_activation = run.activation.is_some();
-            if has_wft || has_activation || about_to_issue_evict || run.more_pending_work() {
-                debug!(run_id = %run_id, run = ?run,
-                       "Got new WFT for a run with outstanding work, buffering it");
-                run.buffered_resp = Some(work);
-                None
-            } else {
-                Some(work)
-            }
-        } else {
-            Some(work)
         }
     }
 
@@ -488,14 +462,14 @@ impl WFStream {
         let num_existing_evictions = self
             .runs
             .runs_lru_order()
-            .filter(|(_, h)| h.trying_to_evict.is_some())
+            .filter(|(_, h)| h.is_trying_to_evict())
             .count();
         let mut num_evicts_needed = num_in_buff.saturating_sub(num_existing_evictions);
         for (rid, handle) in self.runs.runs_lru_order() {
             if num_evicts_needed == 0 {
                 break;
             }
-            if handle.buffered_resp.is_none() {
+            if !handle.has_buffered_wft() {
                 num_evicts_needed -= 1;
                 evict_these.push(rid.to_string());
             }
@@ -531,37 +505,19 @@ impl WFStream {
         false
     }
 
-    fn run_metrics(&mut self, run_id: &str) -> Option<&MetricsContext> {
-        self.runs.get(run_id).map(|r| &r.metrics)
-    }
-
     fn outstanding_wfts(&self) -> usize {
-        self.runs.handles().filter(|r| r.wft.is_some()).count()
+        self.runs.handles().filter(|r| r.wft().is_some()).count()
     }
 
     // Useful when debugging
     #[allow(dead_code)]
     fn info_dump(&self, run_id: &str) {
         if let Some(r) = self.runs.peek(run_id) {
-            info!(run_id, wft=?r.wft, activation=?r.activation, buffered=r.buffered_resp.is_some(),
-                  trying_to_evict=r.trying_to_evict.is_some(), more_work=r.more_pending_work());
+            info!(run_id, wft=?r.wft(), activation=?r.activation(),
+                  buffered_wft=r.has_buffered_wft(),
+                  trying_to_evict=r.is_trying_to_evict(), more_work=r.more_pending_work());
         } else {
             info!(run_id, "Run not found");
-        }
-    }
-
-    fn record_span_fields(&mut self, run_id: &str, span: &Span) {
-        if let Some(run_handle) = self.runs.get_mut(run_id) {
-            if let Some(spid) = span.id() {
-                if run_handle.recorded_span_ids.contains(&spid) {
-                    return;
-                }
-                run_handle.recorded_span_ids.insert(spid);
-
-                if let Some(wid) = run_handle.wft.as_ref().map(|wft| &wft.info.wf_id) {
-                    span.record("workflow_id", wid.as_str());
-                }
-            }
         }
     }
 }
