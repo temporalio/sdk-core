@@ -1,8 +1,8 @@
-use super::{
-    workflow_machines::{MachineResponse, WFMachinesError},
-    NewMachineWithCommand,
+use super::{workflow_machines::MachineResponse, NewMachineWithCommand};
+use crate::worker::workflow::{
+    machines::{Cancellable, EventInfo, WFMachinesAdapter},
+    WFMachinesError,
 };
-use crate::worker::workflow::machines::{Cancellable, EventInfo, WFMachinesAdapter};
 use rustfsm::{fsm, TransitionResult};
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::UpsertWorkflowSearchAttributes,

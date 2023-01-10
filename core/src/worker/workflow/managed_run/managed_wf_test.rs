@@ -4,11 +4,13 @@ use crate::{
     test_help::TEST_Q,
     worker::{
         workflow::{
-            history_update::TestHBExt, machines::WorkflowMachines, WFCommand, WorkflowFetcher,
+            history_update::tests::TestHBExt, machines::WorkflowMachines, WFCommand,
+            WorkflowFetcher,
         },
         LocalActRequest, LocalActivityResolution,
     },
 };
+use crossbeam::channel::bounded;
 use std::{convert::TryInto, time::Duration};
 use temporal_sdk::{WorkflowFunction, WorkflowResult};
 use temporal_sdk_core_protos::{
@@ -27,13 +29,12 @@ use tokio::{
 };
 
 pub(crate) struct WFFutureDriver {
-    completions_rx: UnboundedReceiver<WorkflowActivationCompletion>,
+    completions_q: crossbeam::channel::Receiver<WorkflowActivationCompletion>,
 }
 
-#[async_trait::async_trait]
 impl WorkflowFetcher for WFFutureDriver {
-    async fn fetch_workflow_iteration_output(&mut self) -> Vec<WFCommand> {
-        if let Some(completion) = self.completions_rx.recv().await {
+    fn fetch_workflow_iteration_output(&mut self) -> Vec<WFCommand> {
+        if let Ok(completion) = self.completions_q.try_recv() {
             debug!("Managed wf completion: {}", completion);
             completion
                 .status
@@ -57,6 +58,8 @@ impl WorkflowFetcher for WFFutureDriver {
 pub struct ManagedWFFunc {
     mgr: WorkflowManager,
     activation_tx: UnboundedSender<WorkflowActivation>,
+    completions_rx: UnboundedReceiver<WorkflowActivationCompletion>,
+    completions_sync_tx: crossbeam::channel::Sender<WorkflowActivationCompletion>,
     future_handle: Option<JoinHandle<WorkflowResult<()>>>,
     was_shutdown: bool,
 }
@@ -79,7 +82,10 @@ impl ManagedWFFunc {
             completions_tx,
         );
         let spawned = tokio::spawn(wff);
-        let driver = WFFutureDriver { completions_rx };
+        let (completions_sync_tx, completions_sync_rx) = bounded(1);
+        let driver = WFFutureDriver {
+            completions_q: completions_sync_rx,
+        };
         let state_machines = WorkflowMachines::new(
             "test_namespace".to_string(),
             "wfid".to_string(),
@@ -93,6 +99,8 @@ impl ManagedWFFunc {
         Self {
             mgr,
             activation_tx: activations,
+            completions_rx,
+            completions_sync_tx,
             future_handle: Some(spawned),
             was_shutdown: false,
         }
@@ -100,7 +108,7 @@ impl ManagedWFFunc {
 
     #[instrument(skip(self))]
     pub(crate) async fn get_next_activation(&mut self) -> Result<WorkflowActivation> {
-        let res = self.mgr.get_next_activation().await?;
+        let res = self.mgr.get_next_activation()?;
         debug!("Managed wf next activation: {}", &res);
         self.push_activation_to_wf(&res).await?;
         Ok(res)
@@ -121,7 +129,7 @@ impl ManagedWFFunc {
         &mut self,
         update: HistoryUpdate,
     ) -> Result<WorkflowActivation> {
-        let res = self.mgr.feed_history_from_server(update).await?;
+        let res = self.mgr.feed_history_from_server(update)?;
         self.push_activation_to_wf(&res).await?;
         Ok(res)
     }
@@ -183,7 +191,11 @@ impl ManagedWFFunc {
         self.activation_tx
             .send(res.clone())
             .expect("Workflow should not be dropped if we are still sending activations");
-        self.mgr.machines.iterate_machines().await?;
+        // Move the completion response to the sync workflow bridge
+        self.completions_sync_tx
+            .send(self.completions_rx.recv().await.unwrap())
+            .unwrap();
+        self.mgr.machines.iterate_machines()?;
         Ok(())
     }
 }

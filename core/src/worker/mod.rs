@@ -48,6 +48,7 @@ use temporal_sdk_core_protos::{
     },
     TaskToken,
 };
+use tokio::sync::mpsc::unbounded_channel;
 use tokio_util::sync::CancellationToken;
 
 /// A worker polls on a certain task queue
@@ -241,9 +242,11 @@ impl Worker {
         metrics: MetricsContext,
         shutdown_token: CancellationToken,
     ) -> Self {
+        let (hb_tx, hb_rx) = unbounded_channel();
         let local_act_mgr = Arc::new(LocalActivityManager::new(
             config.max_outstanding_local_activities,
             config.namespace.clone(),
+            hb_tx,
             metrics.with_new_attrs([local_activity_worker_type()]),
         ));
         let lam_clone = local_act_mgr.clone();
@@ -273,6 +276,7 @@ impl Worker {
                     namespace: config.namespace.clone(),
                     task_queue: config.task_queue.clone(),
                     ignore_evicts_on_shutdown: config.ignore_evicts_on_shutdown,
+                    fetching_concurrency: config.fetching_concurrency,
                 },
                 sticky_queue_name.map(|sq| StickyExecutionAttributes {
                     worker_task_queue: Some(TaskQueue {
@@ -289,6 +293,7 @@ impl Worker {
                 client,
                 wft_stream,
                 local_act_req_sink,
+                hb_rx,
                 at_task_mgr
                     .as_ref()
                     .map(|mgr| mgr.get_handle_for_workflows()),
@@ -351,13 +356,9 @@ impl Worker {
             .unwrap_or_default()
     }
 
-    #[cfg(test)]
+    #[allow(unused)]
     pub(crate) async fn available_wft_permits(&self) -> usize {
-        self.workflows
-            .get_state_info()
-            .await
-            .expect("You can only check for available permits before shutdown")
-            .available_wft_permits
+        self.workflows.available_wft_permits()
     }
 
     /// Get new activity tasks (may be local or nonlocal). Local activities are returned first

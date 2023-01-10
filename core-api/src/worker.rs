@@ -105,6 +105,11 @@ pub struct WorkerConfig {
     /// up during shutdown, setting this true saves some back-and-forth.
     #[builder(default = "false")]
     pub ignore_evicts_on_shutdown: bool,
+
+    /// Maximum number of next page (or initial) history event listing requests we'll make
+    /// concurrently. I don't this it's worth exposing this to users until we encounter a reason.
+    #[builder(default = "5")]
+    pub fetching_concurrency: usize,
 }
 
 impl WorkerConfig {

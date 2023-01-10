@@ -1,7 +1,5 @@
 mod local_acts;
 
-pub(crate) use temporal_sdk_core_api::errors::WFMachinesError;
-
 use super::{
     activity_state_machine::new_activity, cancel_external_state_machine::new_external_cancel,
     cancel_workflow_state_machine::cancel_workflow,
@@ -20,9 +18,10 @@ use crate::{
     telemetry::{metrics::MetricsContext, VecDisplayer},
     worker::{
         workflow::{
+            history_update::NextWFT,
             machines::modify_workflow_properties_state_machine::modify_workflow_properties,
             CommandID, DrivenWorkflow, HistoryUpdate, LocalResolution, OutgoingJob, WFCommand,
-            WorkflowFetcher, WorkflowStartedInfo,
+            WFMachinesError, WorkflowFetcher, WorkflowStartedInfo,
         },
         ExecutingLAId, LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
     },
@@ -255,10 +254,10 @@ impl WorkflowMachines {
             .and_then(|(st, et)| et.duration_since(st).ok())
     }
 
-    pub(crate) async fn new_history_from_server(&mut self, update: HistoryUpdate) -> Result<()> {
+    pub(crate) fn new_history_from_server(&mut self, update: HistoryUpdate) -> Result<()> {
         self.last_history_from_server = update;
         self.replaying = self.last_history_from_server.previous_started_event_id > 0;
-        self.apply_next_wft_from_history().await?;
+        self.apply_next_wft_from_history()?;
         Ok(())
     }
 
@@ -366,8 +365,8 @@ impl WorkflowMachines {
 
     /// Iterate the state machines, which consists of grabbing any pending outgoing commands from
     /// the workflow code, handling them, and preparing them to be sent off to the server.
-    pub(crate) async fn iterate_machines(&mut self) -> Result<()> {
-        let results = self.drive_me.fetch_workflow_iteration_output().await;
+    pub(crate) fn iterate_machines(&mut self) -> Result<()> {
+        let results = self.drive_me.fetch_workflow_iteration_output();
         self.handle_driven_results(results)?;
         self.prepare_commands()?;
         if self.workflow_is_finished() {
@@ -378,10 +377,16 @@ impl WorkflowMachines {
         Ok(())
     }
 
+    /// Returns true if machines are ready to apply the next WFT sequence, false if events will need
+    /// to be fetched in order to create a complete update with the entire next WFT sequence.
+    pub(crate) fn ready_to_apply_next_wft(&self) -> bool {
+        self.last_history_from_server
+            .can_take_next_wft_sequence(self.current_started_event_id)
+    }
+
     /// Apply the next (unapplied) entire workflow task from history to these machines. Will replay
-    /// any events that need to be replayed until caught up to the newest WFT. May also fetch
-    /// history from server if needed.
-    pub(crate) async fn apply_next_wft_from_history(&mut self) -> Result<usize> {
+    /// any events that need to be replayed until caught up to the newest WFT.
+    pub(crate) fn apply_next_wft_from_history(&mut self) -> Result<usize> {
         // If we have already seen the terminal event for the entire workflow in a previous WFT,
         // then we don't need to do anything here, and in fact we need to avoid re-applying the
         // final WFT.
@@ -390,16 +395,25 @@ impl WorkflowMachines {
         }
 
         let last_handled_wft_started_id = self.current_started_event_id;
-        let events = {
-            let mut evts = self
+        let events =
+            match self
                 .last_history_from_server
                 .take_next_wft_sequence(last_handled_wft_started_id)
-                .await
-                .map_err(WFMachinesError::HistoryFetchingError)?;
-            // Do not re-process events we have already processed
-            evts.retain(|e| e.event_id > self.last_processed_event);
-            evts
-        };
+            {
+                NextWFT::ReplayOver => {
+                    vec![]
+                }
+                NextWFT::WFT(mut evts) => {
+                    // Do not re-process events we have already processed
+                    evts.retain(|e| e.event_id > self.last_processed_event);
+                    evts
+                }
+                NextWFT::NeedFetch => return Err(WFMachinesError::Fatal(
+                    "Need to fetch history events to continue applying workflow task, but this \
+                     should be prevented ahead of time! This is a Core SDK bug."
+                        .to_string(),
+                )),
+            };
         let num_events_to_process = events.len();
 
         // We're caught up on reply if there are no new events to process
@@ -434,7 +448,11 @@ impl WorkflowMachines {
 
         // Scan through to the next WFT, searching for any patch / la markers, so that we can
         // pre-resolve them.
-        for e in self.last_history_from_server.peek_next_wft_sequence() {
+        let mut wake_las = vec![];
+        for e in self
+            .last_history_from_server
+            .peek_next_wft_sequence(last_handled_wft_started_id)
+        {
             if let Some((patch_id, _)) = e.get_patch_marker_details() {
                 self.encountered_change_markers.insert(
                     patch_id.clone(),
@@ -448,7 +466,31 @@ impl WorkflowMachines {
                         .into(),
                 );
             } else if e.is_local_activity_marker() {
-                self.local_activity_data.process_peekahead_marker(e)?;
+                if let Some(la_dat) = e.clone().into_local_activity_marker_details() {
+                    if let Ok(mk) =
+                        self.get_machine_key(CommandID::LocalActivity(la_dat.marker_dat.seq))
+                    {
+                        wake_las.push((mk, la_dat));
+                    } else {
+                        self.local_activity_data.insert_peeked_marker(la_dat);
+                    }
+                } else {
+                    return Err(WFMachinesError::Fatal(format!(
+                        "Local activity marker was unparsable: {:?}",
+                        e
+                    )));
+                }
+            }
+        }
+        for (mk, la_dat) in wake_las {
+            let mach = self.machine_mut(mk);
+            if let Machines::LocalActivityMachine(ref mut lam) = *mach {
+                if lam.will_accept_resolve_marker() {
+                    let resps = lam.try_resolve_with_dat(la_dat.into())?;
+                    self.process_machine_responses(mk, resps)?;
+                } else {
+                    self.local_activity_data.insert_peeked_marker(la_dat);
+                }
             }
         }
 

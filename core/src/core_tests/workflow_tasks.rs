@@ -1546,9 +1546,8 @@ async fn failing_wft_doesnt_eat_permit_forever() {
         ))
         .await
         .unwrap();
-    assert_eq!(worker.available_wft_permits().await, 2);
-
     worker.shutdown().await;
+    assert_eq!(worker.available_wft_permits().await, 2);
 }
 
 #[tokio::test]
@@ -1574,6 +1573,8 @@ async fn cache_miss_will_fetch_history() {
     let mut mock = build_mock_pollers(mh);
     mock.worker_cfg(|cfg| {
         cfg.max_cached_workflows = 1;
+        // Also verifies tying the WFT permit to the fetch request doesn't get us stuck
+        cfg.max_outstanding_workflow_tasks = 1;
     });
     let worker = mock_worker(mock);
 
@@ -1663,6 +1664,57 @@ async fn tasks_from_completion_are_delivered() {
     mock.expect_complete_workflow_task()
         .times(1)
         .returning(|_| Ok(Default::default()));
+    let mut mock = single_hist_mock_sg(wfid, t, [1], mock, true);
+    mock.worker_cfg(|wc| wc.max_cached_workflows = 2);
+    let core = mock_worker(mock);
+
+    let wf_task = core.poll_workflow_activation().await.unwrap();
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(wf_task.run_id))
+        .await
+        .unwrap();
+    let wf_task = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        wf_task.jobs.as_slice(),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::SignalWorkflow(_)),
+        },]
+    );
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
+        wf_task.run_id,
+        vec![CompleteWorkflowExecution { result: None }.into()],
+    ))
+    .await
+    .unwrap();
+    core.shutdown().await;
+}
+
+#[tokio::test]
+async fn pagination_works_with_tasks_from_completion() {
+    let wfid = "fake_wf_id";
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    t.add_we_signaled("sig", vec![]);
+    t.add_full_wf_task();
+    t.add_workflow_execution_completed();
+    let get_exec_resp: GetWorkflowExecutionHistoryResponse = t.get_history_info(2).unwrap().into();
+
+    let mut mock = mock_workflow_client();
+    let mut needs_pag_resp = hist_to_poll_resp(&t, wfid.to_owned(), ResponseType::OneTask(2)).resp;
+    needs_pag_resp.next_page_token = vec![1];
+    let complete_resp = RespondWorkflowTaskCompletedResponse {
+        workflow_task: Some(needs_pag_resp),
+        ..Default::default()
+    };
+    mock.expect_complete_workflow_task()
+        .times(1)
+        .returning(move |_| Ok(complete_resp.clone()));
+    mock.expect_complete_workflow_task()
+        .times(1)
+        .returning(|_| Ok(Default::default()));
+    mock.expect_get_workflow_execution_history()
+        .returning(move |_, _, _| Ok(get_exec_resp.clone()))
+        .times(1);
     let mut mock = single_hist_mock_sg(wfid, t, [1], mock, true);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 2);
     let core = mock_worker(mock);
@@ -2086,5 +2138,122 @@ async fn ignorable_events_are_ok(#[values(true, false)] attribs_unset: bool) {
     assert_matches!(
         act.jobs[0].variant,
         Some(workflow_activation_job::Variant::StartWorkflow(_))
+    );
+}
+
+#[tokio::test]
+async fn fetching_to_continue_replay_works() {
+    let mut mock_client = mock_workflow_client();
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    t.add_full_wf_task(); // ends 7
+    let mut need_fetch_resp =
+        hist_to_poll_resp(&t, "wfid".to_owned(), ResponseType::AllHistory).resp;
+    need_fetch_resp.next_page_token = vec![1];
+
+    t.add_full_wf_task();
+    t.add_we_signaled("hi", vec![]); // Need to make there be two complete WFTs
+    t.add_full_wf_task(); // end 14
+    let mut fetch_resp: GetWorkflowExecutionHistoryResponse =
+        t.get_full_history_info().unwrap().into();
+    // Should only contain events after 7
+    if let Some(ref mut h) = fetch_resp.history {
+        h.events.retain(|e| e.event_id >= 8);
+    }
+    // And indicate that even *more* needs to be fetched after this, so we see a request for the
+    // next page happen.
+    fetch_resp.next_page_token = vec![2];
+
+    let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+    t.add_timer_fired(timer_started_event_id, "1".to_string());
+    t.add_full_wf_task();
+    let mut final_fetch_resp: GetWorkflowExecutionHistoryResponse =
+        t.get_full_history_info().unwrap().into();
+    // Should have only the final event
+    if let Some(ref mut h) = final_fetch_resp.history {
+        h.events.retain(|e| e.event_id >= 15);
+    }
+
+    let tasks = vec![
+        ResponseType::ToTaskNum(1),
+        ResponseType::Raw(need_fetch_resp),
+    ];
+    mock_client
+        .expect_get_workflow_execution_history()
+        .returning(move |_, _, _| Ok(fetch_resp.clone()))
+        .times(1);
+    mock_client
+        .expect_get_workflow_execution_history()
+        .returning(move |_, _, _| Ok(final_fetch_resp.clone()))
+        .times(1);
+    let mut mock = single_hist_mock_sg("wfid", t, tasks, mock_client, true);
+    mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
+    let core = mock_worker(mock);
+    let act = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        act.jobs[0].variant,
+        Some(workflow_activation_job::Variant::StartWorkflow(_))
+    );
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(act.run_id))
+        .await
+        .unwrap();
+    let act = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        act.jobs.as_slice(),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::SignalWorkflow(_)),
+        }]
+    );
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+        act.run_id,
+        start_timer_cmd(1, Duration::from_secs(1)),
+    ))
+    .await
+    .unwrap();
+    let act = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        act.jobs.as_slice(),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::FireTimer(_)),
+        }]
+    );
+}
+
+#[tokio::test]
+async fn fetching_error_evicts_wf() {
+    let mut mock_client = mock_workflow_client();
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_workflow_task_scheduled_and_started();
+    t.add_workflow_task_completed();
+    let mut need_fetch_resp =
+        hist_to_poll_resp(&t, "wfid".to_owned(), ResponseType::AllHistory).resp;
+    need_fetch_resp.next_page_token = vec![1];
+    let tasks = vec![
+        ResponseType::ToTaskNum(1),
+        ResponseType::Raw(need_fetch_resp),
+    ];
+    mock_client
+        .expect_get_workflow_execution_history()
+        .returning(move |_, _, _| Err(tonic::Status::not_found("Ahh broken")))
+        .times(1);
+    let mut mock = single_hist_mock_sg("wfid", t, tasks, mock_client, true);
+    mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
+    let core = mock_worker(mock);
+    let act = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        act.jobs[0].variant,
+        Some(workflow_activation_job::Variant::StartWorkflow(_))
+    );
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(act.run_id))
+        .await
+        .unwrap();
+    let evict_act = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        evict_act.jobs.as_slice(),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::RemoveFromCache(r)),
+        }] => r.message.contains("Fetching history failed")
     );
 }

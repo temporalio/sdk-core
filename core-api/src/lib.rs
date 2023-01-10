@@ -45,13 +45,17 @@ pub trait Worker: Send + Sync {
     /// concurrently internally.
     async fn poll_activity_task(&self) -> Result<ActivityTask, PollActivityError>;
 
-    /// Tell the worker that a workflow activation has completed. May be freely called concurrently.
+    /// Tell the worker that a workflow activation has completed. May (and should) be freely called
+    /// concurrently. The future may take some time to resolve, as fetching more events might be
+    /// necessary for completion to... complete - thus SDK implementers should make sure they do
+    /// not serialize completions.
     async fn complete_workflow_activation(
         &self,
         completion: WorkflowActivationCompletion,
     ) -> Result<(), CompleteWfError>;
 
-    /// Tell the worker that an activity has finished executing. May be freely called concurrently.
+    /// Tell the worker that an activity has finished executing. May (and should) be freely called
+    /// concurrently.
     async fn complete_activity_task(
         &self,
         completion: ActivityTaskCompletion,

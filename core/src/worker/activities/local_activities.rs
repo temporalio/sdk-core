@@ -2,10 +2,11 @@ use crate::{
     abstractions::{dbg_panic, MeteredSemaphore, OwnedMeteredSemPermit},
     protosext::ValidScheduleLA,
     retry_logic::RetryPolicyExt,
+    worker::workflow::HeartbeatTimeoutMsg,
     MetricsContext, TaskToken,
 };
 use futures::{stream::BoxStream, Stream};
-use futures_util::{stream, StreamExt};
+use futures_util::{future, future::AbortRegistration, stream, StreamExt};
 use parking_lot::{Mutex, MutexGuard};
 use std::{
     collections::{hash_map::Entry, HashMap},
@@ -102,6 +103,11 @@ pub(crate) enum LocalActRequest {
     New(NewLocalAct),
     Cancel(ExecutingLAId),
     CancelAllInRun(String),
+    StartHeartbeatTimeout {
+        send_on_elapse: HeartbeatTimeoutMsg,
+        deadline: Instant,
+        abort_reg: AbortRegistration,
+    },
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
@@ -117,6 +123,10 @@ pub(crate) struct LocalActivityManager {
     act_req_tx: UnboundedSender<NewOrRetry>,
     /// Cancels need a different queue since they should be taken first, and don't take a permit
     cancels_req_tx: UnboundedSender<CancelOrTimeout>,
+    /// For the emission of heartbeat timeouts, back into the workflow machines. This channel
+    /// needs to come in from above us, because we cannot rely on callers getting the next
+    /// activation as a way to deliver heartbeats.
+    heartbeat_timeout_tx: UnboundedSender<HeartbeatTimeoutMsg>,
     /// Wakes every time a complete is processed
     complete_notify: Notify,
     /// Set once workflows have finished shutting down, and thus we know we will no longer receive
@@ -156,6 +166,7 @@ impl LocalActivityManager {
     pub(crate) fn new(
         max_concurrent: usize,
         namespace: String,
+        heartbeat_timeout_tx: UnboundedSender<HeartbeatTimeoutMsg>,
         metrics_context: MetricsContext,
     ) -> Self {
         let (act_req_tx, act_req_rx) = unbounded_channel();
@@ -176,6 +187,7 @@ impl LocalActivityManager {
             )),
             act_req_tx,
             cancels_req_tx,
+            heartbeat_timeout_tx,
             complete_notify: Notify::new(),
             shutdown_complete_tok,
             dat: Mutex::new(LAMData {
@@ -189,9 +201,11 @@ impl LocalActivityManager {
 
     #[cfg(test)]
     fn test(max_concurrent: usize) -> Self {
+        let (hb_tx, _hb_rx) = unbounded_channel();
         Self::new(
             max_concurrent,
             "fake_ns".to_string(),
+            hb_tx,
             MetricsContext::no_op(),
         )
     }
@@ -221,9 +235,9 @@ impl LocalActivityManager {
         }
         let mut immediate_resolutions = vec![];
         for req in reqs {
-            debug!(local_activity = ?req, "Queuing local activity");
             match req {
                 LocalActRequest::New(act) => {
+                    debug!(local_activity=?act, "Queuing local activity");
                     let id = ExecutingLAId {
                         run_id: act.workflow_exec_info.run_id.clone(),
                         seq_num: act.schedule_cmd.seq,
@@ -264,7 +278,22 @@ impl LocalActivityManager {
                         }
                     }
                 }
+                LocalActRequest::StartHeartbeatTimeout {
+                    send_on_elapse,
+                    deadline,
+                    abort_reg,
+                } => {
+                    let chan = self.heartbeat_timeout_tx.clone();
+                    tokio::spawn(future::Abortable::new(
+                        async move {
+                            tokio::time::sleep_until(deadline.into()).await;
+                            let _ = chan.send(send_on_elapse);
+                        },
+                        abort_reg,
+                    ));
+                }
                 LocalActRequest::Cancel(id) => {
+                    debug!(id=?id, "Cancelling local activity");
                     let mut dlock = self.dat.lock();
                     if let Some(lai) = dlock.la_info.get_mut(&id) {
                         if let Some(immediate_res) = self.cancel_one_la(id.seq_num, lai) {
@@ -273,6 +302,7 @@ impl LocalActivityManager {
                     }
                 }
                 LocalActRequest::CancelAllInRun(run_id) => {
+                    debug!(run_id=%run_id, "Cancelling all local activities for run");
                     let mut dlock = self.dat.lock();
                     // Even if we've got 100k+ LAs this should only take a ms or two. Not worth
                     // adding another map to keep in sync.
@@ -752,8 +782,8 @@ mod tests {
         fn unwrap(self) -> ActivityTask {
             match self {
                 DispatchOrTimeoutLA::Dispatch(t) => t,
-                DispatchOrTimeoutLA::Timeout { .. } => {
-                    panic!("Timeout returned when expected a task")
+                _ => {
+                    panic!("Non-dispatched action returned")
                 }
             }
         }
