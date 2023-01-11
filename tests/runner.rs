@@ -1,7 +1,7 @@
 use anyhow::{anyhow, bail};
+use clap::Parser;
 use std::{
     env,
-    env::args,
     path::{Path, PathBuf},
     process::Stdio,
 };
@@ -12,49 +12,86 @@ use temporal_sdk_core_test_utils::{
 };
 use tokio::{self, process::Command};
 
+#[derive(clap::Parser)]
+#[command(author, version, about, long_about = None)]
+struct Cli {
+    /// Test harness to run. Anything defined as a `[[test]]` in core's `Cargo.toml` is valid.
+    #[arg(short, long, default_value = "integ_tests")]
+    test_name: String,
+
+    /// What kind of server to auto-launch, if any
+    #[arg(short, long, value_enum, default_value = "temporalite")]
+    server_kind: ServerKind,
+
+    /// Arguments to pass through to the `cargo test` command. Ex: `--release`
+    #[arg(short, long, allow_hyphen_values(true))]
+    cargo_test_args: Vec<String>,
+
+    /// The rest of the arguments will be passed through to the test harness
+    harness_args: Vec<String>,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, clap::ValueEnum)]
+enum ServerKind {
+    /// Use Temporalite
+    Temporalite,
+    /// Use the Java test server
+    TestServer,
+    /// Do not automatically start any server
+    External,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
+    let Cli {
+        test_name,
+        server_kind,
+        cargo_test_args,
+        harness_args,
+    } = Cli::parse();
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
-    let server_type = env::var("INTEG_SERVER_TYPE")
-        .unwrap_or_else(|_| "temporalite".to_string())
-        .to_lowercase();
     // Try building first, so that we error early on build failures & don't start server
+    let test_args_preamble = ["test", "--test", &test_name]
+        .into_iter()
+        .map(ToString::to_string)
+        .chain(cargo_test_args)
+        .collect::<Vec<_>>();
+    dbg!(&test_args_preamble);
     let status = Command::new(&cargo)
-        .args(["test", "--test", "integ_tests", "--no-run"])
+        .args([test_args_preamble.as_slice(), &["--no-run".to_string()]].concat())
         .status()
         .await?;
     if !status.success() {
         bail!("Building integration tests failed!");
     }
 
-    // Move to clap if we start doing any more complicated input
-    let (server, envs) = if server_type == "test-server" {
-        let config = TestServerConfigBuilder::default()
-            .exe(default_cached_download())
-            .build()?;
-        println!("Using java test server");
-        (
-            Some(config.start_server_with_output(Stdio::null()).await?),
-            vec![(INTEG_TEST_SERVER_USED_ENV_VAR, "true")],
-        )
-    } else if server_type == "temporalite" {
-        let config = TemporaliteConfigBuilder::default()
-            .exe(default_cached_download())
-            .build()?;
-        println!("Using temporalite");
-        (
-            Some(config.start_server_with_output(Stdio::null()).await?),
-            vec![(INTEG_TEMPORALITE_USED_ENV_VAR, "true")],
-        )
-    } else {
-        println!("Not starting up a server. One should be running already.");
-        (None, vec![])
+    let (server, envs) = match server_kind {
+        ServerKind::Temporalite => {
+            let config = TemporaliteConfigBuilder::default()
+                .exe(default_cached_download())
+                .build()?;
+            println!("Using temporalite");
+            (
+                Some(config.start_server_with_output(Stdio::null()).await?),
+                vec![(INTEG_TEMPORALITE_USED_ENV_VAR, "true")],
+            )
+        }
+        ServerKind::TestServer => {
+            let config = TestServerConfigBuilder::default()
+                .exe(default_cached_download())
+                .build()?;
+            println!("Using java test server");
+            (
+                Some(config.start_server_with_output(Stdio::null()).await?),
+                vec![(INTEG_TEST_SERVER_USED_ENV_VAR, "true")],
+            )
+        }
+        ServerKind::External => {
+            println!("Not starting up a server. One should be running already.");
+            (None, vec![])
+        }
     };
 
-    // Run the integ tests, passing through arguments
-    let mut args = args();
-    // Shift off binary name
-    args.next();
     let mut cmd = Command::new(&cargo);
     if let Some(srv) = server.as_ref() {
         cmd.env(
@@ -66,10 +103,10 @@ async fn main() -> Result<(), anyhow::Error> {
         .envs(envs)
         .current_dir(project_root())
         .args(
-            ["test", "--test", "integ_tests"]
+            test_args_preamble
                 .into_iter()
-                .map(ToString::to_string)
-                .chain(args),
+                .chain(["--".to_string()])
+                .chain(harness_args),
         )
         .status()
         .await?;

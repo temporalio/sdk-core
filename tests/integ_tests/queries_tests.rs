@@ -10,7 +10,7 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::{failure::v1::Failure, query::v1::WorkflowQuery},
 };
-use temporal_sdk_core_test_utils::{init_core_and_create_wf, CoreWfStarter, WorkerTestHelpers};
+use temporal_sdk_core_test_utils::{init_core_and_create_wf, WorkerTestHelpers};
 
 #[tokio::test]
 async fn simple_query_legacy() {
@@ -206,131 +206,6 @@ async fn query_after_execution_complete(#[case] do_evict: bool) {
     }
     while query_futs.next().await.is_some() {}
     core.shutdown().await;
-}
-
-#[ignore]
-#[tokio::test]
-async fn repros_query_dropped_on_floor() {
-    // This test reliably repros the server dropping one of the two simultaneously issued queries.
-    let q1_resp = b"query_1_resp";
-    let q2_resp = b"query_2_resp";
-    let mut wf_starter = CoreWfStarter::new("repros_query_dropped_on_floor");
-    // Easiest way I discovered to reliably trigger new query path is with a WFT timeout
-    wf_starter.wft_timeout(Duration::from_secs(1));
-    let core = wf_starter.get_worker().await;
-    let task_q = wf_starter.get_task_queue().to_string();
-    wf_starter.start_wf().await;
-    let client = wf_starter.get_client().await;
-
-    let task = core.poll_workflow_activation().await.unwrap();
-    core.complete_timer(&task.run_id, 1, Duration::from_millis(500))
-        .await;
-
-    // Poll for a task we will time out
-    let task = core.poll_workflow_activation().await.unwrap();
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    // Complete now-timed-out task (add a new timer)
-    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        task.run_id.clone(),
-        vec![],
-    ))
-    .await
-    .unwrap();
-
-    let run_id = task.run_id.to_string();
-    let q1_fut = async {
-        client
-            .query_workflow_execution(
-                task_q.clone(),
-                run_id,
-                WorkflowQuery {
-                    query_type: "query_1".to_string(),
-                    query_args: Some(b"hi 1".into()),
-                    header: None,
-                },
-            )
-            .await
-            .unwrap()
-    };
-    let run_id = task.run_id.to_string();
-    let q2_fut = async {
-        client
-            .query_workflow_execution(
-                task_q.clone(),
-                run_id,
-                WorkflowQuery {
-                    query_type: "query_2".to_string(),
-                    query_args: Some(b"hi 2".into()),
-                    header: None,
-                },
-            )
-            .await
-            .unwrap()
-    };
-    let workflow_completions_future = async {
-        let mut seen_q1 = false;
-        let mut seen_q2 = false;
-        while !seen_q1 || !seen_q2 {
-            let task = core.poll_workflow_activation().await.unwrap();
-
-            if matches!(
-                task.jobs[0],
-                WorkflowActivationJob {
-                    variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
-                }
-            ) {
-                let task = core.poll_workflow_activation().await.unwrap();
-                core.complete_timer(&task.run_id, 1, Duration::from_millis(500))
-                    .await;
-                continue;
-            }
-
-            if matches!(
-                task.jobs[0],
-                WorkflowActivationJob {
-                    variant: Some(workflow_activation_job::Variant::FireTimer(_)),
-                }
-            ) {
-                // If we get the timer firing after replay, be done.
-                core.complete_execution(&task.run_id).await;
-            }
-
-            // There should be a query job (really, there should be both... server only sends one?)
-            let query = assert_matches!(
-                task.jobs.as_slice(),
-                [WorkflowActivationJob {
-                    variant: Some(workflow_activation_job::Variant::QueryWorkflow(q)),
-                }] => q
-            );
-            let resp = if query.query_type == "query_1" {
-                seen_q1 = true;
-                q1_resp
-            } else {
-                seen_q2 = true;
-                q2_resp
-            };
-            // Complete the query
-            core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-                task.run_id,
-                vec![QueryResult {
-                    query_id: query.query_id.clone(),
-                    variant: Some(
-                        QuerySuccess {
-                            response: Some(resp.into()),
-                        }
-                        .into(),
-                    ),
-                }
-                .into()],
-            ))
-            .await
-            .unwrap();
-        }
-    };
-    let (q1_res, q2_res, _) = tokio::join!(q1_fut, q2_fut, workflow_completions_future);
-    // Ensure query responses are as expected
-    assert_eq!(&q1_res.unwrap()[0].data, q1_resp);
-    assert_eq!(&q2_res.unwrap()[0].data, q2_resp);
 }
 
 #[tokio::test]
