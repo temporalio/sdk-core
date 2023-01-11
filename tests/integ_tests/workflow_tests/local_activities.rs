@@ -1,14 +1,13 @@
 use anyhow::anyhow;
 use futures::future::join_all;
-use futures_util::stream::{FuturesUnordered, StreamExt};
 use std::{
     sync::atomic::{AtomicU8, Ordering},
     time::Duration,
 };
-use temporal_client::{WorkflowClientTrait, WorkflowOptions};
+use temporal_client::WorkflowOptions;
 use temporal_sdk::{
-    interceptors::WorkerInterceptor, ActContext, ActivityCancelledError, ActivityOptions,
-    CancellableFuture, LocalActivityOptions, WfContext, WorkflowResult,
+    interceptors::WorkerInterceptor, ActContext, ActivityCancelledError, CancellableFuture,
+    LocalActivityOptions, WfContext, WorkflowResult,
 };
 use temporal_sdk_core::replay::HistoryForReplay;
 use temporal_sdk_core_protos::{
@@ -20,7 +19,8 @@ use temporal_sdk_core_protos::{
     TestHistoryBuilder,
 };
 use temporal_sdk_core_test_utils::{
-    history_from_proto_binary, init_integ_telem, replay_sdk_worker, CoreWfStarter,
+    history_from_proto_binary, init_integ_telem, replay_sdk_worker, workflows::la_problem_workflow,
+    CoreWfStarter,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -649,88 +649,6 @@ async fn repro_nondeterminism_with_timer_bug() {
         .fetch_history_and_replay(wf_name, run_id, worker.inner_mut())
         .await
         .unwrap();
-}
-
-async fn la_problem_workflow(ctx: WfContext) -> WorkflowResult<()> {
-    ctx.local_activity(LocalActivityOptions {
-        activity_type: "delay".to_string(),
-        input: "hi".as_json_payload().expect("serializes fine"),
-        retry_policy: RetryPolicy {
-            initial_interval: Some(prost_dur!(from_micros(15))),
-            backoff_coefficient: 1_000.,
-            maximum_interval: Some(prost_dur!(from_millis(1500))),
-            maximum_attempts: 4,
-            non_retryable_error_types: vec![],
-        },
-        timer_backoff_threshold: Some(Duration::from_secs(1)),
-        ..Default::default()
-    })
-    .await;
-    ctx.activity(ActivityOptions {
-        activity_type: "delay".to_string(),
-        start_to_close_timeout: Some(Duration::from_secs(20)),
-        input: "hi!".as_json_payload().expect("serializes fine"),
-        ..Default::default()
-    })
-    .await;
-    Ok(().into())
-}
-
-// Expensive to run - worth enabling on a stress/regression pipeline.
-#[ignore]
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn evict_while_la_running_no_interference() {
-    let wf_name = "evict_while_la_running_no_interference";
-    let mut starter = CoreWfStarter::new(wf_name);
-    starter.max_local_at(20);
-    starter.max_cached_workflows(20);
-    // Though it doesn't make sense to set wft higher than cached workflows, leaving this commented
-    // introduces more instability that can be useful in the test.
-    // starter.max_wft(20);
-    let mut worker = starter.worker().await;
-
-    worker.register_wf(wf_name.to_owned(), la_problem_workflow);
-    worker.register_activity("delay", |_: ActContext, _: String| async {
-        tokio::time::sleep(Duration::from_secs(15)).await;
-        Ok(())
-    });
-
-    let client = starter.get_client().await;
-    let subfs = FuturesUnordered::new();
-    for i in 1..100 {
-        let wf_id = format!("{}-{}", wf_name, i);
-        let run_id = worker
-            .submit_wf(
-                &wf_id,
-                wf_name.to_owned(),
-                vec![],
-                WorkflowOptions::default(),
-            )
-            .await
-            .unwrap();
-        let cw = worker.core_worker.clone();
-        let client = client.clone();
-        subfs.push(async move {
-            // Evict the workflow
-            tokio::time::sleep(Duration::from_secs(1)).await;
-            cw.request_workflow_eviction(&run_id);
-            // Wake up workflow by sending signal
-            client
-                .signal_workflow_execution(
-                    wf_id,
-                    run_id.clone(),
-                    "whaatever".to_string(),
-                    None,
-                    None,
-                )
-                .await
-                .unwrap();
-        });
-    }
-    let runf = async {
-        worker.run_until_done().await.unwrap();
-    };
-    tokio::join!(subfs.collect::<Vec<_>>(), runf);
 }
 
 #[rstest::rstest]

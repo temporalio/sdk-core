@@ -1,22 +1,12 @@
 //! Integration tests
-//!
-//! Note that integ tests which want to use the server (nearly all of them) *need* to use the
-//! `#[rstest]` macro and accept the TODO fixture to support auto setup & teardown of ephemeral
-//! local servers.
 
 #[macro_use]
 extern crate rstest;
+#[macro_use]
+extern crate temporal_sdk_core_test_utils;
 
 #[cfg(test)]
 mod integ_tests {
-    #[macro_export]
-    macro_rules! prost_dur {
-        ($dur_call:ident $args:tt) => {
-            std::time::Duration::$dur_call$args
-                .try_into()
-                .expect("test duration fits")
-        };
-    }
     mod client_tests;
     mod ephemeral_server_tests;
     mod heartbeat_tests;

@@ -1,3 +1,4 @@
+use base64::{prelude::BASE64_STANDARD, Engine};
 use std::fmt::{Debug, Display, Formatter};
 
 static LOCAL_ACT_TASK_TOKEN_PREFIX: &[u8] = b"local_act_";
@@ -34,5 +35,5 @@ impl Debug for TaskToken {
 }
 
 pub fn fmt_tt(tt: &[u8]) -> String {
-    base64::encode(tt)
+    BASE64_STANDARD.encode(tt)
 }

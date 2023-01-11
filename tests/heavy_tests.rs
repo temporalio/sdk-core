@@ -2,12 +2,12 @@ use assert_matches::assert_matches;
 use futures::{future::join_all, sink, stream::FuturesUnordered, StreamExt};
 use std::time::{Duration, Instant};
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
-use temporal_sdk::{ActContext, ActivityOptions, WfContext};
+use temporal_sdk::{ActContext, ActivityOptions, WfContext, WorkflowResult};
 use temporal_sdk_core_protos::coresdk::{
     activity_result::ActivityExecutionResult, activity_task::activity_task as act_task,
     workflow_commands::ActivityCancellationType, ActivityTaskCompletion, AsJsonPayloadExt,
 };
-use temporal_sdk_core_test_utils::CoreWfStarter;
+use temporal_sdk_core_test_utils::{workflows::la_problem_workflow, CoreWfStarter};
 
 #[tokio::test]
 async fn activity_load() {
@@ -188,4 +188,109 @@ async fn workflow_load() {
         }
     };
     tokio::select! { r1 = worker.run_until_done() => {r1.unwrap()}, _ = sig_sender => {}};
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn evict_while_la_running_no_interference() {
+    let wf_name = "evict_while_la_running_no_interference";
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter.max_local_at(20);
+    starter.max_cached_workflows(20);
+    // Though it doesn't make sense to set wft higher than cached workflows, leaving this commented
+    // introduces more instability that can be useful in the test.
+    // starter.max_wft(20);
+    let mut worker = starter.worker().await;
+
+    worker.register_wf(wf_name.to_owned(), la_problem_workflow);
+    worker.register_activity("delay", |_: ActContext, _: String| async {
+        tokio::time::sleep(Duration::from_secs(15)).await;
+        Ok(())
+    });
+
+    let client = starter.get_client().await;
+    let subfs = FuturesUnordered::new();
+    for i in 1..100 {
+        let wf_id = format!("{}-{}", wf_name, i);
+        let run_id = worker
+            .submit_wf(
+                &wf_id,
+                wf_name.to_owned(),
+                vec![],
+                WorkflowOptions::default(),
+            )
+            .await
+            .unwrap();
+        let cw = worker.core_worker.clone();
+        let client = client.clone();
+        subfs.push(async move {
+            // Evict the workflow
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            cw.request_workflow_eviction(&run_id);
+            // Wake up workflow by sending signal
+            client
+                .signal_workflow_execution(
+                    wf_id,
+                    run_id.clone(),
+                    "whaatever".to_string(),
+                    None,
+                    None,
+                )
+                .await
+                .unwrap();
+        });
+    }
+    let runf = async {
+        worker.run_until_done().await.unwrap();
+    };
+    tokio::join!(subfs.collect::<Vec<_>>(), runf);
+}
+
+pub async fn many_parallel_timers_longhist(ctx: WfContext) -> WorkflowResult<()> {
+    for _ in 0..120 {
+        let mut futs = vec![];
+        for _ in 0..100 {
+            futs.push(ctx.timer(Duration::from_millis(100)));
+        }
+        join_all(futs).await;
+    }
+    Ok(().into())
+}
+
+#[tokio::test]
+async fn can_paginate_long_history() {
+    let wf_name = "can_paginate_long_history";
+    let mut starter = CoreWfStarter::new(wf_name);
+    // Do not use sticky queues so we are forced to paginate once history gets long
+    starter.max_cached_workflows(0);
+
+    let mut worker = starter.worker().await;
+    worker.register_wf(wf_name.to_owned(), many_parallel_timers_longhist);
+    let run_id = worker
+        .submit_wf(
+            wf_name.to_owned(),
+            wf_name.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+    let client = starter.get_client().await;
+    tokio::spawn(async move {
+        loop {
+            for _ in 0..10 {
+                client
+                    .signal_workflow_execution(
+                        wf_name.to_owned(),
+                        run_id.clone(),
+                        "sig".to_string(),
+                        None,
+                        None,
+                    )
+                    .await
+                    .unwrap();
+            }
+            tokio::time::sleep(Duration::from_secs(3)).await;
+        }
+    });
+    worker.run_until_done().await.unwrap();
 }
