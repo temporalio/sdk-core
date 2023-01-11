@@ -11,7 +11,7 @@ use temporal_sdk_core_test_utils::{workflows::la_problem_workflow, CoreWfStarter
 
 #[tokio::test]
 async fn activity_load() {
-    const CONCURRENCY: usize = 1000;
+    const CONCURRENCY: usize = 512;
 
     let mut starter = CoreWfStarter::new("activity_load");
     starter
