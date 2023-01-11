@@ -56,7 +56,6 @@ async fn main() -> Result<(), anyhow::Error> {
         .map(ToString::to_string)
         .chain(cargo_test_args)
         .collect::<Vec<_>>();
-    dbg!(&test_args_preamble);
     let status = Command::new(&cargo)
         .args([test_args_preamble.as_slice(), &["--no-run".to_string()]].concat())
         .status()
