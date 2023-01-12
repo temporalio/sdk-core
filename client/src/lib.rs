@@ -609,7 +609,7 @@ pub struct RegisterNamespaceOptions {
     #[builder(setter(into))]
     pub description: String,
     /// Owner's email
-    #[builder(default)]
+    #[builder(setter(into), default)]
     pub owner_email: String,
     /// Workflow execution retention period
     #[builder(default = "DEFAULT_WORKFLOW_EXECUTION_RETENTION_PERIOD")]
@@ -624,7 +624,7 @@ pub struct RegisterNamespaceOptions {
     #[builder(default)]
     pub data: HashMap<String, String>,
     /// Security Token
-    #[builder(default)]
+    #[builder(setter(into), default)]
     pub security_token: String,
     /// Global namespace
     #[builder(default)]
@@ -633,13 +633,13 @@ pub struct RegisterNamespaceOptions {
     #[builder(setter(into), default = "ArchivalState::Unspecified")]
     pub history_archival_state: ArchivalState,
     /// History Archival uri
-    #[builder(setter(strip_option), default)]
+    #[builder(setter(into), default)]
     pub history_archival_uri: String,
     /// Visibility Archival setting
     #[builder(setter(into), default = "ArchivalState::Unspecified")]
     pub visibility_archival_state: ArchivalState,
     /// Visibility Archival uri
-    #[builder(setter(strip_option), default)]
+    #[builder(setter(into), default)]
     pub visibility_archival_uri: String,
 }
 
@@ -650,25 +650,25 @@ impl RegisterNamespaceOptions {
     }
 }
 
-impl Into<RegisterNamespaceRequest> for RegisterNamespaceOptions {
-    fn into(self) -> RegisterNamespaceRequest {
+impl From<RegisterNamespaceOptions> for RegisterNamespaceRequest {
+    fn from(val: RegisterNamespaceOptions) -> Self {
         RegisterNamespaceRequest {
-            namespace: self.namespace,
-            description: self.description,
-            owner_email: self.owner_email,
-            workflow_execution_retention_period: self
+            namespace: val.namespace,
+            description: val.description,
+            owner_email: val.owner_email,
+            workflow_execution_retention_period: val
                 .workflow_execution_retention_period
                 .try_into()
                 .ok(),
-            clusters: self.clusters,
-            active_cluster_name: self.active_cluster_name,
-            data: self.data,
-            security_token: self.security_token,
-            is_global_namespace: self.is_global_namespace,
-            history_archival_state: self.history_archival_state as i32,
-            history_archival_uri: self.history_archival_uri,
-            visibility_archival_state: self.visibility_archival_state as i32,
-            visibility_archival_uri: self.visibility_archival_uri,
+            clusters: val.clusters,
+            active_cluster_name: val.active_cluster_name,
+            data: val.data,
+            security_token: val.security_token,
+            is_global_namespace: val.is_global_namespace,
+            history_archival_state: val.history_archival_state as i32,
+            history_archival_uri: val.history_archival_uri,
+            visibility_archival_state: val.visibility_archival_state as i32,
+            visibility_archival_uri: val.visibility_archival_uri,
         }
     }
 }
