@@ -675,7 +675,8 @@ impl Into<RegisterNamespaceRequest> for RegisterNamespaceOptions {
 
 impl RegisterNamespaceOptionsBuilder {
     /// Custum builder function for convenience
-    pub fn clusters(&mut self, clusters: Vec<String>) {
+    /// Warning: setting cluster_names could blow away any previously set cluster configs
+    pub fn cluster_names(&mut self, clusters: Vec<String>) {
         self.clusters = Some(
             clusters
                 .into_iter()
@@ -688,22 +689,22 @@ impl RegisterNamespaceOptionsBuilder {
 /// Helper struct for `signal_with_start_workflow_execution`.
 #[derive(Clone, derive_builder::Builder)]
 pub struct SignalWithStartOptions {
-    /// Input payload for the workflow run/signal
+    /// Input payload for the workflow run
     #[builder(setter(strip_option), default)]
     pub input: Option<Payloads>,
     /// Task Queue to target (required)
     #[builder(setter(into))]
     pub task_queue: String,
-    /// Workflow id of the run/signal (required)
+    /// Workflow id for the workflow run
     #[builder(setter(into))]
     pub workflow_id: String,
-    /// Workflow type of the run/signal (required)
+    /// Workflow type for the workflow run
     #[builder(setter(into))]
     pub workflow_type: String,
     #[builder(setter(strip_option), default)]
     /// Request id for idempotency/deduplication
     pub request_id: Option<String>,
-    /// The signal name to send (requierd)
+    /// The signal name to send (required)
     #[builder(setter(into))]
     pub signal_name: String,
     /// Payloads for the signal
