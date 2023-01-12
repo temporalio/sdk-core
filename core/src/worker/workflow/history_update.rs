@@ -20,9 +20,13 @@ use std::{
 use temporal_sdk_core_protos::temporal::api::{
     enums::v1::EventType,
     history::v1::{History, HistoryEvent},
-    workflowservice::v1::GetWorkflowExecutionHistoryResponse,
 };
 use tracing::Instrument;
+
+lazy_static::lazy_static! {
+    static ref EMPTY_FETCH_ERR: tonic::Status
+        = tonic::Status::data_loss("Fetched empty history page");
+}
 
 /// Represents one or more complete WFT sequences. History events are expected to be consumed from
 /// it and applied to the state machines via [HistoryUpdate::take_next_wft_sequence]
@@ -210,7 +214,9 @@ impl HistoryPaginator {
             self.get_next_page().await?;
             let current_events = mem::take(&mut self.event_queue);
             if current_events.is_empty() {
-                panic!("Don't call extract update when nothing is left");
+                // Practically this is unreachable since `get_next_page` should return the error if
+                // it can't get any events, but better to be safe here than panic.
+                return Err(EMPTY_FETCH_ERR.clone());
             }
             let first_event_id = current_events.front().unwrap().event_id;
             // If there are some events at the end of the fetched events which represent only a portion
@@ -234,27 +240,45 @@ impl HistoryPaginator {
     /// Fetches the next page and adds it to the internal queue. Returns true if a fetch was
     /// performed, false if there is no next page.
     async fn get_next_page(&mut self) -> Result<bool, tonic::Status> {
-        let npt = match mem::replace(&mut self.next_page_token, NextPageToken::Done) {
-            // If there's no open request and the last page token we got was empty, we're done.
-            NextPageToken::Done => return Ok(false),
-            NextPageToken::FetchFromStart => vec![],
-            NextPageToken::Next(v) => v,
+        let history = loop {
+            let npt = match mem::replace(&mut self.next_page_token, NextPageToken::Done) {
+                // If there's no open request and the last page token we got was empty, we're done.
+                NextPageToken::Done => return Ok(false),
+                NextPageToken::FetchFromStart => vec![],
+                NextPageToken::Next(v) => v,
+            };
+            debug!(run_id=%self.run_id, "Fetching new history page");
+            let fetch_res = self
+                .client
+                .get_workflow_execution_history(self.wf_id.clone(), Some(self.run_id.clone()), npt)
+                .instrument(span!(tracing::Level::TRACE, "fetch_history_in_paginator"))
+                .await?;
+
+            let history_is_empty = fetch_res
+                .history
+                .as_ref()
+                .map(|h| h.events.is_empty())
+                .unwrap_or(true);
+            if history_is_empty && fetch_res.next_page_token.is_empty() {
+                // A bit odd to make up a grpc error here, but this just causes us to evict the
+                // workflow eventually, which is what we want to do since this paginator is now in a
+                // state that makes no sense.
+                return Err(EMPTY_FETCH_ERR.clone());
+            }
+
+            self.next_page_token = fetch_res.next_page_token.into();
+
+            if history_is_empty && matches!(&self.next_page_token, NextPageToken::Next(_)) {
+                // If the fetch returned an empty history, but there *was* a next page token,
+                // immediately try to get that.
+                continue;
+            }
+            // Async doesn't love recursion so we do this instead.
+            break fetch_res.history;
         };
-        debug!(run_id=%self.run_id, "Fetching new history page");
-        let fetch_res = self
-            .client
-            .get_workflow_execution_history(self.wf_id.clone(), Some(self.run_id.clone()), npt)
-            .instrument(span!(tracing::Level::TRACE, "fetch_history_in_paginator"))
-            .await?;
 
-        self.extend_queue_with_new_page(fetch_res);
-        Ok(true)
-    }
-
-    fn extend_queue_with_new_page(&mut self, resp: GetWorkflowExecutionHistoryResponse) {
-        self.next_page_token = resp.next_page_token.into();
         self.event_queue
-            .extend(resp.history.map(|h| h.events).unwrap_or_default());
+            .extend(history.map(|h| h.events).unwrap_or_default());
         if matches!(&self.next_page_token, NextPageToken::Done) {
             // If finished, we need to extend the queue with the final events, skipping any
             // which are already present.
@@ -267,6 +291,7 @@ impl HistoryPaginator {
                 );
             }
         };
+        Ok(true)
     }
 }
 
@@ -574,6 +599,7 @@ pub mod tests {
         worker::client::mocks::mock_workflow_client,
     };
     use futures_util::TryStreamExt;
+    use temporal_sdk_core_protos::temporal::api::workflowservice::v1::GetWorkflowExecutionHistoryResponse;
 
     impl From<HistoryInfo> for HistoryUpdate {
         fn from(v: HistoryInfo) -> Self {
@@ -961,5 +987,65 @@ pub mod tests {
         assert_eq!(seq.len(), 4);
         let seq = next_check_peek(&mut update, 7);
         assert_eq!(seq.len(), 13);
+    }
+
+    #[tokio::test]
+    async fn handles_blank_fetch_response() {
+        let timer_hist = canned_histories::single_timer("t");
+        let partial_task = timer_hist.get_one_wft(2).unwrap();
+        let mut mock_client = mock_workflow_client();
+        mock_client
+            .expect_get_workflow_execution_history()
+            .returning(move |_, _, _| Ok(Default::default()));
+
+        let mut paginator = HistoryPaginator::new(
+            partial_task.into(),
+            "wfid".to_string(),
+            "runid".to_string(),
+            // A cache miss means we'll try to fetch from start
+            NextPageToken::FetchFromStart,
+            Arc::new(mock_client),
+        );
+        let err = paginator.extract_next_update(1).await.unwrap_err();
+        assert_matches!(err.code(), tonic::Code::DataLoss);
+    }
+
+    #[tokio::test]
+    async fn handles_empty_page_with_next_token() {
+        let timer_hist = canned_histories::single_timer("t");
+        let partial_task = timer_hist.get_one_wft(2).unwrap();
+        let full_resp: GetWorkflowExecutionHistoryResponse =
+            timer_hist.get_full_history_info().unwrap().into();
+        let mut mock_client = mock_workflow_client();
+        mock_client
+            .expect_get_workflow_execution_history()
+            .returning(move |_, _, _| {
+                Ok(GetWorkflowExecutionHistoryResponse {
+                    history: Some(History { events: vec![] }),
+                    raw_history: vec![],
+                    next_page_token: vec![2],
+                    archived: false,
+                })
+            })
+            .times(1);
+        mock_client
+            .expect_get_workflow_execution_history()
+            .returning(move |_, _, _| Ok(full_resp.clone()))
+            .times(1);
+
+        let mut paginator = HistoryPaginator::new(
+            partial_task.into(),
+            "wfid".to_string(),
+            "runid".to_string(),
+            // A cache miss means we'll try to fetch from start
+            NextPageToken::FetchFromStart,
+            Arc::new(mock_client),
+        );
+        let mut update = paginator.extract_next_update(1).await.unwrap();
+        let seq = update.take_next_wft_sequence(0).unwrap_events();
+        assert_eq!(seq.last().unwrap().event_id, 3);
+        let seq = update.take_next_wft_sequence(3).unwrap_events();
+        assert_eq!(seq.last().unwrap().event_id, 8);
+        assert_matches!(update.take_next_wft_sequence(8), NextWFT::ReplayOver);
     }
 }
