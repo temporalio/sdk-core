@@ -1,8 +1,8 @@
 use assert_matches::assert_matches;
 use std::{sync::Arc, time::Duration};
 use temporal_client::{
-    ListClosedFilters, ListOpenFilters, Namespace, StartTimeFilter, WorkflowClientTrait,
-    WorkflowExecutionFilter, WorkflowOptions,
+    ListClosedFilters, ListOpenFilters, Namespace, RegisterNamespaceOptions, StartTimeFilter,
+    WorkflowClientTrait, WorkflowExecutionFilter, WorkflowOptions,
 };
 use temporal_sdk_core_protos::coresdk::workflow_activation::{
     workflow_activation_job, WorkflowActivationJob,
@@ -10,6 +10,7 @@ use temporal_sdk_core_protos::coresdk::workflow_activation::{
 use temporal_sdk_core_test_utils::{
     get_integ_server_options, CoreWfStarter, WorkerTestHelpers, NAMESPACE,
 };
+use tokio::time::sleep;
 
 #[tokio::test]
 async fn client_list_open_closed_workflow_executions() {
@@ -74,6 +75,53 @@ async fn client_list_open_closed_workflow_executions() {
     assert_eq!(closed_workflows.executions.len(), 1);
     let workflow = closed_workflows.executions[0].clone();
     assert_eq!(workflow.execution.as_ref().unwrap().workflow_id, wf_name);
+}
+
+#[tokio::test]
+async fn client_create_namespace() {
+    let client = Arc::new(
+        get_integ_server_options()
+            .connect(NAMESPACE.to_owned(), None, None)
+            .await
+            .expect("Must connect"),
+    );
+
+    let register_options = RegisterNamespaceOptions::builder()
+        .namespace("test-create-namespace")
+        .description("it's alive")
+        .build()
+        .unwrap();
+
+    client
+        .register_namespace(register_options.clone())
+        .await
+        .unwrap();
+
+    //#Hack, not sure how else to wait for a proper response.  RegisterNamespace isn't safe to read
+    //after write
+    let mut attempts = 0;
+    let wait_time = Duration::from_secs(1);
+    loop {
+        attempts += 1;
+        let resp = client
+            .describe_namespace(Namespace::Name(register_options.namespace.clone()))
+            .await;
+
+        match resp {
+            Ok(n) => {
+                let namespace_info = n.namespace_info.unwrap();
+                assert_eq!(namespace_info.name, register_options.namespace);
+                assert_eq!(namespace_info.description, register_options.description);
+                return;
+            }
+            _ => {
+                if attempts == 12 {
+                    panic!("failed to query registered namespace");
+                }
+                sleep(wait_time).await
+            }
+        }
+    }
 }
 
 #[tokio::test]

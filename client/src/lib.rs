@@ -15,12 +15,14 @@ mod workflow_handle;
 pub use crate::retry::{CallType, RetryClient, RETRYABLE_ERROR_CODES};
 pub use raw::{HealthService, OperatorService, TestService, WorkflowService};
 pub use temporal_sdk_core_protos::temporal::api::{
+    enums::v1::ArchivalState,
     filter::v1::{StartTimeFilter, StatusFilter, WorkflowExecutionFilter, WorkflowTypeFilter},
     workflowservice::v1::{
         list_closed_workflow_executions_request::Filters as ListClosedFilters,
         list_open_workflow_executions_request::Filters as ListOpenFilters,
     },
 };
+pub use tonic;
 pub use workflow_handle::{WorkflowExecutionInfo, WorkflowExecutionResult};
 
 use crate::{
@@ -51,6 +53,7 @@ use temporal_sdk_core_protos::{
         failure::v1::Failure,
         operatorservice::v1::operator_service_client::OperatorServiceClient,
         query::v1::WorkflowQuery,
+        replication::v1::ClusterReplicationConfig,
         taskqueue::v1::TaskQueue,
         testservice::v1::test_service_client::TestServiceClient,
         workflowservice::v1::{workflow_service_client::WorkflowServiceClient, *},
@@ -592,6 +595,133 @@ impl Namespace {
     }
 }
 
+/// Default workflow execution retention for a Namespace is 3 days
+pub const DEFAULT_WORKFLOW_EXECUTION_RETENTION_PERIOD: Duration =
+    Duration::from_secs(60 * 60 * 24 * 3);
+
+/// Helper struct for `register_namespace`.
+#[derive(Clone, derive_builder::Builder)]
+pub struct RegisterNamespaceOptions {
+    /// Name (required)
+    #[builder(setter(into))]
+    pub namespace: String,
+    /// Description (required)
+    #[builder(setter(into))]
+    pub description: String,
+    /// Owner's email
+    #[builder(setter(into), default)]
+    pub owner_email: String,
+    /// Workflow execution retention period
+    #[builder(default = "DEFAULT_WORKFLOW_EXECUTION_RETENTION_PERIOD")]
+    pub workflow_execution_retention_period: Duration,
+    /// Cluster settings
+    #[builder(setter(strip_option, custom), default)]
+    pub clusters: Vec<ClusterReplicationConfig>,
+    /// Active cluster name
+    #[builder(setter(into), default)]
+    pub active_cluster_name: String,
+    /// Custom Data
+    #[builder(default)]
+    pub data: HashMap<String, String>,
+    /// Security Token
+    #[builder(setter(into), default)]
+    pub security_token: String,
+    /// Global namespace
+    #[builder(default)]
+    pub is_global_namespace: bool,
+    /// History Archival setting
+    #[builder(setter(into), default = "ArchivalState::Unspecified")]
+    pub history_archival_state: ArchivalState,
+    /// History Archival uri
+    #[builder(setter(into), default)]
+    pub history_archival_uri: String,
+    /// Visibility Archival setting
+    #[builder(setter(into), default = "ArchivalState::Unspecified")]
+    pub visibility_archival_state: ArchivalState,
+    /// Visibility Archival uri
+    #[builder(setter(into), default)]
+    pub visibility_archival_uri: String,
+}
+
+impl RegisterNamespaceOptions {
+    /// Builder convenience.  Less `use` imports
+    pub fn builder() -> RegisterNamespaceOptionsBuilder {
+        Default::default()
+    }
+}
+
+impl From<RegisterNamespaceOptions> for RegisterNamespaceRequest {
+    fn from(val: RegisterNamespaceOptions) -> Self {
+        RegisterNamespaceRequest {
+            namespace: val.namespace,
+            description: val.description,
+            owner_email: val.owner_email,
+            workflow_execution_retention_period: val
+                .workflow_execution_retention_period
+                .try_into()
+                .ok(),
+            clusters: val.clusters,
+            active_cluster_name: val.active_cluster_name,
+            data: val.data,
+            security_token: val.security_token,
+            is_global_namespace: val.is_global_namespace,
+            history_archival_state: val.history_archival_state as i32,
+            history_archival_uri: val.history_archival_uri,
+            visibility_archival_state: val.visibility_archival_state as i32,
+            visibility_archival_uri: val.visibility_archival_uri,
+        }
+    }
+}
+
+impl RegisterNamespaceOptionsBuilder {
+    /// Custum builder function for convenience
+    /// Warning: setting cluster_names could blow away any previously set cluster configs
+    pub fn cluster_names(&mut self, clusters: Vec<String>) {
+        self.clusters = Some(
+            clusters
+                .into_iter()
+                .map(|s| ClusterReplicationConfig { cluster_name: s })
+                .collect(),
+        );
+    }
+}
+
+/// Helper struct for `signal_with_start_workflow_execution`.
+#[derive(Clone, derive_builder::Builder)]
+pub struct SignalWithStartOptions {
+    /// Input payload for the workflow run
+    #[builder(setter(strip_option), default)]
+    pub input: Option<Payloads>,
+    /// Task Queue to target (required)
+    #[builder(setter(into))]
+    pub task_queue: String,
+    /// Workflow id for the workflow run
+    #[builder(setter(into))]
+    pub workflow_id: String,
+    /// Workflow type for the workflow run
+    #[builder(setter(into))]
+    pub workflow_type: String,
+    #[builder(setter(strip_option), default)]
+    /// Request id for idempotency/deduplication
+    pub request_id: Option<String>,
+    /// The signal name to send (required)
+    #[builder(setter(into))]
+    pub signal_name: String,
+    /// Payloads for the signal
+    #[builder(default)]
+    pub signal_input: Option<Payloads>,
+    #[builder(setter(strip_option), default)]
+    /// Headers for the signal
+    pub signal_header: Option<Header>,
+}
+
+impl SignalWithStartOptions {
+    /// Builder convenience.  Less `use` imports
+    pub fn builder() -> SignalWithStartOptionsBuilder {
+        Default::default()
+    }
+}
+
 /// This trait provides higher-level friendlier interaction with the server.
 /// See the [WorkflowService] trait for a lower-level client.
 #[cfg_attr(test, mockall::automock)]
@@ -677,15 +807,8 @@ pub trait WorkflowClientTrait {
     #[allow(clippy::too_many_arguments)]
     async fn signal_with_start_workflow_execution(
         &self,
-        input: Option<Payloads>,
-        task_queue: String,
-        workflow_id: String,
-        workflow_type: String,
-        request_id: Option<String>,
-        options: WorkflowOptions,
-        signal_name: String,
-        signal_input: Option<Payloads>,
-        signal_header: Option<Header>,
+        options: SignalWithStartOptions,
+        workflow_options: WorkflowOptions,
     ) -> Result<SignalWithStartWorkflowExecutionResponse>;
 
     /// Request a query of a certain workflow instance
@@ -734,13 +857,19 @@ pub trait WorkflowClientTrait {
         run_id: Option<String>,
     ) -> Result<TerminateWorkflowExecutionResponse>;
 
+    /// Register a new namespace
+    async fn register_namespace(
+        &self,
+        options: RegisterNamespaceOptions,
+    ) -> Result<RegisterNamespaceResponse>;
+
     /// Lists all available namespaces
     async fn list_namespaces(&self) -> Result<ListNamespacesResponse>;
 
     /// Query namespace details
     async fn describe_namespace(&self, namespace: Namespace) -> Result<DescribeNamespaceResponse>;
 
-    /// List open workflows with Standard Visibility filtering
+    /// List open workflow executions with Standard Visibility filtering
     async fn list_open_workflow_executions(
         &self,
         max_page_size: i32,
@@ -749,7 +878,7 @@ pub trait WorkflowClientTrait {
         filters: Option<ListOpenFilters>,
     ) -> Result<ListOpenWorkflowExecutionsResponse>;
 
-    /// List closed workflows Standard Visibility filtering
+    /// List closed workflow executions Standard Visibility filtering
     async fn list_closed_workflow_executions(
         &self,
         max_page_size: i32,
@@ -758,13 +887,24 @@ pub trait WorkflowClientTrait {
         filters: Option<ListClosedFilters>,
     ) -> Result<ListClosedWorkflowExecutionsResponse>;
 
-    /// List workflows with Advanced Visibility filtering
+    /// List workflow executions with Advanced Visibility filtering
     async fn list_workflow_executions(
         &self,
-        max_page_size: i32,
+        page_size: i32,
         next_page_token: Vec<u8>,
         query: String,
     ) -> Result<ListWorkflowExecutionsResponse>;
+
+    /// List archived workflow executions
+    async fn list_archived_workflow_executions(
+        &self,
+        page_size: i32,
+        next_page_token: Vec<u8>,
+        query: String,
+    ) -> Result<ListArchivedWorkflowExecutionsResponse>;
+
+    /// Get Cluster Search Attributes
+    async fn get_search_attributes(&self) -> Result<GetSearchAttributesResponse>;
 
     /// Returns options that were used to initialize the client
     fn get_options(&self) -> &ClientOptions;
@@ -973,42 +1113,43 @@ impl WorkflowClientTrait for Client {
 
     async fn signal_with_start_workflow_execution(
         &self,
-        input: Option<Payloads>,
-        task_queue: String,
-        workflow_id: String,
-        workflow_type: String,
-        request_id: Option<String>,
-        options: WorkflowOptions,
-        signal_name: String,
-        signal_input: Option<Payloads>,
-        signal_header: Option<Header>,
+        options: SignalWithStartOptions,
+        workflow_options: WorkflowOptions,
     ) -> Result<SignalWithStartWorkflowExecutionResponse> {
         Ok(self
             .wf_svc()
             .signal_with_start_workflow_execution(SignalWithStartWorkflowExecutionRequest {
                 namespace: self.namespace.clone(),
-                workflow_id,
+                workflow_id: options.workflow_id,
                 workflow_type: Some(WorkflowType {
-                    name: workflow_type,
+                    name: options.workflow_type,
                 }),
                 task_queue: Some(TaskQueue {
-                    name: task_queue,
+                    name: options.task_queue,
                     kind: TaskQueueKind::Normal as i32,
                 }),
-                input,
-                signal_name,
-                signal_input,
+                input: options.input,
+                signal_name: options.signal_name,
+                signal_input: options.signal_input,
                 identity: self.inner.options.identity.clone(),
-                request_id: request_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
-                workflow_id_reuse_policy: options.id_reuse_policy as i32,
-                workflow_execution_timeout: options
+                request_id: options
+                    .request_id
+                    .unwrap_or_else(|| Uuid::new_v4().to_string()),
+                workflow_id_reuse_policy: workflow_options.id_reuse_policy as i32,
+                workflow_execution_timeout: workflow_options
                     .execution_timeout
                     .and_then(|d| d.try_into().ok()),
-                workflow_run_timeout: options.execution_timeout.and_then(|d| d.try_into().ok()),
-                workflow_task_timeout: options.task_timeout.and_then(|d| d.try_into().ok()),
-                search_attributes: options.search_attributes.and_then(|d| d.try_into().ok()),
-                cron_schedule: options.cron_schedule.unwrap_or_default(),
-                header: signal_header,
+                workflow_run_timeout: workflow_options
+                    .execution_timeout
+                    .and_then(|d| d.try_into().ok()),
+                workflow_task_timeout: workflow_options
+                    .task_timeout
+                    .and_then(|d| d.try_into().ok()),
+                search_attributes: workflow_options
+                    .search_attributes
+                    .and_then(|d| d.try_into().ok()),
+                cron_schedule: workflow_options.cron_schedule.unwrap_or_default(),
+                header: options.signal_header,
                 ..Default::default()
             })
             .await?
@@ -1140,6 +1281,14 @@ impl WorkflowClientTrait for Client {
             .into_inner())
     }
 
+    async fn register_namespace(
+        &self,
+        options: RegisterNamespaceOptions,
+    ) -> Result<RegisterNamespaceResponse> {
+        let req = Into::<RegisterNamespaceRequest>::into(options);
+        Ok(self.wf_svc().register_namespace(req).await?.into_inner())
+    }
+
     async fn list_namespaces(&self) -> Result<ListNamespacesResponse> {
         Ok(self
             .wf_svc()
@@ -1210,6 +1359,32 @@ impl WorkflowClientTrait for Client {
                 next_page_token,
                 query,
             })
+            .await?
+            .into_inner())
+    }
+
+    async fn list_archived_workflow_executions(
+        &self,
+        page_size: i32,
+        next_page_token: Vec<u8>,
+        query: String,
+    ) -> Result<ListArchivedWorkflowExecutionsResponse> {
+        Ok(self
+            .wf_svc()
+            .list_archived_workflow_executions(ListArchivedWorkflowExecutionsRequest {
+                namespace: self.namespace.clone(),
+                page_size,
+                next_page_token,
+                query,
+            })
+            .await?
+            .into_inner())
+    }
+
+    async fn get_search_attributes(&self) -> Result<GetSearchAttributesResponse> {
+        Ok(self
+            .wf_svc()
+            .get_search_attributes(GetSearchAttributesRequest {})
             .await?
             .into_inner())
     }
