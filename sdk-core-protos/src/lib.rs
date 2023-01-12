@@ -1573,6 +1573,7 @@ pub mod temporal {
         }
         pub mod common {
             pub mod v1 {
+                use base64::{prelude::BASE64_STANDARD, Engine};
                 use std::{
                     collections::HashMap,
                     fmt::{Display, Formatter},
@@ -1609,11 +1610,11 @@ pub mod temporal {
                             write!(
                                 f,
                                 "[{}..{}]",
-                                base64::encode(windows.next().unwrap_or_default()),
-                                base64::encode(windows.next_back().unwrap_or_default())
+                                BASE64_STANDARD.encode(windows.next().unwrap_or_default()),
+                                BASE64_STANDARD.encode(windows.next_back().unwrap_or_default())
                             )
                         } else {
-                            write!(f, "[{}]", base64::encode(&self.data))
+                            write!(f, "[{}]", BASE64_STANDARD.encode(&self.data))
                         }
                     }
                 }

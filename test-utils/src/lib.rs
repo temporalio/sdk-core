@@ -5,8 +5,10 @@
 extern crate tracing;
 
 pub mod canned_histories;
+pub mod workflows;
 
 use crate::stream::{Stream, TryStreamExt};
+use base64::{prelude::BASE64_STANDARD, Engine};
 use futures::{future, stream, stream::FuturesUnordered, StreamExt};
 use parking_lot::Mutex;
 use prost::Message;
@@ -61,6 +63,15 @@ pub const INTEG_TEST_SERVER_USED_ENV_VAR: &str = "INTEG_TEST_SERVER_ON";
 const OTEL_URL_ENV_VAR: &str = "TEMPORAL_INTEG_OTEL_URL";
 /// If set, enable direct scraping of prom metrics on the specified port
 const PROM_ENABLE_ENV_VAR: &str = "TEMPORAL_INTEG_PROM_PORT";
+#[macro_export]
+macro_rules! prost_dur {
+    ($dur_call:ident $args:tt) => {
+        std::time::Duration::$dur_call$args
+            .try_into()
+            .expect("test duration fits")
+    };
+}
+
 /// Create a worker instance which will use the provided test name to base the task queue and wf id
 /// upon. Returns the instance and the task queue name (which is also the workflow id).
 pub async fn init_core_and_create_wf(test_name: &str) -> CoreWfStarter {
@@ -146,7 +157,7 @@ struct InitializedWorker {
 impl CoreWfStarter {
     pub fn new(test_name: &str) -> Self {
         let rand_bytes: Vec<u8> = rand::thread_rng().sample_iter(&Standard).take(6).collect();
-        let task_q_salt = base64::encode(rand_bytes);
+        let task_q_salt = BASE64_STANDARD.encode(rand_bytes);
         let task_queue = format!("{}_{}", test_name, task_q_salt);
         Self::new_tq_name(&task_queue)
     }

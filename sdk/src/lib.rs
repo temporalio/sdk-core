@@ -410,7 +410,7 @@ impl WorkflowHalf {
             );
             let jh = tokio::spawn(async move {
                 tokio::select! {
-                    r = wff => r,
+                    r = wff.fuse() => r,
                     // TODO: This probably shouldn't abort early, as it could cause an in-progress
                     //  complete to abort. Send synthetic remove activation
                     _ = shutdown_token.cancelled() => {

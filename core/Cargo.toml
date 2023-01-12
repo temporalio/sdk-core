@@ -17,7 +17,7 @@ anyhow = "1.0"
 arc-swap = "1.3"
 async-channel = "1.6"
 async-trait = "0.1"
-base64 = "0.20"
+base64 = "0.21"
 crossbeam = "0.8"
 dashmap = "5.0"
 derive_builder = "0.12"
@@ -32,7 +32,7 @@ hyper = "0.14"
 itertools = "0.10"
 lazy_static = "1.4"
 log = "0.4"
-lru = "0.8"
+lru = "0.9"
 mockall = "0.11"
 nix = "0.26"
 once_cell = "1.5"
@@ -86,6 +86,7 @@ version = "0.1"
 [dev-dependencies]
 assert_matches = "1.4"
 bimap = "0.6.1"
+clap = { version = "4.0", features = ["derive"] }
 criterion = "0.4"
 rstest = "0.16"
 temporal-sdk-core-test-utils = { path = "../test-utils" }
@@ -102,8 +103,8 @@ path = "../tests/main.rs"
 test = false
 
 [[test]]
-name = "load_tests"
-path = "../tests/load_tests.rs"
+name = "heavy_tests"
+path = "../tests/heavy_tests.rs"
 test = false
 
 [[bench]]

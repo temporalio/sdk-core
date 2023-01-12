@@ -214,13 +214,15 @@ impl HistoryPaginator {
             self.get_next_page().await?;
             let current_events = mem::take(&mut self.event_queue);
             if current_events.is_empty() {
-                // Practically this is unreachable since `get_next_page` should return the error if
-                // it can't get any events, but better to be safe here than panic.
+                // If next page fetching happened, and we still ended up with no events, something
+                // is wrong. We're expecting there to be more events to be able to extract this
+                // update, but server isn't giving us any. We have no choice except to give up and
+                // evict.
                 return Err(EMPTY_FETCH_ERR.clone());
             }
             let first_event_id = current_events.front().unwrap().event_id;
-            // If there are some events at the end of the fetched events which represent only a portion
-            // of a complete WFT, retain them to be used in the next extraction.
+            // If there are some events at the end of the fetched events which represent only a
+            // portion of a complete WFT, retain them to be used in the next extraction.
             let no_more = matches!(self.next_page_token, NextPageToken::Done);
             let (update, extra) =
                 HistoryUpdate::from_events(current_events, last_processed_event_id, no_more);
@@ -254,20 +256,13 @@ impl HistoryPaginator {
                 .instrument(span!(tracing::Level::TRACE, "fetch_history_in_paginator"))
                 .await?;
 
+            self.next_page_token = fetch_res.next_page_token.into();
+
             let history_is_empty = fetch_res
                 .history
                 .as_ref()
                 .map(|h| h.events.is_empty())
                 .unwrap_or(true);
-            if history_is_empty && fetch_res.next_page_token.is_empty() {
-                // A bit odd to make up a grpc error here, but this just causes us to evict the
-                // workflow eventually, which is what we want to do since this paginator is now in a
-                // state that makes no sense.
-                return Err(EMPTY_FETCH_ERR.clone());
-            }
-
-            self.next_page_token = fetch_res.next_page_token.into();
-
             if history_is_empty && matches!(&self.next_page_token, NextPageToken::Next(_)) {
                 // If the fetch returned an empty history, but there *was* a next page token,
                 // immediately try to get that.

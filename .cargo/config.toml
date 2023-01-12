@@ -1,3 +1,4 @@
 [alias]
-integ-test = ["run", "--package", "temporal-sdk-core", "--example", "integ_runner"]
-lint = ["clippy", "--all", "--test", "integ_tests", "--test", "load_tests"]
+integ-test = ["run", "--package", "temporal-sdk-core", "--example", "integ_runner", "--"]
+lint = ["clippy", "--workspace", "--examples", "--all-features",
+        "--test", "integ_tests", "--test", "heavy_tests", "--", "--D", "warnings"]

@@ -47,7 +47,7 @@ use tracing_subscriber::{layer::SubscriberExt, EnvFilter, Layer};
 const TELEM_SERVICE_NAME: &str = "temporal-core-sdk";
 
 /// Help you construct an [EnvFilter] compatible filter string which will forward all core module
-/// traces at `core_level` and all others (from 3rd party modules, etc) at `other_levl.
+/// traces at `core_level` and all others (from 3rd party modules, etc) at `other_level`.
 pub fn construct_filter_string(core_level: Level, other_level: Level) -> String {
     format!(
         "{o},temporal_sdk_core={l},temporal_client={l},temporal_sdk={l}",
