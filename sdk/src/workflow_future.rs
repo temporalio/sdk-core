@@ -214,6 +214,9 @@ impl WorkflowFuture {
                 }
 
                 Variant::RemoveFromCache(_) => {
+                    // TODO: Need to abort any spawned tasks, etc. See also cancel WF.
+                    //   How best to do this in executor agnostic way? Is that possible?
+                    //  -- tokio JoinSet does this in a nice way.
                     return Ok(true);
                 }
             }

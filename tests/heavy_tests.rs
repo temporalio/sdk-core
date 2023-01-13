@@ -9,6 +9,8 @@ use temporal_sdk_core_protos::coresdk::{
 };
 use temporal_sdk_core_test_utils::{workflows::la_problem_workflow, CoreWfStarter};
 
+mod fuzzy_workflow;
+
 #[tokio::test]
 async fn activity_load() {
     const CONCURRENCY: usize = 512;
@@ -187,7 +189,7 @@ async fn workflow_load() {
             tokio::time::sleep(Duration::from_secs(2)).await;
         }
     };
-    tokio::select! { r1 = worker.run_until_done() => {r1.unwrap()}, _ = sig_sender => {}};
+    tokio::select! { r1 = worker.run_until_done() => {r1.unwrap()}, _ = sig_sender => {}}
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
