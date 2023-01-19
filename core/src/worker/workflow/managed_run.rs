@@ -353,7 +353,7 @@ impl ManagedRun {
     pub(super) fn successful_completion(
         &mut self,
         mut commands: Vec<WFCommand>,
-        resp_chan: oneshot::Sender<ActivationCompleteResult>,
+        resp_chan: Option<oneshot::Sender<ActivationCompleteResult>>,
     ) -> Result<RunUpdateAct, NextPageReq> {
         let activation_was_only_eviction = self.activation_has_only_eviction();
         let (task_token, has_pending_query, start_time) = if let Some(entry) = self.wft.as_ref() {
@@ -421,7 +421,7 @@ impl ManagedRun {
                 activation_was_only_eviction,
                 has_pending_query,
                 query_responses,
-                resp_chan: Some(resp_chan),
+                resp_chan,
             };
 
             // Verify we can actually apply the next workflow task, which will happen as part of
@@ -496,7 +496,7 @@ impl ManagedRun {
         cause: WorkflowTaskFailedCause,
         reason: EvictionReason,
         failure: workflow_completion::Failure,
-        resp_chan: oneshot::Sender<ActivationCompleteResult>,
+        resp_chan: Option<oneshot::Sender<ActivationCompleteResult>>,
     ) -> RunUpdateAct {
         let tt = if let Some(tt) = self.wft.as_ref().map(|t| t.info.task_token.clone()) {
             tt
@@ -882,7 +882,7 @@ impl ManagedRun {
                         fail_cause,
                         fail.source.evict_reason(),
                         Failure::application_failure(wft_fail_str, false).into(),
-                        resp_chan,
+                        Some(resp_chan),
                     )
                 } else {
                     warn!(error=?fail.source, "Error while updating workflow");
@@ -998,13 +998,15 @@ impl ManagedRun {
     fn reply_to_complete(
         &self,
         outcome: ActivationCompleteOutcome,
-        chan: oneshot::Sender<ActivationCompleteResult>,
+        chan: Option<oneshot::Sender<ActivationCompleteResult>>,
     ) {
-        chan.send(ActivationCompleteResult {
-            most_recently_processed_event: self.most_recently_processed_event_number() as usize,
-            outcome,
-        })
-        .expect("Rcv half of activation reply not dropped");
+        if let Some(chan) = chan {
+            chan.send(ActivationCompleteResult {
+                most_recently_processed_event: self.most_recently_processed_event_number() as usize,
+                outcome,
+            })
+            .expect("Rcv half of activation reply not dropped");
+        }
     }
 
     /// Returns true if the handle is currently processing a WFT which contains a legacy query.

@@ -43,7 +43,7 @@ parking_lot = { version = "0.12", features = ["send_guard"] }
 pin-project = "1.0"
 prometheus = "0.13"
 prost = "0.11"
-prost-types = "0.11"
+prost-types = { version = "0.4", package = "prost-wkt-types" }
 rand = "0.8.3"
 reqwest = { version = "0.11", features = ["json", "stream", "rustls-tls", "tokio-rustls"], default-features = false }
 ringbuf = "0.3"
@@ -73,7 +73,8 @@ version = "0.1"
 [dependencies.temporal-sdk-core-protos]
 path = "../sdk-core-protos"
 version = "0.1"
-features = ["history_builders"]
+# TODO: Make own feature for serde
+features = ["history_builders", "serde_serialize"]
 
 [dependencies.temporal-client]
 path = "../client"

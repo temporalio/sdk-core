@@ -1,3 +1,5 @@
+mod tonic_status_serde;
+
 use crate::{
     abstractions::dbg_panic,
     worker::{
@@ -523,7 +525,7 @@ impl WFStream {
 }
 
 /// All possible inputs to the [WFStream]
-#[derive(derive_more::From, Debug)]
+#[derive(derive_more::From, Debug, serde::Serialize, serde::Deserialize)]
 enum WFStreamInput {
     NewWft(PermittedWFT),
     Local(LocalInput),
@@ -531,18 +533,20 @@ enum WFStreamInput {
     PollerDead,
     /// The stream given to us which represents the poller (or a mock) encountered a non-retryable
     /// error while polling
-    PollerError(tonic::Status),
+    PollerError(#[serde(with = "tonic_status_serde::SerdeStatus")] tonic::Status),
     FailedFetch {
         run_id: String,
+        #[serde(with = "tonic_status_serde::SerdeStatus")]
         err: tonic::Status,
     },
 }
 
 /// A non-poller-received input to the [WFStream]
-#[derive(derive_more::DebugCustom)]
+#[derive(derive_more::DebugCustom, serde::Serialize, serde::Deserialize)]
 #[debug(fmt = "LocalInput {{ {:?} }}", input)]
 pub(super) struct LocalInput {
     pub input: LocalInputs,
+    #[serde(skip, default = "Span::current")]
     pub span: Span,
 }
 impl From<HeartbeatTimeoutMsg> for LocalInput {
@@ -555,7 +559,7 @@ impl From<HeartbeatTimeoutMsg> for LocalInput {
 }
 /// Everything that _isn't_ a poll which may affect workflow state. Always higher priority than
 /// new polls.
-#[derive(Debug, derive_more::From)]
+#[derive(Debug, derive_more::From, serde::Serialize, serde::Deserialize)]
 pub(super) enum LocalInputs {
     Completion(WFActCompleteMsg),
     FetchedPageCompletion {
@@ -566,6 +570,7 @@ pub(super) enum LocalInputs {
     PostActivation(PostActivationMsg),
     RequestEviction(RequestEvictMsg),
     HeartbeatTimeout(String),
+    #[serde(skip)]
     GetStateInfo(GetStateInfoMsg),
 }
 impl LocalInputs {

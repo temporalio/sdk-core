@@ -317,7 +317,7 @@ pub mod coresdk {
     }
 
     pub mod external_data {
-        use prost_types::{Duration, Timestamp};
+        use prost_wkt_types::{Duration, Timestamp};
         use serde::{Deserialize, Deserializer, Serialize, Serializer};
         tonic::include_proto!("coresdk.external_data");
 
@@ -404,7 +404,7 @@ pub mod coresdk {
                 query::v1::WorkflowQuery,
             },
         };
-        use prost_types::Timestamp;
+        use prost_wkt_types::Timestamp;
         use std::{
             collections::HashMap,
             fmt::{Display, Formatter},

@@ -96,6 +96,7 @@ async fn fuzzy_workflow() {
         workflow_handles.push(client.get_untyped_workflow_handle(wfid, rid));
     }
 
+    // 1234: Triggers - Local activity cannot be created as pre-resolved while not replaying
     let rng = SmallRng::seed_from_u64(1234);
     let mut actions: Vec<FuzzyWfAction> = rng.sample_iter(FuzzyWfActionSampler).take(15).collect();
     actions.push(FuzzyWfAction::Shutdown);

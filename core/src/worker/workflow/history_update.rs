@@ -1,7 +1,7 @@
 use crate::{
     protosext::ValidPollWFTQResponse,
     worker::{
-        client::WorkerClient,
+        client::{mocks::mock_manual_workflow_client, WorkerClient},
         workflow::{CacheMissFetchReq, PermittedWFT, PreparedWFT},
     },
 };
@@ -30,6 +30,7 @@ lazy_static::lazy_static! {
 
 /// Represents one or more complete WFT sequences. History events are expected to be consumed from
 /// it and applied to the state machines via [HistoryUpdate::take_next_wft_sequence]
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct HistoryUpdate {
     events: Vec<HistoryEvent>,
     pub previous_started_event_id: i64,
@@ -73,14 +74,19 @@ pub enum NextWFT {
     NeedFetch,
 }
 
-#[derive(derive_more::DebugCustom)]
+#[derive(derive_more::DebugCustom, serde::Serialize, serde::Deserialize)]
 #[debug(fmt = "HistoryPaginator(run_id: {})", run_id)]
+#[serde(default = "HistoryPaginator::fake_deserialized")]
 pub struct HistoryPaginator {
+    #[serde(skip)]
     client: Arc<dyn WorkerClient>,
+    #[serde(skip)]
     event_queue: VecDeque<HistoryEvent>,
     pub(crate) wf_id: String,
     pub(crate) run_id: String,
+    #[serde(skip)]
     next_page_token: NextPageToken,
+    #[serde(skip)]
     /// These are events that should be returned once pagination has finished. This only happens
     /// during cache misses, where we got a partial task but need to fetch history from the start.
     final_events: Vec<HistoryEvent>,
@@ -192,6 +198,17 @@ impl HistoryPaginator {
             event_queue: Default::default(),
             wf_id,
             run_id,
+            next_page_token: NextPageToken::FetchFromStart,
+            final_events: vec![],
+        }
+    }
+
+    pub(super) fn fake_deserialized() -> HistoryPaginator {
+        HistoryPaginator {
+            client: Arc::new(mock_manual_workflow_client()),
+            event_queue: Default::default(),
+            wf_id: "".to_string(),
+            run_id: "".to_string(),
             next_page_token: NextPageToken::FetchFromStart,
             final_events: vec![],
         }

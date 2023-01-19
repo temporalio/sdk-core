@@ -54,7 +54,7 @@ pub(crate) struct LocalInFlightActInfo {
     _permit: OwnedMeteredSemPermit,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) enum LocalActivityExecutionResult {
     Completed(Success),
     Failed(ActFail),
@@ -70,7 +70,7 @@ impl LocalActivityExecutionResult {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct LocalActivityResolution {
     pub seq: u32,
     pub result: LocalActivityExecutionResult,

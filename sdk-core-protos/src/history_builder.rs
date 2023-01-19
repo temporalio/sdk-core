@@ -18,7 +18,7 @@ use crate::{
     HistoryInfo,
 };
 use anyhow::bail;
-use prost_types::Timestamp;
+use prost_wkt_types::Timestamp;
 use std::time::{Duration, SystemTime};
 use uuid::Uuid;
 

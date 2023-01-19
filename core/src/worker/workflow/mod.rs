@@ -260,7 +260,7 @@ impl Workflows {
         let (tx, rx) = oneshot::channel();
         let was_sent = self.send_local(WFActCompleteMsg {
             completion,
-            response_tx: tx,
+            response_tx: Some(tx),
         });
         if !was_sent {
             if is_empty_completion {
@@ -630,14 +630,18 @@ impl ActivationOrAuto {
 }
 
 /// A processed WFT which has been validated and had a history update extracted from it
-#[derive(derive_more::DebugCustom)]
+#[derive(derive_more::DebugCustom, serde::Serialize, serde::Deserialize)]
 #[debug(fmt = "PermittedWft({:?})", work)]
 pub(crate) struct PermittedWFT {
     work: PreparedWFT,
-    permit: OwnedMeteredSemPermit,
+    // TODO: Don't love the options - better idea?
+    /// Expected to always be present in normal operation - optional for serialization capability
+    #[serde(skip)]
+    permit: Option<OwnedMeteredSemPermit>,
+    #[serde(skip, default = "HistoryPaginator::fake_deserialized")]
     paginator: HistoryPaginator,
 }
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct PreparedWFT {
     task_token: TaskToken,
     attempt: u32,
@@ -666,7 +670,8 @@ pub(crate) struct OutstandingTask {
     pub start_time: Instant,
     /// The WFT permit owned by this task, ensures we don't exceed max concurrent WFT, and makes
     /// sure the permit is automatically freed when we delete the task.
-    pub permit: OwnedMeteredSemPermit,
+    // TODO: How make not option for serialize mode?
+    pub permit: Option<OwnedMeteredSemPermit>,
 }
 
 impl OutstandingTask {
@@ -773,23 +778,24 @@ pub(crate) struct WorkflowStateInfo {
     pub outstanding_wft: usize,
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct WFActCompleteMsg {
     completion: ValidatedCompletion,
-    response_tx: oneshot::Sender<ActivationCompleteResult>,
+    #[serde(skip)] // TODO: See
+    response_tx: Option<oneshot::Sender<ActivationCompleteResult>>,
 }
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct LocalResolutionMsg {
     run_id: String,
     res: LocalResolution,
 }
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct PostActivationMsg {
     run_id: String,
     wft_report_status: WFTReportStatus,
     wft_from_complete: Option<(PreparedWFT, HistoryPaginator)>,
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct RequestEvictMsg {
     run_id: String,
     message: String,
@@ -826,7 +832,7 @@ enum ActivationCompleteOutcome {
     WFTFailedDontReport,
 }
 /// Did we report, or not, completion of a WFT to server?
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, serde::Serialize, serde::Deserialize)]
 enum WFTReportStatus {
     Reported,
     /// The WFT completion was not reported when finishing the activation, because there's still
@@ -889,7 +895,7 @@ fn validate_completion(
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 #[allow(clippy::large_enum_variant)]
 enum ValidatedCompletion {
     Success {
@@ -917,7 +923,7 @@ pub struct OutgoingServerCommands {
     pub replaying: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) enum LocalResolution {
     LocalActivity(LocalActivityResolution),
 }
@@ -937,7 +943,7 @@ pub struct EmptyWorkflowCommandErr;
 
 /// [DrivenWorkflow]s respond with these when called, to indicate what they want to do next.
 /// EX: Create a new timer, complete the workflow, etc.
-#[derive(Debug, derive_more::From, derive_more::Display)]
+#[derive(Debug, derive_more::From, derive_more::Display, serde::Serialize, serde::Deserialize)]
 #[allow(clippy::large_enum_variant)]
 pub enum WFCommand {
     /// Returned when we need to wait for the lang sdk to send us something
