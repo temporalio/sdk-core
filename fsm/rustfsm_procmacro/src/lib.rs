@@ -132,17 +132,17 @@ use syn::{
 /// The macro will generate a few things:
 /// * A struct for the overall state machine, named with the provided name. Here:
 ///   ```text
-///   struct CardMachine {
-///       state: CardMachineState,
-///       shared_state: CardId,
+///   struct CardReader {
+///       state: CardReaderState,
+///       shared_state: SharedState,
 ///   }
 ///   ```
 /// * An enum with a variant for each state, named with the provided name + "State".
 ///   ```text
-///   enum CardMachineState {
+///   enum CardReaderState {
 ///       Locked(Locked),
 ///       ReadingCard(ReadingCard),
-///       Unlocked(Unlocked),
+///       DoorOpen(DoorOpen),
 ///   }
 ///   ```
 ///
@@ -154,15 +154,18 @@ use syn::{
 /// * An enum with a variant for each event. You are expected to define the type (if any) contained
 ///   in the event variant.
 ///   ```text
-///   enum CardMachineEvents {
-///     CardReadable(CardData)
+///   enum CardReaderEvents {
+///     DoorClosed,
+///     CardAccepted,
+///     CardRejected,
+///     CardReadable(CardData),
 ///   }
 ///   ```
 /// * An implementation of the [StateMachine](trait.StateMachine.html) trait for the generated state
-///   machine enum (in this case, `CardMachine`)
+///   machine enum (in this case, `CardReader`)
 /// * A type alias for a [TransitionResult](enum.TransitionResult.html) with the appropriate generic
 ///   parameters set for your machine. It is named as your machine with `Transition` appended. In
-///   this case, `CardMachineTransition`.
+///   this case, `CardReaderTransition`.
 #[proc_macro]
 pub fn fsm(input: TokenStream) -> TokenStream {
     let def: StateMachineDefinition = parse_macro_input!(input as StateMachineDefinition);
