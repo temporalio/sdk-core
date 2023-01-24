@@ -12,6 +12,9 @@ categories = ["development-tools"]
 
 [lib]
 
+[features]
+save_wf_inputs = ["rmp-serde"]
+
 [dependencies]
 anyhow = "1.0"
 arc-swap = "1.3"
@@ -47,6 +50,7 @@ prost-types = { version = "0.4", package = "prost-wkt-types" }
 rand = "0.8.3"
 reqwest = { version = "0.11", features = ["json", "stream", "rustls-tls", "tokio-rustls"], default-features = false }
 ringbuf = "0.3"
+rmp-serde = { version = "1.1", optional = true }
 serde = "1.0"
 serde_json = "1.0"
 siphasher = "0.3"
@@ -107,6 +111,7 @@ test = false
 name = "heavy_tests"
 path = "../tests/heavy_tests.rs"
 test = false
+required-features = ["save_wf_inputs"]
 
 [[bench]]
 name = "workflow_replay"

@@ -40,6 +40,8 @@ pub(crate) struct WFStream {
     ignore_evicts_on_shutdown: bool,
 
     metrics: MetricsContext,
+
+    wf_state_inputs: Option<UnboundedSender<Vec<u8>>>,
 }
 impl WFStream {
     /// Constructs workflow state management and returns a stream which outputs activations.
@@ -92,11 +94,18 @@ impl WFStream {
             metrics: basics.metrics,
             runs_needing_fetching: Default::default(),
             history_fetch_refcounter: Arc::new(HistfetchRC {}),
+            wf_state_inputs: basics.wf_state_inputs,
         };
         all_inputs
             .map(move |action: WFStreamInput| {
                 let span = span!(Level::DEBUG, "new_stream_input", action=?action);
                 let _span_g = span.enter();
+
+                #[cfg(feature = "rmp-serde")]
+                if let Some(c) = state.wf_state_inputs.as_ref() {
+                    c.send(rmp_serde::to_vec(&action).unwrap())
+                        .expect("Serialized inputs channel not dropped");
+                }
 
                 let mut activations = vec![];
                 let maybe_act = match action {

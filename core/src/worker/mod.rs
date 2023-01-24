@@ -234,7 +234,7 @@ impl Worker {
     }
 
     pub(crate) fn new_with_pollers(
-        config: WorkerConfig,
+        mut config: WorkerConfig,
         sticky_queue_name: Option<String>,
         client: Arc<dyn WorkerClient>,
         wft_stream: impl Stream<Item = Result<ValidPollWFTQResponse, tonic::Status>> + Send + 'static,
@@ -277,6 +277,7 @@ impl Worker {
                     task_queue: config.task_queue.clone(),
                     ignore_evicts_on_shutdown: config.ignore_evicts_on_shutdown,
                     fetching_concurrency: config.fetching_concurrency,
+                    wf_state_inputs: config.wf_state_inputs.take(),
                 },
                 sticky_queue_name.map(|sq| StickyExecutionAttributes {
                     worker_task_queue: Some(TaskQueue {

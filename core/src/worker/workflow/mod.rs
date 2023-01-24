@@ -121,6 +121,7 @@ pub(super) struct WorkflowBasics {
     pub task_queue: String,
     pub ignore_evicts_on_shutdown: bool,
     pub fetching_concurrency: usize,
+    pub wf_state_inputs: Option<UnboundedSender<Vec<u8>>>,
 }
 
 impl Workflows {

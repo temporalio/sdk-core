@@ -5,6 +5,7 @@
 extern crate tracing;
 
 pub mod canned_histories;
+pub mod wf_input_saver;
 pub mod workflows;
 
 use crate::stream::{Stream, TryStreamExt};
