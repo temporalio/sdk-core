@@ -34,7 +34,6 @@ http = "0.2"
 hyper = "0.14"
 itertools = "0.10"
 lazy_static = "1.4"
-log = "0.4"
 lru = "0.9"
 mockall = "0.11"
 nix = "0.26"
@@ -122,3 +121,7 @@ harness = false
 [[example]]
 name = "integ_runner"
 path = "../tests/runner.rs"
+
+[[example]]
+name = "wf_input_replay"
+path = "../tests/wf_input_replay.rs"

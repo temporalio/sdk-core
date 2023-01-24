@@ -12,6 +12,9 @@ mod wft_extraction;
 pub(crate) mod wft_poller;
 mod workflow_stream;
 
+#[cfg(feature = "save_wf_inputs")]
+pub use workflow_stream::replay_wf_state_inputs;
+
 pub(crate) use bridge::WorkflowBridge;
 pub(crate) use driven_workflow::{DrivenWorkflow, WorkflowFetcher};
 pub(crate) use history_update::HistoryUpdate;
@@ -23,7 +26,7 @@ use crate::{
     protosext::{legacy_query_failure, ValidPollWFTQResponse},
     telemetry::{metrics::workflow_worker_type, VecDisplayer},
     worker::{
-        activities::{ActivitiesFromWFTsHandle, PermittedTqResp},
+        activities::{ActivitiesFromWFTsHandle, LocalActivityManager, PermittedTqResp},
         client::{WorkerClient, WorkflowTaskCompletion},
         workflow::{
             history_update::HistoryPaginator,
@@ -112,7 +115,7 @@ pub(crate) struct Workflows {
     wft_semaphore: MeteredSemaphore,
 }
 
-pub(super) struct WorkflowBasics {
+pub(crate) struct WorkflowBasics {
     pub max_cached_workflows: usize,
     pub max_outstanding_wfts: usize,
     pub shutdown_token: CancellationToken,
@@ -130,10 +133,7 @@ impl Workflows {
         sticky_attrs: Option<StickyExecutionAttributes>,
         client: Arc<dyn WorkerClient>,
         wft_stream: impl Stream<Item = Result<ValidPollWFTQResponse, tonic::Status>> + Send + 'static,
-        local_activity_request_sink: impl Fn(Vec<LocalActRequest>) -> Vec<LocalActivityResolution>
-            + Send
-            + Sync
-            + 'static,
+        local_activity_request_sink: impl LocalActivityRequestSink,
         heartbeat_timeout_rx: UnboundedReceiver<HeartbeatTimeoutMsg>,
         activity_tasks_handle: Option<ActivitiesFromWFTsHandle>,
     ) -> Self {
@@ -782,7 +782,7 @@ pub(crate) struct WorkflowStateInfo {
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 struct WFActCompleteMsg {
     completion: ValidatedCompletion,
-    #[serde(skip)] // TODO: See
+    #[serde(skip)] // TODO: Eliminate option if possible
     response_tx: Option<oneshot::Sender<ActivationCompleteResult>>,
 }
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
@@ -1037,9 +1037,6 @@ pub struct WorkflowStartedInfo {
     retry_policy: Option<RetryPolicy>,
 }
 
-type LocalActivityRequestSink =
-    Arc<dyn Fn(Vec<LocalActRequest>) -> Vec<LocalActivityResolution> + Send + Sync>;
-
 /// Wraps outgoing activation job protos with some internal details core might care about
 #[derive(Debug, derive_more::Display)]
 #[display(fmt = "{}", variant)]
@@ -1086,5 +1083,15 @@ impl WFMachinesError {
 impl From<TimestampError> for WFMachinesError {
     fn from(_: TimestampError) -> Self {
         Self::Fatal("Could not decode timestamp".to_string())
+    }
+}
+
+pub(crate) trait LocalActivityRequestSink: Send + Sync + 'static {
+    fn sink_reqs(&self, reqs: Vec<LocalActRequest>) -> Vec<LocalActivityResolution>;
+}
+
+impl LocalActivityRequestSink for Arc<LocalActivityManager> {
+    fn sink_reqs(&self, reqs: Vec<LocalActRequest>) -> Vec<LocalActivityResolution> {
+        self.enqueue(reqs)
     }
 }

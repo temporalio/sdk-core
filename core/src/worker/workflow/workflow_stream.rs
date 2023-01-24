@@ -2,14 +2,11 @@ mod tonic_status_serde;
 
 use crate::{
     abstractions::dbg_panic,
-    worker::{
-        workflow::{
-            managed_run::RunUpdateAct,
-            run_cache::RunCache,
-            wft_extraction::{HistfetchRC, HistoryFetchReq, WFTExtractorOutput},
-            *,
-        },
-        LocalActRequest, LocalActivityResolution,
+    worker::workflow::{
+        managed_run::RunUpdateAct,
+        run_cache::RunCache,
+        wft_extraction::{HistfetchRC, HistoryFetchReq, WFTExtractorOutput},
+        *,
     },
     MetricsContext,
 };
@@ -23,11 +20,14 @@ use temporal_sdk_core_protos::{
 use tokio_util::sync::CancellationToken;
 use tracing::{Level, Span};
 
+#[cfg(feature = "save_wf_inputs")]
+use temporal_sdk_core_api::worker::WorkerConfig;
+
 /// This struct holds all the state needed for tracking what workflow runs are currently cached
 /// and how WFTs should be dispatched to them, etc.
 ///
 /// See [WFStream::build] for more
-pub(crate) struct WFStream {
+pub(super) struct WFStream {
     runs: RunCache,
     /// Buffered polls for new runs which need a cache slot to open up before we can handle them
     buffered_polls_need_cache_slot: VecDeque<PermittedWFT>,
@@ -66,10 +66,7 @@ impl WFStream {
         basics: WorkflowBasics,
         wft_stream: impl Stream<Item = Result<WFTExtractorOutput, tonic::Status>> + Send + 'static,
         local_rx: impl Stream<Item = LocalInput> + Send + 'static,
-        local_activity_request_sink: impl Fn(Vec<LocalActRequest>) -> Vec<LocalActivityResolution>
-            + Send
-            + Sync
-            + 'static,
+        local_activity_request_sink: impl LocalActivityRequestSink,
     ) -> impl Stream<Item = Result<WFStreamOutput, PollWfError>> {
         let all_inputs = stream::select_with_strategy(
             local_rx.map(Into::into),
@@ -81,6 +78,14 @@ impl WFStream {
             // Priority always goes to the local stream
             |_: &mut ()| PollNext::Left,
         );
+        Self::build_internal(all_inputs, basics, local_activity_request_sink)
+    }
+
+    fn build_internal(
+        all_inputs: impl Stream<Item = WFStreamInput>,
+        basics: WorkflowBasics,
+        local_activity_request_sink: impl LocalActivityRequestSink,
+    ) -> impl Stream<Item = Result<WFStreamOutput, PollWfError>> {
         let mut state = WFStream {
             buffered_polls_need_cache_slot: Default::default(),
             runs: RunCache::new(
@@ -101,7 +106,7 @@ impl WFStream {
                 let span = span!(Level::DEBUG, "new_stream_input", action=?action);
                 let _span_g = span.enter();
 
-                #[cfg(feature = "rmp-serde")]
+                #[cfg(feature = "save_wf_inputs")]
                 if let Some(c) = state.wf_state_inputs.as_ref() {
                     c.send(rmp_serde::to_vec(&action).unwrap())
                         .expect("Serialized inputs channel not dropped");
@@ -531,6 +536,36 @@ impl WFStream {
             info!(run_id, "Run not found");
         }
     }
+}
+
+/// Replay everything that happened to internal workflow state. Useful for 100% deterministic
+/// reproduction of bugs.
+///
+/// Use `CoreWfStarter::enable_wf_state_input_recording` from the integration test utilities to
+/// activate saving the data to disk, and use the `wf_input_replay` example binary to replay.
+#[cfg(feature = "save_wf_inputs")]
+pub async fn replay_wf_state_inputs(mut config: WorkerConfig, inputs: impl Stream<Item = Vec<u8>>) {
+    use crate::worker::build_wf_basics;
+
+    let inputs =
+        inputs.map(|bytes| rmp_serde::from_slice(&bytes).expect("Can decode wf stream input"));
+    struct LaSink;
+    impl LocalActivityRequestSink for LaSink {
+        fn sink_reqs(&self, _: Vec<LocalActRequest>) -> Vec<LocalActivityResolution> {
+            // TODO: This clearly won't work. Need to record resolutions.
+            vec![]
+        }
+    }
+    let basics = build_wf_basics(
+        &mut config,
+        MetricsContext::no_op(),
+        CancellationToken::new(),
+    );
+    info!("Beginning workflow stream internal state replay");
+    let stream = WFStream::build_internal(inputs, basics, LaSink);
+    stream
+        .for_each(|o| async move { trace!("Stream output: {:?}", o) })
+        .await;
 }
 
 /// All possible inputs to the [WFStream]

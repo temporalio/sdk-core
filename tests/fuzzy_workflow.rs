@@ -1,11 +1,10 @@
 use futures_util::{sink, stream::FuturesUnordered, FutureExt, StreamExt};
 use rand::{prelude::Distribution, rngs::SmallRng, Rng, SeedableRng};
-use std::{future, sync::mpsc::sync_channel, time::Duration};
+use std::{future, time::Duration};
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{ActContext, ActivityOptions, LocalActivityOptions, WfContext, WorkflowResult};
 use temporal_sdk_core_protos::coresdk::{AsJsonPayloadExt, FromJsonPayloadExt, IntoPayloadsExt};
-use temporal_sdk_core_test_utils::{wf_input_saver::stream_to_file, CoreWfStarter};
-use tokio::sync::mpsc::unbounded_channel;
+use temporal_sdk_core_test_utils::CoreWfStarter;
 use tokio_util::sync::CancellationToken;
 
 const FUZZY_SIG: &str = "fuzzy_sig";
@@ -62,7 +61,10 @@ async fn fuzzy_wf_def(ctx: WfContext) -> WorkflowResult<()> {
                     })
                     .map(|_| ())
                     .boxed(),
-                FuzzyWfAction::Shutdown => future::ready(done_setter.cancel()).boxed(),
+                FuzzyWfAction::Shutdown => {
+                    done_setter.cancel();
+                    future::ready(()).boxed()
+                }
             };
             fut
         })
@@ -76,12 +78,11 @@ async fn fuzzy_workflow() {
     let num_workflows = 200;
     let wf_name = "fuzzy_wf";
     let mut starter = CoreWfStarter::new("fuzzy_workflow");
-    let (ser_tx, ser_rx) = unbounded_channel();
-    tokio::spawn(async move {
-        stream_to_file(ser_rx).await.unwrap();
-    });
-    starter.worker_config.wf_state_inputs = Some(ser_tx);
-    starter.max_wft(25).max_cached_workflows(25).max_at(25);
+    starter
+        .max_wft(25)
+        .max_cached_workflows(25)
+        .max_at(25)
+        .enable_wf_state_input_recording();
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), fuzzy_wf_def);
     worker.register_activity("echo_activity", echo);

@@ -2,7 +2,7 @@ use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 
 /// Defines per-worker configuration options
-#[derive(Debug, Clone, derive_builder::Builder)]
+#[derive(Debug, Clone, derive_builder::Builder, serde::Serialize, serde::Deserialize)]
 #[builder(setter(into), build_fn(validate = "Self::validate"))]
 #[non_exhaustive]
 pub struct WorkerConfig {
@@ -116,6 +116,7 @@ pub struct WorkerConfig {
     /// instance of every input to workflow state in order. This is for testing purposes, SDK
     /// implementations never need to care about it.
     #[builder(default)]
+    #[serde(skip)]
     pub wf_state_inputs: Option<UnboundedSender<Vec<u8>>>,
 }
 
