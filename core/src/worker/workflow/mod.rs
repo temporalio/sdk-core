@@ -124,6 +124,7 @@ pub(crate) struct WorkflowBasics {
     pub task_queue: String,
     pub ignore_evicts_on_shutdown: bool,
     pub fetching_concurrency: usize,
+    #[cfg(feature = "save_wf_inputs")]
     pub wf_state_inputs: Option<UnboundedSender<Vec<u8>>>,
 }
 
@@ -631,18 +632,29 @@ impl ActivationOrAuto {
 }
 
 /// A processed WFT which has been validated and had a history update extracted from it
-#[derive(derive_more::DebugCustom, serde::Serialize, serde::Deserialize)]
+#[derive(derive_more::DebugCustom)]
+#[cfg_attr(
+    feature = "save_wf_inputs",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 #[debug(fmt = "PermittedWft({:?})", work)]
 pub(crate) struct PermittedWFT {
     work: PreparedWFT,
     // TODO: Don't love the options - better idea?
     /// Expected to always be present in normal operation - optional for serialization capability
-    #[serde(skip)]
+    #[cfg_attr(feature = "save_wf_inputs", serde(skip))]
     permit: Option<OwnedMeteredSemPermit>,
-    #[serde(skip, default = "HistoryPaginator::fake_deserialized")]
+    #[cfg_attr(
+        feature = "save_wf_inputs",
+        serde(skip, default = "HistoryPaginator::fake_deserialized")
+    )]
     paginator: HistoryPaginator,
 }
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug)]
+#[cfg_attr(
+    feature = "save_wf_inputs",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 struct PreparedWFT {
     task_token: TaskToken,
     attempt: u32,
@@ -779,24 +791,40 @@ pub(crate) struct WorkflowStateInfo {
     pub outstanding_wft: usize,
 }
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug)]
+#[cfg_attr(
+    feature = "save_wf_inputs",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 struct WFActCompleteMsg {
     completion: ValidatedCompletion,
-    #[serde(skip)] // TODO: Eliminate option if possible
+    #[cfg_attr(feature = "save_wf_inputs", serde(skip))] // TODO: Eliminate option if possible
     response_tx: Option<oneshot::Sender<ActivationCompleteResult>>,
 }
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug)]
+#[cfg_attr(
+    feature = "save_wf_inputs",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 struct LocalResolutionMsg {
     run_id: String,
     res: LocalResolution,
 }
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug)]
+#[cfg_attr(
+    feature = "save_wf_inputs",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 struct PostActivationMsg {
     run_id: String,
     wft_report_status: WFTReportStatus,
     wft_from_complete: Option<(PreparedWFT, HistoryPaginator)>,
 }
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(
+    feature = "save_wf_inputs",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 struct RequestEvictMsg {
     run_id: String,
     message: String,
@@ -833,7 +861,11 @@ enum ActivationCompleteOutcome {
     WFTFailedDontReport,
 }
 /// Did we report, or not, completion of a WFT to server?
-#[derive(Debug, Copy, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Copy, Clone)]
+#[cfg_attr(
+    feature = "save_wf_inputs",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 enum WFTReportStatus {
     Reported,
     /// The WFT completion was not reported when finishing the activation, because there's still
@@ -896,7 +928,11 @@ fn validate_completion(
     }
 }
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug)]
+#[cfg_attr(
+    feature = "save_wf_inputs",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 #[allow(clippy::large_enum_variant)]
 enum ValidatedCompletion {
     Success {
@@ -924,7 +960,11 @@ pub struct OutgoingServerCommands {
     pub replaying: bool,
 }
 
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Debug)]
+#[cfg_attr(
+    feature = "save_wf_inputs",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub(crate) enum LocalResolution {
     LocalActivity(LocalActivityResolution),
 }
@@ -944,7 +984,11 @@ pub struct EmptyWorkflowCommandErr;
 
 /// [DrivenWorkflow]s respond with these when called, to indicate what they want to do next.
 /// EX: Create a new timer, complete the workflow, etc.
-#[derive(Debug, derive_more::From, derive_more::Display, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, derive_more::From, derive_more::Display)]
+#[cfg_attr(
+    feature = "save_wf_inputs",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 #[allow(clippy::large_enum_variant)]
 pub enum WFCommand {
     /// Returned when we need to wait for the lang sdk to send us something
@@ -1090,23 +1134,13 @@ pub(crate) trait LocalActivityRequestSink: Send + Sync + 'static {
     fn sink_reqs(&self, reqs: Vec<LocalActRequest>) -> Vec<LocalActivityResolution>;
 }
 
+#[derive(derive_more::Constructor)]
 pub(super) struct LAReqSink {
     lam: Arc<LocalActivityManager>,
     /// If we're recording WF inputs, we also need to store immediate resolutions so they're
     /// available on replay.
-    #[cfg(feature = "save_wf_inputs")]
-    recorder: UnboundedSender<Vec<u8>>,
-}
-
-impl LAReqSink {
-    #[cfg(not(feature = "save_wf_inputs"))]
-    pub(crate) fn new(lam: Arc<LocalActivityManager>) -> Self {
-        Self { lam }
-    }
-    #[cfg(feature = "save_wf_inputs")]
-    pub(crate) fn new(lam: Arc<LocalActivityManager>, recorder: UnboundedSender<Vec<u8>>) -> Self {
-        Self { lam, recorder }
-    }
+    #[allow(dead_code)] // sometimes appears unused due to feature flagging
+    recorder: Option<UnboundedSender<Vec<u8>>>,
 }
 
 impl LocalActivityRequestSink for LAReqSink {

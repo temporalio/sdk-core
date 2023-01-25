@@ -104,11 +104,12 @@ impl LocalActivityRequestSink for ReadingFromFileLaReqSink {
 
 impl LAReqSink {
     pub(crate) fn write_req(&self, res: &Vec<LocalActivityResolution>) {
-        self.recorder
-            .send(
+        if let Some(r) = self.recorder.as_ref() {
+            r.send(
                 rmp_serde::to_vec(&StoredWFStateInputSer::ImmediateLASinkResolutions(res))
                     .expect("LA immediate resolutions are serializable"),
             )
             .expect("WF input serialization channel is available for immediate LA result storage");
+        }
     }
 }

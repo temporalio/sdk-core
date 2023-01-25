@@ -1,5 +1,6 @@
 #[cfg(feature = "save_wf_inputs")]
 mod saved_wf_inputs;
+#[cfg(feature = "save_wf_inputs")]
 mod tonic_status_serde;
 
 #[cfg(feature = "save_wf_inputs")]
@@ -44,6 +45,7 @@ pub(super) struct WFStream {
 
     metrics: MetricsContext,
 
+    #[cfg(feature = "save_wf_inputs")]
     wf_state_inputs: Option<UnboundedSender<Vec<u8>>>,
 }
 impl WFStream {
@@ -106,6 +108,8 @@ impl WFStream {
             metrics: basics.metrics,
             runs_needing_fetching: Default::default(),
             history_fetch_refcounter: Arc::new(HistfetchRC {}),
+
+            #[cfg(feature = "save_wf_inputs")]
             wf_state_inputs: basics.wf_state_inputs,
         };
         all_inputs
@@ -551,7 +555,11 @@ impl WFStream {
 }
 
 /// All possible inputs to the [WFStream]
-#[derive(derive_more::From, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(derive_more::From, Debug)]
+#[cfg_attr(
+    feature = "save_wf_inputs",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 enum WFStreamInput {
     NewWft(PermittedWFT),
     Local(LocalInput),
@@ -559,20 +567,33 @@ enum WFStreamInput {
     PollerDead,
     /// The stream given to us which represents the poller (or a mock) encountered a non-retryable
     /// error while polling
-    PollerError(#[serde(with = "tonic_status_serde::SerdeStatus")] tonic::Status),
+    PollerError(
+        #[cfg_attr(
+            feature = "save_wf_inputs",
+            serde(with = "tonic_status_serde::SerdeStatus")
+        )]
+        tonic::Status,
+    ),
     FailedFetch {
         run_id: String,
-        #[serde(with = "tonic_status_serde::SerdeStatus")]
+        #[cfg_attr(
+            feature = "save_wf_inputs",
+            serde(with = "tonic_status_serde::SerdeStatus")
+        )]
         err: tonic::Status,
     },
 }
 
 /// A non-poller-received input to the [WFStream]
-#[derive(derive_more::DebugCustom, serde::Serialize, serde::Deserialize)]
+#[derive(derive_more::DebugCustom)]
+#[cfg_attr(
+    feature = "save_wf_inputs",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 #[debug(fmt = "LocalInput {{ {:?} }}", input)]
 pub(super) struct LocalInput {
     pub input: LocalInputs,
-    #[serde(skip, default = "Span::current")]
+    #[cfg_attr(feature = "save_wf_inputs", serde(skip, default = "Span::current"))]
     pub span: Span,
 }
 impl From<HeartbeatTimeoutMsg> for LocalInput {
@@ -585,7 +606,11 @@ impl From<HeartbeatTimeoutMsg> for LocalInput {
 }
 /// Everything that _isn't_ a poll which may affect workflow state. Always higher priority than
 /// new polls.
-#[derive(Debug, derive_more::From, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, derive_more::From)]
+#[cfg_attr(
+    feature = "save_wf_inputs",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub(super) enum LocalInputs {
     Completion(WFActCompleteMsg),
     FetchedPageCompletion {
@@ -596,7 +621,7 @@ pub(super) enum LocalInputs {
     PostActivation(PostActivationMsg),
     RequestEviction(RequestEvictMsg),
     HeartbeatTimeout(String),
-    #[serde(skip)]
+    #[cfg_attr(feature = "save_wf_inputs", serde(skip))]
     GetStateInfo(GetStateInfoMsg),
 }
 impl LocalInputs {

@@ -20,8 +20,6 @@ async fn main() -> Result<(), anyhow::Error> {
         .await
         .context("while reading replay data file")?;
 
-    dbg!(&replay_dat.config);
-
     replay_wf_state_inputs(
         replay_dat.config,
         replay_dat

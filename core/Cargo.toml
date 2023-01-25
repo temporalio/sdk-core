@@ -128,3 +128,4 @@ path = "../tests/runner.rs"
 [[example]]
 name = "wf_input_replay"
 path = "../tests/wf_input_replay.rs"
+required-features = ["save_wf_inputs"]

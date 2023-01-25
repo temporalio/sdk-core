@@ -54,7 +54,11 @@ pub(crate) struct LocalInFlightActInfo {
     _permit: OwnedMeteredSemPermit,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(
+    feature = "save_wf_inputs",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub(crate) enum LocalActivityExecutionResult {
     Completed(Success),
     Failed(ActFail),
@@ -70,7 +74,11 @@ impl LocalActivityExecutionResult {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone)]
+#[cfg_attr(
+    feature = "save_wf_inputs",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub(crate) struct LocalActivityResolution {
     pub seq: u32,
     pub result: LocalActivityExecutionResult,

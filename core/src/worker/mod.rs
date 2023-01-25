@@ -266,16 +266,7 @@ impl Worker {
         if at_task_mgr.is_none() {
             info!("Activity polling is disabled for this worker");
         }
-        #[cfg(feature = "save_wf_inputs")]
-        let la_sink = LAReqSink::new(
-            lam_clone,
-            config
-                .wf_state_inputs
-                .clone()
-                .expect("WF state inputs channel must exist when feature is enabled"),
-        );
-        #[cfg(not(feature = "save_wf_inputs"))]
-        let la_sink = LAReqSink::new(lam_clone);
+        let la_sink = LAReqSink::new(lam_clone, config.wf_state_inputs.clone());
         Self {
             wf_client: client.clone(),
             workflows: Workflows::new(
@@ -539,6 +530,7 @@ fn build_wf_basics(
         task_queue: config.task_queue.clone(),
         ignore_evicts_on_shutdown: config.ignore_evicts_on_shutdown,
         fetching_concurrency: config.fetching_concurrency,
+        #[cfg(feature = "save_wf_inputs")]
         wf_state_inputs: config.wf_state_inputs.take(),
     }
 }
