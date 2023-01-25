@@ -1090,8 +1090,38 @@ pub(crate) trait LocalActivityRequestSink: Send + Sync + 'static {
     fn sink_reqs(&self, reqs: Vec<LocalActRequest>) -> Vec<LocalActivityResolution>;
 }
 
-impl LocalActivityRequestSink for Arc<LocalActivityManager> {
+pub(super) struct LAReqSink {
+    lam: Arc<LocalActivityManager>,
+    /// If we're recording WF inputs, we also need to store immediate resolutions so they're
+    /// available on replay.
+    #[cfg(feature = "save_wf_inputs")]
+    recorder: UnboundedSender<Vec<u8>>,
+}
+
+impl LAReqSink {
+    #[cfg(not(feature = "save_wf_inputs"))]
+    pub(crate) fn new(lam: Arc<LocalActivityManager>) -> Self {
+        Self { lam }
+    }
+    #[cfg(feature = "save_wf_inputs")]
+    pub(crate) fn new(lam: Arc<LocalActivityManager>, recorder: UnboundedSender<Vec<u8>>) -> Self {
+        Self { lam, recorder }
+    }
+}
+
+impl LocalActivityRequestSink for LAReqSink {
     fn sink_reqs(&self, reqs: Vec<LocalActRequest>) -> Vec<LocalActivityResolution> {
-        self.enqueue(reqs)
+        if reqs.is_empty() {
+            return vec![];
+        }
+
+        let res = self.lam.enqueue(reqs);
+
+        // We always save when there are any reqs, even if the response might be empty, so that
+        // calls/responses are 1:1
+        #[cfg(feature = "save_wf_inputs")]
+        self.write_req(&res);
+
+        res
     }
 }

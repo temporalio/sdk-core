@@ -1,4 +1,9 @@
+#[cfg(feature = "save_wf_inputs")]
+mod saved_wf_inputs;
 mod tonic_status_serde;
+
+#[cfg(feature = "save_wf_inputs")]
+pub use saved_wf_inputs::replay_wf_state_inputs;
 
 use crate::{
     abstractions::dbg_panic,
@@ -20,11 +25,9 @@ use temporal_sdk_core_protos::{
 use tokio_util::sync::CancellationToken;
 use tracing::{Level, Span};
 
-#[cfg(feature = "save_wf_inputs")]
-use temporal_sdk_core_api::worker::WorkerConfig;
-
-/// This struct holds all the state needed for tracking what workflow runs are currently cached
-/// and how WFTs should be dispatched to them, etc.
+/// This struct holds all the state needed for tracking the state of currently cached workflow runs
+/// and directs all actions which affect them. It is ultimately the top-level arbiter of nearly
+/// everything important relating to workflow state.
 ///
 /// See [WFStream::build] for more
 pub(super) struct WFStream {
@@ -61,7 +64,11 @@ impl WFStream {
     /// all workflow state can be represented purely via the stream of inputs, plus the
     /// calls/retvals from the LA request sink, which is the last unfortunate bit of impurity in
     /// the design. Eliminating it would be nice, so that all inputs come from the passed-in streams
-    /// and all outputs flow from the return stream.
+    /// and all outputs flow from the return stream, but it's difficult to do so since it would
+    /// require "pausing" in-progress changes to a run while sending & waiting for response from
+    /// local activity management. Likely the best option would be to move the pure state info
+    /// needed to determine immediate responses into LA state machines themselves (out of the LA
+    /// manager), which is a quite substantial change.
     pub(super) fn build(
         basics: WorkflowBasics,
         wft_stream: impl Stream<Item = Result<WFTExtractorOutput, tonic::Status>> + Send + 'static,
@@ -107,10 +114,7 @@ impl WFStream {
                 let _span_g = span.enter();
 
                 #[cfg(feature = "save_wf_inputs")]
-                if let Some(c) = state.wf_state_inputs.as_ref() {
-                    c.send(rmp_serde::to_vec(&action).unwrap())
-                        .expect("Serialized inputs channel not dropped");
-                }
+                let maybe_write = state.prep_input(&action);
 
                 let mut activations = vec![];
                 let maybe_act = match action {
@@ -177,6 +181,14 @@ impl WFStream {
 
                 activations.extend(maybe_act.into_iter());
                 activations.extend(state.reconcile_buffered());
+
+                // Always flush *after* actually handling the input, as this allows LA sink
+                // responses to be recorded before the input, so they can be read and buffered to be
+                // replayed during the handling of the input itself.
+                #[cfg(feature = "save_wf_inputs")]
+                if let Some(write) = maybe_write {
+                    state.flush_write(write);
+                }
 
                 if state.shutdown_done() {
                     info!("Workflow shutdown is done");
@@ -536,36 +548,6 @@ impl WFStream {
             info!(run_id, "Run not found");
         }
     }
-}
-
-/// Replay everything that happened to internal workflow state. Useful for 100% deterministic
-/// reproduction of bugs.
-///
-/// Use `CoreWfStarter::enable_wf_state_input_recording` from the integration test utilities to
-/// activate saving the data to disk, and use the `wf_input_replay` example binary to replay.
-#[cfg(feature = "save_wf_inputs")]
-pub async fn replay_wf_state_inputs(mut config: WorkerConfig, inputs: impl Stream<Item = Vec<u8>>) {
-    use crate::worker::build_wf_basics;
-
-    let inputs =
-        inputs.map(|bytes| rmp_serde::from_slice(&bytes).expect("Can decode wf stream input"));
-    struct LaSink;
-    impl LocalActivityRequestSink for LaSink {
-        fn sink_reqs(&self, _: Vec<LocalActRequest>) -> Vec<LocalActivityResolution> {
-            // TODO: This clearly won't work. Need to record resolutions.
-            vec![]
-        }
-    }
-    let basics = build_wf_basics(
-        &mut config,
-        MetricsContext::no_op(),
-        CancellationToken::new(),
-    );
-    info!("Beginning workflow stream internal state replay");
-    let stream = WFStream::build_internal(inputs, basics, LaSink);
-    stream
-        .for_each(|o| async move { trace!("Stream output: {:?}", o) })
-        .await;
 }
 
 /// All possible inputs to the [WFStream]

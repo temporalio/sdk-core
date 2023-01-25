@@ -13,6 +13,9 @@ categories = ["development-tools"]
 [lib]
 
 [features]
+# Do not enable this feature when building production SDKs. If we ever want a user in the field to
+# record WF input data, we can build them a custom SDK or they can build - it adds significant extra
+# code size in the form of [de]serializers.
 save_wf_inputs = ["rmp-serde"]
 
 [dependencies]

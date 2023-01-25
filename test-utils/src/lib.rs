@@ -290,6 +290,7 @@ impl CoreWfStarter {
         self
     }
 
+    // TODO: Not respected by tests which use worker directly to submit (most of them)
     pub fn wft_timeout(&mut self, timeout: Duration) -> &mut Self {
         self.wft_timeout = Some(timeout);
         self

@@ -318,9 +318,6 @@ impl LocalActivityManager {
                 }
             }
         }
-        if !immediate_resolutions.is_empty() {
-            warn!("Immediate res: {:?}", &immediate_resolutions);
-        }
         immediate_resolutions
     }
 

@@ -314,11 +314,13 @@ async fn cancel_after_act_starts(
     cancel_type: ActivityCancellationType,
 ) {
     let wf_name = format!(
-        "cancel_after_act_starts_timer_{:?}_{:?}",
+        "cancel_after_act_starts_{:?}_{:?}",
         cancel_on_backoff, cancel_type
     );
     let mut starter = CoreWfStarter::new(&wf_name);
-    starter.wft_timeout(Duration::from_secs(1));
+    starter
+        .wft_timeout(Duration::from_secs(1))
+        .enable_wf_state_input_recording();
     let mut worker = starter.worker().await;
     let bo_dur = cancel_on_backoff.unwrap_or_else(|| Duration::from_secs(1));
     worker.register_wf(&wf_name, move |ctx: WfContext| async move {
@@ -393,6 +395,7 @@ async fn cancel_after_act_starts(
         }))
         .await
         .unwrap();
+    starter.shutdown().await;
 }
 
 #[rstest::rstest]
@@ -626,7 +629,7 @@ async fn repro_nondeterminism_with_timer_bug() {
             _ = r1 => {
                 t1.cancel(&ctx);
             },
-        };
+        }
         ctx.timer(Duration::from_secs(1)).await;
         Ok(().into())
     });

@@ -28,7 +28,7 @@ use crate::{
     worker::{
         activities::{DispatchOrTimeoutLA, LACompleteAction, LocalActivityManager},
         client::WorkerClient,
-        workflow::{LocalResolution, WorkflowBasics, Workflows},
+        workflow::{LAReqSink, LocalResolution, WorkflowBasics, Workflows},
     },
     ActivityHeartbeat, CompleteActivityError, PollActivityError, PollWfError, WorkerTrait,
 };
@@ -266,6 +266,16 @@ impl Worker {
         if at_task_mgr.is_none() {
             info!("Activity polling is disabled for this worker");
         }
+        #[cfg(feature = "save_wf_inputs")]
+        let la_sink = LAReqSink::new(
+            lam_clone,
+            config
+                .wf_state_inputs
+                .clone()
+                .expect("WF state inputs channel must exist when feature is enabled"),
+        );
+        #[cfg(not(feature = "save_wf_inputs"))]
+        let la_sink = LAReqSink::new(lam_clone);
         Self {
             wf_client: client.clone(),
             workflows: Workflows::new(
@@ -284,7 +294,7 @@ impl Worker {
                 }),
                 client,
                 wft_stream,
-                lam_clone,
+                la_sink,
                 hb_rx,
                 at_task_mgr
                     .as_ref()
