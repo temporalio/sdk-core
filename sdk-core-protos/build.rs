@@ -1,4 +1,3 @@
-use prost_wkt_build::{FileDescriptorSet, Message};
 use std::{env, path::PathBuf};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -77,11 +76,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .type_attribute("coresdk.Task.variant", "#[derive(::derive_more::From)]")
         // All external data is useful to be able to JSON serialize, so it can render in web UI
-        // TODO: Deal with double-annotate
-        // .type_attribute(
-        //     ".coresdk.external_data",
-        //     "#[derive(::serde::Serialize, ::serde::Deserialize)]",
-        // )
+        .type_attribute(
+            ".coresdk.external_data",
+            "#[cfg_attr(not(feature = \"serde_serialize\"), derive(::serde::Serialize, ::serde::Deserialize))]",
+        )
         .type_attribute(
             ".",
             "#[cfg_attr(feature = \"serde_serialize\", derive(::serde::Serialize, ::serde::Deserialize))]",
@@ -131,9 +129,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ],
         )?;
 
-    let descriptor_bytes = std::fs::read(descriptor_file)?;
-    let descriptor = FileDescriptorSet::decode(&descriptor_bytes[..])?;
-    prost_wkt_build::add_serde(out, descriptor);
+    #[cfg(feature = "serde_serialize")]
+    {
+        use prost_wkt_build::{FileDescriptorSet, Message};
+
+        let descriptor_bytes = std::fs::read(descriptor_file)?;
+        let descriptor = FileDescriptorSet::decode(&descriptor_bytes[..])?;
+        prost_wkt_build::add_serde(out, descriptor);
+    }
 
     Ok(())
 }

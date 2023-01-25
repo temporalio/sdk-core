@@ -16,7 +16,7 @@ categories = ["development-tools"]
 # Do not enable this feature when building production SDKs. If we ever want a user in the field to
 # record WF input data, we can build them a custom SDK or they can build - it adds significant extra
 # code size in the form of [de]serializers.
-save_wf_inputs = ["rmp-serde"]
+save_wf_inputs = ["rmp-serde", "temporal-sdk-core-protos/serde_serialize"]
 
 [dependencies]
 anyhow = "1.0"
@@ -79,8 +79,7 @@ version = "0.1"
 [dependencies.temporal-sdk-core-protos]
 path = "../sdk-core-protos"
 version = "0.1"
-# TODO: Make own feature for serde
-features = ["history_builders", "serde_serialize"]
+features = ["history_builders"]
 
 [dependencies.temporal-client]
 path = "../client"

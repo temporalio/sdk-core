@@ -79,6 +79,17 @@ impl Debug for OwnedMeteredSemPermit {
         self.inner.fmt(f)
     }
 }
+#[cfg(feature = "save_wf_inputs")]
+impl OwnedMeteredSemPermit {
+    pub(crate) fn fake_deserialized() -> Self {
+        let sem = Arc::new(Semaphore::new(1));
+        let inner = sem.try_acquire_owned().unwrap();
+        Self {
+            inner,
+            record_fn: Box::new(|| {}),
+        }
+    }
+}
 
 /// From the input stream, create a new stream which only pulls from the input stream when allowed.
 /// When allowed is determined by the passed in `proceeder` emitting an item. The input stream is

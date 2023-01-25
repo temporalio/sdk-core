@@ -640,10 +640,11 @@ impl ActivationOrAuto {
 #[debug(fmt = "PermittedWft({:?})", work)]
 pub(crate) struct PermittedWFT {
     work: PreparedWFT,
-    // TODO: Don't love the options - better idea?
-    /// Expected to always be present in normal operation - optional for serialization capability
-    #[cfg_attr(feature = "save_wf_inputs", serde(skip))]
-    permit: Option<OwnedMeteredSemPermit>,
+    #[cfg_attr(
+        feature = "save_wf_inputs",
+        serde(skip, default = "OwnedMeteredSemPermit::fake_deserialized")
+    )]
+    permit: OwnedMeteredSemPermit,
     #[cfg_attr(
         feature = "save_wf_inputs",
         serde(skip, default = "HistoryPaginator::fake_deserialized")
@@ -683,8 +684,7 @@ pub(crate) struct OutstandingTask {
     pub start_time: Instant,
     /// The WFT permit owned by this task, ensures we don't exceed max concurrent WFT, and makes
     /// sure the permit is automatically freed when we delete the task.
-    // TODO: How make not option for serialize mode?
-    pub permit: Option<OwnedMeteredSemPermit>,
+    pub permit: OwnedMeteredSemPermit,
 }
 
 impl OutstandingTask {
