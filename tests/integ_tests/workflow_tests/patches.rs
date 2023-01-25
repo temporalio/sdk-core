@@ -2,7 +2,7 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
-use temporal_client::WorkflowOptions;
+
 use temporal_sdk::{WfContext, WorkflowResult};
 use temporal_sdk_core_test_utils::CoreWfStarter;
 
@@ -30,15 +30,7 @@ async fn writes_change_markers() {
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), changes_wf);
 
-    worker
-        .submit_wf(
-            wf_name.to_owned(),
-            wf_name.to_owned(),
-            vec![],
-            WorkflowOptions::default(),
-        )
-        .await
-        .unwrap();
+    starter.start_with_worker(wf_name, &mut worker).await;
     worker.run_until_done().await.unwrap();
 }
 
@@ -70,15 +62,7 @@ async fn can_add_change_markers() {
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), no_change_then_change_wf);
 
-    worker
-        .submit_wf(
-            wf_name.to_owned(),
-            wf_name.to_owned(),
-            vec![],
-            WorkflowOptions::default(),
-        )
-        .await
-        .unwrap();
+    starter.start_with_worker(wf_name, &mut worker).await;
     worker.run_until_done().await.unwrap();
 }
 
@@ -100,14 +84,6 @@ async fn replaying_with_patch_marker() {
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), replay_with_change_marker_wf);
 
-    worker
-        .submit_wf(
-            wf_name.to_owned(),
-            wf_name.to_owned(),
-            vec![],
-            WorkflowOptions::default(),
-        )
-        .await
-        .unwrap();
+    starter.start_with_worker(wf_name, &mut worker).await;
     worker.run_until_done().await.unwrap();
 }

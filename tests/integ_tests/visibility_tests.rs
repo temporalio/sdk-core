@@ -2,7 +2,7 @@ use assert_matches::assert_matches;
 use std::{sync::Arc, time::Duration};
 use temporal_client::{
     ListClosedFilters, ListOpenFilters, Namespace, RegisterNamespaceOptions, StartTimeFilter,
-    WorkflowClientTrait, WorkflowExecutionFilter, WorkflowOptions,
+    WorkflowClientTrait, WorkflowExecutionFilter,
 };
 use temporal_sdk_core_protos::coresdk::workflow_activation::{
     workflow_activation_job, WorkflowActivationJob,
@@ -23,9 +23,7 @@ async fn client_list_open_closed_workflow_executions() {
     let latest = earliest + Duration::from_secs(60);
 
     // start workflow
-    let run_id = starter
-        .start_wf_with_id(wf_name.to_owned(), WorkflowOptions::default())
-        .await;
+    let run_id = starter.start_wf_with_id(wf_name.to_owned()).await;
     let task = core.poll_workflow_activation().await.unwrap();
     assert_matches!(
         task.jobs.as_slice(),

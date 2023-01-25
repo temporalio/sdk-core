@@ -58,8 +58,7 @@ async fn parallel_workflows_same_queue() {
     let num_workflows = 25usize;
 
     let run_ids: Vec<_> = future::join_all(
-        (0..num_workflows)
-            .map(|i| starter.start_wf_with_id(format!("wf-id-{}", i), WorkflowOptions::default())),
+        (0..num_workflows).map(|i| starter.start_wf_with_id(format!("wf-id-{}", i))),
     )
     .await;
 
@@ -435,8 +434,8 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
     wf_starter
         // Test needs eviction on and a short timeout
         .max_cached_workflows(0)
-        .max_wft(1)
-        .wft_timeout(Duration::from_secs(1));
+        .max_wft(1);
+    wf_starter.workflow_options.task_timeout = Some(Duration::from_secs(1));
     let core = wf_starter.get_worker().await;
     let client = wf_starter.get_client().await;
     let task_q = wf_starter.get_task_queue();
@@ -460,7 +459,7 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
         .unwrap();
         wf_task
     };
-    wf_starter.start_wf().await;
+    wf_starter.start_wf_with_id(wf_id.to_string()).await;
 
     // Poll and schedule the activity
     let wf_task = poll_sched_act().await;

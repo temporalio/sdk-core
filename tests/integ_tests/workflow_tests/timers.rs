@@ -1,5 +1,5 @@
 use std::time::Duration;
-use temporal_client::WorkflowOptions;
+
 use temporal_sdk::{WfContext, WorkflowResult};
 use temporal_sdk_core_protos::coresdk::{
     workflow_commands::{CancelTimer, CompleteWorkflowExecution, StartTimer},
@@ -21,15 +21,7 @@ async fn timer_workflow_workflow_driver() {
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), timer_wf);
 
-    worker
-        .submit_wf(
-            wf_name.to_owned(),
-            wf_name.to_owned(),
-            vec![],
-            WorkflowOptions::default(),
-        )
-        .await
-        .unwrap();
+    starter.start_with_worker(wf_name, &mut worker).await;
     worker.run_until_done().await.unwrap();
 }
 
@@ -118,14 +110,6 @@ async fn parallel_timers() {
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), parallel_timer_wf);
 
-    worker
-        .submit_wf(
-            wf_name.to_owned(),
-            wf_name.to_owned(),
-            vec![],
-            WorkflowOptions::default(),
-        )
-        .await
-        .unwrap();
+    starter.start_with_worker(wf_name, &mut worker).await;
     worker.run_until_done().await.unwrap();
 }

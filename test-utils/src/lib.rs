@@ -150,7 +150,8 @@ pub struct CoreWfStarter {
     /// Used for both the task queue and workflow id
     task_queue_name: String,
     pub worker_config: WorkerConfig,
-    wft_timeout: Option<Duration>,
+    /// Options to use when starting workflow(s)
+    pub workflow_options: WorkflowOptions,
     initted_worker: OnceCell<InitializedWorker>,
 }
 struct InitializedWorker {
@@ -160,14 +161,10 @@ struct InitializedWorker {
 
 impl CoreWfStarter {
     pub fn new(test_name: &str) -> Self {
+        init_integ_telem();
         let rand_bytes: Vec<u8> = rand::thread_rng().sample_iter(&Standard).take(6).collect();
         let task_q_salt = BASE64_STANDARD.encode(rand_bytes);
         let task_queue = format!("{}_{}", test_name, task_q_salt);
-        Self::new_tq_name(&task_queue)
-    }
-
-    pub fn new_tq_name(task_queue: &str) -> Self {
-        init_integ_telem();
         Self {
             task_queue_name: task_queue.to_owned(),
             worker_config: WorkerConfigBuilder::default()
@@ -177,8 +174,8 @@ impl CoreWfStarter {
                 .max_cached_workflows(1000_usize)
                 .build()
                 .unwrap(),
-            wft_timeout: None,
             initted_worker: OnceCell::new(),
+            workflow_options: Default::default(),
         }
     }
 
@@ -205,13 +202,27 @@ impl CoreWfStarter {
     }
 
     /// Start the workflow defined by the builder and return run id
-    pub async fn start_wf(&self) -> String {
-        self.start_wf_with_id(self.task_queue_name.clone(), WorkflowOptions::default())
-            .await
+    pub async fn start_wf(&mut self) -> String {
+        self.start_wf_with_id(self.task_queue_name.clone()).await
     }
 
-    pub async fn start_wf_with_id(&self, workflow_id: String, mut opts: WorkflowOptions) -> String {
-        opts.task_timeout = opts.task_timeout.or(self.wft_timeout);
+    pub async fn start_with_worker(
+        &self,
+        wf_name: impl Into<String>,
+        worker: &mut TestWorker,
+    ) -> String {
+        worker
+            .submit_wf(
+                self.task_queue_name.clone(),
+                wf_name.into(),
+                vec![],
+                self.workflow_options.clone(),
+            )
+            .await
+            .unwrap()
+    }
+
+    pub async fn start_wf_with_id(&self, workflow_id: String) -> String {
         self.initted_worker
             .get()
             .expect(
@@ -225,7 +236,7 @@ impl CoreWfStarter {
                 workflow_id,
                 self.task_queue_name.clone(),
                 None,
-                opts,
+                self.workflow_options.clone(),
             )
             .await
             .unwrap()
@@ -287,12 +298,6 @@ impl CoreWfStarter {
 
     pub fn max_at_polls(&mut self, max: usize) -> &mut Self {
         self.worker_config.max_concurrent_at_polls = max;
-        self
-    }
-
-    // TODO: Not respected by tests which use worker directly to submit (most of them)
-    pub fn wft_timeout(&mut self, timeout: Duration) -> &mut Self {
-        self.wft_timeout = Some(timeout);
         self
     }
 

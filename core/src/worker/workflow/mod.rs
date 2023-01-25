@@ -798,7 +798,7 @@ pub(crate) struct WorkflowStateInfo {
 )]
 struct WFActCompleteMsg {
     completion: ValidatedCompletion,
-    #[cfg_attr(feature = "save_wf_inputs", serde(skip))] // TODO: Eliminate option if possible
+    #[cfg_attr(feature = "save_wf_inputs", serde(skip))]
     response_tx: Option<oneshot::Sender<ActivationCompleteResult>>,
 }
 #[derive(Debug)]
@@ -1149,6 +1149,7 @@ impl LocalActivityRequestSink for LAReqSink {
             return vec![];
         }
 
+        #[allow(clippy::let_and_return)] // When feature is off clippy doesn't like this
         let res = self.lam.enqueue(reqs);
 
         // We always save when there are any reqs, even if the response might be empty, so that

@@ -2,7 +2,7 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
     time::Duration,
 };
-use temporal_client::WorkflowOptions;
+
 use temporal_sdk::{ActivityOptions, WfContext, WorkflowResult};
 use temporal_sdk_core_test_utils::CoreWfStarter;
 
@@ -39,15 +39,7 @@ async fn test_determinism_error_then_recovers() {
     let mut worker = starter.worker().await;
 
     worker.register_wf(wf_name.to_owned(), timer_wf_nondeterministic);
-    worker
-        .submit_wf(
-            wf_name.to_owned(),
-            wf_name.to_owned(),
-            vec![],
-            WorkflowOptions::default(),
-        )
-        .await
-        .unwrap();
+    starter.start_with_worker(wf_name, &mut worker).await;
     worker.run_until_done().await.unwrap();
     // 4 because we still add on the 3rd and final attempt
     assert_eq!(RUN_CT.load(Ordering::Relaxed), 4);

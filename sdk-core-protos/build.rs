@@ -112,7 +112,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ".google.protobuf.Value",
             "::prost_wkt_types::Value"
         )
-        .file_descriptor_set_path(&descriptor_file)
+        .file_descriptor_set_path(#[allow(clippy::needless_borrow)] &descriptor_file)
         .compile(
             &[
                 "../protos/local/temporal/sdk/core/core_interface.proto",

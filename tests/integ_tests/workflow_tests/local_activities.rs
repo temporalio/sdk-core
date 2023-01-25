@@ -49,15 +49,7 @@ async fn one_local_activity() {
     worker.register_wf(wf_name.to_owned(), one_local_activity_wf);
     worker.register_activity("echo_activity", echo);
 
-    worker
-        .submit_wf(
-            wf_name.to_owned(),
-            wf_name.to_owned(),
-            vec![],
-            WorkflowOptions::default(),
-        )
-        .await
-        .unwrap();
+    starter.start_with_worker(wf_name, &mut worker).await;
     worker.run_until_done().await.unwrap();
 }
 
@@ -80,15 +72,7 @@ async fn local_act_concurrent_with_timer() {
     worker.register_wf(wf_name.to_owned(), local_act_concurrent_with_timer_wf);
     worker.register_activity("echo_activity", echo);
 
-    worker
-        .submit_wf(
-            wf_name.to_owned(),
-            wf_name.to_owned(),
-            vec![],
-            WorkflowOptions::default(),
-        )
-        .await
-        .unwrap();
+    starter.start_with_worker(wf_name, &mut worker).await;
     worker.run_until_done().await.unwrap();
 }
 
@@ -112,15 +96,7 @@ async fn local_act_then_timer_then_wait_result() {
     worker.register_wf(wf_name.to_owned(), local_act_then_timer_then_wait);
     worker.register_activity("echo_activity", echo);
 
-    worker
-        .submit_wf(
-            wf_name.to_owned(),
-            wf_name.to_owned(),
-            vec![],
-            WorkflowOptions::default(),
-        )
-        .await
-        .unwrap();
+    starter.start_with_worker(wf_name, &mut worker).await;
     worker.run_until_done().await.unwrap();
 }
 
@@ -128,7 +104,7 @@ async fn local_act_then_timer_then_wait_result() {
 async fn long_running_local_act_with_timer() {
     let wf_name = "long_running_local_act_with_timer";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.wft_timeout(Duration::from_secs(1));
+    starter.workflow_options.task_timeout = Some(Duration::from_secs(1));
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), local_act_then_timer_then_wait);
     worker.register_activity("echo_activity", |_ctx: ActContext, str: String| async {
@@ -136,15 +112,7 @@ async fn long_running_local_act_with_timer() {
         Ok(str)
     });
 
-    worker
-        .submit_wf(
-            wf_name.to_owned(),
-            wf_name.to_owned(),
-            vec![],
-            WorkflowOptions::default(),
-        )
-        .await
-        .unwrap();
+    starter.start_with_worker(wf_name, &mut worker).await;
     worker.run_until_done().await.unwrap();
 }
 
@@ -174,15 +142,7 @@ async fn local_act_fanout() {
     worker.register_wf(wf_name.to_owned(), local_act_fanout_wf);
     worker.register_activity("echo_activity", echo);
 
-    worker
-        .submit_wf(
-            wf_name.to_owned(),
-            wf_name.to_owned(),
-            vec![],
-            WorkflowOptions::default(),
-        )
-        .await
-        .unwrap();
+    starter.start_with_worker(wf_name, &mut worker).await;
     worker.run_until_done().await.unwrap();
 }
 
@@ -271,15 +231,7 @@ async fn cancel_immediate(#[case] cancel_type: ActivityCancellationType) {
         }
     });
 
-    worker
-        .submit_wf(
-            wf_name.to_owned(),
-            wf_name.to_owned(),
-            vec![],
-            WorkflowOptions::default(),
-        )
-        .await
-        .unwrap();
+    starter.start_with_worker(wf_name, &mut worker).await;
     worker
         .run_until_done_intercepted(Some(LACancellerInterceptor {
             token: manual_cancel,
@@ -318,9 +270,7 @@ async fn cancel_after_act_starts(
         cancel_on_backoff, cancel_type
     );
     let mut starter = CoreWfStarter::new(&wf_name);
-    starter
-        .wft_timeout(Duration::from_secs(1))
-        .enable_wf_state_input_recording();
+    starter.workflow_options.task_timeout = Some(Duration::from_secs(1));
     let mut worker = starter.worker().await;
     let bo_dur = cancel_on_backoff.unwrap_or_else(|| Duration::from_secs(1));
     worker.register_wf(&wf_name, move |ctx: WfContext| async move {
@@ -380,15 +330,7 @@ async fn cancel_after_act_starts(
         }
     });
 
-    worker
-        .submit_wf(
-            wf_name.to_owned(),
-            wf_name.to_owned(),
-            vec![],
-            WorkflowOptions::default(),
-        )
-        .await
-        .unwrap();
+    starter.start_with_worker(&wf_name, &mut worker).await;
     worker
         .run_until_done_intercepted(Some(LACancellerInterceptor {
             token: manual_cancel,
@@ -451,15 +393,7 @@ async fn x_to_close_timeout(#[case] is_schedule: bool) {
         Ok(())
     });
 
-    worker
-        .submit_wf(
-            wf_name.to_owned(),
-            wf_name.to_owned(),
-            vec![],
-            WorkflowOptions::default(),
-        )
-        .await
-        .unwrap();
+    starter.start_with_worker(wf_name, &mut worker).await;
     worker.run_until_done().await.unwrap();
 }
 
@@ -503,15 +437,7 @@ async fn schedule_to_close_timeout_across_timer_backoff(#[case] cached: bool) {
         Result::<(), _>::Err(anyhow!("Oh no I failed!"))
     });
 
-    worker
-        .submit_wf(
-            wf_name.to_owned(),
-            wf_name.to_owned(),
-            vec![],
-            WorkflowOptions::default(),
-        )
-        .await
-        .unwrap();
+    starter.start_with_worker(wf_name, &mut worker).await;
     worker.run_until_done().await.unwrap();
     // 3 attempts b/c first backoff is very small, then the next 2 attempts take at least 2 seconds
     // b/c of timer backoff.
@@ -590,15 +516,7 @@ async fn timer_backoff_concurrent_with_non_timer_backoff() {
         Result::<(), _>::Err(anyhow!("Oh no I failed!"))
     });
 
-    worker
-        .submit_wf(
-            wf_name.to_owned(),
-            wf_name.to_owned(),
-            vec![],
-            WorkflowOptions::default(),
-        )
-        .await
-        .unwrap();
+    starter.start_with_worker(wf_name, &mut worker).await;
     worker.run_until_done().await.unwrap();
 }
 
