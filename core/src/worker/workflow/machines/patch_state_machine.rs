@@ -208,8 +208,7 @@ impl TryFrom<HistoryEvent> for PatchMachineEvents {
         match e.get_patch_marker_details() {
             Some((id, _)) => Ok(Self::MarkerRecorded(id)),
             _ => Err(WFMachinesError::Nondeterminism(format!(
-                "Change machine cannot handle this event: {}",
-                e
+                "Change machine cannot handle this event: {e}"
             ))),
         }
     }

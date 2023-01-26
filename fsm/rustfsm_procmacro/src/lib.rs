@@ -346,12 +346,12 @@ impl StateMachineDefinition {
         let name = &self.name;
         let name_str = &self.name.to_string();
 
-        let transition_result_name = Ident::new(&format!("{}Transition", name), name.span());
+        let transition_result_name = Ident::new(&format!("{name}Transition"), name.span());
         let transition_type_alias = quote! {
             type #transition_result_name<Ds, Sm = #name> = TransitionResult<Sm, Ds>;
         };
 
-        let state_enum_name = Ident::new(&format!("{}State", name), name.span());
+        let state_enum_name = Ident::new(&format!("{name}State"), name.span());
         // If user has not defined any shared state, use the unit type.
         let shared_state_type = self
             .shared_state_type
@@ -390,7 +390,7 @@ impl StateMachineDefinition {
 
         // Build the events enum
         let events: HashSet<Variant> = self.transitions.iter().map(|t| t.event.clone()).collect();
-        let events_enum_name = Ident::new(&format!("{}Events", name), name.span());
+        let events_enum_name = Ident::new(&format!("{name}Events"), name.span());
         let events: Vec<_> = events
             .into_iter()
             .map(|v| {
@@ -616,11 +616,11 @@ impl StateMachineDefinition {
                 self.all_states()
                     .iter()
                     .filter(|s| self.is_final_state(s))
-                    .map(|s| format!("{} --> [*]", s)),
+                    .map(|s| format!("{s} --> [*]")),
             )
             .collect();
         let transitions = transitions.join("\n");
-        format!("@startuml\n{}\n@enduml", transitions)
+        format!("@startuml\n{transitions}\n@enduml")
     }
 }
 

@@ -112,7 +112,7 @@ pub async fn local_act_fanout_wf(ctx: WfContext) -> WorkflowResult<()> {
         .map(|i| {
             ctx.local_activity(LocalActivityOptions {
                 activity_type: "echo".to_string(),
-                input: format!("Hi {}", i)
+                input: format!("Hi {i}")
                     .as_json_payload()
                     .expect("serializes fine"),
                 ..Default::default()

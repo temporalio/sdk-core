@@ -172,7 +172,7 @@ impl EphemeralServer {
             .stdout(config.output)
             .spawn()?;
         let target = format!("127.0.0.1:{}", config.port);
-        let target_url = format!("http://{}", target);
+        let target_url = format!("http://{target}");
         let success = Ok(EphemeralServer {
             target,
             has_test_service: config.has_test_service,
@@ -304,9 +304,9 @@ impl EphemeralExe {
                     EphemeralExeVersion::Default {
                         sdk_name,
                         sdk_version,
-                    } => format!("{}-{}-{}{}", artifact_name, sdk_name, sdk_version, out_ext),
+                    } => format!("{artifact_name}-{sdk_name}-{sdk_version}{out_ext}"),
                     EphemeralExeVersion::Fixed(version) => {
-                        format!("{}-{}{}", artifact_name, version, out_ext)
+                        format!("{artifact_name}-{version}{out_ext}")
                     }
                 });
                 debug!(
@@ -340,8 +340,7 @@ impl EphemeralExe {
                 let client = reqwest::Client::new();
                 let info: DownloadInfo = client
                     .get(format!(
-                        "https://temporal.download/{}/{}",
-                        artifact_name, version_name
+                        "https://temporal.download/{artifact_name}/{version_name}"
                     ))
                     .query(&get_info_params)
                     .send()
@@ -371,7 +370,7 @@ impl EphemeralExe {
 fn get_free_port(bind_ip: &str) -> u16 {
     // Can just ask OS to give us a port then close socket. OS's don't give that
     // port back to anyone else anytime soon.
-    std::net::TcpListener::bind(format!("{}:0", bind_ip))
+    std::net::TcpListener::bind(format!("{bind_ip}:0"))
         .unwrap()
         .local_addr()
         .unwrap()

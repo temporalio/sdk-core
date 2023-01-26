@@ -895,7 +895,7 @@ async fn it_can_complete_async() {
             Some(act_res::Status::Completed(activity_result::Success { result })) => result
                 .map(|p| String::from_json_payload(&p).unwrap())
                 .unwrap(),
-            _ => panic!("activity task failed {:?}", activity_resolution),
+            _ => panic!("activity task failed {activity_resolution:?}"),
         };
 
         assert_eq!(&res, async_response);

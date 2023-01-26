@@ -51,6 +51,7 @@ async fn client_list_open_closed_workflow_executions() {
 
     // Complete workflow
     core.complete_execution(&task.run_id).await;
+    core.shutdown().await;
 
     // List above CLOSED workflow
     let start_time_filter = StartTimeFilter {

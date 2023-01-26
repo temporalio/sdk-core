@@ -898,7 +898,7 @@ mod tests {
         let no_underscores: HashSet<_> = impl_list.iter().map(|x| x.replace('_', "")).collect();
         for method in methods {
             if !no_underscores.contains(&method.to_lowercase()) {
-                panic!("RPC method {} is not implemented by raw client", method)
+                panic!("RPC method {method} is not implemented by raw client")
             }
         }
     }

@@ -121,7 +121,7 @@ pub async fn local_act_fanout_wf(ctx: WfContext) -> WorkflowResult<()> {
         .map(|i| {
             ctx.local_activity(LocalActivityOptions {
                 activity_type: "echo_activity".to_string(),
-                input: format!("Hi {}", i)
+                input: format!("Hi {i}")
                     .as_json_payload()
                     .expect("serializes fine"),
                 ..Default::default()
@@ -197,7 +197,7 @@ async fn local_act_retry_timer_backoff() {
 #[case::abandon(ActivityCancellationType::Abandon)]
 #[tokio::test]
 async fn cancel_immediate(#[case] cancel_type: ActivityCancellationType) {
-    let wf_name = format!("cancel_immediate_{:?}", cancel_type);
+    let wf_name = format!("cancel_immediate_{cancel_type:?}");
     let mut starter = CoreWfStarter::new(&wf_name);
     let mut worker = starter.worker().await;
     worker.register_wf(&wf_name, move |ctx: WfContext| async move {
@@ -265,10 +265,7 @@ async fn cancel_after_act_starts(
     )]
     cancel_type: ActivityCancellationType,
 ) {
-    let wf_name = format!(
-        "cancel_after_act_starts_{:?}_{:?}",
-        cancel_on_backoff, cancel_type
-    );
+    let wf_name = format!("cancel_after_act_starts_{cancel_on_backoff:?}_{cancel_type:?}");
     let mut starter = CoreWfStarter::new(&wf_name);
     starter.workflow_options.task_timeout = Some(Duration::from_secs(1));
     let mut worker = starter.worker().await;
@@ -447,10 +444,7 @@ async fn schedule_to_close_timeout_across_timer_backoff(#[case] cached: bool) {
 #[rstest::rstest]
 #[tokio::test]
 async fn eviction_wont_make_local_act_get_dropped(#[values(true, false)] short_wft_timeout: bool) {
-    let wf_name = format!(
-        "eviction_wont_make_local_act_get_dropped_{}",
-        short_wft_timeout
-    );
+    let wf_name = format!("eviction_wont_make_local_act_get_dropped_{short_wft_timeout}");
     let mut starter = CoreWfStarter::new(&wf_name);
     starter.max_cached_workflows(0);
     let mut worker = starter.worker().await;

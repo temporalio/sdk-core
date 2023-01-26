@@ -892,7 +892,7 @@ async fn max_wft_respected() {
     let total_wfs = 100;
     let wf_ids: Vec<_> = (0..total_wfs)
         .into_iter()
-        .map(|i| format!("fake-wf-{}", i))
+        .map(|i| format!("fake-wf-{i}"))
         .collect();
     let hists = wf_ids.iter().map(|wf_id| {
         let hist = canned_histories::single_timer("1");
@@ -1022,7 +1022,7 @@ async fn activity_not_canceled_when_also_completed_repro(hist_batches: &'static 
 async fn lots_of_workflows() {
     let total_wfs = 500;
     let hists = (0..total_wfs).into_iter().map(|i| {
-        let wf_id = format!("fake-wf-{}", i);
+        let wf_id = format!("fake-wf-{i}");
         let hist = canned_histories::single_timer("1");
         FakeWfResponses {
             wf_id,
@@ -1744,7 +1744,7 @@ async fn poll_faster_than_complete_wont_overflow_cache() {
     // Make workflow tasks for 5 different runs
     let tasks: Vec<_> = (1..=5)
         .map(|i| FakeWfResponses {
-            wf_id: format!("wf-{}", i),
+            wf_id: format!("wf-{i}"),
             hist: canned_histories::single_timer("1"),
             response_batches: vec![ResponseType::ToTaskNum(1)],
         })

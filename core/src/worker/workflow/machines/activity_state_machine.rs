@@ -184,8 +184,7 @@ impl TryFrom<HistoryEvent> for ActivityMachineEvents {
                     Self::ActivityTaskCompleted(attrs)
                 } else {
                     return Err(WFMachinesError::Fatal(format!(
-                        "Activity completion attributes were unset: {}",
-                        e
+                        "Activity completion attributes were unset: {e}"
                     )));
                 }
             }
@@ -196,8 +195,7 @@ impl TryFrom<HistoryEvent> for ActivityMachineEvents {
                     Self::ActivityTaskFailed(attrs)
                 } else {
                     return Err(WFMachinesError::Fatal(format!(
-                        "Activity failure attributes were unset: {}",
-                        e
+                        "Activity failure attributes were unset: {e}"
                     )));
                 }
             }
@@ -208,8 +206,7 @@ impl TryFrom<HistoryEvent> for ActivityMachineEvents {
                     Self::ActivityTaskTimedOut(attrs)
                 } else {
                     return Err(WFMachinesError::Fatal(format!(
-                        "Activity timeout attributes were unset: {}",
-                        e
+                        "Activity timeout attributes were unset: {e}"
                     )));
                 }
             }
@@ -221,15 +218,13 @@ impl TryFrom<HistoryEvent> for ActivityMachineEvents {
                     Self::ActivityTaskCanceled(attrs)
                 } else {
                     return Err(WFMachinesError::Fatal(format!(
-                        "Activity cancellation attributes were unset: {}",
-                        e
+                        "Activity cancellation attributes were unset: {e}"
                     )));
                 }
             }
             _ => {
                 return Err(WFMachinesError::Nondeterminism(format!(
-                    "Activity machine does not handle this event: {}",
-                    e
+                    "Activity machine does not handle this event: {e}"
                 )))
             }
         })
@@ -339,7 +334,7 @@ impl Cancellable for ActivityMachine {
                         )
                         .into()]
                 }
-                x => panic!("Invalid cancel event response {:?}", x),
+                x => panic!("Invalid cancel event response {x:?}"),
             })
             .collect();
         Ok(res)
@@ -648,8 +643,7 @@ impl Canceled {
         } else {
             TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
                 "Non-Abandon cancel mode activities cannot be started after being cancelled. \
-                 Seq: {:?}",
-                seq_num
+                 Seq: {seq_num:?}"
             )))
         }
     }
@@ -663,8 +657,7 @@ impl Canceled {
             TransitionResult::default()
         } else {
             TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
-                "Non-Abandon cancel mode activities cannot be completed after being cancelled: {:?}",
-                attrs
+                "Non-Abandon cancel mode activities cannot be completed after being cancelled: {attrs:?}"
             )))
         }
     }
@@ -769,8 +762,7 @@ fn convert_payloads(
 ) -> Result<Option<Payload>, WFMachinesError> {
     result.map(TryInto::try_into).transpose().map_err(|pe| {
         WFMachinesError::Fatal(format!(
-            "Not exactly one payload in activity result ({}) for event: {:?}",
-            pe, event_info
+            "Not exactly one payload in activity result ({pe}) for event: {event_info:?}"
         ))
     })
 }

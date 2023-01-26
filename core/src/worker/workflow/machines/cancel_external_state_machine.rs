@@ -161,15 +161,13 @@ impl TryFrom<HistoryEvent> for CancelExternalMachineEvents {
                     Self::RequestCancelExternalWorkflowExecutionFailed(attrs.cause())
                 } else {
                     return Err(WFMachinesError::Fatal(format!(
-                        "Cancelworkflow failed attributes were unset: {}",
-                        e
+                        "Cancelworkflow failed attributes were unset: {e}"
                     )));
                 }
             }
             _ => {
                 return Err(WFMachinesError::Nondeterminism(format!(
-                    "Cancel external WF machine does not handle this event: {}",
-                    e
+                    "Cancel external WF machine does not handle this event: {e}"
                 )))
             }
         })
@@ -199,7 +197,7 @@ impl WFMachinesAdapter for CancelExternalMachine {
                 vec![ResolveRequestCancelExternalWorkflow {
                     seq: self.shared_state.seq,
                     failure: Some(Failure {
-                        message: format!("Unable to cancel external workflow because {}", reason),
+                        message: format!("Unable to cancel external workflow because {reason}"),
                         failure_info: Some(FailureInfo::ApplicationFailureInfo(
                             ApplicationFailureInfo {
                                 r#type: f.to_string(),

@@ -703,7 +703,7 @@ async fn activity_tasks_from_completion_are_delivered() {
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
     let act_same_queue_scheduled_ids = (1..4)
-        .map(|i| t.add_activity_task_scheduled(format!("act_id_{}_same_queue", i)))
+        .map(|i| t.add_activity_task_scheduled(format!("act_id_{i}_same_queue")))
         .collect_vec();
     t.add_activity_task_scheduled("act_id_same_queue_not_eager");
     t.add_activity_task_scheduled("act_id_different_queue");
@@ -742,7 +742,7 @@ async fn activity_tasks_from_completion_are_delivered() {
                 activity_tasks: (1..4)
                     .map(|i| PollActivityTaskQueueResponse {
                         task_token: vec![i],
-                        activity_id: format!("act_id_{}_same_queue", i),
+                        activity_id: format!("act_id_{i}_same_queue"),
                         ..Default::default()
                     })
                     .collect_vec(),
@@ -767,7 +767,7 @@ async fn activity_tasks_from_completion_are_delivered() {
         .map(|seq| {
             ScheduleActivity {
                 seq,
-                activity_id: format!("act_id_{}_same_queue", seq),
+                activity_id: format!("act_id_{seq}_same_queue"),
                 task_queue: TEST_Q.to_string(),
                 cancellation_type: ActivityCancellationType::TryCancel as i32,
                 ..Default::default()

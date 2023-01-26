@@ -162,7 +162,7 @@ async fn new_queries(#[case] num_queries: usize) {
         pr.queries = HashMap::new();
         for i in 1..=num_queries {
             pr.queries.insert(
-                format!("q{}", i),
+                format!("q{i}"),
                 WorkflowQuery {
                     query_type: "query-type".to_string(),
                     query_args: Some(b"hi".into()),
@@ -206,7 +206,7 @@ async fn new_queries(#[case] num_queries: usize) {
     let mut qresults: Vec<_> = (1..=num_queries)
         .map(|i| {
             QueryResult {
-                query_id: format!("q{}", i),
+                query_id: format!("q{i}"),
                 variant: Some(
                     QuerySuccess {
                         response: Some(query_resp.into()),

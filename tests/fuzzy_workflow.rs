@@ -87,7 +87,7 @@ async fn fuzzy_workflow() {
 
     let mut workflow_handles = vec![];
     for i in 0..num_workflows {
-        let wfid = format!("{}_{}", wf_name, i);
+        let wfid = format!("{wf_name}_{i}");
         let rid = worker
             .submit_wf(
                 wfid.clone(),
@@ -109,7 +109,7 @@ async fn fuzzy_workflow() {
             let sends: FuturesUnordered<_> = (0..num_workflows)
                 .map(|i| {
                     client.signal_workflow_execution(
-                        format!("{}_{}", wf_name, i),
+                        format!("{wf_name}_{i}"),
                         "".to_string(),
                         FUZZY_SIG.to_string(),
                         [action.as_json_payload().expect("Serializes ok")].into_payloads(),

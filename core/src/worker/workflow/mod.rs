@@ -360,7 +360,7 @@ impl Workflows {
                 Err(e) => {
                     self.request_eviction(
                         &run_id,
-                        format!("Failed to paginate workflow task from completion: {:?}", e),
+                        format!("Failed to paginate workflow task from completion: {e:?}"),
                         EvictionReason::Fatal,
                     );
                     None
@@ -417,7 +417,7 @@ impl Workflows {
         if let Some(jh) = maybe_jh {
             // This acts as a final wake up in case the stream is still alive and wouldn't otherwise
             // receive another message. It allows it to shut itself down.
-            let _ = self.get_state_info();
+            let _ = self.get_state_info().await;
             jh.await
         } else {
             Ok(())
@@ -616,7 +616,7 @@ enum ActivationOrAuto {
     /// This type should only be filled with an empty activation which is ready to have queries
     /// inserted into the joblist
     ReadyForQueries(WorkflowActivation),
-    #[display(fmt = "Autocomplete(run_id={})", run_id)]
+    #[display(fmt = "Autocomplete(run_id={run_id})")]
     Autocomplete {
         run_id: String,
     },
@@ -637,7 +637,7 @@ impl ActivationOrAuto {
     feature = "save_wf_inputs",
     derive(serde::Serialize, serde::Deserialize)
 )]
-#[debug(fmt = "PermittedWft({:?})", work)]
+#[debug(fmt = "PermittedWft({work:?})")]
 pub(crate) struct PermittedWFT {
     work: PreparedWFT,
     #[cfg_attr(
@@ -903,8 +903,7 @@ fn validate_completion(
                     reason: format!(
                         "Workflow completion had a legacy query response along with other \
                          commands. This is not allowed and constitutes an error in the \
-                         lang SDK. Commands: {:?}",
-                        commands
+                         lang SDK. Commands: {commands:?}"
                     ),
                     run_id: completion.run_id,
                 });
@@ -1083,7 +1082,7 @@ pub struct WorkflowStartedInfo {
 
 /// Wraps outgoing activation job protos with some internal details core might care about
 #[derive(Debug, derive_more::Display)]
-#[display(fmt = "{}", variant)]
+#[display(fmt = "{variant}")]
 struct OutgoingJob {
     variant: workflow_activation_job::Variant,
     /// Since LA resolutions are not distinguished from non-LA resolutions as far as lang is

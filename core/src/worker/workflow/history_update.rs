@@ -81,7 +81,7 @@ pub enum NextWFT {
 }
 
 #[derive(derive_more::DebugCustom)]
-#[debug(fmt = "HistoryPaginator(run_id: {})", run_id)]
+#[debug(fmt = "HistoryPaginator(run_id: {run_id})")]
 #[cfg_attr(
     feature = "save_wf_inputs",
     derive(serde::Serialize, serde::Deserialize),
@@ -649,7 +649,7 @@ pub mod tests {
         fn unwrap_events(self) -> Vec<HistoryEvent> {
             match self {
                 NextWFT::WFT(e) => e,
-                o => panic!("Must be complete WFT: {:?}", o),
+                o => panic!("Must be complete WFT: {o:?}"),
             }
         }
     }

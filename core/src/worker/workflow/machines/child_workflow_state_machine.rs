@@ -471,8 +471,7 @@ impl TryFrom<HistoryEvent> for ChildWorkflowMachineEvents {
             }
             _ => {
                 return Err(WFMachinesError::Fatal(format!(
-                    "Child workflow machine does not handle this event: {:?}",
-                    e
+                    "Child workflow machine does not handle this event: {e:?}"
                 )))
             }
         })
@@ -612,7 +611,7 @@ impl Cancellable for ChildWorkflowMachine {
                 | c @ ChildWorkflowCommand::IssueCancelAfterStarted { .. } => {
                     self.adapt_response(c, None)
                 }
-                x => panic!("Invalid cancel event response {:?}", x),
+                x => panic!("Invalid cancel event response {x:?}"),
             })
             .collect::<Result<Vec<_>, _>>()?
             .into_iter()
@@ -650,8 +649,7 @@ fn convert_payloads(
 ) -> Result<Option<Payload>, WFMachinesError> {
     result.map(TryInto::try_into).transpose().map_err(|pe| {
         WFMachinesError::Fatal(format!(
-            "Not exactly one payload in child workflow result ({}) for event: {:?}",
-            pe, event_info
+            "Not exactly one payload in child workflow result ({pe}) for event: {event_info:?}"
         ))
     })
 }
