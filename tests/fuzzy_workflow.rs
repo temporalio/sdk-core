@@ -78,11 +78,8 @@ async fn fuzzy_workflow() {
     let num_workflows = 200;
     let wf_name = "fuzzy_wf";
     let mut starter = CoreWfStarter::new("fuzzy_workflow");
-    starter
-        .max_wft(25)
-        .max_cached_workflows(25)
-        .max_at(25)
-        .enable_wf_state_input_recording();
+    starter.max_wft(25).max_cached_workflows(25).max_at(25);
+    // .enable_wf_state_input_recording();
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), fuzzy_wf_def);
     worker.register_activity("echo_activity", echo);
@@ -103,13 +100,11 @@ async fn fuzzy_workflow() {
         workflow_handles.push(client.get_untyped_workflow_handle(wfid, rid));
     }
 
-    // 1234: Triggers - Local activity cannot be created as pre-resolved while not replaying
-    let rng = SmallRng::seed_from_u64(1234);
+    let rng = SmallRng::seed_from_u64(523189);
     let mut actions: Vec<FuzzyWfAction> = rng.sample_iter(FuzzyWfActionSampler).take(15).collect();
     actions.push(FuzzyWfAction::Shutdown);
 
     let sig_sender = async {
-        // loop {
         for action in actions {
             let sends: FuturesUnordered<_> = (0..num_workflows)
                 .map(|i| {
