@@ -211,7 +211,7 @@ impl WorkflowMachines {
         driven_wf: DrivenWorkflow,
         metrics: MetricsContext,
     ) -> Self {
-        let replaying = history.previous_started_event_id > 0;
+        let replaying = history.previous_wft_started_id > 0;
         Self {
             last_history_from_server: history,
             namespace,
@@ -256,7 +256,7 @@ impl WorkflowMachines {
 
     pub(crate) fn new_history_from_server(&mut self, update: HistoryUpdate) -> Result<()> {
         self.last_history_from_server = update;
-        self.replaying = self.last_history_from_server.previous_started_event_id > 0;
+        self.replaying = self.last_history_from_server.previous_wft_started_id > 0;
         self.apply_next_wft_from_history()?;
         Ok(())
     }
@@ -530,7 +530,7 @@ impl WorkflowMachines {
         }
         if self.replaying
             && self.current_started_event_id
-                >= self.last_history_from_server.previous_started_event_id
+                >= self.last_history_from_server.previous_wft_started_id
             && event.event_type() != EventType::WorkflowTaskCompleted
         {
             // Replay is finished

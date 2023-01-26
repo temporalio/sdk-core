@@ -587,7 +587,7 @@ impl Workflows {
 /// replay a run
 #[derive(Debug, derive_more::Display)]
 #[display(
-    fmt = "HistoryFetchReq(run_id: {})",
+    fmt = "CacheMissFetchReq(run_id: {})",
     "original_wft.work.execution.run_id"
 )]
 #[must_use]
