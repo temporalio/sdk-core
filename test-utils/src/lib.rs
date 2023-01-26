@@ -5,9 +5,13 @@
 extern crate tracing;
 
 pub mod canned_histories;
+pub mod wf_input_saver;
 pub mod workflows;
 
-use crate::stream::{Stream, TryStreamExt};
+use crate::{
+    stream::{Stream, TryStreamExt},
+    wf_input_saver::stream_to_file,
+};
 use base64::{prelude::BASE64_STANDARD, Engine};
 use futures::{future, stream, stream::FuturesUnordered, StreamExt};
 use parking_lot::Mutex;
@@ -47,7 +51,7 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::{common::v1::Payload, history::v1::History},
 };
-use tokio::sync::OnceCell;
+use tokio::sync::{mpsc::unbounded_channel, OnceCell};
 use url::Url;
 
 pub const NAMESPACE: &str = "default";
@@ -146,7 +150,8 @@ pub struct CoreWfStarter {
     /// Used for both the task queue and workflow id
     task_queue_name: String,
     pub worker_config: WorkerConfig,
-    wft_timeout: Option<Duration>,
+    /// Options to use when starting workflow(s)
+    pub workflow_options: WorkflowOptions,
     initted_worker: OnceCell<InitializedWorker>,
 }
 struct InitializedWorker {
@@ -156,14 +161,10 @@ struct InitializedWorker {
 
 impl CoreWfStarter {
     pub fn new(test_name: &str) -> Self {
+        init_integ_telem();
         let rand_bytes: Vec<u8> = rand::thread_rng().sample_iter(&Standard).take(6).collect();
         let task_q_salt = BASE64_STANDARD.encode(rand_bytes);
         let task_queue = format!("{}_{}", test_name, task_q_salt);
-        Self::new_tq_name(&task_queue)
-    }
-
-    pub fn new_tq_name(task_queue: &str) -> Self {
-        init_integ_telem();
         Self {
             task_queue_name: task_queue.to_owned(),
             worker_config: WorkerConfigBuilder::default()
@@ -173,8 +174,8 @@ impl CoreWfStarter {
                 .max_cached_workflows(1000_usize)
                 .build()
                 .unwrap(),
-            wft_timeout: None,
             initted_worker: OnceCell::new(),
+            workflow_options: Default::default(),
         }
     }
 
@@ -201,13 +202,27 @@ impl CoreWfStarter {
     }
 
     /// Start the workflow defined by the builder and return run id
-    pub async fn start_wf(&self) -> String {
-        self.start_wf_with_id(self.task_queue_name.clone(), WorkflowOptions::default())
-            .await
+    pub async fn start_wf(&mut self) -> String {
+        self.start_wf_with_id(self.task_queue_name.clone()).await
     }
 
-    pub async fn start_wf_with_id(&self, workflow_id: String, mut opts: WorkflowOptions) -> String {
-        opts.task_timeout = opts.task_timeout.or(self.wft_timeout);
+    pub async fn start_with_worker(
+        &self,
+        wf_name: impl Into<String>,
+        worker: &mut TestWorker,
+    ) -> String {
+        worker
+            .submit_wf(
+                self.task_queue_name.clone(),
+                wf_name.into(),
+                vec![],
+                self.workflow_options.clone(),
+            )
+            .await
+            .unwrap()
+    }
+
+    pub async fn start_wf_with_id(&self, workflow_id: String) -> String {
         self.initted_worker
             .get()
             .expect(
@@ -221,7 +236,7 @@ impl CoreWfStarter {
                 workflow_id,
                 self.task_queue_name.clone(),
                 None,
-                opts,
+                self.workflow_options.clone(),
             )
             .await
             .unwrap()
@@ -286,8 +301,13 @@ impl CoreWfStarter {
         self
     }
 
-    pub fn wft_timeout(&mut self, timeout: Duration) -> &mut Self {
-        self.wft_timeout = Some(timeout);
+    pub fn enable_wf_state_input_recording(&mut self) -> &mut Self {
+        let (ser_tx, ser_rx) = unbounded_channel();
+        let worker_cfg_clone = self.worker_config.clone();
+        tokio::spawn(async move {
+            stream_to_file(&worker_cfg_clone, ser_rx).await.unwrap();
+        });
+        self.worker_config.wf_state_inputs = Some(ser_tx);
         self
     }
 

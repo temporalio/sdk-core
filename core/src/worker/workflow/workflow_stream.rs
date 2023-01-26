@@ -1,13 +1,18 @@
+#[cfg(feature = "save_wf_inputs")]
+mod saved_wf_inputs;
+#[cfg(feature = "save_wf_inputs")]
+mod tonic_status_serde;
+
+#[cfg(feature = "save_wf_inputs")]
+pub use saved_wf_inputs::replay_wf_state_inputs;
+
 use crate::{
     abstractions::dbg_panic,
-    worker::{
-        workflow::{
-            managed_run::RunUpdateAct,
-            run_cache::RunCache,
-            wft_extraction::{HistfetchRC, HistoryFetchReq, WFTExtractorOutput},
-            *,
-        },
-        LocalActRequest, LocalActivityResolution,
+    worker::workflow::{
+        managed_run::RunUpdateAct,
+        run_cache::RunCache,
+        wft_extraction::{HistfetchRC, HistoryFetchReq, WFTExtractorOutput},
+        *,
     },
     MetricsContext,
 };
@@ -21,11 +26,12 @@ use temporal_sdk_core_protos::{
 use tokio_util::sync::CancellationToken;
 use tracing::{Level, Span};
 
-/// This struct holds all the state needed for tracking what workflow runs are currently cached
-/// and how WFTs should be dispatched to them, etc.
+/// This struct holds all the state needed for tracking the state of currently cached workflow runs
+/// and directs all actions which affect them. It is ultimately the top-level arbiter of nearly
+/// everything important relating to workflow state.
 ///
 /// See [WFStream::build] for more
-pub(crate) struct WFStream {
+pub(super) struct WFStream {
     runs: RunCache,
     /// Buffered polls for new runs which need a cache slot to open up before we can handle them
     buffered_polls_need_cache_slot: VecDeque<PermittedWFT>,
@@ -38,6 +44,9 @@ pub(crate) struct WFStream {
     ignore_evicts_on_shutdown: bool,
 
     metrics: MetricsContext,
+
+    #[cfg(feature = "save_wf_inputs")]
+    wf_state_inputs: Option<UnboundedSender<Vec<u8>>>,
 }
 impl WFStream {
     /// Constructs workflow state management and returns a stream which outputs activations.
@@ -57,15 +66,16 @@ impl WFStream {
     /// all workflow state can be represented purely via the stream of inputs, plus the
     /// calls/retvals from the LA request sink, which is the last unfortunate bit of impurity in
     /// the design. Eliminating it would be nice, so that all inputs come from the passed-in streams
-    /// and all outputs flow from the return stream.
+    /// and all outputs flow from the return stream, but it's difficult to do so since it would
+    /// require "pausing" in-progress changes to a run while sending & waiting for response from
+    /// local activity management. Likely the best option would be to move the pure state info
+    /// needed to determine immediate responses into LA state machines themselves (out of the LA
+    /// manager), which is a quite substantial change.
     pub(super) fn build(
         basics: WorkflowBasics,
         wft_stream: impl Stream<Item = Result<WFTExtractorOutput, tonic::Status>> + Send + 'static,
         local_rx: impl Stream<Item = LocalInput> + Send + 'static,
-        local_activity_request_sink: impl Fn(Vec<LocalActRequest>) -> Vec<LocalActivityResolution>
-            + Send
-            + Sync
-            + 'static,
+        local_activity_request_sink: impl LocalActivityRequestSink,
     ) -> impl Stream<Item = Result<WFStreamOutput, PollWfError>> {
         let all_inputs = stream::select_with_strategy(
             local_rx.map(Into::into),
@@ -77,6 +87,14 @@ impl WFStream {
             // Priority always goes to the local stream
             |_: &mut ()| PollNext::Left,
         );
+        Self::build_internal(all_inputs, basics, local_activity_request_sink)
+    }
+
+    fn build_internal(
+        all_inputs: impl Stream<Item = WFStreamInput>,
+        basics: WorkflowBasics,
+        local_activity_request_sink: impl LocalActivityRequestSink,
+    ) -> impl Stream<Item = Result<WFStreamOutput, PollWfError>> {
         let mut state = WFStream {
             buffered_polls_need_cache_slot: Default::default(),
             runs: RunCache::new(
@@ -90,11 +108,17 @@ impl WFStream {
             metrics: basics.metrics,
             runs_needing_fetching: Default::default(),
             history_fetch_refcounter: Arc::new(HistfetchRC {}),
+
+            #[cfg(feature = "save_wf_inputs")]
+            wf_state_inputs: basics.wf_state_inputs,
         };
         all_inputs
             .map(move |action: WFStreamInput| {
                 let span = span!(Level::DEBUG, "new_stream_input", action=?action);
                 let _span_g = span.enter();
+
+                #[cfg(feature = "save_wf_inputs")]
+                let maybe_write = state.prep_input(&action);
 
                 let mut activations = vec![];
                 let maybe_act = match action {
@@ -161,6 +185,14 @@ impl WFStream {
 
                 activations.extend(maybe_act.into_iter());
                 activations.extend(state.reconcile_buffered());
+
+                // Always flush *after* actually handling the input, as this allows LA sink
+                // responses to be recorded before the input, so they can be read and buffered to be
+                // replayed during the handling of the input itself.
+                #[cfg(feature = "save_wf_inputs")]
+                if let Some(write) = maybe_write {
+                    state.flush_write(write);
+                }
 
                 if state.shutdown_done() {
                     info!("Workflow shutdown is done");
@@ -524,6 +556,10 @@ impl WFStream {
 
 /// All possible inputs to the [WFStream]
 #[derive(derive_more::From, Debug)]
+#[cfg_attr(
+    feature = "save_wf_inputs",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 enum WFStreamInput {
     NewWft(PermittedWFT),
     Local(LocalInput),
@@ -531,18 +567,33 @@ enum WFStreamInput {
     PollerDead,
     /// The stream given to us which represents the poller (or a mock) encountered a non-retryable
     /// error while polling
-    PollerError(tonic::Status),
+    PollerError(
+        #[cfg_attr(
+            feature = "save_wf_inputs",
+            serde(with = "tonic_status_serde::SerdeStatus")
+        )]
+        tonic::Status,
+    ),
     FailedFetch {
         run_id: String,
+        #[cfg_attr(
+            feature = "save_wf_inputs",
+            serde(with = "tonic_status_serde::SerdeStatus")
+        )]
         err: tonic::Status,
     },
 }
 
 /// A non-poller-received input to the [WFStream]
 #[derive(derive_more::DebugCustom)]
+#[cfg_attr(
+    feature = "save_wf_inputs",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 #[debug(fmt = "LocalInput {{ {:?} }}", input)]
 pub(super) struct LocalInput {
     pub input: LocalInputs,
+    #[cfg_attr(feature = "save_wf_inputs", serde(skip, default = "Span::current"))]
     pub span: Span,
 }
 impl From<HeartbeatTimeoutMsg> for LocalInput {
@@ -556,6 +607,10 @@ impl From<HeartbeatTimeoutMsg> for LocalInput {
 /// Everything that _isn't_ a poll which may affect workflow state. Always higher priority than
 /// new polls.
 #[derive(Debug, derive_more::From)]
+#[cfg_attr(
+    feature = "save_wf_inputs",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub(super) enum LocalInputs {
     Completion(WFActCompleteMsg),
     FetchedPageCompletion {
@@ -566,6 +621,7 @@ pub(super) enum LocalInputs {
     PostActivation(PostActivationMsg),
     RequestEviction(RequestEvictMsg),
     HeartbeatTimeout(String),
+    #[cfg_attr(feature = "save_wf_inputs", serde(skip))]
     GetStateInfo(GetStateInfoMsg),
 }
 impl LocalInputs {

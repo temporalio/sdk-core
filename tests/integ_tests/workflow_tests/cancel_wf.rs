@@ -1,5 +1,5 @@
 use std::time::Duration;
-use temporal_client::{WorkflowClientTrait, WorkflowOptions};
+use temporal_client::WorkflowClientTrait;
 use temporal_sdk::{WfContext, WfExitValue, WorkflowResult};
 use temporal_sdk_core_protos::temporal::api::enums::v1::WorkflowExecutionStatus;
 use temporal_sdk_core_test_utils::CoreWfStarter;
@@ -24,22 +24,14 @@ async fn cancel_during_timer() {
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
     worker.register_wf(wf_name.to_string(), cancelled_wf);
-
-    worker
-        .submit_wf(
-            wf_name.to_owned(),
-            wf_name.to_owned(),
-            vec![],
-            WorkflowOptions::default(),
-        )
-        .await
-        .unwrap();
+    starter.start_with_worker(wf_name, &mut worker).await;
+    let wf_id = starter.get_task_queue().to_string();
 
     let canceller = async {
         tokio::time::sleep(Duration::from_millis(500)).await;
         // Cancel the workflow externally
         client
-            .cancel_workflow_execution(wf_name.to_string(), None, "Dieee".to_string(), None)
+            .cancel_workflow_execution(wf_id.clone(), None, "Dieee".to_string(), None)
             .await
             .unwrap();
     };
@@ -47,7 +39,7 @@ async fn cancel_during_timer() {
     let (_, res) = tokio::join!(canceller, worker.run_until_done());
     res.unwrap();
     let desc = client
-        .describe_workflow_execution(wf_name.to_string(), None)
+        .describe_workflow_execution(wf_id, None)
         .await
         .unwrap();
 

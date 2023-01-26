@@ -25,4 +25,4 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: integ-test
-          args: --cargo-test-args "--release" -t heavy_tests -- --test-threads 1
+          args: -c "--release" -c "--all-features" -t heavy_tests -- --test-threads 1

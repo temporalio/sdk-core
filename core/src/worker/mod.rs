@@ -3,6 +3,8 @@ pub(crate) mod client;
 mod workflow;
 
 pub use temporal_sdk_core_api::worker::{WorkerConfig, WorkerConfigBuilder};
+#[cfg(feature = "save_wf_inputs")]
+pub use workflow::replay_wf_state_inputs;
 
 pub(crate) use activities::{
     ExecutingLAId, LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
@@ -26,7 +28,7 @@ use crate::{
     worker::{
         activities::{DispatchOrTimeoutLA, LACompleteAction, LocalActivityManager},
         client::WorkerClient,
-        workflow::{LocalResolution, WorkflowBasics, Workflows},
+        workflow::{LAReqSink, LocalResolution, WorkflowBasics, Workflows},
     },
     ActivityHeartbeat, CompleteActivityError, PollActivityError, PollWfError, WorkerTrait,
 };
@@ -234,7 +236,7 @@ impl Worker {
     }
 
     pub(crate) fn new_with_pollers(
-        config: WorkerConfig,
+        mut config: WorkerConfig,
         sticky_queue_name: Option<String>,
         client: Arc<dyn WorkerClient>,
         wft_stream: impl Stream<Item = Result<ValidPollWFTQResponse, tonic::Status>> + Send + 'static,
@@ -250,7 +252,6 @@ impl Worker {
             metrics.with_new_attrs([local_activity_worker_type()]),
         ));
         let lam_clone = local_act_mgr.clone();
-        let local_act_req_sink = move |requests| lam_clone.enqueue(requests);
         let at_task_mgr = act_poller.map(|ap| {
             WorkerActivityTasks::new(
                 config.max_outstanding_activities,
@@ -265,19 +266,11 @@ impl Worker {
         if at_task_mgr.is_none() {
             info!("Activity polling is disabled for this worker");
         }
+        let la_sink = LAReqSink::new(lam_clone, config.wf_state_inputs.clone());
         Self {
             wf_client: client.clone(),
             workflows: Workflows::new(
-                WorkflowBasics {
-                    max_cached_workflows: config.max_cached_workflows,
-                    max_outstanding_wfts: config.max_outstanding_workflow_tasks,
-                    shutdown_token: shutdown_token.child_token(),
-                    metrics,
-                    namespace: config.namespace.clone(),
-                    task_queue: config.task_queue.clone(),
-                    ignore_evicts_on_shutdown: config.ignore_evicts_on_shutdown,
-                    fetching_concurrency: config.fetching_concurrency,
-                },
+                build_wf_basics(&mut config, metrics, shutdown_token.child_token()),
                 sticky_queue_name.map(|sq| StickyExecutionAttributes {
                     worker_task_queue: Some(TaskQueue {
                         name: sq,
@@ -292,7 +285,7 @@ impl Worker {
                 }),
                 client,
                 wft_stream,
-                local_act_req_sink,
+                la_sink,
                 hb_rx,
                 at_task_mgr
                     .as_ref()
@@ -520,6 +513,25 @@ impl Worker {
 
     fn notify_local_result(&self, run_id: &str, res: LocalResolution) {
         self.workflows.notify_of_local_result(run_id, res);
+    }
+}
+
+fn build_wf_basics(
+    config: &mut WorkerConfig,
+    metrics: MetricsContext,
+    shutdown_token: CancellationToken,
+) -> WorkflowBasics {
+    WorkflowBasics {
+        max_cached_workflows: config.max_cached_workflows,
+        max_outstanding_wfts: config.max_outstanding_workflow_tasks,
+        shutdown_token,
+        metrics,
+        namespace: config.namespace.clone(),
+        task_queue: config.task_queue.clone(),
+        ignore_evicts_on_shutdown: config.ignore_evicts_on_shutdown,
+        fetching_concurrency: config.fetching_concurrency,
+        #[cfg(feature = "save_wf_inputs")]
+        wf_state_inputs: config.wf_state_inputs.take(),
     }
 }
 

@@ -7,14 +7,14 @@ use crate::{
     MetricsContext,
 };
 use lru::LruCache;
-use std::{mem, num::NonZeroUsize};
+use std::{mem, num::NonZeroUsize, sync::Arc};
 
 pub(super) struct RunCache {
     max: usize,
     namespace: String,
     /// Run id -> Data
     runs: LruCache<String, ManagedRun>,
-    local_activity_request_sink: LocalActivityRequestSink,
+    local_activity_request_sink: Arc<dyn LocalActivityRequestSink>,
 
     metrics: MetricsContext,
 }
@@ -23,7 +23,7 @@ impl RunCache {
     pub fn new(
         max_cache_size: usize,
         namespace: String,
-        local_activity_request_sink: LocalActivityRequestSink,
+        local_activity_request_sink: Arc<dyn LocalActivityRequestSink>,
         metrics: MetricsContext,
     ) -> Self {
         // The cache needs room for at least one run, otherwise we couldn't do anything. In

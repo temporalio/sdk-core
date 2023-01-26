@@ -25,7 +25,7 @@ use futures_util::future::AbortHandle;
 use std::{
     collections::HashSet,
     ops::Add,
-    sync::mpsc::Sender,
+    sync::{mpsc::Sender, Arc},
     time::{Duration, Instant},
 };
 use temporal_sdk_core_protos::{
@@ -65,7 +65,7 @@ pub(super) struct ManagedRun {
     /// pushing things out and then directly back in. The downside is this is the only "impure" part
     /// of the in/out nature of workflow state management. If there's ever a sensible way to lift it
     /// up, that'd be nice.
-    local_activity_request_sink: LocalActivityRequestSink,
+    local_activity_request_sink: Arc<dyn LocalActivityRequestSink>,
     /// Set if the run is currently waiting on the execution of some local activities.
     waiting_on_la: Option<WaitingOnLAs>,
     /// Is set to true if the machines encounter an error and the only subsequent thing we should
@@ -100,7 +100,7 @@ impl ManagedRun {
         workflow_id: String,
         workflow_type: String,
         run_id: String,
-        local_activity_request_sink: LocalActivityRequestSink,
+        local_activity_request_sink: Arc<dyn LocalActivityRequestSink>,
         metrics: MetricsContext,
     ) -> Self {
         let wfm = WorkflowManager::new(
@@ -245,7 +245,7 @@ impl ManagedRun {
                     lawait.hb_timeout_handle.abort();
                     lawait.hb_timeout_handle = sink_heartbeat_timeout_start(
                         self.wfm.machines.run_id.clone(),
-                        &self.local_activity_request_sink,
+                        self.local_activity_request_sink.as_ref(),
                         start_time,
                         lawait.wft_timeout,
                     );
@@ -353,7 +353,7 @@ impl ManagedRun {
     pub(super) fn successful_completion(
         &mut self,
         mut commands: Vec<WFCommand>,
-        resp_chan: oneshot::Sender<ActivationCompleteResult>,
+        resp_chan: Option<oneshot::Sender<ActivationCompleteResult>>,
     ) -> Result<RunUpdateAct, NextPageReq> {
         let activation_was_only_eviction = self.activation_has_only_eviction();
         let (task_token, has_pending_query, start_time) = if let Some(entry) = self.wft.as_ref() {
@@ -421,7 +421,7 @@ impl ManagedRun {
                 activation_was_only_eviction,
                 has_pending_query,
                 query_responses,
-                resp_chan: Some(resp_chan),
+                resp_chan,
             };
 
             // Verify we can actually apply the next workflow task, which will happen as part of
@@ -496,7 +496,7 @@ impl ManagedRun {
         cause: WorkflowTaskFailedCause,
         reason: EvictionReason,
         failure: workflow_completion::Failure,
-        resp_chan: oneshot::Sender<ActivationCompleteResult>,
+        resp_chan: Option<oneshot::Sender<ActivationCompleteResult>>,
     ) -> RunUpdateAct {
         let tt = if let Some(tt) = self.wft.as_ref().map(|t| t.info.task_token.clone()) {
             tt
@@ -558,14 +558,9 @@ impl ManagedRun {
 
     fn _process_completion(
         &mut self,
-        mut completion: RunActivationCompletion,
+        completion: RunActivationCompletion,
         new_update: Option<HistoryUpdate>,
     ) -> Result<Option<FulfillableActivationComplete>, RunUpdateErr> {
-        let resp_chan = completion
-            .resp_chan
-            .take()
-            .expect("Completion response channel must be populated");
-
         let data = CompletionDataForWFT {
             task_token: completion.task_token,
             query_responses: completion.query_responses,
@@ -576,7 +571,11 @@ impl ManagedRun {
         // If this is just bookkeeping after a reply to an only-eviction activation, we can bypass
         // everything, since there is no reason to continue trying to update machines.
         if completion.activation_was_only_eviction {
-            return Ok(Some(self.prepare_complete_resp(resp_chan, data, false)));
+            return Ok(Some(self.prepare_complete_resp(
+                completion.resp_chan,
+                data,
+                false,
+            )));
         }
 
         let outcome = (|| {
@@ -613,17 +612,21 @@ impl ManagedRun {
         })();
 
         match outcome {
-            Ok(None) => Ok(Some(self.prepare_complete_resp(resp_chan, data, false))),
+            Ok(None) => Ok(Some(self.prepare_complete_resp(
+                completion.resp_chan,
+                data,
+                false,
+            ))),
             Ok(Some((start_t, wft_timeout))) => {
                 if let Some(wola) = self.waiting_on_la.as_mut() {
                     wola.hb_timeout_handle.abort();
                 }
                 self.waiting_on_la = Some(WaitingOnLAs {
                     wft_timeout,
-                    completion_dat: Some((data, resp_chan)),
+                    completion_dat: Some((data, completion.resp_chan)),
                     hb_timeout_handle: sink_heartbeat_timeout_start(
                         self.run_id().to_string(),
-                        &self.local_activity_request_sink,
+                        self.local_activity_request_sink.as_ref(),
                         start_t,
                         wft_timeout,
                     ),
@@ -632,7 +635,7 @@ impl ManagedRun {
             }
             Err(e) => Err(RunUpdateErr {
                 source: e,
-                complete_resp_chan: Some(resp_chan),
+                complete_resp_chan: completion.resp_chan,
             }),
         }
     }
@@ -882,7 +885,7 @@ impl ManagedRun {
                         fail_cause,
                         fail.source.evict_reason(),
                         Failure::application_failure(wft_fail_str, false).into(),
-                        resp_chan,
+                        Some(resp_chan),
                     )
                 } else {
                     warn!(error=?fail.source, "Error while updating workflow");
@@ -926,7 +929,7 @@ impl ManagedRun {
 
     fn prepare_complete_resp(
         &mut self,
-        resp_chan: oneshot::Sender<ActivationCompleteResult>,
+        resp_chan: Option<oneshot::Sender<ActivationCompleteResult>>,
         data: CompletionDataForWFT,
         due_to_heartbeat_timeout: bool,
     ) -> FulfillableActivationComplete {
@@ -987,7 +990,10 @@ impl ManagedRun {
         &mut self,
         new_local_acts: Vec<LocalActRequest>,
     ) -> Result<(), WFMachinesError> {
-        let immediate_resolutions = (self.local_activity_request_sink)(new_local_acts);
+        let immediate_resolutions = self.local_activity_request_sink.sink_reqs(new_local_acts);
+        if !immediate_resolutions.is_empty() {
+            warn!("Immediate res: {:?}", &immediate_resolutions);
+        }
         for resolution in immediate_resolutions {
             self.wfm
                 .notify_of_local_result(LocalResolution::LocalActivity(resolution))?;
@@ -998,13 +1004,15 @@ impl ManagedRun {
     fn reply_to_complete(
         &self,
         outcome: ActivationCompleteOutcome,
-        chan: oneshot::Sender<ActivationCompleteResult>,
+        chan: Option<oneshot::Sender<ActivationCompleteResult>>,
     ) {
-        chan.send(ActivationCompleteResult {
-            most_recently_processed_event: self.most_recently_processed_event_number() as usize,
-            outcome,
-        })
-        .expect("Rcv half of activation reply not dropped");
+        if let Some(chan) = chan {
+            chan.send(ActivationCompleteResult {
+                most_recently_processed_event: self.most_recently_processed_event_number() as usize,
+                outcome,
+            })
+            .expect("Rcv half of activation reply not dropped");
+        }
     }
 
     /// Returns true if the handle is currently processing a WFT which contains a legacy query.
@@ -1063,14 +1071,14 @@ fn put_queries_in_act(act: &mut WorkflowActivation, wft: &mut OutstandingTask) {
 }
 fn sink_heartbeat_timeout_start(
     run_id: String,
-    sink: &LocalActivityRequestSink,
+    sink: &dyn LocalActivityRequestSink,
     wft_start_time: Instant,
     wft_timeout: Duration,
 ) -> AbortHandle {
     // The heartbeat deadline is 80% of the WFT timeout
     let deadline = wft_start_time.add(wft_timeout.mul_f32(WFT_HEARTBEAT_TIMEOUT_FRACTION));
     let (abort_handle, abort_reg) = AbortHandle::new_pair();
-    (sink)(vec![LocalActRequest::StartHeartbeatTimeout {
+    sink.sink_reqs(vec![LocalActRequest::StartHeartbeatTimeout {
         send_on_elapse: HeartbeatTimeoutMsg {
             run_id,
             span: Span::current(),
@@ -1090,7 +1098,7 @@ struct WaitingOnLAs {
     /// there are still incomplete LAs.
     completion_dat: Option<(
         CompletionDataForWFT,
-        oneshot::Sender<ActivationCompleteResult>,
+        Option<oneshot::Sender<ActivationCompleteResult>>,
     )>,
     /// Can be used to abort heartbeat timeouts
     hb_timeout_handle: AbortHandle,
@@ -1246,11 +1254,13 @@ impl WorkflowManager {
 #[derive(Debug)]
 struct FulfillableActivationComplete {
     result: ActivationCompleteResult,
-    resp_chan: oneshot::Sender<ActivationCompleteResult>,
+    resp_chan: Option<oneshot::Sender<ActivationCompleteResult>>,
 }
 impl FulfillableActivationComplete {
     fn fulfill(self) {
-        let _ = self.resp_chan.send(self.result);
+        if let Some(resp_chan) = self.resp_chan {
+            let _ = resp_chan.send(self.result);
+        }
     }
 }
 

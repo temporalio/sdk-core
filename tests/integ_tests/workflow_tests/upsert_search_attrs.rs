@@ -1,9 +1,9 @@
-use log::warn;
 use std::{collections::HashMap, env};
 use temporal_client::{WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{WfContext, WorkflowResult};
 use temporal_sdk_core_protos::coresdk::{AsJsonPayloadExt, FromJsonPayloadExt};
 use temporal_sdk_core_test_utils::{CoreWfStarter, INTEG_TEMPORALITE_USED_ENV_VAR};
+use tracing::warn;
 use uuid::Uuid;
 
 // These are initialized on the server as part of the autosetup container which we
