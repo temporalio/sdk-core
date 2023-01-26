@@ -77,8 +77,7 @@ impl TryFrom<HistoryEvent> for ContinueAsNewWorkflowMachineEvents {
             EventType::WorkflowExecutionContinuedAsNew => Self::WorkflowExecutionContinuedAsNew,
             _ => {
                 return Err(WFMachinesError::Nondeterminism(format!(
-                    "Continue as new workflow machine does not handle this event: {}",
-                    e
+                    "Continue as new workflow machine does not handle this event: {e}"
                 )))
             }
         })

@@ -47,10 +47,7 @@ pub(crate) fn validate_wft(
     wft.try_into().map_err(|resp| {
         tonic::Status::new(
             tonic::Code::DataLoss,
-            format!(
-                "Server returned a poll WFT response we couldn't interpret: {:?}",
-                resp
-            ),
+            format!("Server returned a poll WFT response we couldn't interpret: {resp:?}"),
         )
     })
 }

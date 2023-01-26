@@ -108,15 +108,13 @@ impl TryFrom<HistoryEvent> for TimerMachineEvents {
                     Self::TimerFired(attrs)
                 } else {
                     return Err(WFMachinesError::Fatal(format!(
-                        "Timer fired attribs were unset: {}",
-                        e
+                        "Timer fired attribs were unset: {e}"
                     )));
                 }
             }
             _ => {
                 return Err(WFMachinesError::Nondeterminism(format!(
-                    "Timer machine does not handle this event: {}",
-                    e
+                    "Timer machine does not handle this event: {e}"
                 )))
             }
         })
@@ -257,7 +255,7 @@ impl Cancellable for TimerMachine {
                     vec![MachineResponse::IssueNewCommand(cmd)]
                 }
                 None => vec![],
-                x => panic!("Invalid cancel event response {:?}", x),
+                x => panic!("Invalid cancel event response {x:?}"),
             },
         )
     }

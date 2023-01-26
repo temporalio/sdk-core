@@ -755,8 +755,7 @@ impl TryFrom<HistoryEvent> for LocalActivityMachineEvents {
     fn try_from(e: HistoryEvent) -> Result<Self, Self::Error> {
         if e.event_type() != EventType::MarkerRecorded {
             return Err(WFMachinesError::Nondeterminism(format!(
-                "Local activity machine cannot handle this event: {}",
-                e
+                "Local activity machine cannot handle this event: {e}"
             )));
         }
 

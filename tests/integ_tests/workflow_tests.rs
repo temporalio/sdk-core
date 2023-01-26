@@ -58,7 +58,7 @@ async fn parallel_workflows_same_queue() {
     let num_workflows = 25usize;
 
     let run_ids: Vec<_> = future::join_all(
-        (0..num_workflows).map(|i| starter.start_wf_with_id(format!("wf-id-{}", i))),
+        (0..num_workflows).map(|i| starter.start_wf_with_id(format!("wf-id-{i}"))),
     )
     .await;
 
@@ -571,7 +571,7 @@ async fn slow_completes_with_small_cache() {
     for i in 0..20 {
         worker
             .submit_wf(
-                format!("{}_{}", wf_name, i),
+                format!("{wf_name}_{i}"),
                 wf_name.to_owned(),
                 vec![],
                 WorkflowOptions::default(),

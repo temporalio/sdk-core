@@ -22,7 +22,7 @@ async fn prometheus_metrics_exported() {
         .await
         .unwrap();
 
-    let body = reqwest::get(format!("http://{}/metrics", addr))
+    let body = reqwest::get(format!("http://{addr}/metrics"))
         .await
         .unwrap()
         .text()

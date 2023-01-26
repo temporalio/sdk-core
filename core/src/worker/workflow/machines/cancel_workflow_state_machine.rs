@@ -80,8 +80,7 @@ impl TryFrom<HistoryEvent> for CancelWorkflowMachineEvents {
             Some(EventType::WorkflowExecutionCanceled) => Self::WorkflowExecutionCanceled,
             _ => {
                 return Err(WFMachinesError::Nondeterminism(format!(
-                    "Cancel workflow machine does not handle this event: {}",
-                    e
+                    "Cancel workflow machine does not handle this event: {e}"
                 )))
             }
         })

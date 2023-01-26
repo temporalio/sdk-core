@@ -919,9 +919,8 @@ impl ManagedRun {
             // This is a panic because we have screwed up core logic if this is violated. It must be
             // upheld.
             panic!(
-                "Attempted to insert a new outstanding activation {:?}, but there already was \
-                 one outstanding: {:?}",
-                act, old_act
+                "Attempted to insert a new outstanding activation {act:?}, but there already was \
+                 one outstanding: {old_act:?}"
             );
         }
         self.activation = Some(act_type);
@@ -1284,7 +1283,7 @@ enum ActOrFulfill {
 }
 
 #[derive(derive_more::DebugCustom)]
-#[debug(fmt = "RunUpdateErr({:?})", source)]
+#[debug(fmt = "RunUpdateErr({source:?})")]
 struct RunUpdateErr {
     source: WFMachinesError,
     complete_resp_chan: Option<oneshot::Sender<ActivationCompleteResult>>,

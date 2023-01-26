@@ -132,7 +132,7 @@ pub(crate) struct WorkflowMachines {
 }
 
 #[derive(Debug, derive_more::Display)]
-#[display(fmt = "Cmd&Machine({})", "command")]
+#[display(fmt = "Cmd&Machine({command})")]
 struct CommandAndMachine {
     command: MachineAssociatedCommand,
     machine: MachineKey,
@@ -141,7 +141,7 @@ struct CommandAndMachine {
 #[derive(Debug, derive_more::Display)]
 enum MachineAssociatedCommand {
     Real(Box<ProtoCommand>),
-    #[display(fmt = "FakeLocalActivityMarker({})", "_0")]
+    #[display(fmt = "FakeLocalActivityMarker({_0})")]
     FakeLocalActivityMarker(u32),
 }
 
@@ -155,7 +155,7 @@ struct ChangeInfo {
 #[must_use]
 #[allow(clippy::large_enum_variant)]
 pub(super) enum MachineResponse {
-    #[display(fmt = "PushWFJob({})", "_0")]
+    #[display(fmt = "PushWFJob({_0})")]
     PushWFJob(OutgoingJob),
 
     /// Pushes a new command into the list that will be sent to server once we respond with the
@@ -164,31 +164,31 @@ pub(super) enum MachineResponse {
     /// The machine requests the creation of another *different* machine. This acts as if lang
     /// had replied to the activation with a command, but we use a special set of IDs to avoid
     /// collisions.
-    #[display(fmt = "NewCoreOriginatedCommand({:?})", "_0")]
+    #[display(fmt = "NewCoreOriginatedCommand({_0:?})")]
     NewCoreOriginatedCommand(ProtoCmdAttrs),
-    #[display(fmt = "IssueFakeLocalActivityMarker({})", "_0")]
+    #[display(fmt = "IssueFakeLocalActivityMarker({_0})")]
     IssueFakeLocalActivityMarker(u32),
     #[display(fmt = "TriggerWFTaskStarted")]
     TriggerWFTaskStarted {
         task_started_event_id: i64,
         time: SystemTime,
     },
-    #[display(fmt = "UpdateRunIdOnWorkflowReset({})", run_id)]
+    #[display(fmt = "UpdateRunIdOnWorkflowReset({run_id})")]
     UpdateRunIdOnWorkflowReset { run_id: String },
 
     /// Queue a local activity to be processed by the worker
     #[display(fmt = "QueueLocalActivity")]
     QueueLocalActivity(ValidScheduleLA),
     /// Request cancellation of an executing local activity
-    #[display(fmt = "RequestCancelLocalActivity({})", "_0")]
+    #[display(fmt = "RequestCancelLocalActivity({_0})")]
     RequestCancelLocalActivity(u32),
     /// Indicates we are abandoning the indicated LA, so we can remove it from "outstanding" LAs
     /// and we will not try to WFT heartbeat because of it.
-    #[display(fmt = "AbandonLocalActivity({:?})", "_0")]
+    #[display(fmt = "AbandonLocalActivity({_0:?})")]
     AbandonLocalActivity(u32),
 
     /// Set the workflow time to the provided time
-    #[display(fmt = "UpdateWFTime({:?})", "_0")]
+    #[display(fmt = "UpdateWFTime({_0:?})")]
     UpdateWFTime(Option<SystemTime>),
 }
 
@@ -289,9 +289,8 @@ impl WorkflowMachines {
                     self.process_machine_responses(mk, resps)?;
                 } else {
                     return Err(WFMachinesError::Nondeterminism(format!(
-                        "Command matching activity with seq num {} existed but was not a \
-                        local activity!",
-                        seq
+                        "Command matching activity with seq num {seq} existed but was not a \
+                        local activity!"
                     )));
                 }
                 self.local_activity_data.done_executing(seq);
@@ -476,8 +475,7 @@ impl WorkflowMachines {
                     }
                 } else {
                     return Err(WFMachinesError::Fatal(format!(
-                        "Local activity marker was unparsable: {:?}",
-                        e
+                        "Local activity marker was unparsable: {e:?}"
                     )));
                 }
             }
@@ -539,8 +537,7 @@ impl WorkflowMachines {
         if event.event_type() == EventType::Unspecified || event.attributes.is_none() {
             return if !event.worker_may_ignore {
                 Err(WFMachinesError::Fatal(format!(
-                    "Event type is unspecified! This history is invalid. Event detail: {:?}",
-                    event
+                    "Event type is unspecified! This history is invalid. Event detail: {event:?}"
                 )))
             } else {
                 debug!("Event is ignorable");
@@ -568,8 +565,7 @@ impl WorkflowMachines {
                 None => {
                     return Err(WFMachinesError::Nondeterminism(format!(
                         "During event handling, this event had an initial command ID but we \
-                            could not find a matching command for it: {:?}",
-                        event
+                            could not find a matching command for it: {event:?}"
                     )));
                 }
             }
@@ -592,7 +588,7 @@ impl WorkflowMachines {
     fn handle_command_event(&mut self, event: HistoryEvent) -> Result<()> {
         if event.is_local_activity_marker() {
             let deets = event.extract_local_activity_marker_data().ok_or_else(|| {
-                WFMachinesError::Fatal(format!("Local activity marker was unparsable: {:?}", event))
+                WFMachinesError::Fatal(format!("Local activity marker was unparsable: {event:?}"))
             })?;
             let cmdid = CommandID::LocalActivity(deets.seq);
             let mkey = self.get_machine_key(cmdid)?;
@@ -604,8 +600,7 @@ impl WorkflowMachines {
             } else {
                 return Err(WFMachinesError::Fatal(format!(
                     "Encountered local activity marker but the associated machine was of the \
-                     wrong type! {:?}",
-                    event
+                     wrong type! {event:?}"
                 )));
             }
         }
@@ -630,8 +625,7 @@ impl WorkflowMachines {
                 c
             } else {
                 return Err(WFMachinesError::Nondeterminism(format!(
-                    "No command scheduled for event {}",
-                    event
+                    "No command scheduled for event {event}"
                 )));
             };
 
@@ -687,8 +681,7 @@ impl WorkflowMachines {
                     );
                 } else {
                     return Err(WFMachinesError::Fatal(format!(
-                        "WorkflowExecutionStarted event did not have appropriate attributes: {}",
-                        event
+                        "WorkflowExecutionStarted event did not have appropriate attributes: {event}"
                     )));
                 }
             }
@@ -724,8 +717,7 @@ impl WorkflowMachines {
             }
             _ => {
                 return Err(WFMachinesError::Fatal(format!(
-                    "The event is not a non-stateful event, but we tried to handle it as one: {}",
-                    event
+                    "The event is not a non-stateful event, but we tried to handle it as one: {event}"
                 )));
             }
         }
@@ -853,8 +845,7 @@ impl WorkflowMachines {
                     }
                     c => {
                         return Err(WFMachinesError::Fatal(format!(
-                        "A machine requested to create a new command of an unsupported type: {:?}",
-                        c
+                        "A machine requested to create a new command of an unsupported type: {c:?}"
                     )))
                     }
                 },
@@ -979,8 +970,7 @@ impl WorkflowMachines {
                     )
                     .map_err(|e| {
                         WFMachinesError::Fatal(format!(
-                            "Invalid schedule local activity request (seq {}): {}",
-                            seq, e
+                            "Invalid schedule local activity request (seq {seq}): {e}"
                         ))
                     })?;
                     let (la, mach_resp) = new_local_activity(
@@ -1117,7 +1107,7 @@ impl WorkflowMachines {
 
     fn get_machine_key(&self, id: CommandID) -> Result<MachineKey> {
         Ok(*self.id_to_machine.get(&id).ok_or_else(|| {
-            WFMachinesError::Fatal(format!("Missing associated machine for {:?}", id))
+            WFMachinesError::Fatal(format!("Missing associated machine for {id:?}"))
         })?)
     }
 
@@ -1215,9 +1205,8 @@ fn change_marker_handling(event: &HistoryEvent, mach: &Machines) -> Result<Chang
                 return Ok(ChangeMarkerOutcome::SkipEvent);
             }
             return Err(WFMachinesError::Nondeterminism(format!(
-                "Non-deprecated patch marker encountered for change {}, \
-                            but there is no corresponding change command!",
-                patch_name
+                "Non-deprecated patch marker encountered for change {patch_name}, \
+                            but there is no corresponding change command!"
             )));
         }
         // Patch machines themselves may also not *have* matching markers, where non-deprecated

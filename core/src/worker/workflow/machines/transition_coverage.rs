@@ -144,7 +144,7 @@ mod machine_coverage_report {
                 m @ "ModifyWorkflowPropertiesMachine" => {
                     cover_transitions(m, &mut modify_wf_props, coverage)
                 }
-                m => panic!("Unknown machine {}", m),
+                m => panic!("Unknown machine {m}"),
             }
         }
     }
@@ -168,7 +168,7 @@ mod machine_coverage_report {
         let mut d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         d.push("machine_coverage");
         std::fs::create_dir_all(&d).unwrap();
-        d.push(format!("{}_Coverage.puml", machine));
+        d.push(format!("{machine}_Coverage.puml"));
         let mut file = File::create(d).unwrap();
         file.write_all(viz.as_bytes()).unwrap();
     }

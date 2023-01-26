@@ -168,7 +168,7 @@ impl WFStream {
                     WFStreamInput::FailedFetch { run_id, err } => state
                         .request_eviction(RequestEvictMsg {
                             run_id,
-                            message: format!("Fetching history failed: {:?}", err),
+                            message: format!("Fetching history failed: {err:?}"),
                             reason: EvictionReason::Fatal,
                         })
                         .into_run_update_resp(),
@@ -590,7 +590,7 @@ enum WFStreamInput {
     feature = "save_wf_inputs",
     derive(serde::Serialize, serde::Deserialize)
 )]
-#[debug(fmt = "LocalInput {{ {:?} }}", input)]
+#[debug(fmt = "LocalInput {{ {input:?} }}")]
 pub(super) struct LocalInput {
     pub input: LocalInputs,
     #[cfg_attr(feature = "save_wf_inputs", serde(skip, default = "Span::current"))]

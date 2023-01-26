@@ -23,6 +23,6 @@ async fn main() -> Result<(), anyhow::Error> {
         .expect("history field must be populated");
     // Serialize history to file
     let byteified = hist.encode_to_vec();
-    tokio::fs::write(format!("{}_history.bin", wf_id), &byteified).await?;
+    tokio::fs::write(format!("{wf_id}_history.bin"), &byteified).await?;
     Ok(())
 }

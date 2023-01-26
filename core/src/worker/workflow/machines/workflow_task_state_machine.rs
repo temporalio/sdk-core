@@ -48,7 +48,7 @@ pub(super) enum WFTaskMachineCommand {
         task_started_event_id: i64,
         time: SystemTime,
     },
-    #[display(fmt = "RunIdOnWorkflowResetUpdate({})", run_id)]
+    #[display(fmt = "RunIdOnWorkflowResetUpdate({run_id})")]
     RunIdOnWorkflowResetUpdate { run_id: String },
 }
 
@@ -121,8 +121,7 @@ impl TryFrom<HistoryEvent> for WorkflowTaskMachineEvents {
                     }
                 } else {
                     return Err(WFMachinesError::Fatal(format!(
-                        "Workflow task started event must contain timestamp: {}",
-                        e
+                        "Workflow task started event must contain timestamp: {e}"
                     )));
                 };
                 WFTStartedDat {
@@ -150,15 +149,13 @@ impl TryFrom<HistoryEvent> for WorkflowTaskMachineEvents {
                     })
                 } else {
                     return Err(WFMachinesError::Fatal(format!(
-                        "Workflow task failed is missing attributes: {}",
-                        e
+                        "Workflow task failed is missing attributes: {e}"
                     )));
                 }
             }
             _ => {
                 return Err(WFMachinesError::Nondeterminism(format!(
-                    "Event does not apply to a wf task machine: {}",
-                    e
+                    "Event does not apply to a wf task machine: {e}"
                 )))
             }
         })

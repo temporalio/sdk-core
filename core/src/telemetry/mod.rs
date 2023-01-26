@@ -50,9 +50,7 @@ const TELEM_SERVICE_NAME: &str = "temporal-core-sdk";
 /// traces at `core_level` and all others (from 3rd party modules, etc) at `other_level`.
 pub fn construct_filter_string(core_level: Level, other_level: Level) -> String {
     format!(
-        "{o},temporal_sdk_core={l},temporal_client={l},temporal_sdk={l}",
-        o = other_level,
-        l = core_level
+        "{other_level},temporal_sdk_core={core_level},temporal_client={core_level},temporal_sdk={core_level}"
     )
 }
 

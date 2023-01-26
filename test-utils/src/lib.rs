@@ -164,7 +164,7 @@ impl CoreWfStarter {
         init_integ_telem();
         let rand_bytes: Vec<u8> = rand::thread_rng().sample_iter(&Standard).take(6).collect();
         let task_q_salt = BASE64_STANDARD.encode(rand_bytes);
-        let task_queue = format!("{}_{}", test_name, task_q_salt);
+        let task_queue = format!("{test_name}_{task_q_salt}");
         Self {
             task_queue_name: task_queue.to_owned(),
             worker_config: WorkerConfigBuilder::default()

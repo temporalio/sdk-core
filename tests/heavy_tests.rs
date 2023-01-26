@@ -56,7 +56,7 @@ async fn activity_load() {
     worker.register_wf(wf_type.to_owned(), wf_fn);
     join_all((0..CONCURRENCY).map(|i| {
         let worker = &worker;
-        let wf_id = format!("activity_load_{}", i);
+        let wf_id = format!("activity_load_{i}");
         async move {
             worker
                 .submit_wf(
@@ -155,7 +155,7 @@ async fn workflow_load() {
 
     let mut workflow_handles = vec![];
     for i in 0..num_workflows {
-        let wfid = format!("{}_{}", wf_name, i);
+        let wfid = format!("{wf_name}_{i}");
         let rid = worker
             .submit_wf(
                 wfid.clone(),
@@ -173,7 +173,7 @@ async fn workflow_load() {
             let sends: FuturesUnordered<_> = (0..num_workflows)
                 .map(|i| {
                     client.signal_workflow_execution(
-                        format!("{}_{}", wf_name, i),
+                        format!("{wf_name}_{i}"),
                         "".to_string(),
                         SIGNAME.to_string(),
                         None,
@@ -212,7 +212,7 @@ async fn evict_while_la_running_no_interference() {
     let client = starter.get_client().await;
     let subfs = FuturesUnordered::new();
     for i in 1..100 {
-        let wf_id = format!("{}-{}", wf_name, i);
+        let wf_id = format!("{wf_name}-{i}");
         let run_id = worker
             .submit_wf(
                 &wf_id,

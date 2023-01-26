@@ -67,7 +67,7 @@ pub mod coresdk {
                     fmt_tt(&self.task_token),
                 )?;
                 if let Some(r) = self.result.as_ref().and_then(|r| r.status.as_ref()) {
-                    write!(f, ", {}", r)?;
+                    write!(f, ", {r}")?;
                 } else {
                     write!(f, ", missing result")?;
                 }
@@ -125,13 +125,13 @@ pub mod coresdk {
                 write!(f, "ActivityExecutionResult(")?;
                 match self {
                     aer::Status::Completed(v) => {
-                        write!(f, "{})", v)
+                        write!(f, "{v})")
                     }
                     aer::Status::Failed(v) => {
-                        write!(f, "{})", v)
+                        write!(f, "{v})")
                     }
                     aer::Status::Cancelled(v) => {
-                        write!(f, "{})", v)
+                        write!(f, "{v})")
                     }
                     aer::Status::WillCompleteAsync(_) => {
                         write!(f, "Will complete async)")
@@ -144,7 +144,7 @@ pub mod coresdk {
             fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
                 write!(f, "Success(")?;
                 if let Some(ref v) = self.result {
-                    write!(f, "{}", v)?;
+                    write!(f, "{v}")?;
                 }
                 write!(f, ")")
             }
@@ -154,7 +154,7 @@ pub mod coresdk {
             fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
                 write!(f, "Failure(")?;
                 if let Some(ref v) = self.failure {
-                    write!(f, "{}", v)?;
+                    write!(f, "{v}")?;
                 }
                 write!(f, ")")
             }
@@ -164,7 +164,7 @@ pub mod coresdk {
             fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
                 write!(f, "Cancellation(")?;
                 if let Some(ref v) = self.failure {
-                    write!(f, "{}", v)?;
+                    write!(f, "{v}")?;
                 }
                 write!(f, ")")
             }
@@ -491,7 +491,7 @@ pub mod coresdk {
 
         impl Display for EvictionReason {
             fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-                write!(f, "{:?}", self)
+                write!(f, "{self:?}")
             }
         }
 
@@ -517,7 +517,7 @@ pub mod coresdk {
             fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
                 match &self.variant {
                     None => write!(f, "empty"),
-                    Some(v) => write!(f, "{}", v),
+                    Some(v) => write!(f, "{v}"),
                 }
             }
         }
@@ -673,7 +673,7 @@ pub mod coresdk {
             fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
                 match &self.variant {
                     None => write!(f, "Empty"),
-                    Some(v) => write!(f, "{}", v),
+                    Some(v) => write!(f, "{v}"),
                 }
             }
         }
@@ -1027,7 +1027,7 @@ pub mod coresdk {
             )?;
             match &self.status {
                 None => write!(f, "empty")?,
-                Some(s) => write!(f, "{}", s)?,
+                Some(s) => write!(f, "{s}")?,
             };
             write!(f, ")")
         }
@@ -1042,7 +1042,7 @@ pub mod coresdk {
                     write!(f, "Success(")?;
                     let mut written = 0;
                     for c in commands {
-                        write!(f, "{} ", c)?;
+                        write!(f, "{c} ")?;
                         written += 1;
                         if written >= 10 && written < commands.len() {
                             write!(f, "... {} more", commands.len() - written)?;

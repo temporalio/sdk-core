@@ -44,7 +44,7 @@ async fn continue_as_new_multiple_concurrent() {
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_string(), continue_as_new_wf);
 
-    let wf_names = (1..=20).map(|i| format!("{}-{}", wf_name, i));
+    let wf_names = (1..=20).map(|i| format!("{wf_name}-{i}"));
     for name in wf_names.clone() {
         worker
             .submit_wf(

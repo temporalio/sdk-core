@@ -202,15 +202,13 @@ impl TryFrom<HistoryEvent> for SignalExternalMachineEvents {
                     Self::SignalExternalWorkflowExecutionFailed(attrs.cause())
                 } else {
                     return Err(WFMachinesError::Fatal(format!(
-                        "Signal workflow failed attributes were unset: {}",
-                        e
+                        "Signal workflow failed attributes were unset: {e}"
                     )));
                 }
             }
             _ => {
                 return Err(WFMachinesError::Nondeterminism(format!(
-                    "Signal external WF machine does not handle this event: {}",
-                    e
+                    "Signal external WF machine does not handle this event: {e}"
                 )))
             }
         })
@@ -242,7 +240,7 @@ impl WFMachinesAdapter for SignalExternalMachine {
                     seq: self.shared_state.seq,
                     // TODO: Create new failure type upstream for this
                     failure: Some(Failure {
-                        message: format!("Unable to signal external workflow because {}", reason),
+                        message: format!("Unable to signal external workflow because {reason}"),
                         failure_info: Some(FailureInfo::ApplicationFailureInfo(
                             ApplicationFailureInfo {
                                 r#type: f.to_string(),
