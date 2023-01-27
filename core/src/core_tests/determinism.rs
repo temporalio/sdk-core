@@ -9,7 +9,10 @@ use std::{
 };
 use temporal_client::WorkflowOptions;
 use temporal_sdk::{ActivityOptions, WfContext, WorkflowResult};
-use temporal_sdk_core_protos::temporal::api::enums::v1::WorkflowTaskFailedCause;
+use temporal_sdk_core_protos::{
+    temporal::api::{enums::v1::WorkflowTaskFailedCause, failure::v1::Failure},
+    DEFAULT_ACTIVITY_TYPE,
+};
 
 static DID_FAIL: AtomicBool = AtomicBool::new(false);
 pub async fn timer_wf_fails_once(ctx: WfContext) -> WorkflowResult<()> {
@@ -113,7 +116,7 @@ async fn test_wf_task_rejected_properly_due_to_nondeterminism(#[case] use_cache:
 async fn test_activity_type_change_is_nondeterministic(#[case] use_cache: bool) {
     let wf_id = "fakeid";
     let wf_type = DEFAULT_WORKFLOW_TYPE;
-    let t = canned_histories::single_timer_wf_completes("1");
+    let t = canned_histories::single_activity("1");
     let mock = mock_workflow_client();
     let mut mh = MockPollCfg::from_resp_batches(
         wf_id,
@@ -124,8 +127,13 @@ async fn test_activity_type_change_is_nondeterministic(#[case] use_cache: bool) 
     );
     // We should see one wft failure which has nondeterminism cause
     mh.num_expected_fails = 1;
-    mh.expect_fail_wft_matcher =
-        Box::new(|_, cause, _| matches!(cause, WorkflowTaskFailedCause::NonDeterministicError));
+    mh.expect_fail_wft_matcher = Box::new(|_, cause, f| {
+        matches!(cause, WorkflowTaskFailedCause::NonDeterministicError)
+            && matches!(f, Some(Failure {
+                message,
+                ..
+            }) if message.contains("does not match activity type"))
+    });
     let mut worker = mock_sdk_cfg(mh, |cfg| {
         if use_cache {
             cfg.max_cached_workflows = 2;
@@ -135,6 +143,59 @@ async fn test_activity_type_change_is_nondeterministic(#[case] use_cache: bool) 
     worker.register_wf(wf_type.to_owned(), move |ctx: WfContext| async move {
         ctx.activity(ActivityOptions {
             activity_type: "not the default act type".to_string(),
+            ..Default::default()
+        })
+        .await;
+        Ok(().into())
+    });
+
+    worker
+        .submit_wf(
+            wf_id.to_owned(),
+            wf_type.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+}
+
+#[rstest::rstest]
+#[case::with_cache(true)]
+#[case::without_cache(false)]
+#[tokio::test]
+async fn test_activity_id_change_is_nondeterministic(#[case] use_cache: bool) {
+    let wf_id = "fakeid";
+    let wf_type = DEFAULT_WORKFLOW_TYPE;
+    let t = canned_histories::single_activity("1");
+    let mock = mock_workflow_client();
+    let mut mh = MockPollCfg::from_resp_batches(
+        wf_id,
+        t,
+        // Two polls are needed, since the first will fail
+        [ResponseType::AllHistory, ResponseType::AllHistory],
+        mock,
+    );
+    // We should see one wft failure which has nondeterminism cause
+    mh.num_expected_fails = 1;
+    mh.expect_fail_wft_matcher = Box::new(|_, cause, f| {
+        matches!(cause, WorkflowTaskFailedCause::NonDeterministicError)
+            && matches!(f, Some(Failure {
+                message,
+                ..
+            }) if message.contains("does not match activity id"))
+    });
+    let mut worker = mock_sdk_cfg(mh, |cfg| {
+        if use_cache {
+            cfg.max_cached_workflows = 2;
+        }
+    });
+
+    worker.register_wf(wf_type.to_owned(), move |ctx: WfContext| async move {
+        ctx.activity(ActivityOptions {
+            activity_id: Some("I'm bad and wrong!".to_string()),
+            activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
             ..Default::default()
         })
         .await;

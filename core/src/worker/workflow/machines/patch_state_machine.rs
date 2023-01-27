@@ -244,7 +244,7 @@ mod tests {
     };
 
     const MY_PATCH_ID: &str = "test_patch_id";
-    #[derive(Eq, PartialEq, Copy, Clone)]
+    #[derive(Eq, PartialEq, Copy, Clone, Debug)]
     enum MarkerType {
         Deprecated,
         NotDeprecated,
@@ -265,7 +265,11 @@ mod tests {
     /// EVENT_TYPE_WORKFLOW_TASK_STARTED
     /// EVENT_TYPE_WORKFLOW_TASK_COMPLETED
     /// EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
-    fn patch_marker_single_activity(marker_type: MarkerType) -> TestHistoryBuilder {
+    fn patch_marker_single_activity(
+        marker_type: MarkerType,
+        version: usize,
+        replay: bool,
+    ) -> TestHistoryBuilder {
         let mut t = TestHistoryBuilder::default();
         t.add_by_type(EventType::WorkflowExecutionStarted);
         t.add_full_wf_task();
@@ -275,11 +279,30 @@ mod tests {
             MarkerType::NoMarker => {}
         };
 
+        let activity_id = if replay {
+            match (marker_type, version) {
+                (_, 1) => "no_change",
+                (MarkerType::NotDeprecated, 2) => "had_change",
+                (MarkerType::Deprecated, 2) => "had_change",
+                (MarkerType::NoMarker, 2) => "no_change",
+                (_, 3) => "had_change",
+                (_, 4) => "had_change",
+                v => panic!("Nonsense marker / version combo {v:?}"),
+            }
+        } else {
+            // If the workflow isn't replaying (we're creating history here for a workflow which
+            // wasn't replaying at the time of scheduling the activity, and has done that, and now
+            // we're feeding back the history it would have produced) then it always has the change,
+            // except in v1.
+            if version > 1 {
+                "had_change"
+            } else {
+                "no_change"
+            }
+        };
+
         let scheduled_event_id = t.add(ActivityTaskScheduledEventAttributes {
-            activity_id: "0".to_string(),
-            activity_type: Some(ActivityType {
-                name: "".to_string(),
-            }),
+            activity_id: activity_id.to_string(),
             ..Default::default()
         });
         let started_event_id = t.add(ActivityTaskStartedEventAttributes {
@@ -363,7 +386,7 @@ mod tests {
             Ok(().into())
         });
 
-        let t = patch_marker_single_activity(marker_type);
+        let t = patch_marker_single_activity(marker_type, workflow_version, replaying);
         let histinfo = if replaying {
             t.get_full_history_info()
         } else {
@@ -401,7 +424,7 @@ mod tests {
         } else {
             // Feed more history
             wfm.new_history(
-                patch_marker_single_activity(marker_type)
+                patch_marker_single_activity(marker_type, wf_version, replaying)
                     .get_full_history_info()
                     .unwrap()
                     .into(),
@@ -495,7 +518,7 @@ mod tests {
             // and the history should have the has-change timer. v3 of course always has the change
             // regardless.
             wfm.new_history(
-                patch_marker_single_activity(marker_type)
+                patch_marker_single_activity(marker_type, wf_version, replaying)
                     .get_full_history_info()
                     .unwrap()
                     .into(),

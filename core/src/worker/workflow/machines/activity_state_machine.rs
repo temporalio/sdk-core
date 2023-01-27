@@ -97,6 +97,7 @@ pub(super) enum ActivityMachineCommand {
 pub(super) struct ActTaskScheduledData {
     event_id: i64,
     act_type: String,
+    act_id: String,
 }
 
 /// Creates a new activity state machine and a command to schedule it on the server.
@@ -186,6 +187,7 @@ impl TryFrom<HistoryEvent> for ActivityMachineEvents {
                 {
                     Self::ActivityTaskScheduled(ActTaskScheduledData {
                         event_id: e.event_id,
+                        act_id: attrs.activity_id,
                         act_type: attrs.activity_type.unwrap_or_default().name,
                     })
                 } else {
@@ -392,6 +394,13 @@ impl ScheduleCommandCreated {
         dat: SharedState,
         sched_dat: ActTaskScheduledData,
     ) -> ActivityMachineTransition<ScheduledEventRecorded> {
+        if sched_dat.act_id != dat.attrs.activity_id {
+            return TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
+                "Activity id of scheduled event '{}' does not \
+                 match activity id of activity command '{}'",
+                sched_dat.act_id, dat.attrs.activity_id
+            )));
+        }
         if sched_dat.act_type != dat.attrs.activity_type {
             return TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
                 "Activity type of scheduled event '{}' does not \
@@ -829,6 +838,7 @@ mod test {
     async fn activity_wf(command_sink: WfContext) -> WorkflowResult<()> {
         command_sink
             .activity(ActivityOptions {
+                activity_id: Some("activity-id-1".to_string()),
                 activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
                 ..Default::default()
             })

@@ -988,12 +988,11 @@ async fn activity_not_canceled_when_also_completed_repro(hist_batches: &'static 
         &core,
         NonSticky,
         &[
-            // TODO: Act id mismatch. Should also check? Actually semi-debatable, but probably.
             gen_assert_and_reply(
                 &job_assert!(workflow_activation_job::Variant::StartWorkflow(_)),
                 vec![ScheduleActivity {
                     seq: activity_id,
-                    activity_id: activity_id.to_string(),
+                    activity_id: "act-1".to_string(),
                     cancellation_type: ActivityCancellationType::TryCancel as i32,
                     ..default_act_sched()
                 }

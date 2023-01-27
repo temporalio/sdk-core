@@ -874,7 +874,7 @@ pub fn wft_timeout_repro() -> TestHistoryBuilder {
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
-    let scheduled_event_id = t.add_activity_task_scheduled("act-1");
+    let scheduled_event_id = t.add_activity_task_scheduled("1");
     t.add_we_signaled(
         "at-started",
         vec![Payload {
@@ -894,15 +894,11 @@ pub fn wft_timeout_repro() -> TestHistoryBuilder {
         scheduled_event_id,
         ..Default::default()
     });
-    t.add(
-        history_event::Attributes::ActivityTaskCompletedEventAttributes(
-            ActivityTaskCompletedEventAttributes {
-                scheduled_event_id,
-                started_event_id,
-                ..Default::default()
-            },
-        ),
-    );
+    t.add(ActivityTaskCompletedEventAttributes {
+        scheduled_event_id,
+        started_event_id,
+        ..Default::default()
+    });
     t.add_workflow_task_started();
     t.add_workflow_task_timed_out();
     t.add_full_wf_task();
