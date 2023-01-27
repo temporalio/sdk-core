@@ -566,10 +566,7 @@ async fn la_resolve_during_legacy_query_does_not_combine(#[case] impossible_quer
     let wfid = "fake_wf_id";
     let mut t = TestHistoryBuilder::default();
     let wes_short_wft_timeout = default_wes_attribs();
-    t.add(
-        EventType::WorkflowExecutionStarted,
-        wes_short_wft_timeout.into(),
-    );
+    t.add(wes_short_wft_timeout.into());
     // Since we don't send queries with start workflow, need one workflow task of something else
     // b/c we want to get an activation with a job and a nonlegacy query
     t.add_full_wf_task();

@@ -8,6 +8,7 @@ on: # rebuild any PRs and main branch changes
 
 jobs:
   build-and-test:
+    timeout-minutes: 20
     runs-on: ubuntu-latest-16-cores
     steps:
       - uses: actions/checkout@v2

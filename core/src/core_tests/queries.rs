@@ -773,7 +773,6 @@ async fn legacy_query_combined_with_timer_fire_repro() {
     t.add_timer_fired(timer_started_event_id, "1".to_string());
     t.add_full_wf_task();
     t.add(
-        EventType::ActivityTaskCancelRequested,
         history_event::Attributes::ActivityTaskCancelRequestedEventAttributes(
             ActivityTaskCancelRequestedEventAttributes {
                 scheduled_event_id,

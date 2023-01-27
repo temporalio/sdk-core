@@ -42,6 +42,9 @@ use temporal_sdk_core_protos::{
     temporal::api::{
         command::v1::{command::Attributes, ScheduleActivityTaskCommandAttributes},
         enums::v1::EventType,
+        history::v1::{
+            history_event::Attributes as EventAttributes, ActivityTaskScheduledEventAttributes,
+        },
         workflowservice::v1::{
             PollActivityTaskQueueResponse, RecordActivityTaskHeartbeatResponse,
             RespondActivityTaskCanceledResponse, RespondActivityTaskCompletedResponse,
@@ -828,11 +831,23 @@ async fn activity_tasks_from_completion_reserve_slots() {
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
-    let schedid = t.add_activity_task_scheduled("1");
+    let schedid = t.add(EventAttributes::ActivityTaskScheduledEventAttributes(
+        ActivityTaskScheduledEventAttributes {
+            activity_id: "1".to_string(),
+            activity_type: Some("act1".into()),
+            ..Default::default()
+        },
+    ));
     let startid = t.add_activity_task_started(schedid);
     t.add_activity_task_completed(schedid, startid, b"hi".into());
     t.add_full_wf_task();
-    let schedid = t.add_activity_task_scheduled("2");
+    let schedid = t.add(EventAttributes::ActivityTaskScheduledEventAttributes(
+        ActivityTaskScheduledEventAttributes {
+            activity_id: "2".to_string(),
+            activity_type: Some("act2".into()),
+            ..Default::default()
+        },
+    ));
     let startid = t.add_activity_task_started(schedid);
     t.add_activity_task_completed(schedid, startid, b"hi".into());
     t.add_full_wf_task();

@@ -59,14 +59,13 @@ pub fn cancel_timer(wait_timer_id: &str, cancel_timer_id: &str) -> TestHistoryBu
     // 8
     t.add_full_wf_task();
     // 11
-    t.add(
-        EventType::TimerCanceled,
-        history_event::Attributes::TimerCanceledEventAttributes(TimerCanceledEventAttributes {
+    t.add(history_event::Attributes::TimerCanceledEventAttributes(
+        TimerCanceledEventAttributes {
             started_event_id: cancel_timer_started_id,
             timer_id: cancel_timer_id.to_string(),
             ..Default::default()
-        }),
-    );
+        },
+    ));
     // 12
     t.add_workflow_execution_completed();
     t
@@ -224,7 +223,6 @@ pub fn single_failed_activity(activity_id: &str) -> TestHistoryBuilder {
     let scheduled_event_id = t.add_activity_task_scheduled(activity_id);
     let started_event_id = t.add_activity_task_started(scheduled_event_id);
     t.add(
-        EventType::ActivityTaskFailed,
         history_event::Attributes::ActivityTaskFailedEventAttributes(
             ActivityTaskFailedEventAttributes {
                 scheduled_event_id,
@@ -262,7 +260,6 @@ pub fn cancel_scheduled_activity(activity_id: &str, signal_id: &str) -> TestHist
     );
     t.add_full_wf_task();
     t.add(
-        EventType::ActivityTaskCancelRequested,
         history_event::Attributes::ActivityTaskCancelRequestedEventAttributes(
             ActivityTaskCancelRequestedEventAttributes {
                 scheduled_event_id,
@@ -290,7 +287,6 @@ pub fn scheduled_activity_timeout(activity_id: &str) -> TestHistoryBuilder {
     t.add_full_wf_task();
     let scheduled_event_id = t.add_activity_task_scheduled(activity_id);
     t.add(
-        EventType::ActivityTaskTimedOut,
         history_event::Attributes::ActivityTaskTimedOutEventAttributes(
             ActivityTaskTimedOutEventAttributes {
                 scheduled_event_id,
@@ -335,7 +331,6 @@ pub fn scheduled_cancelled_activity_timeout(
     );
     t.add_full_wf_task();
     t.add(
-        EventType::ActivityTaskCancelRequested,
         history_event::Attributes::ActivityTaskCancelRequestedEventAttributes(
             ActivityTaskCancelRequestedEventAttributes {
                 scheduled_event_id,
@@ -344,7 +339,6 @@ pub fn scheduled_cancelled_activity_timeout(
         ),
     );
     t.add(
-        EventType::ActivityTaskTimedOut,
         history_event::Attributes::ActivityTaskTimedOutEventAttributes(
             ActivityTaskTimedOutEventAttributes {
                 scheduled_event_id,
@@ -372,17 +366,7 @@ pub fn started_activity_timeout(activity_id: &str) -> TestHistoryBuilder {
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
-    let scheduled_event_id = t.add_get_event_id(
-        EventType::ActivityTaskScheduled,
-        Some(
-            history_event::Attributes::ActivityTaskScheduledEventAttributes(
-                ActivityTaskScheduledEventAttributes {
-                    activity_id: activity_id.to_string(),
-                    ..Default::default()
-                },
-            ),
-        ),
-    );
+    let scheduled_event_id = t.add_activity_task_scheduled(activity_id);
     let started_event_id = t.add_get_event_id(
         EventType::ActivityTaskStarted,
         Some(
@@ -395,7 +379,6 @@ pub fn started_activity_timeout(activity_id: &str) -> TestHistoryBuilder {
         ),
     );
     t.add(
-        EventType::ActivityTaskTimedOut,
         history_event::Attributes::ActivityTaskTimedOutEventAttributes(
             ActivityTaskTimedOutEventAttributes {
                 scheduled_event_id,
@@ -423,17 +406,7 @@ pub fn cancel_scheduled_activity_abandon(activity_id: &str, signal_id: &str) -> 
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
-    t.add_get_event_id(
-        EventType::ActivityTaskScheduled,
-        Some(
-            history_event::Attributes::ActivityTaskScheduledEventAttributes(
-                ActivityTaskScheduledEventAttributes {
-                    activity_id: activity_id.to_string(),
-                    ..Default::default()
-                },
-            ),
-        ),
-    );
+    t.add_activity_task_scheduled(activity_id);
     t.add_we_signaled(
         signal_id,
         vec![Payload {
@@ -461,17 +434,7 @@ pub fn cancel_started_activity_abandon(activity_id: &str, signal_id: &str) -> Te
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
-    let scheduled_event_id = t.add_get_event_id(
-        EventType::ActivityTaskScheduled,
-        Some(
-            history_event::Attributes::ActivityTaskScheduledEventAttributes(
-                ActivityTaskScheduledEventAttributes {
-                    activity_id: activity_id.to_string(),
-                    ..Default::default()
-                },
-            ),
-        ),
-    );
+    let scheduled_event_id = t.add_activity_task_scheduled(activity_id);
     t.add_get_event_id(
         EventType::ActivityTaskStarted,
         Some(
@@ -521,17 +484,7 @@ pub fn cancel_scheduled_activity_with_signal_and_activity_task_cancel(
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
-    let scheduled_event_id = t.add_get_event_id(
-        EventType::ActivityTaskScheduled,
-        Some(
-            history_event::Attributes::ActivityTaskScheduledEventAttributes(
-                ActivityTaskScheduledEventAttributes {
-                    activity_id: activity_id.to_string(),
-                    ..Default::default()
-                },
-            ),
-        ),
-    );
+    let scheduled_event_id = t.add_activity_task_scheduled(activity_id);
     t.add_we_signaled(
         signal_id,
         vec![Payload {
@@ -541,7 +494,6 @@ pub fn cancel_scheduled_activity_with_signal_and_activity_task_cancel(
     );
     t.add_full_wf_task();
     t.add(
-        EventType::ActivityTaskCancelRequested,
         history_event::Attributes::ActivityTaskCancelRequestedEventAttributes(
             ActivityTaskCancelRequestedEventAttributes {
                 scheduled_event_id,
@@ -558,7 +510,6 @@ pub fn cancel_scheduled_activity_with_signal_and_activity_task_cancel(
     );
     t.add_full_wf_task();
     t.add(
-        EventType::ActivityTaskCanceled,
         history_event::Attributes::ActivityTaskCanceledEventAttributes(
             ActivityTaskCanceledEventAttributes {
                 scheduled_event_id,
@@ -598,17 +549,7 @@ pub fn cancel_started_activity_with_signal_and_activity_task_cancel(
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
-    let scheduled_event_id = t.add_get_event_id(
-        EventType::ActivityTaskScheduled,
-        Some(
-            history_event::Attributes::ActivityTaskScheduledEventAttributes(
-                ActivityTaskScheduledEventAttributes {
-                    activity_id: activity_id.to_string(),
-                    ..Default::default()
-                },
-            ),
-        ),
-    );
+    let scheduled_event_id = t.add_activity_task_scheduled(activity_id);
     t.add_get_event_id(
         EventType::ActivityTaskStarted,
         Some(
@@ -629,7 +570,6 @@ pub fn cancel_started_activity_with_signal_and_activity_task_cancel(
     );
     t.add_full_wf_task();
     t.add(
-        EventType::ActivityTaskCancelRequested,
         history_event::Attributes::ActivityTaskCancelRequestedEventAttributes(
             ActivityTaskCancelRequestedEventAttributes {
                 scheduled_event_id,
@@ -646,7 +586,6 @@ pub fn cancel_started_activity_with_signal_and_activity_task_cancel(
     );
     t.add_full_wf_task();
     t.add(
-        EventType::ActivityTaskCanceled,
         history_event::Attributes::ActivityTaskCanceledEventAttributes(
             ActivityTaskCanceledEventAttributes {
                 scheduled_event_id,
@@ -681,17 +620,7 @@ pub fn cancel_scheduled_activity_with_activity_task_cancel(
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
-    let scheduled_event_id = t.add_get_event_id(
-        EventType::ActivityTaskScheduled,
-        Some(
-            history_event::Attributes::ActivityTaskScheduledEventAttributes(
-                ActivityTaskScheduledEventAttributes {
-                    activity_id: activity_id.to_string(),
-                    ..Default::default()
-                },
-            ),
-        ),
-    );
+    let scheduled_event_id = t.add_activity_task_scheduled(activity_id);
     t.add_we_signaled(
         signal_id,
         vec![Payload {
@@ -701,7 +630,6 @@ pub fn cancel_scheduled_activity_with_activity_task_cancel(
     );
     t.add_full_wf_task();
     t.add(
-        EventType::ActivityTaskCancelRequested,
         history_event::Attributes::ActivityTaskCancelRequestedEventAttributes(
             ActivityTaskCancelRequestedEventAttributes {
                 scheduled_event_id,
@@ -710,7 +638,6 @@ pub fn cancel_scheduled_activity_with_activity_task_cancel(
         ),
     );
     t.add(
-        EventType::ActivityTaskCanceled,
         history_event::Attributes::ActivityTaskCanceledEventAttributes(
             ActivityTaskCanceledEventAttributes {
                 scheduled_event_id,
@@ -746,17 +673,7 @@ pub fn cancel_started_activity_with_activity_task_cancel(
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
-    let scheduled_event_id = t.add_get_event_id(
-        EventType::ActivityTaskScheduled,
-        Some(
-            history_event::Attributes::ActivityTaskScheduledEventAttributes(
-                ActivityTaskScheduledEventAttributes {
-                    activity_id: activity_id.to_string(),
-                    ..Default::default()
-                },
-            ),
-        ),
-    );
+    let scheduled_event_id = t.add_activity_task_scheduled(activity_id);
     t.add_get_event_id(
         EventType::ActivityTaskStarted,
         Some(
@@ -777,7 +694,6 @@ pub fn cancel_started_activity_with_activity_task_cancel(
     );
     t.add_full_wf_task();
     t.add(
-        EventType::ActivityTaskCancelRequested,
         history_event::Attributes::ActivityTaskCancelRequestedEventAttributes(
             ActivityTaskCancelRequestedEventAttributes {
                 scheduled_event_id,
@@ -786,7 +702,6 @@ pub fn cancel_started_activity_with_activity_task_cancel(
         ),
     );
     t.add(
-        EventType::ActivityTaskCanceled,
         history_event::Attributes::ActivityTaskCanceledEventAttributes(
             ActivityTaskCanceledEventAttributes {
                 scheduled_event_id,
@@ -903,17 +818,7 @@ pub fn unsent_at_cancel_repro() -> TestHistoryBuilder {
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
 
-    let scheduled_event_id = t.add_get_event_id(
-        EventType::ActivityTaskScheduled,
-        Some(
-            history_event::Attributes::ActivityTaskScheduledEventAttributes(
-                ActivityTaskScheduledEventAttributes {
-                    activity_id: 1.to_string(),
-                    ..Default::default()
-                },
-            ),
-        ),
-    );
+    let scheduled_event_id = t.add_activity_task_scheduled(1.to_string());
     let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
     t.add_timer_fired(timer_started_event_id, 1.to_string());
 
@@ -947,17 +852,7 @@ pub fn cancel_not_sent_when_also_complete_repro() -> TestHistoryBuilder {
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
 
-    let scheduled_event_id = t.add_get_event_id(
-        EventType::ActivityTaskScheduled,
-        Some(
-            history_event::Attributes::ActivityTaskScheduledEventAttributes(
-                ActivityTaskScheduledEventAttributes {
-                    activity_id: "act-1".to_string(),
-                    ..Default::default()
-                },
-            ),
-        ),
-    );
+    let scheduled_event_id = t.add_activity_task_scheduled("act-1");
     t.add_we_signaled(
         "sig-1",
         vec![Payload {
@@ -980,7 +875,6 @@ pub fn cancel_not_sent_when_also_complete_repro() -> TestHistoryBuilder {
         ),
     );
     t.add(
-        EventType::ActivityTaskCompleted,
         history_event::Attributes::ActivityTaskCompletedEventAttributes(
             ActivityTaskCompletedEventAttributes {
                 scheduled_event_id,
@@ -1015,17 +909,7 @@ pub fn wft_timeout_repro() -> TestHistoryBuilder {
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
-    let scheduled_event_id = t.add_get_event_id(
-        EventType::ActivityTaskScheduled,
-        Some(
-            history_event::Attributes::ActivityTaskScheduledEventAttributes(
-                ActivityTaskScheduledEventAttributes {
-                    activity_id: "act-1".to_string(),
-                    ..Default::default()
-                },
-            ),
-        ),
-    );
+    let scheduled_event_id = t.add_activity_task_scheduled("act-1");
     t.add_we_signaled(
         "at-started",
         vec![Payload {
@@ -1053,7 +937,6 @@ pub fn wft_timeout_repro() -> TestHistoryBuilder {
         ),
     );
     t.add(
-        EventType::ActivityTaskCompleted,
         history_event::Attributes::ActivityTaskCompletedEventAttributes(
             ActivityTaskCompletedEventAttributes {
                 scheduled_event_id,
@@ -1234,7 +1117,6 @@ pub fn activity_double_resolve_repro() -> TestHistoryBuilder {
         ),
     );
     t.add(
-        EventType::ActivityTaskTimedOut,
         history_event::Attributes::ActivityTaskTimedOutEventAttributes(
             ActivityTaskTimedOutEventAttributes {
                 scheduled_event_id: act_sched_id,
@@ -1313,7 +1195,6 @@ fn start_child_wf_preamble(child_wf_id: &str) -> (TestHistoryBuilder, i64, i64) 
 pub fn single_child_workflow(child_wf_id: &str) -> TestHistoryBuilder {
     let (mut t, initiated_event_id, started_event_id) = start_child_wf_preamble(child_wf_id);
     t.add(
-        EventType::ChildWorkflowExecutionCompleted,
         history_event::Attributes::ChildWorkflowExecutionCompletedEventAttributes(
             ChildWorkflowExecutionCompletedEventAttributes {
                 initiated_event_id,
@@ -1345,7 +1226,6 @@ pub fn single_child_workflow(child_wf_id: &str) -> TestHistoryBuilder {
 pub fn single_child_workflow_fail(child_wf_id: &str) -> TestHistoryBuilder {
     let (mut t, initiated_event_id, started_event_id) = start_child_wf_preamble(child_wf_id);
     t.add(
-        EventType::ChildWorkflowExecutionFailed,
         history_event::Attributes::ChildWorkflowExecutionFailedEventAttributes(
             ChildWorkflowExecutionFailedEventAttributes {
                 initiated_event_id,
@@ -1380,7 +1260,6 @@ pub fn single_child_workflow_signaled(child_wf_id: &str, signame: &str) -> TestH
     let id = t.add_signal_wf(signame, "fake_wid", "fake_rid");
     t.add_external_signal_completed(id);
     t.add(
-        EventType::ChildWorkflowExecutionCompleted,
         history_event::Attributes::ChildWorkflowExecutionCompletedEventAttributes(
             ChildWorkflowExecutionCompletedEventAttributes {
                 initiated_event_id,
@@ -1418,7 +1297,6 @@ pub fn single_child_workflow_cancelled(child_wf_id: &str) -> TestHistoryBuilder 
     });
     t.add_cancel_external_wf_completed(id);
     t.add(
-        EventType::ChildWorkflowExecutionCanceled,
         history_event::Attributes::ChildWorkflowExecutionCanceledEventAttributes(
             ChildWorkflowExecutionCanceledEventAttributes {
                 initiated_event_id,

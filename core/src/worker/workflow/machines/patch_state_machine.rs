@@ -302,7 +302,6 @@ mod tests {
             ),
         );
         t.add(
-            EventType::ActivityTaskCompleted,
             history_event::Attributes::ActivityTaskCompletedEventAttributes(
                 ActivityTaskCompletedEventAttributes {
                     scheduled_event_id,
@@ -590,7 +589,6 @@ mod tests {
                 ),
             );
             t.add(
-                EventType::ActivityTaskCompleted,
                 history_event::Attributes::ActivityTaskCompletedEventAttributes(
                     ActivityTaskCompletedEventAttributes {
                         scheduled_event_id,
@@ -602,31 +600,28 @@ mod tests {
             );
             t.add_full_wf_task();
             let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
-            t.add(
-                EventType::TimerFired,
-                history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
+            t.add(history_event::Attributes::TimerFiredEventAttributes(
+                TimerFiredEventAttributes {
                     started_event_id: timer_started_event_id,
                     timer_id: "1".to_owned(),
-                }),
-            );
+                },
+            ));
         } else {
             let started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
-            t.add(
-                EventType::TimerFired,
-                history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
+            t.add(history_event::Attributes::TimerFiredEventAttributes(
+                TimerFiredEventAttributes {
                     started_event_id,
                     timer_id: "1".to_owned(),
-                }),
-            );
+                },
+            ));
             t.add_full_wf_task();
             let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
-            t.add(
-                EventType::TimerFired,
-                history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
+            t.add(history_event::Attributes::TimerFiredEventAttributes(
+                TimerFiredEventAttributes {
                     started_event_id: timer_started_event_id,
                     timer_id: "2".to_owned(),
-                }),
-            );
+                },
+            ));
         }
         t.add_full_wf_task();
 
@@ -657,7 +652,6 @@ mod tests {
                 ),
             );
             t.add(
-                EventType::ActivityTaskCompleted,
                 history_event::Attributes::ActivityTaskCompletedEventAttributes(
                     ActivityTaskCompletedEventAttributes {
                         scheduled_event_id,
@@ -669,13 +663,12 @@ mod tests {
             );
         } else {
             let started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
-            t.add(
-                EventType::TimerFired,
-                history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
+            t.add(history_event::Attributes::TimerFiredEventAttributes(
+                TimerFiredEventAttributes {
                     started_event_id,
                     timer_id: "3".to_owned(),
-                }),
-            );
+                },
+            ));
         }
         t.add_full_wf_task();
         t.add_workflow_execution_completed();
