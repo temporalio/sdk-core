@@ -237,9 +237,8 @@ mod tests {
             common::v1::ActivityType,
             enums::v1::{CommandType, EventType},
             history::v1::{
-                history_event, ActivityTaskCompletedEventAttributes,
-                ActivityTaskScheduledEventAttributes, ActivityTaskStartedEventAttributes,
-                TimerFiredEventAttributes,
+                ActivityTaskCompletedEventAttributes, ActivityTaskScheduledEventAttributes,
+                ActivityTaskStartedEventAttributes, TimerFiredEventAttributes,
             },
         },
     };
@@ -276,40 +275,22 @@ mod tests {
             MarkerType::NoMarker => {}
         };
 
-        let scheduled_event_id = t.add_get_event_id(
-            EventType::ActivityTaskScheduled,
-            Some(
-                history_event::Attributes::ActivityTaskScheduledEventAttributes(
-                    ActivityTaskScheduledEventAttributes {
-                        activity_id: "0".to_string(),
-                        activity_type: Some(ActivityType {
-                            name: "".to_string(),
-                        }),
-                        ..Default::default()
-                    },
-                ),
-            ),
-        );
-        let started_event_id = t.add_get_event_id(
-            EventType::ActivityTaskStarted,
-            Some(
-                history_event::Attributes::ActivityTaskStartedEventAttributes(
-                    ActivityTaskStartedEventAttributes {
-                        scheduled_event_id,
-                        ..Default::default()
-                    },
-                ),
-            ),
-        );
-        t.add(
-            history_event::Attributes::ActivityTaskCompletedEventAttributes(
-                ActivityTaskCompletedEventAttributes {
-                    scheduled_event_id,
-                    started_event_id,
-                    ..Default::default()
-                },
-            ),
-        );
+        let scheduled_event_id = t.add(ActivityTaskScheduledEventAttributes {
+            activity_id: "0".to_string(),
+            activity_type: Some(ActivityType {
+                name: "".to_string(),
+            }),
+            ..Default::default()
+        });
+        let started_event_id = t.add(ActivityTaskStartedEventAttributes {
+            scheduled_event_id,
+            ..Default::default()
+        });
+        t.add(ActivityTaskCompletedEventAttributes {
+            scheduled_event_id,
+            started_event_id,
+            ..Default::default()
+        });
         t.add_full_wf_task();
         t.add_workflow_execution_completed();
         t
@@ -563,112 +544,66 @@ mod tests {
         t.add_full_wf_task();
         if have_marker_in_hist {
             t.add_has_change_marker(MY_PATCH_ID, false);
-            let scheduled_event_id = t.add_get_event_id(
-                EventType::ActivityTaskScheduled,
-                Some(
-                    history_event::Attributes::ActivityTaskScheduledEventAttributes(
-                        ActivityTaskScheduledEventAttributes {
-                            activity_id: "1".to_owned(),
-                            activity_type: Some(ActivityType {
-                                name: "".to_string(),
-                            }),
-                            ..Default::default()
-                        },
-                    ),
-                ),
-            );
-            let started_event_id = t.add_get_event_id(
-                EventType::ActivityTaskStarted,
-                Some(
-                    history_event::Attributes::ActivityTaskStartedEventAttributes(
-                        ActivityTaskStartedEventAttributes {
-                            scheduled_event_id,
-                            ..Default::default()
-                        },
-                    ),
-                ),
-            );
-            t.add(
-                history_event::Attributes::ActivityTaskCompletedEventAttributes(
-                    ActivityTaskCompletedEventAttributes {
-                        scheduled_event_id,
-                        started_event_id,
-                        // TODO result: Some(Payloads { payloads: vec![Payload{ metadata: Default::default(), data: vec![] }] }),
-                        ..Default::default()
-                    },
-                ),
-            );
+            let scheduled_event_id = t.add(ActivityTaskScheduledEventAttributes {
+                activity_id: "1".to_owned(),
+                activity_type: Some(ActivityType {
+                    name: "".to_string(),
+                }),
+                ..Default::default()
+            });
+            let started_event_id = t.add(ActivityTaskStartedEventAttributes {
+                scheduled_event_id,
+                ..Default::default()
+            });
+            t.add(ActivityTaskCompletedEventAttributes {
+                scheduled_event_id,
+                started_event_id,
+                ..Default::default()
+            });
             t.add_full_wf_task();
-            let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
-            t.add(history_event::Attributes::TimerFiredEventAttributes(
-                TimerFiredEventAttributes {
-                    started_event_id: timer_started_event_id,
-                    timer_id: "1".to_owned(),
-                },
-            ));
+            let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
+            t.add(TimerFiredEventAttributes {
+                started_event_id: timer_started_event_id,
+                timer_id: "1".to_owned(),
+            });
         } else {
-            let started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
-            t.add(history_event::Attributes::TimerFiredEventAttributes(
-                TimerFiredEventAttributes {
-                    started_event_id,
-                    timer_id: "1".to_owned(),
-                },
-            ));
+            let started_event_id = t.add_by_type(EventType::TimerStarted);
+            t.add(TimerFiredEventAttributes {
+                started_event_id,
+                timer_id: "1".to_owned(),
+            });
             t.add_full_wf_task();
-            let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
-            t.add(history_event::Attributes::TimerFiredEventAttributes(
-                TimerFiredEventAttributes {
-                    started_event_id: timer_started_event_id,
-                    timer_id: "2".to_owned(),
-                },
-            ));
+            let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
+            t.add(TimerFiredEventAttributes {
+                started_event_id: timer_started_event_id,
+                timer_id: "2".to_owned(),
+            });
         }
         t.add_full_wf_task();
 
         if have_marker_in_hist {
-            let scheduled_event_id = t.add_get_event_id(
-                EventType::ActivityTaskScheduled,
-                Some(
-                    history_event::Attributes::ActivityTaskScheduledEventAttributes(
-                        ActivityTaskScheduledEventAttributes {
-                            activity_id: "2".to_string(),
-                            activity_type: Some(ActivityType {
-                                name: "".to_string(),
-                            }),
-                            ..Default::default()
-                        },
-                    ),
-                ),
-            );
-            let started_event_id = t.add_get_event_id(
-                EventType::ActivityTaskStarted,
-                Some(
-                    history_event::Attributes::ActivityTaskStartedEventAttributes(
-                        ActivityTaskStartedEventAttributes {
-                            scheduled_event_id,
-                            ..Default::default()
-                        },
-                    ),
-                ),
-            );
-            t.add(
-                history_event::Attributes::ActivityTaskCompletedEventAttributes(
-                    ActivityTaskCompletedEventAttributes {
-                        scheduled_event_id,
-                        started_event_id,
-                        // TODO result: Some(Payloads { payloads: vec![Payload{ metadata: Default::default(), data: vec![] }] }),
-                        ..Default::default()
-                    },
-                ),
-            );
+            let scheduled_event_id = t.add(ActivityTaskScheduledEventAttributes {
+                activity_id: "2".to_string(),
+                activity_type: Some(ActivityType {
+                    name: "".to_string(),
+                }),
+                ..Default::default()
+            });
+            let started_event_id = t.add(ActivityTaskStartedEventAttributes {
+                scheduled_event_id,
+                ..Default::default()
+            });
+            t.add(ActivityTaskCompletedEventAttributes {
+                scheduled_event_id,
+                started_event_id,
+                ..Default::default()
+            });
         } else {
-            let started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
-            t.add(history_event::Attributes::TimerFiredEventAttributes(
-                TimerFiredEventAttributes {
-                    started_event_id,
-                    timer_id: "3".to_owned(),
-                },
-            ));
+            let started_event_id = t.add_by_type(EventType::TimerStarted);
+            t.add(TimerFiredEventAttributes {
+                started_event_id,
+                timer_id: "3".to_owned(),
+            });
         }
         t.add_full_wf_task();
         t.add_workflow_execution_completed();

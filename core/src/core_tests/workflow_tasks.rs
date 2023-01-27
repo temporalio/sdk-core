@@ -43,7 +43,10 @@ use temporal_sdk_core_protos::{
         common::v1::{Payload, RetryPolicy},
         enums::v1::{EventType, WorkflowTaskFailedCause},
         failure::v1::Failure,
-        history::v1::{history_event, TimerFiredEventAttributes},
+        history::v1::{
+            history_event, TimerFiredEventAttributes,
+            WorkflowPropertiesModifiedExternallyEventAttributes,
+        },
         workflowservice::v1::{
             GetWorkflowExecutionHistoryResponse, RespondWorkflowTaskCompletedResponse,
         },
@@ -457,10 +460,10 @@ async fn abandoned_activities_ignore_start_and_complete(hist_batches: &'static [
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
     let act_scheduled_event_id = t.add_activity_task_scheduled(activity_id);
-    let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+    let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
     t.add_timer_fired(timer_started_event_id, "1".to_string());
     t.add_full_wf_task();
-    let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+    let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
     let act_started_event_id = t.add_activity_task_started(act_scheduled_event_id);
     t.add_activity_task_completed(
         act_scheduled_event_id,
@@ -1226,7 +1229,7 @@ async fn buffered_work_drained_on_shutdown() {
     let resp_1 = hist_to_poll_resp(&t, wfid.to_owned(), 1.into()).resp;
     t.add_workflow_task_timed_out();
     t.add_full_wf_task();
-    let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+    let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
     t.add(history_event::Attributes::TimerFiredEventAttributes(
         TimerFiredEventAttributes {
             started_event_id: timer_started_event_id,
@@ -2066,7 +2069,7 @@ async fn continue_as_new_preserves_some_values() {
     let mut mock_client = mock_workflow_client();
     let hist = {
         let mut t = TestHistoryBuilder::default();
-        t.add(wes_attrs.clone().into());
+        t.add(wes_attrs.clone());
         t.add_full_wf_task();
         t
     };
@@ -2110,18 +2113,10 @@ async fn continue_as_new_preserves_some_values() {
 async fn ignorable_events_are_ok(#[values(true, false)] attribs_unset: bool) {
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
-    let id = t.add_get_event_id(
-        EventType::Unspecified,
-        Some(
-            history_event::Attributes::WorkflowPropertiesModifiedExternallyEventAttributes(
-                Default::default(),
-            ),
-        ),
-    );
+    let id = t.add(WorkflowPropertiesModifiedExternallyEventAttributes::default());
     t.modify_event(id, |e| e.worker_may_ignore = true);
     if attribs_unset {
         t.modify_event(id, |e| {
-            e.event_type = EventType::WorkflowPropertiesModifiedExternally as i32;
             e.attributes = None;
         });
     }
@@ -2162,7 +2157,7 @@ async fn fetching_to_continue_replay_works() {
     // next page happen.
     fetch_resp.next_page_token = vec![2];
 
-    let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+    let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
     t.add_timer_fired(timer_started_event_id, "1".to_string());
     t.add_full_wf_task();
     let mut final_fetch_resp: GetWorkflowExecutionHistoryResponse =
