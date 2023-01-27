@@ -17,6 +17,7 @@ use temporal_sdk_core_protos::{
         common::v1::{Payload, RetryPolicy},
         enums::v1::TimeoutType,
     },
+    DEFAULT_ACTIVITY_TYPE,
 };
 use temporal_sdk_core_test_utils::{
     init_core_and_create_wf, schedule_activity_cmd, CoreWfStarter, WorkerTestHelpers,
@@ -49,7 +50,7 @@ async fn activity_heartbeat() {
     assert_matches!(
         task.variant,
         Some(activity_task::Variant::Start(start_activity)) => {
-            assert_eq!(start_activity.activity_type, "test_activity".to_string())
+            assert_eq!(start_activity.activity_type, DEFAULT_ACTIVITY_TYPE.to_string())
         }
     );
     // Heartbeat timeout is set to 1 second, this loop is going to send heartbeat every 100ms.
