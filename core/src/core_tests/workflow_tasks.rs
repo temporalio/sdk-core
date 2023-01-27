@@ -2114,12 +2114,18 @@ async fn ignorable_events_are_ok(#[values(true, false)] attribs_unset: bool) {
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     let id = t.add(WorkflowPropertiesModifiedExternallyEventAttributes::default());
-    t.modify_event(id, |e| e.worker_may_ignore = true);
-    if attribs_unset {
-        t.modify_event(id, |e| {
+    t.modify_event(id, |e| {
+        e.worker_may_ignore = true;
+        // Ignorable events are ignored if we can't interpret the proto of either the event attribs
+        // or proto - otherwise (this is the _may_ part of may ignore), we'll still try to process
+        // it. That processing may ultimately still choose to do nothing, if we want to _explicitly_
+        // ignore it.
+        if attribs_unset {
             e.attributes = None;
-        });
-    }
+        } else {
+            e.event_type = EventType::Unspecified as i32;
+        }
+    });
     t.add_workflow_task_scheduled_and_started();
 
     let mock = mock_workflow_client();
