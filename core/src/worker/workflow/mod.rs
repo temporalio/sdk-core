@@ -398,7 +398,6 @@ impl Workflows {
             run_id: run_id.into(),
             message: message.into(),
             reason,
-            because_fetch_failed: false,
         });
     }
 
@@ -829,7 +828,6 @@ struct RequestEvictMsg {
     run_id: String,
     message: String,
     reason: EvictionReason,
-    because_fetch_failed: bool,
 }
 #[derive(Debug)]
 pub(crate) struct HeartbeatTimeoutMsg {

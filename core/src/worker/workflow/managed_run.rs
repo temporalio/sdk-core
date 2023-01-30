@@ -516,7 +516,6 @@ impl ManagedRun {
             run_id: self.run_id().to_string(),
             message,
             reason,
-            because_fetch_failed: false,
         });
         let should_report = match &evict_req_outcome {
             EvictionRequestResult::EvictionRequested(Some(attempt), _)
@@ -758,7 +757,9 @@ impl ManagedRun {
 
         // If we were waiting on a page fetch and we're getting evicted because fetching failed,
         // then make sure we allow the completion to proceed, otherwise we're stuck waiting forever.
-        if self.completion_waiting_on_page_fetch.is_some() && info.because_fetch_failed {
+        if self.completion_waiting_on_page_fetch.is_some()
+            && matches!(info.reason, EvictionReason::PaginationOrHistoryFetch)
+        {
             // We just checked it is some, unwrap OK.
             let c = self.completion_waiting_on_page_fetch.take().unwrap();
             let run_upd = self.failed_completion(
@@ -909,7 +910,6 @@ impl ManagedRun {
                         run_id: self.run_id().to_string(),
                         message: format!("Error while updating workflow: {:?}", fail.source),
                         reason: fail.source.evict_reason(),
-                        because_fetch_failed: false,
                     })
                     .into_run_update_resp()
                 };

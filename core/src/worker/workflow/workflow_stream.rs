@@ -169,8 +169,7 @@ impl WFStream {
                         .request_eviction(RequestEvictMsg {
                             run_id,
                             message: format!("Fetching history failed: {err:?}"),
-                            reason: EvictionReason::Fatal,
-                            because_fetch_failed: true,
+                            reason: EvictionReason::PaginationOrHistoryFetch,
                         })
                         .into_run_update_resp(),
                     WFStreamInput::PollerDead => {
@@ -426,7 +425,6 @@ impl WFStream {
                 run_id,
                 message: "Workflow cache full".to_string(),
                 reason: EvictionReason::CacheFull,
-                because_fetch_failed: false,
             })
         } else {
             // This branch shouldn't really be possible
@@ -515,7 +513,6 @@ impl WFStream {
                     run_id,
                     message: "Workflow cache full".to_string(),
                     reason: EvictionReason::CacheFull,
-                    because_fetch_failed: false,
                 })
                 .into_run_update_resp(),
             );

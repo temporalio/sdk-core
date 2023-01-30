@@ -258,6 +258,8 @@ message RemoveFromCache {
         // There was some fatal error processing the workflow, typically an internal error, but
         // can also happen if then network drops out while paginating. Check message string.
         FATAL = 8;
+        // Something went wrong attempting to fetch more history events.
+        PAGINATION_OR_HISTORY_FETCH = 9;
     }
     EvictionReason reason = 2;
 }
