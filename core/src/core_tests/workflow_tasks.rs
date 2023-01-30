@@ -2254,3 +2254,77 @@ async fn fetching_error_evicts_wf() {
         }] => r.message.contains("Fetching history failed")
     );
 }
+
+/// This test verifies that if we fail to fetch a page during a completion, that we don't get stuck
+/// in the complete waiting for the completion to finish.
+#[tokio::test]
+async fn ensure_fetching_fail_during_complete_sends_task_failure() {
+    let wfid = "fake_wf_id";
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task(); // started 3
+    t.add_we_signaled("sig1", vec![]);
+    t.add_full_wf_task(); // started 7
+    t.add_we_signaled("sig2", vec![]);
+    t.add_full_wf_task(); // started 11
+    t.add_workflow_execution_completed();
+
+    let mut first_poll = hist_to_poll_resp(&t, wfid, ResponseType::ToTaskNum(1)).resp;
+    first_poll.next_page_token = vec![1];
+    first_poll.previous_started_event_id = 3;
+
+    let mut next_page: GetWorkflowExecutionHistoryResponse = t.get_history_info(2).unwrap().into();
+    next_page.next_page_token = vec![2];
+
+    let mut mock = mock_workflow_client();
+    mock.expect_get_workflow_execution_history()
+        .returning(move |_, _, _| {
+            error!("Called fetch!");
+            Ok(next_page.clone())
+        })
+        .times(1);
+    let mut really_empty_fetch_resp: GetWorkflowExecutionHistoryResponse =
+        t.get_history_info(1).unwrap().into();
+    really_empty_fetch_resp.history = Some(Default::default());
+    mock.expect_get_workflow_execution_history()
+        .returning(move |_, _, _| {
+            error!("Called fetch second time!");
+            Ok(really_empty_fetch_resp.clone())
+        })
+        .times(1);
+    mock.expect_fail_workflow_task()
+        .returning(|_, _, _| Ok(Default::default()))
+        .times(1);
+
+    let mut mock = single_hist_mock_sg(wfid, t, [ResponseType::Raw(first_poll)], mock, true);
+    mock.make_wft_stream_interminable();
+    mock.worker_cfg(|wc| wc.max_cached_workflows = 2);
+    let core = mock_worker(mock);
+
+    let wf_task = core.poll_workflow_activation().await.unwrap();
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(wf_task.run_id))
+        .await
+        .unwrap();
+
+    let wf_task = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        wf_task.jobs.as_slice(),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::SignalWorkflow(_)),
+        },]
+    );
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(wf_task.run_id))
+        .await
+        .unwrap();
+
+    // Expect to see eviction b/c of history fetching error here.
+    let wf_task = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        wf_task.jobs.as_slice(),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
+        },]
+    );
+
+    core.shutdown().await;
+}

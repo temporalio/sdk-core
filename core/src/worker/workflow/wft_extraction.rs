@@ -61,18 +61,15 @@ impl WFTExtractor {
                 async move {
                     match wft {
                         Ok(wft) => {
-                            let prev_id = wft.previous_started_event_id;
                             let run_id = wft.workflow_execution.run_id.clone();
-                            Ok(
-                                match HistoryPaginator::from_poll(wft, client, prev_id).await {
-                                    Ok((pag, prep)) => WFTExtractorOutput::NewWFT(PermittedWFT {
-                                        work: prep,
-                                        permit,
-                                        paginator: pag,
-                                    }),
-                                    Err(err) => WFTExtractorOutput::FailedFetch { run_id, err },
-                                },
-                            )
+                            Ok(match HistoryPaginator::from_poll(wft, client).await {
+                                Ok((pag, prep)) => WFTExtractorOutput::NewWFT(PermittedWFT {
+                                    work: prep,
+                                    permit,
+                                    paginator: pag,
+                                }),
+                                Err(err) => WFTExtractorOutput::FailedFetch { run_id, err },
+                            })
                         }
                         Err(e) => Err(e),
                     }
@@ -103,11 +100,7 @@ impl WFTExtractor {
                             }
                         }
                         HistoryFetchReq::NextPage(mut req, rc) => {
-                            match req
-                                .paginator
-                                .extract_next_update(req.last_processed_id)
-                                .await
-                            {
+                            match req.paginator.extract_next_update().await {
                                 Ok(update) => WFTExtractorOutput::NextPage {
                                     paginator: req.paginator,
                                     update,

@@ -169,7 +169,7 @@ impl WFStream {
                         .request_eviction(RequestEvictMsg {
                             run_id,
                             message: format!("Fetching history failed: {err:?}"),
-                            reason: EvictionReason::Fatal,
+                            reason: EvictionReason::PaginationOrHistoryFetch,
                         })
                         .into_run_update_resp(),
                     WFStreamInput::PollerDead => {

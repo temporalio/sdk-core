@@ -355,7 +355,7 @@ impl Workflows {
         };
 
         let maybe_pwft = if let Some(wft) = wft_from_complete {
-            match HistoryPaginator::from_poll(wft, self.client.clone(), 0).await {
+            match HistoryPaginator::from_poll(wft, self.client.clone()).await {
                 Ok((paginator, pwft)) => Some((pwft, paginator)),
                 Err(e) => {
                     self.request_eviction(
@@ -599,7 +599,6 @@ struct CacheMissFetchReq {
 #[derive(Debug)]
 #[must_use]
 struct NextPageReq {
-    last_processed_id: i64,
     paginator: HistoryPaginator,
     span: Span,
 }

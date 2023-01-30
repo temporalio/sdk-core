@@ -207,6 +207,7 @@ impl ManagedRun {
         if let Some(lq) = legacy_query_from_poll {
             pending_queries.push(lq);
         }
+
         self.paginator = Some(pwft.paginator);
         self.wft = Some(OutstandingTask {
             info: wft_info,
@@ -432,7 +433,6 @@ impl ManagedRun {
                     debug!("Need to fetch a history page before next WFT can be applied");
                     self.completion_waiting_on_page_fetch = Some(rac);
                     Err(NextPageReq {
-                        last_processed_id: self.most_recently_processed_event_number(),
                         paginator,
                         span: Span::current(),
                     })
@@ -754,6 +754,23 @@ impl ManagedRun {
 
     pub(super) fn request_eviction(&mut self, info: RequestEvictMsg) -> EvictionRequestResult {
         let attempts = self.wft.as_ref().map(|wt| wt.info.attempt);
+
+        // If we were waiting on a page fetch and we're getting evicted because fetching failed,
+        // then make sure we allow the completion to proceed, otherwise we're stuck waiting forever.
+        if self.completion_waiting_on_page_fetch.is_some()
+            && matches!(info.reason, EvictionReason::PaginationOrHistoryFetch)
+        {
+            // We just checked it is some, unwrap OK.
+            let c = self.completion_waiting_on_page_fetch.take().unwrap();
+            let run_upd = self.failed_completion(
+                WorkflowTaskFailedCause::Unspecified,
+                info.reason,
+                Failure::application_failure(info.message, false).into(),
+                c.resp_chan,
+            );
+            return EvictionRequestResult::EvictionRequested(attempts, run_upd);
+        }
+
         if !self.activation_has_eviction() && self.trying_to_evict.is_none() {
             debug!(run_id=%info.run_id, reason=%info.message, "Eviction requested");
             self.trying_to_evict = Some(info);
