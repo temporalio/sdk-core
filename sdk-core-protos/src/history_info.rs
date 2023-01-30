@@ -208,7 +208,7 @@ mod tests {
         let mut t = TestHistoryBuilder::default();
         t.add_by_type(EventType::WorkflowExecutionStarted);
         t.add_full_wf_task();
-        let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+        let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
         t.add_timer_fired(timer_started_event_id, timer_id.to_string());
         t.add_workflow_task_scheduled_and_started();
         t

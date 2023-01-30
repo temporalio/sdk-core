@@ -12,7 +12,10 @@ mod history_info;
 mod task_token;
 
 #[cfg(feature = "history_builders")]
-pub use history_builder::{default_wes_attribs, TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE};
+pub use history_builder::{
+    default_act_sched, default_wes_attribs, TestHistoryBuilder, DEFAULT_ACTIVITY_TYPE,
+    DEFAULT_WORKFLOW_TYPE,
+};
 #[cfg(feature = "history_builders")]
 pub use history_info::HistoryInfo;
 pub use task_token::TaskToken;
@@ -26,7 +29,7 @@ pub mod coresdk {
     tonic::include_proto!("coresdk");
 
     use crate::temporal::api::{
-        common::v1::{ActivityType, Payload, Payloads, WorkflowExecution},
+        common::v1::{Payload, Payloads, WorkflowExecution},
         failure::v1::{failure::FailureInfo, ApplicationFailureInfo, Failure},
         workflowservice::v1::PollActivityTaskQueueResponse,
     };
@@ -1094,18 +1097,6 @@ pub mod coresdk {
         }
     }
 
-    impl From<String> for ActivityType {
-        fn from(name: String) -> Self {
-            Self { name }
-        }
-    }
-
-    impl From<ActivityType> for String {
-        fn from(at: ActivityType) -> Self {
-            at.name
-        }
-    }
-
     impl Failure {
         pub fn is_timeout(&self) -> Option<crate::temporal::api::enums::v1::TimeoutType> {
             match &self.failure_info {
@@ -1658,6 +1649,26 @@ pub mod temporal {
                         }
                     }
                 }
+
+                impl From<String> for ActivityType {
+                    fn from(name: String) -> Self {
+                        Self { name }
+                    }
+                }
+
+                impl From<&str> for ActivityType {
+                    fn from(name: &str) -> Self {
+                        Self {
+                            name: name.to_string(),
+                        }
+                    }
+                }
+
+                impl From<ActivityType> for String {
+                    fn from(at: ActivityType) -> Self {
+                        at.name
+                    }
+                }
             }
         }
         pub mod enums {
@@ -1791,6 +1802,60 @@ pub mod temporal {
                             self.event_id,
                             EventType::from_i32(self.event_type)
                         )
+                    }
+                }
+
+                impl Attributes {
+                    pub fn event_type(&self) -> EventType {
+                        // I just absolutely _love_ this
+                        match self {
+                            Attributes::WorkflowExecutionStartedEventAttributes(_) => {EventType::WorkflowExecutionStarted}
+                            Attributes::WorkflowExecutionCompletedEventAttributes(_) => {EventType::WorkflowExecutionCompleted}
+                            Attributes::WorkflowExecutionFailedEventAttributes(_) => {EventType::WorkflowExecutionFailed}
+                            Attributes::WorkflowExecutionTimedOutEventAttributes(_) => {EventType::WorkflowExecutionTimedOut}
+                            Attributes::WorkflowTaskScheduledEventAttributes(_) => {EventType::WorkflowTaskScheduled}
+                            Attributes::WorkflowTaskStartedEventAttributes(_) => {EventType::WorkflowTaskStarted}
+                            Attributes::WorkflowTaskCompletedEventAttributes(_) => {EventType::WorkflowTaskCompleted}
+                            Attributes::WorkflowTaskTimedOutEventAttributes(_) => {EventType::WorkflowTaskTimedOut}
+                            Attributes::WorkflowTaskFailedEventAttributes(_) => {EventType::WorkflowTaskFailed}
+                            Attributes::ActivityTaskScheduledEventAttributes(_) => {EventType::ActivityTaskScheduled}
+                            Attributes::ActivityTaskStartedEventAttributes(_) => {EventType::ActivityTaskStarted}
+                            Attributes::ActivityTaskCompletedEventAttributes(_) => {EventType::ActivityTaskCompleted}
+                            Attributes::ActivityTaskFailedEventAttributes(_) => {EventType::ActivityTaskFailed}
+                            Attributes::ActivityTaskTimedOutEventAttributes(_) => {EventType::ActivityTaskTimedOut}
+                            Attributes::TimerStartedEventAttributes(_) => {EventType::TimerStarted}
+                            Attributes::TimerFiredEventAttributes(_) => {EventType::TimerFired}
+                            Attributes::ActivityTaskCancelRequestedEventAttributes(_) => {EventType::ActivityTaskCancelRequested}
+                            Attributes::ActivityTaskCanceledEventAttributes(_) => {EventType::ActivityTaskCanceled}
+                            Attributes::TimerCanceledEventAttributes(_) => {EventType::TimerCanceled}
+                            Attributes::MarkerRecordedEventAttributes(_) => {EventType::MarkerRecorded}
+                            Attributes::WorkflowExecutionSignaledEventAttributes(_) => {EventType::WorkflowExecutionSignaled}
+                            Attributes::WorkflowExecutionTerminatedEventAttributes(_) => {EventType::WorkflowExecutionTerminated}
+                            Attributes::WorkflowExecutionCancelRequestedEventAttributes(_) => {EventType::WorkflowExecutionCancelRequested}
+                            Attributes::WorkflowExecutionCanceledEventAttributes(_) => {EventType::WorkflowExecutionCanceled}
+                            Attributes::RequestCancelExternalWorkflowExecutionInitiatedEventAttributes(_) => {EventType::RequestCancelExternalWorkflowExecutionInitiated}
+                            Attributes::RequestCancelExternalWorkflowExecutionFailedEventAttributes(_) => {EventType::RequestCancelExternalWorkflowExecutionFailed}
+                            Attributes::ExternalWorkflowExecutionCancelRequestedEventAttributes(_) => {EventType::ExternalWorkflowExecutionCancelRequested}
+                            Attributes::WorkflowExecutionContinuedAsNewEventAttributes(_) => {EventType::WorkflowExecutionContinuedAsNew}
+                            Attributes::StartChildWorkflowExecutionInitiatedEventAttributes(_) => {EventType::StartChildWorkflowExecutionInitiated}
+                            Attributes::StartChildWorkflowExecutionFailedEventAttributes(_) => {EventType::StartChildWorkflowExecutionFailed}
+                            Attributes::ChildWorkflowExecutionStartedEventAttributes(_) => {EventType::ChildWorkflowExecutionStarted}
+                            Attributes::ChildWorkflowExecutionCompletedEventAttributes(_) => {EventType::ChildWorkflowExecutionCompleted}
+                            Attributes::ChildWorkflowExecutionFailedEventAttributes(_) => {EventType::ChildWorkflowExecutionFailed}
+                            Attributes::ChildWorkflowExecutionCanceledEventAttributes(_) => {EventType::ChildWorkflowExecutionCanceled}
+                            Attributes::ChildWorkflowExecutionTimedOutEventAttributes(_) => {EventType::ChildWorkflowExecutionTimedOut}
+                            Attributes::ChildWorkflowExecutionTerminatedEventAttributes(_) => {EventType::ChildWorkflowExecutionTerminated}
+                            Attributes::SignalExternalWorkflowExecutionInitiatedEventAttributes(_) => {EventType::SignalExternalWorkflowExecutionInitiated}
+                            Attributes::SignalExternalWorkflowExecutionFailedEventAttributes(_) => {EventType::SignalExternalWorkflowExecutionFailed}
+                            Attributes::ExternalWorkflowExecutionSignaledEventAttributes(_) => {EventType::ExternalWorkflowExecutionSignaled}
+                            Attributes::UpsertWorkflowSearchAttributesEventAttributes(_) => {EventType::UpsertWorkflowSearchAttributes}
+                            Attributes::WorkflowUpdateRejectedEventAttributes(_) => {EventType::WorkflowUpdateRejected}
+                            Attributes::WorkflowUpdateAcceptedEventAttributes(_) => {EventType::WorkflowUpdateAccepted}
+                            Attributes::WorkflowUpdateCompletedEventAttributes(_) => {EventType::WorkflowUpdateCompleted}
+                            Attributes::WorkflowPropertiesModifiedExternallyEventAttributes(_) => {EventType::WorkflowPropertiesModifiedExternally}
+                            Attributes::ActivityPropertiesModifiedExternallyEventAttributes(_) => {EventType::ActivityPropertiesModifiedExternally}
+                            Attributes::WorkflowPropertiesModifiedEventAttributes(_) => {EventType::WorkflowPropertiesModified}
+                        }
                     }
                 }
             }

@@ -50,6 +50,7 @@ use temporal_sdk_core_protos::{
         workflow_completion::WorkflowActivationCompletion,
     },
     temporal::api::{common::v1::Payload, history::v1::History},
+    DEFAULT_ACTIVITY_TYPE,
 };
 use tokio::sync::{mpsc::unbounded_channel, OnceCell};
 use url::Url;
@@ -588,7 +589,7 @@ pub fn schedule_activity_cmd(
     ScheduleActivity {
         seq,
         activity_id: activity_id.to_string(),
-        activity_type: "test_activity".to_string(),
+        activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
         task_queue: task_q.to_owned(),
         schedule_to_start_timeout: Some(activity_timeout.try_into().expect("duration fits")),
         start_to_close_timeout: Some(activity_timeout.try_into().expect("duration fits")),

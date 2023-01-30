@@ -725,12 +725,12 @@ pub mod tests {
         t.add_by_type(EventType::WorkflowExecutionStarted);
         t.add_full_wf_task();
         t.add_full_wf_task(); // wft started 6
-        t.add_get_event_id(EventType::TimerStarted, None);
+        t.add_by_type(EventType::TimerStarted);
         t.add_full_wf_task(); // wft started 10
         t.add_full_wf_task();
         t.add_full_wf_task();
         t.add_full_wf_task(); // wft started 19
-        t.add_get_event_id(EventType::TimerStarted, None);
+        t.add_by_type(EventType::TimerStarted);
         t.add_full_wf_task(); // wft started 23
         t.add_we_signaled("whee", vec![]);
         t.add_full_wf_task();
@@ -866,9 +866,9 @@ pub mod tests {
         // Start with two complete normal WFTs
         t.add_by_type(EventType::WorkflowExecutionStarted);
         t.add_full_wf_task(); // wft start - 3
-        t.add_get_event_id(EventType::TimerStarted, None);
+        t.add_by_type(EventType::TimerStarted);
         t.add_full_wf_task(); // wft start - 7
-        t.add_get_event_id(EventType::TimerStarted, None);
+        t.add_by_type(EventType::TimerStarted);
         t.add_full_wf_task(); // wft start - 11
         for _ in 1..50 {
             // Add a bunch of heartbeats with no commands, which count as one task

@@ -769,11 +769,10 @@ async fn legacy_query_combined_with_timer_fire_repro() {
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
     let scheduled_event_id = t.add_activity_task_scheduled("1");
-    let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+    let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
     t.add_timer_fired(timer_started_event_id, "1".to_string());
     t.add_full_wf_task();
     t.add(
-        EventType::ActivityTaskCancelRequested,
         history_event::Attributes::ActivityTaskCancelRequestedEventAttributes(
             ActivityTaskCancelRequestedEventAttributes {
                 scheduled_event_id,
