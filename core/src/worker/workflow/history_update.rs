@@ -26,6 +26,8 @@ use tracing::Instrument;
 lazy_static::lazy_static! {
     static ref EMPTY_FETCH_ERR: tonic::Status
         = tonic::Status::data_loss("Fetched empty history page");
+    static ref EMPTY_TASK_ERR: tonic::Status
+        = tonic::Status::data_loss("Received an empty workflow task with no queries or history");
 }
 
 /// Represents one or more complete WFT sequences. History events are expected to be consumed from
@@ -46,13 +48,17 @@ pub struct HistoryUpdate {
 }
 impl Debug for HistoryUpdate {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "HistoryUpdate(previous_started_event_id: {}, length: {}, first_event_id: {})",
-            self.previous_wft_started_id,
-            self.events.len(),
-            self.events.first().map(|e| e.event_id).unwrap_or(-1)
-        )
+        if self.is_real() {
+            write!(
+                f,
+                "HistoryUpdate(previous_started_event_id: {}, length: {}, first_event_id: {:?})",
+                self.previous_wft_started_id,
+                self.events.len(),
+                self.events.first().map(|e| e.event_id)
+            )
+        } else {
+            write!(f, "DummyHistoryUpdate")
+        }
     }
 }
 impl HistoryUpdate {
@@ -131,7 +137,6 @@ impl HistoryPaginator {
     pub(super) async fn from_poll(
         wft: ValidPollWFTQResponse,
         client: Arc<dyn WorkerClient>,
-        last_processed_event_id: i64,
     ) -> Result<(Self, PreparedWFT), tonic::Status> {
         let empty_hist = wft.history.events.is_empty();
         let npt = if empty_hist {
@@ -147,12 +152,13 @@ impl HistoryPaginator {
             npt,
             client,
         );
+        if empty_hist && wft.legacy_query.is_none() && wft.query_requests.is_empty() {
+            return Err(EMPTY_TASK_ERR.clone());
+        }
         let update = if empty_hist {
-            HistoryUpdate::from_events([], 0, 0, true).0
+            HistoryUpdate::from_events([], wft.previous_started_event_id, true).0
         } else {
-            paginator
-                .extract_next_update(last_processed_event_id)
-                .await?
+            paginator.extract_next_update().await?
         };
         let prepared = PreparedWFT {
             task_token: wft.task_token,
@@ -179,7 +185,7 @@ impl HistoryPaginator {
             next_page_token: NextPageToken::FetchFromStart,
             final_events: vec![],
         };
-        let first_update = paginator.extract_next_update(0).await?;
+        let first_update = paginator.extract_next_update().await?;
         req.original_wft.work.update = first_update;
         req.original_wft.paginator = paginator;
         Ok(req.original_wft)
@@ -234,10 +240,7 @@ impl HistoryPaginator {
     ///
     /// If there are insufficient events to constitute two WFTs, then we will fetch pages until
     /// we have two, or until we are at the end of history.
-    pub(crate) async fn extract_next_update(
-        &mut self,
-        last_processed_event_id: i64,
-    ) -> Result<HistoryUpdate, tonic::Status> {
+    pub(crate) async fn extract_next_update(&mut self) -> Result<HistoryUpdate, tonic::Status> {
         loop {
             self.get_next_page().await?;
             let current_events = mem::take(&mut self.event_queue);
@@ -246,18 +249,17 @@ impl HistoryPaginator {
                 // is wrong. We're expecting there to be more events to be able to extract this
                 // update, but server isn't giving us any. We have no choice except to give up and
                 // evict.
+                error!(
+                    "We expected to be able to fetch more events but server says there are none"
+                );
                 return Err(EMPTY_FETCH_ERR.clone());
             }
             let first_event_id = current_events.front().unwrap().event_id;
             // If there are some events at the end of the fetched events which represent only a
             // portion of a complete WFT, retain them to be used in the next extraction.
             let no_more = matches!(self.next_page_token, NextPageToken::Done);
-            let (update, extra) = HistoryUpdate::from_events(
-                current_events,
-                self.previous_wft_started_id,
-                last_processed_event_id,
-                no_more,
-            );
+            let (update, extra) =
+                HistoryUpdate::from_events(current_events, self.previous_wft_started_id, no_more);
             let extra_eid_same = extra
                 .first()
                 .map(|e| e.event_id == first_event_id)
@@ -379,7 +381,6 @@ impl HistoryUpdate {
     pub fn from_events<I: IntoIterator<Item = HistoryEvent>>(
         events: I,
         previous_wft_started_id: i64,
-        last_processed_event_id: i64,
         has_last_wft: bool,
     ) -> (Self, Vec<HistoryEvent>)
     where
@@ -387,7 +388,7 @@ impl HistoryUpdate {
     {
         let mut all_events: Vec<_> = events.into_iter().collect();
         let mut last_end =
-            find_end_index_of_next_wft_seq(all_events.as_slice(), last_processed_event_id);
+            find_end_index_of_next_wft_seq(all_events.as_slice(), previous_wft_started_id);
         if matches!(last_end, NextWFTSeqEndIndex::Incomplete(_)) {
             return if has_last_wft {
                 (
@@ -814,7 +815,7 @@ pub mod tests {
             canned_histories::long_sequential_timers(wft_count),
             chunk_size,
         );
-        let mut update = paginator.extract_next_update(0).await.unwrap();
+        let mut update = paginator.extract_next_update().await.unwrap();
 
         let seq = update.take_next_wft_sequence(0).unwrap_events();
         assert_eq!(seq.len(), 3);
@@ -826,7 +827,7 @@ pub mod tests {
                 match update.take_next_wft_sequence(last_started_id) {
                     NextWFT::WFT(seq) => seq,
                     NextWFT::NeedFetch => {
-                        update = paginator.extract_next_update(last_event_id).await.unwrap();
+                        update = paginator.extract_next_update().await.unwrap();
                         update
                             .take_next_wft_sequence(last_started_id)
                             .unwrap_events()
@@ -886,8 +887,7 @@ pub mod tests {
         // The update should contain the first two complete WFTs, ending on the 8th event which
         // is WFT started. The remaining events should be returned. False flags means the creator
         // knows there are more events, so we should return need fetch
-        let (mut update, remaining) =
-            HistoryUpdate::from_events(ends_in_middle_of_seq, 0, 0, false);
+        let (mut update, remaining) = HistoryUpdate::from_events(ends_in_middle_of_seq, 0, false);
         assert_eq!(remaining[0].event_id, 8);
         assert_eq!(remaining.last().unwrap().event_id, 19);
         let seq = update.take_next_wft_sequence(0).unwrap_events();
@@ -906,8 +906,7 @@ pub mod tests {
         let t = three_wfts_then_heartbeats();
         let mut ends_in_middle_of_seq = t.as_history_update().events;
         ends_in_middle_of_seq.truncate(20);
-        let (mut update, remaining) =
-            HistoryUpdate::from_events(ends_in_middle_of_seq, 0, 0, false);
+        let (mut update, remaining) = HistoryUpdate::from_events(ends_in_middle_of_seq, 0, false);
         assert!(remaining.is_empty());
         let seq = update.take_next_wft_sequence(0).unwrap_events();
         assert_eq!(seq.last().unwrap().event_id, 3);
@@ -926,7 +925,7 @@ pub mod tests {
     ) {
         let t = three_wfts_then_heartbeats();
         let mut paginator = paginator_setup(t, chunk_size);
-        let mut update = paginator.extract_next_update(0).await.unwrap();
+        let mut update = paginator.extract_next_update().await.unwrap();
         let mut last_id = 0;
         loop {
             let seq = update.take_next_wft_sequence(last_id);
@@ -935,7 +934,7 @@ pub mod tests {
                     last_id = seq.last().unwrap().event_id;
                 }
                 NextWFT::NeedFetch => {
-                    update = paginator.extract_next_update(last_id).await.unwrap();
+                    update = paginator.extract_next_update().await.unwrap();
                 }
                 NextWFT::ReplayOver => break,
             }
@@ -985,7 +984,7 @@ pub mod tests {
             NextPageToken::FetchFromStart,
             Arc::new(mock_client),
         );
-        let mut update = paginator.extract_next_update(1).await.unwrap();
+        let mut update = paginator.extract_next_update().await.unwrap();
         // We expect if we try to take the first task sequence that the first event is the first
         // event in the sequence.
         let seq = update.take_next_wft_sequence(0).unwrap_events();
@@ -1041,7 +1040,7 @@ pub mod tests {
             NextPageToken::FetchFromStart,
             Arc::new(mock_client),
         );
-        let err = paginator.extract_next_update(1).await.unwrap_err();
+        let err = paginator.extract_next_update().await.unwrap_err();
         assert_matches!(err.code(), tonic::Code::DataLoss);
     }
 
@@ -1078,11 +1077,14 @@ pub mod tests {
             NextPageToken::FetchFromStart,
             Arc::new(mock_client),
         );
-        let mut update = paginator.extract_next_update(1).await.unwrap();
+        let mut update = paginator.extract_next_update().await.unwrap();
         let seq = update.take_next_wft_sequence(0).unwrap_events();
         assert_eq!(seq.last().unwrap().event_id, 3);
         let seq = update.take_next_wft_sequence(3).unwrap_events();
         assert_eq!(seq.last().unwrap().event_id, 8);
         assert_matches!(update.take_next_wft_sequence(8), NextWFT::ReplayOver);
     }
+
+    // TODO: Test we dont re-feed pointless updates if fetching returns <= events we already
+    //   processed
 }

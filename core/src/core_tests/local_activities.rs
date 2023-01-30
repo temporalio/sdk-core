@@ -35,7 +35,6 @@ use temporal_sdk_core_protos::{
         common::v1::RetryPolicy,
         enums::v1::{EventType, TimeoutType, WorkflowTaskFailedCause},
         failure::v1::Failure,
-        history::v1::History,
         query::v1::WorkflowQuery,
     },
 };
@@ -611,8 +610,12 @@ async fn la_resolve_during_legacy_query_does_not_combine(#[case] impossible_quer
                     2,
                 ),
             );
-            // Strip history, we need to look like we hit the cache
-            pr.history = Some(History { events: vec![] });
+            // Strip beginning of history so the only events are WFT sched/started, we need to look
+            // like we hit the cache
+            {
+                let h = pr.history.as_mut().unwrap();
+                h.events = h.events.split_off(6);
+            }
             // In the nonsense server response case, we attach a legacy query, otherwise this
             // response looks like a normal response to a forced WFT heartbeat.
             if impossible_query_in_task {

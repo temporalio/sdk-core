@@ -355,7 +355,7 @@ impl Workflows {
         };
 
         let maybe_pwft = if let Some(wft) = wft_from_complete {
-            match HistoryPaginator::from_poll(wft, self.client.clone(), 0).await {
+            match HistoryPaginator::from_poll(wft, self.client.clone()).await {
                 Ok((paginator, pwft)) => Some((pwft, paginator)),
                 Err(e) => {
                     self.request_eviction(
@@ -398,6 +398,7 @@ impl Workflows {
             run_id: run_id.into(),
             message: message.into(),
             reason,
+            because_fetch_failed: false,
         });
     }
 
@@ -599,7 +600,6 @@ struct CacheMissFetchReq {
 #[derive(Debug)]
 #[must_use]
 struct NextPageReq {
-    last_processed_id: i64,
     paginator: HistoryPaginator,
     span: Span,
 }
@@ -829,6 +829,7 @@ struct RequestEvictMsg {
     run_id: String,
     message: String,
     reason: EvictionReason,
+    because_fetch_failed: bool,
 }
 #[derive(Debug)]
 pub(crate) struct HeartbeatTimeoutMsg {
