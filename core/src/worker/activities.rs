@@ -8,7 +8,7 @@ pub(crate) use local_activities::{
 };
 
 use crate::{
-    abstractions::{MeteredSemaphore, OwnedMeteredSemPermit},
+    abstractions::{MeteredSemaphore, OwnedMeteredSemPermit, UsedMeteredSemPermit},
     pollers::BoxedActPoller,
     telemetry::metrics::{
         activity_type, activity_worker_type, eager, workflow_type, MetricsContext,
@@ -75,10 +75,10 @@ struct RemoteInFlightActInfo {
     /// discard the reply.
     pub known_not_found: bool,
     /// The permit from the max concurrent semaphore
-    _permit: OwnedMeteredSemPermit,
+    _permit: UsedMeteredSemPermit,
 }
 impl RemoteInFlightActInfo {
-    fn new(poll_resp: &PollActivityTaskQueueResponse, permit: OwnedMeteredSemPermit) -> Self {
+    fn new(poll_resp: &PollActivityTaskQueueResponse, permit: UsedMeteredSemPermit) -> Self {
         let wec = poll_resp.workflow_execution.clone().unwrap_or_default();
         Self {
             base: InFlightActInfo {
@@ -186,9 +186,6 @@ impl WorkerActivityTasks {
     /// Returns `Ok(None)` if no activity is ready and the overall polling loop should be retried.
     pub(crate) async fn poll(&self) -> Result<Option<ActivityTask>, PollActivityError> {
         let poll_with_semaphore = async {
-            // Acquire and subsequently forget a permit for an outstanding activity. When they are
-            // completed, we must add a new permit to the semaphore, since holding the permit the
-            // entire time lang does work would be a challenge.
             let perm = self
                 .activities_semaphore
                 .acquire_owned()
@@ -397,7 +394,7 @@ impl WorkerActivityTasks {
 
         self.outstanding_activity_tasks.insert(
             task.resp.task_token.clone().into(),
-            RemoteInFlightActInfo::new(&task.resp, task.permit),
+            RemoteInFlightActInfo::new(&task.resp, task.permit.into_used()),
         );
 
         ActivityTask::start_from_poll_resp(task.resp)

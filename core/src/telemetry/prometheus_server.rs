@@ -13,7 +13,7 @@ use opentelemetry::{
 };
 use opentelemetry_prometheus::{ExporterBuilder, PrometheusExporter};
 use prometheus::{Encoder, TextEncoder};
-use std::{convert::Infallible, net::SocketAddr, sync::Arc};
+use std::{convert::Infallible, net::SocketAddr, sync::Arc, time::Duration};
 
 /// Exposes prometheus metrics for scraping
 pub(super) struct PromServer {
@@ -29,6 +29,8 @@ impl PromServer {
     ) -> Result<Self, MetricsError> {
         let controller =
             controllers::basic(processors::factory(aggregation, temporality).with_memory(true))
+                // Because Prom is pull-based, make this always refresh
+                .with_collect_period(Duration::from_secs(0))
                 .with_resource(default_resource())
                 .build();
         let exporter = ExporterBuilder::new(controller).try_init()?;

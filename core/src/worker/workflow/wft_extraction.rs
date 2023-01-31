@@ -65,7 +65,7 @@ impl WFTExtractor {
                             Ok(match HistoryPaginator::from_poll(wft, client).await {
                                 Ok((pag, prep)) => WFTExtractorOutput::NewWFT(PermittedWFT {
                                     work: prep,
-                                    permit,
+                                    permit: permit.into_used(),
                                     paginator: pag,
                                 }),
                                 Err(err) => WFTExtractorOutput::FailedFetch { run_id, err },
