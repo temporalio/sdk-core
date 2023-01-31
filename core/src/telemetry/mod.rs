@@ -30,6 +30,7 @@ use std::{
     collections::VecDeque,
     convert::TryInto,
     env,
+    net::SocketAddr,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -60,6 +61,7 @@ pub struct TelemetryInstance {
     logs_out: Option<Mutex<CoreLogsOut>>,
     metrics: Option<(Box<dyn MeterProvider + Send + Sync + 'static>, Meter)>,
     trace_subscriber: Arc<dyn Subscriber + Send + Sync>,
+    prom_binding: Option<SocketAddr>,
     _keepalive_rx: Receiver<()>,
 }
 
@@ -69,6 +71,7 @@ impl TelemetryInstance {
         logs_out: Option<Mutex<CoreLogsOut>>,
         metric_prefix: &'static str,
         mut meter_provider: Option<Box<dyn MeterProvider + Send + Sync + 'static>>,
+        prom_binding: Option<SocketAddr>,
         keepalive_rx: Receiver<()>,
     ) -> Self {
         let metrics = meter_provider.take().map(|mp| {
@@ -80,6 +83,7 @@ impl TelemetryInstance {
             logs_out,
             metrics,
             trace_subscriber,
+            prom_binding,
             _keepalive_rx: keepalive_rx,
         }
     }
@@ -88,6 +92,11 @@ impl TelemetryInstance {
     /// [set_trace_subscriber_for_current_thread] function.
     pub fn trace_subscriber(&self) -> Arc<dyn Subscriber + Send + Sync> {
         self.trace_subscriber.clone()
+    }
+
+    /// Returns the address the Prometheus server is bound to if it is running
+    pub fn prom_port(&self) -> Option<SocketAddr> {
+        self.prom_binding
     }
 }
 
@@ -159,6 +168,7 @@ pub fn telemetry_init(opts: TelemetryOptions) -> Result<TelemetryInstance, anyho
         // Parts of telem dat ====
         let mut logs_out = None;
         let metric_prefix = metric_prefix(&opts);
+        let mut prom_binding = None;
         // =======================
 
         // Tracing subscriber layers =========
@@ -208,11 +218,14 @@ pub fn telemetry_init(opts: TelemetryOptions) -> Result<TelemetryInstance, anyho
             let aggregator = SDKAggSelector { metric_prefix };
             match metrics {
                 MetricsExporter::Prometheus(addr) => {
-                    let srv = PromServer::new(
-                        *addr,
-                        aggregator,
-                        metric_temporality_to_selector(opts.metric_temporality),
-                    )?;
+                    let srv = runtime.block_on(async move {
+                        PromServer::new(
+                            *addr,
+                            aggregator,
+                            metric_temporality_to_selector(opts.metric_temporality),
+                        )
+                    })?;
+                    prom_binding = Some(srv.bound_addr());
                     let mp = srv.exporter.meter_provider()?;
                     runtime.spawn(async move { srv.run().await });
                     Some(Box::new(mp) as Box<dyn MeterProvider + Send + Sync>)
@@ -284,6 +297,7 @@ pub fn telemetry_init(opts: TelemetryOptions) -> Result<TelemetryInstance, anyho
             logs_out,
             metric_prefix,
             meter_provider,
+            prom_binding,
             keepalive_rx,
         ))
         .expect("Must be able to send telem instance out of thread");

@@ -1,5 +1,5 @@
 use crate::{
-    abstractions::{dbg_panic, MeteredSemaphore, OwnedMeteredSemPermit},
+    abstractions::{dbg_panic, MeteredSemaphore, OwnedMeteredSemPermit, UsedMeteredSemPermit},
     protosext::ValidScheduleLA,
     retry_logic::RetryPolicyExt,
     worker::workflow::HeartbeatTimeoutMsg,
@@ -51,7 +51,7 @@ pub(crate) struct LocalInFlightActInfo {
     pub la_info: NewLocalAct,
     pub dispatch_time: Instant,
     pub attempt: u32,
-    _permit: OwnedMeteredSemPermit,
+    _permit: UsedMeteredSemPermit,
 }
 
 #[derive(Debug, Clone)]
@@ -432,7 +432,7 @@ impl LocalActivityManager {
                 la_info: la_info_for_in_flight_map,
                 dispatch_time: Instant::now(),
                 attempt,
-                _permit: permit,
+                _permit: permit.into_used(),
             },
         );
 

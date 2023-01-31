@@ -4,7 +4,10 @@ use crate::MetricsContext;
 use futures::{stream, Stream, StreamExt};
 use std::{
     fmt::{Debug, Formatter},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
 };
 use tokio::sync::{AcquireError, OwnedSemaphorePermit, Semaphore, TryAcquireError};
 
@@ -13,6 +16,11 @@ use tokio::sync::{AcquireError, OwnedSemaphorePermit, Semaphore, TryAcquireError
 #[derive(Clone)]
 pub(crate) struct MeteredSemaphore {
     sem: Arc<Semaphore>,
+    /// The number of permit owners who have acquired a permit from the semaphore, but are not yet
+    /// meaningfully using that permit. This is useful for giving a more semantically accurate count
+    /// of used task slots, since we typically wait for a permit first before polling, but that slot
+    /// isn't used in the sense the user expects until we actually also get the corresponding task.
+    unused_claimants: Arc<AtomicUsize>,
     metrics_ctx: MetricsContext,
     record_fn: fn(&MetricsContext, usize),
 }
@@ -25,6 +33,7 @@ impl MeteredSemaphore {
     ) -> Self {
         Self {
             sem: Arc::new(Semaphore::new(inital_permits)),
+            unused_claimants: Arc::new(AtomicUsize::new(0)),
             metrics_ctx,
             record_fn,
         }
@@ -36,42 +45,62 @@ impl MeteredSemaphore {
 
     pub async fn acquire_owned(&self) -> Result<OwnedMeteredSemPermit, AcquireError> {
         let res = self.sem.clone().acquire_owned().await?;
-        self.record();
-        Ok(OwnedMeteredSemPermit {
-            inner: res,
-            record_fn: self.record_drop_owned(),
-        })
+        Ok(self.build_owned(res))
     }
 
     pub fn try_acquire_owned(&self) -> Result<OwnedMeteredSemPermit, TryAcquireError> {
         let res = self.sem.clone().try_acquire_owned()?;
+        Ok(self.build_owned(res))
+    }
+
+    fn build_owned(&self, res: OwnedSemaphorePermit) -> OwnedMeteredSemPermit {
+        self.unused_claimants.fetch_add(1, Ordering::Release);
         self.record();
-        Ok(OwnedMeteredSemPermit {
+        OwnedMeteredSemPermit {
             inner: res,
-            record_fn: self.record_drop_owned(),
-        })
+            unused_claimants: Some(self.unused_claimants.clone()),
+            record_fn: self.record_owned(),
+        }
     }
 
     fn record(&self) {
-        (self.record_fn)(&self.metrics_ctx, self.sem.available_permits());
+        (self.record_fn)(
+            &self.metrics_ctx,
+            self.sem.available_permits() + self.unused_claimants.load(Ordering::Acquire),
+        );
     }
 
-    fn record_drop_owned(&self) -> Box<dyn Fn() + Send + Sync> {
+    fn record_owned(&self) -> Box<dyn Fn(bool) + Send + Sync> {
         let rcf = self.record_fn;
         let mets = self.metrics_ctx.clone();
         let sem = self.sem.clone();
-        Box::new(move || rcf(&mets, sem.available_permits() + 1))
+        let uc = self.unused_claimants.clone();
+        // When being called from the drop impl, the semaphore permit isn't actually dropped yet,
+        // so account for that.
+        Box::new(move |add_one: bool| {
+            let extra = usize::from(add_one);
+            rcf(
+                &mets,
+                sem.available_permits() + uc.load(Ordering::Acquire) + extra,
+            )
+        })
     }
 }
 
 /// Wraps an [OwnedSemaphorePermit] to update metrics when it's dropped
 pub(crate) struct OwnedMeteredSemPermit {
     inner: OwnedSemaphorePermit,
-    record_fn: Box<dyn Fn() + Send + Sync>,
+    /// See [MeteredSemaphore::unused_claimants]. If present when dropping, used to decrement the
+    /// count.
+    unused_claimants: Option<Arc<AtomicUsize>>,
+    record_fn: Box<dyn Fn(bool) + Send + Sync>,
 }
 impl Drop for OwnedMeteredSemPermit {
     fn drop(&mut self) {
-        (self.record_fn)()
+        if let Some(uc) = self.unused_claimants.take() {
+            uc.fetch_sub(1, Ordering::Release);
+        }
+        (self.record_fn)(true)
     }
 }
 impl Debug for OwnedMeteredSemPermit {
@@ -79,15 +108,30 @@ impl Debug for OwnedMeteredSemPermit {
         self.inner.fmt(f)
     }
 }
-#[cfg(feature = "save_wf_inputs")]
 impl OwnedMeteredSemPermit {
+    /// Should be called once this permit is actually being "used" for the work it was meant to
+    /// permit.
+    pub(crate) fn into_used(mut self) -> UsedMeteredSemPermit {
+        if let Some(uc) = self.unused_claimants.take() {
+            uc.fetch_sub(1, Ordering::Release);
+            (self.record_fn)(false)
+        }
+        UsedMeteredSemPermit(self)
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct UsedMeteredSemPermit(OwnedMeteredSemPermit);
+impl UsedMeteredSemPermit {
+    #[cfg(feature = "save_wf_inputs")]
     pub(crate) fn fake_deserialized() -> Self {
         let sem = Arc::new(Semaphore::new(1));
         let inner = sem.try_acquire_owned().unwrap();
-        Self {
+        Self(OwnedMeteredSemPermit {
             inner,
-            record_fn: Box::new(|| {}),
-        }
+            unused_claimants: None,
+            record_fn: Box::new(|_| {}),
+        })
     }
 }
 
