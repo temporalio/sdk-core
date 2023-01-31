@@ -35,7 +35,6 @@ use temporal_sdk_core_protos::{
         common::v1::RetryPolicy,
         enums::v1::{EventType, TimeoutType, WorkflowTaskFailedCause},
         failure::v1::Failure,
-        history::v1::History,
         query::v1::WorkflowQuery,
     },
 };
@@ -60,7 +59,7 @@ async fn local_act_two_wfts_before_marker(#[case] replay: bool, #[case] cached: 
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
-    let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+    let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
     t.add_full_wf_task();
     t.add_local_activity_result_marker(1, "1", b"echo".into());
     t.add_timer_fired(timer_started_event_id, "1".to_string());
@@ -130,7 +129,7 @@ async fn local_act_many_concurrent() {
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
-    let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+    let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
     t.add_full_wf_task();
     for i in 1..=50 {
         t.add_local_activity_result_marker(i, &i.to_string(), b"echo".into());
@@ -302,7 +301,7 @@ async fn local_act_retry_long_backoff_uses_timer() {
         "1",
         Failure::application_failure("la failed".to_string(), false),
     );
-    let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+    let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
     t.add_timer_fired(timer_started_event_id, "1".to_string());
     t.add_full_wf_task();
     t.add_local_activity_fail_marker(
@@ -310,7 +309,7 @@ async fn local_act_retry_long_backoff_uses_timer() {
         "2",
         Failure::application_failure("la failed".to_string(), false),
     );
-    let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+    let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
     t.add_timer_fired(timer_started_event_id, "2".to_string());
     t.add_full_wf_task();
     t.add_workflow_execution_completed();
@@ -411,7 +410,7 @@ async fn local_act_command_immediately_follows_la_marker() {
     t.add_full_wf_task();
     t.add_full_wf_task();
     t.add_local_activity_result_marker(1, "1", "done".into());
-    t.add_get_event_id(EventType::TimerStarted, None);
+    t.add_by_type(EventType::TimerStarted);
     t.add_full_wf_task();
 
     let wf_id = "fakeid";
@@ -565,15 +564,11 @@ async fn la_resolve_during_legacy_query_does_not_combine(#[case] impossible_quer
     // never happen, but there was an issue where an LA resolving could trigger that.
     let wfid = "fake_wf_id";
     let mut t = TestHistoryBuilder::default();
-    let wes_short_wft_timeout = default_wes_attribs();
-    t.add(
-        EventType::WorkflowExecutionStarted,
-        wes_short_wft_timeout.into(),
-    );
+    t.add(default_wes_attribs());
     // Since we don't send queries with start workflow, need one workflow task of something else
     // b/c we want to get an activation with a job and a nonlegacy query
     t.add_full_wf_task();
-    let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+    let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
     t.add_timer_fired(timer_started_event_id, "1".to_string());
 
     // nonlegacy query got here & LA started here
@@ -615,8 +610,12 @@ async fn la_resolve_during_legacy_query_does_not_combine(#[case] impossible_quer
                     2,
                 ),
             );
-            // Strip history, we need to look like we hit the cache
-            pr.history = Some(History { events: vec![] });
+            // Strip beginning of history so the only events are WFT sched/started, we need to look
+            // like we hit the cache
+            {
+                let h = pr.history.as_mut().unwrap();
+                h.events = h.events.split_off(6);
+            }
             // In the nonsense server response case, we attach a legacy query, otherwise this
             // response looks like a normal response to a forced WFT heartbeat.
             if impossible_query_in_task {
@@ -805,7 +804,7 @@ async fn test_schedule_to_start_timeout_not_based_on_original_time(
             deets.backoff = Some(prost_dur!(from_secs(100)));
         },
     );
-    let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+    let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
     t.add_timer_fired(timer_started_event_id, "1".to_string());
     t.add_workflow_task_scheduled_and_started();
 
@@ -871,7 +870,7 @@ async fn wft_failure_cancels_running_las() {
     let mut t = TestHistoryBuilder::default();
     t.add_wfe_started_with_wft_timeout(Duration::from_millis(200));
     t.add_full_wf_task();
-    let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+    let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
     t.add_timer_fired(timer_started_event_id, "1".to_string());
     t.add_workflow_task_scheduled_and_started();
 

@@ -37,18 +37,21 @@ use temporal_sdk_core_protos::{
         },
         workflow_completion::WorkflowActivationCompletion,
     },
-    default_wes_attribs,
+    default_act_sched, default_wes_attribs,
     temporal::api::{
         command::v1::command::Attributes,
         common::v1::{Payload, RetryPolicy},
         enums::v1::{EventType, WorkflowTaskFailedCause},
         failure::v1::Failure,
-        history::v1::{history_event, TimerFiredEventAttributes},
+        history::v1::{
+            history_event, TimerFiredEventAttributes,
+            WorkflowPropertiesModifiedExternallyEventAttributes,
+        },
         workflowservice::v1::{
             GetWorkflowExecutionHistoryResponse, RespondWorkflowTaskCompletedResponse,
         },
     },
-    DEFAULT_WORKFLOW_TYPE,
+    DEFAULT_ACTIVITY_TYPE, DEFAULT_WORKFLOW_TYPE,
 };
 use temporal_sdk_core_test_utils::{fanout_tasks, start_timer_cmd};
 use tokio::{
@@ -120,7 +123,7 @@ async fn single_activity_completion(worker: Worker) {
                 &job_assert!(workflow_activation_job::Variant::StartWorkflow(_)),
                 vec![ScheduleActivity {
                     activity_id: "fake_activity".to_string(),
-                    ..Default::default()
+                    ..default_act_sched()
                 }
                 .into()],
             ),
@@ -245,7 +248,7 @@ async fn scheduled_activity_cancellation_try_cancel(hist_batches: &'static [usiz
                     seq: activity_seq,
                     activity_id: activity_id.to_string(),
                     cancellation_type: ActivityCancellationType::TryCancel as i32,
-                    ..Default::default()
+                    ..default_act_sched()
                 }
                 .into()],
             ),
@@ -281,7 +284,7 @@ async fn scheduled_activity_timeout(hist_batches: &'static [usize]) {
                 vec![ScheduleActivity {
                     seq: activity_seq,
                     activity_id: activity_id.to_string(),
-                    ..Default::default()
+                    ..default_act_sched()
                 }
                     .into()],
             ),
@@ -334,7 +337,7 @@ async fn started_activity_timeout(hist_batches: &'static [usize]) {
                 vec![ScheduleActivity {
                     seq: activity_seq,
                     activity_id: activity_seq.to_string(),
-                    ..Default::default()
+                    ..default_act_sched()
                 }
                     .into()],
             ),
@@ -389,7 +392,7 @@ async fn cancelled_activity_timeout(hist_batches: &'static [usize]) {
                 vec![ScheduleActivity {
                     seq: activity_seq,
                     activity_id: activity_id.to_string(),
-                    ..Default::default()
+                    ..default_act_sched()
                 }
                 .into()],
             ),
@@ -457,10 +460,10 @@ async fn abandoned_activities_ignore_start_and_complete(hist_batches: &'static [
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
     let act_scheduled_event_id = t.add_activity_task_scheduled(activity_id);
-    let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+    let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
     t.add_timer_fired(timer_started_event_id, "1".to_string());
     t.add_full_wf_task();
-    let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+    let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
     let act_started_event_id = t.add_activity_task_started(act_scheduled_event_id);
     t.add_activity_task_completed(
         act_scheduled_event_id,
@@ -476,7 +479,7 @@ async fn abandoned_activities_ignore_start_and_complete(hist_batches: &'static [
 
     worker.register_wf(wf_type.to_owned(), |ctx: WfContext| async move {
         let act_fut = ctx.activity(ActivityOptions {
-            activity_type: "echo_activity".to_string(),
+            activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
             start_to_close_timeout: Some(Duration::from_secs(5)),
             cancellation_type: ActivityCancellationType::Abandon,
             ..Default::default()
@@ -542,7 +545,7 @@ async fn verify_activity_cancellation(
                     seq: activity_seq,
                     activity_id: activity_seq.to_string(),
                     cancellation_type: cancel_type as i32,
-                    ..Default::default()
+                    ..default_act_sched()
                 }
                 .into()],
             ),
@@ -610,7 +613,7 @@ async fn verify_activity_cancellation_wait_for_cancellation(activity_id: u32, wo
                     seq: activity_id,
                     activity_id: activity_id.to_string(),
                     cancellation_type: ActivityCancellationType::WaitCancellationCompleted as i32,
-                    ..Default::default()
+                    ..default_act_sched()
                 }
                 .into()],
             ),
@@ -947,7 +950,7 @@ async fn activity_not_canceled_on_replay_repro(hist_batches: &'static [usize]) {
                         seq: activity_id,
                         activity_id: activity_id.to_string(),
                         cancellation_type: ActivityCancellationType::TryCancel as i32,
-                        ..Default::default()
+                        ..default_act_sched()
                     }
                     .into(),
                     start_timer_cmd(1, Duration::from_secs(1)),
@@ -989,9 +992,9 @@ async fn activity_not_canceled_when_also_completed_repro(hist_batches: &'static 
                 &job_assert!(workflow_activation_job::Variant::StartWorkflow(_)),
                 vec![ScheduleActivity {
                     seq: activity_id,
-                    activity_id: activity_id.to_string(),
+                    activity_id: "act-1".to_string(),
                     cancellation_type: ActivityCancellationType::TryCancel as i32,
-                    ..Default::default()
+                    ..default_act_sched()
                 }
                 .into()],
             ),
@@ -1092,7 +1095,7 @@ async fn wft_timeout_repro(hist_batches: &'static [usize]) {
                     seq: activity_id,
                     activity_id: activity_id.to_string(),
                     cancellation_type: ActivityCancellationType::TryCancel as i32,
-                    ..Default::default()
+                    ..default_act_sched()
                 }
                 .into()],
             ),
@@ -1225,14 +1228,13 @@ async fn buffered_work_drained_on_shutdown() {
     let resp_1 = hist_to_poll_resp(&t, wfid.to_owned(), 1.into()).resp;
     t.add_workflow_task_timed_out();
     t.add_full_wf_task();
-    let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
-    t.add(
-        EventType::TimerFired,
-        history_event::Attributes::TimerFiredEventAttributes(TimerFiredEventAttributes {
+    let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
+    t.add(history_event::Attributes::TimerFiredEventAttributes(
+        TimerFiredEventAttributes {
             started_event_id: timer_started_event_id,
             timer_id: "1".to_string(),
-        }),
-    );
+        },
+    ));
     t.add_full_wf_task();
     t.add_workflow_execution_completed();
 
@@ -1303,7 +1305,7 @@ async fn fail_wft_then_recover() {
         act.run_id.clone(),
         vec![ScheduleActivity {
             activity_id: "fake_activity".to_string(),
-            ..Default::default()
+            ..default_act_sched()
         }
         .into()],
     ))
@@ -1453,7 +1455,7 @@ async fn tries_cancel_of_completed_activity() {
         ScheduleActivity {
             seq: 1,
             activity_id: "1".to_string(),
-            ..Default::default()
+            ..default_act_sched()
         }
         .into(),
     ))
@@ -1953,7 +1955,7 @@ async fn autocompletes_wft_no_work() {
             seq: 1,
             activity_id: activity_id.to_string(),
             cancellation_type: ActivityCancellationType::Abandon as i32,
-            ..Default::default()
+            ..default_act_sched()
         }
         .into(),
     ))
@@ -2066,10 +2068,7 @@ async fn continue_as_new_preserves_some_values() {
     let mut mock_client = mock_workflow_client();
     let hist = {
         let mut t = TestHistoryBuilder::default();
-        t.add(
-            EventType::WorkflowExecutionStarted,
-            wes_attrs.clone().into(),
-        );
+        t.add(wes_attrs.clone());
         t.add_full_wf_task();
         t
     };
@@ -2113,21 +2112,19 @@ async fn continue_as_new_preserves_some_values() {
 async fn ignorable_events_are_ok(#[values(true, false)] attribs_unset: bool) {
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
-    let id = t.add_get_event_id(
-        EventType::Unspecified,
-        Some(
-            history_event::Attributes::WorkflowPropertiesModifiedExternallyEventAttributes(
-                Default::default(),
-            ),
-        ),
-    );
-    t.modify_event(id, |e| e.worker_may_ignore = true);
-    if attribs_unset {
-        t.modify_event(id, |e| {
-            e.event_type = EventType::WorkflowPropertiesModifiedExternally as i32;
+    let id = t.add(WorkflowPropertiesModifiedExternallyEventAttributes::default());
+    t.modify_event(id, |e| {
+        e.worker_may_ignore = true;
+        // Ignorable events are ignored if we can't interpret the proto of either the event attribs
+        // or proto - otherwise (this is the _may_ part of may ignore), we'll still try to process
+        // it. That processing may ultimately still choose to do nothing, if we want to _explicitly_
+        // ignore it.
+        if attribs_unset {
             e.attributes = None;
-        });
-    }
+        } else {
+            e.event_type = EventType::Unspecified as i32;
+        }
+    });
     t.add_workflow_task_scheduled_and_started();
 
     let mock = mock_workflow_client();
@@ -2165,7 +2162,7 @@ async fn fetching_to_continue_replay_works() {
     // next page happen.
     fetch_resp.next_page_token = vec![2];
 
-    let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+    let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
     t.add_timer_fired(timer_started_event_id, "1".to_string());
     t.add_full_wf_task();
     let mut final_fetch_resp: GetWorkflowExecutionHistoryResponse =
@@ -2256,4 +2253,78 @@ async fn fetching_error_evicts_wf() {
             variant: Some(workflow_activation_job::Variant::RemoveFromCache(r)),
         }] => r.message.contains("Fetching history failed")
     );
+}
+
+/// This test verifies that if we fail to fetch a page during a completion, that we don't get stuck
+/// in the complete waiting for the completion to finish.
+#[tokio::test]
+async fn ensure_fetching_fail_during_complete_sends_task_failure() {
+    let wfid = "fake_wf_id";
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task(); // started 3
+    t.add_we_signaled("sig1", vec![]);
+    t.add_full_wf_task(); // started 7
+    t.add_we_signaled("sig2", vec![]);
+    t.add_full_wf_task(); // started 11
+    t.add_workflow_execution_completed();
+
+    let mut first_poll = hist_to_poll_resp(&t, wfid, ResponseType::ToTaskNum(1)).resp;
+    first_poll.next_page_token = vec![1];
+    first_poll.previous_started_event_id = 3;
+
+    let mut next_page: GetWorkflowExecutionHistoryResponse = t.get_history_info(2).unwrap().into();
+    next_page.next_page_token = vec![2];
+
+    let mut mock = mock_workflow_client();
+    mock.expect_get_workflow_execution_history()
+        .returning(move |_, _, _| {
+            error!("Called fetch!");
+            Ok(next_page.clone())
+        })
+        .times(1);
+    let mut really_empty_fetch_resp: GetWorkflowExecutionHistoryResponse =
+        t.get_history_info(1).unwrap().into();
+    really_empty_fetch_resp.history = Some(Default::default());
+    mock.expect_get_workflow_execution_history()
+        .returning(move |_, _, _| {
+            error!("Called fetch second time!");
+            Ok(really_empty_fetch_resp.clone())
+        })
+        .times(1);
+    mock.expect_fail_workflow_task()
+        .returning(|_, _, _| Ok(Default::default()))
+        .times(1);
+
+    let mut mock = single_hist_mock_sg(wfid, t, [ResponseType::Raw(first_poll)], mock, true);
+    mock.make_wft_stream_interminable();
+    mock.worker_cfg(|wc| wc.max_cached_workflows = 2);
+    let core = mock_worker(mock);
+
+    let wf_task = core.poll_workflow_activation().await.unwrap();
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(wf_task.run_id))
+        .await
+        .unwrap();
+
+    let wf_task = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        wf_task.jobs.as_slice(),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::SignalWorkflow(_)),
+        },]
+    );
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(wf_task.run_id))
+        .await
+        .unwrap();
+
+    // Expect to see eviction b/c of history fetching error here.
+    let wf_task = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        wf_task.jobs.as_slice(),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
+        },]
+    );
+
+    core.shutdown().await;
 }

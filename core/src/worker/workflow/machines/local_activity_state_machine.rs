@@ -1373,14 +1373,14 @@ mod tests {
         let mut t = TestHistoryBuilder::default();
         t.add_by_type(EventType::WorkflowExecutionStarted);
         t.add_full_wf_task();
-        let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+        let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
         t.add_timer_fired(timer_started_event_id, "1".to_string());
         t.add_full_wf_task();
         if cancel_type != ActivityCancellationType::WaitCancellationCompleted {
             // With non-wait cancels, the cancel is immediate
             t.add_local_activity_cancel_marker(1, "1");
         }
-        let timer_started_event_id = t.add_get_event_id(EventType::TimerStarted, None);
+        let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
         if cancel_type == ActivityCancellationType::WaitCancellationCompleted {
             // With wait cancels, the cancel marker is not recorded until activity reports.
             t.add_local_activity_cancel_marker(1, "1");

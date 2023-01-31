@@ -40,15 +40,10 @@ async fn out_of_order_completion_doesnt_hang() {
     )
     .await
     .unwrap();
-    // Poll activity and verify that it's been scheduled with correct parameters, we don't expect to
-    // complete it in this test as activity is try-cancelled.
+    // Poll activity and verify that it's been scheduled, we don't expect to complete it in this
+    // test as activity is try-cancelled.
     let activity_task = core.poll_activity_task().await.unwrap();
-    assert_matches!(
-        activity_task.variant,
-        Some(act_task::Variant::Start(start_activity)) => {
-            assert_eq!(start_activity.activity_type, "test_activity".to_string())
-        }
-    );
+    assert_matches!(activity_task.variant, Some(act_task::Variant::Start(_)));
     // Poll workflow task and verify that activity has failed.
     let task = core.poll_workflow_activation().await.unwrap();
     assert_matches!(

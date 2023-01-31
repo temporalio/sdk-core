@@ -22,7 +22,9 @@ pub(crate) use history_update::HistoryUpdate;
 pub(crate) use managed_run::ManagedWFFunc;
 
 use crate::{
-    abstractions::{stream_when_allowed, MeteredSemaphore, OwnedMeteredSemPermit},
+    abstractions::{
+        stream_when_allowed, MeteredSemaphore, OwnedMeteredSemPermit, UsedMeteredSemPermit,
+    },
     protosext::{legacy_query_failure, ValidPollWFTQResponse},
     telemetry::{metrics::workflow_worker_type, VecDisplayer},
     worker::{
@@ -355,7 +357,7 @@ impl Workflows {
         };
 
         let maybe_pwft = if let Some(wft) = wft_from_complete {
-            match HistoryPaginator::from_poll(wft, self.client.clone(), 0).await {
+            match HistoryPaginator::from_poll(wft, self.client.clone()).await {
                 Ok((paginator, pwft)) => Some((pwft, paginator)),
                 Err(e) => {
                     self.request_eviction(
@@ -599,7 +601,6 @@ struct CacheMissFetchReq {
 #[derive(Debug)]
 #[must_use]
 struct NextPageReq {
-    last_processed_id: i64,
     paginator: HistoryPaginator,
     span: Span,
 }
@@ -642,9 +643,9 @@ pub(crate) struct PermittedWFT {
     work: PreparedWFT,
     #[cfg_attr(
         feature = "save_wf_inputs",
-        serde(skip, default = "OwnedMeteredSemPermit::fake_deserialized")
+        serde(skip, default = "UsedMeteredSemPermit::fake_deserialized")
     )]
-    permit: OwnedMeteredSemPermit,
+    permit: UsedMeteredSemPermit,
     #[cfg_attr(
         feature = "save_wf_inputs",
         serde(skip, default = "HistoryPaginator::fake_deserialized")
@@ -684,7 +685,7 @@ pub(crate) struct OutstandingTask {
     pub start_time: Instant,
     /// The WFT permit owned by this task, ensures we don't exceed max concurrent WFT, and makes
     /// sure the permit is automatically freed when we delete the task.
-    pub permit: OwnedMeteredSemPermit,
+    pub permit: UsedMeteredSemPermit,
 }
 
 impl OutstandingTask {

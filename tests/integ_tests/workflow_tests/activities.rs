@@ -24,7 +24,7 @@ use temporal_sdk_core_protos::{
         enums::v1::RetryState,
         failure::v1::{failure::FailureInfo, ActivityFailureInfo, Failure},
     },
-    TaskToken,
+    TaskToken, DEFAULT_ACTIVITY_TYPE,
 };
 use temporal_sdk_core_test_utils::{
     init_core_and_create_wf, schedule_activity_cmd, CoreWfStarter, WorkerTestHelpers,
@@ -98,7 +98,7 @@ async fn activity_workflow() {
     assert_matches!(
         task.variant,
         Some(act_task::Variant::Start(start_activity)) => {
-            assert_eq!(start_activity.activity_type, "test_activity".to_string())
+            assert_eq!(start_activity.activity_type, DEFAULT_ACTIVITY_TYPE.to_string())
         }
     );
     let response_payload = Payload {
@@ -155,14 +155,9 @@ async fn activity_non_retryable_failure() {
     )
     .await
     .unwrap();
-    // Poll activity and verify that it's been scheduled with correct parameters
+    // Poll activity and verify that it's been scheduled
     let task = core.poll_activity_task().await.unwrap();
-    assert_matches!(
-        task.variant,
-        Some(act_task::Variant::Start(start_activity)) => {
-            assert_eq!(start_activity.activity_type, "test_activity".to_string())
-        }
-    );
+    assert_matches!(task.variant, Some(act_task::Variant::Start(_)));
     // Fail activity with non-retryable error
     let failure = Failure::application_failure("activity failed".to_string(), true);
     core.complete_activity_task(ActivityTaskCompletion {
@@ -192,7 +187,7 @@ async fn activity_non_retryable_failure() {
                 failure_info: Some(FailureInfo::ActivityFailureInfo(ActivityFailureInfo{
                     activity_id: "act-1".to_owned(),
                     activity_type: Some(ActivityType {
-                        name: "test_activity".to_owned(),
+                        name: DEFAULT_ACTIVITY_TYPE.to_owned(),
                     }),
                     scheduled_event_id: 5,
                     started_event_id: 6,
@@ -227,14 +222,9 @@ async fn activity_non_retryable_failure_with_error() {
     )
     .await
     .unwrap();
-    // Poll activity and verify that it's been scheduled with correct parameters
+    // Poll activity and verify that it's been scheduled
     let task = core.poll_activity_task().await.unwrap();
-    assert_matches!(
-        task.variant,
-        Some(act_task::Variant::Start(start_activity)) => {
-            assert_eq!(start_activity.activity_type, "test_activity".to_string())
-        }
-    );
+    assert_matches!(task.variant, Some(act_task::Variant::Start(_)));
     // Fail activity with non-retryable error
     let failure = Failure::application_failure_from_error(anyhow!("activity failed"), true);
     core.complete_activity_task(ActivityTaskCompletion {
@@ -264,7 +254,7 @@ async fn activity_non_retryable_failure_with_error() {
                 failure_info: Some(FailureInfo::ActivityFailureInfo(ActivityFailureInfo{
                     activity_id: "act-1".to_owned(),
                     activity_type: Some(ActivityType {
-                        name: "test_activity".to_owned(),
+                        name: DEFAULT_ACTIVITY_TYPE.to_owned(),
                     }),
                     scheduled_event_id: 5,
                     started_event_id: 6,
@@ -301,12 +291,7 @@ async fn activity_retry() {
     .unwrap();
     // Poll activity 1st time
     let task = core.poll_activity_task().await.unwrap();
-    assert_matches!(
-        task.variant,
-        Some(act_task::Variant::Start(start_activity)) => {
-            assert_eq!(start_activity.activity_type, "test_activity".to_string())
-        }
-    );
+    assert_matches!(task.variant, Some(act_task::Variant::Start(_)));
     // Fail activity with retryable error
     let failure = Failure::application_failure("activity failed".to_string(), false);
     core.complete_activity_task(ActivityTaskCompletion {
@@ -317,12 +302,7 @@ async fn activity_retry() {
     .unwrap();
     // Poll 2nd time
     let task = core.poll_activity_task().await.unwrap();
-    assert_matches!(
-        task.variant,
-        Some(act_task::Variant::Start(start_activity)) => {
-            assert_eq!(start_activity.activity_type, "test_activity".to_string())
-        }
-    );
+    assert_matches!(task.variant, Some(act_task::Variant::Start(_)));
     // Complete activity successfully
     let response_payload = Payload {
         data: b"hello ".to_vec(),
@@ -381,15 +361,10 @@ async fn activity_cancellation_try_cancel() {
     )
     .await
     .unwrap();
-    // Poll activity and verify that it's been scheduled with correct parameters, we don't expect to
-    // complete it in this test as activity is try-cancelled.
+    // Poll activity and verify that it's been scheduled, we don't expect to complete it in this
+    // test as activity is try-cancelled.
     let activity_task = core.poll_activity_task().await.unwrap();
-    assert_matches!(
-        activity_task.variant,
-        Some(act_task::Variant::Start(start_activity)) => {
-            assert_eq!(start_activity.activity_type, "test_activity".to_string())
-        }
-    );
+    assert_matches!(activity_task.variant, Some(act_task::Variant::Start(_)));
     // Poll workflow task and verify that activity has failed.
     let task = core.poll_workflow_activation().await.unwrap();
     assert_matches!(
@@ -526,15 +501,10 @@ async fn started_activity_timeout() {
     )
     .await
     .unwrap();
-    // Poll activity and verify that it's been scheduled with correct parameters, we don't expect to
-    // complete it in this test as activity is timed out after 1 second.
+    // Poll activity and verify that it's been scheduled, we don't expect to complete it in this
+    // test as activity is timed out after 1 second.
     let activity_task = core.poll_activity_task().await.unwrap();
-    assert_matches!(
-        activity_task.variant,
-        Some(act_task::Variant::Start(start_activity)) => {
-            assert_eq!(start_activity.activity_type, "test_activity".to_string())
-        }
-    );
+    assert_matches!(activity_task.variant, Some(act_task::Variant::Start(_)));
     let task = core.poll_workflow_activation().await.unwrap();
     assert_matches!(
         task.jobs.as_slice(),
@@ -590,15 +560,10 @@ async fn activity_cancellation_wait_cancellation_completed() {
     )
     .await
     .unwrap();
-    // Poll activity and verify that it's been scheduled with correct parameters, we don't expect to
-    // complete it in this test as activity is wait-cancelled.
+    // Poll activity and verify that it's been scheduled, we don't expect to complete it in this
+    // test as activity is wait-cancelled.
     let activity_task = core.poll_activity_task().await.unwrap();
-    assert_matches!(
-        activity_task.variant,
-        Some(act_task::Variant::Start(start_activity)) => {
-            assert_eq!(start_activity.activity_type, "test_activity".to_string())
-        }
-    );
+    assert_matches!(activity_task.variant, Some(act_task::Variant::Start(_)));
     // Poll workflow task and verify that activity has failed.
     let task = core.poll_workflow_activation().await.unwrap();
     assert_matches!(
@@ -657,15 +622,10 @@ async fn activity_cancellation_abandon() {
     )
     .await
     .unwrap();
-    // Poll activity and verify that it's been scheduled with correct parameters, we don't expect to
-    // complete it in this test as activity is abandoned.
+    // Poll activity and verify that it's been scheduled, we don't expect to complete it in this
+    // test as activity is abandoned.
     let activity_task = core.poll_activity_task().await.unwrap();
-    assert_matches!(
-        activity_task.variant,
-        Some(act_task::Variant::Start(start_activity)) => {
-            assert_eq!(start_activity.activity_type, "test_activity".to_string())
-        }
-    );
+    assert_matches!(activity_task.variant, Some(act_task::Variant::Start(_)));
     // Poll workflow task and verify that activity has failed.
     let task = core.poll_workflow_activation().await.unwrap();
     assert_matches!(
@@ -713,14 +673,9 @@ async fn async_activity_completion_workflow() {
     )
     .await
     .unwrap();
-    // Poll activity and verify that it's been scheduled with correct parameters
+    // Poll activity and verify that it's been scheduled
     let task = core.poll_activity_task().await.unwrap();
-    assert_matches!(
-        task.variant,
-        Some(act_task::Variant::Start(start_activity)) => {
-            assert_eq!(start_activity.activity_type, "test_activity".to_string())
-        }
-    );
+    assert_matches!(task.variant, Some(act_task::Variant::Start(_)));
     let response_payload = Payload {
         data: b"hello ".to_vec(),
         metadata: Default::default(),
@@ -785,14 +740,9 @@ async fn activity_cancelled_after_heartbeat_times_out() {
     )
     .await
     .unwrap();
-    // Poll activity and verify that it's been scheduled with correct parameters
+    // Poll activity and verify that it's been scheduled
     let task = core.poll_activity_task().await.unwrap();
-    assert_matches!(
-        task.variant,
-        Some(act_task::Variant::Start(start_activity)) => {
-            assert_eq!(start_activity.activity_type, "test_activity".to_string())
-        }
-    );
+    assert_matches!(task.variant, Some(act_task::Variant::Start(_)));
     // Delay the heartbeat
     sleep(Duration::from_secs(2)).await;
     core.record_activity_heartbeat(ActivityHeartbeat {

@@ -37,7 +37,7 @@ fsm! {
     Created --(Schedule, on_schedule)--> ScheduleCommandCreated;
 
     ScheduleCommandCreated --(CommandScheduleActivityTask) --> ScheduleCommandCreated;
-    ScheduleCommandCreated --(ActivityTaskScheduled(i64),
+    ScheduleCommandCreated --(ActivityTaskScheduled(ActTaskScheduledData),
         shared on_activity_task_scheduled) --> ScheduledEventRecorded;
     ScheduleCommandCreated --(Cancel, shared on_canceled) --> Canceled;
 
@@ -92,6 +92,12 @@ pub(super) enum ActivityMachineCommand {
     Cancel(Option<Payloads>),
     #[display(fmt = "RequestCancellation")]
     RequestCancellation(Command),
+}
+
+pub(super) struct ActTaskScheduledData {
+    event_id: i64,
+    act_type: String,
+    act_id: String,
 }
 
 /// Creates a new activity state machine and a command to schedule it on the server.
@@ -174,7 +180,22 @@ impl TryFrom<HistoryEvent> for ActivityMachineEvents {
 
     fn try_from(e: HistoryEvent) -> Result<Self, Self::Error> {
         Ok(match e.event_type() {
-            EventType::ActivityTaskScheduled => Self::ActivityTaskScheduled(e.event_id),
+            EventType::ActivityTaskScheduled => {
+                if let Some(history_event::Attributes::ActivityTaskScheduledEventAttributes(
+                    attrs,
+                )) = e.attributes
+                {
+                    Self::ActivityTaskScheduled(ActTaskScheduledData {
+                        event_id: e.event_id,
+                        act_id: attrs.activity_id,
+                        act_type: attrs.activity_type.unwrap_or_default().name,
+                    })
+                } else {
+                    return Err(WFMachinesError::Fatal(format!(
+                        "Activity scheduled attributes were unset: {e}"
+                    )));
+                }
+            }
             EventType::ActivityTaskStarted => Self::ActivityTaskStarted(e.event_id),
             EventType::ActivityTaskCompleted => {
                 if let Some(history_event::Attributes::ActivityTaskCompletedEventAttributes(
@@ -371,17 +392,32 @@ impl ScheduleCommandCreated {
     pub(super) fn on_activity_task_scheduled(
         self,
         dat: SharedState,
-        scheduled_event_id: i64,
+        sched_dat: ActTaskScheduledData,
     ) -> ActivityMachineTransition<ScheduledEventRecorded> {
+        if sched_dat.act_id != dat.attrs.activity_id {
+            return TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
+                "Activity id of scheduled event '{}' does not \
+                 match activity id of activity command '{}'",
+                sched_dat.act_id, dat.attrs.activity_id
+            )));
+        }
+        if sched_dat.act_type != dat.attrs.activity_type {
+            return TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
+                "Activity type of scheduled event '{}' does not \
+                 match activity type of activity command '{}'",
+                sched_dat.act_type, dat.attrs.activity_type
+            )));
+        }
         ActivityMachineTransition::ok_shared(
             vec![],
             ScheduledEventRecorded::default(),
             SharedState {
-                scheduled_event_id,
+                scheduled_event_id: sched_dat.event_id,
                 ..dat
             },
         )
     }
+
     pub(super) fn on_canceled(self, dat: SharedState) -> ActivityMachineTransition<Canceled> {
         let canceled_state = SharedState {
             cancelled_before_sent: true,
@@ -778,8 +814,9 @@ mod test {
     use temporal_sdk::{
         ActivityOptions, CancellableFuture, WfContext, WorkflowFunction, WorkflowResult,
     };
-    use temporal_sdk_core_protos::coresdk::workflow_activation::{
-        workflow_activation_job, WorkflowActivationJob,
+    use temporal_sdk_core_protos::{
+        coresdk::workflow_activation::{workflow_activation_job, WorkflowActivationJob},
+        DEFAULT_ACTIVITY_TYPE,
     };
 
     #[fixture]
@@ -799,7 +836,13 @@ mod test {
     }
 
     async fn activity_wf(command_sink: WfContext) -> WorkflowResult<()> {
-        command_sink.activity(ActivityOptions::default()).await;
+        command_sink
+            .activity(ActivityOptions {
+                activity_id: Some("activity-id-1".to_string()),
+                activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
+                ..Default::default()
+            })
+            .await;
         Ok(().into())
     }
 

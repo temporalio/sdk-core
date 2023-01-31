@@ -93,6 +93,7 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let mut cmd = Command::new(&cargo);
     if let Some(srv) = server.as_ref() {
+        println!("Running on {}", srv.target);
         cmd.env(
             INTEG_SERVER_TARGET_ENV_VAR,
             format!("http://{}", &srv.target),
