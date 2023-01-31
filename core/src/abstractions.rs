@@ -78,7 +78,7 @@ impl MeteredSemaphore {
         // When being called from the drop impl, the semaphore permit isn't actually dropped yet,
         // so account for that.
         Box::new(move |add_one: bool| {
-            let extra = if add_one { 1 } else { 0 };
+            let extra = usize::from(add_one);
             rcf(
                 &mets,
                 sem.available_permits() + uc.load(Ordering::Acquire) + extra,

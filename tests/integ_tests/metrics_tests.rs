@@ -14,6 +14,8 @@ use temporal_sdk_core_protos::{
 use temporal_sdk_core_test_utils::{get_integ_server_options, get_integ_telem_options, NAMESPACE};
 use tokio::sync::Barrier;
 
+static ANY_PORT: &str = "127.0.0.1:0";
+
 async fn get_text(endpoint: String) -> String {
     reqwest::get(endpoint).await.unwrap().text().await.unwrap()
 }
@@ -21,9 +23,9 @@ async fn get_text(endpoint: String) -> String {
 #[tokio::test]
 async fn prometheus_metrics_exported() {
     let mut telemopts = get_integ_telem_options();
-    let addr = "127.0.0.1:10919";
-    telemopts.metrics = Some(MetricsExporter::Prometheus(addr.parse().unwrap()));
+    telemopts.metrics = Some(MetricsExporter::Prometheus(ANY_PORT.parse().unwrap()));
     let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
+    let addr = rt.telemetry().prom_port().unwrap();
     let opts = get_integ_server_options();
     let mut raw_client = opts
         .connect_no_namespace(rt.metric_meter(), None)
@@ -47,12 +49,11 @@ async fn prometheus_metrics_exported() {
 
 #[tokio::test]
 async fn one_slot_worker_reports_available_slot() {
-    // TODO: Diff port
     let mut telemopts = get_integ_telem_options();
-    let addr = "127.0.0.1:10919";
     let tq = "one_slot_worker_tq";
-    telemopts.metrics = Some(MetricsExporter::Prometheus(addr.parse().unwrap()));
+    telemopts.metrics = Some(MetricsExporter::Prometheus(ANY_PORT.parse().unwrap()));
     let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
+    let addr = rt.telemetry().prom_port().unwrap();
 
     let worker_cfg = WorkerConfigBuilder::default()
         .namespace(NAMESPACE)
@@ -191,7 +192,7 @@ async fn one_slot_worker_reports_available_slot() {
         wf_task_barr.wait().await;
         wf_task_barr.wait().await;
         // Sometimes the recording takes an extra bit. 🤷
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
         let body = get_text(format!("http://{addr}/metrics")).await;
         assert!(body.contains(&format!(
             "temporal_worker_task_slots_available{{namespace=\"{NAMESPACE}\",\
