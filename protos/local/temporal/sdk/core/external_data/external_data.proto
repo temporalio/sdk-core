@@ -28,3 +28,8 @@ message LocalActivityMarkerData {
   // schedule-to-close timeouts when timer-based backoffs are used
   google.protobuf.Timestamp original_schedule_time = 7;
 }
+
+/// Used to record the internal patch level for behavior differentiation
+message InternalPatchLevel {
+  uint32 level = 1;
+}

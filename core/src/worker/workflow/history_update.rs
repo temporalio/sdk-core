@@ -19,7 +19,7 @@ use std::{
 };
 use temporal_sdk_core_protos::temporal::api::{
     enums::v1::EventType,
-    history::v1::{History, HistoryEvent},
+    history::v1::{history_event, History, HistoryEvent, WorkflowTaskCompletedEventAttributes},
 };
 use tracing::Instrument;
 
@@ -59,23 +59,6 @@ impl Debug for HistoryUpdate {
         } else {
             write!(f, "DummyHistoryUpdate")
         }
-    }
-}
-impl HistoryUpdate {
-    /// Sometimes it's useful to take an update out of something without needing to use an option
-    /// field. Use this to replace the field with an empty update.
-    pub fn dummy() -> Self {
-        Self {
-            events: vec![],
-            previous_wft_started_id: -1,
-            has_last_wft: false,
-        }
-    }
-    pub fn is_real(&self) -> bool {
-        self.previous_wft_started_id >= 0
-    }
-    pub fn first_event_id(&self) -> Option<i64> {
-        self.events.get(0).map(|e| e.event_id)
     }
 }
 
@@ -374,6 +357,22 @@ impl Stream for StreamingHistoryPaginator {
 }
 
 impl HistoryUpdate {
+    /// Sometimes it's useful to take an update out of something without needing to use an option
+    /// field. Use this to replace the field with an empty update.
+    pub fn dummy() -> Self {
+        Self {
+            events: vec![],
+            previous_wft_started_id: -1,
+            has_last_wft: false,
+        }
+    }
+    pub fn is_real(&self) -> bool {
+        self.previous_wft_started_id >= 0
+    }
+    pub fn first_event_id(&self) -> Option<i64> {
+        self.events.get(0).map(|e| e.event_id)
+    }
+
     /// Create an instance of an update directly from events. If the passed in event iterator has a
     /// partial WFT sequence at the end, all events after the last complete WFT sequence (ending
     /// with WFT started) are returned back to the caller, since the history update only works in
@@ -517,6 +516,23 @@ impl HistoryUpdate {
             }
         }
         true
+    }
+
+    /// Returns the next WFT completed event attributes, if any, starting at (inclusive) the
+    /// `from_id`
+    pub fn peek_next_wft_completed(
+        &self,
+        from_id: i64,
+    ) -> Option<&WorkflowTaskCompletedEventAttributes> {
+        self.events
+            .iter()
+            .skip_while(|e| e.event_id < from_id)
+            .find_map(|e| match e.attributes {
+                Some(history_event::Attributes::WorkflowTaskCompletedEventAttributes(ref a)) => {
+                    Some(a)
+                }
+                _ => None,
+            })
     }
 
     fn starting_index_after_skipping(&self, from_wft_started_id: i64) -> Option<usize> {

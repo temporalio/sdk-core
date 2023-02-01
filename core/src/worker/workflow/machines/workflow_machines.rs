@@ -14,6 +14,7 @@ use super::{
     TemporalStateMachine,
 };
 use crate::{
+    internal_patching::InternalPatchLevel,
     protosext::{HistoryEventExt, ValidScheduleLA},
     telemetry::{metrics::MetricsContext, VecDisplayer},
     worker::{
@@ -94,6 +95,9 @@ pub(crate) struct WorkflowMachines {
     /// The current workflow time if it has been established. This may differ from the WFT start
     /// time since local activities may advance the clock
     current_wf_time: Option<SystemTime>,
+    /// The internal patch level with which the most recent workflow task completion was processed.
+    /// This number can only stay the same or increase, but cannot go down.
+    current_internal_patch_level: InternalPatchLevel,
 
     all_machines: SlotMap<MachineKey, Machines>,
     /// If a machine key is in this map, that machine was created internally by core, not as a
@@ -212,6 +216,15 @@ impl WorkflowMachines {
         metrics: MetricsContext,
     ) -> Self {
         let replaying = history.previous_wft_started_id > 0;
+        // Peek ahead to determine the internal patch level.
+        let current_internal_patch_level = if let Some(attrs) = history.peek_next_wft_completed(0) {
+            // TODO: Read from metadata once it exists
+            InternalPatchLevel::Primordial
+        } else {
+            // If there is no WFT completed event, then we are the first to process this workflow
+            // and we should start with the highest patch level.
+            InternalPatchLevel::HIGHEST
+        };
         Self {
             last_history_from_server: history,
             namespace,
@@ -229,6 +242,7 @@ impl WorkflowMachines {
             workflow_end_time: None,
             wft_start_time: None,
             current_wf_time: None,
+            current_internal_patch_level,
             all_machines: Default::default(),
             machine_is_core_created: Default::default(),
             machines_by_event_id: Default::default(),
