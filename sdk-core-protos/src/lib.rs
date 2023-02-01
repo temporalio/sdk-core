@@ -1849,20 +1849,15 @@ pub mod temporal {
                             Attributes::SignalExternalWorkflowExecutionFailedEventAttributes(_) => {EventType::SignalExternalWorkflowExecutionFailed}
                             Attributes::ExternalWorkflowExecutionSignaledEventAttributes(_) => {EventType::ExternalWorkflowExecutionSignaled}
                             Attributes::UpsertWorkflowSearchAttributesEventAttributes(_) => {EventType::UpsertWorkflowSearchAttributes}
-                            Attributes::WorkflowUpdateRejectedEventAttributes(_) => {EventType::WorkflowUpdateRejected}
-                            Attributes::WorkflowUpdateAcceptedEventAttributes(_) => {EventType::WorkflowUpdateAccepted}
-                            Attributes::WorkflowUpdateCompletedEventAttributes(_) => {EventType::WorkflowUpdateCompleted}
+                            Attributes::WorkflowExecutionUpdateRejectedEventAttributes(_) => {EventType::WorkflowExecutionUpdateRejected}
+                            Attributes::WorkflowExecutionUpdateAcceptedEventAttributes(_) => {EventType::WorkflowExecutionUpdateAccepted}
+                            Attributes::WorkflowExecutionUpdateCompletedEventAttributes(_) => {EventType::WorkflowExecutionUpdateCompleted}
                             Attributes::WorkflowPropertiesModifiedExternallyEventAttributes(_) => {EventType::WorkflowPropertiesModifiedExternally}
                             Attributes::ActivityPropertiesModifiedExternallyEventAttributes(_) => {EventType::ActivityPropertiesModifiedExternally}
                             Attributes::WorkflowPropertiesModifiedEventAttributes(_) => {EventType::WorkflowPropertiesModified}
                         }
                     }
                 }
-            }
-        }
-        pub mod interaction {
-            pub mod v1 {
-                tonic::include_proto!("temporal.api.interaction.v1");
             }
         }
         pub mod namespace {
@@ -1873,6 +1868,11 @@ pub mod temporal {
         pub mod operatorservice {
             pub mod v1 {
                 tonic::include_proto!("temporal.api.operatorservice.v1");
+            }
+        }
+        pub mod protocol {
+            pub mod v1 {
+                tonic::include_proto!("temporal.api.protocol.v1");
             }
         }
         pub mod query {
@@ -1908,6 +1908,11 @@ pub mod temporal {
         pub mod testservice {
             pub mod v1 {
                 tonic::include_proto!("temporal.api.testservice.v1");
+            }
+        }
+        pub mod update {
+            pub mod v1 {
+                tonic::include_proto!("temporal.api.update.v1");
             }
         }
         pub mod version {

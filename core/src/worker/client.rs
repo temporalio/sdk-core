@@ -189,6 +189,7 @@ impl WorkerClient for WorkerClientBag {
             worker_versioning_id: Some(VersionId {
                 worker_build_id: self.versioning_build_id(),
             }),
+            messages: vec![],
             binary_checksum: self.worker_build_id.clone(),
             query_results: request
                 .query_responses
@@ -206,6 +207,7 @@ impl WorkerClient for WorkerClientBag {
                 })
                 .collect(),
             namespace: self.namespace.clone(),
+            metadata: Default::default(),
         };
         Ok(self
             .client
@@ -302,6 +304,7 @@ impl WorkerClient for WorkerClientBag {
             identity: self.identity.clone(),
             binary_checksum: self.worker_build_id.clone(),
             namespace: self.namespace.clone(),
+            messages: vec![],
         };
         Ok(self
             .client
