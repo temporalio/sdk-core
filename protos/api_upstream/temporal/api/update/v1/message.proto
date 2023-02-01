@@ -1,0 +1,111 @@
+// The MIT License
+//
+// Copyright (c) 2020 Temporal Technologies Inc.  All rights reserved.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+
+syntax = "proto3";
+
+package temporal.api.update.v1;
+
+option go_package = "go.temporal.io/api/update/v1;update";
+option java_package = "io.temporal.api.update.v1";
+option java_multiple_files = true;
+option java_outer_classname = "MessageProto";
+option ruby_package = "Temporalio::Api::Update::V1";
+option csharp_namespace = "Temporalio.Api.Update.V1";
+
+import "temporal/api/common/v1/message.proto";
+import "temporal/api/enums/v1/update.proto";
+import "temporal/api/failure/v1/message.proto";
+
+// Sepcifies to the gRPC server how the client wants the UpdateWorkflowExecution
+// call to wait before returning control to the caller.
+message WaitPolicy {
+
+    // Indicates the update lifecycle stage that the gRPC call should wait for
+    // before returning.
+    temporal.api.enums.v1.UpdateWorkflowExecutionLifecycleStage lifecycle_stage = 1;
+}
+
+// The data needed by a client to refer to an previously invoked workflow
+// execution update process.
+message UpdateRef {
+    temporal.api.common.v1.WorkflowExecution workflow_execution = 1;
+    string update_id = 2;
+}
+
+// The outcome of a workflow update - success or failure.
+message Outcome {
+    oneof value {
+        temporal.api.common.v1.Payloads success = 1;
+        temporal.api.failure.v1.Failure failure = 2;
+    }
+}
+
+// Metadata about a workflow execution update.
+message Meta {
+    // An ID with workflow-scoped uniqueness for this update
+    string update_id = 1;
+
+    // A string identifying the agent that requested this update.
+    string identity = 2;
+}
+
+message Input {
+    // Headers that are passed with the update from the requesting entity.
+    // These can include things like auth or tracing tokens.
+    temporal.api.common.v1.Header header = 1;
+
+    // The name of the input handler to invoke on the target workflow
+    string name = 2;
+
+    // The arguments to pass to the named handler.
+    temporal.api.common.v1.Payloads args = 3;
+}
+
+// The client request that triggers a workflow execution update
+message Request {
+    Meta meta = 1;
+    Input input = 2;
+}
+
+// An update protocol message indicating that a workflow execution update has
+// been rejected.
+message Rejection {
+    string rejected_request_message_id = 1;
+    int64 rejected_request_sequencing_event_id = 2;
+    Request rejected_request = 3;
+    temporal.api.failure.v1.Failure failure = 4;
+}
+
+// An update protocol message indicating that a workflow execution update has
+// been accepted (i.e. passed the worker-side validation phase).
+message Acceptance {
+    string accepted_request_message_id = 1;
+    int64 accepted_request_sequencing_event_id = 2;
+    Request accepted_request = 3;
+}
+
+// An update protocol message indicating that a workflow execution update has
+// completed with the contained outcome.
+message Response {
+    Meta meta = 1;
+    Outcome outcome = 2;
+}

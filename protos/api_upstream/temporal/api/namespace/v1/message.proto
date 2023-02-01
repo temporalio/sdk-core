@@ -62,6 +62,8 @@ message NamespaceConfig {
     // If unspecified (ARCHIVAL_STATE_UNSPECIFIED) then default server configuration is used.
     temporal.api.enums.v1.ArchivalState visibility_archival_state = 5;
     string visibility_archival_uri = 6;
+    // Map from field name to alias.
+    map<string, string> custom_search_attribute_aliases = 7;
 }
 
 message BadBinaries {
