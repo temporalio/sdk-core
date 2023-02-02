@@ -54,6 +54,7 @@ import "temporal/api/taskqueue/v1/message.proto";
 import "temporal/api/update/v1/message.proto";
 import "temporal/api/version/v1/message.proto";
 import "temporal/api/batch/v1/message.proto";
+import "temporal/api/sdk/v1/wft_complete_metadata.proto";
 
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
@@ -310,10 +311,9 @@ message RespondWorkflowTaskCompletedRequest {
     temporal.api.taskqueue.v1.VersionId worker_versioning_id = 10;
     // Protocol messages piggybacking on a WFT as a transport
     repeated temporal.api.protocol.v1.Message messages = 11;
-    // Additional metadata which is not directly relevant to the reconstruction of workflow state.
-    // It may be used by SDKs to make notes to themselves, or to provide dynamic information to
-    // the server which is not explicitly defined in this response message.
-    map<string, temporal.api.common.v1.Payload> metadata = 12;
+    // Data the SDK wishes to record for itself, but server need not interpret, and does not
+    // directly impact workflow state.
+    temporal.api.sdk.v1.WFTCompleteMetadata sdk_data = 12;
 }
 
 message RespondWorkflowTaskCompletedResponse {

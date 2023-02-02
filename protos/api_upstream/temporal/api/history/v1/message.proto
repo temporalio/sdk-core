@@ -44,6 +44,7 @@ import "temporal/api/failure/v1/message.proto";
 import "temporal/api/taskqueue/v1/message.proto";
 import "temporal/api/update/v1/message.proto";
 import "temporal/api/workflow/v1/message.proto";
+import "temporal/api/sdk/v1/wft_complete_metadata.proto";
 
 // Always the first event in workflow history
 message WorkflowExecutionStartedEventAttributes {
@@ -195,9 +196,9 @@ message WorkflowTaskCompletedEventAttributes {
     // ID of the worker who picked up this workflow task, or missing if worker
     // is not using versioning.
     temporal.api.taskqueue.v1.VersionId worker_versioning_id = 5;
-    // See `RespondWorkflowTaskCompletedRequest::metadata`. This field contains either all or
-    // some subset of the information from the WFT completion request.
-    map<string, temporal.api.common.v1.Payload> metadata = 6;
+    // Data the SDK wishes to record for itself, but server need not interpret, and does not
+    // directly impact workflow state.
+    temporal.api.sdk.v1.WFTCompleteMetadata sdk_data = 6;
 }
 
 message WorkflowTaskTimedOutEventAttributes {
