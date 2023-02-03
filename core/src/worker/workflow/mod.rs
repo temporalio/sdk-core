@@ -303,6 +303,8 @@ impl Workflows {
                         sticky_attributes: None,
                         return_new_workflow_task: true,
                         force_create_new_workflow_task: force_new_wft,
+                        // TODO: implement
+                        newly_used_patches: Default::default(),
                     };
                     let sticky_attrs = self.sticky_attrs.clone();
                     // Do not return new WFT if we would not cache, because returned new WFTs are

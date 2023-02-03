@@ -34,6 +34,7 @@ pub trait StateMachine: Sized {
     where
         Self: Clone,
     {
+        // TODO: Get rid of this clone. It's pointless.
         // NOTE: This clone is actually nice in some sense, giving us a kind of transactionality.
         //   However if there are really big things in state it could be an issue.
         let res = self.clone().on_event(event);

@@ -394,6 +394,8 @@ impl ScheduleCommandCreated {
         dat: SharedState,
         sched_dat: ActTaskScheduledData,
     ) -> ActivityMachineTransition<ScheduledEventRecorded> {
+        // TODO: Check patches
+
         if sched_dat.act_id != dat.attrs.activity_id {
             return TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
                 "Activity id of scheduled event '{}' does not \

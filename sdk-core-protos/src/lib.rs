@@ -1890,6 +1890,11 @@ pub mod temporal {
                 tonic::include_proto!("temporal.api.schedule.v1");
             }
         }
+        pub mod sdk {
+            pub mod v1 {
+                tonic::include_proto!("temporal.api.sdk.v1");
+            }
+        }
         pub mod taskqueue {
             pub mod v1 {
                 use crate::temporal::api::enums::v1::TaskQueueKind;

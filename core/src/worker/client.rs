@@ -2,6 +2,7 @@
 
 pub(crate) mod mocks;
 
+use crate::internal_patching::InternalPatches;
 use temporal_client::{Client, RetryClient, WorkflowService};
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::QueryResult,
@@ -11,6 +12,7 @@ use temporal_sdk_core_protos::{
         enums::v1::{TaskQueueKind, WorkflowTaskFailedCause},
         failure::v1::Failure,
         query::v1::WorkflowQueryResult,
+        sdk::v1::WftCompleteMetadata,
         taskqueue::v1::{StickyExecutionAttributes, TaskQueue, TaskQueueMetadata, VersionId},
         workflowservice::v1::*,
     },
@@ -207,7 +209,9 @@ impl WorkerClient for WorkerClientBag {
                 })
                 .collect(),
             namespace: self.namespace.clone(),
-            metadata: Default::default(),
+            sdk_data: Some(WftCompleteMetadata {
+                internal_patches: Some(request.newly_used_patches.into()),
+            }),
         };
         Ok(self
             .client
@@ -373,4 +377,6 @@ pub(crate) struct WorkflowTaskCompletion {
     pub return_new_workflow_task: bool,
     /// Force a new WFT to be created after this completion
     pub force_create_new_workflow_task: bool,
+    /// Newly used patches during this completion
+    pub newly_used_patches: InternalPatches,
 }

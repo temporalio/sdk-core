@@ -270,6 +270,10 @@ trait Cancellable: StateMachine {
     }
 }
 
+thread_local! {
+    // static WF_INTERNAL_PATCHES: Option<Arc<Mutex<In>>>
+}
+
 /// We need to wrap calls to [StateMachine::on_event_mut] to track coverage, or anything else
 /// we'd like to do on every call.
 pub(crate) trait OnEventWrapper: StateMachine

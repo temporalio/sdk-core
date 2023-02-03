@@ -125,7 +125,6 @@ pub async fn local_act_fanout_wf(ctx: WfContext) -> WorkflowResult<()> {
 
 #[tokio::test]
 async fn local_act_many_concurrent() {
-    crate::telemetry::test_telem_console();
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
