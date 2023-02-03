@@ -25,7 +25,8 @@ use futures_util::future::AbortHandle;
 use std::{
     collections::HashSet,
     ops::Add,
-    sync::{mpsc::Sender, Arc},
+    rc::Rc,
+    sync::mpsc::Sender,
     time::{Duration, Instant},
 };
 use temporal_sdk_core_protos::{
@@ -65,7 +66,7 @@ pub(super) struct ManagedRun {
     /// pushing things out and then directly back in. The downside is this is the only "impure" part
     /// of the in/out nature of workflow state management. If there's ever a sensible way to lift it
     /// up, that'd be nice.
-    local_activity_request_sink: Arc<dyn LocalActivityRequestSink>,
+    local_activity_request_sink: Rc<dyn LocalActivityRequestSink>,
     /// Set if the run is currently waiting on the execution of some local activities.
     waiting_on_la: Option<WaitingOnLAs>,
     /// Is set to true if the machines encounter an error and the only subsequent thing we should
@@ -100,7 +101,7 @@ impl ManagedRun {
         workflow_id: String,
         workflow_type: String,
         run_id: String,
-        local_activity_request_sink: Arc<dyn LocalActivityRequestSink>,
+        local_activity_request_sink: Rc<dyn LocalActivityRequestSink>,
         metrics: MetricsContext,
     ) -> Self {
         let wfm = WorkflowManager::new(
@@ -688,9 +689,6 @@ impl ManagedRun {
                 // Auto-reply WFT complete
                 return true;
             }
-        } else {
-            // If a heartbeat timeout happened, we should always have been waiting on LAs
-            dbg_panic!("WFT heartbeat timeout fired but we were not waiting on any LAs");
         }
         false
     }

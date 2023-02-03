@@ -148,6 +148,7 @@ pub(crate) fn mock_worker(mocks: MocksHolder) -> Worker {
         mocks.inputs.wft_stream,
         act_poller,
         MetricsContext::no_op(),
+        None,
         CancellationToken::new(),
     )
 }

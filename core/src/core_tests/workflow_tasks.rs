@@ -1266,6 +1266,8 @@ async fn buffered_work_drained_on_shutdown() {
         .unwrap();
     };
     let complete_first = async move {
+        // If the first complete is sent too fast, we may not have had a chance to buffer work.
+        tokio::time::sleep(Duration::from_millis(50)).await;
         core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
             act1.run_id,
             start_timer_cmd(1, Duration::from_secs(1)),
@@ -1274,8 +1276,6 @@ async fn buffered_work_drained_on_shutdown() {
         .unwrap();
     };
     join!(poll_fut, complete_first, async {
-        // If the shutdown is sent too too fast, we might not have got a chance to even buffer work
-        tokio::time::sleep(Duration::from_millis(5)).await;
         core.shutdown().await;
     });
 }

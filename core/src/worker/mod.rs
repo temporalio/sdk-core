@@ -21,9 +21,12 @@ use crate::{
         WorkflowTaskPoller,
     },
     protosext::{validate_activity_completion, ValidPollWFTQResponse},
-    telemetry::metrics::{
-        activity_poller, local_activity_worker_type, workflow_poller, workflow_sticky_poller,
-        MetricsContext,
+    telemetry::{
+        metrics::{
+            activity_poller, local_activity_worker_type, workflow_poller, workflow_sticky_poller,
+            MetricsContext,
+        },
+        TelemetryInstance,
     },
     worker::{
         activities::{DispatchOrTimeoutLA, LACompleteAction, LocalActivityManager},
@@ -159,11 +162,17 @@ impl Worker {
         config: WorkerConfig,
         sticky_queue_name: Option<String>,
         client: Arc<dyn WorkerClient>,
-        metrics: MetricsContext,
+        telem_instance: Option<&TelemetryInstance>,
     ) -> Self {
         info!(task_queue=%config.task_queue,
               namespace=%config.namespace,
               "Initializing worker");
+        let metrics = if let Some(ti) = telem_instance {
+            MetricsContext::top_level(config.namespace.clone(), ti)
+                .with_task_q(config.task_queue.clone())
+        } else {
+            MetricsContext::no_op()
+        };
         metrics.worker_registered();
 
         let shutdown_token = CancellationToken::new();
@@ -226,13 +235,14 @@ impl Worker {
             wft_stream,
             act_poll_buffer,
             metrics,
+            telem_instance,
             shutdown_token,
         )
     }
 
     #[cfg(test)]
     pub(crate) fn new_test(config: WorkerConfig, client: impl WorkerClient + 'static) -> Self {
-        Self::new(config, None, Arc::new(client), MetricsContext::no_op())
+        Self::new(config, None, Arc::new(client), None)
     }
 
     pub(crate) fn new_with_pollers(
@@ -242,6 +252,7 @@ impl Worker {
         wft_stream: impl Stream<Item = Result<ValidPollWFTQResponse, tonic::Status>> + Send + 'static,
         act_poller: Option<BoxedActPoller>,
         metrics: MetricsContext,
+        telem_instance: Option<&TelemetryInstance>,
         shutdown_token: CancellationToken,
     ) -> Self {
         let (hb_tx, hb_rx) = unbounded_channel();
@@ -290,6 +301,7 @@ impl Worker {
                 at_task_mgr
                     .as_ref()
                     .map(|mgr| mgr.get_handle_for_workflows()),
+                telem_instance,
             ),
             at_task_mgr,
             local_act_mgr,
@@ -466,11 +478,14 @@ impl Worker {
         &self,
         completion: WorkflowActivationCompletion,
     ) -> Result<(), CompleteWfError> {
-        let run_id = completion.run_id.clone();
-        let most_recent_event = self.workflows.activation_completed(completion).await?;
-        if let Some(h) = &self.post_activate_hook {
-            h(self, &run_id, most_recent_event);
-        }
+        self.workflows
+            .activation_completed(
+                completion,
+                self.post_activate_hook.as_ref().map(|h| {
+                    |run_id: &str, most_recent_event: usize| h(self, run_id, most_recent_event)
+                }),
+            )
+            .await?;
         Ok(())
     }
 

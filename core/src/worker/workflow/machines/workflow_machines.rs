@@ -31,9 +31,11 @@ use siphasher::sip::SipHasher13;
 use slotmap::{SlotMap, SparseSecondaryMap};
 use std::{
     borrow::{Borrow, BorrowMut},
+    cell::RefCell,
     collections::{HashMap, VecDeque},
     convert::TryInto,
     hash::{Hash, Hasher},
+    rc::Rc,
     time::{Duration, Instant, SystemTime},
 };
 use temporal_sdk_core_protos::{
@@ -97,7 +99,7 @@ pub(crate) struct WorkflowMachines {
     current_wf_time: Option<SystemTime>,
     /// The internal patches which have been seen so far during this run's execution and thus are
     /// usable during replay.
-    observed_internal_patches: InternalPatches,
+    observed_internal_patches: Rc<RefCell<InternalPatches>>,
 
     all_machines: SlotMap<MachineKey, Machines>,
     /// If a machine key is in this map, that machine was created internally by core, not as a
@@ -238,7 +240,7 @@ impl WorkflowMachines {
             workflow_end_time: None,
             wft_start_time: None,
             current_wf_time: None,
-            observed_internal_patches,
+            observed_internal_patches: Rc::new(RefCell::new(observed_internal_patches)),
             all_machines: Default::default(),
             machine_is_core_created: Default::default(),
             machines_by_event_id: Default::default(),
@@ -410,7 +412,8 @@ impl WorkflowMachines {
             .last_history_from_server
             .peek_next_wft_completed(last_handled_wft_started_id)
         {
-            self.observed_internal_patches
+            (*self.observed_internal_patches)
+                .borrow_mut()
                 .add_from_complete(next_complete);
             dbg!(&self.observed_internal_patches);
         }
