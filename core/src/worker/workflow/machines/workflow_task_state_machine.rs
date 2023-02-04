@@ -3,6 +3,7 @@
 use super::{
     workflow_machines::MachineResponse, Cancellable, EventInfo, WFMachinesAdapter, WFMachinesError,
 };
+use crate::worker::workflow::machines::HistEventData;
 use rustfsm::{fsm, TransitionResult};
 use std::{
     convert::{TryFrom, TryInto},
@@ -102,10 +103,11 @@ impl WFMachinesAdapter for WorkflowTaskMachine {
     }
 }
 
-impl TryFrom<HistoryEvent> for WorkflowTaskMachineEvents {
+impl TryFrom<HistEventData> for WorkflowTaskMachineEvents {
     type Error = WFMachinesError;
 
-    fn try_from(e: HistoryEvent) -> Result<Self, Self::Error> {
+    fn try_from(e: HistEventData) -> Result<Self, Self::Error> {
+        let e = e.event;
         Ok(match e.event_type() {
             EventType::WorkflowTaskScheduled => Self::WorkflowTaskScheduled,
             EventType::WorkflowTaskStarted => Self::WorkflowTaskStarted({

@@ -4,6 +4,10 @@ use super::{
     workflow_machines::MachineResponse, Cancellable, EventInfo, NewMachineWithCommand,
     OnEventWrapper, WFMachinesAdapter, WFMachinesError,
 };
+use crate::{
+    internal_patching::CoreInternalPatches,
+    worker::workflow::{machines::HistEventData, InternalPatchesRef},
+};
 use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
 use std::convert::{TryFrom, TryInto};
 use temporal_sdk_core_protos::{
@@ -98,36 +102,35 @@ pub(super) struct ActTaskScheduledData {
     event_id: i64,
     act_type: String,
     act_id: String,
-}
-
-/// Creates a new activity state machine and a command to schedule it on the server.
-pub(super) fn new_activity(attribs: ScheduleActivity) -> NewMachineWithCommand {
-    let (activity, add_cmd) = ActivityMachine::new_scheduled(attribs);
-    NewMachineWithCommand {
-        command: add_cmd,
-        machine: activity.into(),
-    }
+    replaying: bool,
 }
 
 impl ActivityMachine {
     /// Create a new activity and immediately schedule it.
-    fn new_scheduled(attribs: ScheduleActivity) -> (Self, Command) {
+    pub(super) fn new_scheduled(
+        attrs: ScheduleActivity,
+        internal_patches: InternalPatchesRef,
+    ) -> NewMachineWithCommand {
         let mut s = Self {
             state: Created {}.into(),
             shared_state: SharedState {
-                cancellation_type: ActivityCancellationType::from_i32(attribs.cancellation_type)
+                cancellation_type: ActivityCancellationType::from_i32(attrs.cancellation_type)
                     .unwrap(),
-                attrs: attribs,
+                attrs,
+                internal_patches,
                 ..Default::default()
             },
         };
         OnEventWrapper::on_event_mut(&mut s, ActivityMachineEvents::Schedule)
             .expect("Scheduling activities doesn't fail");
-        let cmd = Command {
+        let command = Command {
             command_type: CommandType::ScheduleActivityTask as i32,
             attributes: Some(s.shared_state().attrs.clone().into()),
         };
-        (s, cmd)
+        NewMachineWithCommand {
+            command,
+            machine: s.into(),
+        }
     }
 
     fn machine_responses_from_cancel_request(&self, cancel_cmd: Command) -> Vec<MachineResponse> {
@@ -175,10 +178,12 @@ impl ActivityMachine {
     }
 }
 
-impl TryFrom<HistoryEvent> for ActivityMachineEvents {
+impl TryFrom<HistEventData> for ActivityMachineEvents {
     type Error = WFMachinesError;
 
-    fn try_from(e: HistoryEvent) -> Result<Self, Self::Error> {
+    fn try_from(e: HistEventData) -> Result<Self, Self::Error> {
+        let replaying = e.replaying;
+        let e = e.event;
         Ok(match e.event_type() {
             EventType::ActivityTaskScheduled => {
                 if let Some(history_event::Attributes::ActivityTaskScheduledEventAttributes(
@@ -189,6 +194,7 @@ impl TryFrom<HistoryEvent> for ActivityMachineEvents {
                         event_id: e.event_id,
                         act_id: attrs.activity_id,
                         act_type: attrs.activity_type.unwrap_or_default().name,
+                        replaying,
                     })
                 } else {
                     return Err(WFMachinesError::Fatal(format!(
@@ -373,6 +379,7 @@ pub(super) struct SharedState {
     attrs: ScheduleActivity,
     cancellation_type: ActivityCancellationType,
     cancelled_before_sent: bool,
+    internal_patches: InternalPatchesRef,
 }
 
 #[derive(Default, Clone)]
@@ -394,21 +401,25 @@ impl ScheduleCommandCreated {
         dat: SharedState,
         sched_dat: ActTaskScheduledData,
     ) -> ActivityMachineTransition<ScheduledEventRecorded> {
-        // TODO: Check patches
-
-        if sched_dat.act_id != dat.attrs.activity_id {
-            return TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
-                "Activity id of scheduled event '{}' does not \
+        dbg!(&sched_dat.replaying);
+        if dat.internal_patches.borrow_mut().try_use(
+            CoreInternalPatches::IdAndTypeDeterminismChecks,
+            sched_dat.replaying,
+        ) {
+            if sched_dat.act_id != dat.attrs.activity_id {
+                return TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
+                    "Activity id of scheduled event '{}' does not \
                  match activity id of activity command '{}'",
-                sched_dat.act_id, dat.attrs.activity_id
-            )));
-        }
-        if sched_dat.act_type != dat.attrs.activity_type {
-            return TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
-                "Activity type of scheduled event '{}' does not \
+                    sched_dat.act_id, dat.attrs.activity_id
+                )));
+            }
+            if sched_dat.act_type != dat.attrs.activity_type {
+                return TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
+                    "Activity type of scheduled event '{}' does not \
                  match activity type of activity command '{}'",
-                sched_dat.act_type, dat.attrs.activity_type
-            )));
+                    sched_dat.act_type, dat.attrs.activity_type
+                )));
+            }
         }
         ActivityMachineTransition::ok_shared(
             vec![],

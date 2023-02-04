@@ -73,7 +73,7 @@ enum Machines {
 ///
 /// Formerly known as `EntityStateMachine` in Java.
 #[enum_dispatch::enum_dispatch(Machines)]
-trait TemporalStateMachine: Send {
+trait TemporalStateMachine {
     fn handle_command(
         &mut self,
         command_type: CommandType,
@@ -88,7 +88,7 @@ trait TemporalStateMachine: Send {
     /// to update the overall state of the workflow. EX: To issue outgoing WF activations.
     fn handle_event(
         &mut self,
-        event: HistoryEvent,
+        event: HistEventData,
         has_next_event: bool,
     ) -> Result<Vec<MachineResponse>, WFMachinesError>;
 
@@ -108,9 +108,9 @@ trait TemporalStateMachine: Send {
 
 impl<SM> TemporalStateMachine for SM
 where
-    SM: StateMachine + WFMachinesAdapter + Cancellable + OnEventWrapper + Clone + Send + 'static,
-    <SM as StateMachine>::Event: TryFrom<HistoryEvent> + TryFrom<CommandType> + Display,
-    WFMachinesError: From<<<SM as StateMachine>::Event as TryFrom<HistoryEvent>>::Error>,
+    SM: StateMachine + WFMachinesAdapter + Cancellable + OnEventWrapper + Clone + 'static,
+    <SM as StateMachine>::Event: TryFrom<HistEventData> + TryFrom<CommandType> + Display,
+    WFMachinesError: From<<<SM as StateMachine>::Event as TryFrom<HistEventData>>::Error>,
     <SM as StateMachine>::Command: Debug + Display,
     <SM as StateMachine>::State: Display,
     <SM as StateMachine>::Error: Into<WFMachinesError> + 'static + Send + Sync,
@@ -152,21 +152,21 @@ where
 
     fn handle_event(
         &mut self,
-        event: HistoryEvent,
+        event_dat: HistEventData,
         has_next_event: bool,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         trace!(
-            event = %event,
+            event = %event_dat.event,
             machine_name = %self.name(),
             state = %self.state(),
             "handling event"
         );
         let event_info = EventInfo {
-            event_id: event.event_id,
-            event_type: event.event_type(),
+            event_id: event_dat.event.event_id,
+            event_type: event_dat.event.event_type(),
             has_next_event,
         };
-        let converted_event: <Self as StateMachine>::Event = event.try_into()?;
+        let converted_event: <Self as StateMachine>::Event = event_dat.try_into()?;
 
         match OnEventWrapper::on_event_mut(self, converted_event) {
             Ok(c) => process_machine_commands(self, c, Some(event_info)),
@@ -245,6 +245,15 @@ trait WFMachinesAdapter: StateMachine {
     fn matches_event(&self, event: &HistoryEvent) -> bool;
 }
 
+/// Wraps a history event with extra relevant data that a machine might care about while the event
+/// is being applied to it.
+#[derive(Debug)]
+struct HistEventData {
+    event: HistoryEvent,
+    /// Is the current workflow task under replay or not during application of this event?
+    replaying: bool,
+}
+
 #[derive(Debug, Copy, Clone)]
 struct EventInfo {
     event_id: i64,
@@ -268,10 +277,6 @@ trait Cancellable: StateMachine {
     fn was_cancelled_before_sent_to_server(&self) -> bool {
         false
     }
-}
-
-thread_local! {
-    // static WF_INTERNAL_PATCHES: Option<Arc<Mutex<In>>>
 }
 
 /// We need to wrap calls to [StateMachine::on_event_mut] to track coverage, or anything else

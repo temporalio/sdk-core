@@ -1,6 +1,6 @@
 use super::{workflow_machines::MachineResponse, NewMachineWithCommand};
 use crate::worker::workflow::{
-    machines::{Cancellable, EventInfo, WFMachinesAdapter},
+    machines::{Cancellable, EventInfo, HistEventData, WFMachinesAdapter},
     WFMachinesError,
 };
 use rustfsm::{fsm, TransitionResult};
@@ -109,10 +109,11 @@ impl Cancellable for UpsertSearchAttributesMachine {}
 // Converts the generic history event with type EventType::UpsertWorkflowSearchAttributes into the
 // UpsertSearchAttributesMachine-specific event type
 // UpsertSearchAttributesMachineEvents::CommandRecorded.
-impl TryFrom<HistoryEvent> for UpsertSearchAttributesMachineEvents {
+impl TryFrom<HistEventData> for UpsertSearchAttributesMachineEvents {
     type Error = WFMachinesError;
 
-    fn try_from(e: HistoryEvent) -> Result<Self, Self::Error> {
+    fn try_from(e: HistEventData) -> Result<Self, Self::Error> {
+        let e = e.event;
         match e.event_type() {
             EventType::UpsertWorkflowSearchAttributes => {
                 Ok(UpsertSearchAttributesMachineEvents::CommandRecorded)
@@ -229,7 +230,12 @@ mod tests {
             ..Default::default()
         };
         assert!(sm.matches_event(&recorded_history_event));
-        let cmd_recorded_sm_event = recorded_history_event.try_into().unwrap();
+        let cmd_recorded_sm_event = HistEventData {
+            event: recorded_history_event,
+            replaying: false,
+        }
+        .try_into()
+        .unwrap();
 
         OnEventWrapper::on_event_mut(&mut sm, cmd_scheduled_sm_event)
             .expect("CommandScheduled should transition Created -> CommandIssued");

@@ -984,6 +984,12 @@ impl ManagedRun {
                     force_new_wft,
                     commands: outgoing_cmds.commands,
                     query_responses,
+                    newly_used_patches: self
+                        .wfm
+                        .machines
+                        .observed_internal_patches
+                        .borrow_mut()
+                        .gather_for_wft_complete(),
                 },
             })
         } else {

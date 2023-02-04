@@ -410,7 +410,6 @@ impl WFStream {
     /// activation to evict the workflow from the lang side. Workflow will not *actually* be evicted
     /// until lang replies to that activation
     fn request_eviction(&mut self, info: RequestEvictMsg) -> EvictionRequestResult {
-        dbg!("HELLO!");
         if let Some(rh) = self.runs.get_mut(&info.run_id) {
             rh.request_eviction(info)
         } else {
@@ -530,7 +529,7 @@ impl WFStream {
             let all_runs_ready = self
                 .runs
                 .handles()
-                .all(|r| !r.has_any_pending_work(dbg!(self.ignore_evicts_on_shutdown), false));
+                .all(|r| !r.has_any_pending_work(self.ignore_evicts_on_shutdown, false));
             if all_runs_ready {
                 return true;
             }

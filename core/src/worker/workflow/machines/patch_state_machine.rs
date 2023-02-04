@@ -21,7 +21,7 @@ use super::{
     workflow_machines::MachineResponse, Cancellable, EventInfo, NewMachineWithCommand,
     OnEventWrapper, WFMachinesAdapter, WFMachinesError,
 };
-use crate::protosext::HistoryEventExt;
+use crate::{protosext::HistoryEventExt, worker::workflow::machines::HistEventData};
 use rustfsm::{fsm, TransitionResult};
 use std::convert::TryFrom;
 use temporal_sdk_core_protos::{
@@ -201,10 +201,11 @@ impl TryFrom<CommandType> for PatchMachineEvents {
     }
 }
 
-impl TryFrom<HistoryEvent> for PatchMachineEvents {
+impl TryFrom<HistEventData> for PatchMachineEvents {
     type Error = WFMachinesError;
 
-    fn try_from(e: HistoryEvent) -> Result<Self, Self::Error> {
+    fn try_from(e: HistEventData) -> Result<Self, Self::Error> {
+        let e = e.event;
         match e.get_patch_marker_details() {
             Some((id, _)) => Ok(Self::MarkerRecorded(id)),
             _ => Err(WFMachinesError::Nondeterminism(format!(

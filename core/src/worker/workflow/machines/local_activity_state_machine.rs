@@ -4,7 +4,10 @@ use super::{
 };
 use crate::{
     protosext::{CompleteLocalActivityData, HistoryEventExt, ValidScheduleLA},
-    worker::{workflow::OutgoingJob, LocalActivityExecutionResult},
+    worker::{
+        workflow::{machines::HistEventData, OutgoingJob},
+        LocalActivityExecutionResult,
+    },
 };
 use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
 use std::{
@@ -749,10 +752,11 @@ impl TryFrom<CommandType> for LocalActivityMachineEvents {
     }
 }
 
-impl TryFrom<HistoryEvent> for LocalActivityMachineEvents {
+impl TryFrom<HistEventData> for LocalActivityMachineEvents {
     type Error = WFMachinesError;
 
-    fn try_from(e: HistoryEvent) -> Result<Self, Self::Error> {
+    fn try_from(e: HistEventData) -> Result<Self, Self::Error> {
+        let e = e.event;
         if e.event_type() != EventType::MarkerRecorded {
             return Err(WFMachinesError::Nondeterminism(format!(
                 "Local activity machine cannot handle this event: {e}"

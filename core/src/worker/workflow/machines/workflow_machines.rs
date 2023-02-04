@@ -1,7 +1,7 @@
 mod local_acts;
 
 use super::{
-    activity_state_machine::new_activity, cancel_external_state_machine::new_external_cancel,
+    cancel_external_state_machine::new_external_cancel,
     cancel_workflow_state_machine::cancel_workflow,
     child_workflow_state_machine::new_child_workflow,
     complete_workflow_state_machine::complete_workflow,
@@ -20,9 +20,13 @@ use crate::{
     worker::{
         workflow::{
             history_update::NextWFT,
-            machines::modify_workflow_properties_state_machine::modify_workflow_properties,
-            CommandID, DrivenWorkflow, HistoryUpdate, LocalResolution, OutgoingJob, WFCommand,
-            WFMachinesError, WorkflowFetcher, WorkflowStartedInfo,
+            machines::{
+                activity_state_machine::ActivityMachine,
+                modify_workflow_properties_state_machine::modify_workflow_properties,
+                HistEventData,
+            },
+            CommandID, DrivenWorkflow, HistoryUpdate, InternalPatchesRef, LocalResolution,
+            OutgoingJob, WFCommand, WFMachinesError, WorkflowFetcher, WorkflowStartedInfo,
         },
         ExecutingLAId, LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
     },
@@ -99,7 +103,7 @@ pub(crate) struct WorkflowMachines {
     current_wf_time: Option<SystemTime>,
     /// The internal patches which have been seen so far during this run's execution and thus are
     /// usable during replay.
-    observed_internal_patches: Rc<RefCell<InternalPatches>>,
+    pub observed_internal_patches: InternalPatchesRef,
 
     all_machines: SlotMap<MachineKey, Machines>,
     /// If a machine key is in this map, that machine was created internally by core, not as a
@@ -764,7 +768,10 @@ impl WorkflowMachines {
         event: HistoryEvent,
         has_next_event: bool,
     ) -> Result<()> {
-        let machine_responses = self.machine_mut(sm).handle_event(event, has_next_event)?;
+        let replaying = self.replaying;
+        let machine_responses = self
+            .machine_mut(sm)
+            .handle_event(HistEventData { event, replaying }, has_next_event)?;
         self.process_machine_responses(sm, machine_responses)?;
         Ok(())
     }
@@ -982,7 +989,13 @@ impl WorkflowMachines {
                 }
                 WFCommand::AddActivity(attrs) => {
                     let seq = attrs.seq;
-                    self.add_cmd_to_wf_task(new_activity(attrs), CommandID::Activity(seq).into());
+                    self.add_cmd_to_wf_task(
+                        ActivityMachine::new_scheduled(
+                            attrs,
+                            self.observed_internal_patches.clone(),
+                        ),
+                        CommandID::Activity(seq).into(),
+                    );
                 }
                 WFCommand::AddLocalActivity(attrs) => {
                     let seq = attrs.seq;

@@ -2,7 +2,6 @@
 
 pub(crate) mod mocks;
 
-use crate::internal_patching::InternalPatches;
 use temporal_client::{Client, RetryClient, WorkflowService};
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::QueryResult,
@@ -12,7 +11,7 @@ use temporal_sdk_core_protos::{
         enums::v1::{TaskQueueKind, WorkflowTaskFailedCause},
         failure::v1::Failure,
         query::v1::WorkflowQueryResult,
-        sdk::v1::WftCompleteMetadata,
+        sdk::v1::{InternalPatches, WftCompleteMetadata},
         taskqueue::v1::{StickyExecutionAttributes, TaskQueue, TaskQueueMetadata, VersionId},
         workflowservice::v1::*,
     },

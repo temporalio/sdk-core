@@ -25,6 +25,7 @@ use crate::{
     abstractions::{
         stream_when_allowed, MeteredSemaphore, OwnedMeteredSemPermit, UsedMeteredSemPermit,
     },
+    internal_patching::InternalPatches,
     protosext::{legacy_query_failure, ValidPollWFTQResponse},
     telemetry::{
         metrics::workflow_worker_type, set_trace_subscriber_for_current_thread, TelemetryInstance,
@@ -49,10 +50,12 @@ use futures::{stream::BoxStream, Stream, StreamExt};
 use futures_util::{future::abortable, stream};
 use prost_types::TimestampError;
 use std::{
+    cell::RefCell,
     collections::VecDeque,
     fmt::Debug,
     future::Future,
     ops::DerefMut,
+    rc::Rc,
     result,
     sync::Arc,
     thread,
@@ -76,6 +79,7 @@ use temporal_sdk_core_protos::{
         common::v1::{Memo, RetryPolicy, SearchAttributes, WorkflowExecution},
         enums::v1::WorkflowTaskFailedCause,
         query::v1::WorkflowQuery,
+        sdk::v1::InternalPatches as InternalPatchesProto,
         taskqueue::v1::StickyExecutionAttributes,
         workflowservice::v1::PollActivityTaskQueueResponse,
     },
@@ -100,6 +104,7 @@ const MAX_EAGER_ACTIVITY_RESERVATIONS_PER_WORKFLOW_TASK: usize = 3;
 
 type Result<T, E = WFMachinesError> = result::Result<T, E>;
 type BoxedActivationStream = BoxStream<'static, Result<ActivationOrAuto, PollWfError>>;
+type InternalPatchesRef = Rc<RefCell<InternalPatches>>;
 
 /// Centralizes all state related to workflows and workflow tasks
 pub(crate) struct Workflows {
@@ -316,6 +321,7 @@ impl Workflows {
                             mut commands,
                             query_responses,
                             force_new_wft,
+                            newly_used_patches,
                         },
                 } => {
                     let reserved_act_permits =
@@ -329,8 +335,7 @@ impl Workflows {
                         sticky_attributes: None,
                         return_new_workflow_task: true,
                         force_create_new_workflow_task: force_new_wft,
-                        // TODO: implement
-                        newly_used_patches: Default::default(),
+                        newly_used_patches,
                     };
                     let sticky_attrs = self.sticky_attrs.clone();
                     // Do not return new WFT if we would not cache, because returned new WFTs are
@@ -809,6 +814,7 @@ pub(crate) enum ActivationAction {
         commands: Vec<ProtoCommand>,
         query_responses: Vec<QueryResult>,
         force_new_wft: bool,
+        newly_used_patches: InternalPatchesProto,
     },
     /// We should respond to a legacy query request
     RespondLegacyQuery { result: Box<QueryResult> },

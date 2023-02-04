@@ -28,6 +28,7 @@ pub(crate) enum CoreInternalPatches {
 pub(crate) struct InternalPatches {
     core: HashSet<CoreInternalPatches>,
     lang: HashSet<u32>,
+    core_since_last_complete: HashSet<CoreInternalPatches>,
 }
 
 impl InternalPatches {
@@ -44,6 +45,32 @@ impl InternalPatches {
                     .map(|u| CoreInternalPatches::from_u32(*u)),
             );
             self.lang.extend(patches.lang_used_patches.iter());
+        }
+    }
+
+    /// Returns true if this patch may currently be used. If `replaying` is false, always returns
+    /// true and records the patch as being used, for taking later via
+    /// [Self::gather_for_wft_complete].
+    pub fn try_use(&mut self, core_patch: CoreInternalPatches, replaying: bool) -> bool {
+        if !replaying {
+            self.core_since_last_complete.insert(core_patch);
+            true
+        } else if self.core.contains(&core_patch) {
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Wipes the recorded patches used during the current WFT and returns them, if any.
+    pub fn gather_for_wft_complete(&mut self) -> InternalPatchesProto {
+        InternalPatchesProto {
+            core_used_patches: self
+                .core_since_last_complete
+                .drain()
+                .map(|p| p as u32)
+                .collect(),
+            lang_used_patches: vec![],
         }
     }
 }

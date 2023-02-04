@@ -113,7 +113,7 @@ async fn test_wf_task_rejected_properly_due_to_nondeterminism(#[case] use_cache:
 #[case::with_cache(true)]
 #[case::without_cache(false)]
 #[tokio::test]
-async fn test_activity_type_change_is_nondeterministic(#[case] use_cache: bool) {
+async fn activity_type_change_is_nondeterministic(#[case] use_cache: bool) {
     let wf_id = "fakeid";
     let wf_type = DEFAULT_WORKFLOW_TYPE;
     let t = canned_histories::single_activity("1");
@@ -165,7 +165,7 @@ async fn test_activity_type_change_is_nondeterministic(#[case] use_cache: bool) 
 #[case::with_cache(true)]
 #[case::without_cache(false)]
 #[tokio::test]
-async fn test_activity_id_change_is_nondeterministic(#[case] use_cache: bool) {
+async fn activity_id_change_is_nondeterministic(#[case] use_cache: bool) {
     let wf_id = "fakeid";
     let wf_type = DEFAULT_WORKFLOW_TYPE;
     let t = canned_histories::single_activity("1");

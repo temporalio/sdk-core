@@ -2,6 +2,7 @@ use super::{
     workflow_machines::MachineResponse, Cancellable, EventInfo, NewMachineWithCommand,
     OnEventWrapper, WFMachinesAdapter, WFMachinesError,
 };
+use crate::worker::workflow::machines::HistEventData;
 use rustfsm::{fsm, MachineError, TransitionResult};
 use std::convert::{TryFrom, TryInto};
 use temporal_sdk_core_protos::{
@@ -372,10 +373,11 @@ impl ChildWorkflowMachine {
     }
 }
 
-impl TryFrom<HistoryEvent> for ChildWorkflowMachineEvents {
+impl TryFrom<HistEventData> for ChildWorkflowMachineEvents {
     type Error = WFMachinesError;
 
-    fn try_from(e: HistoryEvent) -> Result<Self, Self::Error> {
+    fn try_from(e: HistEventData) -> Result<Self, Self::Error> {
+        let e = e.event;
         Ok(match EventType::from_i32(e.event_type) {
             Some(EventType::StartChildWorkflowExecutionInitiated) => {
                 Self::StartChildWorkflowExecutionInitiated(e.event_id)
