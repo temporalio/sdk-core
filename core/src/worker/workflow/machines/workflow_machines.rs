@@ -422,25 +422,24 @@ impl WorkflowMachines {
             dbg!(&self.observed_internal_patches);
         }
 
-        let events =
-            match self
-                .last_history_from_server
-                .take_next_wft_sequence(last_handled_wft_started_id)
-            {
-                NextWFT::ReplayOver => {
-                    vec![]
-                }
-                NextWFT::WFT(mut evts) => {
-                    // Do not re-process events we have already processed
-                    evts.retain(|e| e.event_id > self.last_processed_event);
-                    evts
-                }
-                NextWFT::NeedFetch => return Err(WFMachinesError::Fatal(
+        let (events, has_final_event) = match self
+            .last_history_from_server
+            .take_next_wft_sequence(last_handled_wft_started_id)
+        {
+            NextWFT::ReplayOver => (vec![], true),
+            NextWFT::WFT(mut evts, has_final_event) => {
+                // Do not re-process events we have already processed
+                evts.retain(|e| e.event_id > self.last_processed_event);
+                (evts, has_final_event)
+            }
+            NextWFT::NeedFetch => {
+                return Err(WFMachinesError::Fatal(
                     "Need to fetch history events to continue applying workflow task, but this \
                      should be prevented ahead of time! This is a Core SDK bug."
                         .to_string(),
-                )),
-            };
+                ));
+            }
+        };
         let num_events_to_process = events.len();
 
         // We're caught up on reply if there are no new events to process
@@ -465,12 +464,8 @@ impl WorkflowMachines {
             }
             let next_event = history.peek();
             let eid = event.event_id;
-            let etype = event.event_type();
-            self.handle_event(event, next_event.is_some())?;
+            self.handle_event(event, next_event.is_some() || !has_final_event)?;
             self.last_processed_event = eid;
-            if etype == EventType::WorkflowTaskStarted && next_event.is_none() {
-                break;
-            }
         }
 
         // Scan through to the next WFT, searching for any patch / la markers, so that we can
@@ -554,14 +549,6 @@ impl WorkflowMachines {
                 Ok(())
             };
         }
-        if self.replaying
-            && self.current_started_event_id
-                >= self.last_history_from_server.previous_wft_started_id
-            && event.event_type() != EventType::WorkflowTaskCompleted
-        {
-            // Replay is finished
-            self.replaying = false;
-        }
         if event.event_type() == EventType::Unspecified || event.attributes.is_none() {
             return if !event.worker_may_ignore {
                 Err(WFMachinesError::Fatal(format!(
@@ -571,6 +558,14 @@ impl WorkflowMachines {
                 debug!("Event is ignorable");
                 Ok(())
             };
+        }
+
+        if self.replaying
+            && !has_next_event
+            && (event.event_type() == EventType::WorkflowTaskStarted || event.is_wft_closed_event())
+        {
+            // Replay is finished
+            self.replaying = false;
         }
 
         if event.is_command_event() {
@@ -584,7 +579,7 @@ impl WorkflowMachines {
             let maybe_machine = self.machines_by_event_id.remove(&initial_cmd_id);
             match maybe_machine {
                 Some(sm) => {
-                    self.submachine_handle_event(sm, event, has_next_event)?;
+                    self.submachine_handle_event(sm, event)?;
                     // Restore machine if not in it's final state
                     if !self.machine(sm).is_final_state() {
                         self.machines_by_event_id.insert(initial_cmd_id, sm);
@@ -598,7 +593,7 @@ impl WorkflowMachines {
                 }
             }
         } else {
-            self.handle_non_stateful_event(event, has_next_event)?;
+            self.handle_non_stateful_event(event)?;
         }
 
         Ok(())
@@ -622,7 +617,7 @@ impl WorkflowMachines {
             let mkey = self.get_machine_key(cmdid)?;
             if let Machines::LocalActivityMachine(lam) = self.machine(mkey) {
                 if lam.marker_should_get_special_handling()? {
-                    self.submachine_handle_event(mkey, event, false)?;
+                    self.submachine_handle_event(mkey, event)?;
                     return Ok(());
                 }
             } else {
@@ -663,7 +658,7 @@ impl WorkflowMachines {
 
             if !canceled_before_sent {
                 // Feed the machine the event
-                self.submachine_handle_event(command.machine, event, true)?;
+                self.submachine_handle_event(command.machine, event)?;
                 break command;
             }
         };
@@ -676,11 +671,7 @@ impl WorkflowMachines {
         Ok(())
     }
 
-    fn handle_non_stateful_event(
-        &mut self,
-        event: HistoryEvent,
-        has_next_event: bool,
-    ) -> Result<()> {
+    fn handle_non_stateful_event(&mut self, event: HistoryEvent) -> Result<()> {
         trace!(
             event = %event,
             "handling non-stateful event"
@@ -716,7 +707,7 @@ impl WorkflowMachines {
             Some(EventType::WorkflowTaskScheduled) => {
                 let wf_task_sm = WorkflowTaskMachine::new(self.next_started_event_id);
                 let key = self.all_machines.insert(wf_task_sm.into());
-                self.submachine_handle_event(key, event, has_next_event)?;
+                self.submachine_handle_event(key, event)?;
                 self.machines_by_event_id.insert(event_id, key);
             }
             Some(EventType::WorkflowExecutionSignaled) => {
@@ -762,16 +753,11 @@ impl WorkflowMachines {
 
     /// Wrapper for calling [TemporalStateMachine::handle_event] which appropriately takes action
     /// on the returned machine responses
-    fn submachine_handle_event(
-        &mut self,
-        sm: MachineKey,
-        event: HistoryEvent,
-        has_next_event: bool,
-    ) -> Result<()> {
+    fn submachine_handle_event(&mut self, sm: MachineKey, event: HistoryEvent) -> Result<()> {
         let replaying = self.replaying;
         let machine_responses = self
             .machine_mut(sm)
-            .handle_event(HistEventData { event, replaying }, has_next_event)?;
+            .handle_event(HistEventData { event, replaying })?;
         self.process_machine_responses(sm, machine_responses)?;
         Ok(())
     }

@@ -1,4 +1,5 @@
 use crate::{
+    internal_patching::{CoreInternalPatches, InternalPatches},
     replay::DEFAULT_WORKFLOW_TYPE,
     test_help::{canned_histories, mock_sdk, mock_sdk_cfg, MockPollCfg, ResponseType},
     worker::client::mocks::mock_workflow_client,
@@ -110,13 +111,17 @@ async fn test_wf_task_rejected_properly_due_to_nondeterminism(#[case] use_cache:
 }
 
 #[rstest::rstest]
-#[case::with_cache(true)]
-#[case::without_cache(false)]
 #[tokio::test]
-async fn activity_type_change_is_nondeterministic(#[case] use_cache: bool) {
+async fn activity_id_or_type_change_is_nondeterministic(
+    #[values(true, false)] use_cache: bool,
+    #[values(true, false)] id_change: bool,
+) {
     let wf_id = "fakeid";
     let wf_type = DEFAULT_WORKFLOW_TYPE;
-    let t = canned_histories::single_activity("1");
+    let mut t = canned_histories::single_activity("1");
+    t.set_patches_first_wft(
+        InternalPatches::new([CoreInternalPatches::IdAndTypeDeterminismChecks], []).into(),
+    );
     let mock = mock_workflow_client();
     let mut mh = MockPollCfg::from_resp_batches(
         wf_id,
@@ -127,12 +132,17 @@ async fn activity_type_change_is_nondeterministic(#[case] use_cache: bool) {
     );
     // We should see one wft failure which has nondeterminism cause
     mh.num_expected_fails = 1;
-    mh.expect_fail_wft_matcher = Box::new(|_, cause, f| {
+    mh.expect_fail_wft_matcher = Box::new(move |_, cause, f| {
+        let should_contain = if id_change {
+            "does not match activity id"
+        } else {
+            "does not match activity type"
+        };
         matches!(cause, WorkflowTaskFailedCause::NonDeterministicError)
             && matches!(f, Some(Failure {
                 message,
                 ..
-            }) if message.contains("does not match activity type"))
+            }) if message.contains(should_contain))
     });
     let mut worker = mock_sdk_cfg(mh, |cfg| {
         if use_cache {
@@ -141,62 +151,17 @@ async fn activity_type_change_is_nondeterministic(#[case] use_cache: bool) {
     });
 
     worker.register_wf(wf_type.to_owned(), move |ctx: WfContext| async move {
-        ctx.activity(ActivityOptions {
-            activity_type: "not the default act type".to_string(),
-            ..Default::default()
-        })
-        .await;
-        Ok(().into())
-    });
-
-    worker
-        .submit_wf(
-            wf_id.to_owned(),
-            wf_type.to_owned(),
-            vec![],
-            WorkflowOptions::default(),
-        )
-        .await
-        .unwrap();
-    worker.run_until_done().await.unwrap();
-}
-
-#[rstest::rstest]
-#[case::with_cache(true)]
-#[case::without_cache(false)]
-#[tokio::test]
-async fn activity_id_change_is_nondeterministic(#[case] use_cache: bool) {
-    let wf_id = "fakeid";
-    let wf_type = DEFAULT_WORKFLOW_TYPE;
-    let t = canned_histories::single_activity("1");
-    let mock = mock_workflow_client();
-    let mut mh = MockPollCfg::from_resp_batches(
-        wf_id,
-        t,
-        // Two polls are needed, since the first will fail
-        [ResponseType::AllHistory, ResponseType::AllHistory],
-        mock,
-    );
-    // We should see one wft failure which has nondeterminism cause
-    mh.num_expected_fails = 1;
-    mh.expect_fail_wft_matcher = Box::new(|_, cause, f| {
-        matches!(cause, WorkflowTaskFailedCause::NonDeterministicError)
-            && matches!(f, Some(Failure {
-                message,
-                ..
-            }) if message.contains("does not match activity id"))
-    });
-    let mut worker = mock_sdk_cfg(mh, |cfg| {
-        if use_cache {
-            cfg.max_cached_workflows = 2;
-        }
-    });
-
-    worker.register_wf(wf_type.to_owned(), move |ctx: WfContext| async move {
-        ctx.activity(ActivityOptions {
-            activity_id: Some("I'm bad and wrong!".to_string()),
-            activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
-            ..Default::default()
+        ctx.activity(if id_change {
+            ActivityOptions {
+                activity_id: Some("I'm bad and wrong!".to_string()),
+                activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
+                ..Default::default()
+            }
+        } else {
+            ActivityOptions {
+                activity_type: "not the default act type".to_string(),
+                ..Default::default()
+            }
         })
         .await;
         Ok(().into())

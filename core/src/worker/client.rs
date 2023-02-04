@@ -209,7 +209,7 @@ impl WorkerClient for WorkerClientBag {
                 .collect(),
             namespace: self.namespace.clone(),
             sdk_data: Some(WftCompleteMetadata {
-                internal_patches: Some(request.newly_used_patches.into()),
+                internal_patches: Some(request.newly_used_patches),
             }),
         };
         Ok(self

@@ -14,6 +14,7 @@ use crate::{
         enums::v1::{EventType, TaskQueueKind, WorkflowTaskFailedCause},
         failure::v1::{failure, CanceledFailureInfo, Failure},
         history::v1::{history_event::Attributes, *},
+        sdk::v1::InternalPatches,
         taskqueue::v1::TaskQueue,
     },
     HistoryInfo,
@@ -466,6 +467,21 @@ impl TestHistoryBuilder {
             .get_mut((event_id - 1) as usize)
             .expect("Event must be present");
         modifier(he);
+    }
+
+    /// Sets internal patches which should appear in the first WFT complete event
+    pub fn set_patches_first_wft(&mut self, patches: InternalPatches) {
+        if let Some(first_attrs) = self.events.iter_mut().find_map(|e| {
+            if let Some(Attributes::WorkflowTaskCompletedEventAttributes(a)) = e.attributes.as_mut()
+            {
+                Some(a)
+            } else {
+                None
+            }
+        }) {
+            let sdk_dat = first_attrs.sdk_data.get_or_insert_with(Default::default);
+            sdk_dat.internal_patches = Some(patches);
+        }
     }
 
     fn build_and_push_event(&mut self, event_type: EventType, attribs: Attributes) {

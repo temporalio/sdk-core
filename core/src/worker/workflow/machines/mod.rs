@@ -89,7 +89,6 @@ trait TemporalStateMachine {
     fn handle_event(
         &mut self,
         event: HistEventData,
-        has_next_event: bool,
     ) -> Result<Vec<MachineResponse>, WFMachinesError>;
 
     /// Attempt to cancel the command associated with this state machine, if it is cancellable
@@ -153,7 +152,6 @@ where
     fn handle_event(
         &mut self,
         event_dat: HistEventData,
-        has_next_event: bool,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         trace!(
             event = %event_dat.event,
@@ -164,7 +162,6 @@ where
         let event_info = EventInfo {
             event_id: event_dat.event.event_id,
             event_type: event_dat.event.event_type(),
-            has_next_event,
         };
         let converted_event: <Self as StateMachine>::Event = event_dat.try_into()?;
 
@@ -258,7 +255,6 @@ struct HistEventData {
 struct EventInfo {
     event_id: i64,
     event_type: EventType,
-    has_next_event: bool,
 }
 
 trait Cancellable: StateMachine {

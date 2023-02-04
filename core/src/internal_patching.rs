@@ -55,10 +55,8 @@ impl InternalPatches {
         if !replaying {
             self.core_since_last_complete.insert(core_patch);
             true
-        } else if self.core.contains(&core_patch) {
-            true
         } else {
-            false
+            self.core.contains(&core_patch)
         }
     }
 
@@ -71,6 +69,18 @@ impl InternalPatches {
                 .map(|p| p as u32)
                 .collect(),
             lang_used_patches: vec![],
+        }
+    }
+
+    #[cfg(test)]
+    pub fn new(
+        core: impl IntoIterator<Item = CoreInternalPatches>,
+        lang: impl IntoIterator<Item = u32>,
+    ) -> Self {
+        Self {
+            core: core.into_iter().collect(),
+            lang: lang.into_iter().collect(),
+            core_since_last_complete: Default::default(),
         }
     }
 }

@@ -1792,6 +1792,15 @@ pub mod temporal {
                             _ => false,
                         }
                     }
+
+                    pub fn is_wft_closed_event(&self) -> bool {
+                        match self.event_type() {
+                            EventType::WorkflowTaskCompleted => true,
+                            EventType::WorkflowTaskFailed => true,
+                            EventType::WorkflowTaskTimedOut => true,
+                            _ => false,
+                        }
+                    }
                 }
 
                 impl Display for HistoryEvent {

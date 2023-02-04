@@ -65,7 +65,7 @@ impl Debug for HistoryUpdate {
 #[derive(Debug)]
 pub enum NextWFT {
     ReplayOver,
-    WFT(Vec<HistoryEvent>),
+    WFT(Vec<HistoryEvent>, bool),
     NeedFetch,
 }
 
@@ -473,7 +473,7 @@ impl HistoryUpdate {
                     if siz == 0 {
                         NextWFT::ReplayOver
                     } else {
-                        NextWFT::WFT(self.events.drain(0..=siz).collect())
+                        self.build_next_wft(siz)
                     }
                 } else {
                     if siz != 0 {
@@ -484,10 +484,15 @@ impl HistoryUpdate {
                     NextWFT::NeedFetch
                 }
             }
-            NextWFTSeqEndIndex::Complete(next_wft_ix) => {
-                NextWFT::WFT(self.events.drain(0..=next_wft_ix).collect())
-            }
+            NextWFTSeqEndIndex::Complete(next_wft_ix) => self.build_next_wft(next_wft_ix),
         }
+    }
+
+    fn build_next_wft(&mut self, drain_this_much: usize) -> NextWFT {
+        NextWFT::WFT(
+            self.events.drain(0..=drain_this_much).collect(),
+            self.events.is_empty() && self.has_last_wft,
+        )
     }
 
     /// Lets the caller peek ahead at the next WFT sequence that will be returned by
@@ -665,7 +670,7 @@ pub mod tests {
     impl NextWFT {
         fn unwrap_events(self) -> Vec<HistoryEvent> {
             match self {
-                NextWFT::WFT(e) => e,
+                NextWFT::WFT(e, _) => e,
                 o => panic!("Must be complete WFT: {o:?}"),
             }
         }
@@ -841,7 +846,7 @@ pub mod tests {
         for i in 1..wft_count {
             let seq = {
                 match update.take_next_wft_sequence(last_started_id) {
-                    NextWFT::WFT(seq) => seq,
+                    NextWFT::WFT(seq, _) => seq,
                     NextWFT::NeedFetch => {
                         update = paginator.extract_next_update().await.unwrap();
                         update
@@ -946,7 +951,7 @@ pub mod tests {
         loop {
             let seq = update.take_next_wft_sequence(last_id);
             match seq {
-                NextWFT::WFT(seq) => {
+                NextWFT::WFT(seq, _) => {
                     last_id = seq.last().unwrap().event_id;
                 }
                 NextWFT::NeedFetch => {
