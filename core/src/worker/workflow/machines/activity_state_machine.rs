@@ -401,7 +401,6 @@ impl ScheduleCommandCreated {
         dat: SharedState,
         sched_dat: ActTaskScheduledData,
     ) -> ActivityMachineTransition<ScheduledEventRecorded> {
-        dbg!(&sched_dat.replaying);
         if dat.internal_patches.borrow_mut().try_use(
             CoreInternalPatches::IdAndTypeDeterminismChecks,
             sched_dat.replaying,

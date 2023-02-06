@@ -3,7 +3,6 @@ mod local_acts;
 use super::{
     cancel_external_state_machine::new_external_cancel,
     cancel_workflow_state_machine::cancel_workflow,
-    child_workflow_state_machine::new_child_workflow,
     complete_workflow_state_machine::complete_workflow,
     continue_as_new_workflow_state_machine::continue_as_new,
     fail_workflow_state_machine::fail_workflow, local_activity_state_machine::new_local_activity,
@@ -22,6 +21,7 @@ use crate::{
             history_update::NextWFT,
             machines::{
                 activity_state_machine::ActivityMachine,
+                child_workflow_state_machine::ChildWorkflowMachine,
                 modify_workflow_properties_state_machine::modify_workflow_properties,
                 HistEventData,
             },
@@ -419,7 +419,6 @@ impl WorkflowMachines {
             (*self.observed_internal_patches)
                 .borrow_mut()
                 .add_from_complete(next_complete);
-            dbg!(&self.observed_internal_patches);
         }
 
         let (events, has_final_event) = match self
@@ -1056,7 +1055,10 @@ impl WorkflowMachines {
                 WFCommand::AddChildWorkflow(attrs) => {
                     let seq = attrs.seq;
                     self.add_cmd_to_wf_task(
-                        new_child_workflow(attrs),
+                        ChildWorkflowMachine::new_scheduled(
+                            attrs,
+                            self.observed_internal_patches.clone(),
+                        ),
                         CommandID::ChildWorkflowStart(seq).into(),
                     );
                 }

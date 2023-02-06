@@ -9,7 +9,7 @@ use std::{
     time::Duration,
 };
 use temporal_client::WorkflowOptions;
-use temporal_sdk::{ActivityOptions, WfContext, WorkflowResult};
+use temporal_sdk::{ActivityOptions, ChildWorkflowOptions, WfContext, WorkflowResult};
 use temporal_sdk_core_protos::{
     temporal::api::{enums::v1::WorkflowTaskFailedCause, failure::v1::Failure},
     DEFAULT_ACTIVITY_TYPE,
@@ -163,6 +163,77 @@ async fn activity_id_or_type_change_is_nondeterministic(
                 ..Default::default()
             }
         })
+        .await;
+        Ok(().into())
+    });
+
+    worker
+        .submit_wf(
+            wf_id.to_owned(),
+            wf_type.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+}
+
+#[rstest::rstest]
+#[tokio::test]
+async fn child_wf_id_or_type_change_is_nondeterministic(
+    #[values(true, false)] use_cache: bool,
+    #[values(true, false)] id_change: bool,
+) {
+    let wf_id = "fakeid";
+    let wf_type = DEFAULT_WORKFLOW_TYPE;
+    let mut t = canned_histories::single_child_workflow("1");
+    t.set_patches_first_wft(
+        InternalPatches::new([CoreInternalPatches::IdAndTypeDeterminismChecks], []).into(),
+    );
+    let mock = mock_workflow_client();
+    let mut mh = MockPollCfg::from_resp_batches(
+        wf_id,
+        t,
+        // Two polls are needed, since the first will fail
+        [ResponseType::AllHistory, ResponseType::AllHistory],
+        mock,
+    );
+    // We should see one wft failure which has nondeterminism cause
+    mh.num_expected_fails = 1;
+    mh.expect_fail_wft_matcher = Box::new(move |_, cause, f| {
+        let should_contain = if id_change {
+            "does not match child workflow id"
+        } else {
+            "does not match child workflow type"
+        };
+        matches!(cause, WorkflowTaskFailedCause::NonDeterministicError)
+            && matches!(f, Some(Failure {
+                message,
+                ..
+            }) if message.contains(should_contain))
+    });
+    let mut worker = mock_sdk_cfg(mh, |cfg| {
+        if use_cache {
+            cfg.max_cached_workflows = 2;
+        }
+    });
+
+    worker.register_wf(wf_type.to_owned(), move |ctx: WfContext| async move {
+        ctx.child_workflow(if id_change {
+            ChildWorkflowOptions {
+                workflow_id: "I'm bad and wrong!".to_string(),
+                workflow_type: DEFAULT_ACTIVITY_TYPE.to_string(),
+                ..Default::default()
+            }
+        } else {
+            ChildWorkflowOptions {
+                workflow_id: "1".to_string(),
+                workflow_type: "not the child wf type".to_string(),
+                ..Default::default()
+            }
+        })
+        .start(&ctx)
         .await;
         Ok(().into())
     });
