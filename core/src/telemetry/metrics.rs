@@ -277,7 +277,7 @@ impl Instruments {
             wf_e2e_latency: hst(WF_E2E_LATENCY_NAME),
             wf_task_queue_poll_empty_counter: ctr("workflow_task_queue_poll_empty"),
             wf_task_queue_poll_succeed_counter: ctr("workflow_task_queue_poll_succeed"),
-            wf_task_execution_failure_counter: ctr("workflow_task_queue_poll_failed"),
+            wf_task_execution_failure_counter: ctr("workflow_task_execution_failed"),
             wf_task_sched_to_start_latency: hst(WF_TASK_SCHED_TO_START_LATENCY_NAME),
             wf_task_replay_latency: hst(WF_TASK_REPLAY_LATENCY_NAME),
             wf_task_execution_latency: hst(WF_TASK_EXECUTION_LATENCY_NAME),
