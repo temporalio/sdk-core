@@ -274,7 +274,7 @@ impl TestHistoryBuilder {
             seq,
             attempt: 1,
             activity_id: activity_id.to_string(),
-            activity_type: "some_act_type".to_string(),
+            activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
             complete_time: None,
             backoff: None,
             original_schedule_time: None,

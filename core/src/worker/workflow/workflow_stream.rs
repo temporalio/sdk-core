@@ -19,10 +19,7 @@ use crate::{
 use futures::{stream, stream::PollNext, Stream, StreamExt};
 use std::{collections::VecDeque, fmt::Debug, future, sync::Arc};
 use temporal_sdk_core_api::errors::PollWfError;
-use temporal_sdk_core_protos::{
-    coresdk::workflow_activation::remove_from_cache::EvictionReason,
-    temporal::api::enums::v1::WorkflowTaskFailedCause,
-};
+use temporal_sdk_core_protos::coresdk::workflow_activation::remove_from_cache::EvictionReason;
 use tokio_util::sync::CancellationToken;
 use tracing::{Level, Span};
 
@@ -296,7 +293,7 @@ impl WFStream {
                     }
                 }
                 ValidatedCompletion::Fail { failure, .. } => rh.failed_completion(
-                    WorkflowTaskFailedCause::Unspecified,
+                    failure.force_cause(),
                     EvictionReason::LangFail,
                     failure,
                     complete.response_tx,

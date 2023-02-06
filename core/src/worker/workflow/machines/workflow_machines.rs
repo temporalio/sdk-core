@@ -1000,6 +1000,7 @@ impl WorkflowMachines {
                         self.replaying,
                         self.local_activity_data.take_preresolution(seq),
                         self.current_wf_time,
+                        self.observed_internal_patches.clone(),
                     )?;
                     let machkey = self.all_machines.insert(la.into());
                     self.id_to_machine

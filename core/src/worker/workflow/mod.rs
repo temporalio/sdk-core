@@ -246,7 +246,7 @@ impl Workflows {
         }
     }
 
-    pub async fn next_workflow_activation(&self) -> Result<WorkflowActivation, PollWfError> {
+    pub(super) async fn next_workflow_activation(&self) -> Result<WorkflowActivation, PollWfError> {
         loop {
             let al = {
                 let mut lock = self.activation_stream.lock().await;
@@ -276,6 +276,19 @@ impl Workflows {
                     )
                     .await?;
                 }
+                ActivationOrAuto::AutoFail {
+                    run_id,
+                    machines_err,
+                } => {
+                    self.activation_completed(
+                        WorkflowActivationCompletion {
+                            run_id,
+                            status: Some(auto_fail_to_complete_status(machines_err)),
+                        },
+                        Option::<Box<dyn Fn(&str, usize) + Send>>::None,
+                    )
+                    .await?;
+                }
             }
         }
     }
@@ -284,7 +297,7 @@ impl Workflows {
     /// the outcome of that completion. See [ActivationCompletedOutcome].
     ///
     /// Returns the most-recently-processed event number for the run.
-    pub async fn activation_completed(
+    pub(super) async fn activation_completed(
         &self,
         completion: WorkflowActivationCompletion,
         post_activate_hook: Option<impl Fn(&str, usize)>,
@@ -419,7 +432,11 @@ impl Workflows {
     }
 
     /// Tell workflow that a local activity has finished with the provided result
-    pub fn notify_of_local_result(&self, run_id: impl Into<String>, resolved: LocalResolution) {
+    pub(super) fn notify_of_local_result(
+        &self,
+        run_id: impl Into<String>,
+        resolved: LocalResolution,
+    ) {
         self.send_local(LocalResolutionMsg {
             run_id: run_id.into(),
             res: resolved,
@@ -427,7 +444,7 @@ impl Workflows {
     }
 
     /// Request eviction of a workflow
-    pub fn request_eviction(
+    pub(super) fn request_eviction(
         &self,
         run_id: impl Into<String>,
         message: impl Into<String>,
@@ -441,17 +458,17 @@ impl Workflows {
     }
 
     /// Query the state of workflow management. Can return `None` if workflow state is shut down.
-    pub fn get_state_info(&self) -> impl Future<Output = Option<WorkflowStateInfo>> {
+    pub(super) fn get_state_info(&self) -> impl Future<Output = Option<WorkflowStateInfo>> {
         let (tx, rx) = oneshot::channel();
         self.send_local(GetStateInfoMsg { response_tx: tx });
         async move { rx.await.ok() }
     }
 
-    pub fn available_wft_permits(&self) -> usize {
+    pub(super) fn available_wft_permits(&self) -> usize {
         self.wft_semaphore.available_permits()
     }
 
-    pub async fn shutdown(&self) -> Result<(), anyhow::Error> {
+    pub(super) async fn shutdown(&self) -> Result<(), anyhow::Error> {
         let maybe_jh = self.processing_task.lock().await.take();
         if let Some(jh) = maybe_jh {
             // This serves to drive the stream if it is still alive and wouldn't otherwise receive
@@ -671,6 +688,11 @@ enum ActivationOrAuto {
     Autocomplete {
         run_id: String,
     },
+    #[display(fmt = "AutoFail(run_id={run_id})")]
+    AutoFail {
+        run_id: String,
+        machines_err: WFMachinesError,
+    },
 }
 impl ActivationOrAuto {
     pub fn run_id(&self) -> &str {
@@ -678,6 +700,7 @@ impl ActivationOrAuto {
             ActivationOrAuto::LangActivation(act) => &act.run_id,
             ActivationOrAuto::Autocomplete { run_id, .. } => run_id,
             ActivationOrAuto::ReadyForQueries(act) => &act.run_id,
+            ActivationOrAuto::AutoFail { run_id, .. } => run_id,
         }
     }
 }
@@ -1179,6 +1202,22 @@ impl From<TimestampError> for WFMachinesError {
     fn from(_: TimestampError) -> Self {
         Self::Fatal("Could not decode timestamp".to_string())
     }
+}
+
+fn auto_fail_to_complete_status(err: WFMachinesError) -> workflow_activation_completion::Status {
+    workflow_activation_completion::Status::Failed(Failure {
+        failure: Some(
+            temporal_sdk_core_protos::temporal::api::failure::v1::Failure {
+                message: "Error while processing workflow task".to_string(),
+                source: err.to_string(),
+                stack_trace: "".to_string(),
+                encoded_attributes: None,
+                cause: None,
+                failure_info: None,
+            },
+        ),
+        force_cause: WorkflowTaskFailedCause::from(err.evict_reason()) as i32,
+    })
 }
 
 pub(crate) trait LocalActivityRequestSink: Send + Sync + 'static {

@@ -610,7 +610,7 @@ pub fn schedule_local_activity_cmd(
     ScheduleLocalActivity {
         seq,
         activity_id: activity_id.to_string(),
-        activity_type: "test_activity".to_string(),
+        activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
         schedule_to_start_timeout: Some(activity_timeout.try_into().expect("duration fits")),
         start_to_close_timeout: Some(activity_timeout.try_into().expect("duration fits")),
         schedule_to_close_timeout: Some(activity_timeout.try_into().expect("duration fits")),

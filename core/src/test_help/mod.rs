@@ -843,6 +843,7 @@ pub(crate) fn gen_assert_and_fail(asserter: &dyn Fn(&WorkflowActivation)) -> Ass
                 message: "Intentional test failure".to_string(),
                 ..Default::default()
             }),
+            ..Default::default()
         }
         .into(),
     )

@@ -1357,12 +1357,17 @@ async fn poll_response_triggers_wf_error() {
     t.add_full_wf_task();
     t.add_workflow_execution_completed();
 
-    let mh = MockPollCfg::from_resp_batches(
+    let mut mh = MockPollCfg::from_resp_batches(
         "fake_wf_id",
         t,
         [ResponseType::AllHistory],
         mock_workflow_client(),
     );
+    // Fail wft will be called when auto-failing.
+    mh.num_expected_fails = 1;
+    mh.expect_fail_wft_matcher = Box::new(move |_, cause, _| {
+        matches!(cause, WorkflowTaskFailedCause::NonDeterministicError)
+    });
     let mock = build_mock_pollers(mh);
     let core = mock_worker(mock);
     // Poll for first WFT, which is immediately an eviction

@@ -30,6 +30,7 @@ pub mod coresdk {
 
     use crate::temporal::api::{
         common::v1::{Payload, Payloads, WorkflowExecution},
+        enums::v1::WorkflowTaskFailedCause,
         failure::v1::{failure::FailureInfo, ApplicationFailureInfo, Failure},
         workflowservice::v1::PollActivityTaskQueueResponse,
     };
@@ -399,6 +400,7 @@ pub mod coresdk {
             },
             temporal::api::{
                 common::v1::Header,
+                enums::v1::WorkflowTaskFailedCause,
                 history::v1::{
                     WorkflowExecutionCancelRequestedEventAttributes,
                     WorkflowExecutionSignaledEventAttributes,
@@ -495,6 +497,17 @@ pub mod coresdk {
         impl Display for EvictionReason {
             fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
                 write!(f, "{self:?}")
+            }
+        }
+
+        impl From<EvictionReason> for WorkflowTaskFailedCause {
+            fn from(value: EvictionReason) -> Self {
+                match value {
+                    EvictionReason::Nondeterminism => {
+                        WorkflowTaskFailedCause::NonDeterministicError
+                    }
+                    _ => WorkflowTaskFailedCause::Unspecified,
+                }
             }
         }
 
@@ -643,7 +656,7 @@ pub mod coresdk {
     }
 
     pub mod workflow_completion {
-        use crate::temporal::api::failure;
+        use crate::temporal::api::{enums::v1::WorkflowTaskFailedCause, failure};
         tonic::include_proto!("coresdk.workflow_completion");
 
         impl workflow_activation_completion::Status {
@@ -657,7 +670,10 @@ pub mod coresdk {
 
         impl From<failure::v1::Failure> for Failure {
             fn from(f: failure::v1::Failure) -> Self {
-                Failure { failure: Some(f) }
+                Failure {
+                    failure: Some(f),
+                    force_cause: WorkflowTaskFailedCause::Unspecified as i32,
+                }
             }
         }
     }
@@ -910,6 +926,7 @@ pub mod coresdk {
                 status: Some(workflow_activation_completion::Status::Failed(
                     workflow_completion::Failure {
                         failure: Some(failure),
+                        force_cause: WorkflowTaskFailedCause::Unspecified as i32,
                     },
                 )),
             }

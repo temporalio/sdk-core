@@ -842,7 +842,9 @@ impl ManagedRun {
                             None
                         }
                     }
-                    a @ Some(ActivationOrAuto::Autocomplete { .. }) => a,
+                    a @ Some(
+                        ActivationOrAuto::Autocomplete { .. } | ActivationOrAuto::AutoFail { .. },
+                    ) => a,
                     None => {
                         if let Some(reason) = self.trying_to_evict.as_ref() {
                             // If we had nothing to do, but we're trying to evict, just do that now
@@ -904,12 +906,10 @@ impl ManagedRun {
                     )
                 } else {
                     warn!(error=?fail.source, "Error while updating workflow");
-                    self.request_eviction(RequestEvictMsg {
-                        run_id: self.run_id().to_string(),
-                        message: format!("Error while updating workflow: {:?}", fail.source),
-                        reason: fail.source.evict_reason(),
+                    Some(ActivationOrAuto::AutoFail {
+                        run_id: self.run_id().to_owned(),
+                        machines_err: fail.source,
                     })
-                    .into_run_update_resp()
                 };
                 rur
             }
@@ -928,7 +928,9 @@ impl ManagedRun {
                     }
                 }
             }
-            ActivationOrAuto::Autocomplete { .. } => OutstandingActivation::Autocomplete,
+            ActivationOrAuto::Autocomplete { .. } | ActivationOrAuto::AutoFail { .. } => {
+                OutstandingActivation::Autocomplete
+            }
         };
         if let Some(old_act) = self.activation {
             // This is a panic because we have screwed up core logic if this is violated. It must be
@@ -947,12 +949,18 @@ impl ManagedRun {
         data: CompletionDataForWFT,
         due_to_heartbeat_timeout: bool,
     ) -> FulfillableActivationComplete {
-        let outgoing_cmds = self.wfm.get_server_commands();
+        let mut outgoing_cmds = self.wfm.get_server_commands();
         if data.activation_was_only_eviction && !outgoing_cmds.commands.is_empty() {
-            dbg_panic!(
+            if self.am_broken {
+                // If we broke there could be commands in the pipe that we didn't get a chance to
+                // handle properly during replay, just wipe them all out.
+                outgoing_cmds.commands = vec![];
+            } else {
+                dbg_panic!(
                 "There should not be any outgoing commands when preparing a completion response \
                  if the activation was only an eviction. This is an SDK bug."
-            );
+                );
+            }
         }
 
         let query_responses = data.query_responses;
