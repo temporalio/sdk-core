@@ -9,7 +9,9 @@ use std::{
     time::Duration,
 };
 use temporal_client::WorkflowOptions;
-use temporal_sdk::{ActivityOptions, ChildWorkflowOptions, WfContext, WorkflowResult};
+use temporal_sdk::{
+    ActivityOptions, ChildWorkflowOptions, LocalActivityOptions, WfContext, WorkflowResult,
+};
 use temporal_sdk_core_protos::{
     temporal::api::{enums::v1::WorkflowTaskFailedCause, failure::v1::Failure},
     DEFAULT_ACTIVITY_TYPE,
@@ -115,10 +117,15 @@ async fn test_wf_task_rejected_properly_due_to_nondeterminism(#[case] use_cache:
 async fn activity_id_or_type_change_is_nondeterministic(
     #[values(true, false)] use_cache: bool,
     #[values(true, false)] id_change: bool,
+    #[values(true, false)] local_act: bool,
 ) {
     let wf_id = "fakeid";
     let wf_type = DEFAULT_WORKFLOW_TYPE;
-    let mut t = canned_histories::single_activity("1");
+    let mut t = if local_act {
+        canned_histories::single_local_activity("1")
+    } else {
+        canned_histories::single_activity("1")
+    };
     t.set_patches_first_wft(
         InternalPatches::new([CoreInternalPatches::IdAndTypeDeterminismChecks], []).into(),
     );
@@ -151,19 +158,35 @@ async fn activity_id_or_type_change_is_nondeterministic(
     });
 
     worker.register_wf(wf_type.to_owned(), move |ctx: WfContext| async move {
-        ctx.activity(if id_change {
-            ActivityOptions {
-                activity_id: Some("I'm bad and wrong!".to_string()),
-                activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
-                ..Default::default()
-            }
+        if local_act {
+            ctx.local_activity(if id_change {
+                LocalActivityOptions {
+                    activity_id: Some("I'm bad and wrong!".to_string()),
+                    activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
+                    ..Default::default()
+                }
+            } else {
+                LocalActivityOptions {
+                    activity_type: "not the default act type".to_string(),
+                    ..Default::default()
+                }
+            })
+            .await;
         } else {
-            ActivityOptions {
-                activity_type: "not the default act type".to_string(),
-                ..Default::default()
-            }
-        })
-        .await;
+            ctx.activity(if id_change {
+                ActivityOptions {
+                    activity_id: Some("I'm bad and wrong!".to_string()),
+                    activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
+                    ..Default::default()
+                }
+            } else {
+                ActivityOptions {
+                    activity_type: "not the default act type".to_string(),
+                    ..Default::default()
+                }
+            })
+            .await;
+        }
         Ok(().into())
     });
 

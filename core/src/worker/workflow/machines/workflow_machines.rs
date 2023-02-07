@@ -453,6 +453,7 @@ impl WorkflowMachines {
             }
         }
 
+        let mut saw_completed = false;
         let mut history = events.into_iter().peekable();
         while let Some(event) = history.next() {
             if event.event_id != self.last_processed_event + 1 {
@@ -463,6 +464,22 @@ impl WorkflowMachines {
             }
             let next_event = history.peek();
             let eid = event.event_id;
+
+            // This definition of replaying here is that we are no longer replaying as soon as we
+            // see new events that have never been seen or produced by the SDK.
+            //
+            // Specifically, replay ends once we have seen the last command-event which was produced
+            // as a result of the last completed WFT. Thus, replay would be false for things like
+            // signals which were received and after the last completion, and thus generated the
+            // current WFT being handled.
+            if self.replaying && has_final_event && saw_completed && !event.is_command_event() {
+                // Replay is finished
+                self.replaying = false;
+            }
+            if event.event_type() == EventType::WorkflowTaskCompleted {
+                saw_completed = true;
+            }
+
             self.handle_event(event, next_event.is_some() || !has_final_event)?;
             self.last_processed_event = eid;
         }
@@ -557,14 +574,6 @@ impl WorkflowMachines {
                 debug!("Event is ignorable");
                 Ok(())
             };
-        }
-
-        if self.replaying
-            && !has_next_event
-            && (event.event_type() == EventType::WorkflowTaskStarted || event.is_wft_closed_event())
-        {
-            // Replay is finished
-            self.replaying = false;
         }
 
         if event.is_command_event() {

@@ -1751,6 +1751,7 @@ pub mod temporal {
                             | EventType::TimerCanceled
                             | EventType::TimerStarted
                             | EventType::UpsertWorkflowSearchAttributes
+                            | EventType::WorkflowPropertiesModified
                             | EventType::WorkflowExecutionCanceled
                             | EventType::WorkflowExecutionCompleted
                             | EventType::WorkflowExecutionContinuedAsNew
