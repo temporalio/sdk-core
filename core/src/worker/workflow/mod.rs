@@ -140,6 +140,7 @@ pub(crate) struct WorkflowBasics {
 }
 
 impl Workflows {
+    #[allow(clippy::too_many_arguments)] // Not much worth combining here
     pub(super) fn new(
         basics: WorkflowBasics,
         sticky_attrs: Option<StickyExecutionAttributes>,

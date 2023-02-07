@@ -245,6 +245,7 @@ impl Worker {
         Self::new(config, None, Arc::new(client), None)
     }
 
+    #[allow(clippy::too_many_arguments)] // Not much worth combining here
     pub(crate) fn new_with_pollers(
         mut config: WorkerConfig,
         sticky_queue_name: Option<String>,

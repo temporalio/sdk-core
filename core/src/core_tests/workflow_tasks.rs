@@ -2314,9 +2314,7 @@ async fn ensure_fetching_fail_during_complete_sends_task_failure() {
         .await
         .unwrap();
 
-    dbg!("AFter complete 1");
     let wf_task = core.poll_workflow_activation().await.unwrap();
-    dbg!("AFter  poll 2");
     assert_matches!(
         wf_task.jobs.as_slice(),
         [WorkflowActivationJob {
@@ -2326,7 +2324,6 @@ async fn ensure_fetching_fail_during_complete_sends_task_failure() {
     core.complete_workflow_activation(WorkflowActivationCompletion::empty(wf_task.run_id))
         .await
         .unwrap();
-    dbg!("AFter complete 2");
 
     // Expect to see eviction b/c of history fetching error here.
     let wf_task = core.poll_workflow_activation().await.unwrap();
@@ -2337,7 +2334,6 @@ async fn ensure_fetching_fail_during_complete_sends_task_failure() {
         },]
     );
 
-    dbg!("Waiting on shutdown");
     core.shutdown().await;
 }
 
