@@ -1,7 +1,7 @@
 //! Utilities for and tracking of internal versions which alter history in incompatible ways
 //! so that we can use older code paths for workflows executed on older core versions.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use temporal_sdk_core_protos::temporal::api::{
     history::v1::WorkflowTaskCompletedEventAttributes,
     sdk::v1::InternalPatches as InternalPatchesProto,
@@ -15,7 +15,7 @@ use temporal_sdk_core_protos::temporal::api::{
 /// that removing older variants does not create any change in existing values. Removed patch
 /// variants must be reserved forever (a-la protobuf), and should be called out in a comment.
 #[repr(u32)]
-#[derive(PartialEq, Eq, Hash, Copy, Clone, Debug)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Copy, Clone, Debug)]
 pub(crate) enum CoreInternalPatches {
     /// In this patch, additional checks were added to a number of state machines to ensure that
     /// the ID and type of activities, local activities, and child workflows match during replay.
@@ -26,8 +26,8 @@ pub(crate) enum CoreInternalPatches {
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct InternalPatches {
-    core: HashSet<CoreInternalPatches>,
-    lang: HashSet<u32>,
+    core: BTreeSet<CoreInternalPatches>,
+    lang: BTreeSet<u32>,
     core_since_last_complete: HashSet<CoreInternalPatches>,
 }
 
@@ -70,6 +70,10 @@ impl InternalPatches {
                 .collect(),
             lang_used_patches: vec![],
         }
+    }
+
+    pub fn all_lang(&self) -> &BTreeSet<u32> {
+        &self.lang
     }
 
     #[cfg(test)]

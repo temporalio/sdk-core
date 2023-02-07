@@ -1,5 +1,7 @@
 use crate::{
-    advance_fut, job_assert,
+    advance_fut,
+    internal_patching::InternalPatches,
+    job_assert,
     replay::TestHistoryBuilder,
     test_help::{
         build_fake_worker, build_mock_pollers, build_multihist_mock_sg, canned_histories,
@@ -2337,4 +2339,38 @@ async fn ensure_fetching_fail_during_complete_sends_task_failure() {
 
     dbg!("Waiting on shutdown");
     core.shutdown().await;
+}
+
+#[tokio::test]
+async fn lang_internal_patches() {
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    t.set_patches_first_wft(InternalPatches::new([], [1]).into());
+    t.add_we_signaled("sig1", vec![]);
+    t.add_full_wf_task();
+    t.set_patches_last_wft(InternalPatches::new([], [2]).into());
+    t.add_workflow_execution_completed();
+
+    let mut mh = MockPollCfg::from_resp_batches(
+        "fake_wf_id",
+        t,
+        [ResponseType::AllHistory],
+        mock_workflow_client(),
+    );
+    mh.completion_asserts = Some(Box::new(|c| {
+        assert_matches!(c.newly_used_patches.lang_used_patches.as_slice(), &[2]);
+    }));
+    let mut mock = build_mock_pollers(mh);
+    mock.worker_cfg(|wc| wc.max_cached_workflows = 1);
+    let core = mock_worker(mock);
+
+    let act = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(act.available_internal_patches.as_slice(), [1]);
+    let mut completion = WorkflowActivationCompletion::empty(act.run_id);
+    completion.add_internal_patch(2);
+    core.complete_workflow_activation(completion).await.unwrap();
+
+    let act = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(act.available_internal_patches.as_slice(), [1, 2]);
 }

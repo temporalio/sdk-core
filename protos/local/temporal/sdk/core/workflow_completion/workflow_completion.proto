@@ -21,6 +21,8 @@ message WorkflowActivationCompletion {
 message Success {
     // A list of commands to send back to the temporal server
     repeated workflow_commands.WorkflowCommand commands = 1;
+    // Any internal patches which the lang SDK used in the processing of this activation
+    repeated uint32 used_internal_patches = 6;
 }
 
 /// Failure to activate or execute a workflow

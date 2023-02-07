@@ -471,7 +471,19 @@ impl TestHistoryBuilder {
 
     /// Sets internal patches which should appear in the first WFT complete event
     pub fn set_patches_first_wft(&mut self, patches: InternalPatches) {
-        if let Some(first_attrs) = self.events.iter_mut().find_map(|e| {
+        Self::set_patches(self.events.iter_mut(), patches)
+    }
+
+    /// Sets internal patches which should appear in the most recent complete event
+    pub fn set_patches_last_wft(&mut self, patches: InternalPatches) {
+        Self::set_patches(self.events.iter_mut().rev(), patches)
+    }
+
+    fn set_patches<'a>(
+        mut events: impl Iterator<Item = &'a mut HistoryEvent>,
+        patches: InternalPatches,
+    ) {
+        if let Some(first_attrs) = events.find_map(|e| {
             if let Some(Attributes::WorkflowTaskCompletedEventAttributes(a)) = e.attributes.as_mut()
             {
                 Some(a)

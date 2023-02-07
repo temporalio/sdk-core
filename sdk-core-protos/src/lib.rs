@@ -433,6 +433,7 @@ pub mod coresdk {
                         reason: reason as i32,
                     }),
                 )],
+                available_internal_patches: vec![],
             }
         }
 
@@ -872,7 +873,10 @@ pub mod coresdk {
 
     impl From<Vec<WorkflowCommand>> for workflow_completion::Success {
         fn from(v: Vec<WorkflowCommand>) -> Self {
-            Self { commands: v }
+            Self {
+                commands: v,
+                used_internal_patches: vec![],
+            }
         }
     }
 
@@ -1010,6 +1014,12 @@ pub mod coresdk {
             }
             false
         }
+
+        pub fn add_internal_patch(&mut self, patch: u32) {
+            if let Some(workflow_activation_completion::Status::Successful(s)) = &mut self.status {
+                s.used_internal_patches.push(patch);
+            }
+        }
     }
 
     /// Makes converting outgoing lang commands into [WorkflowActivationCompletion]s easier
@@ -1057,7 +1067,7 @@ pub mod coresdk {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
             match self {
                 workflow_activation_completion::Status::Successful(
-                    workflow_completion::Success { commands },
+                    workflow_completion::Success { commands, .. },
                 ) => {
                     write!(f, "Success(")?;
                     let mut written = 0;

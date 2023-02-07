@@ -30,6 +30,10 @@ message WorkflowActivation {
     uint32 history_length = 4;
     /// The things to do upon activating the workflow
     repeated WorkflowActivationJob jobs = 5;
+    // Internal patches which are available for use by lang. If `is_replaying` is false, all
+    // internal patches may be used. This is not a delta - all previously used patches always
+    // appear since this representation is cheap.
+    repeated uint32 available_internal_patches = 6;
 }
 
 message WorkflowActivationJob {

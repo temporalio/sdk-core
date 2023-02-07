@@ -364,6 +364,12 @@ impl WorkflowMachines {
             run_id: self.run_id.clone(),
             history_length: self.last_processed_event as u32,
             jobs,
+            available_internal_patches: (*self.observed_internal_patches)
+                .borrow()
+                .all_lang()
+                .iter()
+                .copied()
+                .collect(),
         }
     }
 
@@ -410,17 +416,6 @@ impl WorkflowMachines {
         }
 
         let last_handled_wft_started_id = self.current_started_event_id;
-
-        // Update observed patches with any that were used in the task we're about to process
-        if let Some(next_complete) = self
-            .last_history_from_server
-            .peek_next_wft_completed(last_handled_wft_started_id)
-        {
-            (*self.observed_internal_patches)
-                .borrow_mut()
-                .add_from_complete(next_complete);
-        }
-
         let (events, has_final_event) = match self
             .last_history_from_server
             .take_next_wft_sequence(last_handled_wft_started_id)
@@ -529,6 +524,16 @@ impl WorkflowMachines {
                     self.local_activity_data.insert_peeked_marker(la_dat);
                 }
             }
+        }
+
+        // Update observed patches with any that were used in the next task
+        if let Some(next_complete) = self
+            .last_history_from_server
+            .peek_next_wft_completed(self.last_processed_event)
+        {
+            (*self.observed_internal_patches)
+                .borrow_mut()
+                .add_from_complete(next_complete);
         }
 
         if !self.replaying {
