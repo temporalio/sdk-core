@@ -570,7 +570,7 @@ pub fn get_integ_telem_options() -> TelemetryOptions {
 
 pub fn default_cached_download() -> EphemeralExe {
     EphemeralExe::CachedDownload {
-        version: EphemeralExeVersion::Default {
+        version: EphemeralExeVersion::SDKDefault {
             sdk_name: "sdk-rust".to_string(),
             sdk_version: "0.1.0".to_string(),
         },
