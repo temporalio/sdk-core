@@ -988,6 +988,7 @@ fn validate_completion(
             Ok(ValidatedCompletion::Success {
                 run_id: completion.run_id,
                 commands,
+                used_flags: success.used_internal_flags,
             })
         }
         Some(workflow_activation_completion::Status::Failed(failure)) => {
@@ -1013,6 +1014,7 @@ enum ValidatedCompletion {
     Success {
         run_id: String,
         commands: Vec<WFCommand>,
+        used_flags: Vec<u32>,
     },
     Fail {
         run_id: String,

@@ -279,19 +279,21 @@ impl WFStream {
         };
         let mut acts: Vec<_> = match complete {
             NewOrFetchedComplete::New(complete) => match complete.completion {
-                ValidatedCompletion::Success { commands, .. } => {
-                    match rh.successful_completion(commands, complete.response_tx) {
-                        Ok(acts) => acts,
-                        Err(npr) => {
-                            self.runs_needing_fetching
-                                .push_back(HistoryFetchReq::NextPage(
-                                    npr,
-                                    self.history_fetch_refcounter.clone(),
-                                ));
-                            None
-                        }
+                ValidatedCompletion::Success {
+                    commands,
+                    used_flags,
+                    ..
+                } => match rh.successful_completion(commands, used_flags, complete.response_tx) {
+                    Ok(acts) => acts,
+                    Err(npr) => {
+                        self.runs_needing_fetching
+                            .push_back(HistoryFetchReq::NextPage(
+                                npr,
+                                self.history_fetch_refcounter.clone(),
+                            ));
+                        None
                     }
-                }
+                },
                 ValidatedCompletion::Fail { failure, .. } => rh.failed_completion(
                     failure.force_cause(),
                     EvictionReason::LangFail,

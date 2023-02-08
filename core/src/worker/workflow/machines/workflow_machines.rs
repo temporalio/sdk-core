@@ -391,6 +391,12 @@ impl WorkflowMachines {
             .gather_for_wft_complete()
     }
 
+    pub(crate) fn add_lang_used_flags(&self, flags: Vec<u32>) {
+        (*self.observed_internal_flags)
+            .borrow_mut()
+            .add_lang_used(flags);
+    }
+
     /// Iterate the state machines, which consists of grabbing any pending outgoing commands from
     /// the workflow code, handling them, and preparing them to be sent off to the server.
     pub(crate) fn iterate_machines(&mut self) -> Result<()> {
@@ -420,6 +426,16 @@ impl WorkflowMachines {
         // final WFT.
         if self.have_seen_terminal_event {
             return Ok(0);
+        }
+
+        // Update observed patches with any that were used in the task
+        if let Some(next_complete) = self
+            .last_history_from_server
+            .peek_next_wft_completed(self.last_processed_event)
+        {
+            (*self.observed_internal_flags)
+                .borrow_mut()
+                .add_from_complete(next_complete);
         }
 
         let last_handled_wft_started_id = self.current_started_event_id;
@@ -531,16 +547,6 @@ impl WorkflowMachines {
                     self.local_activity_data.insert_peeked_marker(la_dat);
                 }
             }
-        }
-
-        // Update observed patches with any that were used in the next task
-        if let Some(next_complete) = self
-            .last_history_from_server
-            .peek_next_wft_completed(self.last_processed_event)
-        {
-            (*self.observed_internal_flags)
-                .borrow_mut()
-                .add_from_complete(next_complete);
         }
 
         if !self.replaying {

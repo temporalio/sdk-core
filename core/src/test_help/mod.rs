@@ -376,6 +376,7 @@ pub(crate) struct MockPollCfg {
     pub expect_fail_wft_matcher:
         Box<dyn Fn(&TaskToken, &WorkflowTaskFailedCause, &Option<Failure>) -> bool + Send>,
     pub completion_asserts: Option<Box<dyn Fn(&WorkflowTaskCompletion) + Send>>,
+    pub num_expected_completions: Option<TimesRange>,
     /// If being used with the Rust SDK, this is set true. It ensures pollers will not error out
     /// early with no work, since we cannot know the exact number of times polling will happen.
     /// Instead, they will just block forever.
@@ -397,6 +398,7 @@ impl MockPollCfg {
             mock_client: mock_workflow_client(),
             expect_fail_wft_matcher: Box::new(|_, _, _| true),
             completion_asserts: None,
+            num_expected_completions: None,
             using_rust_sdk: false,
             make_poll_stream_interminable: false,
         }
@@ -419,6 +421,7 @@ impl MockPollCfg {
             mock_client,
             expect_fail_wft_matcher: Box::new(|_, _, _| true),
             completion_asserts: None,
+            num_expected_completions: None,
             using_rust_sdk: false,
             make_poll_stream_interminable: false,
         }
@@ -588,16 +591,20 @@ pub(crate) fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder {
     );
 
     let outstanding = outstanding_wf_task_tokens.clone();
-    cfg.mock_client
-        .expect_complete_workflow_task()
-        .returning(move |comp| {
-            if let Some(ass) = cfg.completion_asserts.as_ref() {
-                // tee hee
-                ass(&comp)
-            }
-            outstanding.release_token(&comp.task_token);
-            Ok(RespondWorkflowTaskCompletedResponse::default())
-        });
+    let expect_completes = cfg.mock_client.expect_complete_workflow_task();
+    if let Some(range) = cfg.num_expected_completions {
+        expect_completes.times(range);
+    } else if cfg.completion_asserts.is_some() {
+        expect_completes.times(1..);
+    }
+    expect_completes.returning(move |comp| {
+        if let Some(ass) = cfg.completion_asserts.as_ref() {
+            // tee hee
+            ass(&comp)
+        }
+        outstanding.release_token(&comp.task_token);
+        Ok(RespondWorkflowTaskCompletedResponse::default())
+    });
     let outstanding = outstanding_wf_task_tokens.clone();
     cfg.mock_client
         .expect_fail_workflow_task()

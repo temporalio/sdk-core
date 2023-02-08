@@ -53,7 +53,7 @@ use temporal_sdk_core_protos::{
     },
     DEFAULT_ACTIVITY_TYPE, DEFAULT_WORKFLOW_TYPE,
 };
-use temporal_sdk_core_test_utils::{fanout_tasks, start_timer_cmd};
+use temporal_sdk_core_test_utils::{fanout_tasks, start_timer_cmd, WorkerTestHelpers};
 use tokio::{
     join,
     sync::{Barrier, Semaphore},
@@ -2344,12 +2344,14 @@ async fn lang_internal_flags() {
     t.add_we_signaled("sig1", vec![]);
     t.add_full_wf_task();
     t.set_flags_last_wft(&[], &[2]);
+    t.add_we_signaled("sig2", vec![]);
+    t.add_full_wf_task();
     t.add_workflow_execution_completed();
 
     let mut mh = MockPollCfg::from_resp_batches(
         "fake_wf_id",
         t,
-        [ResponseType::AllHistory],
+        [ResponseType::ToTaskNum(2), ResponseType::AllHistory],
         mock_workflow_client(),
     );
     mh.completion_asserts = Some(Box::new(|c| {
@@ -2361,10 +2363,17 @@ async fn lang_internal_flags() {
 
     let act = core.poll_workflow_activation().await.unwrap();
     assert_matches!(act.available_internal_flags.as_slice(), [1]);
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(act.run_id))
+        .await
+        .unwrap();
+
+    let act = core.poll_workflow_activation().await.unwrap();
     let mut completion = WorkflowActivationCompletion::empty(act.run_id);
     completion.add_internal_flags(2);
     core.complete_workflow_activation(completion).await.unwrap();
 
     let act = core.poll_workflow_activation().await.unwrap();
     assert_matches!(act.available_internal_flags.as_slice(), [1, 2]);
+    core.complete_execution(&act.run_id).await;
+    core.shutdown().await;
 }

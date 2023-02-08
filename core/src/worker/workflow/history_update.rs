@@ -532,7 +532,7 @@ impl HistoryUpdate {
         self.events
             .iter()
             .skip_while(|e| e.event_id < from_id)
-            .find_map(|e| match e.attributes {
+            .find_map(|e| match &e.attributes {
                 Some(history_event::Attributes::WorkflowTaskCompletedEventAttributes(ref a)) => {
                     Some(a)
                 }

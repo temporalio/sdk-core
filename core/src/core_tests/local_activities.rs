@@ -946,9 +946,7 @@ async fn resolved_las_not_recorded_if_wft_fails_many_times() {
         mock,
     );
     mh.num_expected_fails = 2;
-    mh.completion_asserts = Some(Box::new(|_| {
-        panic!("should never successfully complete a WFT");
-    }));
+    mh.num_expected_completions = Some(0.into());
     let mut worker = mock_sdk_cfg(mh, |w| w.max_cached_workflows = 1);
 
     worker.register_wf(

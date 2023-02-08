@@ -355,6 +355,7 @@ impl ManagedRun {
     pub(super) fn successful_completion(
         &mut self,
         mut commands: Vec<WFCommand>,
+        used_flags: Vec<u32>,
         resp_chan: Option<oneshot::Sender<ActivationCompleteResult>>,
     ) -> Result<RunUpdateAct, NextPageReq> {
         let activation_was_only_eviction = self.activation_has_only_eviction();
@@ -423,6 +424,7 @@ impl ManagedRun {
                 activation_was_only_eviction,
                 has_pending_query,
                 query_responses,
+                used_flags,
                 resp_chan,
             };
 
@@ -568,6 +570,8 @@ impl ManagedRun {
             has_pending_query: completion.has_pending_query,
             activation_was_only_eviction: completion.activation_was_only_eviction,
         };
+
+        self.wfm.machines.add_lang_used_flags(completion.used_flags);
 
         // If this is just bookkeeping after a reply to an only-eviction activation, we can bypass
         // everything, since there is no reason to continue trying to update machines.
@@ -1296,6 +1300,7 @@ struct RunActivationCompletion {
     activation_was_only_eviction: bool,
     has_pending_query: bool,
     query_responses: Vec<QueryResult>,
+    used_flags: Vec<u32>,
     /// Used to notify the worker when the completion is done processing and the completion can
     /// unblock. Must always be `Some` when initialized.
     resp_chan: Option<oneshot::Sender<ActivationCompleteResult>>,

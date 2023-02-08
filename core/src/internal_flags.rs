@@ -28,6 +28,7 @@ pub(crate) struct InternalFlags {
     core: BTreeSet<CoreInternalFlags>,
     lang: BTreeSet<u32>,
     core_since_last_complete: HashSet<CoreInternalFlags>,
+    lang_since_last_complete: HashSet<u32>,
 }
 
 impl InternalFlags {
@@ -41,6 +42,10 @@ impl InternalFlags {
             );
             self.lang.extend(metadata.lang_used_flags.iter());
         }
+    }
+
+    pub fn add_lang_used(&mut self, flags: impl IntoIterator<Item = u32>) {
+        self.lang_since_last_complete.extend(flags.into_iter());
     }
 
     /// Returns true if this flag may currently be used. If `replaying` is false, always returns
@@ -65,7 +70,7 @@ impl InternalFlags {
                 .drain()
                 .map(|p| p as u32)
                 .collect(),
-            lang_used_flags: vec![],
+            lang_used_flags: self.lang_since_last_complete.drain().collect(),
         }
     }
 
