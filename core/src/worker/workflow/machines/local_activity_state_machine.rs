@@ -3,10 +3,10 @@ use super::{
     WFMachinesError,
 };
 use crate::{
-    internal_patching::CoreInternalPatches,
+    internal_flags::CoreInternalFlags,
     protosext::{CompleteLocalActivityData, HistoryEventExt, ValidScheduleLA},
     worker::{
-        workflow::{machines::HistEventData, InternalPatchesRef, OutgoingJob},
+        workflow::{machines::HistEventData, InternalFlagsRef, OutgoingJob},
         LocalActivityExecutionResult,
     },
 };
@@ -145,7 +145,7 @@ pub(super) fn new_local_activity(
     replaying_when_invoked: bool,
     maybe_pre_resolved: Option<ResolveDat>,
     wf_time: Option<SystemTime>,
-    internal_patches: InternalPatchesRef,
+    internal_flags: InternalFlagsRef,
 ) -> Result<(LocalActivityMachine, Vec<MachineResponse>), WFMachinesError> {
     let initial_state = if replaying_when_invoked {
         if let Some(dat) = maybe_pre_resolved {
@@ -173,7 +173,7 @@ pub(super) fn new_local_activity(
             attrs,
             replaying_when_invoked,
             wf_time_when_started: wf_time,
-            internal_patches,
+            internal_flags,
         },
     };
 
@@ -309,7 +309,7 @@ pub(super) struct SharedState {
     attrs: ValidScheduleLA,
     replaying_when_invoked: bool,
     wf_time_when_started: Option<SystemTime>,
-    internal_patches: InternalPatchesRef,
+    internal_flags: InternalFlagsRef,
 }
 
 impl SharedState {
@@ -790,8 +790,8 @@ fn verify_marker_data_matches(
     // Here we use whether or not we were replaying when we _first invoked_ the LA, because we
     // are always replaying when we see the marker recorded event, and that would make this check
     // a bit pointless.
-    if shared.internal_patches.borrow_mut().try_use(
-        CoreInternalPatches::IdAndTypeDeterminismChecks,
+    if shared.internal_flags.borrow_mut().try_use(
+        CoreInternalFlags::IdAndTypeDeterminismChecks,
         shared.replaying_when_invoked,
     ) {
         if dat.marker_dat.activity_id != shared.attrs.activity_id {

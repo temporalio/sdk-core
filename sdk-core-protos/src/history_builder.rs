@@ -14,7 +14,6 @@ use crate::{
         enums::v1::{EventType, TaskQueueKind, WorkflowTaskFailedCause},
         failure::v1::{failure, CanceledFailureInfo, Failure},
         history::v1::{history_event::Attributes, *},
-        sdk::v1::InternalPatches,
         taskqueue::v1::TaskQueue,
     },
     HistoryInfo,
@@ -470,18 +469,19 @@ impl TestHistoryBuilder {
     }
 
     /// Sets internal patches which should appear in the first WFT complete event
-    pub fn set_patches_first_wft(&mut self, patches: InternalPatches) {
-        Self::set_patches(self.events.iter_mut(), patches)
+    pub fn set_flags_first_wft(&mut self, core: &[u32], lang: &[u32]) {
+        Self::set_flags(self.events.iter_mut(), core, lang)
     }
 
     /// Sets internal patches which should appear in the most recent complete event
-    pub fn set_patches_last_wft(&mut self, patches: InternalPatches) {
-        Self::set_patches(self.events.iter_mut().rev(), patches)
+    pub fn set_flags_last_wft(&mut self, core: &[u32], lang: &[u32]) {
+        Self::set_flags(self.events.iter_mut().rev(), core, lang)
     }
 
-    fn set_patches<'a>(
+    fn set_flags<'a>(
         mut events: impl Iterator<Item = &'a mut HistoryEvent>,
-        patches: InternalPatches,
+        core: &[u32],
+        lang: &[u32],
     ) {
         if let Some(first_attrs) = events.find_map(|e| {
             if let Some(Attributes::WorkflowTaskCompletedEventAttributes(a)) = e.attributes.as_mut()
@@ -491,8 +491,11 @@ impl TestHistoryBuilder {
                 None
             }
         }) {
-            let sdk_dat = first_attrs.sdk_data.get_or_insert_with(Default::default);
-            sdk_dat.internal_patches = Some(patches);
+            let sdk_dat = first_attrs
+                .sdk_metadata
+                .get_or_insert_with(Default::default);
+            sdk_dat.core_used_flags = core.to_vec();
+            sdk_dat.lang_used_flags = lang.to_vec();
         }
     }
 

@@ -13,7 +13,7 @@ use super::{
     TemporalStateMachine,
 };
 use crate::{
-    internal_patching::InternalPatches,
+    internal_flags::InternalFlags,
     protosext::{HistoryEventExt, ValidScheduleLA},
     telemetry::{metrics::MetricsContext, VecDisplayer},
     worker::{
@@ -25,7 +25,7 @@ use crate::{
                 modify_workflow_properties_state_machine::modify_workflow_properties,
                 HistEventData,
             },
-            CommandID, DrivenWorkflow, HistoryUpdate, InternalPatchesRef, LocalResolution,
+            CommandID, DrivenWorkflow, HistoryUpdate, InternalFlagsRef, LocalResolution,
             OutgoingJob, WFCommand, WFMachinesError, WorkflowFetcher, WorkflowStartedInfo,
         },
         ExecutingLAId, LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
@@ -57,6 +57,7 @@ use temporal_sdk_core_protos::{
         command::v1::{command::Attributes as ProtoCmdAttrs, Command as ProtoCommand},
         enums::v1::EventType,
         history::v1::{history_event, HistoryEvent},
+        sdk::v1::WorkflowTaskCompletedMetadata,
     },
 };
 
@@ -101,9 +102,9 @@ pub(crate) struct WorkflowMachines {
     /// The current workflow time if it has been established. This may differ from the WFT start
     /// time since local activities may advance the clock
     current_wf_time: Option<SystemTime>,
-    /// The internal patches which have been seen so far during this run's execution and thus are
+    /// The internal flags which have been seen so far during this run's execution and thus are
     /// usable during replay.
-    pub observed_internal_patches: InternalPatchesRef,
+    observed_internal_flags: InternalFlagsRef,
 
     all_machines: SlotMap<MachineKey, Machines>,
     /// If a machine key is in this map, that machine was created internally by core, not as a
@@ -222,10 +223,10 @@ impl WorkflowMachines {
         metrics: MetricsContext,
     ) -> Self {
         let replaying = history.previous_wft_started_id > 0;
-        let mut observed_internal_patches = InternalPatches::default();
+        let mut observed_internal_flags = InternalFlags::default();
         // Peek ahead to determine used patches in the first WFT.
         if let Some(attrs) = history.peek_next_wft_completed(0) {
-            observed_internal_patches.add_from_complete(attrs);
+            observed_internal_flags.add_from_complete(attrs);
         };
         Self {
             last_history_from_server: history,
@@ -244,7 +245,7 @@ impl WorkflowMachines {
             workflow_end_time: None,
             wft_start_time: None,
             current_wf_time: None,
-            observed_internal_patches: Rc::new(RefCell::new(observed_internal_patches)),
+            observed_internal_flags: Rc::new(RefCell::new(observed_internal_flags)),
             all_machines: Default::default(),
             machine_is_core_created: Default::default(),
             machines_by_event_id: Default::default(),
@@ -364,7 +365,7 @@ impl WorkflowMachines {
             run_id: self.run_id.clone(),
             history_length: self.last_processed_event as u32,
             jobs,
-            available_internal_patches: (*self.observed_internal_patches)
+            available_internal_flags: (*self.observed_internal_flags)
                 .borrow()
                 .all_lang()
                 .iter()
@@ -382,6 +383,12 @@ impl WorkflowMachines {
             .peek_pending_jobs()
             .iter()
             .any(|v| v.is_la_resolution)
+    }
+
+    pub(crate) fn get_metadata_for_wft_complete(&self) -> WorkflowTaskCompletedMetadata {
+        (*self.observed_internal_flags)
+            .borrow_mut()
+            .gather_for_wft_complete()
     }
 
     /// Iterate the state machines, which consists of grabbing any pending outgoing commands from
@@ -531,7 +538,7 @@ impl WorkflowMachines {
             .last_history_from_server
             .peek_next_wft_completed(self.last_processed_event)
         {
-            (*self.observed_internal_patches)
+            (*self.observed_internal_flags)
                 .borrow_mut()
                 .add_from_complete(next_complete);
         }
@@ -989,10 +996,7 @@ impl WorkflowMachines {
                 WFCommand::AddActivity(attrs) => {
                     let seq = attrs.seq;
                     self.add_cmd_to_wf_task(
-                        ActivityMachine::new_scheduled(
-                            attrs,
-                            self.observed_internal_patches.clone(),
-                        ),
+                        ActivityMachine::new_scheduled(attrs, self.observed_internal_flags.clone()),
                         CommandID::Activity(seq).into(),
                     );
                 }
@@ -1014,7 +1018,7 @@ impl WorkflowMachines {
                         self.replaying,
                         self.local_activity_data.take_preresolution(seq),
                         self.current_wf_time,
-                        self.observed_internal_patches.clone(),
+                        self.observed_internal_flags.clone(),
                     )?;
                     let machkey = self.all_machines.insert(la.into());
                     self.id_to_machine
@@ -1072,7 +1076,7 @@ impl WorkflowMachines {
                     self.add_cmd_to_wf_task(
                         ChildWorkflowMachine::new_scheduled(
                             attrs,
-                            self.observed_internal_patches.clone(),
+                            self.observed_internal_flags.clone(),
                         ),
                         CommandID::ChildWorkflowStart(seq).into(),
                     );

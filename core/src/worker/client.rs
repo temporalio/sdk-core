@@ -11,7 +11,7 @@ use temporal_sdk_core_protos::{
         enums::v1::{TaskQueueKind, WorkflowTaskFailedCause},
         failure::v1::Failure,
         query::v1::WorkflowQueryResult,
-        sdk::v1::{InternalPatches, WftCompleteMetadata},
+        sdk::v1::WorkflowTaskCompletedMetadata,
         taskqueue::v1::{StickyExecutionAttributes, TaskQueue, TaskQueueMetadata, VersionId},
         workflowservice::v1::*,
     },
@@ -208,9 +208,7 @@ impl WorkerClient for WorkerClientBag {
                 })
                 .collect(),
             namespace: self.namespace.clone(),
-            sdk_data: Some(WftCompleteMetadata {
-                internal_patches: Some(request.newly_used_patches),
-            }),
+            sdk_metadata: Some(request.sdk_metadata),
         };
         Ok(self
             .client
@@ -376,6 +374,6 @@ pub(crate) struct WorkflowTaskCompletion {
     pub return_new_workflow_task: bool,
     /// Force a new WFT to be created after this completion
     pub force_create_new_workflow_task: bool,
-    /// Newly used patches during this completion
-    pub newly_used_patches: InternalPatches,
+    /// SDK-specific metadata to send
+    pub sdk_metadata: WorkflowTaskCompletedMetadata,
 }

@@ -3,8 +3,8 @@ use super::{
     OnEventWrapper, WFMachinesAdapter, WFMachinesError,
 };
 use crate::{
-    internal_patching::CoreInternalPatches,
-    worker::workflow::{machines::HistEventData, InternalPatchesRef},
+    internal_flags::CoreInternalFlags,
+    worker::workflow::{machines::HistEventData, InternalFlagsRef},
 };
 use rustfsm::{fsm, MachineError, TransitionResult};
 use std::convert::{TryFrom, TryInto};
@@ -137,8 +137,8 @@ impl StartCommandCreated {
         state: SharedState,
         event_dat: ChildWorkflowInitiatedData,
     ) -> ChildWorkflowMachineTransition<StartEventRecorded> {
-        if state.internal_patches.borrow_mut().try_use(
-            CoreInternalPatches::IdAndTypeDeterminismChecks,
+        if state.internal_flags.borrow_mut().try_use(
+            CoreInternalFlags::IdAndTypeDeterminismChecks,
             event_dat.replaying,
         ) {
             if event_dat.wf_id != state.workflow_id {
@@ -340,14 +340,14 @@ pub(super) struct SharedState {
     workflow_type: String,
     cancelled_before_sent: bool,
     cancel_type: ChildWorkflowCancellationType,
-    internal_patches: InternalPatchesRef,
+    internal_flags: InternalFlagsRef,
 }
 
 impl ChildWorkflowMachine {
     /// Create a new child workflow and immediately schedule it.
     pub(super) fn new_scheduled(
         attribs: StartChildWorkflowExecution,
-        internal_patches: InternalPatchesRef,
+        internal_flags: InternalFlagsRef,
     ) -> NewMachineWithCommand {
         let mut s = Self {
             state: Created {}.into(),
@@ -357,7 +357,7 @@ impl ChildWorkflowMachine {
                 workflow_type: attribs.workflow_type.clone(),
                 namespace: attribs.namespace.clone(),
                 cancel_type: attribs.cancellation_type(),
-                internal_patches,
+                internal_flags,
                 ..Default::default()
             },
         };

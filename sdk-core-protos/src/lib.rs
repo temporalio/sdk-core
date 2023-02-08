@@ -433,7 +433,7 @@ pub mod coresdk {
                         reason: reason as i32,
                     }),
                 )],
-                available_internal_patches: vec![],
+                available_internal_flags: vec![],
             }
         }
 
@@ -875,7 +875,7 @@ pub mod coresdk {
         fn from(v: Vec<WorkflowCommand>) -> Self {
             Self {
                 commands: v,
-                used_internal_patches: vec![],
+                used_internal_flags: vec![],
             }
         }
     }
@@ -1015,9 +1015,9 @@ pub mod coresdk {
             false
         }
 
-        pub fn add_internal_patch(&mut self, patch: u32) {
+        pub fn add_internal_flags(&mut self, patch: u32) {
             if let Some(workflow_activation_completion::Status::Successful(s)) = &mut self.status {
-                s.used_internal_patches.push(patch);
+                s.used_internal_flags.push(patch);
             }
         }
     }

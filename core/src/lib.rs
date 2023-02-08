@@ -13,7 +13,7 @@ extern crate core;
 
 mod abstractions;
 pub mod ephemeral_server;
-mod internal_patching;
+mod internal_flags;
 mod pollers;
 mod protosext;
 pub mod replay;

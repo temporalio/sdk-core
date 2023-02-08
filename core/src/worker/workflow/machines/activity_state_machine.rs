@@ -5,8 +5,8 @@ use super::{
     OnEventWrapper, WFMachinesAdapter, WFMachinesError,
 };
 use crate::{
-    internal_patching::CoreInternalPatches,
-    worker::workflow::{machines::HistEventData, InternalPatchesRef},
+    internal_flags::CoreInternalFlags,
+    worker::workflow::{machines::HistEventData, InternalFlagsRef},
 };
 use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
 use std::convert::{TryFrom, TryInto};
@@ -109,7 +109,7 @@ impl ActivityMachine {
     /// Create a new activity and immediately schedule it.
     pub(super) fn new_scheduled(
         attrs: ScheduleActivity,
-        internal_patches: InternalPatchesRef,
+        internal_flags: InternalFlagsRef,
     ) -> NewMachineWithCommand {
         let mut s = Self {
             state: Created {}.into(),
@@ -117,7 +117,7 @@ impl ActivityMachine {
                 cancellation_type: ActivityCancellationType::from_i32(attrs.cancellation_type)
                     .unwrap(),
                 attrs,
-                internal_patches,
+                internal_flags,
                 ..Default::default()
             },
         };
@@ -379,7 +379,7 @@ pub(super) struct SharedState {
     attrs: ScheduleActivity,
     cancellation_type: ActivityCancellationType,
     cancelled_before_sent: bool,
-    internal_patches: InternalPatchesRef,
+    internal_flags: InternalFlagsRef,
 }
 
 #[derive(Default, Clone)]
@@ -401,8 +401,8 @@ impl ScheduleCommandCreated {
         dat: SharedState,
         sched_dat: ActTaskScheduledData,
     ) -> ActivityMachineTransition<ScheduledEventRecorded> {
-        if dat.internal_patches.borrow_mut().try_use(
-            CoreInternalPatches::IdAndTypeDeterminismChecks,
+        if dat.internal_flags.borrow_mut().try_use(
+            CoreInternalFlags::IdAndTypeDeterminismChecks,
             sched_dat.replaying,
         ) {
             if sched_dat.act_id != dat.attrs.activity_id {

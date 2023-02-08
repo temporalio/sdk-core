@@ -1,5 +1,5 @@
 use crate::{
-    internal_patching::{CoreInternalPatches, InternalPatches},
+    internal_flags::CoreInternalFlags,
     replay::DEFAULT_WORKFLOW_TYPE,
     test_help::{canned_histories, mock_sdk, mock_sdk_cfg, MockPollCfg, ResponseType},
     worker::client::mocks::mock_workflow_client,
@@ -126,9 +126,7 @@ async fn activity_id_or_type_change_is_nondeterministic(
     } else {
         canned_histories::single_activity("1")
     };
-    t.set_patches_first_wft(
-        InternalPatches::new([CoreInternalPatches::IdAndTypeDeterminismChecks], []).into(),
-    );
+    t.set_flags_first_wft(&[CoreInternalFlags::IdAndTypeDeterminismChecks as u32], &[]);
     let mock = mock_workflow_client();
     let mut mh = MockPollCfg::from_resp_batches(
         wf_id,
@@ -211,9 +209,7 @@ async fn child_wf_id_or_type_change_is_nondeterministic(
     let wf_id = "fakeid";
     let wf_type = DEFAULT_WORKFLOW_TYPE;
     let mut t = canned_histories::single_child_workflow("1");
-    t.set_patches_first_wft(
-        InternalPatches::new([CoreInternalPatches::IdAndTypeDeterminismChecks], []).into(),
-    );
+    t.set_flags_first_wft(&[CoreInternalFlags::IdAndTypeDeterminismChecks as u32], &[]);
     let mock = mock_workflow_client();
     let mut mh = MockPollCfg::from_resp_batches(
         wf_id,
