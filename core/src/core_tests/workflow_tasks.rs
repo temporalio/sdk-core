@@ -2266,7 +2266,6 @@ async fn fetching_error_evicts_wf() {
 /// in the complete waiting for the completion to finish.
 #[tokio::test]
 async fn ensure_fetching_fail_during_complete_sends_task_failure() {
-    crate::telemetry::test_telem_console();
     let wfid = "fake_wf_id";
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);

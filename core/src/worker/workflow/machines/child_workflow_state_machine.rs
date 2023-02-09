@@ -139,7 +139,7 @@ impl StartCommandCreated {
     ) -> ChildWorkflowMachineTransition<StartEventRecorded> {
         if state.internal_flags.borrow_mut().try_use(
             CoreInternalFlags::IdAndTypeDeterminismChecks,
-            dbg!(event_dat.last_task_in_history),
+            event_dat.last_task_in_history,
         ) {
             if event_dat.wf_id != state.workflow_id {
                 return TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
