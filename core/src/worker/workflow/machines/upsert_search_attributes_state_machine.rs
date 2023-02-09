@@ -233,6 +233,7 @@ mod tests {
         let cmd_recorded_sm_event = HistEventData {
             event: recorded_history_event,
             replaying: false,
+            current_task_is_last_in_history: true,
         }
         .try_into()
         .unwrap();

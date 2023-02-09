@@ -792,7 +792,7 @@ fn verify_marker_data_matches(
     // a bit pointless.
     if shared.internal_flags.borrow_mut().try_use(
         CoreInternalFlags::IdAndTypeDeterminismChecks,
-        shared.replaying_when_invoked,
+        !shared.replaying_when_invoked,
     ) {
         if dat.marker_dat.activity_id != shared.attrs.activity_id {
             return Err(WFMachinesError::Nondeterminism(format!(

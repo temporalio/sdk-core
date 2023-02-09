@@ -102,7 +102,7 @@ pub(super) struct ActTaskScheduledData {
     event_id: i64,
     act_type: String,
     act_id: String,
-    replaying: bool,
+    last_task_in_history: bool,
 }
 
 impl ActivityMachine {
@@ -182,7 +182,7 @@ impl TryFrom<HistEventData> for ActivityMachineEvents {
     type Error = WFMachinesError;
 
     fn try_from(e: HistEventData) -> Result<Self, Self::Error> {
-        let replaying = e.replaying;
+        let last_task_in_history = e.current_task_is_last_in_history;
         let e = e.event;
         Ok(match e.event_type() {
             EventType::ActivityTaskScheduled => {
@@ -194,7 +194,7 @@ impl TryFrom<HistEventData> for ActivityMachineEvents {
                         event_id: e.event_id,
                         act_id: attrs.activity_id,
                         act_type: attrs.activity_type.unwrap_or_default().name,
-                        replaying,
+                        last_task_in_history,
                     })
                 } else {
                     return Err(WFMachinesError::Fatal(format!(
@@ -403,7 +403,7 @@ impl ScheduleCommandCreated {
     ) -> ActivityMachineTransition<ScheduledEventRecorded> {
         if dat.internal_flags.borrow_mut().try_use(
             CoreInternalFlags::IdAndTypeDeterminismChecks,
-            sched_dat.replaying,
+            sched_dat.last_task_in_history,
         ) {
             if sched_dat.act_id != dat.attrs.activity_id {
                 return TransitionResult::Err(WFMachinesError::Nondeterminism(format!(

@@ -107,7 +107,7 @@ pub(super) struct ChildWorkflowInitiatedData {
     event_id: i64,
     wf_type: String,
     wf_id: String,
-    replaying: bool,
+    last_task_in_history: bool,
 }
 
 #[derive(Default, Clone)]
@@ -139,7 +139,7 @@ impl StartCommandCreated {
     ) -> ChildWorkflowMachineTransition<StartEventRecorded> {
         if state.internal_flags.borrow_mut().try_use(
             CoreInternalFlags::IdAndTypeDeterminismChecks,
-            event_dat.replaying,
+            dbg!(event_dat.last_task_in_history),
         ) {
             if event_dat.wf_id != state.workflow_id {
                 return TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
@@ -405,7 +405,7 @@ impl TryFrom<HistEventData> for ChildWorkflowMachineEvents {
     type Error = WFMachinesError;
 
     fn try_from(e: HistEventData) -> Result<Self, Self::Error> {
-        let replaying = e.replaying;
+        let last_task_in_history = e.current_task_is_last_in_history;
         let e = e.event;
         Ok(match EventType::from_i32(e.event_type) {
             Some(EventType::StartChildWorkflowExecutionInitiated) => {
@@ -419,7 +419,7 @@ impl TryFrom<HistEventData> for ChildWorkflowMachineEvents {
                         event_id: e.event_id,
                         wf_type: attrs.workflow_type.unwrap_or_default().name,
                         wf_id: attrs.workflow_id,
-                        replaying,
+                        last_task_in_history,
                     })
                 } else {
                     return Err(WFMachinesError::Fatal(

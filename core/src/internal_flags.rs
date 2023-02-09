@@ -18,7 +18,7 @@ use temporal_sdk_core_protos::temporal::api::{
 pub(crate) enum CoreInternalFlags {
     /// In this flag, additional checks were added to a number of state machines to ensure that
     /// the ID and type of activities, local activities, and child workflows match during replay.
-    IdAndTypeDeterminismChecks = 0,
+    IdAndTypeDeterminismChecks = 1,
     /// We received a value higher than this code can understand.
     TooHigh = u32::MAX,
 }
@@ -48,11 +48,11 @@ impl InternalFlags {
         self.lang_since_last_complete.extend(flags.into_iter());
     }
 
-    /// Returns true if this flag may currently be used. If `replaying` is false, always returns
+    /// Returns true if this flag may currently be used. If `should_record` is true, always returns
     /// true and records the flag as being used, for taking later via
     /// [Self::gather_for_wft_complete].
-    pub fn try_use(&mut self, core_patch: CoreInternalFlags, replaying: bool) -> bool {
-        if !replaying {
+    pub fn try_use(&mut self, core_patch: CoreInternalFlags, should_record: bool) -> bool {
+        if should_record {
             self.core_since_last_complete.insert(core_patch);
             true
         } else {
@@ -82,7 +82,7 @@ impl InternalFlags {
 impl CoreInternalFlags {
     fn from_u32(v: u32) -> Self {
         match v {
-            0 => Self::IdAndTypeDeterminismChecks,
+            1 => Self::IdAndTypeDeterminismChecks,
             _ => Self::TooHigh,
         }
     }
