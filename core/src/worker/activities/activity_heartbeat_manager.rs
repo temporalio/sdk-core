@@ -113,6 +113,9 @@ impl ActivityHeartbeatManager {
     /// This will also force-flush the most recently provided details.
     /// Record *should* not be called with the same TaskToken after calling this.
     pub(super) async fn evict(&self, task_token: TaskToken) {
+        if self.shutdown_token.is_cancelled() {
+            return;
+        }
         let completed = Arc::new(Notify::new());
         let _ = self.heartbeat_tx.send(HeartbeatAction::Evict {
             token: task_token,
@@ -127,11 +130,15 @@ impl ActivityHeartbeatManager {
         self.incoming_cancels.lock().await.recv().await
     }
 
+    pub(super) fn notify_shutdown(&self) {
+        self.shutdown_token.cancel();
+    }
     // TODO: Can own self now!
     /// Initiates shutdown procedure by stopping lifecycle loop and awaiting for all in-flight
     /// heartbeat requests to be flushed to the server.
     pub(super) async fn shutdown(&self) {
-        self.shutdown_token.cancel();
+        // TODO: this might not be necessary
+        self.notify_shutdown();
         let mut handle = self.join_handle.lock().await;
         if let Some(h) = handle.take() {
             let handle_r = h.await;
