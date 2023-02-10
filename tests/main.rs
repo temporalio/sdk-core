@@ -36,7 +36,7 @@ mod integ_tests {
         let opts = get_integ_server_options();
         let runtime = CoreRuntime::new_assume_tokio(get_integ_telem_options()).unwrap();
         let mut retrying_client = opts
-            .connect_no_namespace(runtime.metric_meter(), None)
+            .connect_no_namespace(runtime.metric_meter().as_deref(), None)
             .await
             .unwrap();
 

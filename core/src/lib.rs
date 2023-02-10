@@ -44,8 +44,9 @@ pub use worker::{Worker, WorkerConfig, WorkerConfigBuilder};
 use crate::{
     replay::{mock_client_from_histories, Historator, HistoryForReplay},
     telemetry::{
-        metrics::MetricsContext, remove_trace_subscriber_for_current_thread,
-        set_trace_subscriber_for_current_thread, telemetry_init, TelemetryInstance,
+        metrics::{MetricsContext, TemporalMeter},
+        remove_trace_subscriber_for_current_thread, set_trace_subscriber_for_current_thread,
+        telemetry_init, TelemetryInstance,
     },
     worker::client::WorkerClientBag,
 };
@@ -54,7 +55,7 @@ use std::sync::Arc;
 use temporal_client::{ConfiguredClient, TemporalServiceClientWithMetrics};
 use temporal_sdk_core_api::{
     errors::{CompleteActivityError, PollActivityError, PollWfError},
-    telemetry::{CoreTelemetry, TelemetryOptions},
+    telemetry::TelemetryOptions,
     Worker as WorkerTrait,
 };
 use temporal_sdk_core_protos::coresdk::ActivityHeartbeat;
@@ -65,7 +66,7 @@ use temporal_sdk_core_protos::coresdk::ActivityHeartbeat;
 /// After the worker is initialized, you should use [CoreRuntime::tokio_handle] to run the worker's
 /// async functions.
 ///
-/// Lang implementations may pass in a [temporal_client::ConfiguredClient] directly (or a
+/// Lang implementations may pass in a [ConfiguredClient] directly (or a
 /// [RetryClient] wrapping one, or a handful of other variants of the same idea). When they do so,
 /// this function will always overwrite the client retry configuration, force the client to use the
 /// namespace defined in the worker config, and set the client identity appropriately. IE: Use
@@ -264,7 +265,7 @@ impl CoreRuntime {
     }
 
     /// Returns the metric meter used for recording metrics, if they were enabled.
-    pub fn metric_meter(&self) -> Option<&opentelemetry::metrics::Meter> {
+    pub fn metric_meter(&self) -> Option<TemporalMeter> {
         self.telemetry.get_metric_meter()
     }
 

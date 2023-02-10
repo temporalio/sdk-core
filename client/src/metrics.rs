@@ -1,7 +1,7 @@
 use crate::{AttachMetricLabels, LONG_POLL_METHOD_NAMES};
 use futures::{future::BoxFuture, FutureExt};
 use opentelemetry::{
-    metrics::{Counter, Histogram, Meter},
+    metrics::{Counter, Histogram},
     KeyValue,
 };
 use std::{
@@ -30,18 +30,27 @@ pub struct MetricsContext {
     long_svc_request_latency: Histogram<u64>,
 }
 
+/// Things that can provide metrics for the client implement this. Trait exists to avoid having
+/// to make a whole new lower-level crate just for a tiny shared wrapper around OTel meters.
+pub trait ClientMetricProvider {
+    /// Construct a counter metric
+    fn counter(&self, name: &'static str) -> Counter<u64>;
+    /// Construct a histogram metric
+    fn histogram(&self, name: &'static str) -> Histogram<u64>;
+}
+
 impl MetricsContext {
-    pub(crate) fn new(kvs: Vec<KeyValue>, meter: &Meter) -> Self {
+    pub(crate) fn new(kvs: Vec<KeyValue>, metric_provider: &dyn ClientMetricProvider) -> Self {
         Self {
             ctx: opentelemetry::Context::current(),
             kvs: Arc::new(kvs),
             poll_is_long: false,
-            svc_request: meter.u64_counter("request").init(),
-            svc_request_failed: meter.u64_counter("request_failure").init(),
-            long_svc_request: meter.u64_counter("long_request").init(),
-            long_svc_request_failed: meter.u64_counter("long_request_failure").init(),
-            svc_request_latency: meter.u64_histogram("request_latency").init(),
-            long_svc_request_latency: meter.u64_histogram("long_request_latency").init(),
+            svc_request: metric_provider.counter("request"),
+            svc_request_failed: metric_provider.counter("request_failure"),
+            long_svc_request: metric_provider.counter("long_request"),
+            long_svc_request_failed: metric_provider.counter("long_request_failure"),
+            svc_request_latency: metric_provider.histogram("request_latency"),
+            long_svc_request_latency: metric_provider.histogram("long_request_latency"),
         }
     }
 

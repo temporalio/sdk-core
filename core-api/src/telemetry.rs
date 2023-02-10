@@ -1,4 +1,3 @@
-use opentelemetry::metrics::Meter;
 use std::{
     collections::HashMap,
     net::SocketAddr,
@@ -18,11 +17,6 @@ pub trait CoreTelemetry {
     /// Returns the list of logs from oldest to newest. Returns an empty vec if the feature is not
     /// configured.
     fn fetch_buffered_logs(&self) -> Vec<CoreLog>;
-
-    /// If metrics gathering is enabled, returns the OTel meter for core telemetry, which can be
-    /// used to create metrics instruments, or passed to things that create/record metrics (ex:
-    /// clients).
-    fn get_metric_meter(&self) -> Option<&Meter>;
 }
 
 /// Telemetry configuration options. Construct with [TelemetryOptionsBuilder]

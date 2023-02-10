@@ -28,7 +28,7 @@ async fn prometheus_metrics_exported() {
     let addr = rt.telemetry().prom_port().unwrap();
     let opts = get_integ_server_options();
     let mut raw_client = opts
-        .connect_no_namespace(rt.metric_meter(), None)
+        .connect_no_namespace(rt.metric_meter().as_deref(), None)
         .await
         .unwrap();
     assert!(raw_client.get_client().capabilities().is_some());
@@ -40,10 +40,10 @@ async fn prometheus_metrics_exported() {
 
     let body = get_text(format!("http://{addr}/metrics")).await;
     assert!(body.contains(
-        "request_latency_count{operation=\"ListNamespaces\",service_name=\"temporal-core-sdk\"} 1"
+        "temporal_request_latency_count{operation=\"ListNamespaces\",service_name=\"temporal-core-sdk\"} 1"
     ));
     assert!(body.contains(
-        "request_latency_count{operation=\"GetSystemInfo\",service_name=\"temporal-core-sdk\"} 1"
+        "temporal_request_latency_count{operation=\"GetSystemInfo\",service_name=\"temporal-core-sdk\"} 1"
     ));
 }
 
