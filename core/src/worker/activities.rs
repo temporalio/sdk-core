@@ -97,10 +97,12 @@ impl RemoteInFlightActInfo {
 }
 
 pub(crate) struct WorkerActivityTasks {
+    /// Token used to as a shutdown signal
     shutdown_token: CancellationToken,
     /// Centralizes management of heartbeat issuing / throttling
     heartbeat_manager: Arc<ActivityHeartbeatManager>,
-    poller_stream: Mutex<BoxStream<'static, Result<ActivityTask, PollActivityError>>>,
+    /// Combined stream for any ActivityTask producing source (polls, eager activities, cancellations)
+    activity_task_stream: Mutex<BoxStream<'static, Result<ActivityTask, PollActivityError>>>,
     /// Activities that have been issued to lang but not yet completed
     outstanding_activity_tasks: Arc<DashMap<TaskToken, RemoteInFlightActInfo>>,
     /// Holds activity tasks we have received by non-polling means. EX: In direct response to
@@ -146,10 +148,9 @@ impl WorkerActivityTasks {
             ratelimiter,
             metrics.clone(),
             shutdown_token.clone(),
-        )
-        .map(|res| res.map(|task| (task, false)));
+        );
         let (non_poll_tasks_tx, non_poll_tasks_rx) = unbounded_channel();
-        let tasks_stream = Self::merge_task_sources(
+        let tasks_stream = Self::merge_start_task_sources(
             non_poll_tasks_rx,
             poller_stream,
             metrics.clone(),
@@ -157,18 +158,19 @@ impl WorkerActivityTasks {
             shutdown_token.clone(),
         );
         let heartbeat_manager = Arc::new(ActivityHeartbeatManager::new(client));
-        let cancel_stream = Self::next_pending_cancel_task_stream(
+        let cancel_stream = Self::make_cancel_task_stream(
             heartbeat_manager.clone(),
             outstanding_activity_tasks.clone(),
         );
-        let poll_stream =
+        // Prefer cancels over new tasks
+        let activity_task_stream =
             stream::select_with_strategy(cancel_stream, tasks_stream, |_: &mut ()| PollNext::Left);
 
         Self {
             shutdown_token,
             non_poll_tasks_tx,
             heartbeat_manager,
-            poller_stream: Mutex::new(poll_stream.boxed()),
+            activity_task_stream: Mutex::new(activity_task_stream.boxed()),
             outstanding_activity_tasks,
             activities_semaphore: semaphore,
             complete_notify: Notify::new(),
@@ -179,9 +181,10 @@ impl WorkerActivityTasks {
         }
     }
 
-    fn merge_task_sources(
+    /// Merges the server poll and eager [ActivityTask] sources
+    fn merge_start_task_sources(
         non_poll_tasks_rx: UnboundedReceiver<PermittedTqResp>,
-        poller_stream: impl Stream<Item = Result<(PermittedTqResp, bool), tonic::Status>>,
+        poller_stream: impl Stream<Item = Result<PermittedTqResp, tonic::Status>>,
         metrics: MetricsContext,
         outstanding_tasks: Arc<DashMap<TaskToken, RemoteInFlightActInfo>>,
         shutdown_token: CancellationToken,
@@ -194,6 +197,7 @@ impl WorkerActivityTasks {
                         biased;
 
                         task_opt = non_poll_tasks_rx.recv() => {
+                            // Add is_eager true and wrap in Result
                             return task_opt.map(|task| (Ok((task, true)), (non_poll_tasks_rx, shutdown_token)));
                         }
                         _ = shutdown_token.cancelled() => {
@@ -214,7 +218,10 @@ impl WorkerActivityTasks {
                 ))
             },
         );
+        // Add is_eager false
+        let poller_stream = poller_stream.map(|res| res.map(|task| (task, false)));
 
+        // Prefer eager activities over new tasks
         stream::select_with_strategy(non_poll_stream, poller_stream, |_: &mut ()| PollNext::Left)
             .zip(cloning_stream)
             .map(|(res, (metrics, outstanding_tasks))| {
@@ -223,6 +230,52 @@ impl WorkerActivityTasks {
                 })
                 .map_err(|err| err.into())
             })
+    }
+
+    /// Builds an [ActivityTask] stream for cancellation tasks from cancels delivered by the `heartbeat_manager`
+    fn make_cancel_task_stream(
+        heartbeat_manager: Arc<ActivityHeartbeatManager>,
+        outstanding_activity_tasks: Arc<DashMap<TaskToken, RemoteInFlightActInfo>>,
+    ) -> impl Stream<Item = Result<ActivityTask, PollActivityError>> {
+        stream::unfold(
+            (heartbeat_manager, outstanding_activity_tasks),
+            |(heartbeat_manager, outstanding_activity_tasks)| async move {
+                loop {
+                    let next_pc = heartbeat_manager.next_pending_cancel().await;
+                    // Issue cancellations for anything we noticed was cancelled during heartbeating
+                    if let Some(PendingActivityCancel { task_token, reason }) = next_pc {
+                        // It's possible that activity has been completed and we no longer have an
+                        // outstanding activity task. This is fine because it means that we no
+                        // longer need to cancel this activity, so we'll just ignore such orphaned
+                        // cancellations.
+                        if let Some(mut details) = outstanding_activity_tasks.get_mut(&task_token) {
+                            if details.issued_cancel_to_lang {
+                                // Don't double-issue cancellations
+                                continue;
+                            }
+
+                            details.issued_cancel_to_lang = true;
+                            if reason == ActivityCancelReason::NotFound {
+                                details.known_not_found = true;
+                            }
+                            return Some((
+                                Ok(ActivityTask::cancel_from_ids(task_token.0, reason)),
+                                (heartbeat_manager, outstanding_activity_tasks.clone()),
+                            ));
+                        } else {
+                            debug!(task_token = ?task_token, "Unknown activity task when issuing cancel");
+                            // If we can't find the activity here, it's already been completed,
+                            // in which case issuing a cancel again is pointless.
+                            continue;
+                        }
+                    } else {
+                        // The only situation where the next cancel would return none is if the manager
+                        // was dropped, which can only happen on shutdown, in which case, we close the stream.
+                        return None;
+                    }
+                }
+            },
+        )
     }
 
     pub(crate) fn notify_shutdown(&self) {
@@ -242,11 +295,12 @@ impl WorkerActivityTasks {
         self.poll_returned_shutdown_token.cancelled().await;
     }
 
-    /// Wait until not at the outstanding activity limit, and then poll for an activity task.
+    /// Exclusive poll for activity tasks
     ///
-    /// Returns `Ok(None)` if no activity is ready and the overall polling loop should be retried.
+    /// Polls the various task sources (server polls, eager activities, cancellations) while respecting the provided rate limits and allowed concurrency.
+    /// Returns Err(PollActivityError::ShutDown) after shutdown is completed and all tasks sources are depleted.
     pub(crate) async fn poll(&self) -> Result<ActivityTask, PollActivityError> {
-        let mut poller_stream = self.poller_stream.lock().await;
+        let mut poller_stream = self.activity_task_stream.lock().await;
         poller_stream.next().await.unwrap_or_else(|| {
             self.poll_returned_shutdown_token.cancel();
             Err(PollActivityError::ShutDown)
@@ -366,51 +420,7 @@ impl WorkerActivityTasks {
         }
     }
 
-    fn next_pending_cancel_task_stream(
-        heartbeat_manager: Arc<ActivityHeartbeatManager>,
-        outstanding_activity_tasks: Arc<DashMap<TaskToken, RemoteInFlightActInfo>>,
-    ) -> impl Stream<Item = Result<ActivityTask, PollActivityError>> {
-        stream::unfold(
-            (heartbeat_manager, outstanding_activity_tasks),
-            |(heartbeat_manager, outstanding_activity_tasks)| async move {
-                loop {
-                    let next_pc = heartbeat_manager.next_pending_cancel().await;
-                    // Issue cancellations for anything we noticed was cancelled during heartbeating
-                    if let Some(PendingActivityCancel { task_token, reason }) = next_pc {
-                        // It's possible that activity has been completed and we no longer have an
-                        // outstanding activity task. This is fine because it means that we no
-                        // longer need to cancel this activity, so we'll just ignore such orphaned
-                        // cancellations.
-                        if let Some(mut details) = outstanding_activity_tasks.get_mut(&task_token) {
-                            if details.issued_cancel_to_lang {
-                                // Don't double-issue cancellations
-                                continue;
-                            }
-
-                            details.issued_cancel_to_lang = true;
-                            if reason == ActivityCancelReason::NotFound {
-                                details.known_not_found = true;
-                            }
-                            return Some((
-                                Ok(ActivityTask::cancel_from_ids(task_token.0, reason)),
-                                (heartbeat_manager, outstanding_activity_tasks.clone()),
-                            ));
-                        } else {
-                            debug!(task_token = ?task_token, "Unknown activity task when issuing cancel");
-                            // If we can't find the activity here, it's already been completed,
-                            // in which case issuing a cancel again is pointless.
-                            continue;
-                        }
-                    } else {
-                        // The only situation where the next cancel would return none is if the manager
-                        // was dropped, which can only happen on shutdown, in which case, we close the stream.
-                        return None;
-                    }
-                }
-            },
-        )
-    }
-
+    /// Called when there is a new [ActivityTask] about to be bubbled up out of the poller
     fn about_to_issue_task(
         outstanding_tasks: Arc<DashMap<TaskToken, RemoteInFlightActInfo>>,
         task: PermittedTqResp,
@@ -474,12 +484,12 @@ impl ActivitiesFromWFTsHandle {
         for t in tasks.into_iter() {
             // Technically we should be reporting `activity_task_received` here, but for simplicity
             // and time insensitivity, that metric is tracked in `about_to_issue_task`.
-            // self.tx.send(t).expect("Receive half cannot be dropped");
-            let _ = self.tx.send(t);
+            self.tx.send(t).expect("Receive half cannot be dropped");
         }
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct PermittedTqResp {
     pub permit: OwnedMeteredSemPermit,
     pub resp: PollActivityTaskQueueResponse,
