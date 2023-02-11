@@ -174,6 +174,12 @@ message StartWorkflowExecutionRequest {
     // The returned task will be marked as started and is expected to be completed by the specified
     // `workflow_task_timeout`.
     bool request_eager_execution = 17;
+    // These values will be available as ContinuedFailure and LastCompletionResult in the
+    // WorkflowExecutionStarted event and through SDKs. The are currently only used by the
+    // server itself (for the schedules feature) and are not intended to be exposed in
+    // StartWorkflowExecution.
+    temporal.api.failure.v1.Failure continued_failure = 18;
+    temporal.api.common.v1.Payloads last_completion_result = 19;
 }
 
 message StartWorkflowExecutionResponse {
@@ -871,6 +877,10 @@ message GetSystemInfoResponse {
 
         // True if server supports eager workflow task dispatching for the StartWorkflowExecution API
         bool eager_workflow_start = 8;
+
+        // True if the server knows about the sdk metadata field on WFT completions and will record
+        // it in history
+        bool sdk_metadata = 9;
     }
 }
 
