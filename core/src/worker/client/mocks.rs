@@ -1,15 +1,33 @@
 use super::*;
 use futures::Future;
 
+pub(crate) static DEFAULT_TEST_CAPABILITIES: &Capabilities = &Capabilities {
+    signal_and_query_header: true,
+    internal_error_differentiation: true,
+    activity_failure_include_heartbeat: true,
+    supports_schedules: true,
+    encoded_failure_attributes: true,
+    build_id_based_versioning: true,
+    upsert_memo: true,
+    eager_workflow_start: true,
+    sdk_metadata: true,
+};
+
 #[cfg(test)]
 /// Create a mock client primed with basic necessary expectations
 pub(crate) fn mock_workflow_client() -> MockWorkerClient {
-    MockWorkerClient::new()
+    let mut r = MockWorkerClient::new();
+    r.expect_capabilities()
+        .returning(|| Some(DEFAULT_TEST_CAPABILITIES));
+    r
 }
 
 /// Create a mock manual client primed with basic necessary expectations
 pub(crate) fn mock_manual_workflow_client() -> MockManualWorkerClient {
-    MockManualWorkerClient::new()
+    let mut r = MockManualWorkerClient::new();
+    r.expect_capabilities()
+        .returning(|| Some(DEFAULT_TEST_CAPABILITIES));
+    r
 }
 
 // Need a version of the mock that can return futures so we can return potentially pending
@@ -83,5 +101,7 @@ mockall::mock! {
             query_result: QueryResult,
         ) -> impl Future<Output = Result<RespondQueryTaskCompletedResponse>> + Send + 'b
             where 'a: 'b, Self: 'b;
+
+        fn capabilities(&self) -> Option<&'static get_system_info_response::Capabilities>;
     }
 }

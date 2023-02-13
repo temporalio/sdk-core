@@ -11,8 +11,9 @@ use temporal_sdk_core_protos::{
         enums::v1::{TaskQueueKind, WorkflowTaskFailedCause},
         failure::v1::Failure,
         query::v1::WorkflowQueryResult,
+        sdk::v1::WorkflowTaskCompletedMetadata,
         taskqueue::v1::{StickyExecutionAttributes, TaskQueue, TaskQueueMetadata, VersionId},
-        workflowservice::v1::*,
+        workflowservice::v1::{get_system_info_response::Capabilities, *},
     },
     TaskToken,
 };
@@ -109,6 +110,9 @@ pub(crate) trait WorkerClient: Sync + Send {
         task_token: TaskToken,
         query_result: QueryResult,
     ) -> Result<RespondQueryTaskCompletedResponse>;
+
+    #[allow(clippy::needless_lifetimes)] // Clippy is wrong here
+    fn capabilities<'a>(&'a self) -> Option<&'a get_system_info_response::Capabilities>;
 }
 
 #[async_trait::async_trait]
@@ -189,6 +193,7 @@ impl WorkerClient for WorkerClientBag {
             worker_versioning_id: Some(VersionId {
                 worker_build_id: self.versioning_build_id(),
             }),
+            messages: vec![],
             binary_checksum: self.worker_build_id.clone(),
             query_results: request
                 .query_responses
@@ -206,6 +211,7 @@ impl WorkerClient for WorkerClientBag {
                 })
                 .collect(),
             namespace: self.namespace.clone(),
+            sdk_metadata: Some(request.sdk_metadata),
         };
         Ok(self
             .client
@@ -302,6 +308,7 @@ impl WorkerClient for WorkerClientBag {
             identity: self.identity.clone(),
             binary_checksum: self.worker_build_id.clone(),
             namespace: self.namespace.clone(),
+            messages: vec![],
         };
         Ok(self
             .client
@@ -352,6 +359,10 @@ impl WorkerClient for WorkerClientBag {
             .await?
             .into_inner())
     }
+
+    fn capabilities(&self) -> Option<&Capabilities> {
+        self.client.get_client().inner().capabilities()
+    }
 }
 
 /// A version of [RespondWorkflowTaskCompletedRequest] that will finish being filled out by the
@@ -370,4 +381,6 @@ pub(crate) struct WorkflowTaskCompletion {
     pub return_new_workflow_task: bool,
     /// Force a new WFT to be created after this completion
     pub force_create_new_workflow_task: bool,
+    /// SDK-specific metadata to send
+    pub sdk_metadata: WorkflowTaskCompletedMetadata,
 }

@@ -41,9 +41,10 @@ import "temporal/api/enums/v1/failed_cause.proto";
 import "temporal/api/enums/v1/workflow.proto";
 import "temporal/api/common/v1/message.proto";
 import "temporal/api/failure/v1/message.proto";
-import "temporal/api/interaction/v1/message.proto";
 import "temporal/api/taskqueue/v1/message.proto";
+import "temporal/api/update/v1/message.proto";
 import "temporal/api/workflow/v1/message.proto";
+import "temporal/api/sdk/v1/task_complete_metadata.proto";
 
 // Always the first event in workflow history
 message WorkflowExecutionStartedEventAttributes {
@@ -195,6 +196,9 @@ message WorkflowTaskCompletedEventAttributes {
     // ID of the worker who picked up this workflow task, or missing if worker
     // is not using versioning.
     temporal.api.taskqueue.v1.VersionId worker_versioning_id = 5;
+    // Data the SDK wishes to record for itself, but server need not interpret, and does not
+    // directly impact workflow state.
+    temporal.api.sdk.v1.WorkflowTaskCompletedMetadata sdk_metadata = 6;
 }
 
 message WorkflowTaskTimedOutEventAttributes {
@@ -647,21 +651,6 @@ message ChildWorkflowExecutionTerminatedEventAttributes {
     int64 started_event_id = 5;
 }
 
-message WorkflowUpdateAcceptedEventAttributes {
-    temporal.api.interaction.v1.Meta meta = 1;
-    temporal.api.interaction.v1.Input input = 2;
-}
-
-message WorkflowUpdateCompletedEventAttributes {
-    temporal.api.interaction.v1.Meta meta = 1;
-    temporal.api.interaction.v1.Output output = 2;
-}
-
-message WorkflowUpdateRejectedEventAttributes {
-    temporal.api.interaction.v1.Meta meta = 1;
-    temporal.api.failure.v1.Failure failure = 2;
-}
-
 message WorkflowPropertiesModifiedExternallyEventAttributes {
     // If set to a nonempty string, future workflow tasks for this workflow shall be dispatched on
     // the provided queue.
@@ -685,6 +674,44 @@ message ActivityPropertiesModifiedExternallyEventAttributes {
     // The number of attempts at the activity is preserved.
     temporal.api.common.v1.RetryPolicy new_retry_policy = 2;
 }
+
+message WorkflowExecutionUpdateAcceptedEventAttributes {
+    // The instance ID of the update protocol that generated this event.
+    string protocol_instance_id = 1;
+    // The message ID of the original request message that initiated this
+    // update. Needed so that the worker can recreate and deliver that same
+    // message as part of replay.
+    string accepted_request_message_id = 2;
+    // The event ID used to sequence the original request message.
+    int64 accepted_request_sequencing_event_id = 3;
+    // The message payload of the original request message that initiated this
+    // update.
+    temporal.api.update.v1.Request accepted_request = 4;
+}
+
+message WorkflowExecutionUpdateCompletedEventAttributes {
+    // The metadata about this update.
+    temporal.api.update.v1.Meta meta = 1;
+    // The outcome of executing the workflow update function.
+    temporal.api.update.v1.Outcome outcome = 2;
+}
+
+message WorkflowExecutionUpdateRejectedEventAttributes {
+    // The instance ID of the update protocol that generated this event.
+    string protocol_instance_id = 1;
+    // The message ID of the original request message that initiated this
+    // update. Needed so that the worker can recreate and deliver that same
+    // message as part of replay.
+    string rejected_request_message_id = 2;
+    // The event ID used to sequence the original request message.
+    int64 rejected_request_sequencing_event_id = 3;
+    // The message payload of the original request message that initiated this
+    // update.
+    temporal.api.update.v1.Request rejected_request = 4;
+    // The cause of rejection.
+    temporal.api.failure.v1.Failure failure = 5;
+}
+
 
 // History events are the method by which Temporal SDKs advance (or recreate) workflow state.
 // See the `EventType` enum for more info about what each event is for.
@@ -744,9 +771,9 @@ message HistoryEvent {
         SignalExternalWorkflowExecutionFailedEventAttributes signal_external_workflow_execution_failed_event_attributes = 43;
         ExternalWorkflowExecutionSignaledEventAttributes external_workflow_execution_signaled_event_attributes = 44;
         UpsertWorkflowSearchAttributesEventAttributes upsert_workflow_search_attributes_event_attributes = 45;
-        WorkflowUpdateRejectedEventAttributes workflow_update_rejected_event_attributes = 46;
-        WorkflowUpdateAcceptedEventAttributes workflow_update_accepted_event_attributes = 47;
-        WorkflowUpdateCompletedEventAttributes workflow_update_completed_event_attributes = 48;
+        WorkflowExecutionUpdateAcceptedEventAttributes workflow_execution_update_accepted_event_attributes = 46;
+        WorkflowExecutionUpdateRejectedEventAttributes workflow_execution_update_rejected_event_attributes = 47;
+        WorkflowExecutionUpdateCompletedEventAttributes workflow_execution_update_completed_event_attributes = 48;
         WorkflowPropertiesModifiedExternallyEventAttributes workflow_properties_modified_externally_event_attributes = 49;
         ActivityPropertiesModifiedExternallyEventAttributes activity_properties_modified_externally_event_attributes = 50;
         WorkflowPropertiesModifiedEventAttributes workflow_properties_modified_event_attributes = 51;

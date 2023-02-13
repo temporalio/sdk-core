@@ -1,6 +1,7 @@
 use crate::{
     telemetry::metrics::MetricsContext,
     worker::{
+        client::mocks::DEFAULT_TEST_CAPABILITIES,
         workflow::{
             workflow_stream::{WFStream, WFStreamInput},
             LAReqSink, LocalActivityRequestSink,
@@ -45,6 +46,7 @@ pub async fn replay_wf_state_inputs(mut config: WorkerConfig, inputs: impl Strea
         &mut config,
         MetricsContext::no_op(),
         CancellationToken::new(),
+        DEFAULT_TEST_CAPABILITIES.clone(),
     );
     let sink = ReadingFromFileLaReqSink {
         resolutions: la_resp_q,

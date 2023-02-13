@@ -3,8 +3,12 @@ use super::{
     WFMachinesError,
 };
 use crate::{
+    internal_flags::CoreInternalFlags,
     protosext::{CompleteLocalActivityData, HistoryEventExt, ValidScheduleLA},
-    worker::{workflow::OutgoingJob, LocalActivityExecutionResult},
+    worker::{
+        workflow::{machines::HistEventData, InternalFlagsRef, OutgoingJob},
+        LocalActivityExecutionResult,
+    },
 };
 use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
 use std::{
@@ -141,6 +145,7 @@ pub(super) fn new_local_activity(
     replaying_when_invoked: bool,
     maybe_pre_resolved: Option<ResolveDat>,
     wf_time: Option<SystemTime>,
+    internal_flags: InternalFlagsRef,
 ) -> Result<(LocalActivityMachine, Vec<MachineResponse>), WFMachinesError> {
     let initial_state = if replaying_when_invoked {
         if let Some(dat) = maybe_pre_resolved {
@@ -168,6 +173,7 @@ pub(super) fn new_local_activity(
             attrs,
             replaying_when_invoked,
             wf_time_when_started: wf_time,
+            internal_flags,
         },
     };
 
@@ -303,6 +309,7 @@ pub(super) struct SharedState {
     attrs: ValidScheduleLA,
     replaying_when_invoked: bool,
     wf_time_when_started: Option<SystemTime>,
+    internal_flags: InternalFlagsRef,
 }
 
 impl SharedState {
@@ -749,10 +756,11 @@ impl TryFrom<CommandType> for LocalActivityMachineEvents {
     }
 }
 
-impl TryFrom<HistoryEvent> for LocalActivityMachineEvents {
+impl TryFrom<HistEventData> for LocalActivityMachineEvents {
     type Error = WFMachinesError;
 
-    fn try_from(e: HistoryEvent) -> Result<Self, Self::Error> {
+    fn try_from(e: HistEventData) -> Result<Self, Self::Error> {
+        let e = e.event;
         if e.event_type() != EventType::MarkerRecorded {
             return Err(WFMachinesError::Nondeterminism(format!(
                 "Local activity machine cannot handle this event: {e}"
@@ -778,6 +786,28 @@ fn verify_marker_data_matches(
             command with sequence number {}",
             dat.marker_dat.seq, shared.attrs.seq
         )));
+    }
+    // Here we use whether or not we were replaying when we _first invoked_ the LA, because we
+    // are always replaying when we see the marker recorded event, and that would make this check
+    // a bit pointless.
+    if shared.internal_flags.borrow_mut().try_use(
+        CoreInternalFlags::IdAndTypeDeterminismChecks,
+        !shared.replaying_when_invoked,
+    ) {
+        if dat.marker_dat.activity_id != shared.attrs.activity_id {
+            return Err(WFMachinesError::Nondeterminism(format!(
+                "Activity id of recorded marker '{}' does not \
+                 match activity id of local activity command '{}'",
+                dat.marker_dat.activity_id, shared.attrs.activity_id
+            )));
+        }
+        if dat.marker_dat.activity_type != shared.attrs.activity_type {
+            return Err(WFMachinesError::Nondeterminism(format!(
+                "Activity type of recorded marker '{}' does not \
+                 match activity type of local activity command '{}'",
+                dat.marker_dat.activity_type, shared.attrs.activity_type
+            )));
+        }
     }
 
     Ok(())
@@ -821,10 +851,15 @@ mod tests {
         temporal::api::{
             command::v1::command, enums::v1::WorkflowTaskFailedCause, failure::v1::Failure,
         },
+        DEFAULT_ACTIVITY_TYPE,
     };
 
     async fn la_wf(ctx: WfContext) -> WorkflowResult<()> {
-        ctx.local_activity(LocalActivityOptions::default()).await;
+        ctx.local_activity(LocalActivityOptions {
+            activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
+            ..Default::default()
+        })
+        .await;
         Ok(().into())
     }
 
@@ -937,8 +972,16 @@ mod tests {
     }
 
     async fn two_la_wf(ctx: WfContext) -> WorkflowResult<()> {
-        ctx.local_activity(LocalActivityOptions::default()).await;
-        ctx.local_activity(LocalActivityOptions::default()).await;
+        ctx.local_activity(LocalActivityOptions {
+            activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
+            ..Default::default()
+        })
+        .await;
+        ctx.local_activity(LocalActivityOptions {
+            activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
+            ..Default::default()
+        })
+        .await;
         Ok(().into())
     }
 
@@ -1031,8 +1074,14 @@ mod tests {
 
     async fn two_la_wf_parallel(ctx: WfContext) -> WorkflowResult<()> {
         tokio::join!(
-            ctx.local_activity(LocalActivityOptions::default()),
-            ctx.local_activity(LocalActivityOptions::default())
+            ctx.local_activity(LocalActivityOptions {
+                activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
+                ..Default::default()
+            }),
+            ctx.local_activity(LocalActivityOptions {
+                activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
+                ..Default::default()
+            })
         );
         Ok(().into())
     }
@@ -1115,9 +1164,17 @@ mod tests {
     }
 
     async fn la_timer_la(ctx: WfContext) -> WorkflowResult<()> {
-        ctx.local_activity(LocalActivityOptions::default()).await;
+        ctx.local_activity(LocalActivityOptions {
+            activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
+            ..Default::default()
+        })
+        .await;
         ctx.timer(Duration::from_secs(5)).await;
-        ctx.local_activity(LocalActivityOptions::default()).await;
+        ctx.local_activity(LocalActivityOptions {
+            activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
+            ..Default::default()
+        })
+        .await;
         Ok(().into())
     }
 
@@ -1358,6 +1415,7 @@ mod tests {
         let func = WorkflowFunction::new(move |ctx| async move {
             let la = ctx.local_activity(LocalActivityOptions {
                 cancel_type,
+                activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
                 ..Default::default()
             });
             ctx.timer(Duration::from_secs(1)).await;

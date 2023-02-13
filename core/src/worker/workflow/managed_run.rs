@@ -13,7 +13,7 @@ use crate::{
             ActivationCompleteOutcome, ActivationCompleteResult, ActivationOrAuto,
             EvictionRequestResult, FailedActivationWFTReport, HeartbeatTimeoutMsg, HistoryUpdate,
             LocalActivityRequestSink, LocalResolution, NextPageReq, OutgoingServerCommands,
-            OutstandingActivation, OutstandingTask, PermittedWFT, RequestEvictMsg,
+            OutstandingActivation, OutstandingTask, PermittedWFT, RequestEvictMsg, RunBasics,
             ServerCommandsWithWorkflowInfo, WFCommand, WFMachinesError, WFTReportStatus,
             WorkflowBridge, WorkflowTaskInfo, WFT_HEARTBEAT_TIMEOUT_FRACTION,
         },
@@ -25,7 +25,8 @@ use futures_util::future::AbortHandle;
 use std::{
     collections::HashSet,
     ops::Add,
-    sync::{mpsc::Sender, Arc},
+    rc::Rc,
+    sync::mpsc::Sender,
     time::{Duration, Instant},
 };
 use temporal_sdk_core_protos::{
@@ -65,7 +66,7 @@ pub(super) struct ManagedRun {
     /// pushing things out and then directly back in. The downside is this is the only "impure" part
     /// of the in/out nature of workflow state management. If there's ever a sensible way to lift it
     /// up, that'd be nice.
-    local_activity_request_sink: Arc<dyn LocalActivityRequestSink>,
+    local_activity_request_sink: Rc<dyn LocalActivityRequestSink>,
     /// Set if the run is currently waiting on the execution of some local activities.
     waiting_on_la: Option<WaitingOnLAs>,
     /// Is set to true if the machines encounter an error and the only subsequent thing we should
@@ -93,24 +94,12 @@ pub(super) struct ManagedRun {
     completion_waiting_on_page_fetch: Option<RunActivationCompletion>,
 }
 impl ManagedRun {
-    #[allow(clippy::too_many_arguments)] // Ok with this here. Nothing reusable to extract.
     pub(super) fn new(
-        history_update: HistoryUpdate,
-        namespace: String,
-        workflow_id: String,
-        workflow_type: String,
-        run_id: String,
-        local_activity_request_sink: Arc<dyn LocalActivityRequestSink>,
-        metrics: MetricsContext,
+        basics: RunBasics,
+        local_activity_request_sink: Rc<dyn LocalActivityRequestSink>,
     ) -> Self {
-        let wfm = WorkflowManager::new(
-            history_update,
-            namespace,
-            workflow_id,
-            workflow_type,
-            run_id,
-            metrics.clone(),
-        );
+        let metrics = basics.metrics.clone();
+        let wfm = WorkflowManager::new(basics);
         Self {
             wfm,
             local_activity_request_sink,
@@ -354,6 +343,7 @@ impl ManagedRun {
     pub(super) fn successful_completion(
         &mut self,
         mut commands: Vec<WFCommand>,
+        used_flags: Vec<u32>,
         resp_chan: Option<oneshot::Sender<ActivationCompleteResult>>,
     ) -> Result<RunUpdateAct, NextPageReq> {
         let activation_was_only_eviction = self.activation_has_only_eviction();
@@ -422,6 +412,7 @@ impl ManagedRun {
                 activation_was_only_eviction,
                 has_pending_query,
                 query_responses,
+                used_flags,
                 resp_chan,
             };
 
@@ -568,6 +559,8 @@ impl ManagedRun {
             activation_was_only_eviction: completion.activation_was_only_eviction,
         };
 
+        self.wfm.machines.add_lang_used_flags(completion.used_flags);
+
         // If this is just bookkeeping after a reply to an only-eviction activation, we can bypass
         // everything, since there is no reason to continue trying to update machines.
         if completion.activation_was_only_eviction {
@@ -688,9 +681,6 @@ impl ManagedRun {
                 // Auto-reply WFT complete
                 return true;
             }
-        } else {
-            // If a heartbeat timeout happened, we should always have been waiting on LAs
-            dbg_panic!("WFT heartbeat timeout fired but we were not waiting on any LAs");
         }
         false
     }
@@ -844,7 +834,9 @@ impl ManagedRun {
                             None
                         }
                     }
-                    a @ Some(ActivationOrAuto::Autocomplete { .. }) => a,
+                    a @ Some(
+                        ActivationOrAuto::Autocomplete { .. } | ActivationOrAuto::AutoFail { .. },
+                    ) => a,
                     None => {
                         if let Some(reason) = self.trying_to_evict.as_ref() {
                             // If we had nothing to do, but we're trying to evict, just do that now
@@ -906,12 +898,10 @@ impl ManagedRun {
                     )
                 } else {
                     warn!(error=?fail.source, "Error while updating workflow");
-                    self.request_eviction(RequestEvictMsg {
-                        run_id: self.run_id().to_string(),
-                        message: format!("Error while updating workflow: {:?}", fail.source),
-                        reason: fail.source.evict_reason(),
+                    Some(ActivationOrAuto::AutoFail {
+                        run_id: self.run_id().to_owned(),
+                        machines_err: fail.source,
                     })
-                    .into_run_update_resp()
                 };
                 rur
             }
@@ -930,7 +920,9 @@ impl ManagedRun {
                     }
                 }
             }
-            ActivationOrAuto::Autocomplete { .. } => OutstandingActivation::Autocomplete,
+            ActivationOrAuto::Autocomplete { .. } | ActivationOrAuto::AutoFail { .. } => {
+                OutstandingActivation::Autocomplete
+            }
         };
         if let Some(old_act) = self.activation {
             // This is a panic because we have screwed up core logic if this is violated. It must be
@@ -949,12 +941,18 @@ impl ManagedRun {
         data: CompletionDataForWFT,
         due_to_heartbeat_timeout: bool,
     ) -> FulfillableActivationComplete {
-        let outgoing_cmds = self.wfm.get_server_commands();
+        let mut outgoing_cmds = self.wfm.get_server_commands();
         if data.activation_was_only_eviction && !outgoing_cmds.commands.is_empty() {
-            dbg_panic!(
+            if self.am_broken {
+                // If we broke there could be commands in the pipe that we didn't get a chance to
+                // handle properly during replay, just wipe them all out.
+                outgoing_cmds.commands = vec![];
+            } else {
+                dbg_panic!(
                 "There should not be any outgoing commands when preparing a completion response \
                  if the activation was only an eviction. This is an SDK bug."
-            );
+                );
+            }
         }
 
         let query_responses = data.query_responses;
@@ -986,6 +984,7 @@ impl ManagedRun {
                     force_new_wft,
                     commands: outgoing_cmds.commands,
                     query_responses,
+                    sdk_metadata: self.wfm.machines.get_metadata_for_wft_complete(),
                 },
             })
         } else {
@@ -1139,24 +1138,9 @@ struct WorkflowManager {
 impl WorkflowManager {
     /// Create a new workflow manager given workflow history and execution info as would be found
     /// in [PollWorkflowTaskQueueResponse]
-    fn new(
-        history: HistoryUpdate,
-        namespace: String,
-        workflow_id: String,
-        workflow_type: String,
-        run_id: String,
-        metrics: MetricsContext,
-    ) -> Self {
+    fn new(basics: RunBasics) -> Self {
         let (wfb, cmd_sink) = WorkflowBridge::new();
-        let state_machines = WorkflowMachines::new(
-            namespace,
-            workflow_id,
-            workflow_type,
-            run_id,
-            history,
-            Box::new(wfb).into(),
-            metrics,
-        );
+        let state_machines = WorkflowMachines::new(basics, Box::new(wfb).into());
         Self {
             machines: state_machines,
             command_sink: Some(cmd_sink),
@@ -1289,6 +1273,7 @@ struct RunActivationCompletion {
     activation_was_only_eviction: bool,
     has_pending_query: bool,
     query_responses: Vec<QueryResult>,
+    used_flags: Vec<u32>,
     /// Used to notify the worker when the completion is done processing and the completion can
     /// unblock. Must always be `Some` when initialized.
     resp_chan: Option<oneshot::Sender<ActivationCompleteResult>>,

@@ -4,6 +4,10 @@ use super::{
     workflow_machines::MachineResponse, Cancellable, EventInfo, NewMachineWithCommand,
     OnEventWrapper, WFMachinesAdapter, WFMachinesError,
 };
+use crate::{
+    internal_flags::CoreInternalFlags,
+    worker::workflow::{machines::HistEventData, InternalFlagsRef},
+};
 use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
 use std::convert::{TryFrom, TryInto};
 use temporal_sdk_core_protos::{
@@ -98,36 +102,37 @@ pub(super) struct ActTaskScheduledData {
     event_id: i64,
     act_type: String,
     act_id: String,
-}
-
-/// Creates a new activity state machine and a command to schedule it on the server.
-pub(super) fn new_activity(attribs: ScheduleActivity) -> NewMachineWithCommand {
-    let (activity, add_cmd) = ActivityMachine::new_scheduled(attribs);
-    NewMachineWithCommand {
-        command: add_cmd,
-        machine: activity.into(),
-    }
+    last_task_in_history: bool,
 }
 
 impl ActivityMachine {
     /// Create a new activity and immediately schedule it.
-    fn new_scheduled(attribs: ScheduleActivity) -> (Self, Command) {
+    pub(super) fn new_scheduled(
+        attrs: ScheduleActivity,
+        internal_flags: InternalFlagsRef,
+    ) -> NewMachineWithCommand {
         let mut s = Self {
             state: Created {}.into(),
             shared_state: SharedState {
-                cancellation_type: ActivityCancellationType::from_i32(attribs.cancellation_type)
+                cancellation_type: ActivityCancellationType::from_i32(attrs.cancellation_type)
                     .unwrap(),
-                attrs: attribs,
-                ..Default::default()
+                attrs,
+                internal_flags,
+                scheduled_event_id: 0,
+                started_event_id: 0,
+                cancelled_before_sent: false,
             },
         };
         OnEventWrapper::on_event_mut(&mut s, ActivityMachineEvents::Schedule)
             .expect("Scheduling activities doesn't fail");
-        let cmd = Command {
+        let command = Command {
             command_type: CommandType::ScheduleActivityTask as i32,
             attributes: Some(s.shared_state().attrs.clone().into()),
         };
-        (s, cmd)
+        NewMachineWithCommand {
+            command,
+            machine: s.into(),
+        }
     }
 
     fn machine_responses_from_cancel_request(&self, cancel_cmd: Command) -> Vec<MachineResponse> {
@@ -175,10 +180,12 @@ impl ActivityMachine {
     }
 }
 
-impl TryFrom<HistoryEvent> for ActivityMachineEvents {
+impl TryFrom<HistEventData> for ActivityMachineEvents {
     type Error = WFMachinesError;
 
-    fn try_from(e: HistoryEvent) -> Result<Self, Self::Error> {
+    fn try_from(e: HistEventData) -> Result<Self, Self::Error> {
+        let last_task_in_history = e.current_task_is_last_in_history;
+        let e = e.event;
         Ok(match e.event_type() {
             EventType::ActivityTaskScheduled => {
                 if let Some(history_event::Attributes::ActivityTaskScheduledEventAttributes(
@@ -189,6 +196,7 @@ impl TryFrom<HistoryEvent> for ActivityMachineEvents {
                         event_id: e.event_id,
                         act_id: attrs.activity_id,
                         act_type: attrs.activity_type.unwrap_or_default().name,
+                        last_task_in_history,
                     })
                 } else {
                     return Err(WFMachinesError::Fatal(format!(
@@ -366,13 +374,14 @@ impl Cancellable for ActivityMachine {
     }
 }
 
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub(super) struct SharedState {
     scheduled_event_id: i64,
     started_event_id: i64,
     attrs: ScheduleActivity,
     cancellation_type: ActivityCancellationType,
     cancelled_before_sent: bool,
+    internal_flags: InternalFlagsRef,
 }
 
 #[derive(Default, Clone)]
@@ -394,19 +403,24 @@ impl ScheduleCommandCreated {
         dat: SharedState,
         sched_dat: ActTaskScheduledData,
     ) -> ActivityMachineTransition<ScheduledEventRecorded> {
-        if sched_dat.act_id != dat.attrs.activity_id {
-            return TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
-                "Activity id of scheduled event '{}' does not \
+        if dat.internal_flags.borrow_mut().try_use(
+            CoreInternalFlags::IdAndTypeDeterminismChecks,
+            sched_dat.last_task_in_history,
+        ) {
+            if sched_dat.act_id != dat.attrs.activity_id {
+                return TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
+                    "Activity id of scheduled event '{}' does not \
                  match activity id of activity command '{}'",
-                sched_dat.act_id, dat.attrs.activity_id
-            )));
-        }
-        if sched_dat.act_type != dat.attrs.activity_type {
-            return TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
-                "Activity type of scheduled event '{}' does not \
+                    sched_dat.act_id, dat.attrs.activity_id
+                )));
+            }
+            if sched_dat.act_type != dat.attrs.activity_type {
+                return TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
+                    "Activity type of scheduled event '{}' does not \
                  match activity type of activity command '{}'",
-                sched_dat.act_type, dat.attrs.activity_type
-            )));
+                    sched_dat.act_type, dat.attrs.activity_type
+                )));
+            }
         }
         ActivityMachineTransition::ok_shared(
             vec![],
@@ -807,10 +821,11 @@ fn convert_payloads(
 mod test {
     use super::*;
     use crate::{
-        replay::TestHistoryBuilder, test_help::canned_histories, worker::workflow::ManagedWFFunc,
+        internal_flags::InternalFlags, replay::TestHistoryBuilder, test_help::canned_histories,
+        worker::workflow::ManagedWFFunc,
     };
     use rstest::{fixture, rstest};
-    use std::mem::discriminant;
+    use std::{cell::RefCell, mem::discriminant, rc::Rc};
     use temporal_sdk::{
         ActivityOptions, CancellableFuture, WfContext, WorkflowFunction, WorkflowResult,
     };
@@ -932,7 +947,14 @@ mod test {
         ] {
             let mut s = ActivityMachine {
                 state: state.clone(),
-                shared_state: Default::default(),
+                shared_state: SharedState {
+                    scheduled_event_id: 0,
+                    started_event_id: 0,
+                    attrs: Default::default(),
+                    cancellation_type: Default::default(),
+                    cancelled_before_sent: false,
+                    internal_flags: Rc::new(RefCell::new(InternalFlags::new(&Default::default()))),
+                },
             };
             let cmds = s.cancel().unwrap();
             assert_eq!(cmds.len(), 0);

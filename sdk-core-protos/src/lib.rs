@@ -30,6 +30,7 @@ pub mod coresdk {
 
     use crate::temporal::api::{
         common::v1::{Payload, Payloads, WorkflowExecution},
+        enums::v1::WorkflowTaskFailedCause,
         failure::v1::{failure::FailureInfo, ApplicationFailureInfo, Failure},
         workflowservice::v1::PollActivityTaskQueueResponse,
     };
@@ -399,6 +400,7 @@ pub mod coresdk {
             },
             temporal::api::{
                 common::v1::Header,
+                enums::v1::WorkflowTaskFailedCause,
                 history::v1::{
                     WorkflowExecutionCancelRequestedEventAttributes,
                     WorkflowExecutionSignaledEventAttributes,
@@ -431,6 +433,7 @@ pub mod coresdk {
                         reason: reason as i32,
                     }),
                 )],
+                available_internal_flags: vec![],
             }
         }
 
@@ -495,6 +498,17 @@ pub mod coresdk {
         impl Display for EvictionReason {
             fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
                 write!(f, "{self:?}")
+            }
+        }
+
+        impl From<EvictionReason> for WorkflowTaskFailedCause {
+            fn from(value: EvictionReason) -> Self {
+                match value {
+                    EvictionReason::Nondeterminism => {
+                        WorkflowTaskFailedCause::NonDeterministicError
+                    }
+                    _ => WorkflowTaskFailedCause::Unspecified,
+                }
             }
         }
 
@@ -643,7 +657,7 @@ pub mod coresdk {
     }
 
     pub mod workflow_completion {
-        use crate::temporal::api::failure;
+        use crate::temporal::api::{enums::v1::WorkflowTaskFailedCause, failure};
         tonic::include_proto!("coresdk.workflow_completion");
 
         impl workflow_activation_completion::Status {
@@ -657,7 +671,10 @@ pub mod coresdk {
 
         impl From<failure::v1::Failure> for Failure {
             fn from(f: failure::v1::Failure) -> Self {
-                Failure { failure: Some(f) }
+                Failure {
+                    failure: Some(f),
+                    force_cause: WorkflowTaskFailedCause::Unspecified as i32,
+                }
             }
         }
     }
@@ -856,7 +873,10 @@ pub mod coresdk {
 
     impl From<Vec<WorkflowCommand>> for workflow_completion::Success {
         fn from(v: Vec<WorkflowCommand>) -> Self {
-            Self { commands: v }
+            Self {
+                commands: v,
+                used_internal_flags: vec![],
+            }
         }
     }
 
@@ -910,6 +930,7 @@ pub mod coresdk {
                 status: Some(workflow_activation_completion::Status::Failed(
                     workflow_completion::Failure {
                         failure: Some(failure),
+                        force_cause: WorkflowTaskFailedCause::Unspecified as i32,
                     },
                 )),
             }
@@ -993,6 +1014,12 @@ pub mod coresdk {
             }
             false
         }
+
+        pub fn add_internal_flags(&mut self, patch: u32) {
+            if let Some(workflow_activation_completion::Status::Successful(s)) = &mut self.status {
+                s.used_internal_flags.push(patch);
+            }
+        }
     }
 
     /// Makes converting outgoing lang commands into [WorkflowActivationCompletion]s easier
@@ -1040,7 +1067,7 @@ pub mod coresdk {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
             match self {
                 workflow_activation_completion::Status::Successful(
-                    workflow_completion::Success { commands },
+                    workflow_completion::Success { commands, .. },
                 ) => {
                     write!(f, "Success(")?;
                     let mut written = 0;
@@ -1734,6 +1761,7 @@ pub mod temporal {
                             | EventType::TimerCanceled
                             | EventType::TimerStarted
                             | EventType::UpsertWorkflowSearchAttributes
+                            | EventType::WorkflowPropertiesModified
                             | EventType::WorkflowExecutionCanceled
                             | EventType::WorkflowExecutionCompleted
                             | EventType::WorkflowExecutionContinuedAsNew
@@ -1789,6 +1817,15 @@ pub mod temporal {
                             EventType::WorkflowExecutionTimedOut => true,
                             EventType::WorkflowExecutionContinuedAsNew => true,
                             EventType::WorkflowExecutionTerminated => true,
+                            _ => false,
+                        }
+                    }
+
+                    pub fn is_wft_closed_event(&self) -> bool {
+                        match self.event_type() {
+                            EventType::WorkflowTaskCompleted => true,
+                            EventType::WorkflowTaskFailed => true,
+                            EventType::WorkflowTaskTimedOut => true,
                             _ => false,
                         }
                     }
@@ -1849,20 +1886,15 @@ pub mod temporal {
                             Attributes::SignalExternalWorkflowExecutionFailedEventAttributes(_) => {EventType::SignalExternalWorkflowExecutionFailed}
                             Attributes::ExternalWorkflowExecutionSignaledEventAttributes(_) => {EventType::ExternalWorkflowExecutionSignaled}
                             Attributes::UpsertWorkflowSearchAttributesEventAttributes(_) => {EventType::UpsertWorkflowSearchAttributes}
-                            Attributes::WorkflowUpdateRejectedEventAttributes(_) => {EventType::WorkflowUpdateRejected}
-                            Attributes::WorkflowUpdateAcceptedEventAttributes(_) => {EventType::WorkflowUpdateAccepted}
-                            Attributes::WorkflowUpdateCompletedEventAttributes(_) => {EventType::WorkflowUpdateCompleted}
+                            Attributes::WorkflowExecutionUpdateRejectedEventAttributes(_) => {EventType::WorkflowExecutionUpdateRejected}
+                            Attributes::WorkflowExecutionUpdateAcceptedEventAttributes(_) => {EventType::WorkflowExecutionUpdateAccepted}
+                            Attributes::WorkflowExecutionUpdateCompletedEventAttributes(_) => {EventType::WorkflowExecutionUpdateCompleted}
                             Attributes::WorkflowPropertiesModifiedExternallyEventAttributes(_) => {EventType::WorkflowPropertiesModifiedExternally}
                             Attributes::ActivityPropertiesModifiedExternallyEventAttributes(_) => {EventType::ActivityPropertiesModifiedExternally}
                             Attributes::WorkflowPropertiesModifiedEventAttributes(_) => {EventType::WorkflowPropertiesModified}
                         }
                     }
                 }
-            }
-        }
-        pub mod interaction {
-            pub mod v1 {
-                tonic::include_proto!("temporal.api.interaction.v1");
             }
         }
         pub mod namespace {
@@ -1873,6 +1905,11 @@ pub mod temporal {
         pub mod operatorservice {
             pub mod v1 {
                 tonic::include_proto!("temporal.api.operatorservice.v1");
+            }
+        }
+        pub mod protocol {
+            pub mod v1 {
+                tonic::include_proto!("temporal.api.protocol.v1");
             }
         }
         pub mod query {
@@ -1888,6 +1925,11 @@ pub mod temporal {
         pub mod schedule {
             pub mod v1 {
                 tonic::include_proto!("temporal.api.schedule.v1");
+            }
+        }
+        pub mod sdk {
+            pub mod v1 {
+                tonic::include_proto!("temporal.api.sdk.v1");
             }
         }
         pub mod taskqueue {
@@ -1908,6 +1950,11 @@ pub mod temporal {
         pub mod testservice {
             pub mod v1 {
                 tonic::include_proto!("temporal.api.testservice.v1");
+            }
+        }
+        pub mod update {
+            pub mod v1 {
+                tonic::include_proto!("temporal.api.update.v1");
             }
         }
         pub mod version {

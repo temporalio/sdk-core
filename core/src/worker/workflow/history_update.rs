@@ -19,7 +19,7 @@ use std::{
 };
 use temporal_sdk_core_protos::temporal::api::{
     enums::v1::EventType,
-    history::v1::{History, HistoryEvent},
+    history::v1::{history_event, History, HistoryEvent, WorkflowTaskCompletedEventAttributes},
 };
 use tracing::Instrument;
 
@@ -61,28 +61,11 @@ impl Debug for HistoryUpdate {
         }
     }
 }
-impl HistoryUpdate {
-    /// Sometimes it's useful to take an update out of something without needing to use an option
-    /// field. Use this to replace the field with an empty update.
-    pub fn dummy() -> Self {
-        Self {
-            events: vec![],
-            previous_wft_started_id: -1,
-            has_last_wft: false,
-        }
-    }
-    pub fn is_real(&self) -> bool {
-        self.previous_wft_started_id >= 0
-    }
-    pub fn first_event_id(&self) -> Option<i64> {
-        self.events.get(0).map(|e| e.event_id)
-    }
-}
 
 #[derive(Debug)]
 pub enum NextWFT {
     ReplayOver,
-    WFT(Vec<HistoryEvent>),
+    WFT(Vec<HistoryEvent>, bool),
     NeedFetch,
 }
 
@@ -374,6 +357,22 @@ impl Stream for StreamingHistoryPaginator {
 }
 
 impl HistoryUpdate {
+    /// Sometimes it's useful to take an update out of something without needing to use an option
+    /// field. Use this to replace the field with an empty update.
+    pub fn dummy() -> Self {
+        Self {
+            events: vec![],
+            previous_wft_started_id: -1,
+            has_last_wft: false,
+        }
+    }
+    pub fn is_real(&self) -> bool {
+        self.previous_wft_started_id >= 0
+    }
+    pub fn first_event_id(&self) -> Option<i64> {
+        self.events.get(0).map(|e| e.event_id)
+    }
+
     /// Create an instance of an update directly from events. If the passed in event iterator has a
     /// partial WFT sequence at the end, all events after the last complete WFT sequence (ending
     /// with WFT started) are returned back to the caller, since the history update only works in
@@ -474,7 +473,7 @@ impl HistoryUpdate {
                     if siz == 0 {
                         NextWFT::ReplayOver
                     } else {
-                        NextWFT::WFT(self.events.drain(0..=siz).collect())
+                        self.build_next_wft(siz)
                     }
                 } else {
                     if siz != 0 {
@@ -485,10 +484,15 @@ impl HistoryUpdate {
                     NextWFT::NeedFetch
                 }
             }
-            NextWFTSeqEndIndex::Complete(next_wft_ix) => {
-                NextWFT::WFT(self.events.drain(0..=next_wft_ix).collect())
-            }
+            NextWFTSeqEndIndex::Complete(next_wft_ix) => self.build_next_wft(next_wft_ix),
         }
+    }
+
+    fn build_next_wft(&mut self, drain_this_much: usize) -> NextWFT {
+        NextWFT::WFT(
+            self.events.drain(0..=drain_this_much).collect(),
+            self.events.is_empty() && self.has_last_wft,
+        )
     }
 
     /// Lets the caller peek ahead at the next WFT sequence that will be returned by
@@ -517,6 +521,23 @@ impl HistoryUpdate {
             }
         }
         true
+    }
+
+    /// Returns the next WFT completed event attributes, if any, starting at (inclusive) the
+    /// `from_id`
+    pub fn peek_next_wft_completed(
+        &self,
+        from_id: i64,
+    ) -> Option<&WorkflowTaskCompletedEventAttributes> {
+        self.events
+            .iter()
+            .skip_while(|e| e.event_id < from_id)
+            .find_map(|e| match &e.attributes {
+                Some(history_event::Attributes::WorkflowTaskCompletedEventAttributes(ref a)) => {
+                    Some(a)
+                }
+                _ => None,
+            })
     }
 
     fn starting_index_after_skipping(&self, from_wft_started_id: i64) -> Option<usize> {
@@ -649,7 +670,7 @@ pub mod tests {
     impl NextWFT {
         fn unwrap_events(self) -> Vec<HistoryEvent> {
             match self {
-                NextWFT::WFT(e) => e,
+                NextWFT::WFT(e, _) => e,
                 o => panic!("Must be complete WFT: {o:?}"),
             }
         }
@@ -825,7 +846,7 @@ pub mod tests {
         for i in 1..wft_count {
             let seq = {
                 match update.take_next_wft_sequence(last_started_id) {
-                    NextWFT::WFT(seq) => seq,
+                    NextWFT::WFT(seq, _) => seq,
                     NextWFT::NeedFetch => {
                         update = paginator.extract_next_update().await.unwrap();
                         update
@@ -930,7 +951,7 @@ pub mod tests {
         loop {
             let seq = update.take_next_wft_sequence(last_id);
             match seq {
-                NextWFT::WFT(seq) => {
+                NextWFT::WFT(seq, _) => {
                     last_id = seq.last().unwrap().event_id;
                 }
                 NextWFT::NeedFetch => {

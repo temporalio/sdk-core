@@ -262,7 +262,7 @@ pub enum EphemeralExe {
 #[derive(Debug, Clone)]
 pub enum EphemeralExeVersion {
     /// Use a default version for the given SDK name and version.
-    Default {
+    SDKDefault {
         /// Name of the SDK to get the default for.
         sdk_name: String,
         /// Version of the SDK to get the default for.
@@ -301,7 +301,7 @@ impl EphemeralExe {
                 };
                 // Create dest file based on SDK name/version or fixed version
                 let dest = dest_dir.join(match version {
-                    EphemeralExeVersion::Default {
+                    EphemeralExeVersion::SDKDefault {
                         sdk_name,
                         sdk_version,
                     } => format!("{artifact_name}-{sdk_name}-{sdk_version}{out_ext}"),
@@ -327,7 +327,7 @@ impl EphemeralExe {
                 };
                 let mut get_info_params = vec![("arch", arch), ("platform", platform)];
                 let version_name = match version {
-                    EphemeralExeVersion::Default {
+                    EphemeralExeVersion::SDKDefault {
                         sdk_name,
                         sdk_version,
                     } => {

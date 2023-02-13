@@ -2,6 +2,10 @@ use super::{
     workflow_machines::MachineResponse, Cancellable, EventInfo, NewMachineWithCommand,
     OnEventWrapper, WFMachinesAdapter, WFMachinesError,
 };
+use crate::{
+    internal_flags::CoreInternalFlags,
+    worker::workflow::{machines::HistEventData, InternalFlagsRef},
+};
 use rustfsm::{fsm, MachineError, TransitionResult};
 use std::convert::{TryFrom, TryInto};
 use temporal_sdk_core_protos::{
@@ -41,7 +45,7 @@ fsm! {
 
     Created --(Schedule, on_schedule) --> StartCommandCreated;
     StartCommandCreated --(CommandStartChildWorkflowExecution) --> StartCommandCreated;
-    StartCommandCreated --(StartChildWorkflowExecutionInitiated(i64),
+    StartCommandCreated --(StartChildWorkflowExecutionInitiated(ChildWorkflowInitiatedData),
         shared on_start_child_workflow_execution_initiated) --> StartEventRecorded;
     StartCommandCreated --(Cancel, shared on_cancelled) --> Cancelled;
 
@@ -99,6 +103,13 @@ pub(super) enum ChildWorkflowCommand {
     IssueCancelAfterStarted { reason: String },
 }
 
+pub(super) struct ChildWorkflowInitiatedData {
+    event_id: i64,
+    wf_type: String,
+    wf_id: String,
+    last_task_in_history: bool,
+}
+
 #[derive(Default, Clone)]
 pub(super) struct Cancelled {}
 
@@ -124,13 +135,32 @@ impl StartCommandCreated {
     pub(super) fn on_start_child_workflow_execution_initiated(
         self,
         state: SharedState,
-        initiated_event_id: i64,
+        event_dat: ChildWorkflowInitiatedData,
     ) -> ChildWorkflowMachineTransition<StartEventRecorded> {
+        if state.internal_flags.borrow_mut().try_use(
+            CoreInternalFlags::IdAndTypeDeterminismChecks,
+            event_dat.last_task_in_history,
+        ) {
+            if event_dat.wf_id != state.workflow_id {
+                return TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
+                    "Child workflow id of scheduled event '{}' does not \
+                     match child workflow id of activity command '{}'",
+                    event_dat.wf_id, state.workflow_id
+                )));
+            }
+            if event_dat.wf_type != state.workflow_type {
+                return TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
+                    "Child workflow type of scheduled event '{}' does not \
+                     match child workflow type of activity command '{}'",
+                    event_dat.wf_type, state.workflow_type
+                )));
+            }
+        }
         ChildWorkflowMachineTransition::ok_shared(
             vec![],
             StartEventRecorded::default(),
             SharedState {
-                initiated_event_id,
+                initiated_event_id: event_dat.event_id,
                 ..state
             },
         )
@@ -299,7 +329,7 @@ pub(super) struct Terminated {}
 #[derive(Default, Clone)]
 pub(super) struct TimedOut {}
 
-#[derive(Default, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub(super) struct SharedState {
     initiated_event_id: i64,
     started_event_id: i64,
@@ -310,20 +340,15 @@ pub(super) struct SharedState {
     workflow_type: String,
     cancelled_before_sent: bool,
     cancel_type: ChildWorkflowCancellationType,
-}
-
-/// Creates a new child workflow state machine and a command to start it on the server.
-pub(super) fn new_child_workflow(attribs: StartChildWorkflowExecution) -> NewMachineWithCommand {
-    let (wf, add_cmd) = ChildWorkflowMachine::new_scheduled(attribs);
-    NewMachineWithCommand {
-        command: add_cmd,
-        machine: wf.into(),
-    }
+    internal_flags: InternalFlagsRef,
 }
 
 impl ChildWorkflowMachine {
     /// Create a new child workflow and immediately schedule it.
-    pub(crate) fn new_scheduled(attribs: StartChildWorkflowExecution) -> (Self, Command) {
+    pub(super) fn new_scheduled(
+        attribs: StartChildWorkflowExecution,
+        internal_flags: InternalFlagsRef,
+    ) -> NewMachineWithCommand {
         let mut s = Self {
             state: Created {}.into(),
             shared_state: SharedState {
@@ -332,7 +357,11 @@ impl ChildWorkflowMachine {
                 workflow_type: attribs.workflow_type.clone(),
                 namespace: attribs.namespace.clone(),
                 cancel_type: attribs.cancellation_type(),
-                ..Default::default()
+                internal_flags,
+                run_id: "".to_string(),
+                initiated_event_id: 0,
+                started_event_id: 0,
+                cancelled_before_sent: false,
             },
         };
         OnEventWrapper::on_event_mut(&mut s, ChildWorkflowMachineEvents::Schedule)
@@ -341,7 +370,10 @@ impl ChildWorkflowMachine {
             command_type: CommandType::StartChildWorkflowExecution as i32,
             attributes: Some(attribs.into()),
         };
-        (s, cmd)
+        NewMachineWithCommand {
+            command: cmd,
+            machine: s.into(),
+        }
     }
 
     fn resolve_cancelled_msg(&self) -> ResolveChildWorkflowExecution {
@@ -372,13 +404,31 @@ impl ChildWorkflowMachine {
     }
 }
 
-impl TryFrom<HistoryEvent> for ChildWorkflowMachineEvents {
+impl TryFrom<HistEventData> for ChildWorkflowMachineEvents {
     type Error = WFMachinesError;
 
-    fn try_from(e: HistoryEvent) -> Result<Self, Self::Error> {
+    fn try_from(e: HistEventData) -> Result<Self, Self::Error> {
+        let last_task_in_history = e.current_task_is_last_in_history;
+        let e = e.event;
         Ok(match EventType::from_i32(e.event_type) {
             Some(EventType::StartChildWorkflowExecutionInitiated) => {
-                Self::StartChildWorkflowExecutionInitiated(e.event_id)
+                if let Some(
+                    history_event::Attributes::StartChildWorkflowExecutionInitiatedEventAttributes(
+                        attrs,
+                    ),
+                ) = e.attributes
+                {
+                    Self::StartChildWorkflowExecutionInitiated(ChildWorkflowInitiatedData {
+                        event_id: e.event_id,
+                        wf_type: attrs.workflow_type.unwrap_or_default().name,
+                        wf_id: attrs.workflow_id,
+                        last_task_in_history,
+                    })
+                } else {
+                    return Err(WFMachinesError::Fatal(
+                        "StartChildWorkflowExecutionInitiated attributes were unset".to_string(),
+                    ));
+                }
             }
             Some(EventType::StartChildWorkflowExecutionFailed) => {
                 if let Some(
@@ -658,11 +708,12 @@ fn convert_payloads(
 mod test {
     use super::*;
     use crate::{
-        replay::TestHistoryBuilder, test_help::canned_histories, worker::workflow::ManagedWFFunc,
+        internal_flags::InternalFlags, replay::TestHistoryBuilder, test_help::canned_histories,
+        worker::workflow::ManagedWFFunc,
     };
     use anyhow::anyhow;
     use rstest::{fixture, rstest};
-    use std::mem::discriminant;
+    use std::{cell::RefCell, mem::discriminant, rc::Rc};
     use temporal_sdk::{
         CancellableFuture, ChildWorkflowOptions, WfContext, WorkflowFunction, WorkflowResult,
     };
@@ -846,7 +897,18 @@ mod test {
         ] {
             let mut s = ChildWorkflowMachine {
                 state: state.clone(),
-                shared_state: Default::default(),
+                shared_state: SharedState {
+                    initiated_event_id: 0,
+                    started_event_id: 0,
+                    lang_sequence_number: 0,
+                    namespace: "".to_string(),
+                    workflow_id: "".to_string(),
+                    run_id: "".to_string(),
+                    workflow_type: "".to_string(),
+                    cancelled_before_sent: false,
+                    cancel_type: Default::default(),
+                    internal_flags: Rc::new(RefCell::new(InternalFlags::new(&Default::default()))),
+                },
             };
             let cmds = s.cancel().unwrap();
             assert_eq!(cmds.len(), 0);

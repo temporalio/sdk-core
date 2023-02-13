@@ -13,6 +13,7 @@ extern crate core;
 
 mod abstractions;
 pub mod ephemeral_server;
+mod internal_flags;
 mod pollers;
 mod protosext;
 pub mod replay;
@@ -99,9 +100,12 @@ where
         worker_config.use_worker_versioning,
     ));
 
-    let metrics = MetricsContext::top_level(worker_config.namespace.clone(), &runtime.telemetry)
-        .with_task_q(worker_config.task_queue.clone());
-    Ok(Worker::new(worker_config, sticky_q, client_bag, metrics))
+    Ok(Worker::new(
+        worker_config,
+        sticky_q,
+        client_bag,
+        Some(&runtime.telemetry),
+    ))
 }
 
 /// Create a worker for replaying a specific history. It will auto-shutdown as soon as the history
@@ -128,7 +132,7 @@ where
     let post_activate = historator.get_post_activate_hook();
     let shutdown_tok = historator.get_shutdown_setter();
     let client = mock_client_from_histories(historator);
-    let mut worker = Worker::new(config, None, Arc::new(client), MetricsContext::no_op());
+    let mut worker = Worker::new(config, None, Arc::new(client), None);
     worker.set_post_activate_hook(post_activate);
     shutdown_tok(worker.shutdown_token());
     Ok(worker)

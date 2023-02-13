@@ -4,7 +4,7 @@ use super::{
     workflow_machines::MachineResponse, Cancellable, EventInfo, NewMachineWithCommand,
     OnEventWrapper, WFMachinesAdapter,
 };
-use crate::worker::workflow::WFMachinesError;
+use crate::worker::workflow::{machines::HistEventData, WFMachinesError};
 use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
 use std::convert::TryFrom;
 use temporal_sdk_core_protos::{
@@ -94,10 +94,11 @@ impl TimerMachine {
     }
 }
 
-impl TryFrom<HistoryEvent> for TimerMachineEvents {
+impl TryFrom<HistEventData> for TimerMachineEvents {
     type Error = WFMachinesError;
 
-    fn try_from(e: HistoryEvent) -> Result<Self, Self::Error> {
+    fn try_from(e: HistEventData) -> Result<Self, Self::Error> {
+        let e = e.event;
         Ok(match e.event_type() {
             EventType::TimerStarted => Self::TimerStarted(e.event_id),
             EventType::TimerCanceled => Self::TimerCanceled,

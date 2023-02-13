@@ -393,8 +393,8 @@ service WorkflowService {
 
     // Invokes the specified update function on user workflow code.
     // (-- api-linter: core::0134=disabled
-    //     aip.dev/not-precedent: UpdateWorkflow doesn't follow Google API format --)
-    rpc UpdateWorkflow(UpdateWorkflowRequest) returns (UpdateWorkflowResponse) {
+    //     aip.dev/not-precedent: UpdateWorkflowExecution doesn't follow Google API format --)
+    rpc UpdateWorkflowExecution(UpdateWorkflowExecutionRequest) returns (UpdateWorkflowExecutionResponse) {
     }
 
     // StartBatchOperation starts a new batch operation

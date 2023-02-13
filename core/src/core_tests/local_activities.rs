@@ -37,6 +37,7 @@ use temporal_sdk_core_protos::{
         failure::v1::Failure,
         query::v1::WorkflowQuery,
     },
+    DEFAULT_ACTIVITY_TYPE,
 };
 use temporal_sdk_core_test_utils::{
     schedule_local_activity_cmd, start_timer_cmd, WorkerTestHelpers,
@@ -84,7 +85,7 @@ async fn local_act_two_wfts_before_marker(#[case] replay: bool, #[case] cached: 
         DEFAULT_WORKFLOW_TYPE.to_owned(),
         |ctx: WfContext| async move {
             let la = ctx.local_activity(LocalActivityOptions {
-                activity_type: "echo".to_string(),
+                activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
                 input: "hi".as_json_payload().expect("serializes fine"),
                 ..Default::default()
             });
@@ -93,7 +94,7 @@ async fn local_act_two_wfts_before_marker(#[case] replay: bool, #[case] cached: 
             Ok(().into())
         },
     );
-    worker.register_activity("echo", echo);
+    worker.register_activity(DEFAULT_ACTIVITY_TYPE, echo);
     worker
         .submit_wf(
             wf_id.to_owned(),
@@ -125,7 +126,6 @@ pub async fn local_act_fanout_wf(ctx: WfContext) -> WorkflowResult<()> {
 
 #[tokio::test]
 async fn local_act_many_concurrent() {
-    crate::telemetry::test_telem_console();
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
@@ -329,7 +329,7 @@ async fn local_act_retry_long_backoff_uses_timer() {
         |ctx: WfContext| async move {
             let la_res = ctx
                 .local_activity(LocalActivityOptions {
-                    activity_type: "echo".to_string(),
+                    activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
                     input: "hi".as_json_payload().expect("serializes fine"),
                     retry_policy: RetryPolicy {
                         initial_interval: Some(prost_dur!(from_millis(65))),
@@ -348,9 +348,12 @@ async fn local_act_retry_long_backoff_uses_timer() {
             Ok(().into())
         },
     );
-    worker.register_activity("echo", move |_ctx: ActContext, _: String| async move {
-        Result::<(), _>::Err(anyhow!("Oh no I failed!"))
-    });
+    worker.register_activity(
+        DEFAULT_ACTIVITY_TYPE,
+        move |_ctx: ActContext, _: String| async move {
+            Result::<(), _>::Err(anyhow!("Oh no I failed!"))
+        },
+    );
     worker
         .submit_wf(
             wf_id.to_owned(),
@@ -498,7 +501,7 @@ async fn query_during_wft_heartbeat_doesnt_accidentally_fail_to_continue_heartbe
             task.run_id,
             schedule_local_activity_cmd(
                 1,
-                "act-id",
+                "1",
                 ActivityCancellationType::TryCancel,
                 Duration::from_secs(60),
             ),
@@ -884,7 +887,7 @@ async fn wft_failure_cancels_running_las() {
         DEFAULT_WORKFLOW_TYPE.to_owned(),
         |ctx: WfContext| async move {
             let la_handle = ctx.local_activity(LocalActivityOptions {
-                activity_type: "echo".to_string(),
+                activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
                 input: "hi".as_json_payload().expect("serializes fine"),
                 ..Default::default()
             });
@@ -898,13 +901,16 @@ async fn wft_failure_cancels_running_las() {
             Ok(().into())
         },
     );
-    worker.register_activity("echo", move |ctx: ActContext, _: String| async move {
-        let res = tokio::time::timeout(Duration::from_millis(500), ctx.cancelled()).await;
-        if res.is_err() {
-            panic!("Activity must be cancelled!!!!");
-        }
-        Result::<(), _>::Err(ActivityCancelledError::default().into())
-    });
+    worker.register_activity(
+        DEFAULT_ACTIVITY_TYPE,
+        move |ctx: ActContext, _: String| async move {
+            let res = tokio::time::timeout(Duration::from_millis(500), ctx.cancelled()).await;
+            if res.is_err() {
+                panic!("Activity must be cancelled!!!!");
+            }
+            Result::<(), _>::Err(ActivityCancelledError::default().into())
+        },
+    );
     worker
         .submit_wf(
             wf_id.to_owned(),
@@ -940,9 +946,7 @@ async fn resolved_las_not_recorded_if_wft_fails_many_times() {
         mock,
     );
     mh.num_expected_fails = 2;
-    mh.completion_asserts = Some(Box::new(|_| {
-        panic!("should never successfully complete a WFT");
-    }));
+    mh.num_expected_completions = Some(0.into());
     let mut worker = mock_sdk_cfg(mh, |w| w.max_cached_workflows = 1);
 
     worker.register_wf(

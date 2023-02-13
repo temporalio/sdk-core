@@ -19,10 +19,7 @@ use crate::{
 use futures::{stream, stream::PollNext, Stream, StreamExt};
 use std::{collections::VecDeque, fmt::Debug, future, sync::Arc};
 use temporal_sdk_core_api::errors::PollWfError;
-use temporal_sdk_core_protos::{
-    coresdk::workflow_activation::remove_from_cache::EvictionReason,
-    temporal::api::enums::v1::WorkflowTaskFailedCause,
-};
+use temporal_sdk_core_protos::coresdk::workflow_activation::remove_from_cache::EvictionReason;
 use tokio_util::sync::CancellationToken;
 use tracing::{Level, Span};
 
@@ -100,7 +97,8 @@ impl WFStream {
             runs: RunCache::new(
                 basics.max_cached_workflows,
                 basics.namespace.clone(),
-                Arc::new(local_activity_request_sink),
+                basics.server_capabilities.clone(),
+                local_activity_request_sink,
                 basics.metrics.clone(),
             ),
             shutdown_token: basics.shutdown_token,
@@ -282,21 +280,23 @@ impl WFStream {
         };
         let mut acts: Vec<_> = match complete {
             NewOrFetchedComplete::New(complete) => match complete.completion {
-                ValidatedCompletion::Success { commands, .. } => {
-                    match rh.successful_completion(commands, complete.response_tx) {
-                        Ok(acts) => acts,
-                        Err(npr) => {
-                            self.runs_needing_fetching
-                                .push_back(HistoryFetchReq::NextPage(
-                                    npr,
-                                    self.history_fetch_refcounter.clone(),
-                                ));
-                            None
-                        }
+                ValidatedCompletion::Success {
+                    commands,
+                    used_flags,
+                    ..
+                } => match rh.successful_completion(commands, used_flags, complete.response_tx) {
+                    Ok(acts) => acts,
+                    Err(npr) => {
+                        self.runs_needing_fetching
+                            .push_back(HistoryFetchReq::NextPage(
+                                npr,
+                                self.history_fetch_refcounter.clone(),
+                            ));
+                        None
                     }
-                }
+                },
                 ValidatedCompletion::Fail { failure, .. } => rh.failed_completion(
-                    WorkflowTaskFailedCause::Unspecified,
+                    failure.force_cause(),
                     EvictionReason::LangFail,
                     failure,
                     complete.response_tx,

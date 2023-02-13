@@ -31,10 +31,26 @@ option java_outer_classname = "UpdateProto";
 option ruby_package = "Temporalio::Api::Enums::V1";
 option csharp_namespace = "Temporalio.Api.Enums.V1";
 
-enum WorkflowUpdateResultAccessStyle {
-    WORKFLOW_UPDATE_RESULT_ACCESS_STYLE_UNSPECIFIED = 0;
-
-    // Indicates that the update response _must_ be included as part of the gRPC
-    // response body
-    WORKFLOW_UPDATE_RESULT_ACCESS_STYLE_REQUIRE_INLINE = 1;
+// UpdateWorkflowExecutionLifecycleStage is specified by clients invoking
+// workflow execution updates and used to indicate to the server how long the
+// client wishes to wait for a return value from the RPC. If any value other
+// than UPDATE_WORKFLOW_EXECUTION_LIFECYCLE_STAGE_COMPLETED is sent by the
+// client then the RPC will complete before the update is finished and will
+// return a handle to the running update so that it can later be polled for
+// completion.
+enum UpdateWorkflowExecutionLifecycleStage {
+    // An unspecified vale for this enum.
+    UPDATE_WORKFLOW_EXECUTION_LIFECYCLE_STAGE_UNSPECIFIED = 0;
+    // The gRPC call will not return until the update request has been admitted
+    // by the server - it may be the case that due to a considerations like load
+    // or resource limits that an update is made to wait before the server will
+    // indicate that it has been received and will be processed. This value
+    // does not wait for any sort of acknowledgement from a worker.
+    UPDATE_WORKFLOW_EXECUTION_LIFECYCLE_STAGE_ADMITTED = 1;
+    // The gRPC call will not return until the update has passed validation on
+    // a worker.
+    UPDATE_WORKFLOW_EXECUTION_LIFECYCLE_STAGE_ACCEPTED = 2;
+    // The gRPC call will not return until the update has executed to completion
+    // on a worker and has either been rejected or returned a value or an error.
+    UPDATE_WORKFLOW_EXECUTION_LIFECYCLE_STAGE_COMPLETED = 3;
 }

@@ -62,7 +62,9 @@ impl WorkflowFunction {
                 // We need to mark the workflow future as unconstrained, otherwise Tokio will impose
                 // an artificial limit on how many commands we can unblock in one poll round.
                 // TODO: Now we *need* deadlock detection or we could hose the whole system
-                inner: tokio::task::unconstrained((self.wf_func)(wf_context)).boxed(),
+                inner: tokio::task::unconstrained((self.wf_func)(wf_context))
+                    .fuse()
+                    .boxed(),
                 incoming_commands: cmd_receiver,
                 outgoing_completions,
                 incoming_activations,
