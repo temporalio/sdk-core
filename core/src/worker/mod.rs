@@ -314,9 +314,10 @@ impl Worker {
             .await
             .expect("Workflow processing terminates cleanly");
         // Wait for activities to finish
-        if let Some(acts) = self.at_task_mgr.as_ref() {
-            acts.wait_all_finished().await;
-        }
+        // TODO
+        // if let Some(acts) = self.at_task_mgr.as_ref() {
+        //     acts.wait_all_finished().await;
+        // }
     }
 
     /// Finish shutting down by consuming the background pollers and freeing all resources

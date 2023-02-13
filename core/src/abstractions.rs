@@ -2,6 +2,7 @@
 
 use crate::MetricsContext;
 use futures::{stream, Stream, StreamExt};
+use std::sync::atomic::AtomicBool;
 use std::{
     fmt::{Debug, Formatter},
     sync::{
@@ -10,6 +11,7 @@ use std::{
     },
 };
 use tokio::sync::{AcquireError, OwnedSemaphorePermit, Semaphore, TryAcquireError};
+use tokio_util::sync::CancellationToken;
 
 /// Wraps a [Semaphore] with a function call that is fed the available permits any time a permit is
 /// acquired or restored through the provided methods
@@ -84,6 +86,86 @@ impl MeteredSemaphore {
                 sem.available_permits() + uc.load(Ordering::Acquire) + extra,
             )
         })
+    }
+}
+
+pub(crate) struct ClosableMeteredSemaphore {
+    inner: Arc<MeteredSemaphore>,
+    outstanding_permits: Arc<AtomicUsize>,
+    close_requested: Arc<AtomicBool>,
+    close_complete_token: CancellationToken,
+}
+
+impl ClosableMeteredSemaphore {
+    pub fn new(sem: Arc<MeteredSemaphore>) -> Self {
+        return Self {
+            inner: sem,
+            outstanding_permits: Arc::new(Default::default()),
+            close_requested: Arc::new(AtomicBool::new(false)),
+            close_complete_token: CancellationToken::new(),
+        };
+    }
+
+    #[cfg(test)]
+    pub fn available_permits(&self) -> usize {
+        self.inner.available_permits()
+    }
+
+    pub fn close(&self) {
+        self.close_requested.store(true, Ordering::Release);
+    }
+
+    pub async fn close_complete(&self) {
+        self.close_complete_token.cancelled().await;
+    }
+
+    pub fn try_acquire_owned(&self) -> Result<TrackedOwnedMeteredSemPermit, TryAcquireError> {
+        if self.close_requested.load(Ordering::Acquire) {
+            return Err(TryAcquireError::Closed);
+        }
+        self.outstanding_permits.fetch_add(1, Ordering::Release);
+        let res = self.inner.try_acquire_owned();
+        if res.is_err() {
+            self.outstanding_permits.fetch_sub(1, Ordering::Release);
+        }
+        res.map(|permit| TrackedOwnedMeteredSemPermit {
+            inner: Some(permit),
+            on_drop: self.on_permit_dropped(),
+        })
+    }
+
+    fn on_permit_dropped(&self) -> Box<dyn Fn() + Send + Sync> {
+        let outstanding_permits = self.outstanding_permits.clone();
+        let close_requested = self.close_requested.clone();
+        let close_token = self.close_complete_token.clone();
+        Box::new(move || {
+            // NOTE: fetch_sub returns the previous value
+            if close_requested.load(Ordering::Acquire)
+                && outstanding_permits.fetch_sub(1, Ordering::Release) == 1
+            {
+                close_token.cancel();
+            }
+        })
+    }
+}
+
+pub(crate) struct TrackedOwnedMeteredSemPermit {
+    inner: Option<OwnedMeteredSemPermit>,
+    on_drop: Box<dyn Fn() + Send + Sync>,
+}
+impl Into<OwnedMeteredSemPermit> for TrackedOwnedMeteredSemPermit {
+    fn into(mut self) -> OwnedMeteredSemPermit {
+        return self.inner.take().expect("Inner permit should be available");
+    }
+}
+impl Drop for TrackedOwnedMeteredSemPermit {
+    fn drop(&mut self) {
+        (self.on_drop)();
+    }
+}
+impl Debug for TrackedOwnedMeteredSemPermit {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        self.inner.fmt(f)
     }
 }
 

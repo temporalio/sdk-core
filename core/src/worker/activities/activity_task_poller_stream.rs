@@ -14,7 +14,7 @@ use tokio_util::sync::CancellationToken;
 pub(crate) fn new_activity_task_poller(
     poller: BoxedActPoller,
     semaphore: Arc<MeteredSemaphore>,
-    ratelimiter: Option<RateLimiter<NotKeyed, InMemoryState, DefaultClock, NoOpMiddleware>>,
+    rate_limiter: Option<RateLimiter<NotKeyed, InMemoryState, DefaultClock, NoOpMiddleware>>,
     metrics: MetricsContext,
     shutdown_token: CancellationToken,
 ) -> impl Stream<Item = Result<PermittedTqResp, tonic::Status>> {
@@ -22,7 +22,7 @@ pub(crate) fn new_activity_task_poller(
         (
             poller,
             semaphore,
-            ratelimiter,
+            rate_limiter,
             metrics,
             shutdown_token,
             false,
