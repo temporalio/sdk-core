@@ -2,16 +2,18 @@ use crate::{
     telemetry::metrics::workflow_type,
     worker::workflow::{
         managed_run::{ManagedRun, RunUpdateAct},
-        HistoryUpdate, LocalActivityRequestSink, PermittedWFT,
+        HistoryUpdate, LocalActivityRequestSink, PermittedWFT, RunBasics,
     },
     MetricsContext,
 };
 use lru::LruCache;
 use std::{mem, num::NonZeroUsize, rc::Rc};
+use temporal_sdk_core_protos::temporal::api::workflowservice::v1::get_system_info_response;
 
 pub(super) struct RunCache {
     max: usize,
     namespace: String,
+    server_capabilities: get_system_info_response::Capabilities,
     /// Run id -> Data
     runs: LruCache<String, ManagedRun>,
     local_activity_request_sink: Rc<dyn LocalActivityRequestSink>,
@@ -23,6 +25,7 @@ impl RunCache {
     pub fn new(
         max_cache_size: usize,
         namespace: String,
+        server_capabilities: get_system_info_response::Capabilities,
         local_activity_request_sink: impl LocalActivityRequestSink,
         metrics: MetricsContext,
     ) -> Self {
@@ -36,6 +39,7 @@ impl RunCache {
         Self {
             max: max_cache_size,
             namespace,
+            server_capabilities,
             runs: LruCache::new(
                 NonZeroUsize::new(lru_size).expect("LRU size is guaranteed positive"),
             ),
@@ -63,13 +67,16 @@ impl RunCache {
         // with the update.
         let history_update = mem::replace(&mut pwft.work.update, HistoryUpdate::dummy());
         let mut mrh = ManagedRun::new(
-            history_update,
-            self.namespace.clone(),
-            pwft.work.execution.workflow_id.clone(),
-            pwft.work.workflow_type.clone(),
-            pwft.work.execution.run_id.clone(),
+            RunBasics {
+                namespace: self.namespace.clone(),
+                workflow_id: pwft.work.execution.workflow_id.clone(),
+                workflow_type: pwft.work.workflow_type.clone(),
+                run_id: pwft.work.execution.run_id.clone(),
+                history: history_update,
+                metrics,
+                capabilities: &self.server_capabilities,
+            },
             self.local_activity_request_sink.clone(),
-            metrics,
         );
         let run_id = run_id.to_string();
         let rur = mrh.incoming_wft(pwft);

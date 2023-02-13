@@ -13,7 +13,7 @@ use crate::{
             ActivationCompleteOutcome, ActivationCompleteResult, ActivationOrAuto,
             EvictionRequestResult, FailedActivationWFTReport, HeartbeatTimeoutMsg, HistoryUpdate,
             LocalActivityRequestSink, LocalResolution, NextPageReq, OutgoingServerCommands,
-            OutstandingActivation, OutstandingTask, PermittedWFT, RequestEvictMsg,
+            OutstandingActivation, OutstandingTask, PermittedWFT, RequestEvictMsg, RunBasics,
             ServerCommandsWithWorkflowInfo, WFCommand, WFMachinesError, WFTReportStatus,
             WorkflowBridge, WorkflowTaskInfo, WFT_HEARTBEAT_TIMEOUT_FRACTION,
         },
@@ -94,24 +94,12 @@ pub(super) struct ManagedRun {
     completion_waiting_on_page_fetch: Option<RunActivationCompletion>,
 }
 impl ManagedRun {
-    #[allow(clippy::too_many_arguments)] // Ok with this here. Nothing reusable to extract.
     pub(super) fn new(
-        history_update: HistoryUpdate,
-        namespace: String,
-        workflow_id: String,
-        workflow_type: String,
-        run_id: String,
+        basics: RunBasics,
         local_activity_request_sink: Rc<dyn LocalActivityRequestSink>,
-        metrics: MetricsContext,
     ) -> Self {
-        let wfm = WorkflowManager::new(
-            history_update,
-            namespace,
-            workflow_id,
-            workflow_type,
-            run_id,
-            metrics.clone(),
-        );
+        let metrics = basics.metrics.clone();
+        let wfm = WorkflowManager::new(basics);
         Self {
             wfm,
             local_activity_request_sink,
@@ -1150,24 +1138,9 @@ struct WorkflowManager {
 impl WorkflowManager {
     /// Create a new workflow manager given workflow history and execution info as would be found
     /// in [PollWorkflowTaskQueueResponse]
-    fn new(
-        history: HistoryUpdate,
-        namespace: String,
-        workflow_id: String,
-        workflow_type: String,
-        run_id: String,
-        metrics: MetricsContext,
-    ) -> Self {
+    fn new(basics: RunBasics) -> Self {
         let (wfb, cmd_sink) = WorkflowBridge::new();
-        let state_machines = WorkflowMachines::new(
-            namespace,
-            workflow_id,
-            workflow_type,
-            run_id,
-            history,
-            Box::new(wfb).into(),
-            metrics,
-        );
+        let state_machines = WorkflowMachines::new(basics, Box::new(wfb).into());
         Self {
             machines: state_machines,
             command_sink: Some(cmd_sink),

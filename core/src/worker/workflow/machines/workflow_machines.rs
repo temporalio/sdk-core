@@ -26,7 +26,8 @@ use crate::{
                 HistEventData,
             },
             CommandID, DrivenWorkflow, HistoryUpdate, InternalFlagsRef, LocalResolution,
-            OutgoingJob, WFCommand, WFMachinesError, WorkflowFetcher, WorkflowStartedInfo,
+            OutgoingJob, RunBasics, WFCommand, WFMachinesError, WorkflowFetcher,
+            WorkflowStartedInfo,
         },
         ExecutingLAId, LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
     },
@@ -213,30 +214,22 @@ where
 }
 
 impl WorkflowMachines {
-    pub(crate) fn new(
-        namespace: String,
-        workflow_id: String,
-        workflow_type: String,
-        run_id: String,
-        history: HistoryUpdate,
-        driven_wf: DrivenWorkflow,
-        metrics: MetricsContext,
-    ) -> Self {
-        let replaying = history.previous_wft_started_id > 0;
-        let mut observed_internal_flags = InternalFlags::default();
+    pub(crate) fn new(basics: RunBasics, driven_wf: DrivenWorkflow) -> Self {
+        let replaying = basics.history.previous_wft_started_id > 0;
+        let mut observed_internal_flags = InternalFlags::new(basics.capabilities);
         // Peek ahead to determine used patches in the first WFT.
-        if let Some(attrs) = history.peek_next_wft_completed(0) {
+        if let Some(attrs) = basics.history.peek_next_wft_completed(0) {
             observed_internal_flags.add_from_complete(attrs);
         };
         Self {
-            last_history_from_server: history,
-            namespace,
-            workflow_id,
-            workflow_type,
-            run_id,
+            last_history_from_server: basics.history,
+            namespace: basics.namespace,
+            workflow_id: basics.workflow_id,
+            workflow_type: basics.workflow_type,
+            run_id: basics.run_id,
             drive_me: driven_wf,
             replaying,
-            metrics,
+            metrics: basics.metrics,
             // In an ideal world one could say ..Default::default() here and it'd still work.
             current_started_event_id: 0,
             next_started_event_id: 0,

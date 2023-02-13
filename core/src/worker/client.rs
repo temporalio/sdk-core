@@ -13,7 +13,7 @@ use temporal_sdk_core_protos::{
         query::v1::WorkflowQueryResult,
         sdk::v1::WorkflowTaskCompletedMetadata,
         taskqueue::v1::{StickyExecutionAttributes, TaskQueue, TaskQueueMetadata, VersionId},
-        workflowservice::v1::*,
+        workflowservice::v1::{get_system_info_response::Capabilities, *},
     },
     TaskToken,
 };
@@ -110,6 +110,9 @@ pub(crate) trait WorkerClient: Sync + Send {
         task_token: TaskToken,
         query_result: QueryResult,
     ) -> Result<RespondQueryTaskCompletedResponse>;
+
+    #[allow(clippy::needless_lifetimes)] // Clippy is wrong here
+    fn capabilities<'a>(&'a self) -> Option<&'a get_system_info_response::Capabilities>;
 }
 
 #[async_trait::async_trait]
@@ -355,6 +358,10 @@ impl WorkerClient for WorkerClientBag {
             })
             .await?
             .into_inner())
+    }
+
+    fn capabilities(&self) -> Option<&Capabilities> {
+        self.client.get_client().inner().capabilities()
     }
 }
 

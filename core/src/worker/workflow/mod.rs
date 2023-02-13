@@ -81,7 +81,7 @@ use temporal_sdk_core_protos::{
         query::v1::WorkflowQuery,
         sdk::v1::WorkflowTaskCompletedMetadata,
         taskqueue::v1::StickyExecutionAttributes,
-        workflowservice::v1::PollActivityTaskQueueResponse,
+        workflowservice::v1::{get_system_info_response, PollActivityTaskQueueResponse},
     },
     TaskToken,
 };
@@ -135,8 +135,19 @@ pub(crate) struct WorkflowBasics {
     pub task_queue: String,
     pub ignore_evicts_on_shutdown: bool,
     pub fetching_concurrency: usize,
+    pub server_capabilities: get_system_info_response::Capabilities,
     #[cfg(feature = "save_wf_inputs")]
     pub wf_state_inputs: Option<UnboundedSender<Vec<u8>>>,
+}
+
+pub(crate) struct RunBasics<'a> {
+    pub namespace: String,
+    pub workflow_id: String,
+    pub workflow_type: String,
+    pub run_id: String,
+    pub history: HistoryUpdate,
+    pub metrics: MetricsContext,
+    pub capabilities: &'a get_system_info_response::Capabilities,
 }
 
 impl Workflows {

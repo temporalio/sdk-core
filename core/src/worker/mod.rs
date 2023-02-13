@@ -49,7 +49,7 @@ use temporal_sdk_core_protos::{
     temporal::api::{
         enums::v1::TaskQueueKind,
         taskqueue::v1::{StickyExecutionAttributes, TaskQueue},
-        workflowservice::v1::PollActivityTaskQueueResponse,
+        workflowservice::v1::{get_system_info_response, PollActivityTaskQueueResponse},
     },
     TaskToken,
 };
@@ -282,7 +282,12 @@ impl Worker {
         Self {
             wf_client: client.clone(),
             workflows: Workflows::new(
-                build_wf_basics(&mut config, metrics, shutdown_token.child_token()),
+                build_wf_basics(
+                    &mut config,
+                    metrics,
+                    shutdown_token.child_token(),
+                    client.capabilities().cloned().unwrap_or_default(),
+                ),
                 sticky_queue_name.map(|sq| StickyExecutionAttributes {
                     worker_task_queue: Some(TaskQueue {
                         name: sq,
@@ -536,6 +541,7 @@ fn build_wf_basics(
     config: &mut WorkerConfig,
     metrics: MetricsContext,
     shutdown_token: CancellationToken,
+    server_capabilities: get_system_info_response::Capabilities,
 ) -> WorkflowBasics {
     WorkflowBasics {
         max_cached_workflows: config.max_cached_workflows,
@@ -546,6 +552,7 @@ fn build_wf_basics(
         task_queue: config.task_queue.clone(),
         ignore_evicts_on_shutdown: config.ignore_evicts_on_shutdown,
         fetching_concurrency: config.fetching_concurrency,
+        server_capabilities,
         #[cfg(feature = "save_wf_inputs")]
         wf_state_inputs: config.wf_state_inputs.take(),
     }

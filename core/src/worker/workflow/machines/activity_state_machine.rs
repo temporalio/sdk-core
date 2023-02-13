@@ -118,7 +118,9 @@ impl ActivityMachine {
                     .unwrap(),
                 attrs,
                 internal_flags,
-                ..Default::default()
+                scheduled_event_id: 0,
+                started_event_id: 0,
+                cancelled_before_sent: false,
             },
         };
         OnEventWrapper::on_event_mut(&mut s, ActivityMachineEvents::Schedule)
@@ -372,7 +374,7 @@ impl Cancellable for ActivityMachine {
     }
 }
 
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub(super) struct SharedState {
     scheduled_event_id: i64,
     started_event_id: i64,
@@ -819,10 +821,11 @@ fn convert_payloads(
 mod test {
     use super::*;
     use crate::{
-        replay::TestHistoryBuilder, test_help::canned_histories, worker::workflow::ManagedWFFunc,
+        internal_flags::InternalFlags, replay::TestHistoryBuilder, test_help::canned_histories,
+        worker::workflow::ManagedWFFunc,
     };
     use rstest::{fixture, rstest};
-    use std::mem::discriminant;
+    use std::{cell::RefCell, mem::discriminant, rc::Rc};
     use temporal_sdk::{
         ActivityOptions, CancellableFuture, WfContext, WorkflowFunction, WorkflowResult,
     };
@@ -944,7 +947,14 @@ mod test {
         ] {
             let mut s = ActivityMachine {
                 state: state.clone(),
-                shared_state: Default::default(),
+                shared_state: SharedState {
+                    scheduled_event_id: 0,
+                    started_event_id: 0,
+                    attrs: Default::default(),
+                    cancellation_type: Default::default(),
+                    cancelled_before_sent: false,
+                    internal_flags: Rc::new(RefCell::new(InternalFlags::new(&Default::default()))),
+                },
             };
             let cmds = s.cancel().unwrap();
             assert_eq!(cmds.len(), 0);

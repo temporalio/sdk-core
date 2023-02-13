@@ -87,13 +87,16 @@ impl ManagedWFFunc {
             completions_q: completions_sync_rx,
         };
         let state_machines = WorkflowMachines::new(
-            "test_namespace".to_string(),
-            "wfid".to_string(),
-            "wftype".to_string(),
-            "runid".to_string(),
-            hist,
+            RunBasics {
+                namespace: "test_namespace".to_string(),
+                workflow_id: "wfid".to_string(),
+                workflow_type: "wftype".to_string(),
+                run_id: "runid".to_string(),
+                history: hist,
+                metrics: MetricsContext::no_op(),
+                capabilities: &Default::default(),
+            },
             Box::new(driver).into(),
-            MetricsContext::no_op(),
         );
         let mgr = WorkflowManager::new_from_machines(state_machines);
         Self {

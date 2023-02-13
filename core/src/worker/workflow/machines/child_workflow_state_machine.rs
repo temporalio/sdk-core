@@ -329,7 +329,7 @@ pub(super) struct Terminated {}
 #[derive(Default, Clone)]
 pub(super) struct TimedOut {}
 
-#[derive(Default, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub(super) struct SharedState {
     initiated_event_id: i64,
     started_event_id: i64,
@@ -358,7 +358,10 @@ impl ChildWorkflowMachine {
                 namespace: attribs.namespace.clone(),
                 cancel_type: attribs.cancellation_type(),
                 internal_flags,
-                ..Default::default()
+                run_id: "".to_string(),
+                initiated_event_id: 0,
+                started_event_id: 0,
+                cancelled_before_sent: false,
             },
         };
         OnEventWrapper::on_event_mut(&mut s, ChildWorkflowMachineEvents::Schedule)
@@ -705,11 +708,12 @@ fn convert_payloads(
 mod test {
     use super::*;
     use crate::{
-        replay::TestHistoryBuilder, test_help::canned_histories, worker::workflow::ManagedWFFunc,
+        internal_flags::InternalFlags, replay::TestHistoryBuilder, test_help::canned_histories,
+        worker::workflow::ManagedWFFunc,
     };
     use anyhow::anyhow;
     use rstest::{fixture, rstest};
-    use std::mem::discriminant;
+    use std::{cell::RefCell, mem::discriminant, rc::Rc};
     use temporal_sdk::{
         CancellableFuture, ChildWorkflowOptions, WfContext, WorkflowFunction, WorkflowResult,
     };
@@ -893,7 +897,18 @@ mod test {
         ] {
             let mut s = ChildWorkflowMachine {
                 state: state.clone(),
-                shared_state: Default::default(),
+                shared_state: SharedState {
+                    initiated_event_id: 0,
+                    started_event_id: 0,
+                    lang_sequence_number: 0,
+                    namespace: "".to_string(),
+                    workflow_id: "".to_string(),
+                    run_id: "".to_string(),
+                    workflow_type: "".to_string(),
+                    cancelled_before_sent: false,
+                    cancel_type: Default::default(),
+                    internal_flags: Rc::new(RefCell::new(InternalFlags::new(&Default::default()))),
+                },
             };
             let cmds = s.cancel().unwrap();
             assert_eq!(cmds.len(), 0);

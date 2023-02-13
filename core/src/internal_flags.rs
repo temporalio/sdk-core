@@ -4,6 +4,7 @@
 use std::collections::{BTreeSet, HashSet};
 use temporal_sdk_core_protos::temporal::api::{
     history::v1::WorkflowTaskCompletedEventAttributes, sdk::v1::WorkflowTaskCompletedMetadata,
+    workflowservice::v1::get_system_info_response,
 };
 
 /// This enumeration contains internal flags that may result in incompatible history changes with
@@ -23,8 +24,9 @@ pub(crate) enum CoreInternalFlags {
     TooHigh = u32::MAX,
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct InternalFlags {
+    enabled: bool,
     core: BTreeSet<CoreInternalFlags>,
     lang: BTreeSet<u32>,
     core_since_last_complete: HashSet<CoreInternalFlags>,
@@ -32,7 +34,21 @@ pub(crate) struct InternalFlags {
 }
 
 impl InternalFlags {
+    pub fn new(server_capabilities: &get_system_info_response::Capabilities) -> Self {
+        Self {
+            enabled: server_capabilities.sdk_metadata,
+            core: Default::default(),
+            lang: Default::default(),
+            core_since_last_complete: Default::default(),
+            lang_since_last_complete: Default::default(),
+        }
+    }
+
     pub fn add_from_complete(&mut self, e: &WorkflowTaskCompletedEventAttributes) {
+        if !self.enabled {
+            return;
+        }
+
         if let Some(metadata) = e.sdk_metadata.as_ref() {
             self.core.extend(
                 metadata
@@ -45,6 +61,10 @@ impl InternalFlags {
     }
 
     pub fn add_lang_used(&mut self, flags: impl IntoIterator<Item = u32>) {
+        if !self.enabled {
+            return;
+        }
+
         self.lang_since_last_complete.extend(flags.into_iter());
     }
 
@@ -52,6 +72,11 @@ impl InternalFlags {
     /// true and records the flag as being used, for taking later via
     /// [Self::gather_for_wft_complete].
     pub fn try_use(&mut self, core_patch: CoreInternalFlags, should_record: bool) -> bool {
+        if !self.enabled {
+            // If the server does not support the metadata field, we must assume
+            return false;
+        }
+
         if should_record {
             self.core_since_last_complete.insert(core_patch);
             true
@@ -85,5 +110,27 @@ impl CoreInternalFlags {
             1 => Self::IdAndTypeDeterminismChecks,
             _ => Self::TooHigh,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use temporal_sdk_core_protos::temporal::api::workflowservice::v1::get_system_info_response::Capabilities;
+
+    #[test]
+    fn disabled_in_capabilities_disables() {
+        let mut f = InternalFlags::new(&Capabilities::default());
+        f.add_lang_used([1]);
+        f.add_from_complete(&WorkflowTaskCompletedEventAttributes {
+            sdk_metadata: Some(WorkflowTaskCompletedMetadata {
+                core_used_flags: vec![1],
+                lang_used_flags: vec![],
+            }),
+            ..Default::default()
+        });
+        let gathered = f.gather_for_wft_complete();
+        assert_matches!(gathered.core_used_flags.as_slice(), &[]);
+        assert_matches!(gathered.lang_used_flags.as_slice(), &[]);
     }
 }
