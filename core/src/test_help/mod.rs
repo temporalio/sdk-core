@@ -304,6 +304,9 @@ where
             async { Some(Err(tonic::Status::cancelled(NO_MORE_WORK_ERROR_MSG))) }.boxed()
         }
     });
+    mock_poller
+        .expect_wait_shutdown()
+        .returning(move || async move {}.boxed());
     Box::new(mock_poller) as BoxedPoller<T>
 }
 

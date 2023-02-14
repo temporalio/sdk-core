@@ -113,6 +113,9 @@ impl ClosableMeteredSemaphore {
 
     pub fn close(&self) {
         self.close_requested.store(true, Ordering::Release);
+        if self.outstanding_permits.load(Ordering::Acquire) == 0 {
+            self.close_complete_token.cancel();
+        }
     }
 
     pub async fn close_complete(&self) {

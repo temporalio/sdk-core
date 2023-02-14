@@ -268,29 +268,28 @@ impl WorkerActivityTasks {
             Some((outstanding_tasks.clone(), outstanding_tasks))
         });
         cancels_stream.zip(cloning_stream).filter_map(|(next_pc, outstanding_tasks)| async move {
-                        // It's possible that activity has been completed and we no longer have an
-                        // outstanding activity task. This is fine because it means that we no
-                        // longer need to cancel this activity, so we'll just ignore such orphaned
-                        // cancellations.
-                        if let Some(mut details) = outstanding_tasks.get_mut(&next_pc.task_token) {
-                            if details.issued_cancel_to_lang {
-                                // Don't double-issue cancellations
-                                return None
-                            }
+            // It's possible that activity has been completed and we no longer have an
+            // outstanding activity task. This is fine because it means that we no
+            // longer need to cancel this activity, so we'll just ignore such orphaned
+            // cancellations.
+            if let Some(mut details) = outstanding_tasks.get_mut(&next_pc.task_token) {
+                if details.issued_cancel_to_lang {
+                    // Don't double-issue cancellations
+                    return None
+                }
 
-                            details.issued_cancel_to_lang = true;
-                            if next_pc.reason == ActivityCancelReason::NotFound {
-                                details.known_not_found = true;
-                            }
-                            Some(Ok(ActivityTask::cancel_from_ids(next_pc.task_token.0, next_pc.reason)))
-                        } else {
-                            debug!(task_token = ?next_pc.task_token, "Unknown activity task when issuing cancel");
-                            // If we can't find the activity here, it's already been completed,
-                            // in which case issuing a cancel again is pointless.
-                            None
-                        }
-            },
-        )
+                details.issued_cancel_to_lang = true;
+                if next_pc.reason == ActivityCancelReason::NotFound {
+                    details.known_not_found = true;
+                }
+                Some(Ok(ActivityTask::cancel_from_ids(next_pc.task_token.0, next_pc.reason)))
+            } else {
+                debug!(task_token = ?next_pc.task_token, "Unknown activity task when issuing cancel");
+                // If we can't find the activity here, it's already been completed,
+                // in which case issuing a cancel again is pointless.
+                None
+            }
+        })
     }
 
     pub(crate) fn notify_shutdown(&self) {
@@ -312,6 +311,10 @@ impl WorkerActivityTasks {
         heartbeat_manager.notify_shutdown();
     }
 
+    pub(crate) async fn shutdown2(&self) {
+        self.notify_shutdown();
+        self.poll_returned_shutdown_token.cancelled().await;
+    }
     pub(crate) async fn shutdown(self) {
         self.notify_shutdown();
         self.poll_returned_shutdown_token.cancelled().await;

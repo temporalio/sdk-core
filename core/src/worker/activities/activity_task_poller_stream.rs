@@ -49,6 +49,12 @@ pub(crate) fn new_activity_task_poller(
                                 Some(Ok(PermittedTqResp { permit, resp }))
                             }
                             Some(Err(e)) => {
+                                #[cfg(test)]
+                                if e.code() == tonic::Code::Cancelled
+                                    && e.message() == "No more work to do"
+                                {
+                                    return None;
+                                }
                                 warn!(error=?e, "Error while polling for activity tasks");
                                 Some(Err(e))
                             }

@@ -23,6 +23,7 @@ use std::{
 };
 use temporal_client::WorkflowOptions;
 use temporal_sdk::{ActivityOptions, WfContext};
+use temporal_sdk_core_api::errors::PollActivityError;
 use temporal_sdk_core_api::{errors::CompleteActivityError, Worker as WorkerTrait};
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -518,8 +519,7 @@ async fn can_heartbeat_acts_during_shutdown() {
 
     let act = core.poll_activity_task().await.unwrap();
     // Make sure shutdown has progressed before trying to record heartbeat / complete
-    let shutdown_fut = core.shutdown();
-    advance_fut!(shutdown_fut);
+    core.initiate_shutdown();
     core.record_activity_heartbeat(ActivityHeartbeat {
         task_token: act.task_token.clone(),
 
@@ -532,7 +532,9 @@ async fn can_heartbeat_acts_during_shutdown() {
     })
     .await
     .unwrap();
-    shutdown_fut.await;
+    let res = core.poll_activity_task().await.unwrap_err();
+    assert_matches!(res, PollActivityError::ShutDown);
+    core.finalize_shutdown().await;
 }
 
 /// Verifies that if a user has tried to record a heartbeat and then immediately after failed the
