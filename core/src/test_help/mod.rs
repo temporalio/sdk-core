@@ -50,6 +50,7 @@ use temporal_sdk_core_test_utils::TestWorker;
 use tokio::sync::{mpsc::unbounded_channel, Notify};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
+use temporal_sdk_core_api::errors::{PollActivityError, PollWfError};
 
 pub const TEST_Q: &str = "q";
 pub static NO_MORE_WORK_ERROR_MSG: &str = "No more work to do";
@@ -305,6 +306,7 @@ where
         }
     });
     mock_poller
+        // TODO: can't make this optional while the call is.
         .expect_wait_shutdown()
         .returning(move || async move {}.boxed());
     Box::new(mock_poller) as BoxedPoller<T>
@@ -889,4 +891,15 @@ macro_rules! prost_dur {
             .try_into()
             .expect("test duration fits")
     };
+}
+
+pub (crate) async fn drain_pollers_and_shutdown(worker: Worker, initiate_shutdown: bool) {
+    if initiate_shutdown {
+        worker.initiate_shutdown();
+    }
+    let err = worker.poll_activity_task().await.unwrap_err();
+    assert_matches!(err, PollActivityError::ShutDown);
+    let err = worker.poll_workflow_activation().await.unwrap_err();
+    assert_matches!(err, PollWfError::ShutDown);
+    worker.finalize_shutdown().await;
 }

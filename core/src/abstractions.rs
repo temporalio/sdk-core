@@ -142,10 +142,9 @@ impl ClosableMeteredSemaphore {
         let close_requested = self.close_requested.clone();
         let close_token = self.close_complete_token.clone();
         Box::new(move || {
-            // NOTE: fetch_sub returns the previous value
+            outstanding_permits.fetch_sub(1, Ordering::Release);
             if close_requested.load(Ordering::Acquire)
-                && outstanding_permits.fetch_sub(1, Ordering::Release) == 1
-            {
+                && outstanding_permits.load(Ordering::Acquire) == 0 {
                 close_token.cancel();
             }
         })
@@ -302,5 +301,18 @@ mod tests {
         }
         allow_tx.send(()).unwrap();
         assert_eq!(when_allowed.poll_next_unpin(&mut cx), Poll::Ready(None));
+    }
+
+    #[tokio::test]
+    async fn closable_semaphore_works() {
+        let inner = MeteredSemaphore::new(2, MetricsContext::no_op(), |_, _| {});
+        let sem = ClosableMeteredSemaphore::new(Arc::new(inner));
+        let perm = sem.try_acquire_owned().unwrap();
+        // sem.close();
+        let permits = sem.outstanding_permits.load(Ordering::Acquire);
+        assert_eq!(permits, 1);
+        drop(perm);
+        let permits = sem.outstanding_permits.load(Ordering::Acquire);
+        assert_eq!(permits, 0);
     }
 }
