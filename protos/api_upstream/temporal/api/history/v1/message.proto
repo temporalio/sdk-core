@@ -199,6 +199,8 @@ message WorkflowTaskCompletedEventAttributes {
     // Data the SDK wishes to record for itself, but server need not interpret, and does not
     // directly impact workflow state.
     temporal.api.sdk.v1.WorkflowTaskCompletedMetadata sdk_metadata = 6;
+    // Local usage data sent during workflow task completion and recorded here for posterity
+    temporal.api.common.v1.MeteringMetadata metering_metadata = 13;
 }
 
 message WorkflowTaskTimedOutEventAttributes {
