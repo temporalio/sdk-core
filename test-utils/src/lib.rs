@@ -692,22 +692,16 @@ pub async fn drain_pollers_and_shutdown(worker: &Arc<dyn CoreWorker>) {
     worker.initiate_shutdown();
     tokio::join!(
         async {
-            assert_eq!(
-                matches!(
-                    worker.poll_activity_task().await.unwrap_err(),
-                    PollActivityError::ShutDown
-                ),
-                true
-            );
+            assert!(matches!(
+                worker.poll_activity_task().await.unwrap_err(),
+                PollActivityError::ShutDown
+            ));
         },
         async {
-            assert_eq!(
-                matches!(
-                    worker.poll_workflow_activation().await.unwrap_err(),
-                    PollWfError::ShutDown,
-                ),
-                true
-            );
+            assert!(matches!(
+                worker.poll_workflow_activation().await.unwrap_err(),
+                PollWfError::ShutDown,
+            ));
         }
     );
     worker.shutdown().await;
