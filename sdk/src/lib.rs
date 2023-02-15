@@ -307,20 +307,20 @@ impl Worker {
             // Only poll on the activity queue if activity functions have been registered. This
             // makes tests which use mocks dramatically more manageable.
             async {
-                if !act_half.activity_fns.is_empty() {
-                    loop {
-                        let activity = common.worker.poll_activity_task().await;
-                        if matches!(activity, Err(PollActivityError::ShutDown)) {
-                            break;
-                        }
-                        act_half.activity_task_handler(
-                            common.worker.clone(),
-                            safe_app_data.clone(),
-                            common.task_queue.clone(),
-                            activity?,
-                        )?;
+                // if !act_half.activity_fns.is_empty() {
+                loop {
+                    let activity = common.worker.poll_activity_task().await;
+                    if matches!(activity, Err(PollActivityError::ShutDown)) {
+                        break;
                     }
-                };
+                    act_half.activity_task_handler(
+                        common.worker.clone(),
+                        safe_app_data.clone(),
+                        common.task_queue.clone(),
+                        activity?,
+                    )?;
+                }
+                // };
                 Result::<_, anyhow::Error>::Ok(())
             },
             wf_future_joiner,

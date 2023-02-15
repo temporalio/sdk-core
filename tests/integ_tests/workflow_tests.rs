@@ -42,8 +42,8 @@ use temporal_sdk_core_protos::{
     temporal::api::{failure::v1::Failure, history::v1::history_event},
 };
 use temporal_sdk_core_test_utils::{
-    history_from_proto_binary, init_core_and_create_wf, init_core_replay_preloaded,
-    schedule_activity_cmd, CoreWfStarter, WorkerTestHelpers,
+    drain_pollers_and_shutdown, history_from_proto_binary, init_core_and_create_wf,
+    init_core_replay_preloaded, schedule_activity_cmd, CoreWfStarter, WorkerTestHelpers,
 };
 use tokio::time::sleep;
 use uuid::Uuid;
@@ -103,7 +103,7 @@ async fn parallel_workflows_same_queue() {
     for handle in handles {
         handle.await.unwrap()
     }
-    core.shutdown().await;
+    drain_pollers_and_shutdown(&core).await;
 }
 
 static RUN_CT: AtomicUsize = AtomicUsize::new(0);
@@ -162,7 +162,7 @@ async fn shutdown_aborts_actively_blocked_poll() {
     let tcore = core.clone();
     let handle = tokio::spawn(async move {
         std::thread::sleep(Duration::from_millis(100));
-        tcore.shutdown().await;
+        drain_pollers_and_shutdown(&tcore).await;
     });
     assert_matches!(
         core.poll_workflow_activation().await.unwrap_err(),

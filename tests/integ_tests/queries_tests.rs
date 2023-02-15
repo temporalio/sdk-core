@@ -10,7 +10,9 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::{failure::v1::Failure, query::v1::WorkflowQuery},
 };
-use temporal_sdk_core_test_utils::{init_core_and_create_wf, WorkerTestHelpers};
+use temporal_sdk_core_test_utils::{
+    drain_pollers_and_shutdown, init_core_and_create_wf, WorkerTestHelpers,
+};
 
 #[tokio::test]
 async fn simple_query_legacy() {
@@ -205,7 +207,7 @@ async fn query_after_execution_complete(#[case] do_evict: bool) {
         query_futs.push(do_workflow(true).map(|_| ()).boxed());
     }
     while query_futs.next().await.is_some() {}
-    core.shutdown().await;
+    drain_pollers_and_shutdown(core).await;
 }
 
 #[tokio::test]

@@ -6,7 +6,8 @@ use temporal_sdk_core_protos::coresdk::{
     workflow_completion::WorkflowActivationCompletion,
 };
 use temporal_sdk_core_test_utils::{
-    init_core_and_create_wf, start_timer_cmd, CoreWfStarter, WorkerTestHelpers,
+    drain_pollers_and_shutdown, init_core_and_create_wf, start_timer_cmd, CoreWfStarter,
+    WorkerTestHelpers,
 };
 
 pub async fn timer_wf(command_sink: WfContext) -> WorkflowResult<()> {
@@ -42,7 +43,7 @@ async fn timer_workflow_manual() {
     .unwrap();
     let task = core.poll_workflow_activation().await.unwrap();
     core.complete_execution(&task.run_id).await;
-    core.shutdown().await;
+    drain_pollers_and_shutdown(&core).await;
 }
 
 #[tokio::test]

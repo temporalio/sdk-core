@@ -20,7 +20,8 @@ use temporal_sdk_core_protos::{
     DEFAULT_ACTIVITY_TYPE,
 };
 use temporal_sdk_core_test_utils::{
-    init_core_and_create_wf, schedule_activity_cmd, CoreWfStarter, WorkerTestHelpers,
+    drain_pollers_and_shutdown, init_core_and_create_wf, schedule_activity_cmd, CoreWfStarter,
+    WorkerTestHelpers,
 };
 use tokio::time::sleep;
 
@@ -170,7 +171,7 @@ async fn many_act_fails_with_heartbeats() {
         },]
     );
     core.complete_execution(&task.run_id).await;
-    core.shutdown().await;
+    drain_pollers_and_shutdown(&core).await;
 }
 
 #[tokio::test]

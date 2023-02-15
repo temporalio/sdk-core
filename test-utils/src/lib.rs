@@ -34,6 +34,7 @@ use temporal_sdk_core::{
     replay::HistoryForReplay,
     ClientOptions, ClientOptionsBuilder, CoreRuntime, WorkerConfig, WorkerConfigBuilder,
 };
+use temporal_sdk_core_api::errors::{PollActivityError, PollWfError};
 use temporal_sdk_core_api::{
     telemetry::{
         Logger, MetricsExporter, OtelCollectorOptions, TelemetryOptions, TelemetryOptionsBuilder,
@@ -680,4 +681,29 @@ where
         .await
         .unwrap();
     }
+}
+
+pub async fn drain_pollers_and_shutdown(worker: &Arc<dyn CoreWorker>) {
+    worker.initiate_shutdown();
+    tokio::join!(
+        async {
+            assert_eq!(
+                matches!(
+                    worker.poll_activity_task().await.unwrap_err(),
+                    PollActivityError::ShutDown
+                ),
+                true
+            );
+        },
+        async {
+            assert_eq!(
+                matches!(
+                    worker.poll_workflow_activation().await.unwrap_err(),
+                    PollWfError::ShutDown,
+                ),
+                true
+            );
+        }
+    );
+    worker.shutdown().await;
 }
