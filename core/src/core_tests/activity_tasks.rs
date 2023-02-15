@@ -57,7 +57,6 @@ use temporal_sdk_core_protos::{
 };
 use temporal_sdk_core_test_utils::{fanout_tasks, start_timer_cmd, TestWorker};
 use tokio::{sync::Barrier, time::sleep};
-use tokio_util::sync::CancellationToken;
 
 #[tokio::test]
 async fn max_activities_respected() {

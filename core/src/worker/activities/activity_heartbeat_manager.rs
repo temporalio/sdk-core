@@ -219,12 +219,11 @@ impl ActivityHeartbeatManager {
     pub(super) fn notify_shutdown(&self) {
         self.shutdown_token.cancel();
     }
-    // TODO: Can own self now!
+
+    /// TODO: Can own self
     /// Initiates shutdown procedure by stopping lifecycle loop and awaiting for all in-flight
     /// heartbeat requests to be flushed to the server.
-    pub(super) async fn shutdown(&self) {
-        // TODO: this might not be necessary
-        self.notify_shutdown();
+    pub(super) async fn finalize_shutdown(&self) {
         let mut handle = self.join_handle.lock().await;
         if let Some(h) = handle.take() {
             let handle_r = h.await;
@@ -425,7 +424,8 @@ mod test {
         }
         // sleep again to let heartbeats be flushed
         sleep(Duration::from_millis(20)).await;
-        hm.shutdown().await;
+        hm.notify_shutdown();
+        hm.finalize_shutdown().await;
     }
 
     #[tokio::test]
@@ -442,8 +442,8 @@ mod test {
             record_heartbeat(&hm, fake_task_token.clone(), i, Duration::from_millis(10));
             sleep(Duration::from_millis(20)).await;
         }
-        // sleep again to let heartbeats be flushed
-        hm.shutdown().await;
+        hm.notify_shutdown();
+        hm.finalize_shutdown().await;
     }
 
     /// Ensure that heartbeat can be called from a tight loop without any throttle_interval, resulting in two
@@ -463,7 +463,8 @@ mod test {
             // Let it propagate
             sleep(Duration::from_millis(10)).await;
         }
-        hm.shutdown().await;
+        hm.notify_shutdown();
+        hm.finalize_shutdown().await;
     }
 
     /// This test reports one heartbeat and waits for the throttle_interval to elapse before sending another
@@ -481,7 +482,8 @@ mod test {
         record_heartbeat(&hm, fake_task_token, 1, Duration::from_millis(100));
         // Let it propagate
         sleep(Duration::from_millis(50)).await;
-        hm.shutdown().await;
+        hm.notify_shutdown();
+        hm.finalize_shutdown().await;
     }
 
     #[tokio::test]
@@ -501,7 +503,8 @@ mod test {
         // Let it propagate
         sleep(Duration::from_millis(10)).await;
         // We know it works b/c otherwise we would have only called record 1 time w/o sleep
-        hm.shutdown().await;
+        hm.notify_shutdown();
+        hm.finalize_shutdown().await;
     }
 
     #[tokio::test]
@@ -515,7 +518,8 @@ mod test {
         let fake_task_token = vec![1, 2, 3];
         record_heartbeat(&hm, fake_task_token.clone(), 0, Duration::from_millis(100));
         hm.evict(fake_task_token.clone().into()).await;
-        hm.shutdown().await;
+        hm.notify_shutdown();
+        hm.finalize_shutdown().await;
     }
 
     fn record_heartbeat(

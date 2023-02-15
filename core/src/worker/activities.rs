@@ -124,7 +124,7 @@ pub(crate) struct WorkerActivityTasks {
     complete_notify: Arc<Notify>,
     /// Token to notify when poll returned a shutdown error
     poll_returned_shutdown_token: CancellationToken,
-    drain_watch_task: JoinHandle<()>,
+    drain_watch_task: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl WorkerActivityTasks {
@@ -198,7 +198,7 @@ impl WorkerActivityTasks {
             max_heartbeat_throttle_interval,
             default_heartbeat_throttle_interval,
             poll_returned_shutdown_token: CancellationToken::new(),
-            drain_watch_task,
+            drain_watch_task: Mutex::new(Some(drain_watch_task)),
         }
     }
 
@@ -312,14 +312,13 @@ impl WorkerActivityTasks {
         heartbeat_manager.notify_shutdown();
     }
 
-    pub(crate) async fn shutdown2(&self) {
-        self.notify_shutdown();
+    async fn shutdown_complete(&self) {
         self.poll_returned_shutdown_token.cancelled().await;
-    }
-    pub(crate) async fn shutdown(self) {
-        self.notify_shutdown();
-        self.poll_returned_shutdown_token.cancelled().await;
-        if let Err(e) = self.drain_watch_task.await {
+        let task = self.drain_watch_task.lock().await.take();
+        if task.is_none() {
+            return;
+        }
+        if let Err(e) = task.unwrap().await {
             if !e.is_cancelled() {
                 error!(
                     "Unexpected error joining activity tasks during shutdown: {:?}",
@@ -327,6 +326,16 @@ impl WorkerActivityTasks {
                 )
             }
         }
+        self.heartbeat_manager.finalize_shutdown().await;
+    }
+
+    pub(crate) async fn shutdown(&self) {
+        self.notify_shutdown();
+        self.shutdown_complete().await;
+    }
+
+    pub(crate) async fn finalize_shutdown(self) {
+        self.shutdown_complete().await;
     }
 
     /// Exclusive poll for activity tasks

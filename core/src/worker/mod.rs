@@ -324,14 +324,14 @@ impl Worker {
             .expect("Workflow processing terminates cleanly");
         // Wait for activities to finish
         if let Some(acts) = self.at_task_mgr.as_ref() {
-            acts.shutdown2().await;
+            acts.shutdown().await;
         }
     }
 
     /// Finish shutting down by consuming the background pollers and freeing all resources
     async fn finalize_shutdown(self) {
         if let Some(b) = self.at_task_mgr {
-            b.shutdown().await;
+            b.finalize_shutdown().await;
         }
     }
 
