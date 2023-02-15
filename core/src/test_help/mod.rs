@@ -29,6 +29,7 @@ use std::{
     task::{Context, Poll},
     time::Duration,
 };
+use temporal_sdk_core_api::errors::{PollActivityError, PollWfError};
 use temporal_sdk_core_api::Worker as WorkerTrait;
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -50,7 +51,6 @@ use temporal_sdk_core_test_utils::TestWorker;
 use tokio::sync::{mpsc::unbounded_channel, Notify};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
-use temporal_sdk_core_api::errors::{PollActivityError, PollWfError};
 
 pub const TEST_Q: &str = "q";
 pub static NO_MORE_WORK_ERROR_MSG: &str = "No more work to do";
@@ -893,13 +893,28 @@ macro_rules! prost_dur {
     };
 }
 
-pub (crate) async fn drain_pollers_and_shutdown(worker: Worker, initiate_shutdown: bool) {
+pub(crate) async fn drain_pollers_and_shutdown(worker: Worker, initiate_shutdown: bool) {
+    if initiate_shutdown {
+        worker.initiate_shutdown();
+    }
+    tokio::join!(
+        async {
+            let err = worker.poll_activity_task().await.unwrap_err();
+            assert_matches!(err, PollActivityError::ShutDown);
+        },
+        async {
+            let err = worker.poll_workflow_activation().await.unwrap_err();
+            assert_matches!(err, PollWfError::ShutDown);
+        }
+    );
+    worker.finalize_shutdown().await;
+}
+
+pub(crate) async fn drain_activity_poller_and_shutdown(worker: Worker, initiate_shutdown: bool) {
     if initiate_shutdown {
         worker.initiate_shutdown();
     }
     let err = worker.poll_activity_task().await.unwrap_err();
     assert_matches!(err, PollActivityError::ShutDown);
-    let err = worker.poll_workflow_activation().await.unwrap_err();
-    assert_matches!(err, PollWfError::ShutDown);
     worker.finalize_shutdown().await;
 }
