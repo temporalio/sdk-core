@@ -1,3 +1,4 @@
+pub(crate) use crate::worker::NO_MORE_WORK_ERROR_MSG;
 pub(crate) use temporal_sdk_core_test_utils::canned_histories;
 
 use crate::{
@@ -53,7 +54,6 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
 
 pub const TEST_Q: &str = "q";
-pub static NO_MORE_WORK_ERROR_MSG: &str = "No more work to do";
 
 pub fn test_worker_cfg() -> WorkerConfigBuilder {
     let mut wcb = WorkerConfigBuilder::default();

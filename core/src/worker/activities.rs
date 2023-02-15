@@ -22,6 +22,8 @@ use crate::{
     PollActivityError, TaskToken,
 };
 use activity_heartbeat_manager::ActivityHeartbeatManager;
+#[cfg(test)]
+pub(crate) use activity_task_poller_stream::NO_MORE_WORK_ERROR_MSG;
 use dashmap::DashMap;
 use futures::{stream, stream::BoxStream, stream::PollNext, Stream, StreamExt};
 use governor::{Quota, RateLimiter};
@@ -252,6 +254,7 @@ impl WorkerActivityTasks {
                 })
                 .map_err(|err| err.into())
             })
+            // This map, chain, filter_map sequence is here to cancel the token when this stream ends.
             .map(Some)
             .chain(futures::stream::once(async move {
                 on_complete_token.cancel();
@@ -314,19 +317,17 @@ impl WorkerActivityTasks {
 
     async fn shutdown_complete(&self) {
         self.poll_returned_shutdown_token.cancelled().await;
-        let task = self.drain_watch_task.lock().await.take();
-        if task.is_none() {
-            return;
-        }
-        if let Err(e) = task.unwrap().await {
-            if !e.is_cancelled() {
-                error!(
-                    "Unexpected error joining activity tasks during shutdown: {:?}",
-                    e
-                )
+        self.heartbeat_manager.finalize_shutdown().await;
+        if let Some(task) = self.drain_watch_task.lock().await.take() {
+            if let Err(e) = task.await {
+                if !e.is_cancelled() {
+                    error!(
+                        "Unexpected error joining activity tasks during shutdown: {:?}",
+                        e
+                    )
+                }
             }
         }
-        self.heartbeat_manager.finalize_shutdown().await;
     }
 
     pub(crate) async fn shutdown(&self) {

@@ -6,6 +6,8 @@ pub use temporal_sdk_core_api::worker::{WorkerConfig, WorkerConfigBuilder};
 #[cfg(feature = "save_wf_inputs")]
 pub use workflow::replay_wf_state_inputs;
 
+#[cfg(test)]
+pub(crate) use activities::NO_MORE_WORK_ERROR_MSG;
 pub(crate) use activities::{
     ExecutingLAId, LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
     NewLocalAct,
@@ -70,7 +72,9 @@ pub struct Worker {
     /// Will be called at the end of each activation completion
     #[allow(clippy::type_complexity)] // Sorry clippy, there's no simple way to re-use here.
     post_activate_hook: Option<Box<dyn Fn(&Self, &str, usize) + Send + Sync>>,
+    /// Set when non-local activities are complete and should stop being polled
     non_local_activities_complete: Arc<AtomicBool>,
+    /// Set when local activities are complete and should stop being polled
     local_activities_complete: Arc<AtomicBool>,
 }
 
@@ -141,9 +145,9 @@ impl WorkerTrait for Worker {
             atm.notify_shutdown();
         }
         let lam = self.local_act_mgr.clone();
-        tokio::spawn(async move {
-            lam.wait_all_outstanding_tasks_finished().await;
-        });
+        // Let the manager know that shutdown has been initiated to try to unblock the local activity poll in case this
+        // worker is an activity-only worker.
+        lam.shutdown_initiated();
         info!(
             task_queue=%self.config.task_queue,
             namespace=%self.config.namespace,
@@ -322,6 +326,8 @@ impl Worker {
             .shutdown()
             .await
             .expect("Workflow processing terminates cleanly");
+        let lam = self.local_act_mgr.clone();
+        lam.wait_all_outstanding_tasks_finished().await;
         // Wait for activities to finish
         if let Some(acts) = self.at_task_mgr.as_ref() {
             acts.shutdown().await;

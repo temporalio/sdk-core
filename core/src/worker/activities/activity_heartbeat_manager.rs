@@ -220,7 +220,7 @@ impl ActivityHeartbeatManager {
         self.shutdown_token.cancel();
     }
 
-    /// TODO: Can own self
+    // TODO: Can own self now!
     /// Initiates shutdown procedure by stopping lifecycle loop and awaiting for all in-flight
     /// heartbeat requests to be flushed to the server.
     pub(super) async fn finalize_shutdown(&self) {
