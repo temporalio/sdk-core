@@ -895,12 +895,16 @@ pub(crate) async fn drain_pollers_and_shutdown(worker: Worker, initiate_shutdown
     }
     tokio::join!(
         async {
-            let err = worker.poll_activity_task().await.unwrap_err();
-            assert_matches!(err, PollActivityError::ShutDown);
+            assert_matches!(
+                worker.poll_activity_task().await.unwrap_err(),
+                PollActivityError::ShutDown
+            );
         },
         async {
-            let err = worker.poll_workflow_activation().await.unwrap_err();
-            assert_matches!(err, PollWfError::ShutDown);
+            assert_matches!(
+                worker.poll_workflow_activation().await.unwrap_err(),
+                PollWfError::ShutDown
+            );
         }
     );
     worker.finalize_shutdown().await;
@@ -910,7 +914,9 @@ pub(crate) async fn drain_activity_poller_and_shutdown(worker: Worker, initiate_
     if initiate_shutdown {
         worker.initiate_shutdown();
     }
-    let err = worker.poll_activity_task().await.unwrap_err();
-    assert_matches!(err, PollActivityError::ShutDown);
+    assert_matches!(
+        worker.poll_activity_task().await.unwrap_err(),
+        PollActivityError::ShutDown
+    );
     worker.finalize_shutdown().await;
 }
