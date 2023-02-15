@@ -5,7 +5,7 @@ use crate::{
         drain_activity_poller_and_shutdown, drain_pollers_and_shutdown, gen_assert_and_reply,
         mock_manual_poller, mock_poller, mock_poller_from_resps, mock_worker, poll_and_reply,
         single_hist_mock_sg, test_worker_cfg, MockPollCfg, MockWorkerInputs, MocksHolder,
-        ResponseType, WorkflowCachingPolicy, NO_MORE_WORK_ERROR_MSG, TEST_Q,
+        QueueResponse, ResponseType, WorkflowCachingPolicy, NO_MORE_WORK_ERROR_MSG, TEST_Q,
     },
     worker::client::mocks::{mock_manual_workflow_client, mock_workflow_client},
     ActivityHeartbeat, Worker, WorkerConfigBuilder,
@@ -754,11 +754,8 @@ async fn activity_tasks_from_completion_are_delivered() {
         .times(3)
         .returning(|_, _| Ok(RespondActivityTaskCompletedResponse::default()));
     let mut mock = single_hist_mock_sg(wfid, t, [1], mock, true);
-    let mut mock_poller = mock_manual_poller();
-    mock_poller
-        .expect_poll()
-        .returning(|| futures::future::pending().boxed());
-    mock.set_act_poller(Box::new(mock_poller));
+    let act_tasks: Vec<QueueResponse<PollActivityTaskQueueResponse>> = vec![];
+    mock.set_act_poller(mock_poller_from_resps(act_tasks));
     mock.worker_cfg(|wc| wc.max_cached_workflows = 2);
     let core = mock_worker(mock);
 

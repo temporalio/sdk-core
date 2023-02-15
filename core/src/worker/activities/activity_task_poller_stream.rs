@@ -34,8 +34,10 @@ pub(crate) fn new_activity_task_poller(
                         .acquire_owned()
                         .await
                         .expect("outstanding activity semaphore not closed");
-                    if let Some(ref rl) = ratelimiter {
-                        rl.until_ready().await;
+                    if !poller_was_shutdown {
+                        if let Some(ref rl) = ratelimiter {
+                            rl.until_ready().await;
+                        }
                     }
                     loop {
                         return match poller.poll().await {
