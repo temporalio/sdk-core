@@ -602,12 +602,11 @@ impl LocalActivityManager {
     }
 
     pub(crate) fn get_nonfirst_attempt_count(&self, for_run_id: &str) -> usize {
-        // TODO: Dedupe
-        let mut dlock = self.dat.lock();
+        let dlock = self.dat.lock();
         dlock
             .la_info
-            .iter_mut()
-            .filter(|(id, info)| id.run_id == for_run_id && info.first_wft_has_ended == true)
+            .iter()
+            .filter(|(id, info)| id.run_id == for_run_id && info.first_wft_has_ended)
             .map(|(_, info)| info.attempts_in_wft)
             .sum()
     }
