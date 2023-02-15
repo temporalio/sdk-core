@@ -10,7 +10,10 @@ mod workflow_tasks;
 
 use crate::{
     errors::{PollActivityError, PollWfError},
-    test_help::{build_mock_pollers, canned_histories, mock_worker, test_worker_cfg, MockPollCfg},
+    test_help::{
+        build_mock_pollers, canned_histories, mock_worker, test_worker_cfg, MockPollCfg,
+        NO_MORE_WORK_ERROR_MSG,
+    },
     worker::client::mocks::{mock_manual_workflow_client, mock_workflow_client},
     Worker,
 };
@@ -57,7 +60,7 @@ async fn shutdown_interrupts_both_polls() {
             async move {
                 BARR.wait().await;
                 sleep(Duration::from_secs(1)).await;
-                Ok(Default::default())
+                Err(tonic::Status::cancelled(NO_MORE_WORK_ERROR_MSG))
             }
             .boxed()
         });

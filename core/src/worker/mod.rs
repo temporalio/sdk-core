@@ -140,6 +140,10 @@ impl WorkerTrait for Worker {
         if let Some(atm) = self.at_task_mgr.as_ref() {
             atm.notify_shutdown();
         }
+        let lam = self.local_act_mgr.clone();
+        tokio::spawn(async move {
+            lam.wait_all_outstanding_tasks_finished().await;
+        });
         info!(
             task_queue=%self.config.task_queue,
             namespace=%self.config.namespace,
@@ -266,8 +270,10 @@ impl Worker {
                 config.default_heartbeat_throttle_interval,
             )
         });
+        let mut poll_on_non_local_activities = true;
         if at_task_mgr.is_none() {
             info!("Activity polling is disabled for this worker");
+            poll_on_non_local_activities = false;
         }
         let la_sink = LAReqSink::new(lam_clone, config.wf_state_inputs.clone());
         Self {
@@ -299,7 +305,8 @@ impl Worker {
             config,
             shutdown_token,
             post_activate_hook: None,
-            non_local_activities_complete: Default::default(),
+            // Complete if there configured not to poll on non-local activities.
+            non_local_activities_complete: Arc::new(AtomicBool::new(!poll_on_non_local_activities)),
             local_activities_complete: Default::default(),
         }
     }
@@ -310,9 +317,6 @@ impl Worker {
         self.initiate_shutdown();
         // Next we need to wait for all local activities to finish so no more workflow task
         // heartbeats will be generated
-        self.local_act_mgr
-            .wait_all_outstanding_tasks_finished()
-            .await;
         // Wait for workflows to finish
         self.workflows
             .shutdown()
