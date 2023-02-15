@@ -303,6 +303,11 @@ impl CoreWfStarter {
         self
     }
 
+    pub fn no_remote_activities(&mut self) -> &mut Self {
+        self.worker_config.no_remote_activities = true;
+        self
+    }
+
     pub fn enable_wf_state_input_recording(&mut self) -> &mut Self {
         let (ser_tx, ser_rx) = unbounded_channel();
         let worker_cfg_clone = self.worker_config.clone();

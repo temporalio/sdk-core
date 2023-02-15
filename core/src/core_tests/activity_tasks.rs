@@ -962,16 +962,7 @@ async fn activity_tasks_from_completion_reserve_slots() {
     // This wf poll should *not* set the flag that it wants tasks back since both slots are
     // occupied
     let run_fut = async { worker.run_until_done().await.unwrap() };
-    tokio::select! {
-        _ = run_fut => {
-            // Ignore for now, this doesn't complete, need to fix
-        },
-        _ = act_completer => {
-            return;
-        }
-    }
-    // TODO: Worker run_until_done never returns, fix and replace select above with the line below.
-    // tokio::join!(run_fut, act_completer);
+    tokio::join!(run_fut, act_completer);
 }
 
 #[tokio::test]
