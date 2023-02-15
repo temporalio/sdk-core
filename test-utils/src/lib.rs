@@ -688,6 +688,7 @@ where
     }
 }
 
+/// Initiate shutdown, drain the pollers, and wait for shutdown to complete.
 pub async fn drain_pollers_and_shutdown(worker: &Arc<dyn CoreWorker>) {
     worker.initiate_shutdown();
     tokio::join!(

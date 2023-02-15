@@ -889,10 +889,9 @@ macro_rules! prost_dur {
     };
 }
 
-pub(crate) async fn drain_pollers_and_shutdown(worker: Worker, initiate_shutdown: bool) {
-    if initiate_shutdown {
-        worker.initiate_shutdown();
-    }
+/// Initiate shutdown, drain the pollers, and wait for shutdown to complete.
+pub(crate) async fn drain_pollers_and_shutdown(worker: Worker) {
+    worker.initiate_shutdown();
     tokio::join!(
         async {
             assert_matches!(
@@ -910,13 +909,13 @@ pub(crate) async fn drain_pollers_and_shutdown(worker: Worker, initiate_shutdown
     worker.finalize_shutdown().await;
 }
 
-pub(crate) async fn drain_activity_poller_and_shutdown(worker: Worker, initiate_shutdown: bool) {
-    if initiate_shutdown {
-        worker.initiate_shutdown();
-    }
+/// Initiate shutdown, drain the *activity* poller, and wait for shutdown to complete.
+/// Takes a ref because of that one test that needs it.
+pub(crate) async fn drain_activity_poller_and_shutdown(worker: &Worker) {
+    worker.initiate_shutdown();
     assert_matches!(
         worker.poll_activity_task().await.unwrap_err(),
         PollActivityError::ShutDown
     );
-    worker.finalize_shutdown().await;
+    worker.shutdown().await;
 }
