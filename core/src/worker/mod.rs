@@ -37,8 +37,14 @@ use crate::{
 };
 use activities::{LocalInFlightActInfo, WorkerActivityTasks};
 use futures::Stream;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::{convert::TryInto, future, sync::Arc};
+use std::{
+    convert::TryInto,
+    future,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::activity_execution_result,
@@ -271,7 +277,6 @@ impl Worker {
             hb_tx,
             metrics.with_new_attrs([local_activity_worker_type()]),
         ));
-        let lam_clone = local_act_mgr.clone();
         let at_task_mgr = act_poller.map(|ap| {
             WorkerActivityTasks::new(
                 config.max_outstanding_activities,
@@ -287,7 +292,7 @@ impl Worker {
         if !poll_on_non_local_activities {
             info!("Activity polling is disabled for this worker");
         };
-        let la_sink = LAReqSink::new(lam_clone, config.wf_state_inputs.clone());
+        let la_sink = LAReqSink::new(local_act_mgr.clone(), config.wf_state_inputs.clone());
         Self {
             wf_client: client.clone(),
             workflows: Workflows::new(
@@ -312,6 +317,7 @@ impl Worker {
                 client,
                 wft_stream,
                 la_sink,
+                local_act_mgr.clone(),
                 hb_rx,
                 at_task_mgr
                     .as_ref()

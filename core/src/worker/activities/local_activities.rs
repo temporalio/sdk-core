@@ -110,12 +110,17 @@ impl Debug for NewLocalAct {
 pub(crate) enum LocalActRequest {
     New(NewLocalAct),
     Cancel(ExecutingLAId),
+    #[from(ignore)]
     CancelAllInRun(String),
     StartHeartbeatTimeout {
         send_on_elapse: HeartbeatTimeoutMsg,
         deadline: Instant,
         abort_reg: AbortRegistration,
     },
+    /// Tell the LA manager that a workflow task was responded to (completed or failed) for a
+    /// certain run id
+    #[from(ignore)]
+    IndicateWorkflowTaskCompleted(String),
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
@@ -153,6 +158,10 @@ struct LocalActivityInfo {
     /// Tasks / info about timeouts associated with this LA. May be empty for very brief periods
     /// while the LA id has been generated, but it has not yet been scheduled.
     timeout_bag: Option<TimeoutBag>,
+    /// True once the first workflow task this LA started in has elapsed
+    first_wft_has_ended: bool,
+    /// Attempts at executing this LA during the current WFT
+    attempts_in_wft: usize,
 }
 
 struct LAMData {
@@ -270,6 +279,8 @@ impl LocalActivityManager {
                                 task_token: tt,
                                 backing_off_task: None,
                                 timeout_bag: None,
+                                first_wft_has_ended: false,
+                                attempts_in_wft: 0,
                             });
 
                             // Set up timeouts for the new activity
@@ -322,6 +333,17 @@ impl LocalActivityManager {
                         if let Some(immediate_res) = self.cancel_one_la(laid.seq_num, lainf) {
                             immediate_resolutions.push(immediate_res);
                         }
+                    }
+                }
+                LocalActRequest::IndicateWorkflowTaskCompleted(run_id) => {
+                    let mut dlock = self.dat.lock();
+                    let las_for_run = dlock
+                        .la_info
+                        .iter_mut()
+                        .filter(|(id, _)| id.run_id == run_id);
+                    for (_, lainf) in las_for_run {
+                        lainf.first_wft_has_ended = true;
+                        lainf.attempts_in_wft = 0;
                     }
                 }
             }
@@ -538,6 +560,14 @@ impl LocalActivityManager {
                             LocalActivityInfo {
                                 task_token: tt,
                                 backing_off_task: Some(jh),
+                                first_wft_has_ended: maybe_old_lai
+                                    .as_ref()
+                                    .map(|old| old.first_wft_has_ended)
+                                    .unwrap_or_default(),
+                                attempts_in_wft: maybe_old_lai
+                                    .as_ref()
+                                    .map(|old| old.attempts_in_wft + 1)
+                                    .unwrap_or(1),
                                 timeout_bag: maybe_old_lai.and_then(|old| old.timeout_bag),
                             },
                         );
@@ -569,6 +599,17 @@ impl LocalActivityManager {
     /// get "stuck".
     pub(crate) fn shutdown_initiated(&self) {
         self.set_shutdown_complete_if_ready(&mut self.dat.lock());
+    }
+
+    pub(crate) fn get_nonfirst_attempt_count(&self, for_run_id: &str) -> usize {
+        // TODO: Dedupe
+        let mut dlock = self.dat.lock();
+        dlock
+            .la_info
+            .iter_mut()
+            .filter(|(id, info)| id.run_id == for_run_id && info.first_wft_has_ended == true)
+            .map(|(_, info)| info.attempts_in_wft)
+            .sum()
     }
 
     fn set_shutdown_complete_if_ready(&self, dlock: &mut MutexGuard<LAMData>) -> bool {
@@ -1180,5 +1221,59 @@ mod tests {
         lam.enqueue([new_la.into()]);
         assert_eq!(lam.num_outstanding(), 1);
         assert!(lam.rcvs.lock().await.next().now_or_never().is_none());
+    }
+
+    #[tokio::test]
+    async fn nonfirst_la_attempt_count_is_accurate() {
+        let run_id = "run_id";
+        let lam = LocalActivityManager::test(10);
+        let new_la = NewLocalAct {
+            schedule_cmd: ValidScheduleLA {
+                seq: 1,
+                activity_id: 1.to_string(),
+                retry_policy: RetryPolicy {
+                    initial_interval: Some(prost_dur!(from_millis(1))),
+                    backoff_coefficient: 1.0,
+                    ..Default::default()
+                },
+                local_retry_threshold: Duration::from_secs(500),
+                ..Default::default()
+            },
+            workflow_type: "".to_string(),
+            workflow_exec_info: WorkflowExecution {
+                workflow_id: "".to_string(),
+                run_id: run_id.to_string(),
+            },
+            schedule_time: SystemTime::now(),
+        };
+        lam.enqueue([new_la.clone().into()]);
+        let spinfail = || async {
+            for _ in 1..=10 {
+                let next = lam.next_pending().await.unwrap().unwrap();
+                let tt = TaskToken(next.task_token);
+                lam.complete(
+                    &tt,
+                    &LocalActivityExecutionResult::Failed(Default::default()),
+                );
+            }
+        };
+
+        // Fail a bunch of times
+        spinfail().await;
+        // Nonfirst attempt count should still be zero
+        let count = lam.get_nonfirst_attempt_count(run_id);
+        assert_eq!(count, 0);
+
+        for _ in 1..=2 {
+            // This should work over multiple WFTs
+            // say the first wft was completed
+            lam.enqueue([LocalActRequest::IndicateWorkflowTaskCompleted(
+                run_id.to_string(),
+            )]);
+            // Do some more attempts
+            spinfail().await;
+            let count = lam.get_nonfirst_attempt_count(run_id);
+            assert_eq!(count, 10);
+        }
     }
 }

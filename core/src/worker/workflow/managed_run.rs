@@ -272,6 +272,10 @@ impl ManagedRun {
             if let Some(ot) = &retme {
                 self.metrics.wf_task_latency(ot.start_time.elapsed());
             }
+            // Tell the LA manager that we're done with the WFT
+            self.local_activity_request_sink.sink_reqs(vec![
+                LocalActRequest::IndicateWorkflowTaskCompleted(self.wfm.machines.run_id.clone()),
+            ]);
         }
 
         retme
