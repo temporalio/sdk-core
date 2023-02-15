@@ -249,9 +249,6 @@ async fn activity_cancel_interrupts_poll() {
         .expect_poll()
         .times(2..=3)
         .returning(move || poll_resps.pop_front().unwrap());
-    mock_poller
-        .expect_wait_shutdown()
-        .returning(move || async move {}.boxed());
 
     let mut mock_client = mock_manual_workflow_client();
     mock_client
@@ -665,9 +662,6 @@ async fn no_eager_activities_requested_when_worker_options_disable_remote_activi
     mock_poller
         .expect_poll()
         .returning(|| futures::future::pending().boxed());
-    mock_poller
-        .expect_wait_shutdown()
-        .returning(move || async move {}.boxed());
     mock.set_act_poller(Box::new(mock_poller));
     mock.worker_cfg(|wc| {
         wc.max_cached_workflows = 2;
@@ -764,9 +758,6 @@ async fn activity_tasks_from_completion_are_delivered() {
     mock_poller
         .expect_poll()
         .returning(|| futures::future::pending().boxed());
-    mock_poller
-        .expect_wait_shutdown()
-        .returning(move || async move {}.boxed());
     mock.set_act_poller(Box::new(mock_poller));
     mock.worker_cfg(|wc| wc.max_cached_workflows = 2);
     let core = mock_worker(mock);

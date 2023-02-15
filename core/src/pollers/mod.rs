@@ -27,7 +27,6 @@ where
 {
     async fn poll(&self) -> Option<Result<PollResult>>;
     fn notify_shutdown(&self);
-    async fn wait_shutdown(&self);
     async fn shutdown(self);
     /// Need a separate shutdown to be able to consume boxes :(
     async fn shutdown_box(self: Box<Self>);
@@ -45,9 +44,6 @@ mockall::mock! {
           -> impl Future<Output = Option<Result<T>>> + Send + 'b
             where 'a: 'b, Self: 'b;
         fn notify_shutdown(&self);
-        fn wait_shutdown<'a, 'b>(&self)
-          -> impl Future<Output = ()> + Send + 'b
-            where 'a: 'b, Self: 'b;
         fn shutdown<'a>(self)
           -> impl Future<Output = ()> + Send + 'a
             where Self: 'a;

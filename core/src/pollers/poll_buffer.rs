@@ -25,8 +25,7 @@ use tokio_util::sync::CancellationToken;
 
 pub struct LongPollBuffer<T> {
     buffered_polls: Mutex<Receiver<pollers::Result<T>>>,
-    shutdown_requested: CancellationToken,
-    shutdown_completed: CancellationToken,
+    shutdown: CancellationToken,
     /// This semaphore exists to ensure that we only poll server as many times as core actually
     /// *asked* it to be polled - otherwise we might spin and buffer polls constantly. This also
     /// means unit tests can continue to function in a predictable manner when calling mocks.
@@ -34,7 +33,6 @@ pub struct LongPollBuffer<T> {
     join_handles: FuturesUnordered<JoinHandle<()>>,
     /// Called every time the number of pollers is changed
     num_pollers_changed: Option<Box<dyn Fn(usize) + Send + Sync>>,
-    /// Number of pollers permitted to poll
     active_pollers: Arc<AtomicUsize>,
 }
 
@@ -59,7 +57,7 @@ where
         poll_fn: impl Fn() -> FT + Send + Sync + 'static,
         max_pollers: usize,
         buffer_size: usize,
-        shutdown_requested: CancellationToken,
+        shutdown: CancellationToken,
     ) -> Self
     where
         FT: Future<Output = pollers::Result<T>> + Send,
@@ -67,36 +65,27 @@ where
         let (tx, rx) = channel(buffer_size);
         let polls_requested = Arc::new(Semaphore::new(0));
         let active_pollers = Arc::new(AtomicUsize::new(0));
-        // Tracks the number of running poller routines which may or may not be actively polling
-        let running_pollers = Arc::new(AtomicUsize::new(max_pollers));
         let join_handles = FuturesUnordered::new();
         let pf = Arc::new(poll_fn);
-        let shutdown_completed = CancellationToken::new();
         for _ in 0..max_pollers {
             let tx = tx.clone();
             let pf = pf.clone();
-            let shutdown_requested = shutdown_requested.clone();
-            let shutdown_completed = shutdown_completed.clone();
+            let shutdown = shutdown.clone();
             let polls_requested = polls_requested.clone();
             let ap = active_pollers.clone();
-            let running_pollers = running_pollers.clone();
             let jh = tokio::spawn(async move {
                 loop {
-                    if shutdown_requested.is_cancelled() {
-                        let num_running = running_pollers.fetch_sub(1, Ordering::SeqCst) - 1;
-                        if num_running == 0 {
-                            shutdown_completed.cancel();
-                        }
+                    if shutdown.is_cancelled() {
                         break;
                     }
                     let sp = tokio::select! {
                         sp = polls_requested.acquire() => sp.expect("Polls semaphore not dropped"),
-                        _ = shutdown_requested.cancelled() => continue,
+                        _ = shutdown.cancelled() => continue,
                     };
                     let _active_guard = ActiveCounter::new(ap.as_ref());
                     let r = tokio::select! {
                         r = pf() => r,
-                        _ = shutdown_requested.cancelled() => continue,
+                        _ = shutdown.cancelled() => continue,
                     };
                     sp.forget();
                     let _ = tx.send(r).await;
@@ -106,8 +95,7 @@ where
         }
         Self {
             buffered_polls: Mutex::new(rx),
-            shutdown_requested,
-            shutdown_completed,
+            shutdown,
             polls_requested,
             join_handles,
             num_pollers_changed: None,
@@ -155,11 +143,7 @@ where
     }
 
     fn notify_shutdown(&self) {
-        self.shutdown_requested.cancel();
-    }
-
-    async fn wait_shutdown(&self) {
-        self.shutdown_completed.cancelled().await;
+        self.shutdown.cancel();
     }
 
     async fn shutdown(mut self) {
@@ -197,13 +181,6 @@ impl Poller<PollWorkflowTaskQueueResponse> for WorkflowTaskPoller {
         self.normal_poller.notify_shutdown();
         if let Some(sq) = self.sticky_poller.as_ref() {
             sq.notify_shutdown();
-        }
-    }
-
-    async fn wait_shutdown(&self) {
-        self.normal_poller.wait_shutdown().await;
-        if let Some(sq) = self.sticky_poller.as_ref() {
-            sq.wait_shutdown().await;
         }
     }
 

@@ -66,20 +66,19 @@ pub(crate) fn new_activity_task_poller(
                     }
                 };
                 if poller_was_shutdown {
-                    select! {
-                            res = poll => {
-                                // TODO: mockall makes it impossible to optionally expect a call to wait_shutdown
-                                if res.is_none() {
-                                    poller.wait_shutdown().await;
-                                    return None;
-                                }
-                                return res.map(|res| (res, (poller, semaphore, ratelimiter, metrics, shutdown_token, poller_was_shutdown)));
-                            }
-                            // We still want to get notified of poller shutdown even if there aren't any available poll permits or we've exceeded the poll rate limiter.
-                            _ = poller.wait_shutdown() => {
-                                return None;
-                            }
-                    }
+                    return poll.await.map(|res| {
+                        (
+                            res,
+                            (
+                                poller,
+                                semaphore,
+                                ratelimiter,
+                                metrics,
+                                shutdown_token,
+                                poller_was_shutdown,
+                            ),
+                        )
+                    });
                 }
                 select! {
                     _ = shutdown_token.cancelled() => {
@@ -88,11 +87,6 @@ pub(crate) fn new_activity_task_poller(
                         continue;
                     }
                     res = poll => {
-                        // TODO: mockall makes it impossible to optionally expect a call to wait_shutdown
-                        if res.is_none() {
-                            poller.wait_shutdown().await;
-                            return None;
-                        }
                         return res.map(|res| (res, (poller, semaphore, ratelimiter, metrics, shutdown_token, poller_was_shutdown)));
                     }
                 }

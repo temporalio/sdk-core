@@ -305,10 +305,6 @@ where
             async { Some(Err(tonic::Status::cancelled(NO_MORE_WORK_ERROR_MSG))) }.boxed()
         }
     });
-    mock_poller
-        // TODO: can't make this optional while the call is.
-        .expect_wait_shutdown()
-        .returning(move || async move {}.boxed());
     Box::new(mock_poller) as BoxedPoller<T>
 }
 
