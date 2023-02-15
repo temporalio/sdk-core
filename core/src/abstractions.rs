@@ -144,7 +144,8 @@ impl ClosableMeteredSemaphore {
         Box::new(move || {
             outstanding_permits.fetch_sub(1, Ordering::Release);
             if close_requested.load(Ordering::Acquire)
-                && outstanding_permits.load(Ordering::Acquire) == 0 {
+                && outstanding_permits.load(Ordering::Acquire) == 0
+            {
                 close_token.cancel();
             }
         })

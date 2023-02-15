@@ -25,7 +25,12 @@ use activity_heartbeat_manager::ActivityHeartbeatManager;
 use dashmap::DashMap;
 use futures::{stream, stream::BoxStream, stream::PollNext, Stream, StreamExt};
 use governor::{Quota, RateLimiter};
-use std::{convert::TryInto, future, sync::Arc, time::{Duration, Instant}};
+use std::{
+    convert::TryInto,
+    future,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{self as ar, activity_execution_result as aer},
