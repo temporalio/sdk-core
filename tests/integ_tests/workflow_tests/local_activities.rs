@@ -253,7 +253,7 @@ impl WorkerInterceptor for LACancellerInterceptor {
             return;
         }
         if let Some(workflow_activation_completion::Status::Successful(
-            workflow_completion::Success { commands },
+            workflow_completion::Success { commands, .. },
         )) = completion.status.as_ref()
         {
             if !commands.is_empty() {
