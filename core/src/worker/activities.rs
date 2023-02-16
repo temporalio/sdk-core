@@ -245,7 +245,7 @@ impl WorkerActivityTasks {
         // Add is_eager false
         let poller_stream = poller_stream.map(|res| res.map(|task| (task, false)));
 
-        // Prefer eager activities over new tasks
+        // Prefer eager activities over polling the server
         stream::select_with_strategy(non_poll_stream, poller_stream, |_: &mut ()| PollNext::Left)
             .zip(cloning_stream)
             .map(|(res, (metrics, outstanding_tasks))| {
@@ -263,7 +263,7 @@ impl WorkerActivityTasks {
             .filter_map(future::ready)
     }
 
-    /// Builds an [ActivityTask] stream for cancellation tasks from cancels delivered by the `heartbeat_manager`
+    /// Builds an [ActivityTask] stream for cancellation tasks from cancels delivered from heartbeats
     fn make_cancel_task_stream(
         cancels_stream: UnboundedReceiverStream<PendingActivityCancel>,
         outstanding_tasks: Arc<DashMap<TaskToken, RemoteInFlightActInfo>>,
