@@ -16,7 +16,7 @@ use rstest::{fixture, rstest};
 use std::{
     collections::{HashMap, VecDeque},
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
     },
     time::Duration,
@@ -53,7 +53,9 @@ use temporal_sdk_core_protos::{
     },
     DEFAULT_ACTIVITY_TYPE, DEFAULT_WORKFLOW_TYPE,
 };
-use temporal_sdk_core_test_utils::{fanout_tasks, start_timer_cmd};
+use temporal_sdk_core_test_utils::{
+    fanout_tasks, schedule_activity_cmd, start_timer_cmd, WorkerTestHelpers,
+};
 use tokio::{
     join,
     sync::{Barrier, Semaphore},
@@ -1266,6 +1268,8 @@ async fn buffered_work_drained_on_shutdown() {
         .unwrap();
     };
     let complete_first = async move {
+        // If the first complete is sent too fast, we may not have had a chance to buffer work.
+        tokio::time::sleep(Duration::from_millis(50)).await;
         core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
             act1.run_id,
             start_timer_cmd(1, Duration::from_secs(1)),
@@ -1274,8 +1278,6 @@ async fn buffered_work_drained_on_shutdown() {
         .unwrap();
     };
     join!(poll_fut, complete_first, async {
-        // If the shutdown is sent too too fast, we might not have got a chance to even buffer work
-        tokio::time::sleep(Duration::from_millis(5)).await;
         core.shutdown().await;
     });
 }
@@ -1357,12 +1359,17 @@ async fn poll_response_triggers_wf_error() {
     t.add_full_wf_task();
     t.add_workflow_execution_completed();
 
-    let mh = MockPollCfg::from_resp_batches(
+    let mut mh = MockPollCfg::from_resp_batches(
         "fake_wf_id",
         t,
         [ResponseType::AllHistory],
         mock_workflow_client(),
     );
+    // Fail wft will be called when auto-failing.
+    mh.num_expected_fails = 1;
+    mh.expect_fail_wft_matcher = Box::new(move |_, cause, _| {
+        matches!(cause, WorkflowTaskFailedCause::NonDeterministicError)
+    });
     let mock = build_mock_pollers(mh);
     let core = mock_worker(mock);
     // Poll for first WFT, which is immediately an eviction
@@ -2326,5 +2333,101 @@ async fn ensure_fetching_fail_during_complete_sends_task_failure() {
         },]
     );
 
+    core.shutdown().await;
+}
+
+#[tokio::test]
+async fn lang_internal_flags() {
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    t.set_flags_first_wft(&[], &[1]);
+    t.add_we_signaled("sig1", vec![]);
+    t.add_full_wf_task();
+    t.set_flags_last_wft(&[], &[2]);
+    t.add_we_signaled("sig2", vec![]);
+    t.add_full_wf_task();
+    t.add_workflow_execution_completed();
+
+    let mut mh = MockPollCfg::from_resp_batches(
+        "fake_wf_id",
+        t,
+        [ResponseType::ToTaskNum(2), ResponseType::AllHistory],
+        mock_workflow_client(),
+    );
+    mh.completion_asserts = Some(Box::new(|c| {
+        assert_matches!(c.sdk_metadata.lang_used_flags.as_slice(), &[2]);
+    }));
+    let mut mock = build_mock_pollers(mh);
+    mock.worker_cfg(|wc| wc.max_cached_workflows = 1);
+    let core = mock_worker(mock);
+
+    let act = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(act.available_internal_flags.as_slice(), [1]);
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(act.run_id))
+        .await
+        .unwrap();
+
+    let act = core.poll_workflow_activation().await.unwrap();
+    let mut completion = WorkflowActivationCompletion::empty(act.run_id);
+    completion.add_internal_flags(2);
+    core.complete_workflow_activation(completion).await.unwrap();
+
+    let act = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(act.available_internal_flags.as_slice(), [1, 2]);
+    core.complete_execution(&act.run_id).await;
+    core.shutdown().await;
+}
+
+// Verify we send flags to server when they're used
+#[tokio::test]
+async fn core_internal_flags() {
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    let act_scheduled_event_id = t.add_activity_task_scheduled("act-id");
+    let act_started_event_id = t.add_activity_task_started(act_scheduled_event_id);
+    t.add_activity_task_completed(
+        act_scheduled_event_id,
+        act_started_event_id,
+        Default::default(),
+    );
+    t.add_full_wf_task();
+    t.add_workflow_execution_completed();
+
+    let mut mh = MockPollCfg::from_resp_batches(
+        "fake_wf_id",
+        t,
+        [ResponseType::ToTaskNum(1), ResponseType::ToTaskNum(2)],
+        mock_workflow_client(),
+    );
+    let first_poll = AtomicBool::new(true);
+    mh.completion_asserts = Some(Box::new(move |c| {
+        if !first_poll.load(Ordering::Acquire) {
+            assert_matches!(c.sdk_metadata.core_used_flags.as_slice(), &[1]);
+        }
+        first_poll.store(false, Ordering::Release);
+    }));
+    let mut mock = build_mock_pollers(mh);
+    mock.worker_cfg(|wc| wc.max_cached_workflows = 1);
+    let core = mock_worker(mock);
+
+    let act = core.poll_workflow_activation().await.unwrap();
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+        act.run_id,
+        schedule_activity_cmd(
+            1,
+            "whatever",
+            "act-id",
+            ActivityCancellationType::TryCancel,
+            Duration::from_secs(60),
+            Duration::from_secs(60),
+        ),
+    ))
+    .await
+    .unwrap();
+
+    let act = core.poll_workflow_activation().await.unwrap();
+    core.complete_execution(&act.run_id).await;
     core.shutdown().await;
 }

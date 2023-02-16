@@ -1,4 +1,5 @@
 use crate::{
+    internal_flags::CoreInternalFlags,
     replay::DEFAULT_WORKFLOW_TYPE,
     test_help::{canned_histories, mock_sdk, mock_sdk_cfg, MockPollCfg, ResponseType},
     worker::client::mocks::mock_workflow_client,
@@ -8,7 +9,9 @@ use std::{
     time::Duration,
 };
 use temporal_client::WorkflowOptions;
-use temporal_sdk::{ActivityOptions, WfContext, WorkflowResult};
+use temporal_sdk::{
+    ActivityOptions, ChildWorkflowOptions, LocalActivityOptions, WfContext, WorkflowResult,
+};
 use temporal_sdk_core_protos::{
     temporal::api::{enums::v1::WorkflowTaskFailedCause, failure::v1::Failure},
     DEFAULT_ACTIVITY_TYPE,
@@ -110,13 +113,20 @@ async fn test_wf_task_rejected_properly_due_to_nondeterminism(#[case] use_cache:
 }
 
 #[rstest::rstest]
-#[case::with_cache(true)]
-#[case::without_cache(false)]
 #[tokio::test]
-async fn test_activity_type_change_is_nondeterministic(#[case] use_cache: bool) {
+async fn activity_id_or_type_change_is_nondeterministic(
+    #[values(true, false)] use_cache: bool,
+    #[values(true, false)] id_change: bool,
+    #[values(true, false)] local_act: bool,
+) {
     let wf_id = "fakeid";
     let wf_type = DEFAULT_WORKFLOW_TYPE;
-    let t = canned_histories::single_activity("1");
+    let mut t = if local_act {
+        canned_histories::single_local_activity("1")
+    } else {
+        canned_histories::single_activity("1")
+    };
+    t.set_flags_first_wft(&[CoreInternalFlags::IdAndTypeDeterminismChecks as u32], &[]);
     let mock = mock_workflow_client();
     let mut mh = MockPollCfg::from_resp_batches(
         wf_id,
@@ -127,12 +137,17 @@ async fn test_activity_type_change_is_nondeterministic(#[case] use_cache: bool) 
     );
     // We should see one wft failure which has nondeterminism cause
     mh.num_expected_fails = 1;
-    mh.expect_fail_wft_matcher = Box::new(|_, cause, f| {
+    mh.expect_fail_wft_matcher = Box::new(move |_, cause, f| {
+        let should_contain = if id_change {
+            "does not match activity id"
+        } else {
+            "does not match activity type"
+        };
         matches!(cause, WorkflowTaskFailedCause::NonDeterministicError)
             && matches!(f, Some(Failure {
                 message,
                 ..
-            }) if message.contains("does not match activity type"))
+            }) if message.contains(should_contain))
     });
     let mut worker = mock_sdk_cfg(mh, |cfg| {
         if use_cache {
@@ -141,11 +156,35 @@ async fn test_activity_type_change_is_nondeterministic(#[case] use_cache: bool) 
     });
 
     worker.register_wf(wf_type.to_owned(), move |ctx: WfContext| async move {
-        ctx.activity(ActivityOptions {
-            activity_type: "not the default act type".to_string(),
-            ..Default::default()
-        })
-        .await;
+        if local_act {
+            ctx.local_activity(if id_change {
+                LocalActivityOptions {
+                    activity_id: Some("I'm bad and wrong!".to_string()),
+                    activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
+                    ..Default::default()
+                }
+            } else {
+                LocalActivityOptions {
+                    activity_type: "not the default act type".to_string(),
+                    ..Default::default()
+                }
+            })
+            .await;
+        } else {
+            ctx.activity(if id_change {
+                ActivityOptions {
+                    activity_id: Some("I'm bad and wrong!".to_string()),
+                    activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
+                    ..Default::default()
+                }
+            } else {
+                ActivityOptions {
+                    activity_type: "not the default act type".to_string(),
+                    ..Default::default()
+                }
+            })
+            .await;
+        }
         Ok(().into())
     });
 
@@ -162,13 +201,15 @@ async fn test_activity_type_change_is_nondeterministic(#[case] use_cache: bool) 
 }
 
 #[rstest::rstest]
-#[case::with_cache(true)]
-#[case::without_cache(false)]
 #[tokio::test]
-async fn test_activity_id_change_is_nondeterministic(#[case] use_cache: bool) {
+async fn child_wf_id_or_type_change_is_nondeterministic(
+    #[values(true, false)] use_cache: bool,
+    #[values(true, false)] id_change: bool,
+) {
     let wf_id = "fakeid";
     let wf_type = DEFAULT_WORKFLOW_TYPE;
-    let t = canned_histories::single_activity("1");
+    let mut t = canned_histories::single_child_workflow("1");
+    t.set_flags_first_wft(&[CoreInternalFlags::IdAndTypeDeterminismChecks as u32], &[]);
     let mock = mock_workflow_client();
     let mut mh = MockPollCfg::from_resp_batches(
         wf_id,
@@ -179,12 +220,17 @@ async fn test_activity_id_change_is_nondeterministic(#[case] use_cache: bool) {
     );
     // We should see one wft failure which has nondeterminism cause
     mh.num_expected_fails = 1;
-    mh.expect_fail_wft_matcher = Box::new(|_, cause, f| {
+    mh.expect_fail_wft_matcher = Box::new(move |_, cause, f| {
+        let should_contain = if id_change {
+            "does not match child workflow id"
+        } else {
+            "does not match child workflow type"
+        };
         matches!(cause, WorkflowTaskFailedCause::NonDeterministicError)
             && matches!(f, Some(Failure {
                 message,
                 ..
-            }) if message.contains("does not match activity id"))
+            }) if message.contains(should_contain))
     });
     let mut worker = mock_sdk_cfg(mh, |cfg| {
         if use_cache {
@@ -193,11 +239,20 @@ async fn test_activity_id_change_is_nondeterministic(#[case] use_cache: bool) {
     });
 
     worker.register_wf(wf_type.to_owned(), move |ctx: WfContext| async move {
-        ctx.activity(ActivityOptions {
-            activity_id: Some("I'm bad and wrong!".to_string()),
-            activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
-            ..Default::default()
+        ctx.child_workflow(if id_change {
+            ChildWorkflowOptions {
+                workflow_id: "I'm bad and wrong!".to_string(),
+                workflow_type: DEFAULT_ACTIVITY_TYPE.to_string(),
+                ..Default::default()
+            }
+        } else {
+            ChildWorkflowOptions {
+                workflow_id: "1".to_string(),
+                workflow_type: "not the child wf type".to_string(),
+                ..Default::default()
+            }
         })
+        .start(&ctx)
         .await;
         Ok(().into())
     });

@@ -273,7 +273,7 @@ impl TestHistoryBuilder {
             seq,
             attempt: 1,
             activity_id: activity_id.to_string(),
-            activity_type: "some_act_type".to_string(),
+            activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
             complete_time: None,
             backoff: None,
             original_schedule_time: None,
@@ -466,6 +466,37 @@ impl TestHistoryBuilder {
             .get_mut((event_id - 1) as usize)
             .expect("Event must be present");
         modifier(he);
+    }
+
+    /// Sets internal patches which should appear in the first WFT complete event
+    pub fn set_flags_first_wft(&mut self, core: &[u32], lang: &[u32]) {
+        Self::set_flags(self.events.iter_mut(), core, lang)
+    }
+
+    /// Sets internal patches which should appear in the most recent complete event
+    pub fn set_flags_last_wft(&mut self, core: &[u32], lang: &[u32]) {
+        Self::set_flags(self.events.iter_mut().rev(), core, lang)
+    }
+
+    fn set_flags<'a>(
+        mut events: impl Iterator<Item = &'a mut HistoryEvent>,
+        core: &[u32],
+        lang: &[u32],
+    ) {
+        if let Some(first_attrs) = events.find_map(|e| {
+            if let Some(Attributes::WorkflowTaskCompletedEventAttributes(a)) = e.attributes.as_mut()
+            {
+                Some(a)
+            } else {
+                None
+            }
+        }) {
+            let sdk_dat = first_attrs
+                .sdk_metadata
+                .get_or_insert_with(Default::default);
+            sdk_dat.core_used_flags = core.to_vec();
+            sdk_dat.lang_used_flags = lang.to_vec();
+        }
     }
 
     fn build_and_push_event(&mut self, event_type: EventType, attribs: Attributes) {

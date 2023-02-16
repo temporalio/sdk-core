@@ -38,6 +38,7 @@ import "temporal/api/enums/v1/common.proto";
 message AddSearchAttributesRequest {
     // Mapping between search attribute name and its IndexedValueType.
     map<string, temporal.api.enums.v1.IndexedValueType> search_attributes = 1;
+    string namespace = 2;
 }
 
 message AddSearchAttributesResponse {
@@ -46,12 +47,14 @@ message AddSearchAttributesResponse {
 message RemoveSearchAttributesRequest {
     // Search attribute names to delete.
     repeated string search_attributes = 1;
+    string namespace = 2;
 }
 
 message RemoveSearchAttributesResponse {
 }
 
 message ListSearchAttributesRequest {
+    string namespace = 1;
 }
 
 message ListSearchAttributesResponse {

@@ -39,7 +39,6 @@ import "temporal/api/enums/v1/workflow.proto";
 import "temporal/api/enums/v1/command_type.proto";
 import "temporal/api/common/v1/message.proto";
 import "temporal/api/failure/v1/message.proto";
-import "temporal/api/interaction/v1/message.proto";
 import "temporal/api/taskqueue/v1/message.proto";
 
 message ScheduleActivityTaskCommandAttributes {
@@ -221,19 +220,9 @@ message StartChildWorkflowExecutionCommandAttributes {
     temporal.api.common.v1.SearchAttributes search_attributes = 16;
 }
 
-message AcceptWorkflowUpdateCommandAttributes {
-    temporal.api.interaction.v1.Meta meta = 1;
-    temporal.api.interaction.v1.Input input = 2;
-}
-
-message CompleteWorkflowUpdateCommandAttributes {
-    temporal.api.interaction.v1.Meta meta = 1;
-    temporal.api.interaction.v1.Output output = 2;
-}
-
-message RejectWorkflowUpdateCommandAttributes {
-    temporal.api.interaction.v1.Meta meta = 1;
-    temporal.api.failure.v1.Failure failure = 2;
+message ProtocolMessageCommandAttributes {
+    // The message ID of the message to which this command is a pointer.
+    string message_id = 1;
 }
 
 message Command {
@@ -252,9 +241,8 @@ message Command {
         StartChildWorkflowExecutionCommandAttributes start_child_workflow_execution_command_attributes = 12;
         SignalExternalWorkflowExecutionCommandAttributes signal_external_workflow_execution_command_attributes = 13;
         UpsertWorkflowSearchAttributesCommandAttributes upsert_workflow_search_attributes_command_attributes = 14;
-        AcceptWorkflowUpdateCommandAttributes accept_workflow_update_command_attributes = 15;
-        CompleteWorkflowUpdateCommandAttributes complete_workflow_update_command_attributes = 16;
+        ProtocolMessageCommandAttributes protocol_message_command_attributes = 15;
+        // 16 is available for use - it was used as part of a prototype that never made it into a release
         ModifyWorkflowPropertiesCommandAttributes modify_workflow_properties_command_attributes = 17;
-        RejectWorkflowUpdateCommandAttributes reject_workflow_update_command_attributes = 18;
     }
 }

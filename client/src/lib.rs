@@ -1077,6 +1077,7 @@ impl WorkflowClientTrait for Client {
             identity: self.inner.options.identity.clone(),
             binary_checksum: self.bound_worker_build_id.clone().unwrap_or_default(),
             namespace: self.namespace.clone(),
+            messages: vec![],
         };
         Ok(self
             .wf_svc()

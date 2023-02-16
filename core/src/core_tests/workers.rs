@@ -190,9 +190,7 @@ async fn complete_with_task_not_found_during_shutdown() {
         complete_order.borrow_mut().push(1);
     };
     tokio::join!(shutdown_fut, poll_fut, complete_fut);
-    // Shutdown will currently complete first before the actual eviction reply since the
-    // workflow task is marked complete as soon as we get not found back from the server.
-    assert_eq!(&complete_order.into_inner(), &[1, 3, 2])
+    assert_eq!(&complete_order.into_inner(), &[1, 2, 3])
 }
 
 #[tokio::test]

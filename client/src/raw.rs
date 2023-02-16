@@ -760,9 +760,9 @@ proxier! {
         }
     );
     (
-        update_workflow,
-        UpdateWorkflowRequest,
-        UpdateWorkflowResponse,
+        update_workflow_execution,
+        UpdateWorkflowExecutionRequest,
+        UpdateWorkflowExecutionResponse,
         |r| {
             let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             r.extensions_mut().insert(labels);

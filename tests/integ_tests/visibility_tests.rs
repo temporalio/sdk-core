@@ -54,27 +54,37 @@ async fn client_list_open_closed_workflow_executions() {
     core.complete_execution(&task.run_id).await;
     drain_pollers_and_shutdown(&core).await;
 
-    // List above CLOSED workflow
-    let start_time_filter = StartTimeFilter {
-        earliest_time: Some(earliest).and_then(|t| t.try_into().ok()),
-        latest_time: Some(latest).and_then(|t| t.try_into().ok()),
-    };
-    let filter = ListClosedFilters::ExecutionFilter(WorkflowExecutionFilter {
-        workflow_id: wf_name.clone(),
-        run_id,
-    });
-    let closed_workflows = client
-        .list_closed_workflow_executions(
-            1,
-            Default::default(),
-            Some(start_time_filter),
-            Some(filter),
-        )
-        .await
-        .unwrap();
-    assert_eq!(closed_workflows.executions.len(), 1);
-    let workflow = closed_workflows.executions[0].clone();
-    assert_eq!(workflow.execution.as_ref().unwrap().workflow_id, wf_name);
+    // List above CLOSED workflow. Visibility doesn't always update immediately so we give this a
+    // few tries.
+    let mut passed = false;
+    for _ in 1..=5 {
+        let closed_workflows = client
+            .list_closed_workflow_executions(
+                1,
+                Default::default(),
+                Some(StartTimeFilter {
+                    earliest_time: Some(earliest).and_then(|t| t.try_into().ok()),
+                    latest_time: Some(latest).and_then(|t| t.try_into().ok()),
+                }),
+                Some(ListClosedFilters::ExecutionFilter(
+                    WorkflowExecutionFilter {
+                        workflow_id: wf_name.clone(),
+                        run_id: run_id.clone(),
+                    },
+                )),
+            )
+            .await
+            .unwrap();
+        if closed_workflows.executions.len() == 1 {
+            let workflow = &closed_workflows.executions[0];
+            if workflow.execution.as_ref().unwrap().workflow_id == wf_name {
+                passed = true;
+                break;
+            }
+        }
+        sleep(Duration::from_millis(100)).await;
+    }
+    assert!(passed);
 }
 
 #[tokio::test]

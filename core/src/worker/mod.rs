@@ -23,9 +23,12 @@ use crate::{
         WorkflowTaskPoller,
     },
     protosext::{validate_activity_completion, ValidPollWFTQResponse},
-    telemetry::metrics::{
-        activity_poller, local_activity_worker_type, workflow_poller, workflow_sticky_poller,
-        MetricsContext,
+    telemetry::{
+        metrics::{
+            activity_poller, local_activity_worker_type, workflow_poller, workflow_sticky_poller,
+            MetricsContext,
+        },
+        TelemetryInstance,
     },
     worker::{
         activities::{DispatchOrTimeoutLA, LACompleteAction, LocalActivityManager},
@@ -49,7 +52,7 @@ use temporal_sdk_core_protos::{
     temporal::api::{
         enums::v1::TaskQueueKind,
         taskqueue::v1::{StickyExecutionAttributes, TaskQueue},
-        workflowservice::v1::PollActivityTaskQueueResponse,
+        workflowservice::v1::{get_system_info_response, PollActivityTaskQueueResponse},
     },
     TaskToken,
 };
@@ -170,11 +173,17 @@ impl Worker {
         config: WorkerConfig,
         sticky_queue_name: Option<String>,
         client: Arc<dyn WorkerClient>,
-        metrics: MetricsContext,
+        telem_instance: Option<&TelemetryInstance>,
     ) -> Self {
         info!(task_queue=%config.task_queue,
               namespace=%config.namespace,
               "Initializing worker");
+        let metrics = if let Some(ti) = telem_instance {
+            MetricsContext::top_level(config.namespace.clone(), ti)
+                .with_task_q(config.task_queue.clone())
+        } else {
+            MetricsContext::no_op()
+        };
         metrics.worker_registered();
 
         let shutdown_token = CancellationToken::new();
@@ -237,15 +246,17 @@ impl Worker {
             wft_stream,
             act_poll_buffer,
             metrics,
+            telem_instance,
             shutdown_token,
         )
     }
 
     #[cfg(test)]
     pub(crate) fn new_test(config: WorkerConfig, client: impl WorkerClient + 'static) -> Self {
-        Self::new(config, None, Arc::new(client), MetricsContext::no_op())
+        Self::new(config, None, Arc::new(client), None)
     }
 
+    #[allow(clippy::too_many_arguments)] // Not much worth combining here
     pub(crate) fn new_with_pollers(
         mut config: WorkerConfig,
         sticky_queue_name: Option<String>,
@@ -253,6 +264,7 @@ impl Worker {
         wft_stream: impl Stream<Item = Result<ValidPollWFTQResponse, tonic::Status>> + Send + 'static,
         act_poller: Option<BoxedActPoller>,
         metrics: MetricsContext,
+        telem_instance: Option<&TelemetryInstance>,
         shutdown_token: CancellationToken,
     ) -> Self {
         let (hb_tx, hb_rx) = unbounded_channel();
@@ -283,7 +295,12 @@ impl Worker {
         Self {
             wf_client: client.clone(),
             workflows: Workflows::new(
-                build_wf_basics(&mut config, metrics, shutdown_token.child_token()),
+                build_wf_basics(
+                    &mut config,
+                    metrics,
+                    shutdown_token.child_token(),
+                    client.capabilities().cloned().unwrap_or_default(),
+                ),
                 sticky_queue_name.map(|sq| StickyExecutionAttributes {
                     worker_task_queue: Some(TaskQueue {
                         name: sq,
@@ -303,6 +320,7 @@ impl Worker {
                 at_task_mgr
                     .as_ref()
                     .map(|mgr| mgr.get_handle_for_workflows()),
+                telem_instance,
             ),
             at_task_mgr,
             local_act_mgr,
@@ -508,11 +526,14 @@ impl Worker {
         &self,
         completion: WorkflowActivationCompletion,
     ) -> Result<(), CompleteWfError> {
-        let run_id = completion.run_id.clone();
-        let most_recent_event = self.workflows.activation_completed(completion).await?;
-        if let Some(h) = &self.post_activate_hook {
-            h(self, &run_id, most_recent_event);
-        }
+        self.workflows
+            .activation_completed(
+                completion,
+                self.post_activate_hook.as_ref().map(|h| {
+                    |run_id: &str, most_recent_event: usize| h(self, run_id, most_recent_event)
+                }),
+            )
+            .await?;
         Ok(())
     }
 
@@ -562,6 +583,7 @@ fn build_wf_basics(
     config: &mut WorkerConfig,
     metrics: MetricsContext,
     shutdown_token: CancellationToken,
+    server_capabilities: get_system_info_response::Capabilities,
 ) -> WorkflowBasics {
     WorkflowBasics {
         max_cached_workflows: config.max_cached_workflows,
@@ -572,6 +594,7 @@ fn build_wf_basics(
         task_queue: config.task_queue.clone(),
         ignore_evicts_on_shutdown: config.ignore_evicts_on_shutdown,
         fetching_concurrency: config.fetching_concurrency,
+        server_capabilities,
         #[cfg(feature = "save_wf_inputs")]
         wf_state_inputs: config.wf_state_inputs.take(),
     }

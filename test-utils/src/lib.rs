@@ -576,7 +576,7 @@ pub fn get_integ_telem_options() -> TelemetryOptions {
 
 pub fn default_cached_download() -> EphemeralExe {
     EphemeralExe::CachedDownload {
-        version: EphemeralExeVersion::Default {
+        version: EphemeralExeVersion::SDKDefault {
             sdk_name: "sdk-rust".to_string(),
             sdk_version: "0.1.0".to_string(),
         },
@@ -616,7 +616,7 @@ pub fn schedule_local_activity_cmd(
     ScheduleLocalActivity {
         seq,
         activity_id: activity_id.to_string(),
-        activity_type: "test_activity".to_string(),
+        activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
         schedule_to_start_timeout: Some(activity_timeout.try_into().expect("duration fits")),
         start_to_close_timeout: Some(activity_timeout.try_into().expect("duration fits")),
         schedule_to_close_timeout: Some(activity_timeout.try_into().expect("duration fits")),

@@ -21,12 +21,17 @@ pub(crate) use history_update::HistoryUpdate;
 #[cfg(test)]
 pub(crate) use managed_run::ManagedWFFunc;
 
-use crate::abstractions::TrackedOwnedMeteredSemPermit;
 use crate::worker::activities::TrackedPermittedTqResp;
 use crate::{
-    abstractions::{stream_when_allowed, MeteredSemaphore, UsedMeteredSemPermit},
+    abstractions::{
+        stream_when_allowed, MeteredSemaphore, TrackedOwnedMeteredSemPermit, UsedMeteredSemPermit,
+    },
+    internal_flags::InternalFlags,
     protosext::{legacy_query_failure, ValidPollWFTQResponse},
-    telemetry::{metrics::workflow_worker_type, VecDisplayer},
+    telemetry::{
+        metrics::workflow_worker_type, set_trace_subscriber_for_current_thread, TelemetryInstance,
+        VecDisplayer,
+    },
     worker::{
         activities::{ActivitiesFromWFTsHandle, LocalActivityManager},
         client::{WorkerClient, WorkflowTaskCompletion},
@@ -41,16 +46,20 @@ use crate::{
     },
     MetricsContext,
 };
+use anyhow::anyhow;
 use futures::{stream::BoxStream, Stream, StreamExt};
-use futures_util::stream;
+use futures_util::{future::abortable, stream};
 use prost_types::TimestampError;
 use std::{
+    cell::RefCell,
     collections::VecDeque,
     fmt::Debug,
     future::Future,
     ops::DerefMut,
+    rc::Rc,
     result,
     sync::Arc,
+    thread,
     time::{Duration, Instant},
 };
 use temporal_sdk_core_api::errors::{CompleteWfError, PollWfError};
@@ -71,8 +80,9 @@ use temporal_sdk_core_protos::{
         common::v1::{Memo, RetryPolicy, SearchAttributes, WorkflowExecution},
         enums::v1::WorkflowTaskFailedCause,
         query::v1::WorkflowQuery,
+        sdk::v1::WorkflowTaskCompletedMetadata,
         taskqueue::v1::StickyExecutionAttributes,
-        workflowservice::v1::PollActivityTaskQueueResponse,
+        workflowservice::v1::{get_system_info_response, PollActivityTaskQueueResponse},
     },
     TaskToken,
 };
@@ -81,8 +91,7 @@ use tokio::{
         mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
         oneshot,
     },
-    task,
-    task::{JoinError, JoinHandle},
+    task::{spawn_blocking, LocalSet},
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
@@ -96,12 +105,13 @@ const MAX_EAGER_ACTIVITY_RESERVATIONS_PER_WORKFLOW_TASK: usize = 3;
 
 type Result<T, E = WFMachinesError> = result::Result<T, E>;
 type BoxedActivationStream = BoxStream<'static, Result<ActivationOrAuto, PollWfError>>;
+type InternalFlagsRef = Rc<RefCell<InternalFlags>>;
 
 /// Centralizes all state related to workflows and workflow tasks
 pub(crate) struct Workflows {
     task_queue: String,
     local_tx: UnboundedSender<LocalInput>,
-    processing_task: tokio::sync::Mutex<Option<JoinHandle<()>>>,
+    processing_task: tokio::sync::Mutex<Option<thread::JoinHandle<()>>>,
     activation_stream: tokio::sync::Mutex<(
         BoxedActivationStream,
         // Used to indicate polling may begin
@@ -126,11 +136,23 @@ pub(crate) struct WorkflowBasics {
     pub task_queue: String,
     pub ignore_evicts_on_shutdown: bool,
     pub fetching_concurrency: usize,
+    pub server_capabilities: get_system_info_response::Capabilities,
     #[cfg(feature = "save_wf_inputs")]
     pub wf_state_inputs: Option<UnboundedSender<Vec<u8>>>,
 }
 
+pub(crate) struct RunBasics<'a> {
+    pub namespace: String,
+    pub workflow_id: String,
+    pub workflow_type: String,
+    pub run_id: String,
+    pub history: HistoryUpdate,
+    pub metrics: MetricsContext,
+    pub capabilities: &'a get_system_info_response::Capabilities,
+}
+
 impl Workflows {
+    #[allow(clippy::too_many_arguments)] // Not much worth combining here
     pub(super) fn new(
         basics: WorkflowBasics,
         sticky_attrs: Option<StickyExecutionAttributes>,
@@ -139,6 +161,7 @@ impl Workflows {
         local_activity_request_sink: impl LocalActivityRequestSink,
         heartbeat_timeout_rx: UnboundedReceiver<HeartbeatTimeoutMsg>,
         activity_tasks_handle: Option<ActivitiesFromWFTsHandle>,
+        telem_instance: Option<&TelemetryInstance>,
     ) -> Self {
         let (local_tx, local_rx) = unbounded_channel();
         let (fetch_tx, fetch_rx) = unbounded_channel();
@@ -164,49 +187,62 @@ impl Workflows {
             UnboundedReceiverStream::new(local_rx),
             UnboundedReceiverStream::new(heartbeat_timeout_rx).map(Into::into),
         );
-        let mut stream = WFStream::build(
-            basics,
-            extracted_wft_stream,
-            locals_stream,
-            local_activity_request_sink,
-        );
         let (activation_tx, activation_rx) = unbounded_channel();
         let (start_polling_tx, start_polling_rx) = oneshot::channel();
         // We must spawn a task to constantly poll the activation stream, because otherwise
         // activation completions would not cause anything to happen until the next poll.
-        let processing_task = task::spawn(async move {
-            // However, we want to avoid plowing ahead until we've been asked to poll at least once.
-            // This supports activity-only workers.
-            let do_poll = tokio::select! {
-                sp = start_polling_rx => {
-                    sp.is_ok()
-                }
-                _ = shutdown_tok.cancelled() => {
-                    false
-                }
-            };
-            if !do_poll {
-                return;
+        let tracing_sub = telem_instance.map(|ti| ti.trace_subscriber());
+        let processing_task = thread::spawn(move || {
+            if let Some(ts) = tracing_sub {
+                set_trace_subscriber_for_current_thread(ts);
             }
-            while let Some(output) = stream.next().await {
-                match output {
-                    Ok(o) => {
-                        for fetchreq in o.fetch_histories {
-                            fetch_tx
-                                .send(fetchreq)
-                                .expect("Fetch channel must not be dropped");
-                        }
-                        for act in o.activations {
-                            activation_tx
-                                .send(Ok(act))
-                                .expect("Activation processor channel not dropped");
-                        }
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .thread_name("workflow-processing")
+                .build()
+                .unwrap();
+            let local = LocalSet::new();
+            local.block_on(&rt, async move {
+                let mut stream = WFStream::build(
+                    basics,
+                    extracted_wft_stream,
+                    locals_stream,
+                    local_activity_request_sink,
+                );
+
+                // However, we want to avoid plowing ahead until we've been asked to poll at least
+                // once. This supports activity-only workers.
+                let do_poll = tokio::select! {
+                    sp = start_polling_rx => {
+                        sp.is_ok()
                     }
-                    Err(e) => activation_tx
-                        .send(Err(e))
-                        .expect("Activation processor channel not dropped"),
+                    _ = shutdown_tok.cancelled() => {
+                        false
+                    }
+                };
+                if !do_poll {
+                    return;
                 }
-            }
+                while let Some(output) = stream.next().await {
+                    match output {
+                        Ok(o) => {
+                            for fetchreq in o.fetch_histories {
+                                fetch_tx
+                                    .send(fetchreq)
+                                    .expect("Fetch channel must not be dropped");
+                            }
+                            for act in o.activations {
+                                activation_tx
+                                    .send(Ok(act))
+                                    .expect("Activation processor channel not dropped");
+                            }
+                        }
+                        Err(e) => activation_tx
+                            .send(Err(e))
+                            .expect("Activation processor channel not dropped"),
+                    }
+                }
+            });
         });
         Self {
             task_queue,
@@ -223,7 +259,7 @@ impl Workflows {
         }
     }
 
-    pub async fn next_workflow_activation(&self) -> Result<WorkflowActivation, PollWfError> {
+    pub(super) async fn next_workflow_activation(&self) -> Result<WorkflowActivation, PollWfError> {
         loop {
             let al = {
                 let mut lock = self.activation_stream.lock().await;
@@ -240,10 +276,30 @@ impl Workflows {
                     break Ok(act);
                 }
                 ActivationOrAuto::Autocomplete { run_id } => {
-                    self.activation_completed(WorkflowActivationCompletion {
-                        run_id,
-                        status: Some(workflow_completion::Success::from_variants(vec![]).into()),
-                    })
+                    self.activation_completed(
+                        WorkflowActivationCompletion {
+                            run_id,
+                            status: Some(
+                                workflow_completion::Success::from_variants(vec![]).into(),
+                            ),
+                        },
+                        // We need to say a type, but the type is irrelevant, so imagine some
+                        // boxed function we'll never call.
+                        Option::<Box<dyn Fn(&str, usize) + Send>>::None,
+                    )
+                    .await?;
+                }
+                ActivationOrAuto::AutoFail {
+                    run_id,
+                    machines_err,
+                } => {
+                    self.activation_completed(
+                        WorkflowActivationCompletion {
+                            run_id,
+                            status: Some(auto_fail_to_complete_status(machines_err)),
+                        },
+                        Option::<Box<dyn Fn(&str, usize) + Send>>::None,
+                    )
                     .await?;
                 }
             }
@@ -254,9 +310,10 @@ impl Workflows {
     /// the outcome of that completion. See [ActivationCompletedOutcome].
     ///
     /// Returns the most-recently-processed event number for the run.
-    pub async fn activation_completed(
+    pub(super) async fn activation_completed(
         &self,
         completion: WorkflowActivationCompletion,
+        post_activate_hook: Option<impl Fn(&str, usize)>,
     ) -> Result<usize, CompleteWfError> {
         let is_empty_completion = completion.is_empty();
         let completion = validate_completion(completion)?;
@@ -290,6 +347,7 @@ impl Workflows {
                             mut commands,
                             query_responses,
                             force_new_wft,
+                            sdk_metadata,
                         },
                 } => {
                     let reserved_act_permits =
@@ -303,6 +361,7 @@ impl Workflows {
                         sticky_attributes: None,
                         return_new_workflow_task: true,
                         force_create_new_workflow_task: force_new_wft,
+                        sdk_metadata,
                     };
                     let sticky_attrs = self.sticky_attrs.clone();
                     // Do not return new WFT if we would not cache, because returned new WFTs are
@@ -372,6 +431,10 @@ impl Workflows {
             None
         };
 
+        if let Some(h) = post_activate_hook {
+            h(&run_id, completion_outcome.most_recently_processed_event);
+        }
+
         self.post_activation(PostActivationMsg {
             run_id,
             wft_report_status,
@@ -382,7 +445,11 @@ impl Workflows {
     }
 
     /// Tell workflow that a local activity has finished with the provided result
-    pub fn notify_of_local_result(&self, run_id: impl Into<String>, resolved: LocalResolution) {
+    pub(super) fn notify_of_local_result(
+        &self,
+        run_id: impl Into<String>,
+        resolved: LocalResolution,
+    ) {
         self.send_local(LocalResolutionMsg {
             run_id: run_id.into(),
             res: resolved,
@@ -390,7 +457,7 @@ impl Workflows {
     }
 
     /// Request eviction of a workflow
-    pub fn request_eviction(
+    pub(super) fn request_eviction(
         &self,
         run_id: impl Into<String>,
         message: impl Into<String>,
@@ -404,26 +471,39 @@ impl Workflows {
     }
 
     /// Query the state of workflow management. Can return `None` if workflow state is shut down.
-    pub fn get_state_info(&self) -> impl Future<Output = Option<WorkflowStateInfo>> {
+    pub(super) fn get_state_info(&self) -> impl Future<Output = Option<WorkflowStateInfo>> {
         let (tx, rx) = oneshot::channel();
         self.send_local(GetStateInfoMsg { response_tx: tx });
         async move { rx.await.ok() }
     }
 
-    pub fn available_wft_permits(&self) -> usize {
+    pub(super) fn available_wft_permits(&self) -> usize {
         self.wft_semaphore.available_permits()
     }
 
-    pub async fn shutdown(&self) -> Result<(), JoinError> {
+    pub(super) async fn shutdown(&self) -> Result<(), anyhow::Error> {
         let maybe_jh = self.processing_task.lock().await.take();
         if let Some(jh) = maybe_jh {
-            // This acts as a final wake up in case the stream is still alive and wouldn't otherwise
-            // receive another message. It allows it to shut itself down.
-            let _ = self.get_state_info().await;
-            jh.await
-        } else {
-            Ok(())
+            // This serves to drive the stream if it is still alive and wouldn't otherwise receive
+            // another message. It allows it to shut itself down.
+            let (waker, stop_waker) = abortable(async {
+                let mut interval = tokio::time::interval(Duration::from_millis(10));
+                loop {
+                    interval.tick().await;
+                    let _ = self.get_state_info().await;
+                }
+            });
+            let (_, jh_res) = tokio::join!(
+                waker,
+                spawn_blocking(move || {
+                    let r = jh.join();
+                    stop_waker.abort();
+                    r
+                })
+            );
+            jh_res?.map_err(|e| anyhow!("Error joining workflow processing thread: {e:?}"))?;
         }
+        Ok(())
     }
 
     /// Must be called after every activation completion has finished
@@ -621,6 +701,11 @@ enum ActivationOrAuto {
     Autocomplete {
         run_id: String,
     },
+    #[display(fmt = "AutoFail(run_id={run_id})")]
+    AutoFail {
+        run_id: String,
+        machines_err: WFMachinesError,
+    },
 }
 impl ActivationOrAuto {
     pub fn run_id(&self) -> &str {
@@ -628,6 +713,7 @@ impl ActivationOrAuto {
             ActivationOrAuto::LangActivation(act) => &act.run_id,
             ActivationOrAuto::Autocomplete { run_id, .. } => run_id,
             ActivationOrAuto::ReadyForQueries(act) => &act.run_id,
+            ActivationOrAuto::AutoFail { run_id, .. } => run_id,
         }
     }
 }
@@ -764,6 +850,7 @@ pub(crate) enum ActivationAction {
         commands: Vec<ProtoCommand>,
         query_responses: Vec<QueryResult>,
         force_new_wft: bool,
+        sdk_metadata: WorkflowTaskCompletedMetadata,
     },
     /// We should respond to a legacy query request
     RespondLegacyQuery { result: Box<QueryResult> },
@@ -913,6 +1000,7 @@ fn validate_completion(
             Ok(ValidatedCompletion::Success {
                 run_id: completion.run_id,
                 commands,
+                used_flags: success.used_internal_flags,
             })
         }
         Some(workflow_activation_completion::Status::Failed(failure)) => {
@@ -938,6 +1026,7 @@ enum ValidatedCompletion {
     Success {
         run_id: String,
         commands: Vec<WFCommand>,
+        used_flags: Vec<u32>,
     },
     Fail {
         run_id: String,
@@ -1128,6 +1217,22 @@ impl From<TimestampError> for WFMachinesError {
     fn from(_: TimestampError) -> Self {
         Self::Fatal("Could not decode timestamp".to_string())
     }
+}
+
+fn auto_fail_to_complete_status(err: WFMachinesError) -> workflow_activation_completion::Status {
+    workflow_activation_completion::Status::Failed(Failure {
+        failure: Some(
+            temporal_sdk_core_protos::temporal::api::failure::v1::Failure {
+                message: "Error while processing workflow task".to_string(),
+                source: err.to_string(),
+                stack_trace: "".to_string(),
+                encoded_attributes: None,
+                cause: None,
+                failure_info: None,
+            },
+        ),
+        force_cause: WorkflowTaskFailedCause::from(err.evict_reason()) as i32,
+    })
 }
 
 pub(crate) trait LocalActivityRequestSink: Send + Sync + 'static {

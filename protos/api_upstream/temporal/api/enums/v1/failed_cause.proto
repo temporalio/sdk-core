@@ -85,6 +85,11 @@ enum WorkflowTaskFailedCause {
     // Similarly, we have a buffer of pending requests to cancel other workflows. We return this error
     // when our capacity for pending cancel requests is already reached.
     WORKFLOW_TASK_FAILED_CAUSE_PENDING_REQUEST_CANCEL_LIMIT_EXCEEDED = 29;
+    // Workflow execution update message (update.Acceptance, update.Rejection, or update.Response)
+    // has wrong format, or missing required fields.
+    WORKFLOW_TASK_FAILED_CAUSE_BAD_UPDATE_WORKFLOW_EXECUTION_MESSAGE = 30;
+    // Similar to WORKFLOW_TASK_FAILED_CAUSE_UNHANDLED_COMMAND, but for updates.
+    WORKFLOW_TASK_FAILED_CAUSE_UNHANDLED_UPDATE = 31;
 }
 
 enum StartChildWorkflowExecutionFailedCause {
