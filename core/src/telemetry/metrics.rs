@@ -10,8 +10,8 @@ use opentelemetry::{
     },
     Context, KeyValue,
 };
-use std::{sync::Arc, time::Duration};
-use temporal_sdk_core_api::telemetry::CoreTelemetry;
+use std::{ops::Deref, sync::Arc, time::Duration};
+use temporal_client::ClientMetricProvider;
 
 /// Used to track context associated with metrics, and record/update them
 ///
@@ -22,6 +22,46 @@ pub(crate) struct MetricsContext {
     ctx: Context,
     kvs: Arc<Vec<KeyValue>>,
     instruments: Arc<Instruments>,
+}
+
+/// Wraps OTel's [Meter] to ensure we name our metrics properly, or any other temporal-specific
+/// metrics customizations
+#[derive(derive_more::Constructor)]
+pub struct TemporalMeter<'a> {
+    inner: &'a Meter,
+    metrics_prefix: &'static str,
+}
+
+impl<'a> TemporalMeter<'a> {
+    pub(crate) fn counter(&self, name: &'static str) -> Counter<u64> {
+        self.inner
+            .u64_counter(self.metrics_prefix.to_string() + name)
+            .init()
+    }
+
+    pub(crate) fn histogram(&self, name: &'static str) -> Histogram<u64> {
+        self.inner
+            .u64_histogram(self.metrics_prefix.to_string() + name)
+            .init()
+    }
+}
+
+impl<'a> ClientMetricProvider for TemporalMeter<'a> {
+    fn counter(&self, name: &'static str) -> Counter<u64> {
+        self.counter(name)
+    }
+
+    fn histogram(&self, name: &'static str) -> Histogram<u64> {
+        self.histogram(name)
+    }
+}
+
+impl<'a> Deref for TemporalMeter<'a> {
+    type Target = dyn ClientMetricProvider + 'a;
+
+    fn deref(&self) -> &Self::Target {
+        self as &Self::Target
+    }
 }
 
 struct Instruments {
@@ -54,10 +94,10 @@ impl MetricsContext {
         Self {
             ctx: Default::default(),
             kvs: Default::default(),
-            instruments: Arc::new(Instruments::new_explicit(
+            instruments: Arc::new(Instruments::new_explicit(TemporalMeter::new(
                 &NoopMeterProvider::new().meter("fakemeter"),
                 "fakemetrics",
-            )),
+            ))),
         }
     }
 
@@ -257,42 +297,36 @@ impl Instruments {
             meter
         } else {
             no_op_meter = NoopMeterProvider::default().meter("no_op");
-            &no_op_meter
+            TemporalMeter::new(&no_op_meter, "fakemetrics")
         };
-        Self::new_explicit(meter, telem.metric_prefix)
+        Self::new_explicit(meter)
     }
 
-    fn new_explicit(meter: &Meter, metric_prefix: &'static str) -> Self {
-        let ctr = |name: &'static str| -> Counter<u64> {
-            meter.u64_counter(metric_prefix.to_string() + name).init()
-        };
-        let hst = |name: &'static str| -> Histogram<u64> {
-            meter.u64_histogram(metric_prefix.to_string() + name).init()
-        };
+    fn new_explicit(meter: TemporalMeter) -> Self {
         Self {
-            wf_completed_counter: ctr("workflow_completed"),
-            wf_canceled_counter: ctr("workflow_canceled"),
-            wf_failed_counter: ctr("workflow_failed"),
-            wf_cont_counter: ctr("workflow_continue_as_new"),
-            wf_e2e_latency: hst(WF_E2E_LATENCY_NAME),
-            wf_task_queue_poll_empty_counter: ctr("workflow_task_queue_poll_empty"),
-            wf_task_queue_poll_succeed_counter: ctr("workflow_task_queue_poll_succeed"),
-            wf_task_execution_failure_counter: ctr("workflow_task_execution_failed"),
-            wf_task_sched_to_start_latency: hst(WF_TASK_SCHED_TO_START_LATENCY_NAME),
-            wf_task_replay_latency: hst(WF_TASK_REPLAY_LATENCY_NAME),
-            wf_task_execution_latency: hst(WF_TASK_EXECUTION_LATENCY_NAME),
-            act_poll_no_task: ctr("activity_poll_no_task"),
-            act_task_received_counter: ctr("activity_task_received"),
-            act_execution_failed: ctr("activity_execution_failed"),
-            act_sched_to_start_latency: hst(ACT_SCHED_TO_START_LATENCY_NAME),
-            act_exec_latency: hst(ACT_EXEC_LATENCY_NAME),
+            wf_completed_counter: meter.counter("workflow_completed"),
+            wf_canceled_counter: meter.counter("workflow_canceled"),
+            wf_failed_counter: meter.counter("workflow_failed"),
+            wf_cont_counter: meter.counter("workflow_continue_as_new"),
+            wf_e2e_latency: meter.histogram(WF_E2E_LATENCY_NAME),
+            wf_task_queue_poll_empty_counter: meter.counter("workflow_task_queue_poll_empty"),
+            wf_task_queue_poll_succeed_counter: meter.counter("workflow_task_queue_poll_succeed"),
+            wf_task_execution_failure_counter: meter.counter("workflow_task_execution_failed"),
+            wf_task_sched_to_start_latency: meter.histogram(WF_TASK_SCHED_TO_START_LATENCY_NAME),
+            wf_task_replay_latency: meter.histogram(WF_TASK_REPLAY_LATENCY_NAME),
+            wf_task_execution_latency: meter.histogram(WF_TASK_EXECUTION_LATENCY_NAME),
+            act_poll_no_task: meter.counter("activity_poll_no_task"),
+            act_task_received_counter: meter.counter("activity_task_received"),
+            act_execution_failed: meter.counter("activity_execution_failed"),
+            act_sched_to_start_latency: meter.histogram(ACT_SCHED_TO_START_LATENCY_NAME),
+            act_exec_latency: meter.histogram(ACT_EXEC_LATENCY_NAME),
             // name kept as worker start for compat with old sdk / what users expect
-            worker_registered: ctr("worker_start"),
-            num_pollers: hst(NUM_POLLERS_NAME),
-            task_slots_available: hst(TASK_SLOTS_AVAILABLE_NAME),
-            sticky_cache_hit: ctr("sticky_cache_hit"),
-            sticky_cache_miss: ctr("sticky_cache_miss"),
-            sticky_cache_size: hst(STICKY_CACHE_SIZE_NAME),
+            worker_registered: meter.counter("worker_start"),
+            num_pollers: meter.histogram(NUM_POLLERS_NAME),
+            task_slots_available: meter.histogram(TASK_SLOTS_AVAILABLE_NAME),
+            sticky_cache_hit: meter.counter("sticky_cache_hit"),
+            sticky_cache_miss: meter.counter("sticky_cache_miss"),
+            sticky_cache_size: meter.histogram(STICKY_CACHE_SIZE_NAME),
         }
     }
 }
