@@ -949,7 +949,7 @@ async fn activity_tasks_from_completion_reserve_slots() {
         // TODO: This is ugly, find a better way to ensure that we don't shutdown until the workflow completes.
         // This is required because after shutting down eager activities will not be requested.
         tokio::time::sleep(Duration::from_millis(50)).await;
-        core.initiate_shutdown();
+        drain_activity_poller_and_shutdown(&core).await;
     };
     // This wf poll should *not* set the flag that it wants tasks back since both slots are
     // occupied
