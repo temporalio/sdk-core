@@ -24,6 +24,7 @@ async fn sends_upsert() {
     let wf_name = "sends_upsert_search_attrs";
     let wf_id = Uuid::new_v4();
     let mut starter = CoreWfStarter::new(wf_name);
+    starter.no_remote_activities();
     let mut worker = starter.worker().await;
     if env::var(INTEG_TEMPORALITE_USED_ENV_VAR).is_ok() {
         warn!("skipping sends_upsert -- does not work on temporalite");

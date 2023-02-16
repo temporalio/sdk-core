@@ -24,7 +24,10 @@ use std::{
 };
 use temporal_client::WorkflowOptions;
 use temporal_sdk::{ActivityOptions, WfContext};
-use temporal_sdk_core_api::{errors::CompleteActivityError, Worker as WorkerTrait};
+use temporal_sdk_core_api::{
+    errors::{CompleteActivityError, PollActivityError},
+    Worker as WorkerTrait,
+};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{
@@ -949,7 +952,10 @@ async fn activity_tasks_from_completion_reserve_slots() {
         // TODO: This is ugly, find a better way to ensure that we don't shutdown until the workflow completes.
         // This is required because after shutting down eager activities will not be requested.
         tokio::time::sleep(Duration::from_millis(50)).await;
-        drain_activity_poller_and_shutdown(&core).await;
+        core.initiate_shutdown();
+        // Even though this test requests eager activity tasks, none are returned in poll responses.
+        let err = core.poll_activity_task().await.unwrap_err();
+        assert_matches!(err, PollActivityError::ShutDown);
     };
     // This wf poll should *not* set the flag that it wants tasks back since both slots are
     // occupied

@@ -3,6 +3,7 @@ use futures::{future::join_all, sink, stream::FuturesUnordered, StreamExt};
 use std::time::{Duration, Instant};
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{ActContext, ActivityOptions, WfContext, WorkflowResult};
+use temporal_sdk_core_api::errors::PollActivityError;
 use temporal_sdk_core_protos::coresdk::{
     activity_result::ActivityExecutionResult, activity_task::activity_task as act_task,
     workflow_commands::ActivityCancellationType, ActivityTaskCompletion, AsJsonPayloadExt,
@@ -102,6 +103,10 @@ async fn activity_load() {
             .await
             .into_iter()
             .for_each(|h| h.unwrap());
+        assert_matches!(
+            core.poll_activity_task().await.unwrap_err(),
+            PollActivityError::ShutDown
+        );
     };
     tokio::join! {
         async {
@@ -262,6 +267,7 @@ pub async fn many_parallel_timers_longhist(ctx: WfContext) -> WorkflowResult<()>
 async fn can_paginate_long_history() {
     let wf_name = "can_paginate_long_history";
     let mut starter = CoreWfStarter::new(wf_name);
+    starter.no_remote_activities();
     // Do not use sticky queues so we are forced to paginate once history gets long
     starter.max_cached_workflows(0);
 
