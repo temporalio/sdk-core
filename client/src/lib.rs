@@ -13,6 +13,7 @@ mod retry;
 mod workflow_handle;
 
 pub use crate::retry::{CallType, RetryClient, RETRYABLE_ERROR_CODES};
+pub use metrics::ClientMetricProvider;
 pub use raw::{HealthService, OperatorService, TestService, WorkflowService};
 pub use temporal_sdk_core_protos::temporal::api::{
     enums::v1::ArchivalState,
@@ -34,7 +35,6 @@ use crate::{
 use backoff::{exponential, ExponentialBackoff, SystemClock};
 use http::uri::InvalidUri;
 use once_cell::sync::OnceCell;
-use opentelemetry::metrics::Meter;
 use parking_lot::RwLock;
 use std::{
     collections::HashMap,
@@ -286,7 +286,7 @@ impl ClientOptions {
     pub async fn connect(
         &self,
         namespace: impl Into<String>,
-        metrics_meter: Option<&Meter>,
+        metrics_meter: Option<&dyn ClientMetricProvider>,
         headers: Option<Arc<RwLock<HashMap<String, String>>>>,
     ) -> Result<RetryClient<Client>, ClientInitError> {
         let client = self
@@ -304,7 +304,7 @@ impl ClientOptions {
     /// See [RetryClient] for more
     pub async fn connect_no_namespace(
         &self,
-        metrics_meter: Option<&Meter>,
+        metrics_meter: Option<&dyn ClientMetricProvider>,
         headers: Option<Arc<RwLock<HashMap<String, String>>>>,
     ) -> Result<RetryClient<ConfiguredClient<TemporalServiceClientWithMetrics>>, ClientInitError>
     {

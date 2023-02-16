@@ -98,6 +98,13 @@ impl TelemetryInstance {
     pub fn prom_port(&self) -> Option<SocketAddr> {
         self.prom_binding
     }
+
+    /// Returns our wrapper for OTel metric meters, can be used to, ex: initialize clients
+    pub fn get_metric_meter(&self) -> Option<TemporalMeter> {
+        self.metrics
+            .as_ref()
+            .map(|(_, m)| TemporalMeter::new(m, self.metric_prefix))
+    }
 }
 
 thread_local! {
@@ -137,10 +144,6 @@ impl CoreTelemetry for TelemetryInstance {
         } else {
             vec![]
         }
-    }
-
-    fn get_metric_meter(&self) -> Option<&Meter> {
-        self.metrics.as_ref().map(|(_, m)| m)
     }
 }
 
@@ -389,6 +392,7 @@ pub mod test_initters {
         .unwrap();
     }
 }
+use crate::telemetry::metrics::TemporalMeter;
 #[cfg(test)]
 pub use test_initters::*;
 
