@@ -1,4 +1,3 @@
-pub(crate) use crate::worker::NO_MORE_WORK_ERROR_MSG;
 pub(crate) use temporal_sdk_core_test_utils::canned_histories;
 
 use crate::{
@@ -303,7 +302,7 @@ where
             }
             .boxed()
         } else {
-            async { Some(Err(tonic::Status::cancelled(NO_MORE_WORK_ERROR_MSG))) }.boxed()
+            async { None }.boxed()
         }
     });
     Box::new(mock_poller) as BoxedPoller<T>

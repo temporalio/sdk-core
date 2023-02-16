@@ -6,8 +6,6 @@ pub use temporal_sdk_core_api::worker::{WorkerConfig, WorkerConfigBuilder};
 #[cfg(feature = "save_wf_inputs")]
 pub use workflow::replay_wf_state_inputs;
 
-#[cfg(test)]
-pub(crate) use activities::NO_MORE_WORK_ERROR_MSG;
 pub(crate) use activities::{
     ExecutingLAId, LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
     NewLocalAct,

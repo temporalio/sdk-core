@@ -5,7 +5,7 @@ use crate::{
         drain_activity_poller_and_shutdown, drain_pollers_and_shutdown, gen_assert_and_reply,
         mock_manual_poller, mock_poller, mock_poller_from_resps, mock_worker, poll_and_reply,
         single_hist_mock_sg, test_worker_cfg, MockPollCfg, MockWorkerInputs, MocksHolder,
-        QueueResponse, ResponseType, WorkflowCachingPolicy, NO_MORE_WORK_ERROR_MSG, TEST_Q,
+        QueueResponse, ResponseType, WorkflowCachingPolicy, TEST_Q,
     },
     worker::client::mocks::{mock_manual_workflow_client, mock_workflow_client},
     ActivityHeartbeat, Worker, WorkerConfigBuilder,
@@ -15,6 +15,7 @@ use itertools::Itertools;
 use std::{
     cell::RefCell,
     collections::{hash_map::Entry, HashMap, VecDeque},
+    future,
     rc::Rc,
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -59,6 +60,7 @@ use temporal_sdk_core_protos::{
 };
 use temporal_sdk_core_test_utils::{fanout_tasks, start_timer_cmd, TestWorker};
 use tokio::{sync::Barrier, time::sleep};
+use tokio_util::sync::CancellationToken;
 
 #[tokio::test]
 async fn max_activities_respected() {
@@ -230,6 +232,8 @@ async fn heartbeats_report_cancels_only_once() {
 #[tokio::test]
 async fn activity_cancel_interrupts_poll() {
     let mut mock_poller = mock_manual_poller();
+    let shutdown_token = CancellationToken::new();
+    let shutdown_token_clone = shutdown_token.clone();
     let mut poll_resps = VecDeque::from(vec![
         async {
             Some(Ok(PollActivityTaskQueueResponse {
@@ -244,7 +248,11 @@ async fn activity_cancel_interrupts_poll() {
             Some(Ok(Default::default()))
         }
         .boxed(),
-        async { Some(Err(tonic::Status::cancelled(NO_MORE_WORK_ERROR_MSG))) }.boxed(),
+        async move {
+            shutdown_token.cancelled().await;
+            None
+        }
+        .boxed(),
     ]);
     mock_poller
         .expect_poll()
@@ -297,6 +305,7 @@ async fn activity_cancel_interrupts_poll() {
                 }
             ).await.unwrap();
             last_finisher.store(2, Ordering::SeqCst);
+            shutdown_token_clone.cancel();
         }
     };
     // So that we know we blocked
@@ -350,7 +359,13 @@ async fn many_concurrent_heartbeat_cancels() {
             })
             .collect::<Vec<_>>(),
     );
-    poll_resps.push_back(async { Err(tonic::Status::cancelled(NO_MORE_WORK_ERROR_MSG)) }.boxed());
+    poll_resps.push_back(
+        async {
+            future::pending::<()>().await;
+            unreachable!()
+        }
+        .boxed(),
+    );
     let mut calls_map = HashMap::<_, i32>::new();
     mock_client
         .expect_poll_activity_task()

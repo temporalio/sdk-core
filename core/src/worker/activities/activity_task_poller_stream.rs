@@ -11,9 +11,6 @@ use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollActivityTa
 use tokio::select;
 use tokio_util::sync::CancellationToken;
 
-#[cfg(test)]
-pub static NO_MORE_WORK_ERROR_MSG: &str = "No more work to do";
-
 struct StreamState {
     poller: BoxedActPoller,
     semaphore: Arc<MeteredSemaphore>,
@@ -63,13 +60,6 @@ pub(crate) fn new_activity_task_poller(
                             Some(Ok(PermittedTqResp { permit, resp }))
                         }
                         Some(Err(e)) => {
-                            #[cfg(test)]
-                            if e.code() == tonic::Code::Cancelled
-                                && e.message() == NO_MORE_WORK_ERROR_MSG
-                            {
-                                // Need to work around mock poller and abort here.
-                                return None;
-                            }
                             warn!(error=?e, "Error while polling for activity tasks");
                             Some(Err(e))
                         }
