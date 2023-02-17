@@ -103,7 +103,7 @@ impl RemoteInFlightActInfo {
 }
 
 pub(crate) struct WorkerActivityTasks {
-    /// Token used to as a shutdown signal to the server task poller
+    /// Token used to signal the server task poller that shutdown is beginning
     poller_shutdown_token: CancellationToken,
     /// Centralizes management of heartbeat issuing / throttling
     heartbeat_manager: Arc<ActivityHeartbeatManager>,

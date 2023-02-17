@@ -89,7 +89,7 @@ impl MeteredSemaphore {
     }
 }
 
-/// A version of MeteredSemaphore that can be closed and supports waiting for close to complete.
+/// A version of [MeteredSemaphore] that can be closed and supports waiting for close to complete.
 /// Once closed, no permits will be handed out.
 /// Close completes when all permits have been returned.
 pub(crate) struct ClosableMeteredSemaphore {
@@ -122,7 +122,7 @@ impl ClosableMeteredSemaphore {
         }
     }
 
-    /// Returns after close has been requested and there all outstanding permits have been returned.
+    /// Returns after close has been requested and all outstanding permits have been returned.
     pub async fn close_complete(&self) {
         self.close_complete_token.cancelled().await;
     }
