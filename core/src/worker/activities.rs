@@ -103,7 +103,7 @@ pub(crate) struct WorkerActivityTasks {
     /// Token used to signal the server task poller that shutdown is beginning
     poller_shutdown_token: CancellationToken,
     /// Centralizes management of heartbeat issuing / throttling
-    heartbeat_manager: Arc<ActivityHeartbeatManager>,
+    heartbeat_manager: ActivityHeartbeatManager,
     /// Combined stream for any ActivityTask producing source (polls, eager activities, cancellations)
     activity_task_stream: Mutex<BoxStream<'static, Result<ActivityTask, PollActivityError>>>,
     /// Activities that have been issued to lang but not yet completed
@@ -127,6 +127,12 @@ pub(crate) struct WorkerActivityTasks {
     poll_returned_shutdown_token: CancellationToken,
 }
 
+#[derive(derive_more::From)]
+enum ActivityTaskSource {
+    PendingCancel(PendingActivityCancel),
+    PendingStart(Result<(PermittedTqResp, bool), PollActivityError>),
+}
+
 impl WorkerActivityTasks {
     pub(crate) fn new(
         max_activity_tasks: usize,
@@ -142,17 +148,17 @@ impl WorkerActivityTasks {
             metrics.with_new_attrs([activity_worker_type()]),
             MetricsContext::available_task_slots,
         ));
-        let shutdown_token = CancellationToken::new();
-        let ratelimiter = max_worker_act_per_sec.and_then(|ps| {
+        let poller_shutdown_token = CancellationToken::new();
+        let rate_limiter = max_worker_act_per_sec.and_then(|ps| {
             Quota::with_period(Duration::from_secs_f64(ps.recip())).map(RateLimiter::direct)
         });
         let outstanding_activity_tasks = Arc::new(DashMap::new());
         let server_poller_stream = new_activity_task_poller(
             poller,
             semaphore.clone(),
-            ratelimiter,
+            rate_limiter,
             metrics.clone(),
-            shutdown_token.clone(),
+            poller_shutdown_token.clone(),
         );
         let (eager_activities_tx, eager_activities_rx) = unbounded_channel();
         let eager_activities_semaphore = ClosableMeteredSemaphore::new_arc(semaphore);
@@ -161,31 +167,30 @@ impl WorkerActivityTasks {
         let starts_stream = Self::merge_start_task_sources(
             eager_activities_rx,
             server_poller_stream,
-            metrics.clone(),
-            outstanding_activity_tasks.clone(),
             eager_activities_semaphore.clone(),
             start_tasks_stream_complete.clone(),
         );
         let (heartbeat_manager, cancels_rx) = ActivityHeartbeatManager::new(client);
-        let heartbeat_manager = Arc::new(heartbeat_manager);
         let complete_notify = Arc::new(Notify::new());
-        let cancels_stream = Self::make_cancel_task_stream(
-            cancels_rx.into(),
-            outstanding_activity_tasks.clone(),
-            start_tasks_stream_complete,
-            complete_notify.clone(),
+        let source_stream = stream::select_with_strategy(
+            UnboundedReceiverStream::new(cancels_rx).map(ActivityTaskSource::from),
+            starts_stream.map(ActivityTaskSource::from),
+            |_: &mut ()| PollNext::Left,
         );
         // Create a task stream composed of (in poll preference order):
         //  cancels_stream ------------------------------+--- activity_task_stream
         //  eager_activities_rx ---+--- starts_stream ---|
         //  server_poll_stream  ---|
-        let activity_task_stream =
-            stream::select_with_strategy(cancels_stream, starts_stream, |_: &mut ()| {
-                PollNext::Left
-            });
+        let activity_task_stream = Self::merge_source_streams(
+            source_stream,
+            outstanding_activity_tasks.clone(),
+            start_tasks_stream_complete,
+            complete_notify.clone(),
+            metrics.clone(),
+        );
 
         Self {
-            poller_shutdown_token: shutdown_token,
+            poller_shutdown_token,
             eager_activities_tx,
             heartbeat_manager,
             activity_task_stream: Mutex::new(activity_task_stream.boxed()),
@@ -203,11 +208,9 @@ impl WorkerActivityTasks {
     fn merge_start_task_sources(
         non_poll_tasks_rx: UnboundedReceiver<TrackedPermittedTqResp>,
         poller_stream: impl Stream<Item = Result<PermittedTqResp, tonic::Status>>,
-        metrics: MetricsContext,
-        outstanding_tasks: Arc<DashMap<TaskToken, RemoteInFlightActInfo>>,
         eager_activities_semaphore: Arc<ClosableMeteredSemaphore>,
         on_complete_token: CancellationToken,
-    ) -> impl Stream<Item = Result<ActivityTask, PollActivityError>> {
+    ) -> impl Stream<Item = Result<(PermittedTqResp, bool), PollActivityError>> {
         let non_poll_stream = stream::unfold(
             (non_poll_tasks_rx, eager_activities_semaphore),
             |(mut non_poll_tasks_rx, eager_activities_semaphore)| async move {
@@ -233,14 +236,7 @@ impl WorkerActivityTasks {
 
         // Prefer eager activities over polling the server
         stream::select_with_strategy(non_poll_stream, poller_stream, |_: &mut ()| PollNext::Left)
-            .map(move |res| {
-                let metrics = metrics.clone();
-                let outstanding_tasks = outstanding_tasks.clone();
-                res.map(|(task, is_eager)| {
-                    Self::about_to_issue_task(outstanding_tasks, task, is_eager, metrics)
-                })
-                .map_err(|err| err.into())
-            })
+            .map(|res| res.map_err(|err| err.into()))
             // This map, chain, filter_map sequence is here to cancel the token when this stream ends.
             .map(Some)
             .chain(futures::stream::once(async move {
@@ -251,36 +247,47 @@ impl WorkerActivityTasks {
     }
 
     /// Builds an [ActivityTask] stream for cancellation tasks from cancels delivered from heartbeats
-    fn make_cancel_task_stream(
-        cancels_stream: UnboundedReceiverStream<PendingActivityCancel>,
+    fn merge_source_streams(
+        source_stream: impl Stream<Item = ActivityTaskSource>,
         outstanding_tasks: Arc<DashMap<TaskToken, RemoteInFlightActInfo>>,
         start_tasks_stream_complete: CancellationToken,
         complete_notify: Arc<Notify>,
+        metrics: MetricsContext,
     ) -> impl Stream<Item = Result<ActivityTask, PollActivityError>> {
         let outstanding_tasks_clone = outstanding_tasks.clone();
-        cancels_stream.filter_map(move |next_pc| {
+        source_stream.filter_map(move |source| {
             let outstanding_tasks = outstanding_tasks.clone();
+            let metrics = metrics.clone();
             async move {
-                // It's possible that activity has been completed and we no longer have an
-                // outstanding activity task. This is fine because it means that we no
-                // longer need to cancel this activity, so we'll just ignore such orphaned
-                // cancellations.
-                if let Some(mut details) = outstanding_tasks.get_mut(&next_pc.task_token) {
-                    if details.issued_cancel_to_lang {
-                        // Don't double-issue cancellations
-                        return None
-                    }
+                match source {
+                    ActivityTaskSource::PendingCancel(next_pc) => {
+                        // It's possible that activity has been completed and we no longer have an
+                        // outstanding activity task. This is fine because it means that we no
+                        // longer need to cancel this activity, so we'll just ignore such orphaned
+                        // cancellations.
+                        if let Some(mut details) = outstanding_tasks.get_mut(&next_pc.task_token) {
+                            if details.issued_cancel_to_lang {
+                                // Don't double-issue cancellations
+                                return None
+                            }
 
-                    details.issued_cancel_to_lang = true;
-                    if next_pc.reason == ActivityCancelReason::NotFound {
-                        details.known_not_found = true;
+                            details.issued_cancel_to_lang = true;
+                            if next_pc.reason == ActivityCancelReason::NotFound {
+                                details.known_not_found = true;
+                            }
+                            Some(Ok(ActivityTask::cancel_from_ids(next_pc.task_token.0, next_pc.reason)))
+                        } else {
+                            debug!(task_token = ?next_pc.task_token, "Unknown activity task when issuing cancel");
+                            // If we can't find the activity here, it's already been completed,
+                            // in which case issuing a cancel again is pointless.
+                            None
+                        }
+                    },
+                    ActivityTaskSource::PendingStart(res) => {
+                        Some(res.map(|(task, is_eager)| {
+                            Self::about_to_issue_task(outstanding_tasks, task, is_eager, metrics)
+                        }))
                     }
-                    Some(Ok(ActivityTask::cancel_from_ids(next_pc.task_token.0, next_pc.reason)))
-                } else {
-                    debug!(task_token = ?next_pc.task_token, "Unknown activity task when issuing cancel");
-                    // If we can't find the activity here, it's already been completed,
-                    // in which case issuing a cancel again is pointless.
-                    None
                 }
             }
         }).take_until(async move {
