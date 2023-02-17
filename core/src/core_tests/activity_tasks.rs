@@ -924,19 +924,25 @@ async fn activity_tasks_from_completion_reserve_slots() {
     // First poll for activities twice, occupying both slots
     let at1 = core.poll_activity_task().await.unwrap();
     let at2 = core.poll_activity_task().await.unwrap();
+    let workflow_complete_token = CancellationToken::new();
+    let workflow_complete_token_clone = workflow_complete_token.clone();
 
-    worker.register_wf(DEFAULT_WORKFLOW_TYPE, move |ctx: WfContext| async move {
-        ctx.activity(ActivityOptions {
-            activity_type: "act1".to_string(),
-            ..Default::default()
-        })
-        .await;
-        ctx.activity(ActivityOptions {
-            activity_type: "act2".to_string(),
-            ..Default::default()
-        })
-        .await;
-        Ok(().into())
+    worker.register_wf(DEFAULT_WORKFLOW_TYPE, move |ctx: WfContext| {
+        let complete_token = workflow_complete_token.clone();
+        async move {
+            ctx.activity(ActivityOptions {
+                activity_type: "act1".to_string(),
+                ..Default::default()
+            })
+            .await;
+            ctx.activity(ActivityOptions {
+                activity_type: "act2".to_string(),
+                ..Default::default()
+            })
+            .await;
+            complete_token.cancel();
+            Ok(().into())
+        }
     });
 
     worker
@@ -963,9 +969,9 @@ async fn activity_tasks_from_completion_reserve_slots() {
         .await
         .unwrap();
         barr.wait().await;
-        // TODO: This is ugly, find a better way to ensure that we don't shutdown until the workflow completes.
-        // This is required because after shutting down eager activities will not be requested.
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        // Wait for workflow to complete in order for all eager activities to be requested before shutting down.
+        // After shutdown, no eager activities slots can be allocated.
+        workflow_complete_token_clone.cancelled().await;
         core.initiate_shutdown();
         // Even though this test requests eager activity tasks, none are returned in poll responses.
         let err = core.poll_activity_task().await.unwrap_err();
