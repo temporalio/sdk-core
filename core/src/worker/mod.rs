@@ -351,7 +351,7 @@ impl Worker {
     /// Finish shutting down by consuming the background pollers and freeing all resources
     async fn finalize_shutdown(self) {
         if let Some(b) = self.at_task_mgr {
-            b.finalize_shutdown().await;
+            b.shutdown().await;
         }
     }
 

@@ -44,7 +44,6 @@ use temporal_sdk_core_protos::{
 };
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio::sync::{Mutex, Notify};
-use tokio::task::JoinHandle;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tracing::Span;
@@ -126,7 +125,6 @@ pub(crate) struct WorkerActivityTasks {
     complete_notify: Arc<Notify>,
     /// Token to notify when poll returned a shutdown error
     poll_returned_shutdown_token: CancellationToken,
-    drain_watch_task: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl WorkerActivityTasks {
@@ -170,8 +168,13 @@ impl WorkerActivityTasks {
         );
         let (heartbeat_manager, cancels_rx) = ActivityHeartbeatManager::new(client);
         let heartbeat_manager = Arc::new(heartbeat_manager);
-        let cancels_stream =
-            Self::make_cancel_task_stream(cancels_rx.into(), outstanding_activity_tasks.clone());
+        let complete_notify = Arc::new(Notify::new());
+        let cancels_stream = Self::make_cancel_task_stream(
+            cancels_rx.into(),
+            outstanding_activity_tasks.clone(),
+            start_tasks_stream_complete,
+            complete_notify.clone(),
+        );
         // Create a task stream composed of (in poll preference order):
         //  cancels_stream ------------------------------+--- activity_task_stream
         //  eager_activities_rx ---+--- starts_stream ---|
@@ -181,13 +184,6 @@ impl WorkerActivityTasks {
                 PollNext::Left
             });
 
-        let complete_notify = Arc::new(Notify::new());
-        let drain_watch_task = tokio::spawn(Self::wait_all_finished(
-            start_tasks_stream_complete,
-            outstanding_activity_tasks.clone(),
-            heartbeat_manager.clone(),
-            complete_notify.clone(),
-        ));
         Self {
             poller_shutdown_token: shutdown_token,
             eager_activities_tx,
@@ -200,7 +196,6 @@ impl WorkerActivityTasks {
             max_heartbeat_throttle_interval,
             default_heartbeat_throttle_interval,
             poll_returned_shutdown_token: CancellationToken::new(),
-            drain_watch_task: Mutex::new(Some(drain_watch_task)),
         }
     }
 
@@ -233,22 +228,14 @@ impl WorkerActivityTasks {
                 }
             },
         );
-        let cloning_stream = stream::unfold(
-            (metrics, outstanding_tasks),
-            |(metrics, outstanding_tasks)| async move {
-                Some((
-                    (metrics.clone(), outstanding_tasks.clone()),
-                    (metrics, outstanding_tasks),
-                ))
-            },
-        );
         // Add is_eager false
         let poller_stream = poller_stream.map(|res| res.map(|task| (task, false)));
 
         // Prefer eager activities over polling the server
         stream::select_with_strategy(non_poll_stream, poller_stream, |_: &mut ()| PollNext::Left)
-            .zip(cloning_stream)
-            .map(|(res, (metrics, outstanding_tasks))| {
+            .map(move |res| {
+                let metrics = metrics.clone();
+                let outstanding_tasks = outstanding_tasks.clone();
                 res.map(|(task, is_eager)| {
                     Self::about_to_issue_task(outstanding_tasks, task, is_eager, metrics)
                 })
@@ -267,31 +254,39 @@ impl WorkerActivityTasks {
     fn make_cancel_task_stream(
         cancels_stream: UnboundedReceiverStream<PendingActivityCancel>,
         outstanding_tasks: Arc<DashMap<TaskToken, RemoteInFlightActInfo>>,
+        start_tasks_stream_complete: CancellationToken,
+        complete_notify: Arc<Notify>,
     ) -> impl Stream<Item = Result<ActivityTask, PollActivityError>> {
-        let cloning_stream = stream::unfold(outstanding_tasks, |outstanding_tasks| async move {
-            Some((outstanding_tasks.clone(), outstanding_tasks))
-        });
-        cancels_stream.zip(cloning_stream).filter_map(|(next_pc, outstanding_tasks)| async move {
-            // It's possible that activity has been completed and we no longer have an
-            // outstanding activity task. This is fine because it means that we no
-            // longer need to cancel this activity, so we'll just ignore such orphaned
-            // cancellations.
-            if let Some(mut details) = outstanding_tasks.get_mut(&next_pc.task_token) {
-                if details.issued_cancel_to_lang {
-                    // Don't double-issue cancellations
-                    return None
-                }
+        let outstanding_tasks_clone = outstanding_tasks.clone();
+        cancels_stream.filter_map(move |next_pc| {
+            let outstanding_tasks = outstanding_tasks.clone();
+            async move {
+                // It's possible that activity has been completed and we no longer have an
+                // outstanding activity task. This is fine because it means that we no
+                // longer need to cancel this activity, so we'll just ignore such orphaned
+                // cancellations.
+                if let Some(mut details) = outstanding_tasks.get_mut(&next_pc.task_token) {
+                    if details.issued_cancel_to_lang {
+                        // Don't double-issue cancellations
+                        return None
+                    }
 
-                details.issued_cancel_to_lang = true;
-                if next_pc.reason == ActivityCancelReason::NotFound {
-                    details.known_not_found = true;
+                    details.issued_cancel_to_lang = true;
+                    if next_pc.reason == ActivityCancelReason::NotFound {
+                        details.known_not_found = true;
+                    }
+                    Some(Ok(ActivityTask::cancel_from_ids(next_pc.task_token.0, next_pc.reason)))
+                } else {
+                    debug!(task_token = ?next_pc.task_token, "Unknown activity task when issuing cancel");
+                    // If we can't find the activity here, it's already been completed,
+                    // in which case issuing a cancel again is pointless.
+                    None
                 }
-                Some(Ok(ActivityTask::cancel_from_ids(next_pc.task_token.0, next_pc.reason)))
-            } else {
-                debug!(task_token = ?next_pc.task_token, "Unknown activity task when issuing cancel");
-                // If we can't find the activity here, it's already been completed,
-                // in which case issuing a cancel again is pointless.
-                None
+            }
+        }).take_until(async move {
+            start_tasks_stream_complete.cancelled().await;
+            while !outstanding_tasks_clone.is_empty() {
+                complete_notify.notified().await
             }
         })
     }
@@ -301,41 +296,13 @@ impl WorkerActivityTasks {
         self.eager_activities_semaphore.close();
     }
 
-    /// Wait for all outstanding activity tasks to finish
-    async fn wait_all_finished(
-        task_start_stream_complete: CancellationToken,
-        outstanding_tasks: Arc<DashMap<TaskToken, RemoteInFlightActInfo>>,
-        heartbeat_manager: Arc<ActivityHeartbeatManager>,
-        complete_notify: Arc<Notify>,
-    ) {
-        task_start_stream_complete.cancelled().await;
-        while !outstanding_tasks.is_empty() {
-            complete_notify.notified().await
-        }
-        heartbeat_manager.notify_shutdown();
-    }
-
     async fn shutdown_complete(&self) {
         self.poll_returned_shutdown_token.cancelled().await;
-        self.heartbeat_manager.wait_shutdown_complete().await;
-        if let Some(task) = self.drain_watch_task.lock().await.take() {
-            if let Err(e) = task.await {
-                if !e.is_cancelled() {
-                    error!(
-                        "Unexpected error joining activity tasks during shutdown: {:?}",
-                        e
-                    )
-                }
-            }
-        }
+        self.heartbeat_manager.shutdown().await;
     }
 
     pub(crate) async fn shutdown(&self) {
         self.notify_shutdown();
-        self.shutdown_complete().await;
-    }
-
-    pub(crate) async fn finalize_shutdown(self) {
         self.shutdown_complete().await;
     }
 
