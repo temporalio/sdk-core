@@ -1,6 +1,7 @@
 syntax = "proto3";
 
 package coresdk.common;
+option ruby_package = "Coresdk::Common";
 
 import "google/protobuf/duration.proto";
 

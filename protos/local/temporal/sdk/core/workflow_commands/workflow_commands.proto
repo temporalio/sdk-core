@@ -6,6 +6,7 @@ syntax = "proto3";
  * activation.
  */
 package coresdk.workflow_commands;
+option ruby_package = "Coresdk::WorkflowCommands";
 
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";

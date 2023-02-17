@@ -1,6 +1,7 @@
 syntax = "proto3";
 
 package coresdk.workflow_completion;
+option ruby_package = "Coresdk::WorkflowCompletion";
 
 import "temporal/api/failure/v1/message.proto";
 import "temporal/api/enums/v1/failed_cause.proto";

@@ -1,6 +1,7 @@
 syntax = "proto3";
 
 package coresdk.external_data;
+option ruby_package = "Coresdk::ExternalData";
 
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";

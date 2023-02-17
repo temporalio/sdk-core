@@ -4,6 +4,7 @@ syntax = "proto3";
  * Definitions of the different activity tasks returned from [crate::Core::poll_task].
  */
 package coresdk.activity_task;
+option ruby_package = "Coresdk::ActivityTask";
 
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
