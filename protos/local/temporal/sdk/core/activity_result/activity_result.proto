@@ -1,7 +1,7 @@
 syntax = "proto3";
 
 package coresdk.activity_result;
-option ruby_package = "Coresdk::ActivityResult";
+option ruby_package = "Temporalio::Bridge::Api::ActivityResult";
 
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
