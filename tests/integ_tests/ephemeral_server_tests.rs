@@ -1,12 +1,34 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 use temporal_client::{ClientOptionsBuilder, TestService, WorkflowService};
 use temporal_sdk_core::ephemeral_server::{
-    EphemeralExe, EphemeralExeVersion, EphemeralServer, TemporaliteConfigBuilder,
-    TestServerConfigBuilder,
+    EphemeralExe, EphemeralExeVersion, EphemeralServer, TemporalDevServerConfigBuilder,
+    TemporaliteConfigBuilder, TestServerConfigBuilder,
 };
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::DescribeNamespaceRequest;
 use temporal_sdk_core_test_utils::{default_cached_download, NAMESPACE};
 use url::Url;
+
+#[tokio::test]
+async fn temporal_cli_default() {
+    let config = TemporalDevServerConfigBuilder::default()
+        .exe(default_cached_download())
+        .build()
+        .unwrap();
+    let mut server = config.start_server().await.unwrap();
+    assert_ephemeral_server(&server).await;
+    server.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn temporal_cli_fixed() {
+    let config = TemporalDevServerConfigBuilder::default()
+        .exe(fixed_cached_download("v0.4.0"))
+        .build()
+        .unwrap();
+    let mut server = config.start_server().await.unwrap();
+    assert_ephemeral_server(&server).await;
+    server.shutdown().await.unwrap();
+}
 
 #[tokio::test]
 async fn temporalite_default() {
