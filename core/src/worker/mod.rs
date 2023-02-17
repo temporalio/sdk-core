@@ -145,10 +145,9 @@ impl WorkerTrait for Worker {
         if let Some(atm) = self.at_task_mgr.as_ref() {
             atm.notify_shutdown();
         }
-        let lam = self.local_act_mgr.clone();
         // Let the manager know that shutdown has been initiated to try to unblock the local activity poll in case this
         // worker is an activity-only worker.
-        lam.shutdown_initiated();
+        self.local_act_mgr.shutdown_initiated();
         info!(
             task_queue=%self.config.task_queue,
             namespace=%self.config.namespace,
@@ -284,11 +283,10 @@ impl Worker {
                 config.default_heartbeat_throttle_interval,
             )
         });
-        let mut poll_on_non_local_activities = true;
-        if at_task_mgr.is_none() {
+        let poll_on_non_local_activities = at_task_mgr.is_some();
+        if !poll_on_non_local_activities {
             info!("Activity polling is disabled for this worker");
-            poll_on_non_local_activities = false;
-        }
+        };
         let la_sink = LAReqSink::new(lam_clone, config.wf_state_inputs.clone());
         Self {
             wf_client: client.clone(),

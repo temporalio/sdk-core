@@ -1,11 +1,10 @@
 use crate::{
     advance_fut, job_assert, prost_dur,
     test_help::{
-        build_fake_worker, build_mock_pollers, canned_histories,
-        drain_activity_poller_and_shutdown, drain_pollers_and_shutdown, gen_assert_and_reply,
+        build_fake_worker, build_mock_pollers, canned_histories, gen_assert_and_reply,
         mock_manual_poller, mock_poller, mock_poller_from_resps, mock_worker, poll_and_reply,
         single_hist_mock_sg, test_worker_cfg, MockPollCfg, MockWorkerInputs, MocksHolder,
-        QueueResponse, ResponseType, WorkflowCachingPolicy, TEST_Q,
+        QueueResponse, ResponseType, WorkerExt, WorkflowCachingPolicy, TEST_Q,
     },
     worker::client::mocks::{mock_manual_workflow_client, mock_workflow_client},
     ActivityHeartbeat, Worker, WorkerConfigBuilder,
@@ -130,7 +129,7 @@ async fn activity_not_found_returns_ok() {
     })
     .await
     .unwrap();
-    drain_activity_poller_and_shutdown(&core).await;
+    core.drain_activity_poller_and_shutdown().await;
 }
 
 #[tokio::test]
@@ -226,7 +225,7 @@ async fn heartbeats_report_cancels_only_once() {
     })
     .await
     .unwrap();
-    drain_activity_poller_and_shutdown(&core).await;
+    core.drain_activity_poller_and_shutdown().await;
 }
 
 #[tokio::test]
@@ -310,7 +309,7 @@ async fn activity_cancel_interrupts_poll() {
     };
     // So that we know we blocked
     assert_eq!(last_finisher.load(Ordering::Acquire), 2);
-    drain_activity_poller_and_shutdown(&core).await;
+    core.drain_activity_poller_and_shutdown().await;
 }
 
 #[tokio::test]
@@ -445,7 +444,7 @@ async fn many_concurrent_heartbeat_cancels() {
     })
     .await;
 
-    drain_activity_poller_and_shutdown(worker).await;
+    worker.drain_activity_poller_and_shutdown().await;
 }
 
 #[tokio::test]
@@ -497,7 +496,7 @@ async fn activity_timeout_no_double_resolve() {
     )
     .await;
 
-    drain_pollers_and_shutdown(core).await;
+    core.drain_pollers_and_shutdown().await;
 }
 
 #[tokio::test]
@@ -529,8 +528,8 @@ async fn can_heartbeat_acts_during_shutdown() {
 
     let act = core.poll_activity_task().await.unwrap();
     // Make sure shutdown has progressed before trying to record heartbeat / complete
-    core.initiate_shutdown();
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    let shutdown_fut = core.shutdown();
+    advance_fut!(shutdown_fut);
     core.record_activity_heartbeat(ActivityHeartbeat {
         task_token: act.task_token.clone(),
 
@@ -543,7 +542,7 @@ async fn can_heartbeat_acts_during_shutdown() {
     })
     .await
     .unwrap();
-    drain_pollers_and_shutdown(core).await;
+    core.drain_activity_poller_and_shutdown().await;
 }
 
 /// Verifies that if a user has tried to record a heartbeat and then immediately after failed the
@@ -594,7 +593,7 @@ async fn complete_act_with_fail_flushes_heartbeat() {
     })
     .await
     .unwrap();
-    drain_activity_poller_and_shutdown(&core).await;
+    core.drain_activity_poller_and_shutdown().await;
 
     // Verify the last seen call to record a heartbeat had the last detail payload
     let last_seen_payload = &last_seen_payload.take().unwrap().payloads[0];
@@ -700,7 +699,7 @@ async fn no_eager_activities_requested_when_worker_options_disable_remote_activi
     .await
     .unwrap();
 
-    drain_pollers_and_shutdown(core).await;
+    core.drain_pollers_and_shutdown().await;
 
     assert_eq!(num_eager_requested.load(Ordering::Relaxed), 0);
 }
@@ -827,7 +826,7 @@ async fn activity_tasks_from_completion_are_delivered() {
         .unwrap();
     }
 
-    drain_activity_poller_and_shutdown(&core).await;
+    core.drain_activity_poller_and_shutdown().await;
 
     // Verify only a single eager activity was scheduled (the one on our worker's task queue)
     assert_eq!(num_eager_requested.load(Ordering::Relaxed), 3);
@@ -1004,7 +1003,7 @@ async fn retryable_net_error_exhaustion_is_nonfatal() {
     })
     .await
     .unwrap();
-    drain_activity_poller_and_shutdown(&core).await;
+    core.drain_activity_poller_and_shutdown().await;
 }
 
 #[tokio::test]

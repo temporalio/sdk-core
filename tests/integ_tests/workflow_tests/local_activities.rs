@@ -256,12 +256,10 @@ impl WorkerInterceptor for LACancellerInterceptor {
             workflow_completion::Success { commands, .. },
         )) = completion.status.as_ref()
         {
-            if !commands.is_empty() {
-                if let Some(Variant::CompleteWorkflowExecution(_)) =
-                    commands[commands.len() - 1].variant.as_ref()
-                {
-                    self.token.cancel();
-                }
+            if let Some(&Variant::CompleteWorkflowExecution(_)) =
+                commands.last().and_then(|v| v.variant.as_ref())
+            {
+                self.token.cancel();
             }
         }
     }

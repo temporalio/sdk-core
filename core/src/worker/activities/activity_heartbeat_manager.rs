@@ -80,7 +80,9 @@ impl ActivityHeartbeatManager {
     /// Creates a new instance of an activity heartbeat manager and returns a handle to the user,
     /// which allows to send new heartbeats and initiate the shutdown.
     /// Returns the manager and a channel that buffers cancellation notifications to be sent to Lang.
-    pub fn new(client: Arc<dyn WorkerClient>) -> (Self, UnboundedReceiver<PendingActivityCancel>) {
+    pub(super) fn new(
+        client: Arc<dyn WorkerClient>,
+    ) -> (Self, UnboundedReceiver<PendingActivityCancel>) {
         let (heartbeat_stream_state, heartbeat_tx_source, shutdown_token) =
             HeartbeatStreamState::new();
         let (cancels_tx, cancels_rx) = unbounded_channel();
@@ -216,14 +218,14 @@ impl ActivityHeartbeatManager {
         completed.notified().await;
     }
 
+    /// Notify the inner stream that it can be shut down.
+    /// To wait for shutdown to be completed, use `wait_shutdown`.
     pub(super) fn notify_shutdown(&self) {
         self.shutdown_token.cancel();
     }
 
-    // TODO: Can own self now!
-    /// Initiates shutdown procedure by stopping lifecycle loop and awaiting for all in-flight
-    /// heartbeat requests to be flushed to the server.
-    pub(super) async fn finalize_shutdown(&self) {
+    /// Wait for all in-flight heartbeat requests to be flushed to the server and the inner stream to be closed.
+    pub(super) async fn wait_shutdown_complete(&self) {
         let mut handle = self.join_handle.lock().await;
         if let Some(h) = handle.take() {
             let handle_r = h.await;
@@ -425,7 +427,7 @@ mod test {
         // sleep again to let heartbeats be flushed
         sleep(Duration::from_millis(20)).await;
         hm.notify_shutdown();
-        hm.finalize_shutdown().await;
+        hm.wait_shutdown_complete().await;
     }
 
     #[tokio::test]
@@ -443,7 +445,7 @@ mod test {
             sleep(Duration::from_millis(20)).await;
         }
         hm.notify_shutdown();
-        hm.finalize_shutdown().await;
+        hm.wait_shutdown_complete().await;
     }
 
     /// Ensure that heartbeat can be called from a tight loop without any throttle_interval, resulting in two
@@ -464,7 +466,7 @@ mod test {
             sleep(Duration::from_millis(10)).await;
         }
         hm.notify_shutdown();
-        hm.finalize_shutdown().await;
+        hm.wait_shutdown_complete().await;
     }
 
     /// This test reports one heartbeat and waits for the throttle_interval to elapse before sending another
@@ -483,7 +485,7 @@ mod test {
         // Let it propagate
         sleep(Duration::from_millis(50)).await;
         hm.notify_shutdown();
-        hm.finalize_shutdown().await;
+        hm.wait_shutdown_complete().await;
     }
 
     #[tokio::test]
@@ -504,7 +506,7 @@ mod test {
         sleep(Duration::from_millis(10)).await;
         // We know it works b/c otherwise we would have only called record 1 time w/o sleep
         hm.notify_shutdown();
-        hm.finalize_shutdown().await;
+        hm.wait_shutdown_complete().await;
     }
 
     #[tokio::test]
@@ -519,7 +521,7 @@ mod test {
         record_heartbeat(&hm, fake_task_token.clone(), 0, Duration::from_millis(100));
         hm.evict(fake_task_token.clone().into()).await;
         hm.notify_shutdown();
-        hm.finalize_shutdown().await;
+        hm.wait_shutdown_complete().await;
     }
 
     fn record_heartbeat(

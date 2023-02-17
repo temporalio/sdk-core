@@ -50,7 +50,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::Span;
 
 #[derive(Debug, derive_more::Constructor)]
-pub(crate) struct PendingActivityCancel {
+struct PendingActivityCancel {
     task_token: TaskToken,
     reason: ActivityCancelReason,
 }
@@ -109,11 +109,13 @@ pub(crate) struct WorkerActivityTasks {
     activity_task_stream: Mutex<BoxStream<'static, Result<ActivityTask, PollActivityError>>>,
     /// Activities that have been issued to lang but not yet completed
     outstanding_activity_tasks: Arc<DashMap<TaskToken, RemoteInFlightActInfo>>,
-    /// Holds activity tasks we have received by non-polling means. EX: In direct response to
-    /// workflow task completion.
-    eager_activities_tx: UnboundedSender<TrackedPermittedTqResp>,
-    /// Ensures we stay at or below this worker's maximum concurrent activity limit
+    /// Ensures we don't exceed this worker's maximum concurrent activity limit for activities.
+    /// This semaphore is used to limit eager activities but shares the same underlying [MeteredSemaphore] that is used
+    /// to limit the concurrency for non-eager activities.
     eager_activities_semaphore: Arc<ClosableMeteredSemaphore>,
+    /// Holds activity tasks we have received in direct response to workflow task completion (a.k.a eager activities).
+    /// Tasks received in this stream hold a "tracked" permit that is issued by the `eager_activities_semaphore`.
+    eager_activities_tx: UnboundedSender<TrackedPermittedTqResp>,
 
     metrics: MetricsContext,
 
@@ -155,7 +157,7 @@ impl WorkerActivityTasks {
             shutdown_token.clone(),
         );
         let (eager_activities_tx, eager_activities_rx) = unbounded_channel();
-        let eager_activities_semaphore = Arc::new(ClosableMeteredSemaphore::new(semaphore));
+        let eager_activities_semaphore = ClosableMeteredSemaphore::new_arc(semaphore);
 
         let start_tasks_stream_complete = CancellationToken::new();
         let starts_stream = Self::merge_start_task_sources(
@@ -315,7 +317,7 @@ impl WorkerActivityTasks {
 
     async fn shutdown_complete(&self) {
         self.poll_returned_shutdown_token.cancelled().await;
-        self.heartbeat_manager.finalize_shutdown().await;
+        self.heartbeat_manager.wait_shutdown_complete().await;
         if let Some(task) = self.drain_watch_task.lock().await.take() {
             if let Err(e) = task.await {
                 if !e.is_cancelled() {
