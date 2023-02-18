@@ -599,26 +599,36 @@ fn build_wf_basics(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{test_help::test_worker_cfg, worker::client::mocks::mock_workflow_client};
+    use crate::{
+        advance_fut, test_help::test_worker_cfg, worker::client::mocks::mock_workflow_client,
+    };
+    use futures::FutureExt;
 
-    // TODO: this test is stuck now that the activity poller loops until a task is available
-    // use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse;
+    use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse;
 
-    // #[tokio::test]
-    // async fn activity_timeouts_dont_eat_permits() {
-    //     let mut mock_client = mock_workflow_client();
-    //     mock_client
-    //         .expect_poll_activity_task()
-    //         .returning(|_, _| Ok(PollActivityTaskQueueResponse::default()));
-    //
-    //     let cfg = test_worker_cfg()
-    //         .max_outstanding_activities(5_usize)
-    //         .build()
-    //         .unwrap();
-    //     let worker = Worker::new_test(cfg, mock_client);
-    //     assert_eq!(worker.activity_poll().await.unwrap(), None);
-    //     assert_eq!(worker.at_task_mgr.unwrap().remaining_activity_capacity(), 5);
-    // }
+    #[tokio::test]
+    async fn activity_timeouts_maintain_permit() {
+        let mut mock_client = mock_workflow_client();
+        mock_client
+            .expect_poll_activity_task()
+            .returning(|_, _| Ok(PollActivityTaskQueueResponse::default()));
+
+        let cfg = test_worker_cfg()
+            .max_outstanding_activities(5_usize)
+            .build()
+            .unwrap();
+        let worker = Worker::new_test(cfg, mock_client);
+        let fut = worker.poll_activity_task();
+        advance_fut!(fut);
+        assert_eq!(
+            worker
+                .at_task_mgr
+                .as_ref()
+                .unwrap()
+                .remaining_activity_capacity(),
+            4
+        );
+    }
 
     #[tokio::test]
     async fn activity_errs_dont_eat_permits() {
