@@ -1,6 +1,7 @@
 syntax = "proto3";
 
 package coresdk.common;
+option ruby_package = "Temporalio::Bridge::Api::Common";
 
 import "google/protobuf/duration.proto";
 
