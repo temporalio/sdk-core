@@ -5,9 +5,9 @@ use std::{
     path::{Path, PathBuf},
     process::Stdio,
 };
-use temporal_sdk_core::ephemeral_server::{TemporaliteConfigBuilder, TestServerConfigBuilder};
+use temporal_sdk_core::ephemeral_server::{TemporalDevServerConfig, TestServerConfigBuilder};
 use temporal_sdk_core_test_utils::{
-    default_cached_download, INTEG_SERVER_TARGET_ENV_VAR, INTEG_TEMPORALITE_USED_ENV_VAR,
+    default_cached_download, INTEG_SERVER_TARGET_ENV_VAR, INTEG_TEMPORAL_DEV_SERVER_USED_ENV_VAR,
     INTEG_TEST_SERVER_USED_ENV_VAR,
 };
 use tokio::{self, process::Command};
@@ -20,7 +20,7 @@ struct Cli {
     test_name: String,
 
     /// What kind of server to auto-launch, if any
-    #[arg(short, long, value_enum, default_value = "temporalite")]
+    #[arg(short, long, value_enum, default_value = "temporal-cli")]
     server_kind: ServerKind,
 
     /// Arguments to pass through to the `cargo test` command. Ex: `--release`
@@ -33,8 +33,8 @@ struct Cli {
 
 #[derive(Copy, Clone, PartialEq, Eq, clap::ValueEnum)]
 enum ServerKind {
-    /// Use Temporalite
-    Temporalite,
+    /// Use Temporal-cli
+    TemporalCLI,
     /// Use the Java test server
     TestServer,
     /// Do not automatically start any server
@@ -65,14 +65,14 @@ async fn main() -> Result<(), anyhow::Error> {
     }
 
     let (server, envs) = match server_kind {
-        ServerKind::Temporalite => {
-            let config = TemporaliteConfigBuilder::default()
+        ServerKind::TemporalCLI => {
+            let config = TemporalDevServerConfig::default()
                 .exe(default_cached_download())
                 .build()?;
-            println!("Using temporalite");
+            println!("Using temporal CLI");
             (
                 Some(config.start_server_with_output(Stdio::null()).await?),
-                vec![(INTEG_TEMPORALITE_USED_ENV_VAR, "true")],
+                vec![(INTEG_TEMPORAL_DEV_SERVER_USED_ENV_VAR, "true")],
             )
         }
         ServerKind::TestServer => {

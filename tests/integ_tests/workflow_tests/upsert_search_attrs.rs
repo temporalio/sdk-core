@@ -2,7 +2,7 @@ use std::{collections::HashMap, env};
 use temporal_client::{WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{WfContext, WorkflowResult};
 use temporal_sdk_core_protos::coresdk::{AsJsonPayloadExt, FromJsonPayloadExt};
-use temporal_sdk_core_test_utils::{CoreWfStarter, INTEG_TEMPORALITE_USED_ENV_VAR};
+use temporal_sdk_core_test_utils::{CoreWfStarter, INTEG_TEMPORAL_DEV_SERVER_USED_ENV_VAR};
 use tracing::warn;
 use uuid::Uuid;
 
@@ -25,8 +25,9 @@ async fn sends_upsert() {
     let wf_id = Uuid::new_v4();
     let mut starter = CoreWfStarter::new(wf_name);
     let mut worker = starter.worker().await;
-    if env::var(INTEG_TEMPORALITE_USED_ENV_VAR).is_ok() {
-        warn!("skipping sends_upsert -- does not work on temporalite");
+    // TODO: this should be supported in server 1.20, remove this condition when CLI is upgraded.
+    if env::var(INTEG_TEMPORAL_DEV_SERVER_USED_ENV_VAR).is_ok() {
+        warn!("skipping sends_upsert -- does not work on temporal dev server");
         return;
     }
 
