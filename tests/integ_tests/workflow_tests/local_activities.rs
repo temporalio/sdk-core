@@ -12,7 +12,8 @@ use temporal_sdk::{
 use temporal_sdk_core::replay::HistoryForReplay;
 use temporal_sdk_core_protos::{
     coresdk::{
-        workflow_commands::ActivityCancellationType,
+        workflow_commands::workflow_command::Variant, workflow_commands::ActivityCancellationType,
+        workflow_completion, workflow_completion::workflow_activation_completion,
         workflow_completion::WorkflowActivationCompletion, AsJsonPayloadExt,
     },
     temporal::api::{common::v1::RetryPolicy, enums::v1::TimeoutType},
@@ -234,6 +235,7 @@ async fn cancel_immediate(#[case] cancel_type: ActivityCancellationType) {
     starter.start_with_worker(wf_name, &mut worker).await;
     worker
         .run_until_done_intercepted(Some(LACancellerInterceptor {
+            cancel_on_workflow_completed: false,
             token: manual_cancel,
         }))
         .await
@@ -242,12 +244,29 @@ async fn cancel_immediate(#[case] cancel_type: ActivityCancellationType) {
 
 struct LACancellerInterceptor {
     token: CancellationToken,
+    cancel_on_workflow_completed: bool,
 }
 #[async_trait::async_trait(?Send)]
 impl WorkerInterceptor for LACancellerInterceptor {
-    async fn on_workflow_activation_completion(&self, _: &WorkflowActivationCompletion) {}
+    async fn on_workflow_activation_completion(&self, completion: &WorkflowActivationCompletion) {
+        if !self.cancel_on_workflow_completed {
+            return;
+        }
+        if let Some(workflow_activation_completion::Status::Successful(
+            workflow_completion::Success { commands, .. },
+        )) = completion.status.as_ref()
+        {
+            if let Some(&Variant::CompleteWorkflowExecution(_)) =
+                commands.last().and_then(|v| v.variant.as_ref())
+            {
+                self.token.cancel();
+            }
+        }
+    }
     fn on_shutdown(&self, _: &temporal_sdk::Worker) {
-        self.token.cancel()
+        if !self.cancel_on_workflow_completed {
+            self.token.cancel()
+        }
     }
 }
 
@@ -331,6 +350,9 @@ async fn cancel_after_act_starts(
     worker
         .run_until_done_intercepted(Some(LACancellerInterceptor {
             token: manual_cancel,
+            // Only needed for this one case since the activity is not drained and prevents worker from shutting down.
+            cancel_on_workflow_completed: matches!(cancel_type, ActivityCancellationType::Abandon)
+                && cancel_on_backoff.is_none(),
         }))
         .await
         .unwrap();

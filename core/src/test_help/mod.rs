@@ -14,6 +14,7 @@ use crate::{
     },
     TaskToken, Worker, WorkerConfig, WorkerConfigBuilder,
 };
+use async_trait::async_trait;
 use bimap::BiMap;
 use futures::{future::BoxFuture, stream, stream::BoxStream, FutureExt, Stream, StreamExt};
 use mockall::TimesRange;
@@ -29,6 +30,7 @@ use std::{
     task::{Context, Poll},
     time::Duration,
 };
+use temporal_sdk_core_api::errors::{PollActivityError, PollWfError};
 use temporal_sdk_core_api::Worker as WorkerTrait;
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -52,7 +54,6 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
 
 pub const TEST_Q: &str = "q";
-pub static NO_MORE_WORK_ERROR_MSG: &str = "No more work to do";
 
 pub fn test_worker_cfg() -> WorkerConfigBuilder {
     let mut wcb = WorkerConfigBuilder::default();
@@ -302,7 +303,7 @@ where
             }
             .boxed()
         } else {
-            async { Some(Err(tonic::Status::cancelled(NO_MORE_WORK_ERROR_MSG))) }.boxed()
+            async { None }.boxed()
         }
     });
     Box::new(mock_poller) as BoxedPoller<T>
@@ -895,4 +896,44 @@ macro_rules! prost_dur {
             .try_into()
             .expect("test duration fits")
     };
+}
+
+#[async_trait]
+pub(crate) trait WorkerExt {
+    /// Initiate shutdown, drain the pollers, and wait for shutdown to complete.
+    async fn drain_pollers_and_shutdown(self);
+    /// Initiate shutdown, drain the *activity* poller, and wait for shutdown to complete.
+    /// Takes a ref because of that one test that needs it.
+    async fn drain_activity_poller_and_shutdown(&self);
+}
+
+#[async_trait]
+impl WorkerExt for Worker {
+    async fn drain_pollers_and_shutdown(self) {
+        self.initiate_shutdown();
+        tokio::join!(
+            async {
+                assert_matches!(
+                    self.poll_activity_task().await.unwrap_err(),
+                    PollActivityError::ShutDown
+                );
+            },
+            async {
+                assert_matches!(
+                    self.poll_workflow_activation().await.unwrap_err(),
+                    PollWfError::ShutDown
+                );
+            }
+        );
+        self.finalize_shutdown().await;
+    }
+
+    async fn drain_activity_poller_and_shutdown(&self) {
+        self.initiate_shutdown();
+        assert_matches!(
+            self.poll_activity_task().await.unwrap_err(),
+            PollActivityError::ShutDown
+        );
+        self.shutdown().await;
+    }
 }

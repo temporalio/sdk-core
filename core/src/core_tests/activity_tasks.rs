@@ -4,7 +4,7 @@ use crate::{
         build_fake_worker, build_mock_pollers, canned_histories, gen_assert_and_reply,
         mock_manual_poller, mock_poller, mock_poller_from_resps, mock_worker, poll_and_reply,
         single_hist_mock_sg, test_worker_cfg, MockPollCfg, MockWorkerInputs, MocksHolder,
-        ResponseType, WorkflowCachingPolicy, TEST_Q,
+        QueueResponse, ResponseType, WorkerExt, WorkflowCachingPolicy, TEST_Q,
     },
     worker::client::mocks::{mock_manual_workflow_client, mock_workflow_client},
     ActivityHeartbeat, Worker, WorkerConfigBuilder,
@@ -14,6 +14,7 @@ use itertools::Itertools;
 use std::{
     cell::RefCell,
     collections::{hash_map::Entry, HashMap, VecDeque},
+    future,
     rc::Rc,
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -23,7 +24,10 @@ use std::{
 };
 use temporal_client::WorkflowOptions;
 use temporal_sdk::{ActivityOptions, WfContext};
-use temporal_sdk_core_api::{errors::CompleteActivityError, Worker as WorkerTrait};
+use temporal_sdk_core_api::{
+    errors::{CompleteActivityError, PollActivityError},
+    Worker as WorkerTrait,
+};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{
@@ -55,6 +59,7 @@ use temporal_sdk_core_protos::{
 };
 use temporal_sdk_core_test_utils::{fanout_tasks, start_timer_cmd, TestWorker};
 use tokio::{sync::Barrier, time::sleep};
+use tokio_util::sync::CancellationToken;
 
 #[tokio::test]
 async fn max_activities_respected() {
@@ -124,7 +129,7 @@ async fn activity_not_found_returns_ok() {
     })
     .await
     .unwrap();
-    core.shutdown().await;
+    core.drain_activity_poller_and_shutdown().await;
 }
 
 #[tokio::test]
@@ -220,12 +225,14 @@ async fn heartbeats_report_cancels_only_once() {
     })
     .await
     .unwrap();
-    core.shutdown().await;
+    core.drain_activity_poller_and_shutdown().await;
 }
 
 #[tokio::test]
 async fn activity_cancel_interrupts_poll() {
     let mut mock_poller = mock_manual_poller();
+    let shutdown_token = CancellationToken::new();
+    let shutdown_token_clone = shutdown_token.clone();
     let mut poll_resps = VecDeque::from(vec![
         async {
             Some(Ok(PollActivityTaskQueueResponse {
@@ -240,10 +247,15 @@ async fn activity_cancel_interrupts_poll() {
             Some(Ok(Default::default()))
         }
         .boxed(),
+        async move {
+            shutdown_token.cancelled().await;
+            None
+        }
+        .boxed(),
     ]);
     mock_poller
         .expect_poll()
-        .times(2)
+        .times(3)
         .returning(move || poll_resps.pop_front().unwrap());
 
     let mut mock_client = mock_manual_workflow_client();
@@ -292,11 +304,12 @@ async fn activity_cancel_interrupts_poll() {
                 }
             ).await.unwrap();
             last_finisher.store(2, Ordering::SeqCst);
+            shutdown_token_clone.cancel();
         }
     };
     // So that we know we blocked
     assert_eq!(last_finisher.load(Ordering::Acquire), 2);
-    core.shutdown().await;
+    core.drain_activity_poller_and_shutdown().await;
 }
 
 #[tokio::test]
@@ -345,13 +358,10 @@ async fn many_concurrent_heartbeat_cancels() {
             })
             .collect::<Vec<_>>(),
     );
-    // Because the mock is so fast, it's possible it can return before the cancel channel in
-    // the activity task poll selector. So, the final poll when there are no more tasks must
-    // take a while.
     poll_resps.push_back(
         async {
-            sleep(Duration::from_secs(10)).await;
-            unreachable!("Long poll")
+            future::pending::<()>().await;
+            unreachable!()
         }
         .boxed(),
     );
@@ -434,7 +444,7 @@ async fn many_concurrent_heartbeat_cancels() {
     })
     .await;
 
-    worker.shutdown().await;
+    worker.drain_activity_poller_and_shutdown().await;
 }
 
 #[tokio::test]
@@ -486,7 +496,7 @@ async fn activity_timeout_no_double_resolve() {
     )
     .await;
 
-    core.shutdown().await;
+    core.drain_pollers_and_shutdown().await;
 }
 
 #[tokio::test]
@@ -532,7 +542,7 @@ async fn can_heartbeat_acts_during_shutdown() {
     })
     .await
     .unwrap();
-    shutdown_fut.await;
+    core.drain_activity_poller_and_shutdown().await;
 }
 
 /// Verifies that if a user has tried to record a heartbeat and then immediately after failed the
@@ -583,7 +593,7 @@ async fn complete_act_with_fail_flushes_heartbeat() {
     })
     .await
     .unwrap();
-    core.shutdown().await;
+    core.drain_activity_poller_and_shutdown().await;
 
     // Verify the last seen call to record a heartbeat had the last detail payload
     let last_seen_payload = &last_seen_payload.take().unwrap().payloads[0];
@@ -689,7 +699,7 @@ async fn no_eager_activities_requested_when_worker_options_disable_remote_activi
     .await
     .unwrap();
 
-    core.shutdown().await;
+    core.drain_pollers_and_shutdown().await;
 
     assert_eq!(num_eager_requested.load(Ordering::Relaxed), 0);
 }
@@ -756,11 +766,8 @@ async fn activity_tasks_from_completion_are_delivered() {
         .times(3)
         .returning(|_, _| Ok(RespondActivityTaskCompletedResponse::default()));
     let mut mock = single_hist_mock_sg(wfid, t, [1], mock, true);
-    let mut mock_poller = mock_manual_poller();
-    mock_poller
-        .expect_poll()
-        .returning(|| futures::future::pending().boxed());
-    mock.set_act_poller(Box::new(mock_poller));
+    let act_tasks: Vec<QueueResponse<PollActivityTaskQueueResponse>> = vec![];
+    mock.set_act_poller(mock_poller_from_resps(act_tasks));
     mock.worker_cfg(|wc| wc.max_cached_workflows = 2);
     let core = mock_worker(mock);
 
@@ -819,7 +826,7 @@ async fn activity_tasks_from_completion_are_delivered() {
         .unwrap();
     }
 
-    core.shutdown().await;
+    core.drain_activity_poller_and_shutdown().await;
 
     // Verify only a single eager activity was scheduled (the one on our worker's task queue)
     assert_eq!(num_eager_requested.load(Ordering::Relaxed), 3);
@@ -917,19 +924,25 @@ async fn activity_tasks_from_completion_reserve_slots() {
     // First poll for activities twice, occupying both slots
     let at1 = core.poll_activity_task().await.unwrap();
     let at2 = core.poll_activity_task().await.unwrap();
+    let workflow_complete_token = CancellationToken::new();
+    let workflow_complete_token_clone = workflow_complete_token.clone();
 
-    worker.register_wf(DEFAULT_WORKFLOW_TYPE, move |ctx: WfContext| async move {
-        ctx.activity(ActivityOptions {
-            activity_type: "act1".to_string(),
-            ..Default::default()
-        })
-        .await;
-        ctx.activity(ActivityOptions {
-            activity_type: "act2".to_string(),
-            ..Default::default()
-        })
-        .await;
-        Ok(().into())
+    worker.register_wf(DEFAULT_WORKFLOW_TYPE, move |ctx: WfContext| {
+        let complete_token = workflow_complete_token.clone();
+        async move {
+            ctx.activity(ActivityOptions {
+                activity_type: "act1".to_string(),
+                ..Default::default()
+            })
+            .await;
+            ctx.activity(ActivityOptions {
+                activity_type: "act2".to_string(),
+                ..Default::default()
+            })
+            .await;
+            complete_token.cancel();
+            Ok(().into())
+        }
     });
 
     worker
@@ -956,6 +969,13 @@ async fn activity_tasks_from_completion_reserve_slots() {
         .await
         .unwrap();
         barr.wait().await;
+        // Wait for workflow to complete in order for all eager activities to be requested before shutting down.
+        // After shutdown, no eager activities slots can be allocated.
+        workflow_complete_token_clone.cancelled().await;
+        core.initiate_shutdown();
+        // Even though this test requests eager activity tasks, none are returned in poll responses.
+        let err = core.poll_activity_task().await.unwrap_err();
+        assert_matches!(err, PollActivityError::ShutDown);
     };
     // This wf poll should *not* set the flag that it wants tasks back since both slots are
     // occupied
@@ -989,7 +1009,7 @@ async fn retryable_net_error_exhaustion_is_nonfatal() {
     })
     .await
     .unwrap();
-    core.shutdown().await;
+    core.drain_activity_poller_and_shutdown().await;
 }
 
 #[tokio::test]

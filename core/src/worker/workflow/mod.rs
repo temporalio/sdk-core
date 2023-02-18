@@ -21,9 +21,10 @@ pub(crate) use history_update::HistoryUpdate;
 #[cfg(test)]
 pub(crate) use managed_run::ManagedWFFunc;
 
+use crate::worker::activities::TrackedPermittedTqResp;
 use crate::{
     abstractions::{
-        stream_when_allowed, MeteredSemaphore, OwnedMeteredSemPermit, UsedMeteredSemPermit,
+        stream_when_allowed, MeteredSemaphore, TrackedOwnedMeteredSemPermit, UsedMeteredSemPermit,
     },
     internal_flags::InternalFlags,
     protosext::{legacy_query_failure, ValidPollWFTQResponse},
@@ -32,7 +33,7 @@ use crate::{
         VecDisplayer,
     },
     worker::{
-        activities::{ActivitiesFromWFTsHandle, LocalActivityManager, PermittedTqResp},
+        activities::{ActivitiesFromWFTsHandle, LocalActivityManager},
         client::{WorkerClient, WorkflowTaskCompletion},
         workflow::{
             history_update::HistoryPaginator,
@@ -569,7 +570,7 @@ impl Workflows {
     /// Process eagerly returned activities from WFT completion
     fn handle_eager_activities(
         &self,
-        reserved_act_permits: Vec<OwnedMeteredSemPermit>,
+        reserved_act_permits: Vec<TrackedOwnedMeteredSemPermit>,
         eager_acts: Vec<PollActivityTaskQueueResponse>,
     ) {
         if let Some(at_handle) = self.activity_tasks_handle.as_ref() {
@@ -590,7 +591,7 @@ impl Workflows {
             let with_permits = reserved_act_permits
                 .into_iter()
                 .zip(eager_acts.into_iter())
-                .map(|(permit, resp)| PermittedTqResp { permit, resp });
+                .map(|(permit, resp)| TrackedPermittedTqResp { permit, resp });
             if with_permits.len() > 0 {
                 debug!(
                     "Adding {} activity tasks received from WFT complete",
@@ -613,7 +614,7 @@ impl Workflows {
     fn reserve_activity_slots_for_outgoing_commands(
         &self,
         commands: &mut [Command],
-    ) -> Vec<OwnedMeteredSemPermit> {
+    ) -> Vec<TrackedOwnedMeteredSemPermit> {
         let mut reserved = vec![];
         for cmd in commands {
             if let Some(Attributes::ScheduleActivityTaskCommandAttributes(attrs)) =

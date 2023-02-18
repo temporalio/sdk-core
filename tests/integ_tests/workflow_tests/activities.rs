@@ -27,7 +27,8 @@ use temporal_sdk_core_protos::{
     TaskToken, DEFAULT_ACTIVITY_TYPE,
 };
 use temporal_sdk_core_test_utils::{
-    init_core_and_create_wf, schedule_activity_cmd, CoreWfStarter, WorkerTestHelpers,
+    drain_pollers_and_shutdown, init_core_and_create_wf, schedule_activity_cmd, CoreWfStarter,
+    WorkerTestHelpers,
 };
 use tokio::time::sleep;
 
@@ -764,7 +765,7 @@ async fn activity_cancelled_after_heartbeat_times_out() {
     .unwrap();
 
     // Verify shutdown completes
-    core.shutdown().await;
+    drain_pollers_and_shutdown(&core).await;
     // Cleanup just in case
     starter
         .get_client()

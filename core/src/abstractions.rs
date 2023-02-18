@@ -1,7 +1,9 @@
 //! This module contains very generic helpers that can be used codebase-wide
 
 use crate::MetricsContext;
+use derive_more::DebugCustom;
 use futures::{stream, Stream, StreamExt};
+use std::sync::atomic::AtomicBool;
 use std::{
     fmt::{Debug, Formatter},
     sync::{
@@ -10,6 +12,7 @@ use std::{
     },
 };
 use tokio::sync::{AcquireError, OwnedSemaphorePermit, Semaphore, TryAcquireError};
+use tokio_util::sync::CancellationToken;
 
 /// Wraps a [Semaphore] with a function call that is fed the available permits any time a permit is
 /// acquired or restored through the provided methods
@@ -84,6 +87,98 @@ impl MeteredSemaphore {
                 sem.available_permits() + uc.load(Ordering::Acquire) + extra,
             )
         })
+    }
+}
+
+/// A version of [MeteredSemaphore] that can be closed and supports waiting for close to complete.
+/// Once closed, no permits will be handed out.
+/// Close completes when all permits have been returned.
+pub(crate) struct ClosableMeteredSemaphore {
+    inner: Arc<MeteredSemaphore>,
+    outstanding_permits: AtomicUsize,
+    close_requested: AtomicBool,
+    close_complete_token: CancellationToken,
+}
+
+impl ClosableMeteredSemaphore {
+    pub fn new_arc(sem: Arc<MeteredSemaphore>) -> Arc<Self> {
+        Arc::new(Self {
+            inner: sem,
+            outstanding_permits: Default::default(),
+            close_requested: AtomicBool::new(false),
+            close_complete_token: CancellationToken::new(),
+        })
+    }
+}
+
+impl ClosableMeteredSemaphore {
+    #[cfg(test)]
+    pub fn available_permits(&self) -> usize {
+        self.inner.available_permits()
+    }
+
+    /// Request to close the semaphore and prevent new permits from being acquired.
+    pub fn close(&self) {
+        self.close_requested.store(true, Ordering::Release);
+        if self.outstanding_permits.load(Ordering::Acquire) == 0 {
+            self.close_complete_token.cancel();
+        }
+    }
+
+    /// Returns after close has been requested and all outstanding permits have been returned.
+    pub async fn close_complete(&self) {
+        self.close_complete_token.cancelled().await;
+    }
+
+    /// Acquire a permit if one is available and close was not requested.
+    pub fn try_acquire_owned(
+        self: &Arc<Self>,
+    ) -> Result<TrackedOwnedMeteredSemPermit, TryAcquireError> {
+        if self.close_requested.load(Ordering::Acquire) {
+            return Err(TryAcquireError::Closed);
+        }
+        self.outstanding_permits.fetch_add(1, Ordering::Release);
+        let res = self.inner.try_acquire_owned();
+        if res.is_err() {
+            self.outstanding_permits.fetch_sub(1, Ordering::Release);
+        }
+        res.map(|permit| TrackedOwnedMeteredSemPermit {
+            inner: Some(permit),
+            on_drop: self.on_permit_dropped(),
+        })
+    }
+
+    fn on_permit_dropped(self: &Arc<Self>) -> Box<dyn Fn() + Send + Sync> {
+        let sem = self.clone();
+        Box::new(move || {
+            sem.outstanding_permits.fetch_sub(1, Ordering::Release);
+            if sem.close_requested.load(Ordering::Acquire)
+                && sem.outstanding_permits.load(Ordering::Acquire) == 0
+            {
+                sem.close_complete_token.cancel();
+            }
+        })
+    }
+}
+
+/// Tracks an OwnedMeteredSemPermit and calls on_drop when dropped.
+#[derive(DebugCustom)]
+#[debug(fmt = "Tracked({inner:?})")]
+pub(crate) struct TrackedOwnedMeteredSemPermit {
+    inner: Option<OwnedMeteredSemPermit>,
+    on_drop: Box<dyn Fn() + Send + Sync>,
+}
+impl From<TrackedOwnedMeteredSemPermit> for OwnedMeteredSemPermit {
+    fn from(mut value: TrackedOwnedMeteredSemPermit) -> Self {
+        value
+            .inner
+            .take()
+            .expect("Inner permit should be available")
+    }
+}
+impl Drop for TrackedOwnedMeteredSemPermit {
+    fn drop(&mut self) {
+        (self.on_drop)();
     }
 }
 
@@ -217,5 +312,44 @@ mod tests {
         }
         allow_tx.send(()).unwrap();
         assert_eq!(when_allowed.poll_next_unpin(&mut cx), Poll::Ready(None));
+    }
+
+    #[tokio::test]
+    async fn closable_semaphore_permit_drop_returns_permit() {
+        let inner = MeteredSemaphore::new(2, MetricsContext::no_op(), |_, _| {});
+        let sem = ClosableMeteredSemaphore::new_arc(Arc::new(inner));
+        let perm = sem.try_acquire_owned().unwrap();
+        let permits = sem.outstanding_permits.load(Ordering::Acquire);
+        assert_eq!(permits, 1);
+        drop(perm);
+        let permits = sem.outstanding_permits.load(Ordering::Acquire);
+        assert_eq!(permits, 0);
+    }
+
+    #[tokio::test]
+    async fn closable_semaphore_permit_drop_after_close_resolves_close_complete() {
+        let inner = MeteredSemaphore::new(2, MetricsContext::no_op(), |_, _| {});
+        let sem = ClosableMeteredSemaphore::new_arc(Arc::new(inner));
+        let perm = sem.try_acquire_owned().unwrap();
+        sem.close();
+        drop(perm);
+        sem.close_complete().await;
+    }
+
+    #[tokio::test]
+    async fn closable_semaphore_close_complete_ready_if_unused() {
+        let inner = MeteredSemaphore::new(2, MetricsContext::no_op(), |_, _| {});
+        let sem = ClosableMeteredSemaphore::new_arc(Arc::new(inner));
+        sem.close();
+        sem.close_complete().await;
+    }
+
+    #[tokio::test]
+    async fn closable_semaphore_does_not_hand_out_permits_after_closed() {
+        let inner = MeteredSemaphore::new(2, MetricsContext::no_op(), |_, _| {});
+        let sem = ClosableMeteredSemaphore::new_arc(Arc::new(inner));
+        sem.close();
+        let perm = sem.try_acquire_owned().unwrap_err();
+        assert_matches!(perm, TryAcquireError::Closed);
     }
 }
