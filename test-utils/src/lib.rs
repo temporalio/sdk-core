@@ -60,8 +60,8 @@ pub const NAMESPACE: &str = "default";
 pub const TEST_Q: &str = "q";
 /// The env var used to specify where the integ tests should point
 pub const INTEG_SERVER_TARGET_ENV_VAR: &str = "TEMPORAL_SERVICE_ADDRESS";
-/// This env var is set (to any value) if temporalite is in use
-pub const INTEG_TEMPORALITE_USED_ENV_VAR: &str = "INTEG_TEMPORALITE_ON";
+/// This env var is set (to any value) if temporal CLI dev server is in use
+pub const INTEG_TEMPORAL_DEV_SERVER_USED_ENV_VAR: &str = "INTEG_TEMPORAL_DEV_SERVER_ON";
 /// This env var is set (to any value) if the test server is in use
 pub const INTEG_TEST_SERVER_USED_ENV_VAR: &str = "INTEG_TEST_SERVER_ON";
 

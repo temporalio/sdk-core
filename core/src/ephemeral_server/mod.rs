@@ -23,6 +23,9 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::process::Stdio;
 
 /// Configuration for Temporalite.
+/// Will be removed eventually as its successor, Temporal CLI matures.
+/// We don't care for the duplication between this struct and [TemporalDevServerConfig] and prefer that over another
+/// abstraction since the existence of this struct is temporary.
 #[derive(Debug, Clone, derive_builder::Builder)]
 pub struct TemporaliteConfig {
     /// Required path to executable or download info.
@@ -59,7 +62,10 @@ impl TemporaliteConfig {
     /// Start a Temporalite server with configurable stdout destination.
     pub async fn start_server_with_output(&self, output: Stdio) -> anyhow::Result<EphemeralServer> {
         // Get exe path
-        let exe_path = self.exe.get_or_download("temporalite").await?;
+        let exe_path = self
+            .exe
+            .get_or_download("temporalite", "temporalite")
+            .await?;
 
         // Get free port if not already given
         let port = self.port.unwrap_or_else(|| get_free_port(&self.ip));
@@ -77,12 +83,94 @@ impl TemporaliteConfig {
             self.log.0.clone(),
             "--log-level".to_owned(),
             self.log.1.clone(),
+            "--dynamic-config-value".to_owned(),
+            "frontend.enableServerVersionCheck=false".to_owned(),
         ];
         if let Some(db_filename) = &self.db_filename {
             args.push("--filename".to_owned());
             args.push(db_filename.clone());
         } else {
             args.push("--ephemeral".to_owned());
+        }
+        if !self.ui {
+            args.push("--headless".to_owned());
+        }
+        args.extend(self.extra_args.clone());
+
+        // Start
+        EphemeralServer::start(EphemeralServerConfig {
+            exe_path,
+            port,
+            args,
+            has_test_service: false,
+            output,
+        })
+        .await
+    }
+}
+
+/// Configuration for Temporal CLI dev server.
+#[derive(Debug, Clone, derive_builder::Builder)]
+pub struct TemporalDevServerConfig {
+    /// Required path to executable or download info.
+    pub exe: EphemeralExe,
+    /// Namespace to use.
+    #[builder(default = "\"default\".to_owned()")]
+    pub namespace: String,
+    /// IP to bind to.
+    #[builder(default = "\"127.0.0.1\".to_owned()")]
+    pub ip: String,
+    /// Port to use or obtains a free one if none given.
+    #[builder(default)]
+    pub port: Option<u16>,
+    /// Sqlite DB filename if persisting or non-persistent if none.
+    #[builder(default)]
+    pub db_filename: Option<String>,
+    /// Whether to enable the UI.
+    #[builder(default)]
+    pub ui: bool,
+    /// Log format and level
+    #[builder(default = "(\"pretty\".to_owned(), \"warn\".to_owned())")]
+    pub log: (String, String),
+    /// Additional arguments to Temporalite.
+    #[builder(default)]
+    pub extra_args: Vec<String>,
+}
+
+impl TemporalDevServerConfig {
+    /// Start a Temporal CLI dev server.
+    pub async fn start_server(&self) -> anyhow::Result<EphemeralServer> {
+        self.start_server_with_output(Stdio::inherit()).await
+    }
+
+    /// Start a Temporal CLI dev server with configurable stdout destination.
+    pub async fn start_server_with_output(&self, output: Stdio) -> anyhow::Result<EphemeralServer> {
+        // Get exe path
+        let exe_path = self.exe.get_or_download("cli", "temporal").await?;
+
+        // Get free port if not already given
+        let port = self.port.unwrap_or_else(|| get_free_port(&self.ip));
+
+        // Build arg set
+        let mut args = vec![
+            "server".to_owned(),
+            "start-dev".to_owned(),
+            "--port".to_owned(),
+            port.to_string(),
+            "--namespace".to_owned(),
+            self.namespace.clone(),
+            "--ip".to_owned(),
+            self.ip.clone(),
+            "--log-format".to_owned(),
+            self.log.0.clone(),
+            "--log-level".to_owned(),
+            self.log.1.clone(),
+            "--dynamic-config-value".to_owned(),
+            "frontend.enableServerVersionCheck=false".to_owned(),
+        ];
+        if let Some(db_filename) = &self.db_filename {
+            args.push("--filename".to_owned());
+            args.push(db_filename.clone());
         }
         if !self.ui {
             args.push("--headless".to_owned());
@@ -123,7 +211,10 @@ impl TestServerConfig {
     /// Start a test server with configurable stdout.
     pub async fn start_server_with_output(&self, output: Stdio) -> anyhow::Result<EphemeralServer> {
         // Get exe path
-        let exe_path = self.exe.get_or_download("temporal-test-server").await?;
+        let exe_path = self
+            .exe
+            .get_or_download("temporal-test-server", "temporal-test-server")
+            .await?;
 
         // Get free port if not already given
         let port = self.port.unwrap_or_else(|| get_free_port("0.0.0.0"));
@@ -280,7 +371,11 @@ struct DownloadInfo {
 }
 
 impl EphemeralExe {
-    async fn get_or_download(&self, artifact_name: &str) -> anyhow::Result<PathBuf> {
+    async fn get_or_download(
+        &self,
+        artifact_name: &str,
+        downloaded_name_prefix: &str,
+    ) -> anyhow::Result<PathBuf> {
         match self {
             EphemeralExe::ExistingPath(exe_path) => {
                 let path = PathBuf::from(exe_path);
@@ -304,9 +399,9 @@ impl EphemeralExe {
                     EphemeralExeVersion::SDKDefault {
                         sdk_name,
                         sdk_version,
-                    } => format!("{artifact_name}-{sdk_name}-{sdk_version}{out_ext}"),
+                    } => format!("{downloaded_name_prefix}-{sdk_name}-{sdk_version}{out_ext}"),
                     EphemeralExeVersion::Fixed(version) => {
-                        format!("{artifact_name}-{version}{out_ext}")
+                        format!("{downloaded_name_prefix}-{version}{out_ext}")
                     }
                 });
                 debug!(
