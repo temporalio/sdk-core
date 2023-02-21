@@ -189,7 +189,7 @@ pub mod coresdk {
             pub fn unwrap_ok_payload(self) -> Payload {
                 match self.status.unwrap() {
                     activity_resolution::Status::Completed(c) => c.result.unwrap(),
-                    _ => panic!("Activity was not successful"),
+                    e => panic!("Activity was not successful: {e:?}"),
                 }
             }
 

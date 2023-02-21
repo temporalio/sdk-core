@@ -110,3 +110,14 @@ message RetryPolicy {
     // this is not a substring match, the error *type* (not message) must match exactly.
     repeated string non_retryable_error_types = 5;
 }
+
+// Metadata relevant for metering purposes
+message MeteringMetadata {
+    // Count of local activities which have begun an execution attempt during this workflow task,
+    // and whose first attempt occurred in some previous task. This is used for metering
+    // purposes, and does not affect workflow state.
+    //
+    // (-- api-linter: core::0141::forbidden-types=disabled
+    //     aip.dev/not-precedent: Negative values make no sense to represent. --)
+    uint32 nonfirst_local_activity_execution_attempts = 13;
+}

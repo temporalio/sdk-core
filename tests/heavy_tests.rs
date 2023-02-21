@@ -1,12 +1,9 @@
-use assert_matches::assert_matches;
 use futures::{future::join_all, sink, stream::FuturesUnordered, StreamExt};
 use std::time::{Duration, Instant};
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{ActContext, ActivityOptions, WfContext, WorkflowResult};
-use temporal_sdk_core_api::errors::PollActivityError;
 use temporal_sdk_core_protos::coresdk::{
-    activity_result::ActivityExecutionResult, activity_task::activity_task as act_task,
-    workflow_commands::ActivityCancellationType, ActivityTaskCompletion, AsJsonPayloadExt,
+    workflow_commands::ActivityCancellationType, AsJsonPayloadExt,
 };
 use temporal_sdk_core_test_utils::{workflows::la_problem_workflow, CoreWfStarter};
 
@@ -26,18 +23,16 @@ async fn activity_load() {
 
     let activity_id = "act-1";
     let activity_timeout = Duration::from_secs(8);
-    let payload_dat = b"hello".to_vec();
     let task_queue = starter.get_task_queue().to_owned();
 
-    let pd = payload_dat.clone();
     let wf_fn = move |ctx: WfContext| {
         let task_queue = task_queue.clone();
-        let payload_dat = pd.clone();
-
+        let payload = "yo".as_json_payload().unwrap();
         async move {
             let activity = ActivityOptions {
                 activity_id: Some(activity_id.to_string()),
                 activity_type: "test_activity".to_string(),
+                input: payload.clone(),
                 task_queue,
                 schedule_to_start_timeout: Some(activity_timeout),
                 start_to_close_timeout: Some(activity_timeout),
@@ -47,7 +42,7 @@ async fn activity_load() {
                 ..Default::default()
             };
             let res = ctx.activity(activity).await.unwrap_ok_payload();
-            assert_eq!(res.data, payload_dat);
+            assert_eq!(res.data, payload.data);
             Ok(().into())
         }
     };
@@ -55,6 +50,10 @@ async fn activity_load() {
     let starting = Instant::now();
     let wf_type = "activity_load";
     worker.register_wf(wf_type.to_owned(), wf_fn);
+    worker.register_activity(
+        "test_activity",
+        |_ctx: ActContext, echo: String| async move { Ok(echo) },
+    );
     join_all((0..CONCURRENCY).map(|i| {
         let worker = &worker;
         let wf_id = format!("activity_load_{i}");
@@ -74,46 +73,8 @@ async fn activity_load() {
     dbg!(starting.elapsed());
 
     let running = Instant::now();
-    let core = starter.get_worker().await;
 
-    // Poll for and complete all activities
-    let c2 = core.clone();
-    let all_acts = async move {
-        let mut act_complete_futs = vec![];
-        for _ in 0..CONCURRENCY {
-            let task = c2.poll_activity_task().await.unwrap();
-            assert_matches!(
-                task.variant,
-                Some(act_task::Variant::Start(ref start_activity)) => {
-                    assert_eq!(start_activity.activity_type, "test_activity")
-                }
-            );
-            let pd = payload_dat.clone();
-            let core = c2.clone();
-            act_complete_futs.push(tokio::spawn(async move {
-                core.complete_activity_task(ActivityTaskCompletion {
-                    task_token: task.task_token,
-                    result: Some(ActivityExecutionResult::ok(pd.into())),
-                })
-                .await
-                .unwrap()
-            }));
-        }
-        join_all(act_complete_futs)
-            .await
-            .into_iter()
-            .for_each(|h| h.unwrap());
-        assert_matches!(
-            core.poll_activity_task().await.unwrap_err(),
-            PollActivityError::ShutDown
-        );
-    };
-    tokio::join! {
-        async {
-            worker.run_until_done().await.unwrap();
-        },
-        all_acts
-    };
+    worker.run_until_done().await.unwrap();
     dbg!(running.elapsed());
 }
 

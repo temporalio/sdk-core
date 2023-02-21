@@ -7,7 +7,7 @@ use temporal_sdk_core_protos::{
     coresdk::workflow_commands::QueryResult,
     temporal::api::{
         command::v1::Command,
-        common::v1::{Payloads, WorkflowExecution},
+        common::v1::{MeteringMetadata, Payloads, WorkflowExecution},
         enums::v1::{TaskQueueKind, WorkflowTaskFailedCause},
         failure::v1::Failure,
         query::v1::WorkflowQueryResult,
@@ -212,6 +212,7 @@ impl WorkerClient for WorkerClientBag {
                 .collect(),
             namespace: self.namespace.clone(),
             sdk_metadata: Some(request.sdk_metadata),
+            metering_metadata: Some(request.metering_metadata),
         };
         Ok(self
             .client
@@ -383,4 +384,6 @@ pub(crate) struct WorkflowTaskCompletion {
     pub force_create_new_workflow_task: bool,
     /// SDK-specific metadata to send
     pub sdk_metadata: WorkflowTaskCompletedMetadata,
+    /// Metering info
+    pub metering_metadata: MeteringMetadata,
 }
