@@ -77,7 +77,7 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::{
         command::v1::{command::Attributes, Command as ProtoCommand, Command},
-        common::v1::{Memo, RetryPolicy, SearchAttributes, WorkflowExecution},
+        common::v1::{Memo, MeteringMetadata, RetryPolicy, SearchAttributes, WorkflowExecution},
         enums::v1::WorkflowTaskFailedCause,
         query::v1::WorkflowQuery,
         sdk::v1::WorkflowTaskCompletedMetadata,
@@ -125,6 +125,7 @@ pub(crate) struct Workflows {
     activity_tasks_handle: Option<ActivitiesFromWFTsHandle>,
     /// Ensures we stay at or below this worker's maximum concurrent workflow task limit
     wft_semaphore: MeteredSemaphore,
+    local_act_mgr: Arc<LocalActivityManager>,
 }
 
 pub(crate) struct WorkflowBasics {
@@ -159,6 +160,7 @@ impl Workflows {
         client: Arc<dyn WorkerClient>,
         wft_stream: impl Stream<Item = Result<ValidPollWFTQResponse, tonic::Status>> + Send + 'static,
         local_activity_request_sink: impl LocalActivityRequestSink,
+        local_act_mgr: Arc<LocalActivityManager>,
         heartbeat_timeout_rx: UnboundedReceiver<HeartbeatTimeoutMsg>,
         activity_tasks_handle: Option<ActivitiesFromWFTsHandle>,
         telem_instance: Option<&TelemetryInstance>,
@@ -256,6 +258,7 @@ impl Workflows {
             sticky_attrs,
             activity_tasks_handle,
             wft_semaphore,
+            local_act_mgr,
         }
     }
 
@@ -362,6 +365,12 @@ impl Workflows {
                         return_new_workflow_task: true,
                         force_create_new_workflow_task: force_new_wft,
                         sdk_metadata,
+                        metering_metadata: MeteringMetadata {
+                            nonfirst_local_activity_execution_attempts: self
+                                .local_act_mgr
+                                .get_nonfirst_attempt_count(&run_id)
+                                as u32,
+                        },
                     };
                     let sticky_attrs = self.sticky_attrs.clone();
                     // Do not return new WFT if we would not cache, because returned new WFTs are

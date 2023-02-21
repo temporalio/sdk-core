@@ -8,6 +8,7 @@ use crate::{
     worker::{client::mocks::mock_workflow_client, LEGACY_QUERY_ID},
 };
 use anyhow::anyhow;
+use crossbeam::queue::SegQueue;
 use futures::{future::join_all, FutureExt};
 use std::{
     collections::HashMap,
@@ -975,4 +976,71 @@ async fn resolved_las_not_recorded_if_wft_fails_many_times() {
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
+}
+
+#[tokio::test]
+async fn local_act_records_nonfirst_attempts_ok() {
+    let mut t = TestHistoryBuilder::default();
+    let wft_timeout = Duration::from_millis(200);
+    t.add_wfe_started_with_wft_timeout(wft_timeout);
+    t.add_full_wf_task();
+    t.add_full_wf_task();
+    t.add_full_wf_task();
+    t.add_workflow_task_scheduled_and_started();
+
+    let wf_id = "fakeid";
+    let mock = mock_workflow_client();
+    let mut mh = MockPollCfg::from_resp_batches(wf_id, t, [1, 2, 3], mock);
+    let nonfirst_counts = Arc::new(SegQueue::new());
+    let nfc_c = nonfirst_counts.clone();
+    mh.completion_asserts = Some(Box::new(move |c| {
+        nfc_c.push(
+            c.metering_metadata
+                .nonfirst_local_activity_execution_attempts,
+        );
+    }));
+    let mut worker = mock_sdk_cfg(mh, |wc| {
+        wc.max_cached_workflows = 1;
+        wc.max_outstanding_workflow_tasks = 1;
+    });
+
+    worker.register_wf(
+        DEFAULT_WORKFLOW_TYPE.to_owned(),
+        |ctx: WfContext| async move {
+            ctx.local_activity(LocalActivityOptions {
+                activity_type: "echo".to_string(),
+                input: "hi".as_json_payload().expect("serializes fine"),
+                retry_policy: RetryPolicy {
+                    initial_interval: Some(prost_dur!(from_millis(10))),
+                    backoff_coefficient: 1.0,
+                    maximum_interval: None,
+                    maximum_attempts: 0,
+                    non_retryable_error_types: vec![],
+                },
+                ..Default::default()
+            })
+            .await;
+            Ok(().into())
+        },
+    );
+    worker.register_activity("echo", move |_ctx: ActContext, _: String| async move {
+        Result::<(), _>::Err(anyhow!("I fail"))
+    });
+    worker
+        .submit_wf(
+            wf_id.to_owned(),
+            DEFAULT_WORKFLOW_TYPE.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+    // 3 workflow tasks
+    assert_eq!(nonfirst_counts.len(), 3);
+    // First task's non-first count should, of course, be 0
+    assert_eq!(nonfirst_counts.pop().unwrap(), 0);
+    // Next two, some nonzero amount which could vary based on test load
+    assert!(nonfirst_counts.pop().unwrap() > 0);
+    assert!(nonfirst_counts.pop().unwrap() > 0);
 }
