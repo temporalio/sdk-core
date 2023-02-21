@@ -5,7 +5,9 @@ use std::{
     path::{Path, PathBuf},
     process::Stdio,
 };
-use temporal_sdk_core::ephemeral_server::{TemporalDevServerConfig, TestServerConfigBuilder};
+use temporal_sdk_core::ephemeral_server::{
+    TemporalDevServerConfigBuilder, TestServerConfigBuilder,
+};
 use temporal_sdk_core_test_utils::{
     default_cached_download, INTEG_SERVER_TARGET_ENV_VAR, INTEG_TEMPORAL_DEV_SERVER_USED_ENV_VAR,
     INTEG_TEST_SERVER_USED_ENV_VAR,
@@ -66,7 +68,7 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let (server, envs) = match server_kind {
         ServerKind::TemporalCLI => {
-            let config = TemporalDevServerConfig::default()
+            let config = TemporalDevServerConfigBuilder::default()
                 .exe(default_cached_download())
                 .build()?;
             println!("Using temporal CLI");
