@@ -62,7 +62,10 @@ impl TemporaliteConfig {
     /// Start a Temporalite server with configurable stdout destination.
     pub async fn start_server_with_output(&self, output: Stdio) -> anyhow::Result<EphemeralServer> {
         // Get exe path
-        let exe_path = self.exe.get_or_download("temporalite").await?;
+        let exe_path = self
+            .exe
+            .get_or_download("temporalite", "temporalite")
+            .await?;
 
         // Get free port if not already given
         let port = self.port.unwrap_or_else(|| get_free_port(&self.ip));
@@ -143,7 +146,7 @@ impl TemporalDevServerConfig {
     /// Start a Temporal CLI dev server with configurable stdout destination.
     pub async fn start_server_with_output(&self, output: Stdio) -> anyhow::Result<EphemeralServer> {
         // Get exe path
-        let exe_path = self.exe.get_or_download("cli").await?;
+        let exe_path = self.exe.get_or_download("cli", "temporal").await?;
 
         // Get free port if not already given
         let port = self.port.unwrap_or_else(|| get_free_port(&self.ip));
@@ -208,7 +211,10 @@ impl TestServerConfig {
     /// Start a test server with configurable stdout.
     pub async fn start_server_with_output(&self, output: Stdio) -> anyhow::Result<EphemeralServer> {
         // Get exe path
-        let exe_path = self.exe.get_or_download("temporal-test-server").await?;
+        let exe_path = self
+            .exe
+            .get_or_download("temporal-test-server", "temporal-test-server")
+            .await?;
 
         // Get free port if not already given
         let port = self.port.unwrap_or_else(|| get_free_port("0.0.0.0"));
@@ -365,7 +371,11 @@ struct DownloadInfo {
 }
 
 impl EphemeralExe {
-    async fn get_or_download(&self, artifact_name: &str) -> anyhow::Result<PathBuf> {
+    async fn get_or_download(
+        &self,
+        artifact_name: &str,
+        downloaded_name_prefix: &str,
+    ) -> anyhow::Result<PathBuf> {
         match self {
             EphemeralExe::ExistingPath(exe_path) => {
                 let path = PathBuf::from(exe_path);
@@ -389,9 +399,9 @@ impl EphemeralExe {
                     EphemeralExeVersion::SDKDefault {
                         sdk_name,
                         sdk_version,
-                    } => format!("{artifact_name}-{sdk_name}-{sdk_version}{out_ext}"),
+                    } => format!("{downloaded_name_prefix}-{sdk_name}-{sdk_version}{out_ext}"),
                     EphemeralExeVersion::Fixed(version) => {
-                        format!("{artifact_name}-{version}{out_ext}")
+                        format!("{downloaded_name_prefix}-{version}{out_ext}")
                     }
                 });
                 debug!(
