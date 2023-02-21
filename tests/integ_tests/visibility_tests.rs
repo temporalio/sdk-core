@@ -8,7 +8,8 @@ use temporal_sdk_core_protos::coresdk::workflow_activation::{
     workflow_activation_job, WorkflowActivationJob,
 };
 use temporal_sdk_core_test_utils::{
-    get_integ_server_options, CoreWfStarter, WorkerTestHelpers, NAMESPACE,
+    drain_pollers_and_shutdown, get_integ_server_options, CoreWfStarter, WorkerTestHelpers,
+    NAMESPACE,
 };
 use tokio::time::sleep;
 
@@ -51,7 +52,7 @@ async fn client_list_open_closed_workflow_executions() {
 
     // Complete workflow
     core.complete_execution(&task.run_id).await;
-    core.shutdown().await;
+    drain_pollers_and_shutdown(&core).await;
 
     // List above CLOSED workflow. Visibility doesn't always update immediately so we give this a
     // few tries.

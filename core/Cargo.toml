@@ -21,7 +21,6 @@ save_wf_inputs = ["rmp-serde", "temporal-sdk-core-protos/serde_serialize"]
 [dependencies]
 anyhow = "1.0"
 arc-swap = "1.3"
-async-channel = "1.6"
 async-trait = "0.1"
 base64 = "0.21"
 crossbeam = "0.8"

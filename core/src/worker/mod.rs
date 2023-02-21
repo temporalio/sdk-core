@@ -37,6 +37,7 @@ use crate::{
 };
 use activities::{LocalInFlightActInfo, WorkerActivityTasks};
 use futures::Stream;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{convert::TryInto, future, sync::Arc};
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -72,6 +73,10 @@ pub struct Worker {
     /// Will be called at the end of each activation completion
     #[allow(clippy::type_complexity)] // Sorry clippy, there's no simple way to re-use here.
     post_activate_hook: Option<Box<dyn Fn(&Self, &str, usize) + Send + Sync>>,
+    /// Set when non-local activities are complete and should stop being polled
+    non_local_activities_complete: Arc<AtomicBool>,
+    /// Set when local activities are complete and should stop being polled
+    local_activities_complete: Arc<AtomicBool>,
 }
 
 #[async_trait::async_trait]
@@ -140,6 +145,9 @@ impl WorkerTrait for Worker {
         if let Some(atm) = self.at_task_mgr.as_ref() {
             atm.notify_shutdown();
         }
+        // Let the manager know that shutdown has been initiated to try to unblock the local activity poll in case this
+        // worker is an activity-only worker.
+        self.local_act_mgr.shutdown_initiated();
         info!(
             task_queue=%self.config.task_queue,
             namespace=%self.config.namespace,
@@ -275,9 +283,10 @@ impl Worker {
                 config.default_heartbeat_throttle_interval,
             )
         });
-        if at_task_mgr.is_none() {
+        let poll_on_non_local_activities = at_task_mgr.is_some();
+        if !poll_on_non_local_activities {
             info!("Activity polling is disabled for this worker");
-        }
+        };
         let la_sink = LAReqSink::new(lam_clone, config.wf_state_inputs.clone());
         Self {
             wf_client: client.clone(),
@@ -314,6 +323,9 @@ impl Worker {
             config,
             shutdown_token,
             post_activate_hook: None,
+            // Complete if there configured not to poll on non-local activities.
+            non_local_activities_complete: Arc::new(AtomicBool::new(!poll_on_non_local_activities)),
+            local_activities_complete: Default::default(),
         }
     }
 
@@ -323,17 +335,16 @@ impl Worker {
         self.initiate_shutdown();
         // Next we need to wait for all local activities to finish so no more workflow task
         // heartbeats will be generated
-        self.local_act_mgr
-            .wait_all_outstanding_tasks_finished()
-            .await;
         // Wait for workflows to finish
         self.workflows
             .shutdown()
             .await
             .expect("Workflow processing terminates cleanly");
+        let lam = self.local_act_mgr.clone();
+        lam.wait_all_outstanding_tasks_finished().await;
         // Wait for activities to finish
         if let Some(acts) = self.at_task_mgr.as_ref() {
-            acts.wait_all_finished().await;
+            acts.shutdown().await;
         }
     }
 
@@ -378,9 +389,27 @@ impl Worker {
     /// Returns `Ok(None)` in the event of a poll timeout or if the polling loop should otherwise
     /// be restarted
     async fn activity_poll(&self) -> Result<Option<ActivityTask>, PollActivityError> {
+        let local_activities_complete = self.local_activities_complete.load(Ordering::Relaxed);
+        let non_local_activities_complete =
+            self.non_local_activities_complete.load(Ordering::Relaxed);
+        if local_activities_complete && non_local_activities_complete {
+            return Err(PollActivityError::ShutDown);
+        }
         let act_mgr_poll = async {
+            if non_local_activities_complete {
+                future::pending::<()>().await;
+                unreachable!()
+            }
             if let Some(ref act_mgr) = self.at_task_mgr {
-                act_mgr.poll().await
+                let res = act_mgr.poll().await;
+                if let Err(err) = res.as_ref() {
+                    if matches!(err, PollActivityError::ShutDown) {
+                        self.non_local_activities_complete
+                            .store(true, Ordering::Relaxed);
+                        return Ok(None);
+                    }
+                };
+                res.map(Some)
             } else {
                 // We expect the local activity branch below to produce shutdown when appropriate if
                 // there are no activity pollers.
@@ -388,26 +417,35 @@ impl Worker {
                 unreachable!()
             }
         };
+        let local_activities_poll = async {
+            if local_activities_complete {
+                future::pending::<()>().await;
+                unreachable!()
+            }
+            match self.local_act_mgr.next_pending().await {
+                Some(DispatchOrTimeoutLA::Dispatch(r)) => Ok(Some(r)),
+                Some(DispatchOrTimeoutLA::Timeout {
+                    run_id,
+                    resolution,
+                    task,
+                }) => {
+                    self.notify_local_result(&run_id, LocalResolution::LocalActivity(resolution));
+                    Ok(task)
+                }
+                None => {
+                    if self.shutdown_token.is_cancelled() {
+                        self.local_activities_complete
+                            .store(true, Ordering::Relaxed);
+                    }
+                    Ok(None)
+                }
+            }
+        };
 
         tokio::select! {
             biased;
 
-            r = self.local_act_mgr.next_pending() => {
-                match r {
-                    Some(DispatchOrTimeoutLA::Dispatch(r)) => Ok(Some(r)),
-                    Some(DispatchOrTimeoutLA::Timeout { run_id, resolution, task }) => {
-                        self.notify_local_result(
-                            &run_id, LocalResolution::LocalActivity(resolution));
-                        Ok(task)
-                    },
-                    None => {
-                        if self.shutdown_token.is_cancelled() {
-                            return Err(PollActivityError::ShutDown);
-                        }
-                        Ok(None)
-                    }
-                }
-            },
+            r = local_activities_poll => r,
             r = act_mgr_poll => r,
         }
     }
@@ -471,6 +509,7 @@ impl Worker {
         // about to happen anyway. Tell the local activity manager that, so that it can know to
         // cancel any remaining outstanding LAs and shutdown.
         if matches!(r, Err(PollWfError::ShutDown)) {
+            // This is covering the situation where WFT pollers dying is the reason for shutdown
             self.initiate_shutdown();
             self.local_act_mgr.workflows_have_shutdown();
         }
@@ -561,11 +600,15 @@ fn build_wf_basics(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{test_help::test_worker_cfg, worker::client::mocks::mock_workflow_client};
+    use crate::{
+        advance_fut, test_help::test_worker_cfg, worker::client::mocks::mock_workflow_client,
+    };
+    use futures::FutureExt;
+
     use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse;
 
     #[tokio::test]
-    async fn activity_timeouts_dont_eat_permits() {
+    async fn activity_timeouts_maintain_permit() {
         let mut mock_client = mock_workflow_client();
         mock_client
             .expect_poll_activity_task()
@@ -576,8 +619,16 @@ mod tests {
             .build()
             .unwrap();
         let worker = Worker::new_test(cfg, mock_client);
-        assert_eq!(worker.activity_poll().await.unwrap(), None);
-        assert_eq!(worker.at_task_mgr.unwrap().remaining_activity_capacity(), 5);
+        let fut = worker.poll_activity_task();
+        advance_fut!(fut);
+        assert_eq!(
+            worker
+                .at_task_mgr
+                .as_ref()
+                .unwrap()
+                .remaining_activity_capacity(),
+            4
+        );
     }
 
     #[tokio::test]

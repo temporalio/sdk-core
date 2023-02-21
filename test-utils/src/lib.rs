@@ -34,6 +34,7 @@ use temporal_sdk_core::{
     replay::HistoryForReplay,
     ClientOptions, ClientOptionsBuilder, CoreRuntime, WorkerConfig, WorkerConfigBuilder,
 };
+use temporal_sdk_core_api::errors::{PollActivityError, PollWfError};
 use temporal_sdk_core_api::{
     telemetry::{
         Logger, MetricsExporter, OtelCollectorOptions, TelemetryOptions, TelemetryOptionsBuilder,
@@ -299,6 +300,11 @@ impl CoreWfStarter {
 
     pub fn max_at_polls(&mut self, max: usize) -> &mut Self {
         self.worker_config.max_concurrent_at_polls = max;
+        self
+    }
+
+    pub fn no_remote_activities(&mut self) -> &mut Self {
+        self.worker_config.no_remote_activities = true;
         self
     }
 
@@ -680,4 +686,24 @@ where
         .await
         .unwrap();
     }
+}
+
+/// Initiate shutdown, drain the pollers, and wait for shutdown to complete.
+pub async fn drain_pollers_and_shutdown(worker: &Arc<dyn CoreWorker>) {
+    worker.initiate_shutdown();
+    tokio::join!(
+        async {
+            assert!(matches!(
+                worker.poll_activity_task().await.unwrap_err(),
+                PollActivityError::ShutDown
+            ));
+        },
+        async {
+            assert!(matches!(
+                worker.poll_workflow_activation().await.unwrap_err(),
+                PollWfError::ShutDown,
+            ));
+        }
+    );
+    worker.shutdown().await;
 }

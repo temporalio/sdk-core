@@ -21,6 +21,7 @@ async fn continue_as_new_wf(ctx: WfContext) -> WorkflowResult<()> {
 async fn continue_as_new_happy_path() {
     let wf_name = "continue_as_new_happy_path";
     let mut starter = CoreWfStarter::new(wf_name);
+    starter.no_remote_activities();
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_string(), continue_as_new_wf);
 
@@ -40,7 +41,10 @@ async fn continue_as_new_happy_path() {
 async fn continue_as_new_multiple_concurrent() {
     let wf_name = "continue_as_new_multiple_concurrent";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.max_cached_workflows(3).max_wft(3);
+    starter
+        .no_remote_activities()
+        .max_cached_workflows(3)
+        .max_wft(3);
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_string(), continue_as_new_wf);
 

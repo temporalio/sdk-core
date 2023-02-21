@@ -36,6 +36,7 @@ pub async fn timer_wf_nondeterministic(ctx: WfContext) -> WorkflowResult<()> {
 async fn test_determinism_error_then_recovers() {
     let wf_name = "test_determinism_error_then_recovers";
     let mut starter = CoreWfStarter::new(wf_name);
+    starter.no_remote_activities();
     let mut worker = starter.worker().await;
 
     worker.register_wf(wf_name.to_owned(), timer_wf_nondeterministic);
