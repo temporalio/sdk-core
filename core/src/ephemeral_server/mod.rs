@@ -24,7 +24,7 @@ use std::process::Stdio;
 
 /// Configuration for Temporalite.
 /// Will be removed eventually as its successor, Temporal CLI matures.
-/// We don't care for the duplication between this struct and [TemporalCLIConfig] and prefer that over another
+/// We don't care for the duplication between this struct and [TemporalDevServerConfig] and prefer that over another
 /// abstraction since the existence of this struct is temporary.
 #[derive(Debug, Clone, derive_builder::Builder)]
 pub struct TemporaliteConfig {
