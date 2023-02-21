@@ -44,7 +44,7 @@ async fn temporalite_default() {
 #[tokio::test]
 async fn temporalite_fixed() {
     let config = TemporaliteConfigBuilder::default()
-        .exe(fixed_cached_download("v0.1.1"))
+        .exe(fixed_cached_download("v0.2.0"))
         .build()
         .unwrap();
     let mut server = config.start_server().await.unwrap();
