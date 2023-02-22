@@ -4,19 +4,19 @@ Core SDK that can be used as a base for other Temporal SDKs. It is currently use
 
 - [TypeScript SDK](https://github.com/temporalio/sdk-typescript/)
 - [Python SDK](https://github.com/temporalio/sdk-python/)
+- [.NET SDK](https://github.com/temporalio/sdk-dotnet/)
+- [Ruby SDK](https://github.com/temporalio/sdk-ruby/)
 
 For the reasoning behind the Core SDK, see: 
 
 - [Why Rust powers Temporal’s new Core SDK](https://temporal.io/blog/why-rust-powers-core-sdk).
 
-# Getting started
-
-See the [Architecture](ARCHITECTURE.md) doc for some high-level information.
-
-## Dependencies
-* Protobuf compiler
+See the [Architecture](ARCHITECTURE.md) doc for some high-level information about how Core works
+and how language layers interact with it.
 
 # Development
+
+You will need the `protoc` protobuf compiler installed to build Core.
 
 This repo is composed of multiple crates:
 * temporal-sdk-core-protos `./sdk-core-protos` - Holds the generated proto code and extensions
@@ -30,7 +30,6 @@ This repo is composed of multiple crates:
 Visualized (dev dependencies are in blue):
 
 ![Crate dependency graph](./etc/deps.svg)
-
 
 All the following commands are enforced for each pull request:
 
@@ -109,3 +108,10 @@ Any error which is returned from a public interface should be well-typed, and we
 Errors returned from things only used in testing are free to use 
 [anyhow](https://github.com/dtolnay/anyhow) for less verbosity.
 
+
+# The Rust "SDK"
+This repo contains a *prototype* Rust sdk in the `sdk/` directory. This SDK should be considered
+pre-alpha in terms of its API surface. Since it's still using Core underneath, it is generally
+functional. We do not currently have any firm plans to productionize this SDK. If you want to write
+workflows and activities in Rust, feel free to use it - but be aware that the API may change at any
+time without warning and we do not provide any support guarantees.
