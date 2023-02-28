@@ -7,7 +7,7 @@ use rustfsm::{fsm, TransitionResult};
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::UpsertWorkflowSearchAttributes,
     temporal::api::{
-        command::v1::Command,
+        command::v1::{Command, UpsertWorkflowSearchAttributesCommandAttributes},
         enums::v1::{CommandType, EventType},
         history::v1::HistoryEvent,
     },
@@ -35,6 +35,20 @@ fsm! {
 /// to apply the provided search attribute update.
 pub(super) fn upsert_search_attrs(
     attribs: UpsertWorkflowSearchAttributes,
+) -> NewMachineWithCommand {
+    let sm = UpsertSearchAttributesMachine::new();
+    let cmd = Command {
+        command_type: CommandType::UpsertWorkflowSearchAttributes as i32,
+        attributes: Some(attribs.into()),
+    };
+    NewMachineWithCommand {
+        command: cmd,
+        machine: sm.into(),
+    }
+}
+
+pub(super) fn upsert_search_attrs_from_raw(
+    attribs: UpsertWorkflowSearchAttributesCommandAttributes,
 ) -> NewMachineWithCommand {
     let sm = UpsertSearchAttributesMachine::new();
     let cmd = Command {

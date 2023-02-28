@@ -7,10 +7,12 @@ use crate::{
         },
         external_data::LocalActivityMarkerData,
         workflow_commands::ScheduleActivity,
-        IntoPayloadsExt,
+        AsJsonPayloadExt, IntoPayloadsExt,
     },
     temporal::api::{
-        common::v1::{ActivityType, Payload, Payloads, WorkflowExecution, WorkflowType},
+        common::v1::{
+            ActivityType, Payload, Payloads, SearchAttributes, WorkflowExecution, WorkflowType,
+        },
         enums::v1::{EventType, TaskQueueKind, WorkflowTaskFailedCause},
         failure::v1::{failure, CanceledFailureInfo, Failure},
         history::v1::{history_event::Attributes, *},
@@ -20,7 +22,10 @@ use crate::{
 };
 use anyhow::bail;
 use prost_wkt_types::Timestamp;
-use std::time::{Duration, SystemTime};
+use std::{
+    collections::HashMap,
+    time::{Duration, SystemTime},
+};
 use uuid::Uuid;
 
 pub static DEFAULT_WORKFLOW_TYPE: &str = "default_wf_type";
@@ -415,6 +420,17 @@ impl TestHistoryBuilder {
         let mut wesattrs = default_wes_attribs();
         wesattrs.workflow_task_timeout = Some(dur.try_into().unwrap());
         self.add(wesattrs);
+    }
+
+    pub fn add_upsert_search_attrs_for_patch(&mut self) {
+        let mut indexed_fields = HashMap::new();
+        indexed_fields.insert(
+            "TemporalChangeVersion".to_string(),
+            "yo".as_json_payload().unwrap(),
+        );
+        let mut attrs = UpsertWorkflowSearchAttributesEventAttributes::default();
+        attrs.search_attributes = Some(SearchAttributes { indexed_fields });
+        self.build_and_push_event(EventType::UpsertWorkflowSearchAttributes, attrs.into())
     }
 
     pub fn get_orig_run_id(&self) -> &str {

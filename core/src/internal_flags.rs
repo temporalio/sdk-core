@@ -17,9 +17,11 @@ use temporal_sdk_core_protos::temporal::api::{
 #[repr(u32)]
 #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Copy, Clone, Debug)]
 pub(crate) enum CoreInternalFlags {
-    /// In this flag, additional checks were added to a number of state machines to ensure that
+    /// In this flag additional checks were added to a number of state machines to ensure that
     /// the ID and type of activities, local activities, and child workflows match during replay.
     IdAndTypeDeterminismChecks = 1,
+    /// Introduced automatically upserting search attributes for each patched call
+    UpsertSearchAttributeOnPatch = 2,
     /// We received a value higher than this code can understand.
     TooHigh = u32::MAX,
 }
@@ -73,7 +75,8 @@ impl InternalFlags {
     /// [Self::gather_for_wft_complete].
     pub fn try_use(&mut self, core_patch: CoreInternalFlags, should_record: bool) -> bool {
         if !self.enabled {
-            // If the server does not support the metadata field, we must assume
+            // If the server does not support the metadata field, we must assume we can never use
+            // any internal flags since they can't be recorded for future use
             return false;
         }
 
@@ -108,6 +111,7 @@ impl CoreInternalFlags {
     fn from_u32(v: u32) -> Self {
         match v {
             1 => Self::IdAndTypeDeterminismChecks,
+            2 => Self::UpsertSearchAttributeOnPatch,
             _ => Self::TooHigh,
         }
     }
