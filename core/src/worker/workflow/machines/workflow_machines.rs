@@ -24,7 +24,7 @@ use crate::{
                 child_workflow_state_machine::ChildWorkflowMachine,
                 modify_workflow_properties_state_machine::modify_workflow_properties,
                 patch_state_machine::VERSION_SEARCH_ATTR_KEY,
-                upsert_search_attributes_state_machine::upsert_search_attrs_from_raw,
+                upsert_search_attributes_state_machine::upsert_search_attrs_internal,
                 HistEventData,
             },
             CommandID, DrivenWorkflow, HistoryUpdate, InternalFlagsRef, LocalResolution,
@@ -506,7 +506,7 @@ impl WorkflowMachines {
                 if matches!(
                     eho,
                     EventHandlingOutcome::SkipEvent {
-                        skip_next_upsert: true
+                        skip_next_event: true
                     }
                 ) {
                     do_handle_event = false;
@@ -612,7 +612,7 @@ impl WorkflowMachines {
             } else {
                 debug!("Event is ignorable");
                 Ok(EventHandlingOutcome::SkipEvent {
-                    skip_next_upsert: false,
+                    skip_next_event: false,
                 })
             };
         }
@@ -688,7 +688,7 @@ impl WorkflowMachines {
             if let Some(peek_machine) = self.commands.front() {
                 let mach = self.machine(peek_machine.machine);
                 match change_marker_handling(event, mach, next_event)? {
-                    EventHandlingOutcome::SkipCommand { skip_next_upsert } => {
+                    EventHandlingOutcome::SkipCommand => {
                         self.commands.pop_front();
                         continue;
                     }
@@ -913,7 +913,7 @@ impl WorkflowMachines {
                     }
                     ProtoCmdAttrs::UpsertWorkflowSearchAttributesCommandAttributes(attrs) => {
                         self.add_cmd_to_wf_task(
-                            upsert_search_attrs_from_raw(attrs),
+                            upsert_search_attrs_internal(attrs),
                             CommandIdKind::NeverResolves,
                         );
                     }
@@ -1023,7 +1023,7 @@ impl WorkflowMachines {
                 }
                 WFCommand::UpsertSearchAttributes(attrs) => {
                     self.add_cmd_to_wf_task(
-                        upsert_search_attrs(attrs),
+                        upsert_search_attrs(attrs)?,
                         CommandIdKind::NeverResolves,
                     );
                 }
@@ -1282,8 +1282,8 @@ fn str_to_randomness_seed(run_id: &str) -> u64 {
 
 #[must_use]
 enum EventHandlingOutcome {
-    SkipEvent { skip_next_upsert: bool },
-    SkipCommand { skip_next_upsert: bool },
+    SkipEvent { skip_next_event: bool },
+    SkipCommand,
     Normal,
 }
 
@@ -1303,18 +1303,16 @@ fn change_marker_handling(
                 debug!("Deprecated patch marker tried against wrong machine, skipping.");
 
                 // Also ignore the subsequent upsert event if present
-                // TODO: But we still need to include data in currently known attrs??
-                let mut skip_next_upsert = false;
+                let mut skip_next_event = false;
                 if let Some(Attributes::UpsertWorkflowSearchAttributesEventAttributes(atts)) =
                     next_event.and_then(|ne| ne.attributes.as_ref())
                 {
                     if let Some(ref sa) = atts.search_attributes {
-                        skip_next_upsert = sa.indexed_fields.contains_key(VERSION_SEARCH_ATTR_KEY);
-                        dbg!(skip_next_upsert);
+                        skip_next_event = sa.indexed_fields.contains_key(VERSION_SEARCH_ATTR_KEY);
                     }
                 }
 
-                return Ok(EventHandlingOutcome::SkipEvent { skip_next_upsert });
+                return Ok(EventHandlingOutcome::SkipEvent { skip_next_event });
             }
             return Err(WFMachinesError::Nondeterminism(format!(
                 "Non-deprecated patch marker encountered for change {patch_name}, \
@@ -1325,10 +1323,8 @@ fn change_marker_handling(
         // calls take the old path, and deprecated calls assume history is produced by a new-code
         // worker.
         if matches!(mach, Machines::PatchMachine(_)) {
-            // TODO: Do we need this here at all? Is this covered?
-            let skip_next_upsert = false;
             debug!("Skipping non-matching event against patch machine");
-            return Ok(EventHandlingOutcome::SkipCommand { skip_next_upsert });
+            return Ok(EventHandlingOutcome::SkipCommand);
         }
     }
     Ok(EventHandlingOutcome::Normal)

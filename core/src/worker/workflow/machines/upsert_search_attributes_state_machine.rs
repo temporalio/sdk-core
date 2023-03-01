@@ -1,13 +1,16 @@
 use super::{workflow_machines::MachineResponse, NewMachineWithCommand};
 use crate::worker::workflow::{
-    machines::{Cancellable, EventInfo, HistEventData, WFMachinesAdapter},
+    machines::{
+        patch_state_machine::VERSION_SEARCH_ATTR_KEY, Cancellable, EventInfo, HistEventData,
+        WFMachinesAdapter,
+    },
     WFMachinesError,
 };
 use rustfsm::{fsm, TransitionResult};
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::UpsertWorkflowSearchAttributes,
     temporal::api::{
-        command::v1::{Command, UpsertWorkflowSearchAttributesCommandAttributes},
+        command::v1::{command, Command, UpsertWorkflowSearchAttributesCommandAttributes},
         enums::v1::{CommandType, EventType},
         history::v1::HistoryEvent,
     },
@@ -35,21 +38,27 @@ fsm! {
 /// to apply the provided search attribute update.
 pub(super) fn upsert_search_attrs(
     attribs: UpsertWorkflowSearchAttributes,
-) -> NewMachineWithCommand {
-    let sm = UpsertSearchAttributesMachine::new();
-    let cmd = Command {
-        command_type: CommandType::UpsertWorkflowSearchAttributes as i32,
-        attributes: Some(attribs.into()),
-    };
-    NewMachineWithCommand {
-        command: cmd,
-        machine: sm.into(),
+) -> Result<NewMachineWithCommand, WFMachinesError> {
+    if attribs
+        .search_attributes
+        .contains_key(VERSION_SEARCH_ATTR_KEY)
+    {
+        return Err(WFMachinesError::Fatal(format!(
+            "The {VERSION_SEARCH_ATTR_KEY} key may not be set directly by users. \
+             If you wish to use a patch, use the patching API for your language."
+        )));
     }
+    Ok(create_new(attribs))
 }
 
-pub(super) fn upsert_search_attrs_from_raw(
+/// May be used by other state machines / internal needs which desire upserting search attributes.
+pub(super) fn upsert_search_attrs_internal(
     attribs: UpsertWorkflowSearchAttributesCommandAttributes,
 ) -> NewMachineWithCommand {
+    create_new(attribs)
+}
+
+fn create_new(attribs: impl Into<command::Attributes>) -> NewMachineWithCommand {
     let sm = UpsertSearchAttributesMachine::new();
     let cmd = Command {
         command_type: CommandType::UpsertWorkflowSearchAttributes as i32,
@@ -173,11 +182,21 @@ impl From<Created> for CommandIssued {
 #[cfg(test)]
 mod tests {
     use super::{super::OnEventWrapper, *};
-    use crate::{replay::TestHistoryBuilder, worker::workflow::ManagedWFFunc};
+    use crate::{
+        replay::TestHistoryBuilder,
+        test_help::{build_mock_pollers, mock_worker, MockPollCfg, ResponseType},
+        worker::{
+            client::mocks::mock_workflow_client,
+            workflow::{machines::patch_state_machine::VERSION_SEARCH_ATTR_KEY, ManagedWFFunc},
+        },
+    };
     use rustfsm::StateMachine;
+    use std::collections::HashMap;
     use temporal_sdk::{WfContext, WorkflowFunction};
-    use temporal_sdk_core_protos::temporal::api::{
-        command::v1::command::Attributes, common::v1::Payload,
+    use temporal_sdk_core_api::Worker;
+    use temporal_sdk_core_protos::{
+        coresdk::{workflow_completion::WorkflowActivationCompletion, AsJsonPayloadExt},
+        temporal::api::{command::v1::command::Attributes, common::v1::Payload},
     };
 
     #[tokio::test]
@@ -259,5 +278,44 @@ mod tests {
         OnEventWrapper::on_event_mut(&mut sm, cmd_recorded_sm_event)
             .expect("CommandRecorded should transition CommandIssued -> Done");
         assert_eq!(Done {}.to_string(), sm.state().to_string());
+    }
+
+    #[tokio::test]
+    async fn rejects_upserting_change_version() {
+        crate::telemetry::test_telem_console();
+        let mut t = TestHistoryBuilder::default();
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        t.add_workflow_task_scheduled_and_started();
+
+        let mut mp = MockPollCfg::from_resp_batches(
+            "fakeid",
+            t,
+            [ResponseType::ToTaskNum(1)],
+            mock_workflow_client(),
+        );
+        mp.num_expected_fails = 1;
+        mp.expect_fail_wft_matcher = Box::new(|_, _, f| {
+            f.as_ref()
+                .unwrap()
+                .message
+                .contains("may not be set directly")
+        });
+        let core = mock_worker(build_mock_pollers(mp));
+
+        let mut ver_upsert = HashMap::new();
+        ver_upsert.insert(
+            VERSION_SEARCH_ATTR_KEY.to_string(),
+            "hi".as_json_payload().unwrap(),
+        );
+        let act = core.poll_workflow_activation().await.unwrap();
+        core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+            act.run_id,
+            UpsertWorkflowSearchAttributes {
+                search_attributes: ver_upsert,
+            }
+            .into(),
+        ))
+        .await
+        .unwrap();
     }
 }
