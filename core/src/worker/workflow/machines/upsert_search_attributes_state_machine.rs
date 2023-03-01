@@ -16,6 +16,9 @@ use temporal_sdk_core_protos::{
     },
 };
 
+/// By default the server permits SA values under 2k.
+pub(crate) const MAX_SEARCH_ATTR_PAYLOAD_SIZE: usize = 2048;
+
 fsm! {
     pub(super) name UpsertSearchAttributesMachine;
     command UpsertSearchAttributesMachineCommand;
@@ -43,10 +46,13 @@ pub(super) fn upsert_search_attrs(
         .search_attributes
         .contains_key(VERSION_SEARCH_ATTR_KEY)
     {
-        return Err(WFMachinesError::Fatal(format!(
-            "The {VERSION_SEARCH_ATTR_KEY} key may not be set directly by users. \
-             If you wish to use a patch, use the patching API for your language."
-        )));
+        warn!(
+            "Upserting the {VERSION_SEARCH_ATTR_KEY} search attribute directly from workflow code \
+             is not permitted and has no effect!"
+        );
+        // We must still create the command to preserve compatability with anyone previously doing
+        // this
+        return Ok(create_new(UpsertWorkflowSearchAttributes::default()));
     }
     Ok(create_new(attribs))
 }
@@ -281,8 +287,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_upserting_change_version() {
-        crate::telemetry::test_telem_console();
+    async fn upserting_change_version_directly_does_nothing() {
         let mut t = TestHistoryBuilder::default();
         t.add_by_type(EventType::WorkflowExecutionStarted);
         t.add_workflow_task_scheduled_and_started();
@@ -293,13 +298,12 @@ mod tests {
             [ResponseType::ToTaskNum(1)],
             mock_workflow_client(),
         );
-        mp.num_expected_fails = 1;
-        mp.expect_fail_wft_matcher = Box::new(|_, _, f| {
-            f.as_ref()
-                .unwrap()
-                .message
-                .contains("may not be set directly")
-        });
+        // Ensure the command has an empty map
+        mp.completion_asserts = Some(Box::new(|wftc| {
+            assert_matches!(wftc.commands.get(0).and_then(|c| c.attributes.as_ref()).unwrap(),
+            Attributes::UpsertWorkflowSearchAttributesCommandAttributes(attrs)
+            if attrs.search_attributes.as_ref().unwrap().indexed_fields.is_empty())
+        }));
         let core = mock_worker(build_mock_pollers(mp));
 
         let mut ver_upsert = HashMap::new();

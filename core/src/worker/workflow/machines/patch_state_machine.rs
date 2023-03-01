@@ -24,7 +24,12 @@ use super::{
 use crate::{
     internal_flags::CoreInternalFlags,
     protosext::HistoryEventExt,
-    worker::workflow::{machines::HistEventData, InternalFlagsRef},
+    worker::workflow::{
+        machines::{
+            upsert_search_attributes_state_machine::MAX_SEARCH_ATTR_PAYLOAD_SIZE, HistEventData,
+        },
+        InternalFlagsRef,
+    },
 };
 use anyhow::Context;
 use rustfsm::{fsm, TransitionResult};
@@ -128,24 +133,35 @@ pub(super) fn has_change<'a>(
         // upserted either, and thus should not create the machine
         vec![]
     } else {
-        // TODO:  check size limit not exceeded
         let mut all_ids = HashSet::<_, RandomState>::from_iter(existing_patch_ids);
         all_ids.insert(machine.shared_state.patch_id.as_str());
         let serialized = all_ids
             .as_json_payload()
             .context("Could not serialize search attribute value for patch machine")
             .map_err(|e| WFMachinesError::Fatal(e.to_string()))?;
-        let indexed_fields = {
-            let mut m = HashMap::new();
-            m.insert(VERSION_SEARCH_ATTR_KEY.to_string(), serialized);
-            m
-        };
-        vec![MachineResponse::NewCoreOriginatedCommand(
-            UpsertWorkflowSearchAttributesCommandAttributes {
-                search_attributes: Some(SearchAttributes { indexed_fields }),
-            }
-            .into(),
-        )]
+
+        if serialized.data.len() >= MAX_SEARCH_ATTR_PAYLOAD_SIZE {
+            warn!(
+                "Serialized size of {VERSION_SEARCH_ATTR_KEY} search attribute update would \
+                 exceed the maximum value size. Skipping this upsert. Be aware that your \
+                 visibility records will not include the following patch: {}",
+                machine.shared_state.patch_id
+            );
+            dbg!(serialized.data.len());
+            vec![]
+        } else {
+            let indexed_fields = {
+                let mut m = HashMap::new();
+                m.insert(VERSION_SEARCH_ATTR_KEY.to_string(), serialized);
+                m
+            };
+            vec![MachineResponse::NewCoreOriginatedCommand(
+                UpsertWorkflowSearchAttributesCommandAttributes {
+                    search_attributes: Some(SearchAttributes { indexed_fields }),
+                }
+                .into(),
+            )]
+        }
     };
 
     Ok((
@@ -736,9 +752,13 @@ mod tests {
         wfm.shutdown().await.unwrap();
     }
 
+    const SIZE_OVERFLOW_PATCH_AMOUNT: usize = 180;
+    #[rstest]
+    #[case::happy_path(50)]
+    // We start exceeding the 2k size limit at 180 patches with this format
+    #[case::size_overflow(SIZE_OVERFLOW_PATCH_AMOUNT)]
     #[tokio::test]
-    async fn many_patches_combine_in_search_attrib_update() {
-        let num_patches = 100;
+    async fn many_patches_combine_in_search_attrib_update(#[case] num_patches: usize) {
         let mut t = TestHistoryBuilder::default();
         t.add_by_type(EventType::WorkflowExecutionStarted);
         t.add_full_wf_task();
@@ -749,7 +769,9 @@ mod tests {
         for i in 1..=num_patches {
             let id = format!("patch-{i}");
             t.add_has_change_marker(&id, false);
-            t.add_upsert_search_attrs_for_patch(&[id]);
+            if i < SIZE_OVERFLOW_PATCH_AMOUNT {
+                t.add_upsert_search_attrs_for_patch(&[id]);
+            }
             let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
             t.add(TimerFiredEventAttributes {
                 started_event_id: timer_started_event_id,
@@ -777,6 +799,12 @@ mod tests {
             wfm.new_history(t.get_history_info(i).unwrap().into())
                 .await
                 .unwrap();
+            if i > SIZE_OVERFLOW_PATCH_AMOUNT {
+                assert_eq!(2, cmds.commands.len());
+                assert_matches!(cmds.commands[1].command_type(), CommandType::StartTimer);
+                continue;
+            }
+            assert_eq!(3, cmds.commands.len());
             let attrs = assert_matches!(
                 cmds.commands[1].attributes.as_ref().unwrap(),
                 Attributes::UpsertWorkflowSearchAttributesCommandAttributes(
