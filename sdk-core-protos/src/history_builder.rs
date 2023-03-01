@@ -422,11 +422,11 @@ impl TestHistoryBuilder {
         self.add(wesattrs);
     }
 
-    pub fn add_upsert_search_attrs_for_patch(&mut self) {
+    pub fn add_upsert_search_attrs_for_patch(&mut self, attribs: &[String]) {
         let mut indexed_fields = HashMap::new();
         indexed_fields.insert(
             "TemporalChangeVersion".to_string(),
-            "yo".as_json_payload().unwrap(),
+            attribs.as_json_payload().unwrap(),
         );
         let mut attrs = UpsertWorkflowSearchAttributesEventAttributes::default();
         attrs.search_attributes = Some(SearchAttributes { indexed_fields });

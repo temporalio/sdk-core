@@ -1097,8 +1097,9 @@ impl WorkflowMachines {
                             self.replaying,
                             attrs.deprecated,
                             encountered_entry.is_some(),
+                            self.encountered_change_markers.keys().map(|s| s.as_str()),
                             self.observed_internal_flags.clone(),
-                        );
+                        )?;
                         let mkey =
                             self.add_cmd_to_wf_task(patch_machine, CommandIdKind::NeverResolves);
                         self.process_machine_responses(mkey, other_cmds)?;

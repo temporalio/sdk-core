@@ -28,7 +28,10 @@ use crate::{
 };
 use anyhow::Context;
 use rustfsm::{fsm, TransitionResult};
-use std::{collections::HashMap, convert::TryFrom};
+use std::{
+    collections::{hash_map::RandomState, HashMap, HashSet},
+    convert::TryFrom,
+};
 use temporal_sdk_core_protos::{
     constants::PATCH_MARKER_NAME,
     coresdk::{common::build_has_change_marker_details, AsJsonPayloadExt},
@@ -69,14 +72,10 @@ fsm! {
 #[derive(Clone)]
 pub(super) struct SharedState {
     patch_id: String,
-    internal_flags: InternalFlagsRef,
-    seen_in_peekahead: bool,
 }
 
 #[derive(Debug, derive_more::Display)]
-pub(super) enum PatchCommand {
-    UpsertSearchAttr { is_executing: bool },
-}
+pub(super) enum PatchCommand {}
 
 /// Patch machines are created when the user invokes `has_change` (or whatever it may be named
 /// in that lang).
@@ -85,18 +84,15 @@ pub(super) enum PatchCommand {
 /// are guaranteed to return the same value.
 /// `replaying_when_invoked`: If the workflow is replaying when this invocation occurs, this needs
 /// to be set to true.
-pub(super) fn has_change(
+pub(super) fn has_change<'a>(
     patch_id: String,
     replaying_when_invoked: bool,
     deprecated: bool,
     seen_in_peekahead: bool,
+    existing_patch_ids: impl Iterator<Item = &'a str>,
     internal_flags: InternalFlagsRef,
-) -> (NewMachineWithCommand, Vec<MachineResponse>) {
-    let shared_state = SharedState {
-        patch_id,
-        internal_flags,
-        seen_in_peekahead,
-    };
+) -> Result<(NewMachineWithCommand, Vec<MachineResponse>), WFMachinesError> {
+    let shared_state = SharedState { patch_id };
     let initial_state = if replaying_when_invoked {
         Replaying {}.into()
     } else {
@@ -118,24 +114,47 @@ pub(super) fn has_change(
         state: initial_state,
         shared_state,
     };
-    let commands = OnEventWrapper::on_event_mut(&mut machine, PatchMachineEvents::Schedule)
+
+    OnEventWrapper::on_event_mut(&mut machine, PatchMachineEvents::Schedule)
         .expect("Patch machine scheduling doesn't fail");
-    let adapted = commands
-        .into_iter()
-        .map(|c| {
-            machine
-                .adapt_response(c, None)
-                .expect("Adapting patch schedule response doesn't fail")
-        })
-        .flatten()
-        .collect();
-    (
+
+    // Possibly produce an upsert SA command for this patch.
+    let maybe_upsert_cmd = if replaying_when_invoked && !seen_in_peekahead
+        || !internal_flags.borrow_mut().try_use(
+            CoreInternalFlags::UpsertSearchAttributeOnPatch,
+            !replaying_when_invoked,
+        ) {
+        // If we're replaying but this patch isn't in the peekahead, then we wouldn't have
+        // upserted either, and thus should not create the machine
+        vec![]
+    } else {
+        // TODO:  check size limit not exceeded
+        let mut all_ids = HashSet::<_, RandomState>::from_iter(existing_patch_ids);
+        all_ids.insert(machine.shared_state.patch_id.as_str());
+        let serialized = all_ids
+            .as_json_payload()
+            .context("Could not serialize search attribute value for patch machine")
+            .map_err(|e| WFMachinesError::Fatal(e.to_string()))?;
+        let indexed_fields = {
+            let mut m = HashMap::new();
+            m.insert(VERSION_SEARCH_ATTR_KEY.to_string(), serialized);
+            m
+        };
+        vec![MachineResponse::NewCoreOriginatedCommand(
+            UpsertWorkflowSearchAttributesCommandAttributes {
+                search_attributes: Some(SearchAttributes { indexed_fields }),
+            }
+            .into(),
+        )]
+    };
+
+    Ok((
         NewMachineWithCommand {
             command,
             machine: machine.into(),
         },
-        adapted,
-    )
+        maybe_upsert_cmd,
+    ))
 }
 
 impl PatchMachine {}
@@ -145,7 +164,7 @@ pub(super) struct Executing {}
 
 impl Executing {
     pub(super) fn on_schedule(self) -> PatchMachineTransition<MarkerCommandCreated> {
-        TransitionResult::commands([PatchCommand::UpsertSearchAttr { is_executing: true }])
+        TransitionResult::default()
     }
 }
 
@@ -169,9 +188,7 @@ pub(super) struct Replaying {}
 
 impl Replaying {
     pub(super) fn on_schedule(self) -> PatchMachineTransition<MarkerCommandCreatedReplaying> {
-        TransitionResult::commands([PatchCommand::UpsertSearchAttr {
-            is_executing: false,
-        }])
+        TransitionResult::default()
     }
 }
 
@@ -201,42 +218,10 @@ impl Notified {
 impl WFMachinesAdapter for PatchMachine {
     fn adapt_response(
         &self,
-        my_command: Self::Command,
+        _my_command: Self::Command,
         _event_info: Option<EventInfo>,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
-        match my_command {
-            PatchCommand::UpsertSearchAttr { is_executing } => {
-                // If we're replaying but this patch isn't in the peekahead, then we wouldn't have
-                // upserted either, and thus should not create the machine
-                if (!is_executing && !self.shared_state.seen_in_peekahead)
-                    || !self.shared_state.internal_flags.borrow_mut().try_use(
-                        CoreInternalFlags::UpsertSearchAttributeOnPatch,
-                        is_executing,
-                    )
-                {
-                    error!("Not issuing cmd");
-                    return Ok(vec![]);
-                }
-
-                error!("Issuing upsert cmd");
-                // TODO: Need to merge existing values
-                let serialized = [self.shared_state.patch_id.clone()]
-                    .as_json_payload()
-                    .context("Could not serialize search attribute value for patch machine")
-                    .map_err(|e| WFMachinesError::Fatal(e.to_string()))?;
-                let indexed_fields = {
-                    let mut m = HashMap::new();
-                    m.insert(VERSION_SEARCH_ATTR_KEY.to_string(), serialized);
-                    m
-                };
-                Ok(vec![MachineResponse::NewCoreOriginatedCommand(
-                    UpsertWorkflowSearchAttributesCommandAttributes {
-                        search_attributes: Some(SearchAttributes { indexed_fields }),
-                    }
-                    .into(),
-                )])
-            }
-        }
+        panic!("Patch machine does not produce commands")
     }
 
     fn matches_event(&self, event: &HistoryEvent) -> bool {
@@ -282,14 +267,17 @@ mod tests {
         },
     };
     use rstest::rstest;
-    use std::{collections::VecDeque, time::Duration};
+    use std::{
+        collections::{hash_map::RandomState, HashSet, VecDeque},
+        time::Duration,
+    };
     use temporal_sdk::{ActivityOptions, WfContext, WorkflowFunction};
     use temporal_sdk_core_protos::{
         constants::PATCH_MARKER_NAME,
         coresdk::{
             common::decode_change_marker_details,
             workflow_activation::{workflow_activation_job, NotifyHasPatch, WorkflowActivationJob},
-            AsJsonPayloadExt,
+            AsJsonPayloadExt, FromJsonPayloadExt,
         },
         temporal::api::{
             command::v1::{
@@ -343,11 +331,11 @@ mod tests {
         match marker_type {
             MarkerType::Deprecated => {
                 t.add_has_change_marker(MY_PATCH_ID, true);
-                t.add_upsert_search_attrs_for_patch();
+                t.add_upsert_search_attrs_for_patch(&[MY_PATCH_ID.to_string()]);
             }
             MarkerType::NotDeprecated => {
                 t.add_has_change_marker(MY_PATCH_ID, false);
-                t.add_upsert_search_attrs_for_patch();
+                t.add_upsert_search_attrs_for_patch(&[MY_PATCH_ID.to_string()]);
             }
             MarkerType::NoMarker => {}
         };
@@ -658,7 +646,7 @@ mod tests {
         );
         if have_marker_in_hist {
             t.add_has_change_marker(MY_PATCH_ID, false);
-            t.add_upsert_search_attrs_for_patch();
+            t.add_upsert_search_attrs_for_patch(&[MY_PATCH_ID.to_string()]);
             let scheduled_event_id = t.add(ActivityTaskScheduledEventAttributes {
                 activity_id: "1".to_owned(),
                 activity_type: Some(ActivityType {
@@ -745,6 +733,65 @@ mod tests {
             wfm
         };
 
+        wfm.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn many_patches_combine_in_search_attrib_update() {
+        let num_patches = 100;
+        let mut t = TestHistoryBuilder::default();
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        t.add_full_wf_task();
+        t.set_flags_first_wft(
+            &[CoreInternalFlags::UpsertSearchAttributeOnPatch as u32],
+            &[],
+        );
+        for i in 1..=num_patches {
+            let id = format!("patch-{i}");
+            t.add_has_change_marker(&id, false);
+            t.add_upsert_search_attrs_for_patch(&[id]);
+            let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
+            t.add(TimerFiredEventAttributes {
+                started_event_id: timer_started_event_id,
+                timer_id: i.to_string(),
+            });
+            t.add_full_wf_task();
+        }
+        t.add_workflow_execution_completed();
+
+        let mut wfm = ManagedWFFunc::new_from_update(
+            t.get_history_info(1).unwrap().into(),
+            WorkflowFunction::new(move |ctx: WfContext| async move {
+                for i in 1..=num_patches {
+                    let _dontcare = ctx.patched(&format!("patch-{i}"));
+                    ctx.timer(ONE_SECOND).await;
+                }
+                Ok(().into())
+            }),
+            vec![],
+        );
+        // Iterate through all activations/responses except the final one with complete workflow
+        for i in 2..=num_patches + 1 {
+            wfm.get_next_activation().await.unwrap();
+            let cmds = wfm.get_server_commands();
+            wfm.new_history(t.get_history_info(i).unwrap().into())
+                .await
+                .unwrap();
+            let attrs = assert_matches!(
+                cmds.commands[1].attributes.as_ref().unwrap(),
+                Attributes::UpsertWorkflowSearchAttributesCommandAttributes(
+                    UpsertWorkflowSearchAttributesCommandAttributes{ search_attributes: Some(attrs) }
+                )
+                  => attrs
+            );
+            let expected_patches: HashSet<String, _> =
+                (1..i).map(|i| format!("patch-{i}")).collect();
+            let deserialized = HashSet::<String, RandomState>::from_json_payload(
+                attrs.indexed_fields.get(VERSION_SEARCH_ATTR_KEY).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(deserialized, expected_patches);
+        }
         wfm.shutdown().await.unwrap();
     }
 }
