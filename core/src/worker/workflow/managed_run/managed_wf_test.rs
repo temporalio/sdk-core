@@ -3,6 +3,7 @@ use crate::{
     replay::TestHistoryBuilder,
     test_help::TEST_Q,
     worker::{
+        client::mocks::DEFAULT_TEST_CAPABILITIES,
         workflow::{
             history_update::tests::TestHBExt, machines::WorkflowMachines, WFCommand,
             WorkflowFetcher,
@@ -94,7 +95,7 @@ impl ManagedWFFunc {
                 run_id: "runid".to_string(),
                 history: hist,
                 metrics: MetricsContext::no_op(),
-                capabilities: &Default::default(),
+                capabilities: &DEFAULT_TEST_CAPABILITIES,
             },
             Box::new(driver).into(),
         );

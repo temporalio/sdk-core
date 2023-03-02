@@ -21,18 +21,36 @@ use super::{
     workflow_machines::MachineResponse, Cancellable, EventInfo, NewMachineWithCommand,
     OnEventWrapper, WFMachinesAdapter, WFMachinesError,
 };
-use crate::{protosext::HistoryEventExt, worker::workflow::machines::HistEventData};
+use crate::{
+    internal_flags::CoreInternalFlags,
+    protosext::HistoryEventExt,
+    worker::workflow::{
+        machines::{
+            upsert_search_attributes_state_machine::MAX_SEARCH_ATTR_PAYLOAD_SIZE, HistEventData,
+        },
+        InternalFlagsRef,
+    },
+};
+use anyhow::Context;
 use rustfsm::{fsm, TransitionResult};
-use std::convert::TryFrom;
+use std::{
+    collections::{BTreeSet, HashMap},
+    convert::TryFrom,
+};
 use temporal_sdk_core_protos::{
     constants::PATCH_MARKER_NAME,
-    coresdk::common::build_has_change_marker_details,
+    coresdk::{common::build_has_change_marker_details, AsJsonPayloadExt},
     temporal::api::{
-        command::v1::{Command, RecordMarkerCommandAttributes},
+        command::v1::{
+            Command, RecordMarkerCommandAttributes, UpsertWorkflowSearchAttributesCommandAttributes,
+        },
+        common::v1::SearchAttributes,
         enums::v1::CommandType,
         history::v1::HistoryEvent,
     },
 };
+
+pub(crate) const VERSION_SEARCH_ATTR_KEY: &str = "TemporalChangeVersion";
 
 fsm! {
     pub(super) name PatchMachine;
@@ -71,52 +89,91 @@ pub(super) enum PatchCommand {}
 /// are guaranteed to return the same value.
 /// `replaying_when_invoked`: If the workflow is replaying when this invocation occurs, this needs
 /// to be set to true.
-pub(super) fn has_change(
+pub(super) fn has_change<'a>(
     patch_id: String,
     replaying_when_invoked: bool,
     deprecated: bool,
-) -> NewMachineWithCommand {
-    let (machine, command) =
-        PatchMachine::new_scheduled(SharedState { patch_id }, replaying_when_invoked, deprecated);
-    NewMachineWithCommand {
-        command,
-        machine: machine.into(),
-    }
-}
+    seen_in_peekahead: bool,
+    existing_patch_ids: impl Iterator<Item = &'a str>,
+    internal_flags: InternalFlagsRef,
+) -> Result<(NewMachineWithCommand, Vec<MachineResponse>), WFMachinesError> {
+    let shared_state = SharedState { patch_id };
+    let initial_state = if replaying_when_invoked {
+        Replaying {}.into()
+    } else {
+        Executing {}.into()
+    };
+    let command = Command {
+        command_type: CommandType::RecordMarker as i32,
+        attributes: Some(
+            RecordMarkerCommandAttributes {
+                marker_name: PATCH_MARKER_NAME.to_string(),
+                details: build_has_change_marker_details(&shared_state.patch_id, deprecated),
+                header: None,
+                failure: None,
+            }
+            .into(),
+        ),
+    };
+    let mut machine = PatchMachine {
+        state: initial_state,
+        shared_state,
+    };
 
-impl PatchMachine {
-    fn new_scheduled(
-        state: SharedState,
-        replaying_when_invoked: bool,
-        deprecated: bool,
-    ) -> (Self, Command) {
-        let initial_state = if replaying_when_invoked {
-            Replaying {}.into()
+    OnEventWrapper::on_event_mut(&mut machine, PatchMachineEvents::Schedule)
+        .expect("Patch machine scheduling doesn't fail");
+
+    // If we're replaying but this patch isn't in the peekahead, then we wouldn't have
+    // upserted either, and thus should not create the machine
+    let replaying_and_not_in_history = replaying_when_invoked && !seen_in_peekahead;
+    let cannot_use_flag = !internal_flags.borrow_mut().try_use(
+        CoreInternalFlags::UpsertSearchAttributeOnPatch,
+        !replaying_when_invoked,
+    );
+    let maybe_upsert_cmd = if replaying_and_not_in_history || cannot_use_flag {
+        vec![]
+    } else {
+        // Produce an upsert SA command for this patch.
+        let mut all_ids = BTreeSet::from_iter(existing_patch_ids);
+        all_ids.insert(machine.shared_state.patch_id.as_str());
+        let serialized = all_ids
+            .as_json_payload()
+            .context("Could not serialize search attribute value for patch machine")
+            .map_err(|e| WFMachinesError::Fatal(e.to_string()))?;
+
+        if serialized.data.len() >= MAX_SEARCH_ATTR_PAYLOAD_SIZE {
+            warn!(
+                "Serialized size of {VERSION_SEARCH_ATTR_KEY} search attribute update would \
+                 exceed the maximum value size. Skipping this upsert. Be aware that your \
+                 visibility records will not include the following patch: {}",
+                machine.shared_state.patch_id
+            );
+            vec![]
         } else {
-            Executing {}.into()
-        };
-        let cmd = Command {
-            command_type: CommandType::RecordMarker as i32,
-            attributes: Some(
-                RecordMarkerCommandAttributes {
-                    marker_name: PATCH_MARKER_NAME.to_string(),
-                    details: build_has_change_marker_details(&state.patch_id, deprecated),
-                    header: None,
-                    failure: None,
+            let indexed_fields = {
+                let mut m = HashMap::new();
+                m.insert(VERSION_SEARCH_ATTR_KEY.to_string(), serialized);
+                m
+            };
+            vec![MachineResponse::NewCoreOriginatedCommand(
+                UpsertWorkflowSearchAttributesCommandAttributes {
+                    search_attributes: Some(SearchAttributes { indexed_fields }),
                 }
                 .into(),
-            ),
-        };
-        let mut machine = Self {
-            state: initial_state,
-            shared_state: state,
-        };
-        OnEventWrapper::on_event_mut(&mut machine, PatchMachineEvents::Schedule)
-            .expect("Patch machine scheduling doesn't fail");
+            )]
+        }
+    };
 
-        (machine, cmd)
-    }
+    Ok((
+        NewMachineWithCommand {
+            command,
+            machine: machine.into(),
+        },
+        maybe_upsert_cmd,
+    ))
 }
+
+impl PatchMachine {}
 
 #[derive(Default, Clone)]
 pub(super) struct Executing {}
@@ -132,7 +189,7 @@ pub(super) struct MarkerCommandCreated {}
 
 impl MarkerCommandCreated {
     pub(super) fn on_command_record_marker(self) -> PatchMachineTransition<Notified> {
-        TransitionResult::commands(vec![])
+        TransitionResult::default()
     }
 }
 
@@ -218,22 +275,31 @@ impl TryFrom<HistEventData> for PatchMachineEvents {
 #[cfg(test)]
 mod tests {
     use crate::{
+        internal_flags::CoreInternalFlags,
         replay::TestHistoryBuilder,
-        worker::workflow::{machines::WFMachinesError, ManagedWFFunc},
+        worker::workflow::{
+            machines::{patch_state_machine::VERSION_SEARCH_ATTR_KEY, WFMachinesError},
+            ManagedWFFunc,
+        },
     };
     use rstest::rstest;
-    use std::time::Duration;
+    use std::{
+        collections::{hash_map::RandomState, HashSet, VecDeque},
+        time::Duration,
+    };
     use temporal_sdk::{ActivityOptions, WfContext, WorkflowFunction};
     use temporal_sdk_core_protos::{
         constants::PATCH_MARKER_NAME,
         coresdk::{
             common::decode_change_marker_details,
             workflow_activation::{workflow_activation_job, NotifyHasPatch, WorkflowActivationJob},
+            AsJsonPayloadExt, FromJsonPayloadExt,
         },
         temporal::api::{
             command::v1::{
                 command::Attributes, RecordMarkerCommandAttributes,
                 ScheduleActivityTaskCommandAttributes,
+                UpsertWorkflowSearchAttributesCommandAttributes,
             },
             common::v1::ActivityType,
             enums::v1::{CommandType, EventType},
@@ -274,9 +340,19 @@ mod tests {
         let mut t = TestHistoryBuilder::default();
         t.add_by_type(EventType::WorkflowExecutionStarted);
         t.add_full_wf_task();
+        t.set_flags_first_wft(
+            &[CoreInternalFlags::UpsertSearchAttributeOnPatch as u32],
+            &[],
+        );
         match marker_type {
-            MarkerType::Deprecated => t.add_has_change_marker(MY_PATCH_ID, true),
-            MarkerType::NotDeprecated => t.add_has_change_marker(MY_PATCH_ID, false),
+            MarkerType::Deprecated => {
+                t.add_has_change_marker(MY_PATCH_ID, true);
+                t.add_upsert_search_attrs_for_patch(&[MY_PATCH_ID.to_string()]);
+            }
+            MarkerType::NotDeprecated => {
+                t.add_has_change_marker(MY_PATCH_ID, false);
+                t.add_upsert_search_attrs_for_patch(&[MY_PATCH_ID.to_string()]);
+            }
             MarkerType::NoMarker => {}
         };
 
@@ -450,14 +526,13 @@ mod tests {
         wfm.shutdown().await.unwrap();
     }
 
+    // Note that the not-replaying and no-marker cases don't make sense and hence are absent
     #[rstest]
-    #[case::v2_no_marker_old_path(false, MarkerType::NoMarker, 2)]
     #[case::v2_marker_new_path(false, MarkerType::NotDeprecated, 2)]
     #[case::v2_dep_marker_new_path(false, MarkerType::Deprecated, 2)]
     #[case::v2_replay_no_marker_old_path(true, MarkerType::NoMarker, 2)]
     #[case::v2_replay_marker_new_path(true, MarkerType::NotDeprecated, 2)]
     #[case::v2_replay_dep_marker_new_path(true, MarkerType::Deprecated, 2)]
-    #[case::v3_no_marker_old_path(false, MarkerType::NoMarker, 3)]
     #[case::v3_marker_new_path(false, MarkerType::NotDeprecated, 3)]
     #[case::v3_dep_marker_new_path(false, MarkerType::Deprecated, 3)]
     #[case::v3_replay_no_marker_old_path(true, MarkerType::NoMarker, 3)]
@@ -486,17 +561,32 @@ mod tests {
         } else {
             assert_eq!(act.jobs.len(), 1);
         }
-        let commands = wfm.get_server_commands().commands;
-        assert_eq!(commands.len(), 2);
+        let mut commands = VecDeque::from(wfm.get_server_commands().commands);
+        let expected_num_cmds = if marker_type == MarkerType::NoMarker {
+            2
+        } else {
+            3
+        };
+        assert_eq!(commands.len(), expected_num_cmds);
         let dep_flag_expected = wf_version != 2;
         assert_matches!(
-            commands[0].attributes.as_ref().unwrap(),
+            commands.pop_front().unwrap().attributes.as_ref().unwrap(),
             Attributes::RecordMarkerCommandAttributes(
                 RecordMarkerCommandAttributes { marker_name, details,.. })
 
             if marker_name == PATCH_MARKER_NAME
               && decode_change_marker_details(details).unwrap().1 == dep_flag_expected
         );
+        if expected_num_cmds == 3 {
+            assert_matches!(
+                commands.pop_front().unwrap().attributes.as_ref().unwrap(),
+                Attributes::UpsertWorkflowSearchAttributesCommandAttributes(
+                    UpsertWorkflowSearchAttributesCommandAttributes{ search_attributes: Some(attrs) }
+                )
+                if attrs.indexed_fields.get(VERSION_SEARCH_ATTR_KEY).unwrap()
+                  == &[MY_PATCH_ID].as_json_payload().unwrap()
+            );
+        }
         // The only time the "old" timer should fire is in v2, replaying, without a marker.
         let expected_activity_id =
             if replaying && marker_type == MarkerType::NoMarker && wf_version == 2 {
@@ -505,7 +595,7 @@ mod tests {
                 "had_change"
             };
         assert_matches!(
-            commands[1].attributes.as_ref().unwrap(),
+            commands.pop_front().unwrap().attributes.as_ref().unwrap(),
             Attributes::ScheduleActivityTaskCommandAttributes(
                 ScheduleActivityTaskCommandAttributes { activity_id, .. }
             )
@@ -566,8 +656,13 @@ mod tests {
         let mut t = TestHistoryBuilder::default();
         t.add_by_type(EventType::WorkflowExecutionStarted);
         t.add_full_wf_task();
+        t.set_flags_first_wft(
+            &[CoreInternalFlags::UpsertSearchAttributeOnPatch as u32],
+            &[],
+        );
         if have_marker_in_hist {
             t.add_has_change_marker(MY_PATCH_ID, false);
+            t.add_upsert_search_attrs_for_patch(&[MY_PATCH_ID.to_string()]);
             let scheduled_event_id = t.add(ActivityTaskScheduledEventAttributes {
                 activity_id: "1".to_owned(),
                 activity_type: Some(ActivityType {
@@ -654,6 +749,77 @@ mod tests {
             wfm
         };
 
+        wfm.shutdown().await.unwrap();
+    }
+
+    const SIZE_OVERFLOW_PATCH_AMOUNT: usize = 180;
+    #[rstest]
+    #[case::happy_path(50)]
+    // We start exceeding the 2k size limit at 180 patches with this format
+    #[case::size_overflow(SIZE_OVERFLOW_PATCH_AMOUNT)]
+    #[tokio::test]
+    async fn many_patches_combine_in_search_attrib_update(#[case] num_patches: usize) {
+        let mut t = TestHistoryBuilder::default();
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        t.add_full_wf_task();
+        t.set_flags_first_wft(
+            &[CoreInternalFlags::UpsertSearchAttributeOnPatch as u32],
+            &[],
+        );
+        for i in 1..=num_patches {
+            let id = format!("patch-{i}");
+            t.add_has_change_marker(&id, false);
+            if i < SIZE_OVERFLOW_PATCH_AMOUNT {
+                t.add_upsert_search_attrs_for_patch(&[id]);
+            }
+            let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
+            t.add(TimerFiredEventAttributes {
+                started_event_id: timer_started_event_id,
+                timer_id: i.to_string(),
+            });
+            t.add_full_wf_task();
+        }
+        t.add_workflow_execution_completed();
+
+        let mut wfm = ManagedWFFunc::new_from_update(
+            t.get_history_info(1).unwrap().into(),
+            WorkflowFunction::new(move |ctx: WfContext| async move {
+                for i in 1..=num_patches {
+                    let _dontcare = ctx.patched(&format!("patch-{i}"));
+                    ctx.timer(ONE_SECOND).await;
+                }
+                Ok(().into())
+            }),
+            vec![],
+        );
+        // Iterate through all activations/responses except the final one with complete workflow
+        for i in 2..=num_patches + 1 {
+            wfm.get_next_activation().await.unwrap();
+            let cmds = wfm.get_server_commands();
+            wfm.new_history(t.get_history_info(i).unwrap().into())
+                .await
+                .unwrap();
+            if i > SIZE_OVERFLOW_PATCH_AMOUNT {
+                assert_eq!(2, cmds.commands.len());
+                assert_matches!(cmds.commands[1].command_type(), CommandType::StartTimer);
+                continue;
+            }
+            assert_eq!(3, cmds.commands.len());
+            let attrs = assert_matches!(
+                cmds.commands[1].attributes.as_ref().unwrap(),
+                Attributes::UpsertWorkflowSearchAttributesCommandAttributes(
+                    UpsertWorkflowSearchAttributesCommandAttributes{ search_attributes: Some(attrs) }
+                )
+                  => attrs
+            );
+            let expected_patches: HashSet<String, _> =
+                (1..i).map(|i| format!("patch-{i}")).collect();
+            let deserialized = HashSet::<String, RandomState>::from_json_payload(
+                attrs.indexed_fields.get(VERSION_SEARCH_ATTR_KEY).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(deserialized, expected_patches);
+        }
         wfm.shutdown().await.unwrap();
     }
 }

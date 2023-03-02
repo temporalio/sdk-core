@@ -23,6 +23,8 @@ use crate::{
                 activity_state_machine::ActivityMachine,
                 child_workflow_state_machine::ChildWorkflowMachine,
                 modify_workflow_properties_state_machine::modify_workflow_properties,
+                patch_state_machine::VERSION_SEARCH_ATTR_KEY,
+                upsert_search_attributes_state_machine::upsert_search_attrs_internal,
                 HistEventData,
             },
             CommandID, DrivenWorkflow, HistoryUpdate, InternalFlagsRef, LocalResolution,
@@ -57,7 +59,7 @@ use temporal_sdk_core_protos::{
     temporal::api::{
         command::v1::{command::Attributes as ProtoCmdAttrs, Command as ProtoCommand},
         enums::v1::EventType,
-        history::v1::{history_event, HistoryEvent},
+        history::v1::{history_event, history_event::Attributes, HistoryEvent},
         sdk::v1::WorkflowTaskCompletedMetadata,
     },
 };
@@ -465,6 +467,7 @@ impl WorkflowMachines {
         }
 
         let mut saw_completed = false;
+        let mut do_handle_event = true;
         let mut history = events.into_iter().peekable();
         while let Some(event) = history.next() {
             if event.event_id != self.last_processed_event + 1 {
@@ -491,14 +494,26 @@ impl WorkflowMachines {
                 saw_completed = true;
             }
 
-            self.handle_event(
-                HistEventData {
-                    event,
-                    replaying: self.replaying,
-                    current_task_is_last_in_history: has_final_event,
-                },
-                next_event.is_some() || !has_final_event,
-            )?;
+            if do_handle_event {
+                let eho = self.handle_event(
+                    HistEventData {
+                        event,
+                        replaying: self.replaying,
+                        current_task_is_last_in_history: has_final_event,
+                    },
+                    next_event,
+                )?;
+                if matches!(
+                    eho,
+                    EventHandlingOutcome::SkipEvent {
+                        skip_next_event: true
+                    }
+                ) {
+                    do_handle_event = false;
+                }
+            } else {
+                do_handle_event = true;
+            }
             self.last_processed_event = eid;
         }
 
@@ -556,8 +571,7 @@ impl WorkflowMachines {
         Ok(num_events_to_process)
     }
 
-    /// Handle a single event from the workflow history. `has_next_event` should be false if `event`
-    /// is the last event in the history.
+    /// Handle a single event from the workflow history.
     ///
     /// This function will attempt to apply the event to the workflow state machines. If there is
     /// not a matching machine for the event, a nondeterminism error is returned. Otherwise, the
@@ -565,7 +579,11 @@ impl WorkflowMachines {
     /// does not match the expected type. A fatal error may be returned if the machine is in an
     /// invalid state.
     #[instrument(skip(self, event_dat), fields(event=%event_dat))]
-    fn handle_event(&mut self, event_dat: HistEventData, has_next_event: bool) -> Result<()> {
+    fn handle_event(
+        &mut self,
+        event_dat: HistEventData,
+        next_event: Option<&HistoryEvent>,
+    ) -> Result<EventHandlingOutcome> {
         let event = &event_dat.event;
         if event.is_final_wf_execution_event() {
             self.have_seen_terminal_event = true;
@@ -574,14 +592,16 @@ impl WorkflowMachines {
             event.event_type(),
             EventType::WorkflowExecutionTerminated | EventType::WorkflowExecutionTimedOut
         ) {
-            return if has_next_event {
+            let are_more_events =
+                next_event.is_some() || !event_dat.current_task_is_last_in_history;
+            return if are_more_events {
                 Err(WFMachinesError::Fatal(
                     "Machines were fed a history which has an event after workflow execution was \
                      terminated!"
                         .to_string(),
                 ))
             } else {
-                Ok(())
+                Ok(EventHandlingOutcome::Normal)
             };
         }
         if event.event_type() == EventType::Unspecified || event.attributes.is_none() {
@@ -591,13 +611,14 @@ impl WorkflowMachines {
                 )))
             } else {
                 debug!("Event is ignorable");
-                Ok(())
+                Ok(EventHandlingOutcome::SkipEvent {
+                    skip_next_event: false,
+                })
             };
         }
 
         if event.is_command_event() {
-            self.handle_command_event(event_dat)?;
-            return Ok(());
+            return self.handle_command_event(event_dat, next_event);
         }
 
         if let Some(initial_cmd_id) = event.get_initial_command_event_id() {
@@ -623,7 +644,7 @@ impl WorkflowMachines {
             self.handle_non_stateful_event(event_dat)?;
         }
 
-        Ok(())
+        Ok(EventHandlingOutcome::Normal)
     }
 
     /// A command event is an event which is generated from a command emitted as a result of
@@ -635,8 +656,13 @@ impl WorkflowMachines {
     /// The handling consists of verifying that the next command in the commands queue is associated
     /// with a state machine, which is then notified about the event and the command is removed from
     /// the commands queue.
-    fn handle_command_event(&mut self, event_dat: HistEventData) -> Result<()> {
+    fn handle_command_event(
+        &mut self,
+        event_dat: HistEventData,
+        next_event: Option<&HistoryEvent>,
+    ) -> Result<EventHandlingOutcome> {
         let event = &event_dat.event;
+
         if event.is_local_activity_marker() {
             let deets = event.extract_local_activity_marker_data().ok_or_else(|| {
                 WFMachinesError::Fatal(format!("Local activity marker was unparsable: {event:?}"))
@@ -646,7 +672,7 @@ impl WorkflowMachines {
             if let Machines::LocalActivityMachine(lam) = self.machine(mkey) {
                 if lam.marker_should_get_special_handling()? {
                     self.submachine_handle_event(mkey, event_dat)?;
-                    return Ok(());
+                    return Ok(EventHandlingOutcome::Normal);
                 }
             } else {
                 return Err(WFMachinesError::Fatal(format!(
@@ -661,13 +687,13 @@ impl WorkflowMachines {
         let consumed_cmd = loop {
             if let Some(peek_machine) = self.commands.front() {
                 let mach = self.machine(peek_machine.machine);
-                match change_marker_handling(event, mach)? {
-                    ChangeMarkerOutcome::SkipEvent => return Ok(()),
-                    ChangeMarkerOutcome::SkipCommand => {
+                match change_marker_handling(event, mach, next_event)? {
+                    EventHandlingOutcome::SkipCommand => {
                         self.commands.pop_front();
                         continue;
                     }
-                    ChangeMarkerOutcome::Normal => {}
+                    eho @ EventHandlingOutcome::SkipEvent { .. } => return Ok(eho),
+                    EventHandlingOutcome::Normal => {}
                 }
             }
 
@@ -696,7 +722,7 @@ impl WorkflowMachines {
                 .insert(event_id, consumed_cmd.machine);
         }
 
-        Ok(())
+        Ok(EventHandlingOutcome::Normal)
     }
 
     fn handle_non_stateful_event(&mut self, event_dat: HistEventData) -> Result<()> {
@@ -885,6 +911,15 @@ impl WorkflowMachines {
                             CommandIdKind::CoreInternal,
                         );
                     }
+                    ProtoCmdAttrs::UpsertWorkflowSearchAttributesCommandAttributes(attrs) => {
+                        self.add_cmd_to_wf_task(
+                            upsert_search_attrs_internal(
+                                attrs,
+                                self.observed_internal_flags.clone(),
+                            ),
+                            CommandIdKind::NeverResolves,
+                        );
+                    }
                     c => {
                         return Err(WFMachinesError::Fatal(format!(
                         "A machine requested to create a new command of an unsupported type: {c:?}"
@@ -991,7 +1026,11 @@ impl WorkflowMachines {
                 }
                 WFCommand::UpsertSearchAttributes(attrs) => {
                     self.add_cmd_to_wf_task(
-                        upsert_search_attrs(attrs),
+                        upsert_search_attrs(
+                            attrs,
+                            self.observed_internal_flags.clone(),
+                            self.replaying,
+                        ),
                         CommandIdKind::NeverResolves,
                     );
                 }
@@ -1056,13 +1095,21 @@ impl WorkflowMachines {
                 WFCommand::SetPatchMarker(attrs) => {
                     // Do not create commands for change IDs that we have already created commands
                     // for.
-                    if !matches!(self.encountered_change_markers.get(&attrs.patch_id),
+                    let encountered_entry = self.encountered_change_markers.get(&attrs.patch_id);
+                    if !matches!(encountered_entry,
                                  Some(ChangeInfo {created_command}) if *created_command)
                     {
-                        self.add_cmd_to_wf_task(
-                            has_change(attrs.patch_id.clone(), self.replaying, attrs.deprecated),
-                            CommandIdKind::NeverResolves,
-                        );
+                        let (patch_machine, other_cmds) = has_change(
+                            attrs.patch_id.clone(),
+                            self.replaying,
+                            attrs.deprecated,
+                            encountered_entry.is_some(),
+                            self.encountered_change_markers.keys().map(|s| s.as_str()),
+                            self.observed_internal_flags.clone(),
+                        )?;
+                        let mkey =
+                            self.add_cmd_to_wf_task(patch_machine, CommandIdKind::NeverResolves);
+                        self.process_machine_responses(mkey, other_cmds)?;
 
                         if let Some(ci) = self.encountered_change_markers.get_mut(&attrs.patch_id) {
                             ci.created_command = true;
@@ -1167,15 +1214,21 @@ impl WorkflowMachines {
     }
 
     /// Add a new command/machines for that command to the current workflow task
-    fn add_cmd_to_wf_task(&mut self, machine: NewMachineWithCommand, id: CommandIdKind) {
+    fn add_cmd_to_wf_task(
+        &mut self,
+        machine: NewMachineWithCommand,
+        id: CommandIdKind,
+    ) -> MachineKey {
         let mach = self.add_new_command_machine(machine);
+        let key = mach.machine;
         if let CommandIdKind::LangIssued(id) = id {
-            self.id_to_machine.insert(id, mach.machine);
+            self.id_to_machine.insert(id, key);
         }
         if matches!(id, CommandIdKind::CoreInternal) {
-            self.machine_is_core_created.insert(mach.machine, ());
+            self.machine_is_core_created.insert(key, ());
         }
         self.current_wf_task_commands.push_back(mach);
+        key
     }
 
     fn add_new_command_machine(&mut self, machine: NewMachineWithCommand) -> CommandAndMachine {
@@ -1235,15 +1288,20 @@ fn str_to_randomness_seed(run_id: &str) -> u64 {
     s.finish()
 }
 
-enum ChangeMarkerOutcome {
-    SkipEvent,
+#[must_use]
+enum EventHandlingOutcome {
+    SkipEvent { skip_next_event: bool },
     SkipCommand,
     Normal,
 }
 
 /// Special handling for patch markers, when handling command events as in
 /// [WorkflowMachines::handle_command_event]
-fn change_marker_handling(event: &HistoryEvent, mach: &Machines) -> Result<ChangeMarkerOutcome> {
+fn change_marker_handling(
+    event: &HistoryEvent,
+    mach: &Machines,
+    next_event: Option<&HistoryEvent>,
+) -> Result<EventHandlingOutcome> {
     if !mach.matches_event(event) {
         // Version markers can be skipped in the event they are deprecated
         if let Some((patch_name, deprecated)) = event.get_patch_marker_details() {
@@ -1251,7 +1309,18 @@ fn change_marker_handling(event: &HistoryEvent, mach: &Machines) -> Result<Chang
             // markers are allowed without matching changed calls.
             if deprecated {
                 debug!("Deprecated patch marker tried against wrong machine, skipping.");
-                return Ok(ChangeMarkerOutcome::SkipEvent);
+
+                // Also ignore the subsequent upsert event if present
+                let mut skip_next_event = false;
+                if let Some(Attributes::UpsertWorkflowSearchAttributesEventAttributes(atts)) =
+                    next_event.and_then(|ne| ne.attributes.as_ref())
+                {
+                    if let Some(ref sa) = atts.search_attributes {
+                        skip_next_event = sa.indexed_fields.contains_key(VERSION_SEARCH_ATTR_KEY);
+                    }
+                }
+
+                return Ok(EventHandlingOutcome::SkipEvent { skip_next_event });
             }
             return Err(WFMachinesError::Nondeterminism(format!(
                 "Non-deprecated patch marker encountered for change {patch_name}, \
@@ -1263,10 +1332,10 @@ fn change_marker_handling(event: &HistoryEvent, mach: &Machines) -> Result<Chang
         // worker.
         if matches!(mach, Machines::PatchMachine(_)) {
             debug!("Skipping non-matching event against patch machine");
-            return Ok(ChangeMarkerOutcome::SkipCommand);
+            return Ok(EventHandlingOutcome::SkipCommand);
         }
     }
-    Ok(ChangeMarkerOutcome::Normal)
+    Ok(EventHandlingOutcome::Normal)
 }
 
 #[derive(derive_more::From)]
