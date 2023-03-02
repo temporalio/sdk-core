@@ -220,7 +220,7 @@ impl Parse for StateMachineDefinition {
         // not ideal.
         let trans_set: HashSet<_> = transitions.iter().collect();
         if trans_set.len() != transitions.len() {
-            return Err(syn::Error::new(
+            return Err(Error::new(
                 input.span(),
                 "Duplicate transitions are not allowed!",
             ));
@@ -438,6 +438,7 @@ impl StateMachineDefinition {
         };
         let mut multi_dest_enums = vec![];
         let state_branches: Vec<_> = statemap.into_iter().map(|(from, transitions)| {
+            let occupied_current_state = quote! { Some(#state_enum_name::#from(state_data)) };
             // Merge transition dest states with the same handler
             let transitions = merge_transition_dests(transitions);
             let event_branches = transitions
@@ -483,7 +484,7 @@ impl StateMachineDefinition {
                                 } else {
                                     quote! {val}
                                 };
-                                quote_spanned! {span=>
+                                quote_spanned! { span =>
                                     #events_enum_name::#ev_variant(val) => {
                                         let res: #trans_type = state_data.#ts_fn(#arglist);
                                         #transition_result_transform
@@ -496,7 +497,7 @@ impl StateMachineDefinition {
                                 } else {
                                     quote! {}
                                 };
-                                quote_spanned! {span=>
+                                quote_spanned! { span =>
                                     #events_enum_name::#ev_variant => {
                                         let res: #trans_type = state_data.#ts_fn(#arglist);
                                         #transition_result_transform
@@ -510,18 +511,18 @@ impl StateMachineDefinition {
                         // using `Default`.
                         if let [new_state] = ts.to.as_slice() {
                             let span = new_state.span();
-                            let default_trans = quote_spanned! {span=>
+                            let default_trans = quote_spanned! { span =>
                             let res = TransitionResult::<Self, #new_state>::from::<#from>(state_data);
                                 #transition_result_transform
                             };
                             let span = ts.event.span();
                             match ts.event.fields {
-                                Fields::Unnamed(_) => quote_spanned! {span=>
+                                Fields::Unnamed(_) => quote_spanned! { span =>
                                     #events_enum_name::#ev_variant(_val) => {
                                         #default_trans
                                     }
                                 },
-                                Fields::Unit => quote_spanned! {span=>
+                                Fields::Unit => quote_spanned! { span =>
                                     #events_enum_name::#ev_variant => {
                                         #default_trans
                                     }
@@ -529,16 +530,22 @@ impl StateMachineDefinition {
                                 Fields::Named(_) => unreachable!(),
                             }
                         } else {
-                            unreachable!("It should be impossible to have more than one dest state in no-handler transitions")
+                            unreachable!("It should be impossible to have more than one dest state \
+                                          in no-handler transitions")
                         }
                     }
                 })
-                // Since most states won't handle every possible event, return an error to that effect
+                // Since most states won't handle every possible event, return an error to that
+                // effect
                 .chain(std::iter::once(
-                    quote! { _ => { return Err(::rustfsm::MachineError::InvalidTransition) } },
+                    quote! { _ => {
+                        // Restore state in event the transition doesn't match
+                        self.state = #occupied_current_state;
+                        return Err(::rustfsm::MachineError::InvalidTransition)
+                    } },
                 ));
             quote! {
-                Some(#state_enum_name::#from(state_data)) => match event {
+                #occupied_current_state => match event {
                     #(#event_branches),*
                 }
             }
@@ -550,7 +557,6 @@ impl StateMachineDefinition {
 
         let viz_str = self.visualize();
 
-        // TODO: Ideally, we don't blow up state in event of an invalid transition
         let trait_impl = quote! {
             impl ::rustfsm::StateMachine for #name {
                 type Error = #err_type;
@@ -566,7 +572,8 @@ impl StateMachineDefinition {
                 fn on_event(&mut self, event: #events_enum_name)
                   -> ::core::result::Result<::std::vec::Vec<Self::Command>,
                                             ::rustfsm::MachineError<Self::Error>> {
-                    match self.state.take() {
+                    let taken_state = self.state.take();
+                    match taken_state {
                         #(#state_branches),*
                     }
                 }
