@@ -123,16 +123,17 @@ pub(super) fn has_change<'a>(
     OnEventWrapper::on_event_mut(&mut machine, PatchMachineEvents::Schedule)
         .expect("Patch machine scheduling doesn't fail");
 
-    // Possibly produce an upsert SA command for this patch.
-    let maybe_upsert_cmd = if replaying_when_invoked && !seen_in_peekahead
-        || !internal_flags.borrow_mut().try_use(
-            CoreInternalFlags::UpsertSearchAttributeOnPatch,
-            !replaying_when_invoked,
-        ) {
-        // If we're replaying but this patch isn't in the peekahead, then we wouldn't have
-        // upserted either, and thus should not create the machine
+    // If we're replaying but this patch isn't in the peekahead, then we wouldn't have
+    // upserted either, and thus should not create the machine
+    let replaying_and_not_in_history = replaying_when_invoked && !seen_in_peekahead;
+    let cannot_use_flag = !internal_flags.borrow_mut().try_use(
+        CoreInternalFlags::UpsertSearchAttributeOnPatch,
+        !replaying_when_invoked,
+    );
+    let maybe_upsert_cmd = if replaying_and_not_in_history || cannot_use_flag {
         vec![]
     } else {
+        // Produce an upsert SA command for this patch.
         let mut all_ids = HashSet::<_, RandomState>::from_iter(existing_patch_ids);
         all_ids.insert(machine.shared_state.patch_id.as_str());
         let serialized = all_ids
