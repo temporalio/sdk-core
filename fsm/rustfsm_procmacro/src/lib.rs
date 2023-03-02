@@ -363,7 +363,7 @@ impl StateMachineDefinition {
         let machine_struct = quote! {
             #[derive(Clone)]
             #visibility struct #name {
-                state: #state_enum_name,
+                state: ::core::option::Option<#state_enum_name>,
                 shared_state: #shared_state_type
             }
         };
@@ -470,6 +470,7 @@ impl StateMachineDefinition {
                         match ts.event.fields {
                             Fields::Unnamed(_) => {
                                 let arglist = if ts.mutates_shared {
+                                    // TODO: should be &mut (or & and & mut) w/ keyword
                                     quote! {self.shared_state, val}
                                 } else {
                                     quote! {val}
@@ -477,7 +478,7 @@ impl StateMachineDefinition {
                                 quote_spanned! {span=>
                                     #events_enum_name::#ev_variant(val) => {
                                         let res: #trans_type = state_data.#ts_fn(#arglist);
-                                        res.into_general()
+                                        res.into_cmd_result(self.state.as_mut().unwrap())
                                     }
                                 }
                             }
@@ -490,7 +491,7 @@ impl StateMachineDefinition {
                                 quote_spanned! {span=>
                                     #events_enum_name::#ev_variant => {
                                         let res: #trans_type = state_data.#ts_fn(#arglist);
-                                        res.into_general()
+                                        res.into_cmd_result(self.state.as_mut().unwrap())
                                     }
                                 }
                             }
@@ -502,23 +503,23 @@ impl StateMachineDefinition {
                         if let [new_state] = ts.to.as_slice() {
                             let span = new_state.span();
                             let default_trans = quote_spanned! {span=>
-                            TransitionResult::<_, #new_state>::from::<#from>(state_data).into_general()
+                            TransitionResult::<Self, #new_state>::from::<#from>(state_data)
+                                .into_cmd_result(self.state.as_mut().unwrap())
                         };
                             let span = ts.event.span();
                             match ts.event.fields {
                                 Fields::Unnamed(_) => quote_spanned! {span=>
-                                #events_enum_name::#ev_variant(_val) => {
-                                    #default_trans
-                                }
-                            },
+                                    #events_enum_name::#ev_variant(_val) => {
+                                        #default_trans
+                                    }
+                                },
                                 Fields::Unit => quote_spanned! {span=>
-                                #events_enum_name::#ev_variant => {
-                                    #default_trans
-                                }
-                            },
+                                    #events_enum_name::#ev_variant => {
+                                        #default_trans
+                                    }
+                                },
                                 Fields::Named(_) => unreachable!(),
                             }
-
                         } else {
                             unreachable!("It should be impossible to have more than one dest state in no-handler transitions")
                         }
@@ -526,10 +527,10 @@ impl StateMachineDefinition {
                 })
                 // Since most states won't handle every possible event, return an error to that effect
                 .chain(std::iter::once(
-                    quote! { _ => { return TransitionResult::InvalidTransition } },
+                    quote! { _ => { return Err(::rustfsm::MachineError::InvalidTransition) } },
                 ));
             quote! {
-                #state_enum_name::#from(state_data) => match event {
+                Some(#state_enum_name::#from(state_data)) => match event {
                     #(#event_branches),*
                 }
             }
@@ -549,19 +550,20 @@ impl StateMachineDefinition {
                   #name_str
                 }
 
-                fn on_event(self, event: #events_enum_name)
-                  -> ::rustfsm::TransitionResult<Self, Self::State> {
+                fn on_event(&mut self, event: #events_enum_name)
+                  -> ::core::result::Result<::std::vec::Vec<Self::Command>,
+                                            ::rustfsm::MachineError<Self::Error>> {
                     match self.state {
                         #(#state_branches),*
                     }
                 }
 
                 fn state(&self) -> &Self::State {
-                    &self.state
+                    self.state.as_ref().unwrap()
                 }
 
                 fn set_state(&mut self, new: Self::State) {
-                    self.state = new
+                    self.state = Some(new)
                 }
 
                 fn shared_state(&self) -> &Self::SharedState{
@@ -569,11 +571,11 @@ impl StateMachineDefinition {
                 }
 
                 fn has_reached_final_state(&self) -> bool {
-                    self.state.is_final()
+                    self.state.as_ref().unwrap().is_final()
                 }
 
-                fn from_parts(shared: Self::SharedState, state: Self::State) -> Self {
-                    Self { shared_state: shared, state }
+                fn from_parts(state: Self::State, shared: Self::SharedState) -> Self {
+                    Self { shared_state: shared, state: Some(state) }
                 }
 
                 fn visualizer() -> &'static str {

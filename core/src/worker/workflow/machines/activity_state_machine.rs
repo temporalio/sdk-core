@@ -111,9 +111,9 @@ impl ActivityMachine {
         attrs: ScheduleActivity,
         internal_flags: InternalFlagsRef,
     ) -> NewMachineWithCommand {
-        let mut s = Self {
-            state: Created {}.into(),
-            shared_state: SharedState {
+        let mut s = Self::from_parts(
+            Created {}.into(),
+            SharedState {
                 cancellation_type: ActivityCancellationType::from_i32(attrs.cancellation_type)
                     .unwrap(),
                 attrs,
@@ -122,7 +122,7 @@ impl ActivityMachine {
                 started_event_id: 0,
                 cancelled_before_sent: false,
             },
-        };
+        );
         OnEventWrapper::on_event_mut(&mut s, ActivityMachineEvents::Schedule)
             .expect("Scheduling activities doesn't fail");
         let command = Command {
