@@ -64,21 +64,21 @@ use syn::{
 /// }
 ///
 /// impl Locked {
-///     fn on_card_readable(&self, shared_dat: SharedState, data: CardData)
+///     fn on_card_readable(&self, shared_dat: &mut SharedState, data: CardData)
 ///       -> CardReaderTransition<ReadingCardOrLocked> {
-///         match shared_dat.last_id {
+///         match &shared_dat.last_id {
 ///             // Arbitrarily deny the same person entering twice in a row
-///             Some(d) if d == data => TransitionResult::ok(vec![], Locked {}.into()),
+///             Some(d) if d == &data => TransitionResult::ok(vec![], Locked {}.into()),
 ///             _ => {
 ///                 // Otherwise issue a processing command. This illustrates using the same handler
 ///                 // for different destinations
-///                 TransitionResult::ok_shared(
+///                 shared_dat.last_id = Some(data.clone());
+///                 TransitionResult::ok(
 ///                     vec![
 ///                         Commands::ProcessData(data.clone()),
 ///                         Commands::StartBlinkingLight,
 ///                     ],
-///                     ReadingCard { card_data: data.clone() }.into(),
-///                     SharedState { last_id: Some(data) }
+///                     ReadingCard { card_data: data }.into(),
 ///                 )
 ///             }
 ///         }
@@ -96,19 +96,19 @@ use syn::{
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let crs = CardReaderState::Locked(Locked {});
-/// let mut cr = CardReader { state: crs, shared_state: SharedState { last_id: None } };
-/// let cmds = cr.on_event_mut(CardReaderEvents::CardReadable("badguy".to_string()))?;
+/// let mut cr = CardReader::from_parts(crs, SharedState { last_id: None });
+/// let cmds = cr.on_event(CardReaderEvents::CardReadable("badguy".to_string()))?;
 /// assert_eq!(cmds[0], Commands::ProcessData("badguy".to_string()));
 /// assert_eq!(cmds[1], Commands::StartBlinkingLight);
 ///
-/// let cmds = cr.on_event_mut(CardReaderEvents::CardRejected)?;
+/// let cmds = cr.on_event(CardReaderEvents::CardRejected)?;
 /// assert_eq!(cmds[0], Commands::StopBlinkingLight);
 ///
-/// let cmds = cr.on_event_mut(CardReaderEvents::CardReadable("goodguy".to_string()))?;
+/// let cmds = cr.on_event(CardReaderEvents::CardReadable("goodguy".to_string()))?;
 /// assert_eq!(cmds[0], Commands::ProcessData("goodguy".to_string()));
 /// assert_eq!(cmds[1], Commands::StartBlinkingLight);
 ///
-/// let cmds = cr.on_event_mut(CardReaderEvents::CardAccepted)?;
+/// let cmds = cr.on_event(CardReaderEvents::CardAccepted)?;
 /// assert_eq!(cmds[0], Commands::StopBlinkingLight);
 /// # Ok(())
 /// # }
