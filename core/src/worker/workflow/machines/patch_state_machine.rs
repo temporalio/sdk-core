@@ -34,7 +34,7 @@ use crate::{
 use anyhow::Context;
 use rustfsm::{fsm, TransitionResult};
 use std::{
-    collections::{hash_map::RandomState, HashMap, HashSet},
+    collections::{BTreeSet, HashMap},
     convert::TryFrom,
 };
 use temporal_sdk_core_protos::{
@@ -134,7 +134,7 @@ pub(super) fn has_change<'a>(
         vec![]
     } else {
         // Produce an upsert SA command for this patch.
-        let mut all_ids = HashSet::<_, RandomState>::from_iter(existing_patch_ids);
+        let mut all_ids = BTreeSet::from_iter(existing_patch_ids);
         all_ids.insert(machine.shared_state.patch_id.as_str());
         let serialized = all_ids
             .as_json_payload()
