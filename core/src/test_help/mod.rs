@@ -30,8 +30,10 @@ use std::{
     task::{Context, Poll},
     time::Duration,
 };
-use temporal_sdk_core_api::errors::{PollActivityError, PollWfError};
-use temporal_sdk_core_api::Worker as WorkerTrait;
+use temporal_sdk_core_api::{
+    errors::{PollActivityError, PollWfError},
+    Worker as WorkerTrait,
+};
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::WorkflowActivation,

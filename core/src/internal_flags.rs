@@ -20,7 +20,8 @@ pub(crate) enum CoreInternalFlags {
     /// In this flag additional checks were added to a number of state machines to ensure that
     /// the ID and type of activities, local activities, and child workflows match during replay.
     IdAndTypeDeterminismChecks = 1,
-    /// Introduced automatically upserting search attributes for each patched call
+    /// Introduced automatically upserting search attributes for each patched call, and
+    /// nondeterminism checks for upserts.
     UpsertSearchAttributeOnPatch = 2,
     /// We received a value higher than this code can understand.
     TooHigh = u32::MAX,
@@ -40,6 +41,20 @@ impl InternalFlags {
         Self {
             enabled: server_capabilities.sdk_metadata,
             core: Default::default(),
+            lang: Default::default(),
+            core_since_last_complete: Default::default(),
+            lang_since_last_complete: Default::default(),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn all_core_enabled() -> Self {
+        Self {
+            enabled: true,
+            core: BTreeSet::from([
+                CoreInternalFlags::IdAndTypeDeterminismChecks,
+                CoreInternalFlags::UpsertSearchAttributeOnPatch,
+            ]),
             lang: Default::default(),
             core_since_last_complete: Default::default(),
             lang_since_last_complete: Default::default(),

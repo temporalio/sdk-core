@@ -428,8 +428,10 @@ impl TestHistoryBuilder {
             "TemporalChangeVersion".to_string(),
             attribs.as_json_payload().unwrap(),
         );
-        let mut attrs = UpsertWorkflowSearchAttributesEventAttributes::default();
-        attrs.search_attributes = Some(SearchAttributes { indexed_fields });
+        let attrs = UpsertWorkflowSearchAttributesEventAttributes {
+            workflow_task_completed_event_id: self.previous_task_completed_id,
+            search_attributes: Some(SearchAttributes { indexed_fields }),
+        };
         self.build_and_push_event(EventType::UpsertWorkflowSearchAttributes, attrs.into())
     }
 

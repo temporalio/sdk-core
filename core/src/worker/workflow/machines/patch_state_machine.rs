@@ -147,7 +147,6 @@ pub(super) fn has_change<'a>(
                  visibility records will not include the following patch: {}",
                 machine.shared_state.patch_id
             );
-            dbg!(serialized.data.len());
             vec![]
         } else {
             let indexed_fields = {
