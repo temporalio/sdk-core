@@ -522,7 +522,7 @@ impl ResultNotified {
                 shared.attrs.seq
             )));
         }
-        verify_marker_dat!(&shared, &dat, TransitionResult::default())
+        verify_marker_dat!(shared, &dat, TransitionResult::default())
     }
 }
 
@@ -538,7 +538,7 @@ impl WaitingMarkerEvent {
         dat: CompleteLocalActivityData,
     ) -> LocalActivityMachineTransition<MarkerCommandRecorded> {
         verify_marker_dat!(
-            &shared,
+            shared,
             &dat,
             TransitionResult::commands(if self.already_resolved {
                 vec![]
@@ -593,7 +593,7 @@ impl WaitingMarkerEventPreResolved {
         shared: &mut SharedState,
         dat: CompleteLocalActivityData,
     ) -> LocalActivityMachineTransition<MarkerCommandRecorded> {
-        verify_marker_dat!(&shared, &dat, TransitionResult::default())
+        verify_marker_dat!(shared, &dat, TransitionResult::default())
     }
 }
 

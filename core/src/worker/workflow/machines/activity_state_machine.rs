@@ -723,7 +723,7 @@ fn notify_lang_activity_timed_out(
     attrs: ActivityTaskTimedOutEventAttributes,
 ) -> TransitionResult<ActivityMachine, TimedOut> {
     ActivityMachineTransition::commands(vec![ActivityMachineCommand::Fail(new_timeout_failure(
-        &dat, attrs,
+        dat, attrs,
     ))])
 }
 

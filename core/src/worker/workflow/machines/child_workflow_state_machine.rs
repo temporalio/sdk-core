@@ -175,7 +175,7 @@ impl StartCommandCreated {
                 )),
                 ..Default::default()
             })),
-            failure_info: failure_info_from_state(&state, RetryState::NonRetryableFailure),
+            failure_info: failure_info_from_state(state, RetryState::NonRetryableFailure),
             ..Default::default()
         })])
     }
@@ -231,7 +231,7 @@ impl Started {
         ChildWorkflowMachineTransition::ok(
             vec![ChildWorkflowCommand::Fail(Failure {
                 message: "Child Workflow execution failed".to_owned(),
-                failure_info: failure_info_from_state(&state, attrs.retry_state()),
+                failure_info: failure_info_from_state(state, attrs.retry_state()),
                 cause: attrs.failure.map(Box::new),
                 ..Default::default()
             })],
@@ -256,7 +256,7 @@ impl Started {
                     )),
                     ..Default::default()
                 })),
-                failure_info: failure_info_from_state(&state, retry_state),
+                failure_info: failure_info_from_state(state, retry_state),
                 ..Default::default()
             })],
             TimedOut::default(),
@@ -279,7 +279,7 @@ impl Started {
                     )),
                     ..Default::default()
                 })),
-                failure_info: failure_info_from_state(&state, RetryState::NonRetryableFailure),
+                failure_info: failure_info_from_state(state, RetryState::NonRetryableFailure),
                 ..Default::default()
             })],
             Terminated::default(),

@@ -192,6 +192,7 @@ where
 
     /// Transforms the transition result into a machine-ready outcome with commands and new state,
     /// or a [MachineError]
+    #[allow(clippy::type_complexity)]
     pub fn into_cmd_result(self) -> Result<(Vec<Sm::Command>, Sm::State), MachineError<Sm::Error>> {
         let general = self.into_general();
         match general {
