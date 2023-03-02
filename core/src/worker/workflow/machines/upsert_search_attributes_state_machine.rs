@@ -46,10 +46,15 @@ fsm! {
 pub(super) fn upsert_search_attrs(
     attribs: UpsertWorkflowSearchAttributes,
     internal_flags: InternalFlagsRef,
+    replaying: bool,
 ) -> NewMachineWithCommand {
-    if attribs
-        .search_attributes
-        .contains_key(VERSION_SEARCH_ATTR_KEY)
+    let has_flag = internal_flags
+        .borrow_mut()
+        .try_use(CoreInternalFlags::UpsertSearchAttributeOnPatch, !replaying);
+    if has_flag
+        && attribs
+            .search_attributes
+            .contains_key(VERSION_SEARCH_ATTR_KEY)
     {
         warn!(
             "Upserting the {VERSION_SEARCH_ATTR_KEY} search attribute directly from workflow code \
@@ -249,12 +254,16 @@ mod tests {
     use temporal_sdk::{WfContext, WorkflowFunction};
     use temporal_sdk_core_api::Worker;
     use temporal_sdk_core_protos::{
-        coresdk::{workflow_completion::WorkflowActivationCompletion, AsJsonPayloadExt},
+        coresdk::{
+            workflow_commands::SetPatchMarker, workflow_completion::WorkflowActivationCompletion,
+            AsJsonPayloadExt,
+        },
         temporal::api::{
             command::v1::command::Attributes, common::v1::Payload,
             history::v1::UpsertWorkflowSearchAttributesEventAttributes,
         },
     };
+    use temporal_sdk_core_test_utils::WorkerTestHelpers;
 
     #[tokio::test]
     async fn upsert_search_attrs_from_workflow() {
@@ -367,24 +376,43 @@ mod tests {
         }
     }
 
+    #[rstest::rstest]
     #[tokio::test]
-    async fn upserting_change_version_directly_does_nothing() {
+    async fn upserting_change_version_directly(
+        #[values(true, false)] flag_in_history: bool,
+        #[values(true, false)] with_patched_cmd: bool,
+    ) {
+        let patch_id = "whatever".to_string();
         let mut t = TestHistoryBuilder::default();
         t.add_by_type(EventType::WorkflowExecutionStarted);
-        t.add_workflow_task_scheduled_and_started();
+        t.add_full_wf_task();
+        if flag_in_history {
+            t.set_flags_first_wft(
+                &[CoreInternalFlags::UpsertSearchAttributeOnPatch as u32],
+                &[],
+            );
+        }
+        if with_patched_cmd {
+            t.add_has_change_marker(&patch_id, false);
+        }
+        t.add_upsert_search_attrs_for_patch(&[patch_id.clone()]);
+        t.add_full_wf_task();
+        t.add_workflow_execution_completed();
 
         let mut mp = MockPollCfg::from_resp_batches(
             "fakeid",
             t,
-            [ResponseType::ToTaskNum(1)],
+            [ResponseType::ToTaskNum(1), ResponseType::AllHistory],
             mock_workflow_client(),
         );
-        // Ensure the command has an empty map
-        mp.completion_asserts = Some(Box::new(|wftc| {
-            assert_matches!(wftc.commands.get(0).and_then(|c| c.attributes.as_ref()).unwrap(),
+        // Ensure the upsert command has an empty map when not using the patched command
+        if !with_patched_cmd {
+            mp.completion_asserts = Some(Box::new(|wftc| {
+                assert_matches!(wftc.commands.get(0).and_then(|c| c.attributes.as_ref()).unwrap(),
             Attributes::UpsertWorkflowSearchAttributesCommandAttributes(attrs)
             if attrs.search_attributes.as_ref().unwrap().indexed_fields.is_empty())
-        }));
+            }));
+        }
         let core = mock_worker(build_mock_pollers(mp));
 
         let mut ver_upsert = HashMap::new();
@@ -393,14 +421,28 @@ mod tests {
             "hi".as_json_payload().unwrap(),
         );
         let act = core.poll_workflow_activation().await.unwrap();
-        core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-            act.run_id,
+        let mut cmds = if with_patched_cmd {
+            vec![SetPatchMarker {
+                patch_id,
+                deprecated: false,
+            }
+            .into()]
+        } else {
+            vec![]
+        };
+        cmds.push(
             UpsertWorkflowSearchAttributes {
                 search_attributes: ver_upsert,
             }
             .into(),
+        );
+        core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
+            act.run_id, cmds,
         ))
         .await
         .unwrap();
+        // Now ensure that encountering the upsert in history works fine
+        let act = core.poll_workflow_activation().await.unwrap();
+        core.complete_execution(&act.run_id).await;
     }
 }

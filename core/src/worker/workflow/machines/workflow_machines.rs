@@ -1026,7 +1026,11 @@ impl WorkflowMachines {
                 }
                 WFCommand::UpsertSearchAttributes(attrs) => {
                     self.add_cmd_to_wf_task(
-                        upsert_search_attrs(attrs, self.observed_internal_flags.clone()),
+                        upsert_search_attrs(
+                            attrs,
+                            self.observed_internal_flags.clone(),
+                            self.replaying,
+                        ),
                         CommandIdKind::NeverResolves,
                     );
                 }
