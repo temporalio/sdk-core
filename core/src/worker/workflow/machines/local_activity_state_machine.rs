@@ -356,7 +356,9 @@ impl Executing {
         self,
         dat: &mut SharedState,
     ) -> LocalActivityMachineTransition<RequestSent> {
-        TransitionResult::commands([LocalActivityCommand::RequestActivityExecution(dat.attrs)])
+        TransitionResult::commands([LocalActivityCommand::RequestActivityExecution(
+            dat.attrs.clone(),
+        )])
     }
 }
 

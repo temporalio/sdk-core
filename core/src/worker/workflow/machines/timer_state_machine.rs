@@ -417,13 +417,10 @@ mod test {
     #[test]
     fn cancels_ignored_terminal() {
         for state in [TimerMachineState::Canceled(Canceled {}), Fired {}.into()] {
-            let mut s = TimerMachine {
-                state: state.clone(),
-                shared_state: Default::default(),
-            };
+            let mut s = TimerMachine::from_parts(state.clone(), Default::default());
             let cmds = s.cancel().unwrap();
             assert_eq!(cmds.len(), 0);
-            assert_eq!(discriminant(&state), discriminant(&s.state));
+            assert_eq!(discriminant(&state), discriminant(s.state()));
         }
     }
 }

@@ -191,9 +191,9 @@ impl StartEventRecorded {
         event: ChildWorkflowExecutionStartedEvent,
     ) -> ChildWorkflowMachineTransition<Started> {
         state.started_event_id = event.started_event_id;
-        state.run_id = event.workflow_execution.run_id;
+        state.run_id = event.workflow_execution.run_id.clone();
         ChildWorkflowMachineTransition::commands(vec![ChildWorkflowCommand::Start(
-            event.workflow_execution.clone(),
+            event.workflow_execution,
         )])
     }
     pub(super) fn on_start_child_workflow_execution_failed(
@@ -876,9 +876,9 @@ mod test {
             TimedOut {}.into(),
             Completed {}.into(),
         ] {
-            let mut s = ChildWorkflowMachine {
-                state: state.clone(),
-                shared_state: &mut SharedState {
+            let mut s = ChildWorkflowMachine::from_parts(
+                state.clone(),
+                SharedState {
                     initiated_event_id: 0,
                     started_event_id: 0,
                     lang_sequence_number: 0,
@@ -890,10 +890,10 @@ mod test {
                     cancel_type: Default::default(),
                     internal_flags: Rc::new(RefCell::new(InternalFlags::new(&Default::default()))),
                 },
-            };
+            );
             let cmds = s.cancel().unwrap();
             assert_eq!(cmds.len(), 0);
-            assert_eq!(discriminant(&state), discriminant(&s.state));
+            assert_eq!(discriminant(&state), discriminant(s.state()));
         }
     }
 }

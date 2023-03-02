@@ -190,20 +190,15 @@ where
         }
     }
 
-    /// Updates the passed in state to be the new state, returning commands or error
-    pub fn into_cmd_result(
-        self,
-        write_state: &mut Sm::State,
-    ) -> Result<Vec<Sm::Command>, MachineError<Sm::Error>> {
+    /// Transforms the transition result into a machine-ready outcome with commands and new state,
+    /// or a [MachineError]
+    pub fn into_cmd_result(self) -> Result<(Vec<Sm::Command>, Sm::State), MachineError<Sm::Error>> {
         let general = self.into_general();
         match general {
             TransitionResult::Ok {
                 new_state,
                 commands,
-            } => {
-                *write_state = new_state;
-                Ok(commands)
-            }
+            } => Ok((commands, new_state)),
             TransitionResult::InvalidTransition => Err(MachineError::InvalidTransition),
             TransitionResult::Err(e) => Err(MachineError::Underlying(e)),
         }

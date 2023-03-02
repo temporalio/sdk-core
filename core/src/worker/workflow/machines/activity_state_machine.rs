@@ -20,10 +20,7 @@ use temporal_sdk_core_protos::{
         command::v1::{command, Command, RequestCancelActivityTaskCommandAttributes},
         common::v1::{ActivityType, Payload, Payloads},
         enums::v1::{CommandType, EventType, RetryState},
-        failure::v1::{
-            self as failure, failure::FailureInfo, ActivityFailureInfo, CanceledFailureInfo,
-            Failure,
-        },
+        failure::v1::{failure::FailureInfo, ActivityFailureInfo, CanceledFailureInfo, Failure},
         history::v1::{
             history_event, ActivityTaskCanceledEventAttributes,
             ActivityTaskCompletedEventAttributes, ActivityTaskFailedEventAttributes,
@@ -49,7 +46,7 @@ fsm! {
     ScheduledEventRecorded --(ActivityTaskTimedOut(ActivityTaskTimedOutEventAttributes),
         shared on_task_timed_out) --> TimedOut;
     ScheduledEventRecorded --(Cancel, shared on_canceled) --> ScheduledActivityCancelCommandCreated;
-    ScheduledEventRecorded --(Abandon, shared on_abandoned) --> Canceled;
+    ScheduledEventRecorded --(Abandon, on_abandoned) --> Canceled;
 
     Started --(ActivityTaskCompleted(ActivityTaskCompletedEventAttributes),
         on_activity_task_completed) --> Completed;
@@ -58,7 +55,7 @@ fsm! {
     Started --(ActivityTaskTimedOut(ActivityTaskTimedOutEventAttributes),
         shared on_activity_task_timed_out) --> TimedOut;
     Started --(Cancel, shared on_canceled) --> StartedActivityCancelCommandCreated;
-    Started --(Abandon, shared on_abandoned) --> Canceled;
+    Started --(Abandon, on_abandoned) --> Canceled;
 
     ScheduledActivityCancelCommandCreated --(CommandRequestCancelActivityTask) --> ScheduledActivityCancelCommandCreated;
     ScheduledActivityCancelCommandCreated --(ActivityTaskCancelRequested) --> ScheduledActivityCancelEventRecorded;
@@ -464,7 +461,7 @@ impl ScheduledEventRecorded {
             ScheduledActivityCancelCommandCreated::default(),
         )
     }
-    pub(super) fn on_abandoned(self, dat: &mut SharedState) -> ActivityMachineTransition<Canceled> {
+    pub(super) fn on_abandoned(self) -> ActivityMachineTransition<Canceled> {
         notify_lang_activity_cancelled(None)
     }
 }
@@ -510,7 +507,7 @@ impl Started {
             StartedActivityCancelCommandCreated::default(),
         )
     }
-    pub(super) fn on_abandoned(self, dat: &mut SharedState) -> ActivityMachineTransition<Canceled> {
+    pub(super) fn on_abandoned(self) -> ActivityMachineTransition<Canceled> {
         notify_lang_activity_cancelled(None)
     }
 }
@@ -527,7 +524,7 @@ impl ScheduledActivityCancelEventRecorded {
         dat: &mut SharedState,
         attrs: ActivityTaskCanceledEventAttributes,
     ) -> ActivityMachineTransition<Canceled> {
-        notify_if_not_already_cancelled(dat, |dat| notify_lang_activity_cancelled(Some(attrs)))
+        notify_if_not_already_cancelled(dat, |_| notify_lang_activity_cancelled(Some(attrs)))
     }
 
     pub(super) fn on_activity_task_timed_out(
@@ -582,7 +579,7 @@ impl StartedActivityCancelEventRecorded {
         dat: &mut SharedState,
         attrs: ActivityTaskCanceledEventAttributes,
     ) -> ActivityMachineTransition<Canceled> {
-        notify_if_not_already_cancelled(dat, |dat| notify_lang_activity_cancelled(Some(attrs)))
+        notify_if_not_already_cancelled(dat, |_| notify_lang_activity_cancelled(Some(attrs)))
     }
 }
 
@@ -745,18 +742,16 @@ fn new_failure(dat: &mut SharedState, attrs: ActivityTaskFailedEventAttributes) 
     Failure {
         message: "Activity task failed".to_owned(),
         cause: attrs.failure.map(Box::new),
-        failure_info: Some(FailureInfo::ActivityFailureInfo(
-            failure::ActivityFailureInfo {
-                identity: attrs.identity,
-                activity_type: Some(ActivityType {
-                    name: dat.attrs.activity_type,
-                }),
-                activity_id: dat.attrs.activity_id,
-                retry_state: attrs.retry_state,
-                started_event_id: attrs.started_event_id,
-                scheduled_event_id: attrs.scheduled_event_id,
-            },
-        )),
+        failure_info: Some(FailureInfo::ActivityFailureInfo(ActivityFailureInfo {
+            identity: attrs.identity,
+            activity_type: Some(ActivityType {
+                name: dat.attrs.activity_type.clone(),
+            }),
+            activity_id: dat.attrs.activity_id.clone(),
+            retry_state: attrs.retry_state,
+            started_event_id: attrs.started_event_id,
+            scheduled_event_id: attrs.scheduled_event_id,
+        })),
         ..Default::default()
     }
 }
@@ -919,9 +914,9 @@ mod test {
             TimedOut {}.into(),
             Completed {}.into(),
         ] {
-            let mut s = ActivityMachine {
-                state: state.clone(),
-                shared_state: &mut SharedState {
+            let mut s = ActivityMachine::from_parts(
+                state.clone(),
+                SharedState {
                     scheduled_event_id: 0,
                     started_event_id: 0,
                     attrs: Default::default(),
@@ -929,10 +924,10 @@ mod test {
                     cancelled_before_sent: false,
                     internal_flags: Rc::new(RefCell::new(InternalFlags::new(&Default::default()))),
                 },
-            };
+            );
             let cmds = s.cancel().unwrap();
             assert_eq!(cmds.len(), 0);
-            assert_eq!(discriminant(&state), discriminant(&s.state));
+            assert_eq!(discriminant(&state), discriminant(s.state()));
         }
     }
 }

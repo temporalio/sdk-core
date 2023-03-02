@@ -318,14 +318,14 @@ mod tests {
 
     #[rstest::rstest]
     fn upsert_search_attrs_sm(#[values(true, false)] nondetermistic: bool) {
-        let mut sm = UpsertSearchAttributesMachine {
-            state: Created {}.into(),
-            shared_state: &mut SharedState {
+        let mut sm = UpsertSearchAttributesMachine::from_parts(
+            Created {}.into(),
+            SharedState {
                 sa_map: Default::default(),
                 should_skip_determinism: false,
                 internal_flags: Rc::new(RefCell::new(InternalFlags::all_core_enabled())),
             },
-        };
+        );
 
         let sa_attribs = if nondetermistic {
             UpsertWorkflowSearchAttributesEventAttributes {

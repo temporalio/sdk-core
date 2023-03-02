@@ -425,13 +425,10 @@ mod tests {
             SignalExternalMachineState::Cancelled(Cancelled {}),
             Signaled {}.into(),
         ] {
-            let mut s = SignalExternalMachine {
-                state: state.clone(),
-                shared_state: Default::default(),
-            };
+            let mut s = SignalExternalMachine::from_parts(state.clone(), Default::default());
             let cmds = s.cancel().unwrap();
             assert_eq!(cmds.len(), 0);
-            assert_eq!(discriminant(&state), discriminant(&s.state));
+            assert_eq!(discriminant(&state), discriminant(s.state()));
         }
     }
 }
