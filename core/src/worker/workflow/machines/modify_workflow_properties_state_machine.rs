@@ -3,7 +3,7 @@ use crate::worker::workflow::{
     machines::{Cancellable, EventInfo, HistEventData, WFMachinesAdapter},
     WFMachinesError,
 };
-use rustfsm::{fsm, TransitionResult};
+use rustfsm::{fsm, StateMachine, TransitionResult};
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::ModifyWorkflowProperties,
     temporal::api::{
@@ -28,10 +28,7 @@ fsm! {
 pub(super) fn modify_workflow_properties(
     lang_cmd: ModifyWorkflowProperties,
 ) -> NewMachineWithCommand {
-    let sm = ModifyWorkflowPropertiesMachine {
-        state: Created {}.into(),
-        shared_state: (),
-    };
+    let sm = ModifyWorkflowPropertiesMachine::from_parts(Created {}.into(), ());
     let cmd = Command {
         command_type: CommandType::ModifyWorkflowProperties as i32,
         attributes: Some(lang_cmd.into()),

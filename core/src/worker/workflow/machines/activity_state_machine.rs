@@ -400,7 +400,7 @@ pub(super) struct ScheduleCommandCreated {}
 impl ScheduleCommandCreated {
     pub(super) fn on_activity_task_scheduled(
         self,
-        dat: SharedState,
+        dat: &mut SharedState,
         sched_dat: ActTaskScheduledData,
     ) -> ActivityMachineTransition<ScheduledEventRecorded> {
         if dat.internal_flags.borrow_mut().try_use(
@@ -422,26 +422,15 @@ impl ScheduleCommandCreated {
                 )));
             }
         }
-        ActivityMachineTransition::ok_shared(
-            vec![],
-            ScheduledEventRecorded::default(),
-            SharedState {
-                scheduled_event_id: sched_dat.event_id,
-                ..dat
-            },
-        )
+        dat.scheduled_event_id = sched_dat.event_id;
+        ActivityMachineTransition::default()
     }
 
-    pub(super) fn on_canceled(self, dat: SharedState) -> ActivityMachineTransition<Canceled> {
-        let canceled_state = SharedState {
-            cancelled_before_sent: true,
-            ..dat
-        };
+    pub(super) fn on_canceled(self, dat: &mut SharedState) -> ActivityMachineTransition<Canceled> {
+        dat.cancelled_before_sent = true;
         match dat.cancellation_type {
-            ActivityCancellationType::Abandon => {
-                ActivityMachineTransition::ok_shared(vec![], Canceled::default(), canceled_state)
-            }
-            _ => notify_lang_activity_cancelled(canceled_state, None),
+            ActivityCancellationType::Abandon => ActivityMachineTransition::default(),
+            _ => notify_lang_activity_cancelled(None),
         }
     }
 }
@@ -452,21 +441,15 @@ pub(super) struct ScheduledEventRecorded {}
 impl ScheduledEventRecorded {
     pub(super) fn on_task_started(
         self,
-        dat: SharedState,
+        dat: &mut SharedState,
         started_event_id: i64,
     ) -> ActivityMachineTransition<Started> {
-        ActivityMachineTransition::ok_shared(
-            vec![],
-            Started::default(),
-            SharedState {
-                started_event_id,
-                ..dat
-            },
-        )
+        dat.started_event_id = started_event_id;
+        ActivityMachineTransition::default()
     }
     pub(super) fn on_task_timed_out(
         self,
-        dat: SharedState,
+        dat: &mut SharedState,
         attrs: ActivityTaskTimedOutEventAttributes,
     ) -> ActivityMachineTransition<TimedOut> {
         notify_lang_activity_timed_out(dat, attrs)
@@ -474,15 +457,15 @@ impl ScheduledEventRecorded {
 
     pub(super) fn on_canceled(
         self,
-        dat: SharedState,
+        dat: &mut SharedState,
     ) -> ActivityMachineTransition<ScheduledActivityCancelCommandCreated> {
         create_request_cancel_activity_task_command(
             dat,
             ScheduledActivityCancelCommandCreated::default(),
         )
     }
-    pub(super) fn on_abandoned(self, dat: SharedState) -> ActivityMachineTransition<Canceled> {
-        notify_lang_activity_cancelled(dat, None)
+    pub(super) fn on_abandoned(self, dat: &mut SharedState) -> ActivityMachineTransition<Canceled> {
+        notify_lang_activity_cancelled(None)
     }
 }
 
@@ -501,7 +484,7 @@ impl Started {
     }
     pub(super) fn on_activity_task_failed(
         self,
-        dat: SharedState,
+        dat: &mut SharedState,
         attrs: ActivityTaskFailedEventAttributes,
     ) -> ActivityMachineTransition<Failed> {
         ActivityMachineTransition::ok(
@@ -512,7 +495,7 @@ impl Started {
 
     pub(super) fn on_activity_task_timed_out(
         self,
-        dat: SharedState,
+        dat: &mut SharedState,
         attrs: ActivityTaskTimedOutEventAttributes,
     ) -> ActivityMachineTransition<TimedOut> {
         notify_lang_activity_timed_out(dat, attrs)
@@ -520,15 +503,15 @@ impl Started {
 
     pub(super) fn on_canceled(
         self,
-        dat: SharedState,
+        dat: &mut SharedState,
     ) -> ActivityMachineTransition<StartedActivityCancelCommandCreated> {
         create_request_cancel_activity_task_command(
             dat,
             StartedActivityCancelCommandCreated::default(),
         )
     }
-    pub(super) fn on_abandoned(self, dat: SharedState) -> ActivityMachineTransition<Canceled> {
-        notify_lang_activity_cancelled(dat, None)
+    pub(super) fn on_abandoned(self, dat: &mut SharedState) -> ActivityMachineTransition<Canceled> {
+        notify_lang_activity_cancelled(None)
     }
 }
 
@@ -541,15 +524,15 @@ pub(super) struct ScheduledActivityCancelEventRecorded {}
 impl ScheduledActivityCancelEventRecorded {
     pub(super) fn on_activity_task_canceled(
         self,
-        dat: SharedState,
+        dat: &mut SharedState,
         attrs: ActivityTaskCanceledEventAttributes,
     ) -> ActivityMachineTransition<Canceled> {
-        notify_if_not_already_cancelled(dat, |dat| notify_lang_activity_cancelled(dat, Some(attrs)))
+        notify_if_not_already_cancelled(dat, |dat| notify_lang_activity_cancelled(Some(attrs)))
     }
 
     pub(super) fn on_activity_task_timed_out(
         self,
-        dat: SharedState,
+        dat: &mut SharedState,
         attrs: ActivityTaskTimedOutEventAttributes,
     ) -> ActivityMachineTransition<TimedOut> {
         notify_if_not_already_cancelled(dat, |dat| notify_lang_activity_timed_out(dat, attrs))
@@ -571,7 +554,7 @@ pub(super) struct StartedActivityCancelEventRecorded {}
 impl StartedActivityCancelEventRecorded {
     pub(super) fn on_activity_task_completed(
         self,
-        dat: SharedState,
+        dat: &mut SharedState,
         attrs: ActivityTaskCompletedEventAttributes,
     ) -> ActivityMachineTransition<Completed> {
         notify_if_not_already_cancelled(dat, |_| {
@@ -580,7 +563,7 @@ impl StartedActivityCancelEventRecorded {
     }
     pub(super) fn on_activity_task_failed(
         self,
-        dat: SharedState,
+        dat: &mut SharedState,
         attrs: ActivityTaskFailedEventAttributes,
     ) -> ActivityMachineTransition<Failed> {
         notify_if_not_already_cancelled(dat, |dat| {
@@ -589,23 +572,23 @@ impl StartedActivityCancelEventRecorded {
     }
     pub(super) fn on_activity_task_timed_out(
         self,
-        dat: SharedState,
+        dat: &mut SharedState,
         attrs: ActivityTaskTimedOutEventAttributes,
     ) -> ActivityMachineTransition<TimedOut> {
         notify_if_not_already_cancelled(dat, |dat| notify_lang_activity_timed_out(dat, attrs))
     }
     pub(super) fn on_activity_task_canceled(
         self,
-        dat: SharedState,
+        dat: &mut SharedState,
         attrs: ActivityTaskCanceledEventAttributes,
     ) -> ActivityMachineTransition<Canceled> {
-        notify_if_not_already_cancelled(dat, |dat| notify_lang_activity_cancelled(dat, Some(attrs)))
+        notify_if_not_already_cancelled(dat, |dat| notify_lang_activity_cancelled(Some(attrs)))
     }
 }
 
 fn notify_if_not_already_cancelled<S>(
-    dat: SharedState,
-    notifier: impl FnOnce(SharedState) -> ActivityMachineTransition<S>,
+    dat: &mut SharedState,
+    notifier: impl FnOnce(&mut SharedState) -> ActivityMachineTransition<S>,
 ) -> ActivityMachineTransition<S>
 where
     S: Into<ActivityMachineState> + Default,
@@ -684,7 +667,7 @@ pub(super) struct Canceled {}
 impl Canceled {
     pub(super) fn on_activity_task_started(
         self,
-        dat: SharedState,
+        dat: &mut SharedState,
         seq_num: i64,
     ) -> ActivityMachineTransition<Canceled> {
         // Abandoned activities might start anyway. Ignore the result.
@@ -699,7 +682,7 @@ impl Canceled {
     }
     pub(super) fn on_activity_task_completed(
         self,
-        dat: SharedState,
+        dat: &mut SharedState,
         attrs: ActivityTaskCompletedEventAttributes,
     ) -> ActivityMachineTransition<Canceled> {
         // Abandoned activities might complete anyway. Ignore the result.
@@ -714,7 +697,7 @@ impl Canceled {
 }
 
 fn create_request_cancel_activity_task_command<S>(
-    dat: SharedState,
+    dat: &mut SharedState,
     next_state: S,
 ) -> ActivityMachineTransition<S>
 where
@@ -739,35 +722,26 @@ where
 /// Notifies lang side that activity has timed out by sending a failure with timeout error as a cause.
 /// State machine will transition into the TimedOut state.
 fn notify_lang_activity_timed_out(
-    dat: SharedState,
+    dat: &mut SharedState,
     attrs: ActivityTaskTimedOutEventAttributes,
 ) -> TransitionResult<ActivityMachine, TimedOut> {
-    ActivityMachineTransition::ok_shared(
-        vec![ActivityMachineCommand::Fail(new_timeout_failure(
-            &dat, attrs,
-        ))],
-        TimedOut::default(),
-        dat,
-    )
+    ActivityMachineTransition::commands(vec![ActivityMachineCommand::Fail(new_timeout_failure(
+        &dat, attrs,
+    ))])
 }
 
 /// Notifies lang side that activity has been cancelled by sending a failure with cancelled failure
 /// as a cause. Optional cancelled_event, if passed, is used to supply event IDs. State machine will
 /// transition into the `next_state` provided as a parameter.
 fn notify_lang_activity_cancelled(
-    dat: SharedState,
     canceled_event: Option<ActivityTaskCanceledEventAttributes>,
 ) -> ActivityMachineTransition<Canceled> {
-    ActivityMachineTransition::ok_shared(
-        vec![ActivityMachineCommand::Cancel(
-            canceled_event.and_then(|e| e.details),
-        )],
-        Canceled::default(),
-        dat,
-    )
+    ActivityMachineTransition::commands(vec![ActivityMachineCommand::Cancel(
+        canceled_event.and_then(|e| e.details),
+    )])
 }
 
-fn new_failure(dat: SharedState, attrs: ActivityTaskFailedEventAttributes) -> Failure {
+fn new_failure(dat: &mut SharedState, attrs: ActivityTaskFailedEventAttributes) -> Failure {
     Failure {
         message: "Activity task failed".to_owned(),
         cause: attrs.failure.map(Box::new),
@@ -947,7 +921,7 @@ mod test {
         ] {
             let mut s = ActivityMachine {
                 state: state.clone(),
-                shared_state: SharedState {
+                shared_state: &mut SharedState {
                     scheduled_event_id: 0,
                     started_event_id: 0,
                     attrs: Default::default(),

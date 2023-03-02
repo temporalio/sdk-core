@@ -32,7 +32,7 @@ use crate::{
     },
 };
 use anyhow::Context;
-use rustfsm::{fsm, TransitionResult};
+use rustfsm::{fsm, StateMachine, TransitionResult};
 use std::{
     collections::{BTreeSet, HashMap},
     convert::TryFrom,
@@ -115,10 +115,7 @@ pub(super) fn has_change<'a>(
             .into(),
         ),
     };
-    let mut machine = PatchMachine {
-        state: initial_state,
-        shared_state,
-    };
+    let mut machine = PatchMachine::from_parts(initial_state, shared_state);
 
     OnEventWrapper::on_event_mut(&mut machine, PatchMachineEvents::Schedule)
         .expect("Patch machine scheduling doesn't fail");
@@ -218,7 +215,7 @@ impl From<MarkerCommandCreatedReplaying> for Notified {
 impl Notified {
     pub(super) fn on_marker_recorded(
         self,
-        dat: SharedState,
+        dat: &mut SharedState,
         id: String,
     ) -> PatchMachineTransition<MarkerCommandRecorded> {
         if id != dat.patch_id {

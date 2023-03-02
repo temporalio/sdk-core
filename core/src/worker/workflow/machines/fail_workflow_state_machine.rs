@@ -3,7 +3,7 @@ use super::{
     OnEventWrapper, WFMachinesAdapter, WFMachinesError,
 };
 use crate::worker::workflow::machines::HistEventData;
-use rustfsm::{fsm, TransitionResult};
+use rustfsm::{fsm, StateMachine, TransitionResult};
 use std::convert::TryFrom;
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::FailWorkflowExecution,
@@ -18,9 +18,9 @@ fsm! {
     pub(super) name FailWorkflowMachine;
     command FailWFCommand;
     error WFMachinesError;
-    shared_state FailWorkflowExecution;
+    shared_state ();
 
-    Created --(Schedule, shared on_schedule) --> FailWorkflowCommandCreated;
+    Created --(Schedule, on_schedule) --> FailWorkflowCommandCreated;
 
     FailWorkflowCommandCreated --(CommandFailWorkflowExecution) --> FailWorkflowCommandCreated;
     FailWorkflowCommandCreated --(WorkflowExecutionFailed) --> FailWorkflowCommandRecorded;
@@ -43,10 +43,7 @@ pub(super) fn fail_workflow(attribs: FailWorkflowExecution) -> NewMachineWithCom
 impl FailWorkflowMachine {
     /// Create a new WF machine and schedule it
     pub(crate) fn new_scheduled(attribs: FailWorkflowExecution) -> (Self, ProtoCommand) {
-        let mut s = Self {
-            state: Created {}.into(),
-            shared_state: attribs,
-        };
+        let mut s = Self::from_parts(Created { attribs }.into(), ());
         let cmd = match OnEventWrapper::on_event_mut(&mut s, FailWorkflowMachineEvents::Schedule)
             .expect("Scheduling fail wf machines doesn't fail")
             .pop()
@@ -59,16 +56,15 @@ impl FailWorkflowMachine {
 }
 
 #[derive(Default, Clone)]
-pub(super) struct Created {}
+pub(super) struct Created {
+    attribs: FailWorkflowExecution,
+}
 
 impl Created {
-    pub(super) fn on_schedule(
-        self,
-        dat: FailWorkflowExecution,
-    ) -> FailWorkflowMachineTransition<FailWorkflowCommandCreated> {
+    pub(super) fn on_schedule(self) -> FailWorkflowMachineTransition<FailWorkflowCommandCreated> {
         let cmd = ProtoCommand {
             command_type: CommandType::FailWorkflowExecution as i32,
-            attributes: Some(dat.into()),
+            attributes: Some(self.attribs.into()),
         };
         TransitionResult::commands(vec![FailWFCommand::AddCommand(cmd)])
     }

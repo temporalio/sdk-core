@@ -471,7 +471,7 @@ impl StateMachineDefinition {
                             Fields::Unnamed(_) => {
                                 let arglist = if ts.mutates_shared {
                                     // TODO: should be &mut (or & and & mut) w/ keyword
-                                    quote! {self.shared_state, val}
+                                    quote! {&mut self.shared_state, val}
                                 } else {
                                     quote! {val}
                                 };
@@ -484,7 +484,7 @@ impl StateMachineDefinition {
                             }
                             Fields::Unit => {
                                 let arglist = if ts.mutates_shared {
-                                    quote! {self.shared_state}
+                                    quote! {&mut self.shared_state}
                                 } else {
                                     quote! {}
                                 };

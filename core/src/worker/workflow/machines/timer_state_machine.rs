@@ -84,13 +84,13 @@ impl TimerMachine {
     }
 
     fn new(attribs: StartTimer) -> Self {
-        Self {
-            state: Created {}.into(),
-            shared_state: SharedState {
+        Self::from_parts(
+            Created {}.into(),
+            SharedState {
                 attrs: attribs,
                 cancelled_before_sent: false,
             },
-        }
+        )
     }
 }
 
@@ -178,15 +178,9 @@ impl StartCommandCreated {
         TransitionResult::default()
     }
 
-    pub(super) fn on_cancel(self, dat: SharedState) -> TimerMachineTransition<Canceled> {
-        TransitionResult::ok_shared(
-            vec![],
-            Canceled::default(),
-            SharedState {
-                cancelled_before_sent: true,
-                ..dat
-            },
-        )
+    pub(super) fn on_cancel(self, dat: &mut SharedState) -> TimerMachineTransition<Canceled> {
+        dat.cancelled_before_sent = true;
+        TransitionResult::default()
     }
 }
 
@@ -196,7 +190,7 @@ pub(super) struct StartCommandRecorded {}
 impl StartCommandRecorded {
     pub(super) fn on_timer_fired(
         self,
-        dat: SharedState,
+        dat: &mut SharedState,
         attrs: TimerFiredEventAttributes,
     ) -> TimerMachineTransition<Fired> {
         if dat.attrs.seq.to_string() == attrs.timer_id {
@@ -211,7 +205,7 @@ impl StartCommandRecorded {
 
     pub(super) fn on_cancel(
         self,
-        dat: SharedState,
+        dat: &mut SharedState,
     ) -> TimerMachineTransition<CancelTimerCommandCreated> {
         let cmd = Command {
             command_type: CommandType::CancelTimer as i32,
