@@ -82,8 +82,9 @@ struct RemoteInFlightActInfo {
     pub base: InFlightActInfo,
     /// Used to calculate aggregation delay between activity heartbeats.
     pub heartbeat_timeout: Option<prost_types::Duration>,
-    /// Set to true if we have already issued a cancellation activation to lang for this activity
-    pub issued_cancel_to_lang: bool,
+    /// Set if we have already issued a cancellation activation to lang for this activity, with
+    /// the original reason we issued the cancel.
+    pub issued_cancel_to_lang: Option<ActivityCancelReason>,
     /// Set to true if we have already learned from the server this activity doesn't exist. EX:
     /// we have learned from heartbeating and issued a cancel task, in which case we may simply
     /// discard the reply.
@@ -103,7 +104,7 @@ impl RemoteInFlightActInfo {
                 start_time: Instant::now(),
             },
             heartbeat_timeout: poll_resp.heartbeat_timeout.clone(),
-            issued_cancel_to_lang: false,
+            issued_cancel_to_lang: None,
             known_not_found: false,
             _permit: permit,
         }
@@ -294,12 +295,12 @@ impl WorkerActivityTasks {
                             if let Some(mut details) =
                                 outstanding_tasks.get_mut(&next_pc.task_token)
                             {
-                                if details.issued_cancel_to_lang {
+                                if details.issued_cancel_to_lang.is_some() {
                                     // Don't double-issue cancellations
                                     return None;
                                 }
 
-                                details.issued_cancel_to_lang = true;
+                                details.issued_cancel_to_lang = Some(next_pc.reason);
                                 if next_pc.reason == ActivityCancelReason::NotFound {
                                     details.known_not_found = true;
                                 }
@@ -419,22 +420,33 @@ impl WorkerActivityTasks {
                             .err()
                     }
                     aer::Status::Cancelled(ar::Cancellation { failure }) => {
-                        let details = if let Some(Failure {
-                            failure_info:
-                                Some(FailureInfo::CanceledFailureInfo(CanceledFailureInfo { details })),
-                            ..
-                        }) = failure
-                        {
-                            details
-                        } else {
-                            warn!(task_token = ? task_token,
-                                "Expected activity cancelled status with CanceledFailureInfo");
+                        if matches!(
+                            act_info.issued_cancel_to_lang,
+                            Some(ActivityCancelReason::GracefulShutdown),
+                        ) {
+                            // We don't tell server about cancels for graceful shutdown since they
+                            // were never requested
                             None
-                        };
-                        client
-                            .cancel_activity_task(task_token.clone(), details.map(Into::into))
-                            .await
-                            .err()
+                        } else {
+                            let details = if let Some(Failure {
+                                failure_info:
+                                    Some(FailureInfo::CanceledFailureInfo(CanceledFailureInfo {
+                                        details,
+                                    })),
+                                ..
+                            }) = failure
+                            {
+                                details
+                            } else {
+                                warn!(task_token = ? task_token,
+                                "Expected activity cancelled status with CanceledFailureInfo");
+                                None
+                            };
+                            client
+                                .cancel_activity_task(task_token.clone(), details.map(Into::into))
+                                .await
+                                .err()
+                        }
                     }
                 };
 
