@@ -59,6 +59,8 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tracing::Span;
 
+type OutstandingActMap = Arc<DashMap<TaskToken, RemoteInFlightActInfo>>;
+
 #[derive(Debug, derive_more::Constructor)]
 struct PendingActivityCancel {
     task_token: TaskToken,
@@ -120,7 +122,7 @@ pub(crate) struct WorkerActivityTasks {
     /// cancellations)
     activity_task_stream: Mutex<BoxStream<'static, Result<ActivityTask, PollActivityError>>>,
     /// Activities that have been issued to lang but not yet completed
-    outstanding_activity_tasks: Arc<DashMap<TaskToken, RemoteInFlightActInfo>>,
+    outstanding_activity_tasks: OutstandingActMap,
     /// Ensures we don't exceed this worker's maximum concurrent activity limit for activities. This
     /// semaphore is used to limit eager activities but shares the same underlying
     /// [MeteredSemaphore] that is used to limit the concurrency for non-eager activities.
@@ -129,15 +131,13 @@ pub(crate) struct WorkerActivityTasks {
     /// eager activities). Tasks received in this stream hold a "tracked" permit that is issued by
     /// the `eager_activities_semaphore`.
     eager_activities_tx: UnboundedSender<TrackedPermittedTqResp>,
+    /// Handles graceful shutdowns, if configured
+    graceful_shutdown: Option<GracefulShutdown>,
 
     metrics: MetricsContext,
 
     max_heartbeat_throttle_interval: Duration,
     default_heartbeat_throttle_interval: Duration,
-    // TODO: Probably put all this in its own struct
-    start_tasks_stream_complete: CancellationToken,
-    graceful_cancel_initted: Once,
-    self_issued_cancels: UnboundedSender<PendingActivityCancel>,
 
     /// Wakes every time an activity is removed from the outstanding map
     complete_notify: Arc<Notify>,
@@ -152,6 +152,7 @@ enum ActivityTaskSource {
 }
 
 impl WorkerActivityTasks {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         max_activity_tasks: usize,
         max_worker_act_per_sec: Option<f64>,
@@ -160,6 +161,7 @@ impl WorkerActivityTasks {
         metrics: MetricsContext,
         max_heartbeat_throttle_interval: Duration,
         default_heartbeat_throttle_interval: Duration,
+        graceful_shutdown: Option<Duration>,
     ) -> Self {
         let semaphore = Arc::new(MeteredSemaphore::new(
             max_activity_tasks,
@@ -213,16 +215,21 @@ impl WorkerActivityTasks {
             eager_activities_tx,
             heartbeat_manager,
             activity_task_stream: Mutex::new(activity_task_stream.boxed()),
-            outstanding_activity_tasks,
             eager_activities_semaphore,
             complete_notify,
             metrics,
             max_heartbeat_throttle_interval,
             default_heartbeat_throttle_interval,
             poll_returned_shutdown_token: CancellationToken::new(),
-            graceful_cancel_initted: Once::new(),
-            self_issued_cancels: cancels_tx,
-            start_tasks_stream_complete,
+            graceful_shutdown: graceful_shutdown.map(|gs| {
+                GracefulShutdown::new(
+                    gs,
+                    start_tasks_stream_complete,
+                    cancels_tx,
+                    outstanding_activity_tasks.clone(),
+                )
+            }),
+            outstanding_activity_tasks,
         }
     }
 
@@ -337,36 +344,16 @@ impl WorkerActivityTasks {
             })
     }
 
-    pub(crate) fn initiate_shutdown(&self, grace_period: Option<Duration>) {
+    pub(crate) fn initiate_shutdown(&self) {
         self.poller_shutdown_token.cancel();
         self.eager_activities_semaphore.close();
-        let starts_done = self.start_tasks_stream_complete.clone();
-        let outstanding = self.outstanding_activity_tasks.clone();
-        let cancels_tx = self.self_issued_cancels.clone();
-        if let Some(gp) = grace_period {
-            let grace_deadline = Instant::now() + gp;
-            self.graceful_cancel_initted.call_once(move || {
-                // We don't really need to join this? TODO: Should I?
-                tokio::task::spawn(async move {
-                    // Don't issue cancels until we know we won't be getting any more tasks to avoid
-                    // missing the cancellation of any just-starting activities.
-                    starts_done.cancelled().await;
-                    // Make sure we've waited at least the grace period. This way if waiting for
-                    // starts to finish took a while, we subtract that from the grace period.
-                    tokio::time::sleep_until(grace_deadline.into()).await;
-                    for mapref in outstanding.iter() {
-                        let _ = cancels_tx.send(PendingActivityCancel::new(
-                            mapref.key().clone(),
-                            ActivityCancelReason::GracefulShutdown,
-                        ));
-                    }
-                });
-            })
+        if let Some(gs) = self.graceful_shutdown.as_ref() {
+            gs.initiate();
         }
     }
 
-    pub(crate) async fn shutdown(&self, grace_period: Option<Duration>) {
-        self.initiate_shutdown(grace_period);
+    pub(crate) async fn shutdown(&self) {
+        self.initiate_shutdown();
         self.poll_returned_shutdown_token.cancelled().await;
         self.heartbeat_manager.shutdown().await;
     }
@@ -585,6 +572,54 @@ pub(crate) struct TrackedPermittedTqResp {
     pub resp: PollActivityTaskQueueResponse,
 }
 
+struct GracefulShutdown {
+    once: Once,
+    start_tasks_stream_complete: CancellationToken,
+    cancels_tx: UnboundedSender<PendingActivityCancel>,
+    grace_period: Duration,
+    outstanding: OutstandingActMap,
+}
+impl GracefulShutdown {
+    fn new(
+        grace_period: Duration,
+        start_tasks_stream_complete: CancellationToken,
+        cancels_tx: UnboundedSender<PendingActivityCancel>,
+        outstanding: OutstandingActMap,
+    ) -> Self {
+        Self {
+            once: Once::new(),
+            grace_period,
+            start_tasks_stream_complete,
+            cancels_tx,
+            outstanding,
+        }
+    }
+
+    fn initiate(&self) {
+        self.once.call_once(|| {
+            let grace_deadline = Instant::now() + self.grace_period;
+            let sts_complete = self.start_tasks_stream_complete.clone();
+            let outstanding = self.outstanding.clone();
+            let cancels_tx = self.cancels_tx.clone();
+            // We don't really need to join this? TODO: Should I?
+            tokio::task::spawn(async move {
+                // Don't issue cancels until we know we won't be getting any more tasks to avoid
+                // missing the cancellation of any just-starting activities.
+                sts_complete.cancelled().await;
+                // Make sure we've waited at least the grace period. This way if waiting for
+                // starts to finish took a while, we subtract that from the grace period.
+                tokio::time::sleep_until(grace_deadline.into()).await;
+                for mapref in outstanding.iter() {
+                    let _ = cancels_tx.send(PendingActivityCancel::new(
+                        mapref.key().clone(),
+                        ActivityCancelReason::GracefulShutdown,
+                    ));
+                }
+            });
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -616,6 +651,7 @@ mod tests {
             MetricsContext::no_op(),
             Duration::from_secs(1),
             Duration::from_secs(1),
+            None,
         );
         let start = Instant::now();
         atm.poll().await.unwrap();
