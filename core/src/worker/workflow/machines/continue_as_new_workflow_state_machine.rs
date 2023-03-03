@@ -3,7 +3,7 @@ use super::{
     WFMachinesAdapter, WFMachinesError,
 };
 use crate::worker::workflow::machines::HistEventData;
-use rustfsm::{fsm, TransitionResult};
+use rustfsm::{fsm, StateMachine, TransitionResult};
 use std::convert::TryFrom;
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::ContinueAsNewWorkflowExecution,
@@ -31,10 +31,7 @@ fsm! {
 pub(super) enum ContinueAsNewWorkflowCommand {}
 
 pub(super) fn continue_as_new(attribs: ContinueAsNewWorkflowExecution) -> NewMachineWithCommand {
-    let mut machine = ContinueAsNewWorkflowMachine {
-        state: Created {}.into(),
-        shared_state: (),
-    };
+    let mut machine = ContinueAsNewWorkflowMachine::from_parts(Created {}.into(), ());
     OnEventWrapper::on_event_mut(&mut machine, ContinueAsNewWorkflowMachineEvents::Schedule)
         .expect("Scheduling continue as new machine doesn't fail");
     let command = Command {

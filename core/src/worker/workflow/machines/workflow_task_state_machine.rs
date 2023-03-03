@@ -4,7 +4,7 @@ use super::{
     workflow_machines::MachineResponse, Cancellable, EventInfo, WFMachinesAdapter, WFMachinesError,
 };
 use crate::worker::workflow::machines::HistEventData;
-use rustfsm::{fsm, TransitionResult};
+use rustfsm::{fsm, StateMachine, TransitionResult};
 use std::{
     convert::{TryFrom, TryInto},
     time::SystemTime,
@@ -32,12 +32,12 @@ fsm! {
 
 impl WorkflowTaskMachine {
     pub(super) fn new(wf_task_started_event_id: i64) -> Self {
-        Self {
-            state: Created {}.into(),
-            shared_state: SharedState {
+        Self::from_parts(
+            Created {}.into(),
+            SharedState {
                 wf_task_started_event_id,
             },
-        }
+        )
     }
 }
 
@@ -201,7 +201,7 @@ pub(super) struct WFTFailedDat {
 impl Scheduled {
     pub(super) fn on_workflow_task_started(
         self,
-        shared: SharedState,
+        shared: &mut SharedState,
         WFTStartedDat {
             current_time_millis,
             started_event_id,

@@ -3,7 +3,7 @@ use super::{
     OnEventWrapper, WFMachinesAdapter, WFMachinesError,
 };
 use crate::worker::workflow::machines::HistEventData;
-use rustfsm::{fsm, MachineError, TransitionResult};
+use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
 use std::convert::TryFrom;
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -86,10 +86,8 @@ pub(super) fn new_external_signal(
         Some(sig_we::Target::WorkflowExecution(we)) => (we, false),
     };
 
-    let mut s = SignalExternalMachine {
-        state: Created {}.into(),
-        shared_state: SharedState { seq: attrs.seq },
-    };
+    let mut s =
+        SignalExternalMachine::from_parts(Created {}.into(), SharedState { seq: attrs.seq });
     OnEventWrapper::on_event_mut(&mut s, SignalExternalMachineEvents::Schedule)
         .expect("Scheduling signal external wf command doesn't fail");
     let cmd_attrs = command::Attributes::SignalExternalWorkflowExecutionCommandAttributes(
@@ -297,7 +295,7 @@ impl Cancellable for SignalExternalMachine {
     fn was_cancelled_before_sent_to_server(&self) -> bool {
         // We are only ever in the cancelled state if cancelled before sent to server, there is no
         // after sent cancellation here.
-        matches!(self.state, SignalExternalMachineState::Cancelled(_))
+        matches!(self.state(), SignalExternalMachineState::Cancelled(_))
     }
 }
 
@@ -427,13 +425,10 @@ mod tests {
             SignalExternalMachineState::Cancelled(Cancelled {}),
             Signaled {}.into(),
         ] {
-            let mut s = SignalExternalMachine {
-                state: state.clone(),
-                shared_state: Default::default(),
-            };
+            let mut s = SignalExternalMachine::from_parts(state.clone(), Default::default());
             let cmds = s.cancel().unwrap();
             assert_eq!(cmds.len(), 0);
-            assert_eq!(discriminant(&state), discriminant(&s.state));
+            assert_eq!(discriminant(&state), discriminant(s.state()));
         }
     }
 }

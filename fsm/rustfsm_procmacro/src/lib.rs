@@ -64,21 +64,21 @@ use syn::{
 /// }
 ///
 /// impl Locked {
-///     fn on_card_readable(&self, shared_dat: SharedState, data: CardData)
+///     fn on_card_readable(&self, shared_dat: &mut SharedState, data: CardData)
 ///       -> CardReaderTransition<ReadingCardOrLocked> {
-///         match shared_dat.last_id {
+///         match &shared_dat.last_id {
 ///             // Arbitrarily deny the same person entering twice in a row
-///             Some(d) if d == data => TransitionResult::ok(vec![], Locked {}.into()),
+///             Some(d) if d == &data => TransitionResult::ok(vec![], Locked {}.into()),
 ///             _ => {
 ///                 // Otherwise issue a processing command. This illustrates using the same handler
 ///                 // for different destinations
-///                 TransitionResult::ok_shared(
+///                 shared_dat.last_id = Some(data.clone());
+///                 TransitionResult::ok(
 ///                     vec![
 ///                         Commands::ProcessData(data.clone()),
 ///                         Commands::StartBlinkingLight,
 ///                     ],
-///                     ReadingCard { card_data: data.clone() }.into(),
-///                     SharedState { last_id: Some(data) }
+///                     ReadingCard { card_data: data }.into(),
 ///                 )
 ///             }
 ///         }
@@ -96,19 +96,19 @@ use syn::{
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let crs = CardReaderState::Locked(Locked {});
-/// let mut cr = CardReader { state: crs, shared_state: SharedState { last_id: None } };
-/// let cmds = cr.on_event_mut(CardReaderEvents::CardReadable("badguy".to_string()))?;
+/// let mut cr = CardReader::from_parts(crs, SharedState { last_id: None });
+/// let cmds = cr.on_event(CardReaderEvents::CardReadable("badguy".to_string()))?;
 /// assert_eq!(cmds[0], Commands::ProcessData("badguy".to_string()));
 /// assert_eq!(cmds[1], Commands::StartBlinkingLight);
 ///
-/// let cmds = cr.on_event_mut(CardReaderEvents::CardRejected)?;
+/// let cmds = cr.on_event(CardReaderEvents::CardRejected)?;
 /// assert_eq!(cmds[0], Commands::StopBlinkingLight);
 ///
-/// let cmds = cr.on_event_mut(CardReaderEvents::CardReadable("goodguy".to_string()))?;
+/// let cmds = cr.on_event(CardReaderEvents::CardReadable("goodguy".to_string()))?;
 /// assert_eq!(cmds[0], Commands::ProcessData("goodguy".to_string()));
 /// assert_eq!(cmds[1], Commands::StartBlinkingLight);
 ///
-/// let cmds = cr.on_event_mut(CardReaderEvents::CardAccepted)?;
+/// let cmds = cr.on_event(CardReaderEvents::CardAccepted)?;
 /// assert_eq!(cmds[0], Commands::StopBlinkingLight);
 /// # Ok(())
 /// # }
@@ -220,7 +220,7 @@ impl Parse for StateMachineDefinition {
         // not ideal.
         let trans_set: HashSet<_> = transitions.iter().collect();
         if trans_set.len() != transitions.len() {
-            return Err(syn::Error::new(
+            return Err(Error::new(
                 input.span(),
                 "Duplicate transitions are not allowed!",
             ));
@@ -363,7 +363,7 @@ impl StateMachineDefinition {
         let machine_struct = quote! {
             #[derive(Clone)]
             #visibility struct #name {
-                state: #state_enum_name,
+                state: ::core::option::Option<#state_enum_name>,
                 shared_state: #shared_state_type
             }
         };
@@ -427,8 +427,18 @@ impl StateMachineDefinition {
                 statemap.insert(s.clone(), vec![]);
             }
         }
+        let transition_result_transform = quote! {
+            match res.into_cmd_result() {
+                Ok((cmds, state)) => {
+                    self.state = Some(state);
+                    Ok(cmds)
+                }
+                Err(e) => Err(e)
+            }
+        };
         let mut multi_dest_enums = vec![];
         let state_branches: Vec<_> = statemap.into_iter().map(|(from, transitions)| {
+            let occupied_current_state = quote! { Some(#state_enum_name::#from(state_data)) };
             // Merge transition dest states with the same handler
             let transitions = merge_transition_dests(transitions);
             let event_branches = transitions
@@ -470,27 +480,27 @@ impl StateMachineDefinition {
                         match ts.event.fields {
                             Fields::Unnamed(_) => {
                                 let arglist = if ts.mutates_shared {
-                                    quote! {self.shared_state, val}
+                                    quote! {&mut self.shared_state, val}
                                 } else {
                                     quote! {val}
                                 };
-                                quote_spanned! {span=>
+                                quote_spanned! { span =>
                                     #events_enum_name::#ev_variant(val) => {
                                         let res: #trans_type = state_data.#ts_fn(#arglist);
-                                        res.into_general()
+                                        #transition_result_transform
                                     }
                                 }
                             }
                             Fields::Unit => {
                                 let arglist = if ts.mutates_shared {
-                                    quote! {self.shared_state}
+                                    quote! {&mut self.shared_state}
                                 } else {
                                     quote! {}
                                 };
-                                quote_spanned! {span=>
+                                quote_spanned! { span =>
                                     #events_enum_name::#ev_variant => {
                                         let res: #trans_type = state_data.#ts_fn(#arglist);
-                                        res.into_general()
+                                        #transition_result_transform
                                     }
                                 }
                             }
@@ -501,39 +511,49 @@ impl StateMachineDefinition {
                         // using `Default`.
                         if let [new_state] = ts.to.as_slice() {
                             let span = new_state.span();
-                            let default_trans = quote_spanned! {span=>
-                            TransitionResult::<_, #new_state>::from::<#from>(state_data).into_general()
-                        };
+                            let default_trans = quote_spanned! { span =>
+                            let res = TransitionResult::<Self, #new_state>::from::<#from>(state_data);
+                                #transition_result_transform
+                            };
                             let span = ts.event.span();
                             match ts.event.fields {
-                                Fields::Unnamed(_) => quote_spanned! {span=>
-                                #events_enum_name::#ev_variant(_val) => {
-                                    #default_trans
-                                }
-                            },
-                                Fields::Unit => quote_spanned! {span=>
-                                #events_enum_name::#ev_variant => {
-                                    #default_trans
-                                }
-                            },
+                                Fields::Unnamed(_) => quote_spanned! { span =>
+                                    #events_enum_name::#ev_variant(_val) => {
+                                        #default_trans
+                                    }
+                                },
+                                Fields::Unit => quote_spanned! { span =>
+                                    #events_enum_name::#ev_variant => {
+                                        #default_trans
+                                    }
+                                },
                                 Fields::Named(_) => unreachable!(),
                             }
-
                         } else {
-                            unreachable!("It should be impossible to have more than one dest state in no-handler transitions")
+                            unreachable!("It should be impossible to have more than one dest state \
+                                          in no-handler transitions")
                         }
                     }
                 })
-                // Since most states won't handle every possible event, return an error to that effect
+                // Since most states won't handle every possible event, return an error to that
+                // effect
                 .chain(std::iter::once(
-                    quote! { _ => { return TransitionResult::InvalidTransition } },
+                    quote! { _ => {
+                        // Restore state in event the transition doesn't match
+                        self.state = #occupied_current_state;
+                        return Err(::rustfsm::MachineError::InvalidTransition)
+                    } },
                 ));
             quote! {
-                #state_enum_name::#from(state_data) => match event {
+                #occupied_current_state => match event {
                     #(#event_branches),*
                 }
             }
-        }).collect();
+        }).chain(std::iter::once(
+            quote! {
+                None => Err(::rustfsm::MachineError::InvalidTransition)
+            }
+        )).collect();
 
         let viz_str = self.visualize();
 
@@ -549,19 +569,21 @@ impl StateMachineDefinition {
                   #name_str
                 }
 
-                fn on_event(self, event: #events_enum_name)
-                  -> ::rustfsm::TransitionResult<Self, Self::State> {
-                    match self.state {
+                fn on_event(&mut self, event: #events_enum_name)
+                  -> ::core::result::Result<::std::vec::Vec<Self::Command>,
+                                            ::rustfsm::MachineError<Self::Error>> {
+                    let taken_state = self.state.take();
+                    match taken_state {
                         #(#state_branches),*
                     }
                 }
 
                 fn state(&self) -> &Self::State {
-                    &self.state
+                    self.state.as_ref().unwrap()
                 }
 
                 fn set_state(&mut self, new: Self::State) {
-                    self.state = new
+                    self.state = Some(new)
                 }
 
                 fn shared_state(&self) -> &Self::SharedState{
@@ -569,11 +591,11 @@ impl StateMachineDefinition {
                 }
 
                 fn has_reached_final_state(&self) -> bool {
-                    self.state.is_final()
+                    self.state.as_ref().unwrap().is_final()
                 }
 
-                fn from_parts(shared: Self::SharedState, state: Self::State) -> Self {
-                    Self { shared_state: shared, state }
+                fn from_parts(state: Self::State, shared: Self::SharedState) -> Self {
+                    Self { shared_state: shared, state: Some(state) }
                 }
 
                 fn visualizer() -> &'static str {

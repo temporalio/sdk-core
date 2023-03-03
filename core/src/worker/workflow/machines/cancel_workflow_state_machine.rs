@@ -3,7 +3,7 @@ use super::{
     NewMachineWithCommand, OnEventWrapper, WFMachinesAdapter, WFMachinesError,
 };
 use crate::worker::workflow::machines::HistEventData;
-use rustfsm::{fsm, TransitionResult};
+use rustfsm::{fsm, StateMachine, TransitionResult};
 use std::convert::TryFrom;
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::CancelWorkflowExecution,
@@ -34,10 +34,7 @@ pub(super) enum CancelWorkflowMachineError {}
 pub(super) enum CancelWorkflowCommand {}
 
 pub(super) fn cancel_workflow(attribs: CancelWorkflowExecution) -> NewMachineWithCommand {
-    let mut machine = CancelWorkflowMachine {
-        state: Created {}.into(),
-        shared_state: (),
-    };
+    let mut machine = CancelWorkflowMachine::from_parts(Created {}.into(), ());
     OnEventWrapper::on_event_mut(&mut machine, CancelWorkflowMachineEvents::Schedule)
         .expect("Scheduling continue as new machine doesn't fail");
     let command = Command {

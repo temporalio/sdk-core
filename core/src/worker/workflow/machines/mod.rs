@@ -278,7 +278,7 @@ trait Cancellable: StateMachine {
     }
 }
 
-/// We need to wrap calls to [StateMachine::on_event_mut] to track coverage, or anything else
+/// We need to wrap calls to [StateMachine::on_event] to track coverage, or anything else
 /// we'd like to do on every call.
 pub(crate) trait OnEventWrapper: StateMachine
 where
@@ -295,7 +295,7 @@ where
         #[cfg(test)]
         let converted_event_str = event.to_string();
 
-        let res = StateMachine::on_event_mut(self, event);
+        let res = StateMachine::on_event(self, event);
         if res.is_ok() {
             #[cfg(test)]
             add_coverage(

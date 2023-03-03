@@ -9,7 +9,7 @@ use crate::{
         InternalFlagsRef, WFMachinesError,
     },
 };
-use rustfsm::{fsm, TransitionResult};
+use rustfsm::{fsm, StateMachine, TransitionResult};
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::UpsertWorkflowSearchAttributes,
     temporal::api::{
@@ -85,14 +85,14 @@ fn create_new(
     should_skip_determinism: bool,
     internal_flags: InternalFlagsRef,
 ) -> NewMachineWithCommand {
-    let sm = UpsertSearchAttributesMachine {
-        state: Created {}.into(),
-        shared_state: SharedState {
+    let sm = UpsertSearchAttributesMachine::from_parts(
+        Created {}.into(),
+        SharedState {
             sa_map: sa_map.clone(),
             should_skip_determinism,
             internal_flags,
         },
-    };
+    );
     let cmd = Command {
         command_type: CommandType::UpsertWorkflowSearchAttributes as i32,
         attributes: Some(
@@ -139,7 +139,7 @@ pub(super) struct CmdRecDat {
 impl CommandIssued {
     pub(super) fn on_command_recorded(
         self,
-        shared: SharedState,
+        shared: &mut SharedState,
         dat: CmdRecDat,
     ) -> UpsertSearchAttributesMachineTransition<Done> {
         if shared.internal_flags.borrow_mut().try_use(
@@ -318,14 +318,14 @@ mod tests {
 
     #[rstest::rstest]
     fn upsert_search_attrs_sm(#[values(true, false)] nondetermistic: bool) {
-        let mut sm = UpsertSearchAttributesMachine {
-            state: Created {}.into(),
-            shared_state: SharedState {
+        let mut sm = UpsertSearchAttributesMachine::from_parts(
+            Created {}.into(),
+            SharedState {
                 sa_map: Default::default(),
                 should_skip_determinism: false,
                 internal_flags: Rc::new(RefCell::new(InternalFlags::all_core_enabled())),
             },
-        };
+        );
 
         let sa_attribs = if nondetermistic {
             UpsertWorkflowSearchAttributesEventAttributes {

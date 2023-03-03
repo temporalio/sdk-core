@@ -6,7 +6,7 @@ use crate::{
     internal_flags::CoreInternalFlags,
     worker::workflow::{machines::HistEventData, InternalFlagsRef},
 };
-use rustfsm::{fsm, MachineError, TransitionResult};
+use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
 use std::convert::{TryFrom, TryInto};
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -134,7 +134,7 @@ pub(super) struct StartCommandCreated {}
 impl StartCommandCreated {
     pub(super) fn on_start_child_workflow_execution_initiated(
         self,
-        state: SharedState,
+        state: &mut SharedState,
         event_dat: ChildWorkflowInitiatedData,
     ) -> ChildWorkflowMachineTransition<StartEventRecorded> {
         if state.internal_flags.borrow_mut().try_use(
@@ -156,41 +156,28 @@ impl StartCommandCreated {
                 )));
             }
         }
-        ChildWorkflowMachineTransition::ok_shared(
-            vec![],
-            StartEventRecorded::default(),
-            SharedState {
-                initiated_event_id: event_dat.event_id,
-                ..state
-            },
-        )
+        state.initiated_event_id = event_dat.event_id;
+        ChildWorkflowMachineTransition::default()
     }
 
     pub(super) fn on_cancelled(
         self,
-        state: SharedState,
+        state: &mut SharedState,
     ) -> ChildWorkflowMachineTransition<Cancelled> {
-        let state = SharedState {
-            cancelled_before_sent: true,
-            ..state
-        };
-        ChildWorkflowMachineTransition::ok_shared(
-            vec![ChildWorkflowCommand::StartCancel(Failure {
-                message: "Child Workflow execution cancelled before scheduled".to_owned(),
-                cause: Some(Box::new(Failure {
-                    failure_info: Some(FailureInfo::CanceledFailureInfo(
-                        failure::CanceledFailureInfo {
-                            ..Default::default()
-                        },
-                    )),
-                    ..Default::default()
-                })),
-                failure_info: failure_info_from_state(&state, RetryState::NonRetryableFailure),
+        state.cancelled_before_sent = true;
+        ChildWorkflowMachineTransition::commands(vec![ChildWorkflowCommand::StartCancel(Failure {
+            message: "Child Workflow execution cancelled before scheduled".to_owned(),
+            cause: Some(Box::new(Failure {
+                failure_info: Some(FailureInfo::CanceledFailureInfo(
+                    failure::CanceledFailureInfo {
+                        ..Default::default()
+                    },
+                )),
                 ..Default::default()
-            })],
-            Cancelled::default(),
-            state,
-        )
+            })),
+            failure_info: failure_info_from_state(state, RetryState::NonRetryableFailure),
+            ..Default::default()
+        })])
     }
 }
 
@@ -200,20 +187,14 @@ pub(super) struct StartEventRecorded {}
 impl StartEventRecorded {
     pub(super) fn on_child_workflow_execution_started(
         self,
-        state: SharedState,
+        state: &mut SharedState,
         event: ChildWorkflowExecutionStartedEvent,
     ) -> ChildWorkflowMachineTransition<Started> {
-        ChildWorkflowMachineTransition::ok_shared(
-            vec![ChildWorkflowCommand::Start(
-                event.workflow_execution.clone(),
-            )],
-            Started::default(),
-            SharedState {
-                started_event_id: event.started_event_id,
-                run_id: event.workflow_execution.run_id,
-                ..state
-            },
-        )
+        state.started_event_id = event.started_event_id;
+        state.run_id = event.workflow_execution.run_id.clone();
+        ChildWorkflowMachineTransition::commands(vec![ChildWorkflowCommand::Start(
+            event.workflow_execution,
+        )])
     }
     pub(super) fn on_start_child_workflow_execution_failed(
         self,
@@ -244,13 +225,13 @@ impl Started {
     }
     fn on_child_workflow_execution_failed(
         self,
-        state: SharedState,
+        state: &mut SharedState,
         attrs: ChildWorkflowExecutionFailedEventAttributes,
     ) -> ChildWorkflowMachineTransition<Failed> {
         ChildWorkflowMachineTransition::ok(
             vec![ChildWorkflowCommand::Fail(Failure {
                 message: "Child Workflow execution failed".to_owned(),
-                failure_info: failure_info_from_state(&state, attrs.retry_state()),
+                failure_info: failure_info_from_state(state, attrs.retry_state()),
                 cause: attrs.failure.map(Box::new),
                 ..Default::default()
             })],
@@ -259,7 +240,7 @@ impl Started {
     }
     fn on_child_workflow_execution_timed_out(
         self,
-        state: SharedState,
+        state: &mut SharedState,
         retry_state: RetryState,
     ) -> ChildWorkflowMachineTransition<TimedOut> {
         ChildWorkflowMachineTransition::ok(
@@ -275,7 +256,7 @@ impl Started {
                     )),
                     ..Default::default()
                 })),
-                failure_info: failure_info_from_state(&state, retry_state),
+                failure_info: failure_info_from_state(state, retry_state),
                 ..Default::default()
             })],
             TimedOut::default(),
@@ -286,7 +267,7 @@ impl Started {
     }
     fn on_child_workflow_execution_terminated(
         self,
-        state: SharedState,
+        state: &mut SharedState,
     ) -> ChildWorkflowMachineTransition<Terminated> {
         ChildWorkflowMachineTransition::ok(
             vec![ChildWorkflowCommand::Fail(Failure {
@@ -298,7 +279,7 @@ impl Started {
                     )),
                     ..Default::default()
                 })),
-                failure_info: failure_info_from_state(&state, RetryState::NonRetryableFailure),
+                failure_info: failure_info_from_state(state, RetryState::NonRetryableFailure),
                 ..Default::default()
             })],
             Terminated::default(),
@@ -306,7 +287,7 @@ impl Started {
     }
     fn on_cancelled(
         self,
-        state: SharedState,
+        state: &mut SharedState,
     ) -> ChildWorkflowMachineTransition<StartedOrCancelled> {
         let dest = match state.cancel_type {
             ChildWorkflowCancellationType::Abandon | ChildWorkflowCancellationType::TryCancel => {
@@ -349,9 +330,9 @@ impl ChildWorkflowMachine {
         attribs: StartChildWorkflowExecution,
         internal_flags: InternalFlagsRef,
     ) -> NewMachineWithCommand {
-        let mut s = Self {
-            state: Created {}.into(),
-            shared_state: SharedState {
+        let mut s = Self::from_parts(
+            Created {}.into(),
+            SharedState {
                 lang_sequence_number: attribs.seq,
                 workflow_id: attribs.workflow_id.clone(),
                 workflow_type: attribs.workflow_type.clone(),
@@ -363,7 +344,7 @@ impl ChildWorkflowMachine {
                 started_event_id: 0,
                 cancelled_before_sent: false,
             },
-        };
+        );
         OnEventWrapper::on_event_mut(&mut s, ChildWorkflowMachineEvents::Schedule)
             .expect("Scheduling child workflows doesn't fail");
         let cmd = Command {
@@ -895,9 +876,9 @@ mod test {
             TimedOut {}.into(),
             Completed {}.into(),
         ] {
-            let mut s = ChildWorkflowMachine {
-                state: state.clone(),
-                shared_state: SharedState {
+            let mut s = ChildWorkflowMachine::from_parts(
+                state.clone(),
+                SharedState {
                     initiated_event_id: 0,
                     started_event_id: 0,
                     lang_sequence_number: 0,
@@ -909,10 +890,10 @@ mod test {
                     cancel_type: Default::default(),
                     internal_flags: Rc::new(RefCell::new(InternalFlags::new(&Default::default()))),
                 },
-            };
+            );
             let cmds = s.cancel().unwrap();
             assert_eq!(cmds.len(), 0);
-            assert_eq!(discriminant(&state), discriminant(&s.state));
+            assert_eq!(discriminant(&state), discriminant(s.state()));
         }
     }
 }

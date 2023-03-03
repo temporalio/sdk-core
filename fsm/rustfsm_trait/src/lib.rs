@@ -19,45 +19,12 @@ pub trait StateMachine: Sized {
     /// The type used to represent commands the machine issues upon transitions.
     type Command;
 
-    /// Handle an incoming event, returning a transition result which represents updates to apply
-    /// to the state machine.
-    fn on_event(self, event: Self::Event) -> TransitionResult<Self, Self::State>;
-
-    /// Handle an incoming event and mutate the state machine to update to the new state and apply
-    /// any changes to shared state.
-    ///
-    /// Returns the commands issued by the transition on success, otherwise a [MachineError]
-    fn on_event_mut(
+    /// Handle an incoming event, returning any new commands or an error. Implementations may
+    /// mutate current state, possibly moving to a new state.
+    fn on_event(
         &mut self,
         event: Self::Event,
-    ) -> Result<Vec<Self::Command>, MachineError<Self::Error>>
-    where
-        Self: Clone,
-    {
-        // TODO: Get rid of this clone. It's pointless.
-        // NOTE: This clone is actually nice in some sense, giving us a kind of transactionality.
-        //   However if there are really big things in state it could be an issue.
-        let res = self.clone().on_event(event);
-        match res {
-            TransitionResult::Ok {
-                commands,
-                new_state,
-                shared_state,
-            } => {
-                *self = Self::from_parts(shared_state, new_state);
-                Ok(commands)
-            }
-            TransitionResult::OkNoShare {
-                commands,
-                new_state,
-            } => {
-                self.set_state(new_state);
-                Ok(commands)
-            }
-            TransitionResult::InvalidTransition => Err(MachineError::InvalidTransition),
-            TransitionResult::Err(e) => Err(MachineError::Underlying(e)),
-        }
-    }
+    ) -> Result<Vec<Self::Command>, MachineError<Self::Error>>;
 
     fn name(&self) -> &str;
 
@@ -72,7 +39,7 @@ pub trait StateMachine: Sized {
     fn has_reached_final_state(&self) -> bool;
 
     /// Given the shared data and new state, create a new instance.
-    fn from_parts(shared: Self::SharedState, state: Self::State) -> Self;
+    fn from_parts(state: Self::State, shared: Self::SharedState) -> Self;
 
     /// Return a PlantUML definition of the fsm that can be used to visualize it
     fn visualizer() -> &'static str;
@@ -137,12 +104,6 @@ where
     Ok {
         commands: Vec<Machine::Command>,
         new_state: DestinationState,
-        shared_state: Machine::SharedState,
-    },
-    /// The transition was successful with no shared state change
-    OkNoShare {
-        commands: Vec<Machine::Command>,
-        new_state: DestinationState,
     },
     /// There was some error performing the transition
     Err(Machine::Error),
@@ -159,23 +120,9 @@ where
     where
         CI: IntoIterator<Item = Sm::Command>,
     {
-        Self::OkNoShare {
-            commands: commands.into_iter().collect(),
-            new_state,
-        }
-    }
-
-    /// Produce a transition with the provided commands to the provided state with shared state
-    /// changes
-    pub fn ok_shared<CI, SS>(commands: CI, new_state: Ds, new_shared: SS) -> Self
-    where
-        CI: IntoIterator<Item = Sm::Command>,
-        SS: Into<Sm::SharedState>,
-    {
         Self::Ok {
             commands: commands.into_iter().collect(),
             new_state,
-            shared_state: new_shared.into(),
         }
     }
 
@@ -186,7 +133,7 @@ where
         CurrentState: Into<Ds>,
     {
         let as_dest: Ds = current_state.into();
-        Self::OkNoShare {
+        Self::Ok {
             commands: vec![],
             new_state: as_dest,
         }
@@ -203,7 +150,7 @@ where
     where
         CI: IntoIterator<Item = Sm::Command>,
     {
-        Self::OkNoShare {
+        Self::Ok {
             commands: commands.into_iter().collect(),
             new_state: Ds::default(),
         }
@@ -216,7 +163,7 @@ where
     Ds: Into<Sm::State> + Default,
 {
     fn default() -> Self {
-        Self::OkNoShare {
+        Self::Ok {
             commands: vec![],
             new_state: Ds::default(),
         }
@@ -235,20 +182,26 @@ where
             TransitionResult::Ok {
                 commands,
                 new_state,
-                shared_state,
             } => TransitionResult::Ok {
-                commands,
-                new_state: new_state.into(),
-                shared_state,
-            },
-            TransitionResult::OkNoShare {
-                commands,
-                new_state,
-            } => TransitionResult::OkNoShare {
                 commands,
                 new_state: new_state.into(),
             },
             TransitionResult::Err(e) => TransitionResult::Err(e),
+        }
+    }
+
+    /// Transforms the transition result into a machine-ready outcome with commands and new state,
+    /// or a [MachineError]
+    #[allow(clippy::type_complexity)]
+    pub fn into_cmd_result(self) -> Result<(Vec<Sm::Command>, Sm::State), MachineError<Sm::Error>> {
+        let general = self.into_general();
+        match general {
+            TransitionResult::Ok {
+                new_state,
+                commands,
+            } => Ok((commands, new_state)),
+            TransitionResult::InvalidTransition => Err(MachineError::InvalidTransition),
+            TransitionResult::Err(e) => Err(MachineError::Underlying(e)),
         }
     }
 }

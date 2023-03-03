@@ -3,7 +3,7 @@ use super::{
     OnEventWrapper, WFMachinesAdapter, WFMachinesError,
 };
 use crate::worker::workflow::machines::HistEventData;
-use rustfsm::{fsm, TransitionResult};
+use rustfsm::{fsm, StateMachine, TransitionResult};
 use std::convert::TryFrom;
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -61,10 +61,7 @@ pub(super) fn new_external_cancel(
     only_child: bool,
     reason: String,
 ) -> NewMachineWithCommand {
-    let mut s = CancelExternalMachine {
-        state: Created {}.into(),
-        shared_state: SharedState { seq },
-    };
+    let mut s = CancelExternalMachine::from_parts(Created {}.into(), SharedState { seq });
     OnEventWrapper::on_event_mut(&mut s, CancelExternalMachineEvents::Schedule)
         .expect("Scheduling cancel external wf command doesn't fail");
     let cmd_attrs = command::Attributes::RequestCancelExternalWorkflowExecutionCommandAttributes(

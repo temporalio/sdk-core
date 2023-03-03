@@ -167,15 +167,15 @@ pub(super) fn new_local_activity(
         .original_schedule_time
         .get_or_insert(SystemTime::now());
 
-    let mut machine = LocalActivityMachine {
-        state: initial_state,
-        shared_state: SharedState {
+    let mut machine = LocalActivityMachine::from_parts(
+        initial_state,
+        SharedState {
             attrs,
             replaying_when_invoked,
             wf_time_when_started: wf_time,
             internal_flags,
         },
-    };
+    );
 
     let mut res = OnEventWrapper::on_event_mut(&mut machine, LocalActivityMachineEvents::Schedule)
         .expect("Scheduling local activities doesn't fail");
@@ -199,13 +199,13 @@ impl LocalActivityMachine {
     ///
     /// Attempting the check in any other state likely means a bug in the SDK.
     pub(super) fn marker_should_get_special_handling(&self) -> Result<bool, WFMachinesError> {
-        match &self.state {
+        match self.state() {
             LocalActivityMachineState::ResultNotified(_) => Ok(false),
             LocalActivityMachineState::WaitingMarkerEvent(_) => Ok(true),
             LocalActivityMachineState::WaitingMarkerEventPreResolved(_) => Ok(true),
             _ => Err(WFMachinesError::Fatal(format!(
                 "Attempted to check for LA marker handling in invalid state {}",
-                self.state
+                self.state()
             ))),
         }
     }
@@ -213,7 +213,10 @@ impl LocalActivityMachine {
     /// Returns true if the machine will willingly accept data from a marker in its current state.
     /// IE: Calling [Self::try_resolve_with_dat] makes sense.
     pub(super) fn will_accept_resolve_marker(&self) -> bool {
-        matches!(self.state, LocalActivityMachineState::WaitingMarkerEvent(_))
+        matches!(
+            self.state(),
+            LocalActivityMachineState::WaitingMarkerEvent(_)
+        )
     }
 
     /// Must be called if the workflow encounters a non-replay workflow task
@@ -351,9 +354,11 @@ pub(super) struct Executing {}
 impl Executing {
     pub(super) fn on_schedule(
         self,
-        dat: SharedState,
+        dat: &mut SharedState,
     ) -> LocalActivityMachineTransition<RequestSent> {
-        TransitionResult::commands([LocalActivityCommand::RequestActivityExecution(dat.attrs)])
+        TransitionResult::commands([LocalActivityCommand::RequestActivityExecution(
+            dat.attrs.clone(),
+        )])
     }
 }
 
@@ -463,7 +468,7 @@ impl RequestSent {
 
     fn on_no_wait_cancel(
         self,
-        shared: SharedState,
+        shared: &mut SharedState,
         cancel_type: ActivityCancellationType,
     ) -> LocalActivityMachineTransition<MarkerCommandCreated> {
         let mut cmds = vec![];
@@ -502,7 +507,7 @@ pub(super) struct ResultNotified {
 impl ResultNotified {
     pub(super) fn on_marker_recorded(
         self,
-        shared: SharedState,
+        shared: &mut SharedState,
         dat: CompleteLocalActivityData,
     ) -> LocalActivityMachineTransition<MarkerCommandRecorded> {
         if self.result_type == ResultType::Completed && dat.result.is_err() {
@@ -517,7 +522,7 @@ impl ResultNotified {
                 shared.attrs.seq
             )));
         }
-        verify_marker_dat!(&shared, &dat, TransitionResult::default())
+        verify_marker_dat!(shared, &dat, TransitionResult::default())
     }
 }
 
@@ -529,11 +534,11 @@ pub(super) struct WaitingMarkerEvent {
 impl WaitingMarkerEvent {
     pub(super) fn on_marker_recorded(
         self,
-        shared: SharedState,
+        shared: &mut SharedState,
         dat: CompleteLocalActivityData,
     ) -> LocalActivityMachineTransition<MarkerCommandRecorded> {
         verify_marker_dat!(
-            &shared,
+            shared,
             &dat,
             TransitionResult::commands(if self.already_resolved {
                 vec![]
@@ -555,17 +560,13 @@ impl WaitingMarkerEvent {
     }
     pub(super) fn on_started_non_replay_wft(
         self,
-        mut dat: SharedState,
+        dat: &mut SharedState,
     ) -> LocalActivityMachineTransition<RequestSent> {
         // We aren't really "replaying" anymore for our purposes, and want to record the marker.
         dat.replaying_when_invoked = false;
-        TransitionResult::ok_shared(
-            [LocalActivityCommand::RequestActivityExecution(
-                dat.attrs.clone(),
-            )],
-            RequestSent::default(),
-            dat,
-        )
+        TransitionResult::commands([LocalActivityCommand::RequestActivityExecution(
+            dat.attrs.clone(),
+        )])
     }
 
     fn on_cancel_requested(self) -> LocalActivityMachineTransition<WaitingMarkerEvent> {
@@ -589,10 +590,10 @@ pub(super) struct WaitingMarkerEventPreResolved {}
 impl WaitingMarkerEventPreResolved {
     pub(super) fn on_marker_recorded(
         self,
-        shared: SharedState,
+        shared: &mut SharedState,
         dat: CompleteLocalActivityData,
     ) -> LocalActivityMachineTransition<MarkerCommandRecorded> {
-        verify_marker_dat!(&shared, &dat, TransitionResult::default())
+        verify_marker_dat!(shared, &dat, TransitionResult::default())
     }
 }
 

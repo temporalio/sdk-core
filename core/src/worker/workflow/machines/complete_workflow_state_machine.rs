@@ -3,7 +3,7 @@ use super::{
     OnEventWrapper, WFMachinesAdapter, WFMachinesError,
 };
 use crate::worker::workflow::machines::HistEventData;
-use rustfsm::{fsm, TransitionResult};
+use rustfsm::{fsm, StateMachine, TransitionResult};
 use std::convert::TryFrom;
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::CompleteWorkflowExecution,
@@ -19,9 +19,9 @@ fsm! {
     name CompleteWorkflowMachine;
     command CompleteWFCommand;
     error WFMachinesError;
-    shared_state CompleteWorkflowExecution;
+    shared_state ();
 
-    Created --(Schedule, shared on_schedule) --> CompleteWorkflowCommandCreated;
+    Created --(Schedule, on_schedule) --> CompleteWorkflowCommandCreated;
 
     CompleteWorkflowCommandCreated --(CommandCompleteWorkflowExecution)
         --> CompleteWorkflowCommandCreated;
@@ -46,10 +46,7 @@ pub(super) fn complete_workflow(attribs: CompleteWorkflowExecution) -> NewMachin
 impl CompleteWorkflowMachine {
     /// Create a new WF machine and schedule it
     pub(crate) fn new_scheduled(attribs: CompleteWorkflowExecution) -> (Self, Command) {
-        let mut s = Self {
-            state: Created {}.into(),
-            shared_state: attribs,
-        };
+        let mut s = Self::from_parts(Created { attribs }.into(), ());
         let cmd =
             match OnEventWrapper::on_event_mut(&mut s, CompleteWorkflowMachineEvents::Schedule)
                 .expect("Scheduling complete wf machines doesn't fail")
@@ -90,16 +87,17 @@ impl TryFrom<CommandType> for CompleteWorkflowMachineEvents {
 }
 
 #[derive(Default, Clone)]
-pub(super) struct Created {}
+pub(super) struct Created {
+    attribs: CompleteWorkflowExecution,
+}
 
 impl Created {
     pub(super) fn on_schedule(
         self,
-        dat: CompleteWorkflowExecution,
     ) -> CompleteWorkflowMachineTransition<CompleteWorkflowCommandCreated> {
         let cmd = Command {
             command_type: CommandType::CompleteWorkflowExecution as i32,
-            attributes: Some(dat.into()),
+            attributes: Some(self.attribs.into()),
         };
         TransitionResult::commands(vec![CompleteWFCommand::AddCommand(cmd)])
     }
