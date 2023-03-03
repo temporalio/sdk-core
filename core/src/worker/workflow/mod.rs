@@ -21,10 +21,10 @@ pub(crate) use history_update::HistoryUpdate;
 #[cfg(test)]
 pub(crate) use managed_run::ManagedWFFunc;
 
-use crate::worker::activities::TrackedPermittedTqResp;
 use crate::{
     abstractions::{
-        stream_when_allowed, MeteredSemaphore, TrackedOwnedMeteredSemPermit, UsedMeteredSemPermit,
+        stream_when_allowed, take_cell::TakeCell, MeteredSemaphore, TrackedOwnedMeteredSemPermit,
+        UsedMeteredSemPermit,
     },
     internal_flags::InternalFlags,
     protosext::{legacy_query_failure, ValidPollWFTQResponse},
@@ -33,7 +33,7 @@ use crate::{
         VecDisplayer,
     },
     worker::{
-        activities::{ActivitiesFromWFTsHandle, LocalActivityManager},
+        activities::{ActivitiesFromWFTsHandle, LocalActivityManager, TrackedPermittedTqResp},
         client::{WorkerClient, WorkflowTaskCompletion},
         workflow::{
             history_update::HistoryPaginator,
@@ -111,7 +111,7 @@ type InternalFlagsRef = Rc<RefCell<InternalFlags>>;
 pub(crate) struct Workflows {
     task_queue: String,
     local_tx: UnboundedSender<LocalInput>,
-    processing_task: tokio::sync::Mutex<Option<thread::JoinHandle<()>>>,
+    processing_task: TakeCell<thread::JoinHandle<()>>,
     activation_stream: tokio::sync::Mutex<(
         BoxedActivationStream,
         // Used to indicate polling may begin
@@ -249,7 +249,7 @@ impl Workflows {
         Self {
             task_queue,
             local_tx,
-            processing_task: tokio::sync::Mutex::new(Some(processing_task)),
+            processing_task: TakeCell::new(processing_task),
             activation_stream: tokio::sync::Mutex::new((
                 UnboundedReceiverStream::new(activation_rx).boxed(),
                 Some(start_polling_tx),
@@ -491,8 +491,7 @@ impl Workflows {
     }
 
     pub(super) async fn shutdown(&self) -> Result<(), anyhow::Error> {
-        let maybe_jh = self.processing_task.lock().await.take();
-        if let Some(jh) = maybe_jh {
+        if let Some(jh) = self.processing_task.take_once() {
             // This serves to drive the stream if it is still alive and wouldn't otherwise receive
             // another message. It allows it to shut itself down.
             let (waker, stop_waker) = abortable(async {

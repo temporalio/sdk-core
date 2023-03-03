@@ -10,7 +10,7 @@ pub(crate) use local_activities::{
 
 use crate::{
     abstractions::{
-        ClosableMeteredSemaphore, MeteredSemaphore, OwnedMeteredSemPermit,
+        take_cell::TakeCell, ClosableMeteredSemaphore, MeteredSemaphore, OwnedMeteredSemPermit,
         TrackedOwnedMeteredSemPermit, UsedMeteredSemPermit,
     },
     pollers::BoxedActPoller,
@@ -37,7 +37,7 @@ use governor::{Quota, RateLimiter};
 use std::{
     convert::TryInto,
     future,
-    sync::{Arc, Once},
+    sync::Arc,
     time::{Duration, Instant},
 };
 use temporal_sdk_core_protos::{
@@ -573,7 +573,9 @@ pub(crate) struct TrackedPermittedTqResp {
 }
 
 struct GracefulShutdown {
-    once: Once,
+    once: TakeCell<GSState>,
+}
+struct GSState {
     start_tasks_stream_complete: CancellationToken,
     cancels_tx: UnboundedSender<PendingActivityCancel>,
     grace_period: Duration,
@@ -587,36 +589,34 @@ impl GracefulShutdown {
         outstanding: OutstandingActMap,
     ) -> Self {
         Self {
-            once: Once::new(),
-            grace_period,
-            start_tasks_stream_complete,
-            cancels_tx,
-            outstanding,
+            once: TakeCell::new(GSState {
+                grace_period,
+                start_tasks_stream_complete,
+                cancels_tx,
+                outstanding,
+            }),
         }
     }
 
     fn initiate(&self) {
-        self.once.call_once(|| {
-            let grace_deadline = Instant::now() + self.grace_period;
-            let sts_complete = self.start_tasks_stream_complete.clone();
-            let outstanding = self.outstanding.clone();
-            let cancels_tx = self.cancels_tx.clone();
-            // We don't really need to join this? TODO: Should I?
+        if let Some(state) = self.once.take_once() {
+            let grace_deadline = Instant::now() + state.grace_period;
+            // We don't really need to join this
             tokio::task::spawn(async move {
                 // Don't issue cancels until we know we won't be getting any more tasks to avoid
                 // missing the cancellation of any just-starting activities.
-                sts_complete.cancelled().await;
+                state.start_tasks_stream_complete.cancelled().await;
                 // Make sure we've waited at least the grace period. This way if waiting for
                 // starts to finish took a while, we subtract that from the grace period.
                 tokio::time::sleep_until(grace_deadline.into()).await;
-                for mapref in outstanding.iter() {
-                    let _ = cancels_tx.send(PendingActivityCancel::new(
+                for mapref in state.outstanding.iter() {
+                    let _ = state.cancels_tx.send(PendingActivityCancel::new(
                         mapref.key().clone(),
                         ActivityCancelReason::GracefulShutdown,
                     ));
                 }
             });
-        })
+        }
     }
 }
 

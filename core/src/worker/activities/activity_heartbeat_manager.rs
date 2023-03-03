@@ -1,4 +1,5 @@
 use crate::{
+    abstractions::take_cell::TakeCell,
     worker::{activities::PendingActivityCancel, client::WorkerClient},
     TaskToken,
 };
@@ -17,7 +18,7 @@ use temporal_sdk_core_protos::{
 use tokio::{
     sync::{
         mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
-        Mutex, Notify,
+        Notify,
     },
     task::JoinHandle,
 };
@@ -28,7 +29,7 @@ use tokio_util::sync::CancellationToken;
 pub(crate) struct ActivityHeartbeatManager {
     shutdown_token: CancellationToken,
     /// Used during `shutdown` to await until all inflight requests are sent.
-    join_handle: Mutex<Option<JoinHandle<()>>>,
+    join_handle: TakeCell<JoinHandle<()>>,
     heartbeat_tx: UnboundedSender<HeartbeatAction>,
 }
 
@@ -175,7 +176,7 @@ impl ActivityHeartbeatManager {
         );
 
         Self {
-            join_handle: Mutex::new(Some(join_handle)),
+            join_handle: TakeCell::new(join_handle),
             shutdown_token,
             heartbeat_tx,
         }
@@ -219,8 +220,7 @@ impl ActivityHeartbeatManager {
     /// heartbeat requests to be flushed to the server.
     pub(super) async fn shutdown(&self) {
         self.shutdown_token.cancel();
-        let mut handle = self.join_handle.lock().await;
-        if let Some(h) = handle.take() {
+        if let Some(h) = self.join_handle.take_once() {
             let handle_r = h.await;
             if let Err(e) = handle_r {
                 if !e.is_cancelled() {
