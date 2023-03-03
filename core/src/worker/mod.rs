@@ -149,7 +149,7 @@ impl WorkerTrait for Worker {
         self.shutdown_token.cancel();
         // First, we want to stop polling of both activity and workflow tasks
         if let Some(atm) = self.at_task_mgr.as_ref() {
-            atm.notify_shutdown();
+            atm.initiate_shutdown(self.config.graceful_shutdown_period);
         }
         // Let the manager know that shutdown has been initiated to try to unblock the local activity poll in case this
         // worker is an activity-only worker.
@@ -350,14 +350,14 @@ impl Worker {
         lam.wait_all_outstanding_tasks_finished().await;
         // Wait for activities to finish
         if let Some(acts) = self.at_task_mgr.as_ref() {
-            acts.shutdown().await;
+            acts.shutdown(self.config.graceful_shutdown_period).await;
         }
     }
 
     /// Finish shutting down by consuming the background pollers and freeing all resources
     async fn finalize_shutdown(self) {
         if let Some(b) = self.at_task_mgr {
-            b.shutdown().await;
+            b.shutdown(self.config.graceful_shutdown_period).await;
         }
     }
 

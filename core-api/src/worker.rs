@@ -118,6 +118,11 @@ pub struct WorkerConfig {
     #[builder(default)]
     #[serde(skip)]
     pub wf_state_inputs: Option<UnboundedSender<Vec<u8>>>,
+
+    /// If set, core will issue cancels for all outstanding activities after shutdown has been
+    /// initiated and this amount of time has elapsed.
+    #[builder(setter(strip_option), default)]
+    pub graceful_shutdown_period: Option<Duration>,
 }
 
 impl WorkerConfig {

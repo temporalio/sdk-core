@@ -13,7 +13,7 @@ use futures::FutureExt;
 use itertools::Itertools;
 use std::{
     cell::RefCell,
-    collections::{hash_map::Entry, HashMap, VecDeque},
+    collections::{hash_map::Entry, HashMap, HashSet, VecDeque},
     future,
     rc::Rc,
     sync::{
@@ -34,7 +34,7 @@ use temporal_sdk_core_protos::{
             activity_execution_result, activity_resolution, ActivityExecutionResult,
             ActivityResolution, Success,
         },
-        activity_task::{activity_task, ActivityTask},
+        activity_task::{activity_task, ActivityCancelReason, ActivityTask, Cancel},
         workflow_activation::{workflow_activation_job, ResolveActivity, WorkflowActivationJob},
         workflow_commands::{
             ActivityCancellationType, CompleteWorkflowExecution, RequestCancelActivity,
@@ -61,10 +61,8 @@ use temporal_sdk_core_test_utils::{fanout_tasks, start_timer_cmd, TestWorker};
 use tokio::{sync::Barrier, time::sleep};
 use tokio_util::sync::CancellationToken;
 
-#[tokio::test]
-async fn max_activities_respected() {
-    let _task_q = "q";
-    let mut tasks = VecDeque::from(vec![
+fn three_tasks() -> VecDeque<PollActivityTaskQueueResponse> {
+    VecDeque::from(vec![
         PollActivityTaskQueueResponse {
             task_token: vec![1],
             activity_id: "act1".to_string(),
@@ -80,7 +78,13 @@ async fn max_activities_respected() {
             activity_id: "act3".to_string(),
             ..Default::default()
         },
-    ]);
+    ])
+}
+
+#[tokio::test]
+async fn max_activities_respected() {
+    let _task_q = "q";
+    let mut tasks = three_tasks();
     let mut mock_client = mock_workflow_client();
     mock_client
         .expect_poll_activity_task()
@@ -1046,4 +1050,45 @@ async fn cant_complete_activity_with_unset_result_payload() {
         res,
         Err(CompleteActivityError::MalformedActivityCompletion { .. })
     )
+}
+
+#[tokio::test]
+async fn graceful_shutdown() {
+    let _task_q = "q";
+    let mut tasks = three_tasks();
+    let mut mock_client = mock_workflow_client();
+    mock_client
+        .expect_poll_activity_task()
+        .times(3)
+        .returning(move |_, _| Ok(tasks.pop_front().unwrap()));
+    mock_client
+        .expect_complete_activity_task()
+        .returning(|_, _| Ok(RespondActivityTaskCompletedResponse::default()));
+
+    let worker = Worker::new_test(
+        test_worker_cfg()
+            .graceful_shutdown_period(Duration::from_millis(500))
+            .build()
+            .unwrap(),
+        mock_client,
+    );
+
+    let _1 = worker.poll_activity_task().await.unwrap();
+    let _2 = worker.poll_activity_task().await.unwrap();
+    let _3 = worker.poll_activity_task().await.unwrap();
+
+    worker.initiate_shutdown();
+    let expected_tts = HashSet::from([vec![1], vec![2], vec![3]]);
+    let mut seen_tts = HashSet::new();
+    for _ in 1..=3 {
+        let cancel = worker.poll_activity_task().await.unwrap();
+        assert_matches!(
+            cancel.variant,
+            Some(activity_task::Variant::Cancel(Cancel {
+                reason: r
+            })) if r == ActivityCancelReason::GracefulShutdown as i32
+        );
+        seen_tts.insert(cancel.task_token);
+    }
+    assert_eq!(expected_tts, seen_tts);
 }
