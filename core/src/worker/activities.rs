@@ -51,9 +51,12 @@ use temporal_sdk_core_protos::{
         workflowservice::v1::PollActivityTaskQueueResponse,
     },
 };
-use tokio::sync::{
-    mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
-    Mutex, Notify,
+use tokio::{
+    join,
+    sync::{
+        mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
+        Mutex, Notify,
+    },
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
@@ -331,26 +334,32 @@ impl WorkerActivityTasks {
                 }
             })
             .take_until(async move {
-                let grace_deadline = grace_period.map(|gp| Instant::now() + gp);
-
                 start_tasks_stream_complete.cancelled().await;
-
                 // Issue cancels for any still-living act tasks after the grace period
-                if let Some(gd) = grace_deadline {
-                    // Make sure we've waited at least the grace period. This way if waiting for
-                    // starts to finish took a while, we subtract that from the grace period.
-                    tokio::time::sleep_until(gd.into()).await;
-                    for mapref in outstanding_tasks_clone.iter() {
-                        let _ = cancels_tx.send(PendingActivityCancel::new(
-                            mapref.key().clone(),
-                            ActivityCancelReason::WorkerShutdown,
-                        ));
+                let (grace_killer, stop_grace) = futures_util::future::abortable(async {
+                    if let Some(gp) = grace_period {
+                        // Make sure we've waited at least the grace period. This way if waiting for
+                        // starts to finish took a while, we subtract that from the grace period.
+                        tokio::time::sleep(gp).await;
+                        for mapref in outstanding_tasks_clone.iter() {
+                            let _ = cancels_tx.send(PendingActivityCancel::new(
+                                mapref.key().clone(),
+                                ActivityCancelReason::WorkerShutdown,
+                            ));
+                        }
                     }
-                }
-
-                while !outstanding_tasks_clone.is_empty() {
-                    complete_notify.notified().await
-                }
+                });
+                join!(
+                    async {
+                        while !outstanding_tasks_clone.is_empty() {
+                            complete_notify.notified().await
+                        }
+                        // If we were waiting for the grace period but everything already finished,
+                        // we don't need to keep waiting.
+                        stop_grace.abort();
+                    },
+                    grace_killer
+                )
             })
     }
 
