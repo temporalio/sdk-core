@@ -104,6 +104,9 @@ pub trait Worker: Send + Sync {
     /// workflows & activities until they are done. At that point, the lang SDK can end the process,
     /// or drop the [Worker] instance via [Worker::finalize_shutdown], which will close the
     /// connection and free resources.
+    ///
+    /// Lang implementations should use [Worker::initiate_shutdown] followed by
+    /// [Worker::finalize_shutdown].
     async fn shutdown(&self);
 
     /// Completes shutdown and frees all resources. You should avoid simply dropping workers, as

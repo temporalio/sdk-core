@@ -1086,7 +1086,7 @@ async fn graceful_shutdown() {
             cancel.variant,
             Some(activity_task::Variant::Cancel(Cancel {
                 reason: r
-            })) if r == ActivityCancelReason::GracefulShutdown as i32
+            })) if r == ActivityCancelReason::WorkerShutdown as i32
         );
         seen_tts.insert(cancel.task_token);
     }

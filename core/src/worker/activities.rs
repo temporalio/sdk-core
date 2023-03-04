@@ -10,7 +10,7 @@ pub(crate) use local_activities::{
 
 use crate::{
     abstractions::{
-        take_cell::TakeCell, ClosableMeteredSemaphore, MeteredSemaphore, OwnedMeteredSemPermit,
+        ClosableMeteredSemaphore, MeteredSemaphore, OwnedMeteredSemPermit,
         TrackedOwnedMeteredSemPermit, UsedMeteredSemPermit,
     },
     pollers::BoxedActPoller,
@@ -131,8 +131,6 @@ pub(crate) struct WorkerActivityTasks {
     /// eager activities). Tasks received in this stream hold a "tracked" permit that is issued by
     /// the `eager_activities_semaphore`.
     eager_activities_tx: UnboundedSender<TrackedPermittedTqResp>,
-    /// Handles graceful shutdowns, if configured
-    graceful_shutdown: Option<GracefulShutdown>,
 
     metrics: MetricsContext,
 
@@ -207,6 +205,8 @@ impl WorkerActivityTasks {
             outstanding_activity_tasks.clone(),
             start_tasks_stream_complete.clone(),
             complete_notify.clone(),
+            graceful_shutdown,
+            cancels_tx,
             metrics.clone(),
         );
 
@@ -221,14 +221,6 @@ impl WorkerActivityTasks {
             max_heartbeat_throttle_interval,
             default_heartbeat_throttle_interval,
             poll_returned_shutdown_token: CancellationToken::new(),
-            graceful_shutdown: graceful_shutdown.map(|gs| {
-                GracefulShutdown::new(
-                    gs,
-                    start_tasks_stream_complete,
-                    cancels_tx,
-                    outstanding_activity_tasks.clone(),
-                )
-            }),
             outstanding_activity_tasks,
         }
     }
@@ -285,6 +277,8 @@ impl WorkerActivityTasks {
         outstanding_tasks: Arc<DashMap<TaskToken, RemoteInFlightActInfo>>,
         start_tasks_stream_complete: CancellationToken,
         complete_notify: Arc<Notify>,
+        grace_period: Option<Duration>,
+        cancels_tx: UnboundedSender<PendingActivityCancel>,
         metrics: MetricsContext,
     ) -> impl Stream<Item = Result<ActivityTask, PollActivityError>> {
         let outstanding_tasks_clone = outstanding_tasks.clone();
@@ -337,7 +331,23 @@ impl WorkerActivityTasks {
                 }
             })
             .take_until(async move {
+                let grace_deadline = grace_period.map(|gp| Instant::now() + gp);
+
                 start_tasks_stream_complete.cancelled().await;
+
+                // Issue cancels for any still-living act tasks after the grace period
+                if let Some(gd) = grace_deadline {
+                    // Make sure we've waited at least the grace period. This way if waiting for
+                    // starts to finish took a while, we subtract that from the grace period.
+                    tokio::time::sleep_until(gd.into()).await;
+                    for mapref in outstanding_tasks_clone.iter() {
+                        let _ = cancels_tx.send(PendingActivityCancel::new(
+                            mapref.key().clone(),
+                            ActivityCancelReason::WorkerShutdown,
+                        ));
+                    }
+                }
+
                 while !outstanding_tasks_clone.is_empty() {
                     complete_notify.notified().await
                 }
@@ -347,9 +357,6 @@ impl WorkerActivityTasks {
     pub(crate) fn initiate_shutdown(&self) {
         self.poller_shutdown_token.cancel();
         self.eager_activities_semaphore.close();
-        if let Some(gs) = self.graceful_shutdown.as_ref() {
-            gs.initiate();
-        }
     }
 
     pub(crate) async fn shutdown(&self) {
@@ -409,7 +416,7 @@ impl WorkerActivityTasks {
                     aer::Status::Cancelled(ar::Cancellation { failure }) => {
                         if matches!(
                             act_info.issued_cancel_to_lang,
-                            Some(ActivityCancelReason::GracefulShutdown),
+                            Some(ActivityCancelReason::WorkerShutdown),
                         ) {
                             // We don't tell server about cancels for graceful shutdown since they
                             // were never requested
@@ -570,54 +577,6 @@ pub(crate) struct PermittedTqResp {
 pub(crate) struct TrackedPermittedTqResp {
     pub permit: TrackedOwnedMeteredSemPermit,
     pub resp: PollActivityTaskQueueResponse,
-}
-
-struct GracefulShutdown {
-    once: TakeCell<GSState>,
-}
-struct GSState {
-    start_tasks_stream_complete: CancellationToken,
-    cancels_tx: UnboundedSender<PendingActivityCancel>,
-    grace_period: Duration,
-    outstanding: OutstandingActMap,
-}
-impl GracefulShutdown {
-    fn new(
-        grace_period: Duration,
-        start_tasks_stream_complete: CancellationToken,
-        cancels_tx: UnboundedSender<PendingActivityCancel>,
-        outstanding: OutstandingActMap,
-    ) -> Self {
-        Self {
-            once: TakeCell::new(GSState {
-                grace_period,
-                start_tasks_stream_complete,
-                cancels_tx,
-                outstanding,
-            }),
-        }
-    }
-
-    fn initiate(&self) {
-        if let Some(state) = self.once.take_once() {
-            let grace_deadline = Instant::now() + state.grace_period;
-            // We don't really need to join this
-            tokio::task::spawn(async move {
-                // Don't issue cancels until we know we won't be getting any more tasks to avoid
-                // missing the cancellation of any just-starting activities.
-                state.start_tasks_stream_complete.cancelled().await;
-                // Make sure we've waited at least the grace period. This way if waiting for
-                // starts to finish took a while, we subtract that from the grace period.
-                tokio::time::sleep_until(grace_deadline.into()).await;
-                for mapref in state.outstanding.iter() {
-                    let _ = state.cancels_tx.send(PendingActivityCancel::new(
-                        mapref.key().clone(),
-                        ActivityCancelReason::GracefulShutdown,
-                    ));
-                }
-            });
-        }
-    }
 }
 
 #[cfg(test)]
