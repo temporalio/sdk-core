@@ -149,7 +149,7 @@ impl WorkerTrait for Worker {
         self.shutdown_token.cancel();
         // First, we want to stop polling of both activity and workflow tasks
         if let Some(atm) = self.at_task_mgr.as_ref() {
-            atm.notify_shutdown();
+            atm.initiate_shutdown();
         }
         // Let the manager know that shutdown has been initiated to try to unblock the local activity poll in case this
         // worker is an activity-only worker.
@@ -286,6 +286,7 @@ impl Worker {
                 metrics.clone(),
                 config.max_heartbeat_throttle_interval,
                 config.default_heartbeat_throttle_interval,
+                config.graceful_shutdown_period,
             )
         });
         let poll_on_non_local_activities = at_task_mgr.is_some();

@@ -1,13 +1,14 @@
 //! This module contains very generic helpers that can be used codebase-wide
 
+pub mod take_cell;
+
 use crate::MetricsContext;
 use derive_more::DebugCustom;
 use futures::{stream, Stream, StreamExt};
-use std::sync::atomic::AtomicBool;
 use std::{
     fmt::{Debug, Formatter},
     sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     },
 };

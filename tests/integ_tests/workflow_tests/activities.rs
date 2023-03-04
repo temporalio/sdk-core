@@ -1,9 +1,11 @@
 use anyhow::anyhow;
 use assert_matches::assert_matches;
+use futures_util::future::join_all;
 use std::time::Duration;
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowExecutionResult, WorkflowOptions};
 use temporal_sdk::{
-    ActContext, ActExitValue, ActivityOptions, CancellableFuture, WfContext, WorkflowResult,
+    ActContext, ActExitValue, ActivityCancelledError, ActivityOptions, CancellableFuture,
+    WfContext, WorkflowResult,
 };
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -20,7 +22,7 @@ use temporal_sdk_core_protos::{
         IntoCompletion,
     },
     temporal::api::{
-        common::v1::{ActivityType, Payload, Payloads},
+        common::v1::{ActivityType, Payload, Payloads, RetryPolicy},
         enums::v1::RetryState,
         failure::v1::{failure::FailureInfo, ActivityFailureInfo, Failure},
     },
@@ -30,7 +32,7 @@ use temporal_sdk_core_test_utils::{
     drain_pollers_and_shutdown, init_core_and_create_wf, schedule_activity_cmd, CoreWfStarter,
     WorkerTestHelpers,
 };
-use tokio::time::sleep;
+use tokio::{join, sync::Semaphore, time::sleep};
 
 pub async fn one_activity_wf(ctx: WfContext) -> WorkflowResult<()> {
     ctx.activity(ActivityOptions {
@@ -899,4 +901,67 @@ async fn it_can_complete_async() {
         .unwrap();
 
     worker.run_until_done().await.unwrap();
+}
+
+#[tokio::test]
+async fn graceful_shutdown() {
+    let wf_name = "graceful_shutdown";
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter.worker_config.graceful_shutdown_period = Some(Duration::from_millis(500));
+    let mut worker = starter.worker().await;
+    let client = starter.get_client().await;
+    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+        let act_futs = (1..=10).map(|_| {
+            ctx.activity(ActivityOptions {
+                activity_type: "sleeper".to_string(),
+                start_to_close_timeout: Some(Duration::from_secs(5)),
+                retry_policy: Some(RetryPolicy {
+                    maximum_attempts: 1,
+                    ..Default::default()
+                }),
+                cancellation_type: ActivityCancellationType::WaitCancellationCompleted,
+                input: "hi".as_json_payload().unwrap(),
+                ..Default::default()
+            })
+        });
+        join_all(act_futs).await;
+        Ok(().into())
+    });
+    static ACTS_STARTED: Semaphore = Semaphore::const_new(0);
+    static ACTS_DONE: Semaphore = Semaphore::const_new(0);
+    worker.register_activity("sleeper", |ctx: ActContext, _: String| async move {
+        ACTS_STARTED.add_permits(1);
+        // just wait to be cancelled
+        ctx.cancelled().await;
+        ACTS_DONE.add_permits(1);
+        Result::<(), _>::Err(ActivityCancelledError::default().into())
+    });
+
+    worker
+        .submit_wf(
+            wf_name.to_owned(),
+            wf_name.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+
+    let handle = worker.inner_mut().shutdown_handle();
+    let shutdowner = async {
+        // Wait for all acts to be started before initiating shutdown
+        let _ = ACTS_STARTED.acquire_many(10).await;
+        handle();
+        // Kill workflow once all acts are cancelled. This also ensures we actually see all the
+        // cancels, otherwise run_until_done will hang since the workflow won't complete.
+        let _ = ACTS_DONE.acquire_many(10).await;
+        client
+            .terminate_workflow_execution(wf_name.to_owned(), None)
+            .await
+            .unwrap();
+    };
+    let runner = async {
+        worker.run_until_done().await.unwrap();
+    };
+    join!(shutdowner, runner);
 }

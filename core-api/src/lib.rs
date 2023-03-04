@@ -97,17 +97,22 @@ pub trait Worker: Send + Sync {
     fn initiate_shutdown(&self);
 
     /// Initiates async shutdown procedure, eventually ceases all polling of the server and shuts
-    /// down this worker. [Worker::poll_workflow_activation] should be called until it
-    /// returns [PollWfError::ShutDown] to ensure that any workflows which are still undergoing
-    /// replay have an opportunity to finish. This means that the lang sdk will need to call
-    /// [Worker::complete_workflow_activation] for those workflows until they are done. At that point,
-    /// the lang SDK can end the process, or drop the [Worker] instance, which will close the
-    /// connection.
+    /// down this worker. [Worker::poll_workflow_activation] and [Worker::poll_activity_task] should
+    /// be called until both return a `ShutDown` error to ensure that all outstanding work is
+    /// complete. This means that the lang sdk will need to call
+    /// [Worker::complete_workflow_activation] and [Worker::complete_activity_task] for those
+    /// workflows & activities until they are done. At that point, the lang SDK can end the process,
+    /// or drop the [Worker] instance via [Worker::finalize_shutdown], which will close the
+    /// connection and free resources.
+    ///
+    /// Lang implementations should use [Worker::initiate_shutdown] followed by
+    /// [Worker::finalize_shutdown].
     async fn shutdown(&self);
 
     /// Completes shutdown and frees all resources. You should avoid simply dropping workers, as
     /// this does not allow async tasks to report any panics that may have occurred cleanly.
     ///
-    /// This should be called only after [Worker::shutdown] has resolved.
+    /// This should be called only after [Worker::shutdown] has resolved and/or both polling
+    /// functions have returned `ShutDown` errors.
     async fn finalize_shutdown(self);
 }

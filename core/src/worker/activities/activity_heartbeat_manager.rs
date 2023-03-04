@@ -1,4 +1,5 @@
 use crate::{
+    abstractions::take_cell::TakeCell,
     worker::{activities::PendingActivityCancel, client::WorkerClient},
     TaskToken,
 };
@@ -17,7 +18,7 @@ use temporal_sdk_core_protos::{
 use tokio::{
     sync::{
         mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
-        Mutex, Notify,
+        Notify,
     },
     task::JoinHandle,
 };
@@ -28,7 +29,7 @@ use tokio_util::sync::CancellationToken;
 pub(crate) struct ActivityHeartbeatManager {
     shutdown_token: CancellationToken,
     /// Used during `shutdown` to await until all inflight requests are sent.
-    join_handle: Mutex<Option<JoinHandle<()>>>,
+    join_handle: TakeCell<JoinHandle<()>>,
     heartbeat_tx: UnboundedSender<HeartbeatAction>,
 }
 
@@ -82,10 +83,10 @@ impl ActivityHeartbeatManager {
     /// Returns the manager and a channel that buffers cancellation notifications to be sent to Lang.
     pub(super) fn new(
         client: Arc<dyn WorkerClient>,
-    ) -> (Self, UnboundedReceiver<PendingActivityCancel>) {
+        cancels_tx: UnboundedSender<PendingActivityCancel>,
+    ) -> Self {
         let (heartbeat_stream_state, heartbeat_tx_source, shutdown_token) =
             HeartbeatStreamState::new();
-        let (cancels_tx, cancels_rx) = unbounded_channel();
         let heartbeat_tx = heartbeat_tx_source.clone();
 
         let join_handle = tokio::spawn(
@@ -174,14 +175,11 @@ impl ActivityHeartbeatManager {
                 }),
         );
 
-        (
-            Self {
-                join_handle: Mutex::new(Some(join_handle)),
-                shutdown_token,
-                heartbeat_tx,
-            },
-            cancels_rx,
-        )
+        Self {
+            join_handle: TakeCell::new(join_handle),
+            shutdown_token,
+            heartbeat_tx,
+        }
     }
     /// Records a new heartbeat, the first call will result in an immediate call to the server,
     /// while rapid successive calls would accumulate for up to `delay` and then latest heartbeat
@@ -222,8 +220,7 @@ impl ActivityHeartbeatManager {
     /// heartbeat requests to be flushed to the server.
     pub(super) async fn shutdown(&self) {
         self.shutdown_token.cancel();
-        let mut handle = self.join_handle.lock().await;
-        if let Some(h) = handle.take() {
+        if let Some(h) = self.join_handle.take_once() {
             let handle_r = h.await;
             if let Err(e) = handle_r {
                 if !e.is_cancelled() {
@@ -411,7 +408,8 @@ mod test {
             .expect_record_activity_heartbeat()
             .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
             .times(2);
-        let (hm, _) = ActivityHeartbeatManager::new(Arc::new(mock_client));
+        let (cancel_tx, _cancel_rx) = unbounded_channel();
+        let hm = ActivityHeartbeatManager::new(Arc::new(mock_client), cancel_tx);
         let fake_task_token = vec![1, 2, 3];
         // Send 2 heartbeat requests for 20ms apart.
         // The first heartbeat should be sent right away, and
@@ -432,7 +430,8 @@ mod test {
             .expect_record_activity_heartbeat()
             .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
             .times(3);
-        let (hm, _) = ActivityHeartbeatManager::new(Arc::new(mock_client));
+        let (cancel_tx, _cancel_rx) = unbounded_channel();
+        let hm = ActivityHeartbeatManager::new(Arc::new(mock_client), cancel_tx);
         let fake_task_token = vec![1, 2, 3];
         // Heartbeats always get sent if recorded less frequently than the throttle interval
         for i in 0_u8..3 {
@@ -451,7 +450,8 @@ mod test {
             .expect_record_activity_heartbeat()
             .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
             .times(1);
-        let (hm, _) = ActivityHeartbeatManager::new(Arc::new(mock_client));
+        let (cancel_tx, _cancel_rx) = unbounded_channel();
+        let hm = ActivityHeartbeatManager::new(Arc::new(mock_client), cancel_tx);
         let fake_task_token = vec![1, 2, 3];
         // Send a whole bunch of heartbeats very fast. We should still only send one total.
         for i in 0_u8..50 {
@@ -470,7 +470,8 @@ mod test {
             .expect_record_activity_heartbeat()
             .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
             .times(2);
-        let (hm, _) = ActivityHeartbeatManager::new(Arc::new(mock_client));
+        let (cancel_tx, _cancel_rx) = unbounded_channel();
+        let hm = ActivityHeartbeatManager::new(Arc::new(mock_client), cancel_tx);
         let fake_task_token = vec![1, 2, 3];
         record_heartbeat(&hm, fake_task_token.clone(), 0, Duration::from_millis(100));
         sleep(Duration::from_millis(500)).await;
@@ -487,7 +488,8 @@ mod test {
             .expect_record_activity_heartbeat()
             .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
             .times(2);
-        let (hm, _) = ActivityHeartbeatManager::new(Arc::new(mock_client));
+        let (cancel_tx, _cancel_rx) = unbounded_channel();
+        let hm = ActivityHeartbeatManager::new(Arc::new(mock_client), cancel_tx);
         let fake_task_token = vec![1, 2, 3];
         record_heartbeat(&hm, fake_task_token.clone(), 0, Duration::from_millis(100));
         // Let it propagate
@@ -507,7 +509,8 @@ mod test {
             .expect_record_activity_heartbeat()
             .returning(|_, _| Ok(RecordActivityTaskHeartbeatResponse::default()))
             .times(1);
-        let (hm, _) = ActivityHeartbeatManager::new(Arc::new(mock_client));
+        let (cancel_tx, _cancel_rx) = unbounded_channel();
+        let hm = ActivityHeartbeatManager::new(Arc::new(mock_client), cancel_tx);
         let fake_task_token = vec![1, 2, 3];
         record_heartbeat(&hm, fake_task_token.clone(), 0, Duration::from_millis(100));
         hm.evict(fake_task_token.clone().into()).await;

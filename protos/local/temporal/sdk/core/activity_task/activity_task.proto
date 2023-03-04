@@ -75,6 +75,8 @@ enum ActivityCancelReason {
     CANCELLED = 1;
     /// Activity timed out
     TIMED_OUT = 2;
+    /// Core is shutting down and the graceful timeout has elapsed
+    WORKER_SHUTDOWN = 3;
 }
 
 
