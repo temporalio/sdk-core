@@ -32,7 +32,7 @@ use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{
             activity_execution_result, activity_resolution, ActivityExecutionResult,
-            ActivityResolution, Success,
+            ActivityResolution, Cancellation, Success,
         },
         activity_task::{activity_task, ActivityCancelReason, ActivityTask, Cancel},
         workflow_activation::{workflow_activation_job, ResolveActivity, WorkflowActivationJob},
@@ -1061,9 +1061,11 @@ async fn graceful_shutdown() {
         .expect_poll_activity_task()
         .times(3)
         .returning(move |_, _| Ok(tasks.pop_front().unwrap()));
+    // They shall all be reported as failed
     mock_client
-        .expect_complete_activity_task()
-        .returning(|_, _| Ok(RespondActivityTaskCompletedResponse::default()));
+        .expect_fail_activity_task()
+        .times(3)
+        .returning(|_, _| Ok(Default::default()));
 
     let worker = Worker::new_test(
         test_worker_cfg()
@@ -1091,4 +1093,18 @@ async fn graceful_shutdown() {
         seen_tts.insert(cancel.task_token);
     }
     assert_eq!(expected_tts, seen_tts);
+    for tt in seen_tts {
+        worker
+            .complete_activity_task(ActivityTaskCompletion {
+                task_token: tt,
+                result: Some(ActivityExecutionResult {
+                    status: Some(activity_execution_result::Status::Cancelled(Cancellation {
+                        failure: None,
+                    })),
+                }),
+            })
+            .await
+            .unwrap();
+    }
+    worker.drain_pollers_and_shutdown().await;
 }

@@ -47,7 +47,7 @@ use temporal_sdk_core_protos::{
         ActivityHeartbeat,
     },
     temporal::api::{
-        failure::v1::{failure::FailureInfo, CanceledFailureInfo, Failure},
+        failure::v1::{failure::FailureInfo, ApplicationFailureInfo, CanceledFailureInfo, Failure},
         workflowservice::v1::PollActivityTaskQueueResponse,
     },
 };
@@ -203,7 +203,7 @@ impl WorkerActivityTasks {
         let activity_task_stream = Self::merge_source_streams(
             source_stream,
             outstanding_activity_tasks.clone(),
-            start_tasks_stream_complete.clone(),
+            start_tasks_stream_complete,
             complete_notify.clone(),
             graceful_shutdown,
             cancels_tx,
@@ -418,9 +418,16 @@ impl WorkerActivityTasks {
                             act_info.issued_cancel_to_lang,
                             Some(ActivityCancelReason::WorkerShutdown),
                         ) {
-                            // We don't tell server about cancels for graceful shutdown since they
-                            // were never requested
-                            None
+                            // We don't report cancels for graceful shutdown as failures, so we
+                            // don't wait for the whole timeout to elapse, which is what would
+                            // happen anyway.
+                            client
+                                .fail_activity_task(
+                                    task_token.clone(),
+                                    Some(worker_shutdown_failure()),
+                                )
+                                .await
+                                .err()
                         } else {
                             let details = if let Some(Failure {
                                 failure_info:
@@ -577,6 +584,23 @@ pub(crate) struct PermittedTqResp {
 pub(crate) struct TrackedPermittedTqResp {
     pub permit: TrackedOwnedMeteredSemPermit,
     pub resp: PollActivityTaskQueueResponse,
+}
+
+fn worker_shutdown_failure() -> Failure {
+    Failure {
+        message: "Worker is shutting down and this activity did not complete in time".to_string(),
+        source: "".to_string(),
+        stack_trace: "".to_string(),
+        encoded_attributes: None,
+        cause: None,
+        failure_info: Some(FailureInfo::ApplicationFailureInfo(
+            ApplicationFailureInfo {
+                r#type: "WorkerShutdown".to_string(),
+                non_retryable: false,
+                details: None,
+            },
+        )),
+    }
 }
 
 #[cfg(test)]

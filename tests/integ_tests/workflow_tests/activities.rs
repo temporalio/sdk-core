@@ -22,7 +22,7 @@ use temporal_sdk_core_protos::{
         IntoCompletion,
     },
     temporal::api::{
-        common::v1::{ActivityType, Payload, Payloads},
+        common::v1::{ActivityType, Payload, Payloads, RetryPolicy},
         enums::v1::RetryState,
         failure::v1::{failure::FailureInfo, ActivityFailureInfo, Failure},
     },
@@ -915,6 +915,10 @@ async fn graceful_shutdown() {
             ctx.activity(ActivityOptions {
                 activity_type: "sleeper".to_string(),
                 start_to_close_timeout: Some(Duration::from_secs(5)),
+                retry_policy: Some(RetryPolicy {
+                    maximum_attempts: 1,
+                    ..Default::default()
+                }),
                 cancellation_type: ActivityCancellationType::WaitCancellationCompleted,
                 input: "hi".as_json_payload().unwrap(),
                 ..Default::default()
