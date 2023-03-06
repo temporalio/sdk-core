@@ -2431,3 +2431,43 @@ async fn core_internal_flags() {
     core.complete_execution(&act.run_id).await;
     core.shutdown().await;
 }
+
+#[tokio::test]
+async fn post_terminal_commands_are_discarded() {
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    t.add_workflow_execution_completed();
+
+    let mut mh = MockPollCfg::from_resp_batches(
+        "fake_wf_id",
+        t,
+        [ResponseType::ToTaskNum(1), ResponseType::AllHistory],
+        mock_workflow_client(),
+    );
+    mh.completion_asserts = Some(Box::new(|c| {
+        // Only the complete execution command should actually be sent
+        assert_eq!(c.commands.len(), 1);
+    }));
+    let mut mock = build_mock_pollers(mh);
+    mock.worker_cfg(|wc| wc.max_cached_workflows = 1);
+    let core = mock_worker(mock);
+
+    let act = core.poll_workflow_activation().await.unwrap();
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
+        act.run_id,
+        vec![
+            CompleteWorkflowExecution { result: None }.into(),
+            start_timer_cmd(1, Duration::from_secs(1)),
+        ],
+    ))
+    .await
+    .unwrap();
+
+    // This just ensures applying the complete history w/ the completion command works, though
+    // there's no activation.
+    let act = core.poll_workflow_activation().await;
+    assert_matches!(act.unwrap_err(), PollWfError::ShutDown);
+
+    core.shutdown().await;
+}

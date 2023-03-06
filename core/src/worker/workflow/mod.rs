@@ -978,7 +978,7 @@ fn validate_completion(
     match completion.status {
         Some(workflow_activation_completion::Status::Successful(success)) => {
             // Convert to wf commands
-            let commands = success
+            let mut commands = success
                 .commands
                 .into_iter()
                 .map(|c| c.try_into())
@@ -1003,6 +1003,18 @@ fn validate_completion(
                     ),
                     run_id: completion.run_id,
                 });
+            }
+
+            // Any commands after a terminal command should be ignored
+            if let Some(term_cmd_pos) = commands.iter().position(|c| c.is_terminal()) {
+                let remaining = commands.split_off(term_cmd_pos + 1);
+                if !remaining.is_empty() {
+                    warn!(
+                        "Activation included commands after a terminal workflow command. These \
+                         commands will be ignored: {}",
+                        remaining.display()
+                    );
+                }
             }
 
             Ok(ValidatedCompletion::Success {
@@ -1153,6 +1165,23 @@ impl TryFrom<WorkflowCommand> for WFCommand {
             workflow_command::Variant::ModifyWorkflowProperties(s) => {
                 Ok(Self::ModifyWorkflowProperties(s))
             }
+        }
+    }
+}
+
+impl WFCommand {
+    /// Returns true if the command is one which ends the workflow:
+    /// * Completed
+    /// * Failed
+    /// * Cancelled
+    /// * Continue-as-new
+    pub fn is_terminal(&self) -> bool {
+        match self {
+            WFCommand::CompleteWorkflow(_)
+            | WFCommand::FailWorkflow(_)
+            | WFCommand::CancelWorkflow(_)
+            | WFCommand::ContinueAsNew(_) => true,
+            _ => false,
         }
     }
 }
