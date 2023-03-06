@@ -121,7 +121,7 @@ pub struct WorkerConfig {
 
     /// If set, core will issue cancels for all outstanding activities after shutdown has been
     /// initiated and this amount of time has elapsed.
-    #[builder(setter(strip_option), default)]
+    #[builder(default)]
     pub graceful_shutdown_period: Option<Duration>,
 }
 
