@@ -1176,13 +1176,13 @@ impl WFCommand {
     /// * Cancelled
     /// * Continue-as-new
     pub fn is_terminal(&self) -> bool {
-        match self {
+        matches!(
+            self,
             WFCommand::CompleteWorkflow(_)
-            | WFCommand::FailWorkflow(_)
-            | WFCommand::CancelWorkflow(_)
-            | WFCommand::ContinueAsNew(_) => true,
-            _ => false,
-        }
+                | WFCommand::FailWorkflow(_)
+                | WFCommand::CancelWorkflow(_)
+                | WFCommand::ContinueAsNew(_)
+        )
     }
 }
 
