@@ -32,7 +32,7 @@ pub struct MetricsContext {
 
 /// Things that can provide metrics for the client implement this. Trait exists to avoid having
 /// to make a whole new lower-level crate just for a tiny shared wrapper around OTel meters.
-pub trait ClientMetricProvider: Send {
+pub trait ClientMetricProvider: Send + Sync {
     /// Construct a counter metric
     fn counter(&self, name: &'static str) -> Counter<u64>;
     /// Construct a histogram metric
