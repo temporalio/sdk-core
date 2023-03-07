@@ -1009,16 +1009,14 @@ fn validate_completion(
                 });
             }
 
-            // Any commands after a terminal command should be ignored
+            // Any non-query-response commands after a terminal command should be ignored
             if let Some(term_cmd_pos) = commands.iter().position(|c| c.is_terminal()) {
-                let remaining = commands.split_off(term_cmd_pos + 1);
-                if !remaining.is_empty() {
-                    warn!(
-                        "Activation included commands after a terminal workflow command. These \
-                         commands will be ignored: {}",
-                        remaining.display()
-                    );
-                }
+                // Query responses are just fine, so keep them.
+                let queries = commands
+                    .split_off(term_cmd_pos + 1)
+                    .into_iter()
+                    .filter(|c| matches!(c, WFCommand::QueryResponse(_)));
+                commands.extend(queries);
             }
 
             Ok(ValidatedCompletion::Success {

@@ -2434,6 +2434,7 @@ async fn core_internal_flags() {
 
 #[tokio::test]
 async fn post_terminal_commands_are_discarded() {
+    crate::telemetry::test_telem_console();
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();

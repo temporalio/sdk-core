@@ -23,7 +23,7 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::{
         common::v1::Payload,
-        enums::v1::EventType,
+        enums::v1::{CommandType, EventType},
         failure::v1::Failure,
         history::v1::{history_event, ActivityTaskCancelRequestedEventAttributes, History},
         query::v1::WorkflowQuery,
@@ -148,10 +148,11 @@ async fn legacy_query(#[case] include_history: bool) {
 }
 
 #[rstest::rstest]
-#[case::one_query(1)]
-#[case::multiple_queries(3)]
 #[tokio::test]
-async fn new_queries(#[case] num_queries: usize) {
+async fn new_queries(
+    #[values(1, 3)] num_queries: usize,
+    #[values(false, true)] query_results_after_complete: bool,
+) {
     let wfid = "fake_wf_id";
     let query_resp = "response";
     let t = canned_histories::single_timer("1");
@@ -174,7 +175,18 @@ async fn new_queries(#[case] num_queries: usize) {
     }]);
     let mut mock_client = mock_workflow_client();
     mock_client.expect_respond_legacy_query().times(0);
-    let mut mock = single_hist_mock_sg(wfid, t, tasks, mock_client, true);
+    let mut mh = MockPollCfg::from_resp_batches(wfid, t, tasks, mock_workflow_client());
+    mh.completion_asserts = Some(Box::new(move |c| {
+        // If the completion is the one ending the workflow, make sure it includes the query resps
+        if c.commands[0].command_type() == CommandType::CompleteWorkflowExecution {
+            assert_eq!(c.query_responses.len(), num_queries);
+        } else if c.commands[0].command_type() == CommandType::StartTimer {
+            // first reply, no queries here.
+        } else {
+            panic!("Unexpected command in response")
+        }
+    }));
+    let mut mock = build_mock_pollers(mh);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
     let core = mock_worker(mock);
 
@@ -203,8 +215,13 @@ async fn new_queries(#[case] num_queries: usize) {
             }
         );
     }
-    let mut qresults: Vec<_> = (1..=num_queries)
-        .map(|i| {
+
+    let mut commands = vec![];
+    if query_results_after_complete {
+        commands.push(CompleteWorkflowExecution { result: None }.into());
+    }
+    for i in 1..=num_queries {
+        commands.push(
             QueryResult {
                 query_id: format!("q{i}"),
                 variant: Some(
@@ -214,13 +231,15 @@ async fn new_queries(#[case] num_queries: usize) {
                     .into(),
                 ),
             }
-            .into()
-        })
-        .collect();
-    qresults.push(CompleteWorkflowExecution { result: None }.into());
+            .into(),
+        );
+    }
+    if !query_results_after_complete {
+        commands.push(CompleteWorkflowExecution { result: None }.into());
+    }
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         task.run_id,
-        qresults,
+        commands,
     ))
     .await
     .unwrap();
