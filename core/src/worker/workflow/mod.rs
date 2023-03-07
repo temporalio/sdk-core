@@ -52,9 +52,11 @@ use futures_util::{future::abortable, stream};
 use prost_types::TimestampError;
 use std::{
     cell::RefCell,
+    cmp::Ordering,
     collections::VecDeque,
     fmt::Debug,
     future::Future,
+    mem::discriminant,
     ops::DerefMut,
     rc::Rc,
     result,
@@ -274,7 +276,9 @@ impl Workflows {
             };
             Span::current().record("run_id", al.run_id());
             match al {
-                ActivationOrAuto::LangActivation(act) | ActivationOrAuto::ReadyForQueries(act) => {
+                ActivationOrAuto::LangActivation(mut act)
+                | ActivationOrAuto::ReadyForQueries(mut act) => {
+                    sort_act_jobs(&mut act);
                     debug!(activation=%act, "Sending activation to lang");
                     break Ok(act);
                 }
@@ -1301,4 +1305,23 @@ impl LocalActivityRequestSink for LAReqSink {
 
         res
     }
+}
+
+/// Sorts jobs in an activation to be in the order lang expects:
+/// `patches -> signals -> other -> queries`
+fn sort_act_jobs(wfa: &mut WorkflowActivation) {
+    wfa.jobs.sort_by(|j1, j2| {
+        // Unwrapping is fine here since we'll never issue empty variants
+        let j1v = j1.variant.as_ref().unwrap();
+        let j2v = j2.variant.as_ref().unwrap();
+        if discriminant(j1v) == discriminant(j2v) {
+            return Ordering::Equal;
+        }
+        match (j1v, j2v) {
+            (workflow_activation_job::Variant::NotifyHasPatch(_), _) => Ordering::Less,
+            (workflow_activation_job::Variant::SignalWorkflow(_), _) => Ordering::Less,
+            (workflow_activation_job::Variant::QueryWorkflow(_), _) => Ordering::Greater,
+            _ => Ordering::Equal,
+        }
+    })
 }

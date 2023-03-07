@@ -414,11 +414,11 @@ async fn signal_workflow_signal_not_handled_on_workflow_completion() {
             res.jobs.as_slice(),
             [
                 WorkflowActivationJob {
-                    variant: Some(workflow_activation_job::Variant::FireTimer(_)),
+                    variant: Some(workflow_activation_job::Variant::SignalWorkflow(_)),
                 },
                 WorkflowActivationJob {
-                    variant: Some(workflow_activation_job::Variant::SignalWorkflow(_)),
-                }
+                    variant: Some(workflow_activation_job::Variant::FireTimer(_)),
+                },
             ]
         );
         core.complete_execution(&res.run_id).await;

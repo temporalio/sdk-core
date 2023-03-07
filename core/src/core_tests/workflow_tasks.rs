@@ -33,7 +33,7 @@ use temporal_sdk_core_protos::{
         workflow_commands::{
             ActivityCancellationType, CancelTimer, CompleteWorkflowExecution,
             ContinueAsNewWorkflowExecution, FailWorkflowExecution, RequestCancelActivity,
-            ScheduleActivity,
+            ScheduleActivity, SetPatchMarker,
         },
         workflow_completion::WorkflowActivationCompletion,
     },
@@ -2470,4 +2470,69 @@ async fn post_terminal_commands_are_discarded() {
     assert_matches!(act.unwrap_err(), PollWfError::ShutDown);
 
     core.shutdown().await;
+}
+
+// Lang expects to always see jobs in this order:
+//   patches, signals, everything else, queries
+#[tokio::test]
+async fn jobs_are_in_appropriate_order() {
+    let p1 = "patchy-mc-patchface";
+    let p2 = "enchi-the-kitty";
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    t.add_has_change_marker(p1, false);
+    let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
+    t.add_timer_fired(timer_started_event_id, "1".to_string());
+    t.add_we_signaled("yummy-salmon", vec![]);
+    t.add_full_wf_task();
+    t.add_has_change_marker(p2, false);
+    t.add_workflow_execution_completed();
+
+    let mh = MockPollCfg::from_resp_batches(
+        "fake_wf_id",
+        t,
+        [ResponseType::AllHistory],
+        mock_workflow_client(),
+    );
+    let mut mock = build_mock_pollers(mh);
+    mock.worker_cfg(|wc| wc.max_cached_workflows = 1);
+    let core = mock_worker(mock);
+
+    let act = core.poll_workflow_activation().await.unwrap();
+    // Patch notifications always come first
+    assert_matches!(
+        act.jobs[0].variant.as_ref().unwrap(),
+        workflow_activation_job::Variant::NotifyHasPatch(_)
+    );
+    assert_matches!(
+        act.jobs[1].variant.as_ref().unwrap(),
+        workflow_activation_job::Variant::StartWorkflow(_)
+    );
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
+        act.run_id,
+        vec![
+            SetPatchMarker {
+                patch_id: p1.to_string(),
+                deprecated: false,
+            }
+            .into(),
+            start_timer_cmd(1, Duration::from_secs(1)),
+        ],
+    ))
+    .await
+    .unwrap();
+    let act = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        act.jobs[0].variant.as_ref().unwrap(),
+        workflow_activation_job::Variant::NotifyHasPatch(_)
+    );
+    assert_matches!(
+        act.jobs[1].variant.as_ref().unwrap(),
+        workflow_activation_job::Variant::SignalWorkflow(_)
+    );
+    assert_matches!(
+        act.jobs[2].variant.as_ref().unwrap(),
+        workflow_activation_job::Variant::FireTimer(_)
+    );
 }
