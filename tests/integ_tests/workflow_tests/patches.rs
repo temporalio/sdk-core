@@ -101,8 +101,14 @@ async fn patched_on_second_workflow_task_is_deterministic() {
     // Disable caching to force replay from beginning
     starter.max_cached_workflows(0).no_remote_activities();
     let mut worker = starter.worker().await;
+    // Include a task failure as well to make sure that works
+    static FAIL_ONCE: AtomicBool = AtomicBool::new(true);
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         ctx.timer(Duration::from_millis(1)).await;
+        if FAIL_ONCE.load(Ordering::Acquire) {
+            FAIL_ONCE.store(false, Ordering::Release);
+            panic!("Enchi is hungry!");
+        }
         assert!(ctx.patched(MY_PATCH_ID));
         ctx.timer(Duration::from_millis(1)).await;
         Ok(().into())
