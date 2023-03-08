@@ -423,15 +423,22 @@ impl WorkflowMachines {
             return Ok(0);
         }
 
-        // Update observed patches with any that were used in the task
-        if let Some(next_complete) = self
-            .last_history_from_server
-            .peek_next_wft_completed(self.last_processed_event)
-        {
-            (*self.observed_internal_flags)
-                .borrow_mut()
-                .add_from_complete(next_complete);
+        fn update_internal_flags(me: &mut WorkflowMachines) {
+            // Update observed patches with any that were used in the task
+            if let Some(next_complete) = me
+                .last_history_from_server
+                .peek_next_wft_completed(me.last_processed_event)
+            {
+                (*me.observed_internal_flags)
+                    .borrow_mut()
+                    .add_from_complete(next_complete);
+            }
         }
+
+        // We update the internal flags before applying the current task (peeking to the completion
+        // of this task), and also at the end (peeking to the completion of the task that lang is
+        // about to generate commands for, and for which we will want those flags active).
+        update_internal_flags(self);
 
         let last_handled_wft_started_id = self.current_started_event_id;
         let (events, has_final_event) = match self
@@ -563,6 +570,8 @@ impl WorkflowMachines {
                 }
             }
         }
+
+        update_internal_flags(self);
 
         if !self.replaying {
             self.metrics.wf_task_replay_latency(replay_start.elapsed());

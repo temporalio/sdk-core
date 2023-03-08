@@ -90,3 +90,24 @@ async fn replaying_with_patch_marker() {
     starter.start_with_worker(wf_name, &mut worker).await;
     worker.run_until_done().await.unwrap();
 }
+
+/// Test that the internal patching mechanism works on the second workflow task when replaying.
+/// Used as regression test for a bug that detected that we did not look ahead far enough to find
+/// the next workflow task completion, which the flags are attached to.
+#[tokio::test]
+async fn patched_on_second_workflow_task_is_deterministic() {
+    let wf_name = "timer_patched_timer";
+    let mut starter = CoreWfStarter::new(wf_name);
+    // Disable caching to force replay from beginning
+    starter.max_cached_workflows(0).no_remote_activities();
+    let mut worker = starter.worker().await;
+    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+        ctx.timer(Duration::from_millis(1)).await;
+        assert!(ctx.patched(MY_PATCH_ID));
+        ctx.timer(Duration::from_millis(1)).await;
+        Ok(().into())
+    });
+
+    starter.start_with_worker(wf_name, &mut worker).await;
+    worker.run_until_done().await.unwrap();
+}
