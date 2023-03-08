@@ -426,7 +426,10 @@ impl WorkflowMachines {
         // Update observed patches with any that were used in the task
         if let Some(next_complete) = self
             .last_history_from_server
-            .peek_next_wft_completed(self.last_processed_event)
+            // Our last_processed event is always a WorkflowTaskStarted, we don't care about
+            // internal flags in the current workflow task since we already know about those.
+            // Peek past the WorkflowTaskCompleted event for the current workflow task.
+            .peek_next_wft_completed(self.last_processed_event + 2)
         {
             (*self.observed_internal_flags)
                 .borrow_mut()
