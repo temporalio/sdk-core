@@ -1315,11 +1315,70 @@ fn sort_act_jobs(wfa: &mut WorkflowActivation) {
         if discriminant(j1v) == discriminant(j2v) {
             return Ordering::Equal;
         }
-        match (j1v, j2v) {
-            (workflow_activation_job::Variant::NotifyHasPatch(_), _) => Ordering::Less,
-            (workflow_activation_job::Variant::SignalWorkflow(_), _) => Ordering::Less,
-            (workflow_activation_job::Variant::QueryWorkflow(_), _) => Ordering::Greater,
-            _ => Ordering::Equal,
+        fn variant_ordinal(v: &workflow_activation_job::Variant) -> u8 {
+            match v {
+                workflow_activation_job::Variant::NotifyHasPatch(_) => 1,
+                workflow_activation_job::Variant::SignalWorkflow(_) => 2,
+                workflow_activation_job::Variant::QueryWorkflow(_) => 4,
+                _ => 3,
+            }
         }
+        variant_ordinal(j1v).cmp(&variant_ordinal(j2v))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use itertools::Itertools;
+
+    #[test]
+    fn jobs_sort() {
+        let mut act = WorkflowActivation {
+            jobs: vec![
+                WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::SignalWorkflow(
+                        Default::default(),
+                    )),
+                },
+                WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::NotifyHasPatch(
+                        Default::default(),
+                    )),
+                },
+                WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::QueryWorkflow(
+                        Default::default(),
+                    )),
+                },
+                WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::FireTimer(
+                        Default::default(),
+                    )),
+                },
+                WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::ResolveActivity(
+                        Default::default(),
+                    )),
+                },
+            ],
+            ..Default::default()
+        };
+        sort_act_jobs(&mut act);
+        let variants = act
+            .jobs
+            .into_iter()
+            .map(|j| j.variant.unwrap())
+            .collect_vec();
+        assert_matches!(
+            variants.as_slice(),
+            &[
+                workflow_activation_job::Variant::NotifyHasPatch(_),
+                workflow_activation_job::Variant::SignalWorkflow(_),
+                workflow_activation_job::Variant::FireTimer(_),
+                workflow_activation_job::Variant::ResolveActivity(_),
+                workflow_activation_job::Variant::QueryWorkflow(_)
+            ]
+        )
+    }
 }
