@@ -2,7 +2,7 @@ use crate::{
     prost_dur,
     test_help::{
         build_fake_worker, build_mock_pollers, canned_histories, mock_manual_poller, mock_worker,
-        MockPollCfg, MockWorkerInputs, MocksHolder, ResponseType,
+        MockPollCfg, MockWorkerInputs, MocksHolder, ResponseType, WorkerExt,
     },
     worker::client::mocks::mock_workflow_client,
     PollActivityError, PollWfError,
@@ -144,13 +144,18 @@ async fn can_shutdown_local_act_only_worker_when_act_polling() {
                 .await
                 .unwrap();
             barrier.wait().await;
+            // We need to see workflow poll return shutdown before activity poll will
+            assert_matches!(
+                worker.poll_workflow_activation().await.unwrap_err(),
+                PollWfError::ShutDown
+            );
             assert_matches!(
                 worker.poll_activity_task().await.unwrap_err(),
                 PollActivityError::ShutDown
             );
         }
     );
-    worker.finalize_shutdown().await;
+    worker.drain_pollers_and_shutdown().await;
 }
 
 #[tokio::test]

@@ -23,12 +23,17 @@ use temporal_client::WorkflowOptions;
 use temporal_sdk::{
     ActContext, ActivityCancelledError, LocalActivityOptions, WfContext, WorkflowResult,
 };
-use temporal_sdk_core_api::Worker;
+use temporal_sdk_core_api::{
+    errors::{PollActivityError, PollWfError},
+    Worker,
+};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::ActivityExecutionResult,
         workflow_activation::{workflow_activation_job, WorkflowActivationJob},
-        workflow_commands::{ActivityCancellationType, QueryResult, QuerySuccess},
+        workflow_commands::{
+            ActivityCancellationType, QueryResult, QuerySuccess, ScheduleLocalActivity,
+        },
         workflow_completion::WorkflowActivationCompletion,
         ActivityTaskCompletion, AsJsonPayloadExt,
     },
@@ -43,7 +48,7 @@ use temporal_sdk_core_protos::{
 use temporal_sdk_core_test_utils::{
     schedule_local_activity_cmd, start_timer_cmd, WorkerTestHelpers,
 };
-use tokio::sync::Barrier;
+use tokio::{join, sync::Barrier};
 
 async fn echo(_ctx: ActContext, e: String) -> anyhow::Result<String> {
     Ok(e)
@@ -1043,4 +1048,69 @@ async fn local_act_records_nonfirst_attempts_ok() {
     // Next two, some nonzero amount which could vary based on test load
     assert!(nonfirst_counts.pop().unwrap() > 0);
     assert!(nonfirst_counts.pop().unwrap() > 0);
+}
+
+#[tokio::test]
+async fn las_can_be_delivered_during_shutdown() {
+    let wfid = "fake_wf_id";
+    let mut t = TestHistoryBuilder::default();
+    t.add_wfe_started_with_wft_timeout(Duration::from_millis(200));
+    t.add_full_wf_task();
+    let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
+    t.add_timer_fired(timer_started_event_id, "1".to_string());
+    t.add_workflow_task_scheduled_and_started();
+
+    let mock = mock_workflow_client();
+    let mut mock = single_hist_mock_sg(
+        wfid,
+        t,
+        [ResponseType::ToTaskNum(1), ResponseType::AllHistory],
+        mock,
+        true,
+    );
+    mock.worker_cfg(|wc| wc.max_cached_workflows = 1);
+    let core = mock_worker(mock);
+
+    let task = core.poll_workflow_activation().await.unwrap();
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+        task.run_id,
+        start_timer_cmd(1, Duration::from_secs(1)),
+    ))
+    .await
+    .unwrap();
+
+    let task = core.poll_workflow_activation().await.unwrap();
+    // Initiate shutdown once we have the WF activation, but before replying that we want to do an
+    // LA
+    core.initiate_shutdown();
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+        task.run_id,
+        ScheduleLocalActivity {
+            seq: 1,
+            activity_id: "1".to_string(),
+            activity_type: "test_act".to_string(),
+            start_to_close_timeout: Some(prost_dur!(from_secs(30))),
+            ..Default::default()
+        }
+        .into(),
+    ))
+    .await
+    .unwrap();
+
+    let wf_poller = async { core.poll_workflow_activation().await };
+
+    let at_poller = async {
+        let act_task = core.poll_activity_task().await.unwrap();
+        core.complete_activity_task(ActivityTaskCompletion {
+            task_token: act_task.task_token,
+            result: Some(ActivityExecutionResult::ok(vec![1].into())),
+        })
+        .await
+        .unwrap();
+        core.poll_activity_task().await
+    };
+
+    let (wf_r, act_r) = join!(wf_poller, at_poller);
+    assert_matches!(wf_r.unwrap_err(), PollWfError::ShutDown);
+    assert_matches!(act_r.unwrap_err(), PollActivityError::ShutDown);
 }

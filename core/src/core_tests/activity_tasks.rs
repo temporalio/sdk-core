@@ -830,7 +830,7 @@ async fn activity_tasks_from_completion_are_delivered() {
         .unwrap();
     }
 
-    core.drain_activity_poller_and_shutdown().await;
+    core.drain_pollers_and_shutdown().await;
 
     // Verify only a single eager activity was scheduled (the one on our worker's task queue)
     assert_eq!(num_eager_requested.load(Ordering::Relaxed), 3);

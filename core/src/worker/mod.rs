@@ -151,9 +151,12 @@ impl WorkerTrait for Worker {
         if let Some(atm) = self.at_task_mgr.as_ref() {
             atm.initiate_shutdown();
         }
-        // Let the manager know that shutdown has been initiated to try to unblock the local activity poll in case this
-        // worker is an activity-only worker.
+        // Let the manager know that shutdown has been initiated to try to unblock the local
+        // activity poll in case this worker is an activity-only worker.
         self.local_act_mgr.shutdown_initiated();
+        if !self.workflows.ever_polled() {
+            self.local_act_mgr.workflows_have_shutdown();
+        }
         info!(
             task_queue=%self.config.task_queue,
             namespace=%self.config.namespace,
@@ -340,15 +343,16 @@ impl Worker {
     /// completed
     async fn shutdown(&self) {
         self.initiate_shutdown();
-        // Next we need to wait for all local activities to finish so no more workflow task
-        // heartbeats will be generated
+        // We need to wait for all local activities to finish so no more workflow task heartbeats
+        // will be generated
+        self.local_act_mgr
+            .wait_all_outstanding_tasks_finished()
+            .await;
         // Wait for workflows to finish
         self.workflows
             .shutdown()
             .await
             .expect("Workflow processing terminates cleanly");
-        let lam = self.local_act_mgr.clone();
-        lam.wait_all_outstanding_tasks_finished().await;
         // Wait for activities to finish
         if let Some(acts) = self.at_task_mgr.as_ref() {
             acts.shutdown().await;
@@ -357,6 +361,7 @@ impl Worker {
 
     /// Finish shutting down by consuming the background pollers and freeing all resources
     async fn finalize_shutdown(self) {
+        self.shutdown().await;
         if let Some(b) = self.at_task_mgr {
             b.shutdown().await;
         }
