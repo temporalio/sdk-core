@@ -1051,7 +1051,7 @@ async fn local_act_records_nonfirst_attempts_ok() {
 }
 
 #[tokio::test]
-async fn las_can_be_delivered_during_shutdown() {
+async fn local_activities_can_be_delivered_during_shutdown() {
     let wfid = "fake_wf_id";
     let mut t = TestHistoryBuilder::default();
     t.add_wfe_started_with_wft_timeout(Duration::from_millis(200));
