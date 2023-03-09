@@ -52,9 +52,11 @@ use futures_util::{future::abortable, stream};
 use prost_types::TimestampError;
 use std::{
     cell::RefCell,
+    cmp::Ordering,
     collections::VecDeque,
     fmt::Debug,
     future::Future,
+    mem::discriminant,
     ops::DerefMut,
     rc::Rc,
     result,
@@ -274,7 +276,9 @@ impl Workflows {
             };
             Span::current().record("run_id", al.run_id());
             match al {
-                ActivationOrAuto::LangActivation(act) | ActivationOrAuto::ReadyForQueries(act) => {
+                ActivationOrAuto::LangActivation(mut act)
+                | ActivationOrAuto::ReadyForQueries(mut act) => {
+                    sort_act_jobs(&mut act);
                     debug!(activation=%act, "Sending activation to lang");
                     break Ok(act);
                 }
@@ -978,7 +982,7 @@ fn validate_completion(
     match completion.status {
         Some(workflow_activation_completion::Status::Successful(success)) => {
             // Convert to wf commands
-            let commands = success
+            let mut commands = success
                 .commands
                 .into_iter()
                 .map(|c| c.try_into())
@@ -1003,6 +1007,16 @@ fn validate_completion(
                     ),
                     run_id: completion.run_id,
                 });
+            }
+
+            // Any non-query-response commands after a terminal command should be ignored
+            if let Some(term_cmd_pos) = commands.iter().position(|c| c.is_terminal()) {
+                // Query responses are just fine, so keep them.
+                let queries = commands
+                    .split_off(term_cmd_pos + 1)
+                    .into_iter()
+                    .filter(|c| matches!(c, WFCommand::QueryResponse(_)));
+                commands.extend(queries);
             }
 
             Ok(ValidatedCompletion::Success {
@@ -1157,6 +1171,23 @@ impl TryFrom<WorkflowCommand> for WFCommand {
     }
 }
 
+impl WFCommand {
+    /// Returns true if the command is one which ends the workflow:
+    /// * Completed
+    /// * Failed
+    /// * Cancelled
+    /// * Continue-as-new
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            self,
+            WFCommand::CompleteWorkflow(_)
+                | WFCommand::FailWorkflow(_)
+                | WFCommand::CancelWorkflow(_)
+                | WFCommand::ContinueAsNew(_)
+        )
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 enum CommandID {
     Timer(u32),
@@ -1271,5 +1302,83 @@ impl LocalActivityRequestSink for LAReqSink {
         self.write_req(&res);
 
         res
+    }
+}
+
+/// Sorts jobs in an activation to be in the order lang expects:
+/// `patches -> signals -> other -> queries`
+fn sort_act_jobs(wfa: &mut WorkflowActivation) {
+    wfa.jobs.sort_by(|j1, j2| {
+        // Unwrapping is fine here since we'll never issue empty variants
+        let j1v = j1.variant.as_ref().unwrap();
+        let j2v = j2.variant.as_ref().unwrap();
+        if discriminant(j1v) == discriminant(j2v) {
+            return Ordering::Equal;
+        }
+        fn variant_ordinal(v: &workflow_activation_job::Variant) -> u8 {
+            match v {
+                workflow_activation_job::Variant::NotifyHasPatch(_) => 1,
+                workflow_activation_job::Variant::SignalWorkflow(_) => 2,
+                workflow_activation_job::Variant::QueryWorkflow(_) => 4,
+                _ => 3,
+            }
+        }
+        variant_ordinal(j1v).cmp(&variant_ordinal(j2v))
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use itertools::Itertools;
+
+    #[test]
+    fn jobs_sort() {
+        let mut act = WorkflowActivation {
+            jobs: vec![
+                WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::SignalWorkflow(
+                        Default::default(),
+                    )),
+                },
+                WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::NotifyHasPatch(
+                        Default::default(),
+                    )),
+                },
+                WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::QueryWorkflow(
+                        Default::default(),
+                    )),
+                },
+                WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::FireTimer(
+                        Default::default(),
+                    )),
+                },
+                WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::ResolveActivity(
+                        Default::default(),
+                    )),
+                },
+            ],
+            ..Default::default()
+        };
+        sort_act_jobs(&mut act);
+        let variants = act
+            .jobs
+            .into_iter()
+            .map(|j| j.variant.unwrap())
+            .collect_vec();
+        assert_matches!(
+            variants.as_slice(),
+            &[
+                workflow_activation_job::Variant::NotifyHasPatch(_),
+                workflow_activation_job::Variant::SignalWorkflow(_),
+                workflow_activation_job::Variant::FireTimer(_),
+                workflow_activation_job::Variant::ResolveActivity(_),
+                workflow_activation_job::Variant::QueryWorkflow(_)
+            ]
+        )
     }
 }

@@ -88,7 +88,7 @@ use temporal_sdk_core_protos::{
         common::NamespacedWorkflowExecution,
         workflow_activation::{
             resolve_child_workflow_execution_start::Status as ChildWorkflowStartStatus,
-            workflow_activation_job::Variant, WorkflowActivation, WorkflowActivationJob,
+            workflow_activation_job::Variant, WorkflowActivation,
         },
         workflow_commands::{workflow_command, ContinueAsNewWorkflowExecution},
         workflow_completion::WorkflowActivationCompletion,
@@ -391,10 +391,10 @@ impl WorkflowHalf {
 
         // If the activation is to start a workflow, create a new workflow driver for it,
         // using the function associated with that workflow id
-        if let Some(WorkflowActivationJob {
-            variant: Some(Variant::StartWorkflow(sw)),
-        }) = activation.jobs.get(0)
-        {
+        if let Some(sw) = activation.jobs.iter().find_map(|j| match j.variant {
+            Some(Variant::StartWorkflow(ref sw)) => Some(sw),
+            _ => None,
+        }) {
             let workflow_type = &sw.workflow_type;
             let wf_fns_borrow = self.workflow_fns.borrow();
             let wf_function = wf_fns_borrow
