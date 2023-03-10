@@ -594,8 +594,8 @@ impl LocalActivityManager {
         }
     }
 
-    /// Try to close the activity stream as soon as worker shutdown is initiated.
-    /// This is required for activity-only workers where since workflows are not polled and the activity poller might
+    /// Try to close the activity stream as soon as worker shutdown is initiated. This is required
+    /// for activity-only workers where since workflows are not polled and the activity poller might
     /// get "stuck".
     pub(crate) fn shutdown_initiated(&self) {
         self.set_shutdown_complete_if_ready(&mut self.dat.lock());
@@ -613,7 +613,7 @@ impl LocalActivityManager {
 
     fn set_shutdown_complete_if_ready(&self, dlock: &mut MutexGuard<LAMData>) -> bool {
         let nothing_outstanding = dlock.outstanding_activity_tasks.is_empty();
-        if nothing_outstanding {
+        if nothing_outstanding && self.workflows_have_shut_down.is_cancelled() {
             self.shutdown_complete_tok.cancel();
         }
         nothing_outstanding

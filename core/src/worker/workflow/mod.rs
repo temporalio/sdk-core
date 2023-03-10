@@ -60,7 +60,7 @@ use std::{
     ops::DerefMut,
     rc::Rc,
     result,
-    sync::Arc,
+    sync::{atomic, atomic::AtomicBool, Arc},
     thread,
     time::{Duration, Instant},
 };
@@ -128,6 +128,7 @@ pub(crate) struct Workflows {
     /// Ensures we stay at or below this worker's maximum concurrent workflow task limit
     wft_semaphore: MeteredSemaphore,
     local_act_mgr: Arc<LocalActivityManager>,
+    ever_polled: AtomicBool,
 }
 
 pub(crate) struct WorkflowBasics {
@@ -261,10 +262,12 @@ impl Workflows {
             activity_tasks_handle,
             wft_semaphore,
             local_act_mgr,
+            ever_polled: AtomicBool::new(false),
         }
     }
 
     pub(super) async fn next_workflow_activation(&self) -> Result<WorkflowActivation, PollWfError> {
+        self.ever_polled.store(true, atomic::Ordering::Release);
         loop {
             let al = {
                 let mut lock = self.activation_stream.lock().await;
@@ -516,6 +519,10 @@ impl Workflows {
             jh_res?.map_err(|e| anyhow!("Error joining workflow processing thread: {e:?}"))?;
         }
         Ok(())
+    }
+
+    pub(super) fn ever_polled(&self) -> bool {
+        self.ever_polled.load(atomic::Ordering::Acquire)
     }
 
     /// Must be called after every activation completion has finished
