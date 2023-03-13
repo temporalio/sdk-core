@@ -254,7 +254,7 @@ pub fn telemetry_init(opts: TelemetryOptions) -> Result<TelemetryInstance, anyho
                                 UnixStream::connect(path.to_owned())
                             }))
                             .await?;
-                        exporter.with_channel(channel.to_owned())
+                        exporter.with_channel(channel)
                     } else {
                         exporter.with_endpoint(url.to_string())
                     };
