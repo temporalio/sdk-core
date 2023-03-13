@@ -42,7 +42,10 @@ use temporal_sdk_core_api::telemetry::{
     TelemetryOptions, TraceExporter,
 };
 use tokio::net::UnixStream;
-use tonic::{metadata::MetadataMap, transport::Endpoint, transport::Uri};
+use tonic::{
+    metadata::MetadataMap,
+    transport::{Endpoint, Uri},
+};
 use tracing::{Level, Subscriber};
 use tracing_subscriber::{layer::SubscriberExt, EnvFilter, Layer};
 
@@ -239,23 +242,21 @@ pub fn telemetry_init(opts: TelemetryOptions) -> Result<TelemetryInstance, anyho
                     headers,
                     metric_periodicity,
                 }) => runtime.block_on(async {
+                    let exporter = opentelemetry_otlp::new_exporter()
+                        .tonic()
+                        .with_metadata(MetadataMap::from_headers(headers.try_into()?));
                     let exporter = if url.scheme() == "unix" {
+                        // Workaround the fact that tonic doesn't automatically work w/ UDS schemes
                         let path = url.path().to_owned();
-                        let channel = Endpoint::try_from("http://[::]:50051")?
+                        // The endpoint URL is not used.
+                        let channel = Endpoint::try_from("http://[::]:0")?
                             .connect_with_connector(tower::service_fn(move |_: Uri| {
                                 UnixStream::connect(path.to_owned())
                             }))
                             .await?;
-
-                        opentelemetry_otlp::new_exporter()
-                            .tonic()
-                            .with_channel(channel.to_owned())
-                            .with_metadata(MetadataMap::from_headers(headers.try_into()?))
+                        exporter.with_channel(channel.to_owned())
                     } else {
-                        opentelemetry_otlp::new_exporter()
-                            .tonic()
-                            .with_endpoint(url.to_string())
-                            .with_metadata(MetadataMap::from_headers(headers.try_into()?))
+                        exporter.with_endpoint(url.to_string())
                     };
                     let metrics = opentelemetry_otlp::new_pipeline()
                         .metrics(
