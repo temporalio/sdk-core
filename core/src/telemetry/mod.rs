@@ -240,9 +240,10 @@ pub fn telemetry_init(opts: TelemetryOptions) -> Result<TelemetryInstance, anyho
                     metric_periodicity,
                 }) => runtime.block_on(async {
                     let exporter = if url.scheme() == "unix" {
-                        let channel = Endpoint::try_from(url.as_str().to_owned())?
-                            .connect_with_connector(tower::service_fn(|url: Uri| {
-                                UnixStream::connect(url.path().to_owned())
+                        let path = url.path().to_owned();
+                        let channel = Endpoint::try_from("http://[::]:50051")?
+                            .connect_with_connector(tower::service_fn(move |_: Uri| {
+                                UnixStream::connect(path.to_owned())
                             }))
                             .await?;
 
