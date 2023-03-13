@@ -41,7 +41,8 @@ use temporal_sdk_core_api::telemetry::{
     CoreLog, CoreTelemetry, Logger, MetricTemporality, MetricsExporter, OtelCollectorOptions,
     TelemetryOptions, TraceExporter,
 };
-use tonic::metadata::MetadataMap;
+use tokio::net::UnixStream;
+use tonic::{metadata::MetadataMap, transport::Endpoint, transport::Uri};
 use tracing::{Level, Subscriber};
 use tracing_subscriber::{layer::SubscriberExt, EnvFilter, Layer};
 
@@ -238,6 +239,23 @@ pub fn telemetry_init(opts: TelemetryOptions) -> Result<TelemetryInstance, anyho
                     headers,
                     metric_periodicity,
                 }) => runtime.block_on(async {
+                    let exporter = if url.scheme() == "unix" {
+                        let channel = Endpoint::try_from(url.as_str().to_owned())?
+                            .connect_with_connector(tower::service_fn(|url: Uri| {
+                                UnixStream::connect(url.path().to_owned())
+                            }))
+                            .await?;
+
+                        opentelemetry_otlp::new_exporter()
+                            .tonic()
+                            .with_channel(channel.to_owned())
+                            .with_metadata(MetadataMap::from_headers(headers.try_into()?))
+                    } else {
+                        opentelemetry_otlp::new_exporter()
+                            .tonic()
+                            .with_endpoint(url.to_string())
+                            .with_metadata(MetadataMap::from_headers(headers.try_into()?))
+                    };
                     let metrics = opentelemetry_otlp::new_pipeline()
                         .metrics(
                             aggregator,
@@ -246,12 +264,7 @@ pub fn telemetry_init(opts: TelemetryOptions) -> Result<TelemetryInstance, anyho
                         )
                         .with_period(metric_periodicity.unwrap_or_else(|| Duration::from_secs(1)))
                         .with_resource(default_resource())
-                        .with_exporter(
-                            opentelemetry_otlp::new_exporter()
-                                .tonic()
-                                .with_endpoint(url.to_string())
-                                .with_metadata(MetadataMap::from_headers(headers.try_into()?)),
-                        )
+                        .with_exporter(exporter)
                         .build()?;
                     Ok::<_, anyhow::Error>(Some(
                         Box::new(metrics) as Box<dyn MeterProvider + Send + Sync>
