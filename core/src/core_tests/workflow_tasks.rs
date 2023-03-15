@@ -21,6 +21,7 @@ use std::{
     },
     time::Duration,
 };
+use temporal_client::WorkflowOptions;
 use temporal_sdk::{ActivityOptions, CancellableFuture, WfContext};
 use temporal_sdk_core_api::{errors::PollWfError, Worker as WorkerTrait};
 use temporal_sdk_core_protos::{
@@ -2536,4 +2537,59 @@ async fn jobs_are_in_appropriate_order() {
         act.jobs[2].variant.as_ref().unwrap(),
         workflow_activation_job::Variant::FireTimer(_)
     );
+}
+
+#[rstest]
+#[tokio::test]
+async fn history_length_with_fail_and_timeout(
+    #[values(true, false)] use_cache: bool,
+    #[values(vec![ResponseType::AllHistory],
+             vec![
+                 ResponseType::ToTaskNum(1),
+                 ResponseType::ToTaskNum(2),
+                 ResponseType::AllHistory,
+             ],
+    )]
+    history_responses: Vec<ResponseType>,
+) {
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
+    t.add_timer_fired(timer_started_event_id, "1".to_string());
+    t.add_workflow_task_scheduled_and_started();
+    t.add_workflow_task_failed_with_failure(WorkflowTaskFailedCause::Unspecified, "ahh".into());
+    t.add_workflow_task_scheduled_and_started();
+    t.add_workflow_task_timed_out();
+    t.add_full_wf_task();
+    let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
+    t.add_timer_fired(timer_started_event_id, "2".to_string());
+    t.add_full_wf_task();
+    t.add_workflow_execution_completed();
+
+    let mh =
+        MockPollCfg::from_resp_batches("fake_wf_id", t, history_responses, mock_workflow_client());
+    let mut worker = mock_sdk_cfg(mh, |wc| {
+        if use_cache {
+            wc.max_cached_workflows = 1
+        }
+    });
+    worker.register_wf(DEFAULT_WORKFLOW_TYPE, |ctx: WfContext| async move {
+        assert_eq!(ctx.history_length(), 3);
+        ctx.timer(Duration::from_secs(1)).await;
+        assert_eq!(ctx.history_length(), 14);
+        ctx.timer(Duration::from_secs(1)).await;
+        assert_eq!(ctx.history_length(), 19);
+        Ok(().into())
+    });
+    worker
+        .submit_wf(
+            "fake_wf_id".to_owned(),
+            DEFAULT_WORKFLOW_TYPE.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
 }

@@ -98,6 +98,7 @@ pub struct WfContextSharedData {
     pub changes: HashMap<String, bool>,
     pub is_replaying: bool,
     pub wf_time: Option<SystemTime>,
+    pub history_length: u32,
 }
 
 // TODO: Dataconverter type interface to replace Payloads here. Possibly just use serde
@@ -146,6 +147,11 @@ impl WfContext {
     /// Return the current time according to the workflow (which is not wall-clock time).
     pub fn workflow_time(&self) -> Option<SystemTime> {
         self.shared.read().wf_time
+    }
+
+    /// Return the length of history so far at this point in the workflow
+    pub fn history_length(&self) -> u32 {
+        self.shared.read().history_length
     }
 
     pub(crate) fn get_shared_data(&self) -> Arc<RwLock<WfContextSharedData>> {
