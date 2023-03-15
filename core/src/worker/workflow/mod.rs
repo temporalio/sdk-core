@@ -23,8 +23,8 @@ pub(crate) use managed_run::ManagedWFFunc;
 
 use crate::{
     abstractions::{
-        stream_when_allowed, take_cell::TakeCell, MeteredSemaphore, TrackedOwnedMeteredSemPermit,
-        UsedMeteredSemPermit,
+        dbg_panic, stream_when_allowed, take_cell::TakeCell, MeteredSemaphore,
+        TrackedOwnedMeteredSemPermit, UsedMeteredSemPermit,
     },
     internal_flags::InternalFlags,
     protosext::{legacy_query_failure, ValidPollWFTQResponse},
@@ -325,7 +325,7 @@ impl Workflows {
         &self,
         completion: WorkflowActivationCompletion,
         post_activate_hook: Option<impl Fn(PostActivateHookData)>,
-    ) -> Result<usize, CompleteWfError> {
+    ) -> Result<(), CompleteWfError> {
         let is_empty_completion = completion.is_empty();
         let completion = validate_completion(completion)?;
         let run_id = completion.run_id().to_string();
@@ -337,7 +337,7 @@ impl Workflows {
         if !was_sent {
             if is_empty_completion {
                 // Empty complete which is likely an evict reply, we can just ignore.
-                return Ok(0);
+                return Ok(());
             }
             panic!(
                 "A non-empty completion was not processed. Workflow processing may have \
@@ -345,9 +345,18 @@ impl Workflows {
             );
         }
 
-        let completion_outcome = rx
-            .await
-            .expect("Send half of activation complete response not dropped");
+        let completion_outcome = if let Ok(c) = rx.await {
+            c
+        } else {
+            dbg_panic!("Send half of activation complete response channel went missing");
+            self.request_eviction(
+                run_id,
+                "Send half of activation complete response channel went missing",
+                EvictionReason::Fatal,
+            );
+            return Ok(());
+        };
+
         let mut wft_from_complete = None;
         let wft_report_status = match completion_outcome.outcome {
             ActivationCompleteOutcome::ReportWFTSuccess(report) => match report {
@@ -462,7 +471,7 @@ impl Workflows {
             wft_from_complete: maybe_pwft,
         });
 
-        Ok(completion_outcome.most_recently_processed_event)
+        Ok(())
     }
 
     /// Tell workflow that a local activity has finished with the provided result
