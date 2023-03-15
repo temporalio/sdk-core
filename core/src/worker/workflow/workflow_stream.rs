@@ -163,11 +163,16 @@ impl WFStream {
                             }
                         }
                     }
-                    WFStreamInput::FailedFetch { run_id, err } => state
+                    WFStreamInput::FailedFetch {
+                        run_id,
+                        err,
+                        auto_reply_fail_tt,
+                    } => state
                         .request_eviction(RequestEvictMsg {
                             run_id,
                             message: format!("Fetching history failed: {err:?}"),
                             reason: EvictionReason::PaginationOrHistoryFetch,
+                            auto_reply_fail_tt,
                         })
                         .into_run_update_resp(),
                     WFStreamInput::PollerDead => {
@@ -425,6 +430,7 @@ impl WFStream {
                 run_id,
                 message: "Workflow cache full".to_string(),
                 reason: EvictionReason::CacheFull,
+                auto_reply_fail_tt: None,
             })
         } else {
             // This branch shouldn't really be possible
@@ -513,6 +519,7 @@ impl WFStream {
                     run_id,
                     message: "Workflow cache full".to_string(),
                     reason: EvictionReason::CacheFull,
+                    auto_reply_fail_tt: None,
                 })
                 .into_run_update_resp(),
             );
@@ -581,6 +588,7 @@ enum WFStreamInput {
             serde(with = "tonic_status_serde::SerdeStatus")
         )]
         err: tonic::Status,
+        auto_reply_fail_tt: Option<TaskToken>,
     },
 }
 
@@ -652,6 +660,7 @@ enum ExternalPollerInputs {
     FailedFetch {
         run_id: String,
         err: tonic::Status,
+        auto_reply_fail_tt: Option<TaskToken>,
     },
 }
 impl From<ExternalPollerInputs> for WFStreamInput {
@@ -661,9 +670,15 @@ impl From<ExternalPollerInputs> for WFStreamInput {
             ExternalPollerInputs::PollerDead => WFStreamInput::PollerDead,
             ExternalPollerInputs::PollerError(e) => WFStreamInput::PollerError(e),
             ExternalPollerInputs::FetchedUpdate(wft) => WFStreamInput::NewWft(wft),
-            ExternalPollerInputs::FailedFetch { run_id, err } => {
-                WFStreamInput::FailedFetch { run_id, err }
-            }
+            ExternalPollerInputs::FailedFetch {
+                run_id,
+                err,
+                auto_reply_fail_tt,
+            } => WFStreamInput::FailedFetch {
+                run_id,
+                err,
+                auto_reply_fail_tt,
+            },
             ExternalPollerInputs::NextPage {
                 paginator,
                 update,
@@ -692,9 +707,15 @@ impl From<Result<WFTExtractorOutput, tonic::Status>> for ExternalPollerInputs {
                 update,
                 span,
             },
-            Ok(WFTExtractorOutput::FailedFetch { run_id, err }) => {
-                ExternalPollerInputs::FailedFetch { run_id, err }
-            }
+            Ok(WFTExtractorOutput::FailedFetch {
+                run_id,
+                err,
+                auto_reply_fail_tt,
+            }) => ExternalPollerInputs::FailedFetch {
+                run_id,
+                err,
+                auto_reply_fail_tt,
+            },
             Ok(WFTExtractorOutput::PollerDead) => ExternalPollerInputs::PollerDead,
             Err(e) => ExternalPollerInputs::PollerError(e),
         }
