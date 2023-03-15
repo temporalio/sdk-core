@@ -64,7 +64,7 @@ impl WFTExtractor {
                     match wft {
                         Ok(wft) => {
                             let run_id = wft.workflow_execution.run_id.clone();
-                            let tt = wft.task_token.clone().into();
+                            let tt = wft.task_token.clone();
                             Ok(match HistoryPaginator::from_poll(wft, client).await {
                                 Ok((pag, prep)) => WFTExtractorOutput::NewWFT(PermittedWFT {
                                     work: prep,

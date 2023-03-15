@@ -366,17 +366,15 @@ impl ManagedRun {
                     self.run_id()
                 );
             }
-            let outcome = if let Some(tt) = self
-                .trying_to_evict
-                .as_mut()
-                .map(|te| te.auto_reply_fail_tt.take())
-                .flatten()
-            {
+            let outcome = if let Some((tt, reason)) = self.trying_to_evict.as_mut().and_then(|te| {
+                te.auto_reply_fail_tt
+                    .take()
+                    .map(|tt| (tt, te.message.clone()))
+            }) {
                 ActivationCompleteOutcome::ReportWFTFail(FailedActivationWFTReport::Report(
                     tt,
-                    // TODO: Right
                     WorkflowTaskFailedCause::Unspecified,
-                    Default::default(),
+                    Failure::application_failure(reason, true).into(),
                 ))
             } else {
                 ActivationCompleteOutcome::DoNothing
@@ -786,10 +784,8 @@ impl ManagedRun {
             self.trying_to_evict = Some(info);
             EvictionRequestResult::EvictionRequested(attempts, self.check_more_activations())
         } else {
-            // TODO: Always replace?
-            if let Some(te) = self.trying_to_evict.as_mut() {
-                te.auto_reply_fail_tt = info.auto_reply_fail_tt;
-            }
+            // Always store the most recent eviction reason
+            self.trying_to_evict = Some(info);
             EvictionRequestResult::EvictionAlreadyRequested(attempts)
         }
     }

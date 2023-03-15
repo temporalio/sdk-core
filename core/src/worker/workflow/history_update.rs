@@ -240,13 +240,18 @@ impl HistoryPaginator {
     /// we have two, or until we are at the end of history.
     pub(crate) async fn extract_next_update(&mut self) -> Result<HistoryUpdate, tonic::Status> {
         loop {
-            let no_next_page = self.get_next_page().await?;
+            let no_next_page = !self.get_next_page().await?;
             let current_events = mem::take(&mut self.event_queue);
-            if current_events.is_empty() {
-                // If next page fetching happened, and we still ended up with no events, something
-                // is wrong. We're expecting there to be more events to be able to extract this
-                // update, but server isn't giving us any. We have no choice except to give up and
-                // evict.
+            let seen_enough_events = current_events
+                .back()
+                .map(|e| e.event_id)
+                .unwrap_or_default()
+                >= self.wft_started_event_id;
+            if current_events.is_empty() || (no_next_page && !seen_enough_events) {
+                // If next page fetching happened, and we still ended up with no or insufficient
+                // events, something is wrong. We're expecting there to be more events to be able to
+                // extract this update, but server isn't giving us any. We have no choice except to
+                // give up and evict.
                 error!(
                     "We expected to be able to fetch more events but server says there are none"
                 );
@@ -255,12 +260,7 @@ impl HistoryPaginator {
             let first_event_id = current_events.front().unwrap().event_id;
             // We only *really* have the last WFT if the events go all the way up to at least the
             // WFT started event id. Otherwise we somehow still have partial history.
-            let no_more = matches!(self.next_page_token, NextPageToken::Done)
-                && current_events
-                    .back()
-                    .map(|e| e.event_id)
-                    .unwrap_or_default()
-                    >= self.wft_started_event_id;
+            let no_more = matches!(self.next_page_token, NextPageToken::Done) && seen_enough_events;
             let (update, extra) = HistoryUpdate::from_events(
                 current_events,
                 self.previous_wft_started_id,
@@ -275,13 +275,7 @@ impl HistoryPaginator {
             // portion of a complete WFT, retain them to be used in the next extraction.
             self.event_queue = extra.into();
             if !no_more && extra_eid_same {
-                // There was not a meaningful WFT in the whole page. We must fetch more
-                if no_next_page {
-                    error!(
-                    "ahhhh expected to be able to fetch more events but server says there are none"
-                );
-                    return Err(EMPTY_FETCH_ERR.clone());
-                }
+                // There was not a meaningful WFT in the whole page. We must fetch more.
                 continue;
             }
             return Ok(update);
@@ -293,12 +287,12 @@ impl HistoryPaginator {
     async fn get_next_page(&mut self) -> Result<bool, tonic::Status> {
         let history = loop {
             let npt = match mem::replace(&mut self.next_page_token, NextPageToken::Done) {
-                // If there's no open request and the last page token we got was empty, we're done.
+                // If the last page token we got was empty, we're done.
                 NextPageToken::Done => return Ok(false),
                 NextPageToken::FetchFromStart => vec![],
                 NextPageToken::Next(v) => v,
             };
-            warn!(run_id=%self.run_id, "Fetching new history page");
+            debug!(run_id=%self.run_id, "Fetching new history page");
             let fetch_res = self
                 .client
                 .get_workflow_execution_history(self.wf_id.clone(), Some(self.run_id.clone()), npt)
@@ -422,7 +416,6 @@ impl HistoryUpdate {
         let mut all_events: Vec<_> = events.into_iter().collect();
         let mut last_end =
             find_end_index_of_next_wft_seq(all_events.as_slice(), previous_wft_started_id);
-        dbg!(last_end, previous_wft_started_id, has_last_wft);
         if matches!(last_end, NextWFTSeqEndIndex::Incomplete(_)) {
             return if has_last_wft {
                 (
@@ -981,7 +974,6 @@ pub mod tests {
         let t = three_wfts_then_heartbeats();
         let mut ends_in_middle_of_seq = t.as_history_update().events;
         ends_in_middle_of_seq.truncate(20);
-        // TODO: dedupe
         let (mut update, remaining) = HistoryUpdate::from_events(
             ends_in_middle_of_seq,
             0,

@@ -2435,7 +2435,6 @@ async fn core_internal_flags() {
 
 #[tokio::test]
 async fn post_terminal_commands_are_discarded() {
-    crate::telemetry::test_telem_console();
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
@@ -2543,14 +2542,7 @@ async fn jobs_are_in_appropriate_order() {
 #[tokio::test]
 async fn history_length_with_fail_and_timeout(
     #[values(true, false)] use_cache: bool,
-    #[values(vec![ResponseType::AllHistory],
-             vec![
-                ResponseType::ToTaskNum(1),
-                ResponseType::ToTaskNum(2),
-                ResponseType::AllHistory,
-             ],
-    )]
-    history_responses: Vec<ResponseType>,
+    #[values(1, 2, 3)] history_responses_case: u8,
 ) {
     let wfid = "fake_wf_id";
     let mut t = TestHistoryBuilder::default();
@@ -2568,77 +2560,45 @@ async fn history_length_with_fail_and_timeout(
     t.add_full_wf_task();
     t.add_workflow_execution_completed();
 
-    let mh = MockPollCfg::from_resp_batches(wfid, t, history_responses, mock_workflow_client());
-    let mut worker = mock_sdk_cfg(mh, |wc| {
-        if use_cache {
-            wc.max_cached_workflows = 1
-        }
-    });
-    worker.register_wf(DEFAULT_WORKFLOW_TYPE, |ctx: WfContext| async move {
-        assert_eq!(ctx.history_length(), 3);
-        ctx.timer(Duration::from_secs(1)).await;
-        assert_eq!(ctx.history_length(), 14);
-        ctx.timer(Duration::from_secs(1)).await;
-        assert_eq!(ctx.history_length(), 19);
-        Ok(().into())
-    });
-    worker
-        .submit_wf(
-            wfid.to_owned(),
-            DEFAULT_WORKFLOW_TYPE.to_owned(),
-            vec![],
-            WorkflowOptions::default(),
-        )
-        .await
-        .unwrap();
-    worker.run_until_done().await.unwrap();
-}
-
-#[rstest]
-#[tokio::test]
-async fn history_length_with_empty_page_fail_and_timeout(#[values(true, false)] use_cache: bool) {
-    crate::telemetry::test_telem_console();
-    let wfid = "fake_wf_id";
-    let mut t = TestHistoryBuilder::default();
-    t.add_by_type(EventType::WorkflowExecutionStarted);
-    t.add_full_wf_task();
-    let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
-    t.add_timer_fired(timer_started_event_id, "1".to_string());
-    t.add_workflow_task_scheduled_and_started();
-    t.add_workflow_task_failed_with_failure(WorkflowTaskFailedCause::Unspecified, "ahh".into());
-    t.add_workflow_task_scheduled_and_started();
-    t.add_workflow_task_timed_out();
-    t.add_full_wf_task();
-    let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
-    t.add_timer_fired(timer_started_event_id, "2".to_string());
-    t.add_full_wf_task();
-    t.add_workflow_execution_completed();
-
     let mut mock_client = mock_workflow_client();
-    let mut needs_fetch = hist_to_poll_resp(&t, wfid, ResponseType::ToTaskNum(2)).resp;
-    needs_fetch.next_page_token = vec![1];
-    // Truncate the history a bit
-    needs_fetch.history.as_mut().unwrap().events.truncate(6);
-    let needs_fetch_resp = ResponseType::Raw(needs_fetch);
-    let mut empty_fetch_resp: GetWorkflowExecutionHistoryResponse =
-        t.get_history_info(1).unwrap().into();
-    empty_fetch_resp.history.as_mut().unwrap().events = vec![];
-    mock_client
-        .expect_get_workflow_execution_history()
-        .returning(move |_, _, _| Ok(empty_fetch_resp.clone()))
-        .times(1);
-    let history_responses = [
-        ResponseType::ToTaskNum(1),
-        needs_fetch_resp,
-        ResponseType::ToTaskNum(2),
-        ResponseType::AllHistory,
-    ];
+    let history_responses = match history_responses_case {
+        1 => vec![ResponseType::AllHistory],
+        2 => vec![
+            ResponseType::ToTaskNum(1),
+            ResponseType::ToTaskNum(2),
+            ResponseType::AllHistory,
+        ],
+        3 => {
+            let mut needs_fetch = hist_to_poll_resp(&t, wfid, ResponseType::ToTaskNum(2)).resp;
+            needs_fetch.next_page_token = vec![1];
+            // Truncate the history a bit in order to force incomplete WFT
+            needs_fetch.history.as_mut().unwrap().events.truncate(6);
+            let needs_fetch_resp = ResponseType::Raw(needs_fetch);
+            let mut empty_fetch_resp: GetWorkflowExecutionHistoryResponse =
+                t.get_history_info(1).unwrap().into();
+            empty_fetch_resp.history.as_mut().unwrap().events = vec![];
+            mock_client
+                .expect_get_workflow_execution_history()
+                .returning(move |_, _, _| Ok(empty_fetch_resp.clone()))
+                .times(1);
+            vec![
+                ResponseType::ToTaskNum(1),
+                needs_fetch_resp,
+                ResponseType::ToTaskNum(2),
+                ResponseType::AllHistory,
+            ]
+        }
+        _ => unreachable!(),
+    };
 
     let mut mh = MockPollCfg::from_resp_batches(wfid, t, history_responses, mock_client);
-    mh.num_expected_fails = 1;
+    if history_responses_case == 3 {
+        // Expect the failed pagination fetch
+        mh.num_expected_fails = 1;
+    }
     let mut worker = mock_sdk_cfg(mh, |wc| {
         if use_cache {
-            wc.max_cached_workflows = 1
+            wc.max_cached_workflows = 1;
         }
     });
     worker.register_wf(DEFAULT_WORKFLOW_TYPE, |ctx: WfContext| async move {
