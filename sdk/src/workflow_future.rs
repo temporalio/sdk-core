@@ -254,6 +254,7 @@ impl Future for WorkflowFuture {
                 let mut wlock = self.ctx_shared.write();
                 wlock.is_replaying = activation.is_replaying;
                 wlock.wf_time = activation.timestamp.try_into_or_none();
+                wlock.history_length = activation.history_length;
             }
 
             let mut die_of_eviction_when_done = false;

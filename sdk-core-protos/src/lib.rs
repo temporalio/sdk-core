@@ -1923,6 +1923,7 @@ pub mod temporal {
             }
         }
         pub mod schedule {
+            #[allow(rustdoc::invalid_html_tags)]
             pub mod v1 {
                 tonic::include_proto!("temporal.api.schedule.v1");
             }

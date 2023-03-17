@@ -25,9 +25,9 @@ use tracing::Instrument;
 
 lazy_static::lazy_static! {
     static ref EMPTY_FETCH_ERR: tonic::Status
-        = tonic::Status::data_loss("Fetched empty history page");
+        = tonic::Status::unknown("Fetched empty history page");
     static ref EMPTY_TASK_ERR: tonic::Status
-        = tonic::Status::data_loss("Received an empty workflow task with no queries or history");
+        = tonic::Status::unknown("Received an empty workflow task with no queries or history");
 }
 
 /// Represents one or more complete WFT sequences. History events are expected to be consumed from
@@ -42,6 +42,9 @@ pub struct HistoryUpdate {
     /// extracted from. Hence, while processing multiple logical WFTs during replay which were part
     /// of one large history fetched from server, multiple updates may have the same value here.
     pub previous_wft_started_id: i64,
+    /// The `started_event_id` field from the WFT which this update is tied to. Multiple updates
+    /// may have the same value if they're associated with the same WFT.
+    pub wft_started_id: i64,
     /// True if this update contains the final WFT in history, and no more attempts to extract
     /// additional updates should be made.
     has_last_wft: bool,
@@ -80,6 +83,7 @@ pub struct HistoryPaginator {
     pub(crate) wf_id: String,
     pub(crate) run_id: String,
     pub(crate) previous_wft_started_id: i64,
+    pub(crate) wft_started_event_id: i64,
 
     #[cfg_attr(feature = "save_wf_inputs", serde(skip))]
     client: Arc<dyn WorkerClient>,
@@ -130,6 +134,7 @@ impl HistoryPaginator {
         let mut paginator = HistoryPaginator::new(
             wft.history,
             wft.previous_started_event_id,
+            wft.started_event_id,
             wft.workflow_execution.workflow_id.clone(),
             wft.workflow_execution.run_id.clone(),
             npt,
@@ -139,7 +144,13 @@ impl HistoryPaginator {
             return Err(EMPTY_TASK_ERR.clone());
         }
         let update = if empty_hist {
-            HistoryUpdate::from_events([], wft.previous_started_event_id, true).0
+            HistoryUpdate::from_events(
+                [],
+                wft.previous_started_event_id,
+                wft.started_event_id,
+                true,
+            )
+            .0
         } else {
             paginator.extract_next_update().await?
         };
@@ -163,6 +174,7 @@ impl HistoryPaginator {
             wf_id: req.original_wft.work.execution.workflow_id.clone(),
             run_id: req.original_wft.work.execution.run_id.clone(),
             previous_wft_started_id: req.original_wft.work.update.previous_wft_started_id,
+            wft_started_event_id: req.original_wft.work.update.wft_started_id,
             client,
             event_queue: Default::default(),
             next_page_token: NextPageToken::FetchFromStart,
@@ -177,6 +189,7 @@ impl HistoryPaginator {
     fn new(
         initial_history: History,
         previous_wft_started_id: i64,
+        wft_started_event_id: i64,
         wf_id: String,
         run_id: String,
         next_page_token: impl Into<NextPageToken>,
@@ -197,6 +210,7 @@ impl HistoryPaginator {
             next_page_token,
             final_events,
             previous_wft_started_id,
+            wft_started_event_id,
         }
     }
 
@@ -211,6 +225,7 @@ impl HistoryPaginator {
             next_page_token: NextPageToken::FetchFromStart,
             final_events: vec![],
             previous_wft_started_id: -2,
+            wft_started_event_id: -2,
         }
     }
 
@@ -225,31 +240,42 @@ impl HistoryPaginator {
     /// we have two, or until we are at the end of history.
     pub(crate) async fn extract_next_update(&mut self) -> Result<HistoryUpdate, tonic::Status> {
         loop {
-            self.get_next_page().await?;
+            let no_next_page = !self.get_next_page().await?;
             let current_events = mem::take(&mut self.event_queue);
-            if current_events.is_empty() {
-                // If next page fetching happened, and we still ended up with no events, something
-                // is wrong. We're expecting there to be more events to be able to extract this
-                // update, but server isn't giving us any. We have no choice except to give up and
-                // evict.
+            let seen_enough_events = current_events
+                .back()
+                .map(|e| e.event_id)
+                .unwrap_or_default()
+                >= self.wft_started_event_id;
+            if current_events.is_empty() || (no_next_page && !seen_enough_events) {
+                // If next page fetching happened, and we still ended up with no or insufficient
+                // events, something is wrong. We're expecting there to be more events to be able to
+                // extract this update, but server isn't giving us any. We have no choice except to
+                // give up and evict.
                 error!(
                     "We expected to be able to fetch more events but server says there are none"
                 );
                 return Err(EMPTY_FETCH_ERR.clone());
             }
             let first_event_id = current_events.front().unwrap().event_id;
-            // If there are some events at the end of the fetched events which represent only a
-            // portion of a complete WFT, retain them to be used in the next extraction.
-            let no_more = matches!(self.next_page_token, NextPageToken::Done);
-            let (update, extra) =
-                HistoryUpdate::from_events(current_events, self.previous_wft_started_id, no_more);
+            // We only *really* have the last WFT if the events go all the way up to at least the
+            // WFT started event id. Otherwise we somehow still have partial history.
+            let no_more = matches!(self.next_page_token, NextPageToken::Done) && seen_enough_events;
+            let (update, extra) = HistoryUpdate::from_events(
+                current_events,
+                self.previous_wft_started_id,
+                self.wft_started_event_id,
+                no_more,
+            );
             let extra_eid_same = extra
                 .first()
                 .map(|e| e.event_id == first_event_id)
                 .unwrap_or_default();
+            // If there are some events at the end of the fetched events which represent only a
+            // portion of a complete WFT, retain them to be used in the next extraction.
             self.event_queue = extra.into();
             if !no_more && extra_eid_same {
-                // There was not a meaningful WFT in the whole page. We must fetch more
+                // There was not a meaningful WFT in the whole page. We must fetch more.
                 continue;
             }
             return Ok(update);
@@ -261,7 +287,7 @@ impl HistoryPaginator {
     async fn get_next_page(&mut self) -> Result<bool, tonic::Status> {
         let history = loop {
             let npt = match mem::replace(&mut self.next_page_token, NextPageToken::Done) {
-                // If there's no open request and the last page token we got was empty, we're done.
+                // If the last page token we got was empty, we're done.
                 NextPageToken::Done => return Ok(false),
                 NextPageToken::FetchFromStart => vec![],
                 NextPageToken::Next(v) => v,
@@ -363,6 +389,7 @@ impl HistoryUpdate {
         Self {
             events: vec![],
             previous_wft_started_id: -1,
+            wft_started_id: -1,
             has_last_wft: false,
         }
     }
@@ -380,6 +407,7 @@ impl HistoryUpdate {
     pub fn from_events<I: IntoIterator<Item = HistoryEvent>>(
         events: I,
         previous_wft_started_id: i64,
+        wft_started_id: i64,
         has_last_wft: bool,
     ) -> (Self, Vec<HistoryEvent>)
     where
@@ -394,6 +422,7 @@ impl HistoryUpdate {
                     Self {
                         events: all_events,
                         previous_wft_started_id,
+                        wft_started_id,
                         has_last_wft,
                     },
                     vec![],
@@ -403,6 +432,7 @@ impl HistoryUpdate {
                     Self {
                         events: vec![],
                         previous_wft_started_id,
+                        wft_started_id,
                         has_last_wft,
                     },
                     all_events,
@@ -430,6 +460,7 @@ impl HistoryUpdate {
             Self {
                 events: all_events,
                 previous_wft_started_id,
+                wft_started_id,
                 has_last_wft,
             },
             remaining_events,
@@ -443,6 +474,7 @@ impl HistoryUpdate {
     pub fn new_from_events<I: IntoIterator<Item = HistoryEvent>>(
         events: I,
         previous_wft_started_id: i64,
+        wft_started_id: i64,
     ) -> Self
     where
         <I as IntoIterator>::IntoIter: Send + 'static,
@@ -450,6 +482,7 @@ impl HistoryUpdate {
         Self {
             events: events.into_iter().collect(),
             previous_wft_started_id,
+            wft_started_id,
             has_last_wft: true,
         }
     }
@@ -653,7 +686,11 @@ pub mod tests {
 
     impl From<HistoryInfo> for HistoryUpdate {
         fn from(v: HistoryInfo) -> Self {
-            Self::new_from_events(v.events().to_vec(), v.previous_started_event_id())
+            Self::new_from_events(
+                v.events().to_vec(),
+                v.previous_started_event_id(),
+                v.workflow_task_started_event_id(),
+            )
         }
     }
 
@@ -789,7 +826,9 @@ pub mod tests {
     }
 
     fn paginator_setup(history: TestHistoryBuilder, chunk_size: usize) -> HistoryPaginator {
-        let full_hist = history.get_full_history_info().unwrap().into_events();
+        let hinfo = history.get_full_history_info().unwrap();
+        let wft_started = hinfo.workflow_task_started_event_id();
+        let full_hist = hinfo.into_events();
         let initial_hist = full_hist.chunks(chunk_size).next().unwrap().to_vec();
         let mut mock_client = mock_workflow_client();
 
@@ -821,6 +860,7 @@ pub mod tests {
                 events: initial_hist,
             },
             0,
+            wft_started,
             "wfid".to_string(),
             "runid".to_string(),
             vec![1],
@@ -908,7 +948,14 @@ pub mod tests {
         // The update should contain the first two complete WFTs, ending on the 8th event which
         // is WFT started. The remaining events should be returned. False flags means the creator
         // knows there are more events, so we should return need fetch
-        let (mut update, remaining) = HistoryUpdate::from_events(ends_in_middle_of_seq, 0, false);
+        let (mut update, remaining) = HistoryUpdate::from_events(
+            ends_in_middle_of_seq,
+            0,
+            t.get_full_history_info()
+                .unwrap()
+                .workflow_task_started_event_id(),
+            false,
+        );
         assert_eq!(remaining[0].event_id, 8);
         assert_eq!(remaining.last().unwrap().event_id, 19);
         let seq = update.take_next_wft_sequence(0).unwrap_events();
@@ -927,7 +974,14 @@ pub mod tests {
         let t = three_wfts_then_heartbeats();
         let mut ends_in_middle_of_seq = t.as_history_update().events;
         ends_in_middle_of_seq.truncate(20);
-        let (mut update, remaining) = HistoryUpdate::from_events(ends_in_middle_of_seq, 0, false);
+        let (mut update, remaining) = HistoryUpdate::from_events(
+            ends_in_middle_of_seq,
+            0,
+            t.get_full_history_info()
+                .unwrap()
+                .workflow_task_started_event_id(),
+            false,
+        );
         assert!(remaining.is_empty());
         let seq = update.take_next_wft_sequence(0).unwrap_events();
         assert_eq!(seq.last().unwrap().event_id, 3);
@@ -986,6 +1040,7 @@ pub mod tests {
         let timer_hist = canned_histories::single_timer("t");
         let partial_task = timer_hist.get_one_wft(2).unwrap();
         let prev_started_wft_id = partial_task.previous_started_event_id();
+        let wft_started_id = partial_task.workflow_task_started_event_id();
         let mut history_from_get: GetWorkflowExecutionHistoryResponse =
             timer_hist.get_history_info(2).unwrap().into();
         // Chop off the last event, which is WFT started, which server doesn't return in get
@@ -999,6 +1054,7 @@ pub mod tests {
         let mut paginator = HistoryPaginator::new(
             partial_task.into(),
             prev_started_wft_id,
+            wft_started_id,
             "wfid".to_string(),
             "runid".to_string(),
             // A cache miss means we'll try to fetch from start
@@ -1047,6 +1103,7 @@ pub mod tests {
         let timer_hist = canned_histories::single_timer("t");
         let partial_task = timer_hist.get_one_wft(2).unwrap();
         let prev_started_wft_id = partial_task.previous_started_event_id();
+        let wft_started_id = partial_task.workflow_task_started_event_id();
         let mut mock_client = mock_workflow_client();
         mock_client
             .expect_get_workflow_execution_history()
@@ -1055,6 +1112,7 @@ pub mod tests {
         let mut paginator = HistoryPaginator::new(
             partial_task.into(),
             prev_started_wft_id,
+            wft_started_id,
             "wfid".to_string(),
             "runid".to_string(),
             // A cache miss means we'll try to fetch from start
@@ -1062,7 +1120,7 @@ pub mod tests {
             Arc::new(mock_client),
         );
         let err = paginator.extract_next_update().await.unwrap_err();
-        assert_matches!(err.code(), tonic::Code::DataLoss);
+        assert_matches!(err.code(), tonic::Code::Unknown);
     }
 
     #[tokio::test]
@@ -1070,6 +1128,7 @@ pub mod tests {
         let timer_hist = canned_histories::single_timer("t");
         let partial_task = timer_hist.get_one_wft(2).unwrap();
         let prev_started_wft_id = partial_task.previous_started_event_id();
+        let wft_started_id = partial_task.workflow_task_started_event_id();
         let full_resp: GetWorkflowExecutionHistoryResponse =
             timer_hist.get_full_history_info().unwrap().into();
         let mut mock_client = mock_workflow_client();
@@ -1092,6 +1151,7 @@ pub mod tests {
         let mut paginator = HistoryPaginator::new(
             partial_task.into(),
             prev_started_wft_id,
+            wft_started_id,
             "wfid".to_string(),
             "runid".to_string(),
             // A cache miss means we'll try to fetch from start
