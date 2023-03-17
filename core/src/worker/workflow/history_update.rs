@@ -25,9 +25,9 @@ use tracing::Instrument;
 
 lazy_static::lazy_static! {
     static ref EMPTY_FETCH_ERR: tonic::Status
-        = tonic::Status::data_loss("Fetched empty history page");
+        = tonic::Status::unknown("Fetched empty history page");
     static ref EMPTY_TASK_ERR: tonic::Status
-        = tonic::Status::data_loss("Received an empty workflow task with no queries or history");
+        = tonic::Status::unknown("Received an empty workflow task with no queries or history");
 }
 
 /// Represents one or more complete WFT sequences. History events are expected to be consumed from
@@ -1120,7 +1120,7 @@ pub mod tests {
             Arc::new(mock_client),
         );
         let err = paginator.extract_next_update().await.unwrap_err();
-        assert_matches!(err.code(), tonic::Code::DataLoss);
+        assert_matches!(err.code(), tonic::Code::Unknown);
     }
 
     #[tokio::test]
