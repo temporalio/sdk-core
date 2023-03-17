@@ -29,7 +29,7 @@ steps:
     agents:
       queue: "default"
       docker: "*"
-    command: "cargo tarpaulin --out Html --workspace && cargo test -- --include-ignored"
+    command: "cargo tarpaulin --out Html --workspace --engine llvm && cargo test -- --include-ignored"
     artifact_paths:
       - "tarpaulin-report.html"
       - "machine_coverage/*"
