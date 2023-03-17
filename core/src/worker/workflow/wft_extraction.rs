@@ -12,6 +12,7 @@ use crate::{
 use futures::Stream;
 use futures_util::{stream, stream::PollNext, FutureExt, StreamExt};
 use std::{future, sync::Arc};
+use temporal_sdk_core_protos::TaskToken;
 use tracing::Span;
 
 /// Transforms incoming validated WFTs and history fetching requests into [PermittedWFT]s ready
@@ -30,6 +31,7 @@ pub(super) enum WFTExtractorOutput {
     FailedFetch {
         run_id: String,
         err: tonic::Status,
+        auto_reply_fail_tt: Option<TaskToken>,
     },
     PollerDead,
 }
@@ -62,13 +64,18 @@ impl WFTExtractor {
                     match wft {
                         Ok(wft) => {
                             let run_id = wft.workflow_execution.run_id.clone();
+                            let tt = wft.task_token.clone();
                             Ok(match HistoryPaginator::from_poll(wft, client).await {
                                 Ok((pag, prep)) => WFTExtractorOutput::NewWFT(PermittedWFT {
                                     work: prep,
                                     permit: permit.into_used(),
                                     paginator: pag,
                                 }),
-                                Err(err) => WFTExtractorOutput::FailedFetch { run_id, err },
+                                Err(err) => WFTExtractorOutput::FailedFetch {
+                                    run_id,
+                                    err,
+                                    auto_reply_fail_tt: Some(tt),
+                                },
                             })
                         }
                         Err(e) => Err(e),
@@ -96,7 +103,11 @@ impl WFTExtractor {
                             let run_id = req.original_wft.work.execution.run_id.clone();
                             match HistoryPaginator::from_fetchreq(req, client).await {
                                 Ok(r) => WFTExtractorOutput::FetchResult(r, rc),
-                                Err(err) => WFTExtractorOutput::FailedFetch { run_id, err },
+                                Err(err) => WFTExtractorOutput::FailedFetch {
+                                    run_id,
+                                    err,
+                                    auto_reply_fail_tt: None,
+                                },
                             }
                         }
                         HistoryFetchReq::NextPage(mut req, rc) => {
@@ -110,6 +121,7 @@ impl WFTExtractor {
                                 Err(err) => WFTExtractorOutput::FailedFetch {
                                     run_id: req.paginator.run_id,
                                     err,
+                                    auto_reply_fail_tt: None,
                                 },
                             }
                         }

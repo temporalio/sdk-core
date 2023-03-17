@@ -366,7 +366,20 @@ impl ManagedRun {
                     self.run_id()
                 );
             }
-            self.reply_to_complete(ActivationCompleteOutcome::DoNothing, resp_chan);
+            let outcome = if let Some((tt, reason)) = self.trying_to_evict.as_mut().and_then(|te| {
+                te.auto_reply_fail_tt
+                    .take()
+                    .map(|tt| (tt, te.message.clone()))
+            }) {
+                ActivationCompleteOutcome::ReportWFTFail(FailedActivationWFTReport::Report(
+                    tt,
+                    WorkflowTaskFailedCause::Unspecified,
+                    Failure::application_failure(reason, true).into(),
+                ))
+            } else {
+                ActivationCompleteOutcome::DoNothing
+            };
+            self.reply_to_complete(outcome, resp_chan);
             return Ok(None);
         };
 
@@ -511,6 +524,7 @@ impl ManagedRun {
             run_id: self.run_id().to_string(),
             message,
             reason,
+            auto_reply_fail_tt: None,
         });
         let should_report = match &evict_req_outcome {
             EvictionRequestResult::EvictionRequested(Some(attempt), _)
@@ -770,6 +784,8 @@ impl ManagedRun {
             self.trying_to_evict = Some(info);
             EvictionRequestResult::EvictionRequested(attempts, self.check_more_activations())
         } else {
+            // Always store the most recent eviction reason
+            self.trying_to_evict = Some(info);
             EvictionRequestResult::EvictionAlreadyRequested(attempts)
         }
     }

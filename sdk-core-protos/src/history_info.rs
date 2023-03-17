@@ -183,6 +183,11 @@ impl HistoryInfo {
     pub fn previous_started_event_id(&self) -> i64 {
         self.previous_started_event_id
     }
+
+    /// Returns the current workflow task started event id
+    pub fn workflow_task_started_event_id(&self) -> i64 {
+        self.workflow_task_started_event_id
+    }
 }
 
 impl From<HistoryInfo> for History {

@@ -483,6 +483,7 @@ impl Workflows {
             run_id: run_id.into(),
             message: message.into(),
             reason,
+            auto_reply_fail_tt: None,
         });
     }
 
@@ -936,6 +937,10 @@ struct RequestEvictMsg {
     run_id: String,
     message: String,
     reason: EvictionReason,
+    /// If set, we requested eviction because something went wrong processing a brand new poll task,
+    /// which means we won't have stored the WFT and we need to track the task token separately so
+    /// we can reply with a failure to server after the evict goes through.
+    auto_reply_fail_tt: Option<TaskToken>,
 }
 #[derive(Debug)]
 pub(crate) struct HeartbeatTimeoutMsg {
