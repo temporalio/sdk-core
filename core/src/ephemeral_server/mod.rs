@@ -64,7 +64,7 @@ impl TemporaliteConfig {
         // Get exe path
         let exe_path = self
             .exe
-            .get_or_download("temporalite", "temporalite")
+            .get_or_download("temporalite", "temporalite", None)
             .await?;
 
         // Get free port if not already given
@@ -146,7 +146,10 @@ impl TemporalDevServerConfig {
     /// Start a Temporal CLI dev server with configurable stdout destination.
     pub async fn start_server_with_output(&self, output: Stdio) -> anyhow::Result<EphemeralServer> {
         // Get exe path
-        let exe_path = self.exe.get_or_download("cli", "temporal").await?;
+        let exe_path = self
+            .exe
+            .get_or_download("cli", "temporal", Some("tar.gz"))
+            .await?;
 
         // Get free port if not already given
         let port = self.port.unwrap_or_else(|| get_free_port(&self.ip));
@@ -213,7 +216,7 @@ impl TestServerConfig {
         // Get exe path
         let exe_path = self
             .exe
-            .get_or_download("temporal-test-server", "temporal-test-server")
+            .get_or_download("temporal-test-server", "temporal-test-server", None)
             .await?;
 
         // Get free port if not already given
@@ -375,6 +378,7 @@ impl EphemeralExe {
         &self,
         artifact_name: &str,
         downloaded_name_prefix: &str,
+        preferred_format: Option<&str>,
     ) -> anyhow::Result<PathBuf> {
         match self {
             EphemeralExe::ExistingPath(exe_path) => {
@@ -421,6 +425,9 @@ impl EphemeralExe {
                     other => return Err(anyhow!("Unsupported arch: {}", other)),
                 };
                 let mut get_info_params = vec![("arch", arch), ("platform", platform)];
+                if let Some(format) = preferred_format {
+                    get_info_params.push(("format", format));
+                }
                 let version_name = match version {
                     EphemeralExeVersion::SDKDefault {
                         sdk_name,
