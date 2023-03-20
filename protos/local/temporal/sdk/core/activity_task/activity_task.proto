@@ -12,12 +12,12 @@ import "temporal/api/common/v1/message.proto";
 import "temporal/sdk/core/common/common.proto";
 
 message ActivityTask {
-    /// A unique identifier for this task
+    // A unique identifier for this task
     bytes task_token = 1;
     oneof variant {
-        /// Start activity execution.
+        // Start activity execution.
         Start start = 3;
-        /// Attempt to cancel activity execution.
+        // Attempt to cancel activity execution.
         Cancel cancel = 4;
     }
 }
@@ -63,19 +63,19 @@ message Start {
     bool is_local = 17;
 }
 
-/// Attempt to cancel a running activity
+// Attempt to cancel a running activity
 message Cancel {
     ActivityCancelReason reason = 1;
 }
 
 enum ActivityCancelReason {
-    /// The activity no longer exists according to server (may be already completed)
+    // The activity no longer exists according to server (may be already completed)
     NOT_FOUND = 0;
-    /// Activity was explicitly cancelled
+    // Activity was explicitly cancelled
     CANCELLED = 1;
-    /// Activity timed out
+    // Activity timed out
     TIMED_OUT = 2;
-    /// Core is shutting down and the graceful timeout has elapsed
+    // Core is shutting down and the graceful timeout has elapsed
     WORKER_SHUTDOWN = 3;
 }
 
