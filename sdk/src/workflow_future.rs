@@ -181,8 +181,11 @@ impl WorkflowFuture {
                     Box::new(result.context("Child Workflow execution must have a result")?),
                 ))?,
                 Variant::UpdateRandomSeed(_) => (),
-                Variant::QueryWorkflow(_) => {
-                    todo!()
+                Variant::QueryWorkflow(q) => {
+                    error!(
+                        "Queries are not implemented in the Rust SDK. Got query '{}'",
+                        q.query_id
+                    );
                 }
                 Variant::CancelWorkflow(_) => {
                     // TODO: Cancel pending futures, etc
