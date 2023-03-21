@@ -556,16 +556,16 @@ impl<'a> Future for LATimerBackoffFut<'a> {
         }
         let poll_res = self.current_fut.poll_unpin(cx);
         if let Poll::Ready(ref r) = poll_res {
-            // If we've already said we want to cancel, don't schedule the backoff timer. Just
-            // return cancel status. This can happen if cancel comes after the LA says it wants to
-            // back off but before we have scheduled the timer.
-            if self.did_cancel.load(Ordering::Acquire) {
-                return Poll::Ready(ActivityResolution {
-                    status: Some(activity_resolution::Status::Cancelled(Default::default())),
-                });
-            }
-
             if let Some(activity_resolution::Status::Backoff(b)) = r.status.as_ref() {
+                // If we've already said we want to cancel, don't schedule the backoff timer. Just
+                // return cancel status. This can happen if cancel comes after the LA says it wants
+                // to back off but before we have scheduled the timer.
+                if self.did_cancel.load(Ordering::Acquire) {
+                    return Poll::Ready(ActivityResolution {
+                        status: Some(activity_resolution::Status::Cancelled(Default::default())),
+                    });
+                }
+
                 let timer_f = self.ctx.timer(
                     b.backoff_duration
                         .clone()

@@ -20,7 +20,11 @@ use temporal_sdk_core_protos::{
         activity_result::{Cancellation, Failure as ActFail, Success},
         activity_task::{activity_task, ActivityCancelReason, ActivityTask, Cancel, Start},
     },
-    temporal::api::{common::v1::WorkflowExecution, enums::v1::TimeoutType},
+    temporal::api::{
+        common::v1::WorkflowExecution,
+        enums::v1::TimeoutType,
+        failure::v1::{failure, Failure as APIFailure, TimeoutFailureInfo},
+    },
 };
 use tokio::{
     sync::{
@@ -70,7 +74,18 @@ impl LocalActivityExecutionResult {
         Self::Cancelled(Cancellation::from_details(None))
     }
     pub(crate) fn timeout(tt: TimeoutType) -> Self {
-        Self::TimedOut(ActFail::timeout(tt))
+        Self::TimedOut(ActFail {
+            failure: Some(APIFailure {
+                message: "Activity timed out".to_string(),
+                failure_info: Some(failure::FailureInfo::TimeoutFailureInfo(
+                    TimeoutFailureInfo {
+                        timeout_type: tt as i32,
+                        last_heartbeat_details: None,
+                    },
+                )),
+                ..Default::default()
+            }),
+        })
     }
 }
 

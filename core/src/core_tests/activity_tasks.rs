@@ -1098,6 +1098,7 @@ async fn graceful_shutdown() {
             .complete_activity_task(ActivityTaskCompletion {
                 task_token: tt,
                 result: Some(ActivityExecutionResult {
+                    // TODO: use lib fn
                     status: Some(activity_execution_result::Status::Cancelled(Cancellation {
                         failure: None,
                     })),

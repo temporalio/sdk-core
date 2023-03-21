@@ -86,7 +86,10 @@ pub mod coresdk {
             common::v1::Payload,
             failure::v1::{failure, CanceledFailureInfo, Failure as APIFailure},
         };
-        use crate::temporal::api::{enums::v1::TimeoutType, failure::v1::TimeoutFailureInfo};
+        use crate::{
+            coresdk::activity_result::activity_resolution::Status,
+            temporal::api::enums::v1::TimeoutType,
+        };
         use activity_execution_result as aer;
         use std::fmt::{Display, Formatter};
 
@@ -201,7 +204,7 @@ pub mod coresdk {
                 matches!(self.status, Some(activity_resolution::Status::Failed(_)))
             }
 
-            pub fn timed_out(&self) -> Option<crate::temporal::api::enums::v1::TimeoutType> {
+            pub fn timed_out(&self) -> Option<TimeoutType> {
                 match self.status {
                     Some(activity_resolution::Status::Failed(Failure {
                         failure: Some(ref f),
@@ -215,33 +218,28 @@ pub mod coresdk {
             pub fn cancelled(&self) -> bool {
                 matches!(self.status, Some(activity_resolution::Status::Cancelled(_)))
             }
+
+            /// If this resolution is any kind of failure, return the inner failure details. Panics
+            /// if the activity succeeded, is in backoff, or this resolution is malformed.
+            pub fn unwrap_failure(self) -> APIFailure {
+                match self.status.unwrap() {
+                    Status::Failed(f) => f.failure.unwrap(),
+                    Status::Cancelled(c) => c.failure.unwrap(),
+                    _ => panic!("Actvity did not fail"),
+                }
+            }
         }
 
         impl Cancellation {
-            pub fn from_details(payload: Option<Payload>) -> Self {
+            /// Create a cancellation result from some payload. This is to be used when telling Core
+            /// that an activity completed as cancelled.
+            pub fn from_details(details: Option<Payload>) -> Self {
                 Cancellation {
                     failure: Some(APIFailure {
                         message: "Activity cancelled".to_string(),
                         failure_info: Some(failure::FailureInfo::CanceledFailureInfo(
                             CanceledFailureInfo {
-                                details: payload.map(Into::into),
-                            },
-                        )),
-                        ..Default::default()
-                    }),
-                }
-            }
-        }
-
-        impl Failure {
-            pub fn timeout(timeout_type: TimeoutType) -> Self {
-                Failure {
-                    failure: Some(APIFailure {
-                        message: "Activity timed out".to_string(),
-                        failure_info: Some(failure::FailureInfo::TimeoutFailureInfo(
-                            TimeoutFailureInfo {
-                                timeout_type: timeout_type as i32,
-                                last_heartbeat_details: None,
+                                details: details.map(Into::into),
                             },
                         )),
                         ..Default::default()
