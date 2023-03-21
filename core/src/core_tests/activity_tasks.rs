@@ -32,7 +32,7 @@ use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{
             activity_execution_result, activity_resolution, ActivityExecutionResult,
-            ActivityResolution, Cancellation, Success,
+            ActivityResolution, Success,
         },
         activity_task::{activity_task, ActivityCancelReason, ActivityTask, Cancel},
         workflow_activation::{workflow_activation_job, ResolveActivity, WorkflowActivationJob},
@@ -1097,12 +1097,7 @@ async fn graceful_shutdown() {
         worker
             .complete_activity_task(ActivityTaskCompletion {
                 task_token: tt,
-                result: Some(ActivityExecutionResult {
-                    // TODO: use lib fn
-                    status: Some(activity_execution_result::Status::Cancelled(Cancellation {
-                        failure: None,
-                    })),
-                }),
+                result: Some(ActivityExecutionResult::cancel_from_details(None)),
             })
             .await
             .unwrap();

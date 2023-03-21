@@ -120,8 +120,12 @@ impl From<CompleteLocalActivityData> for ResolveDat {
             result: match d.result {
                 Ok(res) => LocalActivityExecutionResult::Completed(Success { result: Some(res) }),
                 Err(fail) => {
-                    // TODO: or cause is cancelled - unpack properly
-                    if matches!(fail.failure_info, Some(FailureInfo::CanceledFailureInfo(_))) {
+                    if matches!(fail.failure_info, Some(FailureInfo::CanceledFailureInfo(_)))
+                        || matches!(
+                            fail.cause.as_deref().and_then(|f| f.failure_info.as_ref()),
+                            Some(FailureInfo::CanceledFailureInfo(_))
+                        )
+                    {
                         LocalActivityExecutionResult::Cancelled(Cancellation {
                             failure: Some(fail),
                         })
