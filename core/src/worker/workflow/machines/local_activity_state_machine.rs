@@ -683,25 +683,18 @@ impl WFMachinesAdapter for LocalActivityMachine {
                         ),
                     }
                 } else {
-                    match result {
-                        LocalActivityExecutionResult::Completed(c) => ActivityResolution {
-                            status: Some(c.into()),
-                        },
-                        LocalActivityExecutionResult::Failed(f)
-                        | LocalActivityExecutionResult::TimedOut(f) => ActivityResolution {
-                            status: Some(f.into()),
-                        },
-                        LocalActivityExecutionResult::Cancelled(mut cancel) => {
-                            // Cancels are to be wrapped with an activity failure
-                            let mut fail = cancel.failure.take();
+                    // Cancels and timeouts are to be wrapped with an activity failure
+                    macro_rules! wrap_fail {
+                        ($me:ident, $fail:ident, $msg:expr, $info:pat) => {
+                            let mut fail = $fail.failure.take();
                             let fail_info = fail.as_ref().and_then(|f| f.failure_info.as_ref());
-                            if matches!(fail_info, Some(FailureInfo::CanceledFailureInfo(_))) {
+                            if matches!(fail_info, Some($info)) {
                                 fail = Some(Failure {
-                                    message: "Local Activity cancelled".to_string(),
+                                    message: $msg,
                                     cause: fail.map(Box::new),
                                     failure_info: Some(activity_fail_info(
-                                        self.shared_state.attrs.activity_type.clone(),
-                                        self.shared_state.attrs.activity_id.clone(),
+                                        $me.shared_state.attrs.activity_type.clone(),
+                                        $me.shared_state.attrs.activity_id.clone(),
                                         None,
                                         RetryState::CancelRequested,
                                         0,
@@ -710,7 +703,34 @@ impl WFMachinesAdapter for LocalActivityMachine {
                                     ..Default::default()
                                 });
                             }
-                            cancel.failure = fail;
+                            $fail.failure = fail;
+                        };
+                    }
+                    match result {
+                        LocalActivityExecutionResult::Completed(c) => ActivityResolution {
+                            status: Some(c.into()),
+                        },
+                        LocalActivityExecutionResult::Failed(f) => ActivityResolution {
+                            status: Some(f.into()),
+                        },
+                        LocalActivityExecutionResult::TimedOut(mut failure) => {
+                            wrap_fail!(
+                                self,
+                                failure,
+                                "Local Activity timed out".to_string(),
+                                FailureInfo::TimeoutFailureInfo(_)
+                            );
+                            ActivityResolution {
+                                status: Some(failure.into()),
+                            }
+                        }
+                        LocalActivityExecutionResult::Cancelled(mut cancel) => {
+                            wrap_fail!(
+                                self,
+                                cancel,
+                                "Local Activity cancelled".to_string(),
+                                FailureInfo::CanceledFailureInfo(_)
+                            );
                             ActivityResolution {
                                 status: Some(cancel.into()),
                             }

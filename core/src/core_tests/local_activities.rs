@@ -40,7 +40,7 @@ use temporal_sdk_core_protos::{
     temporal::api::{
         common::v1::RetryPolicy,
         enums::v1::{EventType, TimeoutType, WorkflowTaskFailedCause},
-        failure::v1::Failure,
+        failure::v1::{failure::FailureInfo, Failure},
         query::v1::WorkflowQuery,
     },
     DEFAULT_ACTIVITY_TYPE,
@@ -765,6 +765,15 @@ async fn test_schedule_to_start_timeout() {
                 })
                 .await;
             assert_eq!(la_res.timed_out(), Some(TimeoutType::ScheduleToStart));
+            let rfail = la_res.unwrap_failure();
+            assert_matches!(
+                rfail.failure_info,
+                Some(FailureInfo::ActivityFailureInfo(_))
+            );
+            assert_matches!(
+                rfail.cause.unwrap().failure_info,
+                Some(FailureInfo::TimeoutFailureInfo(_))
+            );
             Ok(().into())
         },
     );
