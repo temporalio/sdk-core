@@ -58,7 +58,7 @@ siphasher = "0.3"
 slotmap = "1.0"
 tar = "0.4"
 thiserror = "1.0"
-tokio = { version = "1.1", features = ["rt", "rt-multi-thread", "parking_lot", "time", "fs", "process"] }
+tokio = { version = "1.26", features = ["rt", "rt-multi-thread", "parking_lot", "time", "fs", "process"] }
 tokio-util = { version = "0.7", features = ["io", "io-util"] }
 tokio-stream = "0.1"
 tonic = { version = "0.8", features = ["tls", "tls-roots"] }
@@ -93,7 +93,7 @@ assert_matches = "1.4"
 bimap = "0.6.1"
 clap = { version = "4.0", features = ["derive"] }
 criterion = "0.4"
-rstest = "0.16"
+rstest = "0.17"
 temporal-sdk-core-test-utils = { path = "../test-utils" }
 temporal-sdk = { path = "../sdk" }
 

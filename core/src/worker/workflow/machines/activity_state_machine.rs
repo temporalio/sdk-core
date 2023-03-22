@@ -90,7 +90,7 @@ pub(super) enum ActivityMachineCommand {
     #[display(fmt = "Fail")]
     Fail(Failure),
     #[display(fmt = "Cancel")]
-    Cancel(Option<Payloads>),
+    Cancel(Option<ActivityTaskCanceledEventAttributes>),
     #[display(fmt = "RequestCancellation")]
     RequestCancellation(Command),
 }
@@ -144,33 +144,16 @@ impl ActivityMachine {
         r
     }
 
-    fn create_cancelation_resolve(&self, details: Option<Payload>) -> ResolveActivity {
+    fn create_cancelation_resolve(
+        &self,
+        attrs: Option<ActivityTaskCanceledEventAttributes>,
+    ) -> ResolveActivity {
+        let attrs = attrs.unwrap_or_default();
         ResolveActivity {
             seq: self.shared_state.attrs.seq,
             result: Some(ActivityResolution {
                 status: Some(activity_resolution::Status::Cancelled(Cancellation {
-                    failure: Some(Failure {
-                        message: "Activity cancelled".to_string(),
-                        cause: Some(Box::from(Failure {
-                            failure_info: Some(FailureInfo::CanceledFailureInfo(
-                                CanceledFailureInfo {
-                                    details: details.map(Into::into),
-                                },
-                            )),
-                            ..Default::default()
-                        })),
-                        failure_info: Some(FailureInfo::ActivityFailureInfo(ActivityFailureInfo {
-                            scheduled_event_id: self.shared_state.scheduled_event_id,
-                            started_event_id: self.shared_state.started_event_id,
-                            activity_type: Some(ActivityType {
-                                name: self.shared_state.attrs.activity_type.clone(),
-                            }),
-                            activity_id: self.shared_state.attrs.activity_id.clone(),
-                            retry_state: RetryState::CancelRequested as i32,
-                            ..Default::default()
-                        })),
-                        ..Default::default()
-                    }),
+                    failure: Some(new_cancel_failure(&self.shared_state, attrs)),
                 })),
             }),
         }
@@ -289,10 +272,8 @@ impl WFMachinesAdapter for ActivityMachine {
             ActivityMachineCommand::RequestCancellation(c) => {
                 self.machine_responses_from_cancel_request(c)
             }
-            ActivityMachineCommand::Cancel(details) => {
-                vec![self
-                    .create_cancelation_resolve(convert_payloads(event_info, details)?)
-                    .into()]
+            ActivityMachineCommand::Cancel(attrs) => {
+                vec![self.create_cancelation_resolve(attrs).into()]
             }
         })
     }
@@ -351,14 +332,7 @@ impl Cancellable for ActivityMachine {
                     self.machine_responses_from_cancel_request(cmd)
                 }
                 ActivityMachineCommand::Cancel(details) => {
-                    vec![self
-                        .create_cancelation_resolve(
-                            details
-                                .map(TryInto::try_into)
-                                .transpose()
-                                .unwrap_or_default(),
-                        )
-                        .into()]
+                    vec![self.create_cancelation_resolve(details).into()]
                 }
                 x => panic!("Invalid cancel event response {x:?}"),
             })
@@ -719,7 +693,7 @@ where
 /// Notifies lang side that activity has timed out by sending a failure with timeout error as a cause.
 /// State machine will transition into the TimedOut state.
 fn notify_lang_activity_timed_out(
-    dat: &mut SharedState,
+    dat: &SharedState,
     attrs: ActivityTaskTimedOutEventAttributes,
 ) -> TransitionResult<ActivityMachine, TimedOut> {
     ActivityMachineTransition::commands(vec![ActivityMachineCommand::Fail(new_timeout_failure(
@@ -727,52 +701,85 @@ fn notify_lang_activity_timed_out(
     ))])
 }
 
-/// Notifies lang side that activity has been cancelled by sending a failure with cancelled failure
-/// as a cause. Optional cancelled_event, if passed, is used to supply event IDs. State machine will
-/// transition into the `next_state` provided as a parameter.
+/// Returns the transition to indicate activity has been cancelled by sending a failure with
+/// cancelled failure as a cause. Optional cancelled_event, if passed, is used to supply event IDs.
 fn notify_lang_activity_cancelled(
     canceled_event: Option<ActivityTaskCanceledEventAttributes>,
 ) -> ActivityMachineTransition<Canceled> {
-    ActivityMachineTransition::commands(vec![ActivityMachineCommand::Cancel(
-        canceled_event.and_then(|e| e.details),
-    )])
+    ActivityMachineTransition::commands(vec![ActivityMachineCommand::Cancel(canceled_event)])
 }
 
-fn new_failure(dat: &mut SharedState, attrs: ActivityTaskFailedEventAttributes) -> Failure {
+fn new_failure(dat: &SharedState, attrs: ActivityTaskFailedEventAttributes) -> Failure {
+    let rs = attrs.retry_state();
     Failure {
         message: "Activity task failed".to_owned(),
         cause: attrs.failure.map(Box::new),
-        failure_info: Some(FailureInfo::ActivityFailureInfo(ActivityFailureInfo {
-            identity: attrs.identity,
-            activity_type: Some(ActivityType {
-                name: dat.attrs.activity_type.clone(),
-            }),
-            activity_id: dat.attrs.activity_id.clone(),
-            retry_state: attrs.retry_state,
-            started_event_id: attrs.started_event_id,
-            scheduled_event_id: attrs.scheduled_event_id,
-        })),
+        failure_info: Some(activity_fail_info(
+            dat.attrs.activity_type.clone(),
+            dat.attrs.activity_id.clone(),
+            Some(attrs.identity),
+            rs,
+            attrs.started_event_id,
+            attrs.scheduled_event_id,
+        )),
         ..Default::default()
     }
 }
 
 fn new_timeout_failure(dat: &SharedState, attrs: ActivityTaskTimedOutEventAttributes) -> Failure {
-    let failure_info = ActivityFailureInfo {
-        activity_id: dat.attrs.activity_id.to_string(),
-        activity_type: Some(ActivityType {
-            name: dat.attrs.activity_type.to_string(),
-        }),
-        scheduled_event_id: attrs.scheduled_event_id,
-        started_event_id: attrs.started_event_id,
-        retry_state: attrs.retry_state,
-        ..Default::default()
-    };
+    let rs = attrs.retry_state();
     Failure {
         message: "Activity task timed out".to_string(),
         cause: attrs.failure.map(Box::new),
-        failure_info: Some(FailureInfo::ActivityFailureInfo(failure_info)),
+        failure_info: Some(activity_fail_info(
+            dat.attrs.activity_type.clone(),
+            dat.attrs.activity_id.clone(),
+            None,
+            rs,
+            attrs.started_event_id,
+            attrs.scheduled_event_id,
+        )),
         ..Default::default()
     }
+}
+
+fn new_cancel_failure(dat: &SharedState, attrs: ActivityTaskCanceledEventAttributes) -> Failure {
+    Failure {
+        message: "Activity cancelled".to_string(),
+        cause: Some(Box::from(Failure {
+            failure_info: Some(FailureInfo::CanceledFailureInfo(CanceledFailureInfo {
+                details: attrs.details.map(Into::into),
+            })),
+            ..Default::default()
+        })),
+        failure_info: Some(activity_fail_info(
+            dat.attrs.activity_type.clone(),
+            dat.attrs.activity_id.clone(),
+            Some(attrs.identity),
+            RetryState::CancelRequested,
+            attrs.started_event_id,
+            attrs.scheduled_event_id,
+        )),
+        ..Default::default()
+    }
+}
+
+pub fn activity_fail_info(
+    act_type: String,
+    act_id: String,
+    identity: Option<String>,
+    retry_state: RetryState,
+    started_event_id: i64,
+    scheduled_event_id: i64,
+) -> FailureInfo {
+    FailureInfo::ActivityFailureInfo(ActivityFailureInfo {
+        identity: identity.unwrap_or_default(),
+        activity_type: Some(ActivityType { name: act_type }),
+        activity_id: act_id,
+        retry_state: retry_state as i32,
+        started_event_id,
+        scheduled_event_id,
+    })
 }
 
 fn convert_payloads(

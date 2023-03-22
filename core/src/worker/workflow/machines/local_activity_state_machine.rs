@@ -6,7 +6,10 @@ use crate::{
     internal_flags::CoreInternalFlags,
     protosext::{CompleteLocalActivityData, HistoryEventExt, ValidScheduleLA},
     worker::{
-        workflow::{machines::HistEventData, InternalFlagsRef, OutgoingJob},
+        workflow::{
+            machines::{activity_state_machine::activity_fail_info, HistEventData},
+            InternalFlagsRef, OutgoingJob,
+        },
         LocalActivityExecutionResult,
     },
 };
@@ -28,8 +31,8 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::{
         command::v1::{Command, RecordMarkerCommandAttributes},
-        enums::v1::{CommandType, EventType},
-        failure::v1::failure::FailureInfo,
+        enums::v1::{CommandType, EventType, RetryState},
+        failure::v1::{failure::FailureInfo, Failure},
         history::v1::HistoryEvent,
     },
     utilities::TryIntoOrNone,
@@ -117,7 +120,12 @@ impl From<CompleteLocalActivityData> for ResolveDat {
             result: match d.result {
                 Ok(res) => LocalActivityExecutionResult::Completed(Success { result: Some(res) }),
                 Err(fail) => {
-                    if matches!(fail.failure_info, Some(FailureInfo::CanceledFailureInfo(_))) {
+                    if matches!(fail.failure_info, Some(FailureInfo::CanceledFailureInfo(_)))
+                        || matches!(
+                            fail.cause.as_deref().and_then(|f| f.failure_info.as_ref()),
+                            Some(FailureInfo::CanceledFailureInfo(_))
+                        )
+                    {
                         LocalActivityExecutionResult::Cancelled(Cancellation {
                             failure: Some(fail),
                         })
@@ -675,8 +683,61 @@ impl WFMachinesAdapter for LocalActivityMachine {
                         ),
                     }
                 } else {
-                    result.into()
+                    // Cancels and timeouts are to be wrapped with an activity failure
+                    macro_rules! wrap_fail {
+                        ($me:ident, $fail:ident, $msg:expr, $info:pat) => {
+                            let mut fail = $fail.failure.take();
+                            let fail_info = fail.as_ref().and_then(|f| f.failure_info.as_ref());
+                            if matches!(fail_info, Some($info)) {
+                                fail = Some(Failure {
+                                    message: $msg,
+                                    cause: fail.map(Box::new),
+                                    failure_info: Some(activity_fail_info(
+                                        $me.shared_state.attrs.activity_type.clone(),
+                                        $me.shared_state.attrs.activity_id.clone(),
+                                        None,
+                                        RetryState::CancelRequested,
+                                        0,
+                                        0,
+                                    )),
+                                    ..Default::default()
+                                });
+                            }
+                            $fail.failure = fail;
+                        };
+                    }
+                    match result {
+                        LocalActivityExecutionResult::Completed(c) => ActivityResolution {
+                            status: Some(c.into()),
+                        },
+                        LocalActivityExecutionResult::Failed(f) => ActivityResolution {
+                            status: Some(f.into()),
+                        },
+                        LocalActivityExecutionResult::TimedOut(mut failure) => {
+                            wrap_fail!(
+                                self,
+                                failure,
+                                "Local Activity timed out".to_string(),
+                                FailureInfo::TimeoutFailureInfo(_)
+                            );
+                            ActivityResolution {
+                                status: Some(failure.into()),
+                            }
+                        }
+                        LocalActivityExecutionResult::Cancelled(mut cancel) => {
+                            wrap_fail!(
+                                self,
+                                cancel,
+                                "Local Activity cancelled".to_string(),
+                                FailureInfo::CanceledFailureInfo(_)
+                            );
+                            ActivityResolution {
+                                status: Some(cancel.into()),
+                            }
+                        }
+                    }
                 };
+
                 let mut responses = vec![
                     MachineResponse::PushWFJob(OutgoingJob {
                         variant: ResolveActivity {
@@ -814,24 +875,6 @@ fn verify_marker_data_matches(
     Ok(())
 }
 
-impl From<LocalActivityExecutionResult> for ActivityResolution {
-    fn from(lar: LocalActivityExecutionResult) -> Self {
-        match lar {
-            LocalActivityExecutionResult::Completed(c) => ActivityResolution {
-                status: Some(c.into()),
-            },
-            LocalActivityExecutionResult::Failed(f) | LocalActivityExecutionResult::TimedOut(f) => {
-                ActivityResolution {
-                    status: Some(f.into()),
-                }
-            }
-            LocalActivityExecutionResult::Cancelled(cancel) => ActivityResolution {
-                status: Some(cancel.into()),
-            },
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -847,7 +890,6 @@ mod tests {
         coresdk::{
             activity_result::ActivityExecutionResult,
             workflow_activation::{workflow_activation_job, WorkflowActivationJob},
-            workflow_commands::ActivityCancellationType::WaitCancellationCompleted,
         },
         temporal::api::{
             command::v1::command, enums::v1::WorkflowTaskFailedCause, failure::v1::Failure,
@@ -1426,6 +1468,15 @@ mod tests {
             ctx.timer(Duration::from_secs(1)).await;
             let resolution = la.await;
             assert!(resolution.cancelled());
+            let rfail = resolution.unwrap_failure();
+            assert_matches!(
+                rfail.failure_info,
+                Some(FailureInfo::ActivityFailureInfo(_))
+            );
+            assert_matches!(
+                rfail.cause.unwrap().failure_info,
+                Some(FailureInfo::CanceledFailureInfo(_))
+            );
             Ok(().into())
         });
 
@@ -1493,7 +1544,7 @@ mod tests {
             // what would have happened if we woke up with new history -- but it does mean we
             // generate the commands at this point. This matters b/c we want to make sure the record
             // marker command is sent as soon as cancel happens.
-            if cancel_type == WaitCancellationCompleted {
+            if cancel_type == ActivityCancellationType::WaitCancellationCompleted {
                 wfm.complete_local_activity(1, ActivityExecutionResult::cancel_from_details(None))
                     .unwrap();
             }
