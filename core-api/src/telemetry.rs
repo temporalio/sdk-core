@@ -44,7 +44,7 @@ pub struct TelemetryOptions {
 
     // A map of tags to be applied to all metrics
     #[builder(default)]
-    pub global_tags: HashMap<String, String>
+    pub global_tags: HashMap<String, String>,
 }
 
 /// Options for exporting to an OpenTelemetry Collector
