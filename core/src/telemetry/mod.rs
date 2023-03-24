@@ -27,7 +27,7 @@ use opentelemetry_otlp::WithExportConfig;
 use parking_lot::Mutex;
 use std::{
     cell::RefCell,
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     convert::TryInto,
     env,
     net::SocketAddr,
@@ -221,11 +221,12 @@ pub fn telemetry_init(opts: TelemetryOptions) -> Result<TelemetryInstance, anyho
             let aggregator = SDKAggSelector { metric_prefix };
             match metrics {
                 MetricsExporter::Prometheus(addr) => {
-                    let srv = runtime.block_on(async move {
+                    let srv = runtime.block_on(async {
                         PromServer::new(
                             *addr,
                             aggregator,
                             metric_temporality_to_selector(opts.metric_temporality),
+                            &opts.global_tags,
                         )
                     })?;
                     prom_binding = Some(srv.bound_addr());
@@ -245,7 +246,7 @@ pub fn telemetry_init(opts: TelemetryOptions) -> Result<TelemetryInstance, anyho
                             runtime::Tokio,
                         )
                         .with_period(metric_periodicity.unwrap_or_else(|| Duration::from_secs(1)))
-                        .with_resource(default_resource())
+                        .with_resource(default_resource(&opts.global_tags))
                         .with_exporter(
                             opentelemetry_otlp::new_exporter()
                                 .tonic()
@@ -266,7 +267,8 @@ pub fn telemetry_init(opts: TelemetryOptions) -> Result<TelemetryInstance, anyho
             match &tracing.exporter {
                 TraceExporter::Otel(OtelCollectorOptions { url, headers, .. }) => {
                     runtime.block_on(async {
-                        let tracer_cfg = Config::default().with_resource(default_resource());
+                        let tracer_cfg =
+                            Config::default().with_resource(default_resource(&opts.global_tags));
                         let tracer = opentelemetry_otlp::new_pipeline()
                             .tracing()
                             .with_exporter(
@@ -338,8 +340,12 @@ fn default_resource_kvs() -> &'static [KeyValue] {
     static INSTANCE: OnceCell<[KeyValue; 1]> = OnceCell::new();
     INSTANCE.get_or_init(|| [KeyValue::new("service.name", TELEM_SERVICE_NAME)])
 }
-fn default_resource() -> Resource {
-    Resource::new(default_resource_kvs().iter().cloned())
+
+fn default_resource(override_values: &HashMap<String, String>) -> Resource {
+    let override_kvs = override_values
+        .iter()
+        .map(|(k, v)| KeyValue::new(k.clone(), v.clone()));
+    Resource::new(default_resource_kvs().iter().cloned()).merge(&Resource::new(override_kvs))
 }
 
 fn metric_temporality_to_selector(

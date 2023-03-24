@@ -41,6 +41,10 @@ pub struct TelemetryOptions {
     /// Specifies the aggregation temporality for metric export. Defaults to cumulative.
     #[builder(default = "MetricTemporality::Cumulative")]
     pub metric_temporality: MetricTemporality,
+
+    // A map of tags to be applied to all metrics
+    #[builder(default)]
+    pub global_tags: HashMap<String, String>,
 }
 
 /// Options for exporting to an OpenTelemetry Collector
