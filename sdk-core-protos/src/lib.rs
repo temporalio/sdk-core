@@ -20,6 +20,9 @@ pub use history_builder::{
 pub use history_info::HistoryInfo;
 pub use task_token::TaskToken;
 
+pub static ENCODING_PAYLOAD_KEY: &str = "encoding";
+pub static JSON_ENCODING_VAL: &str = "json/plain";
+
 #[allow(clippy::large_enum_variant, clippy::derive_partial_eq_without_eq)]
 // I'd prefer not to do this, but there are some generated things that just don't need it.
 #[allow(missing_docs)]
@@ -28,11 +31,14 @@ pub mod coresdk {
 
     tonic::include_proto!("coresdk");
 
-    use crate::temporal::api::{
-        common::v1::{Payload, Payloads, WorkflowExecution},
-        enums::v1::WorkflowTaskFailedCause,
-        failure::v1::{failure::FailureInfo, ApplicationFailureInfo, Failure},
-        workflowservice::v1::PollActivityTaskQueueResponse,
+    use crate::{
+        temporal::api::{
+            common::v1::{Payload, Payloads, WorkflowExecution},
+            enums::v1::WorkflowTaskFailedCause,
+            failure::v1::{failure::FailureInfo, ApplicationFailureInfo, Failure},
+            workflowservice::v1::PollActivityTaskQueueResponse,
+        },
+        ENCODING_PAYLOAD_KEY, JSON_ENCODING_VAL,
     };
     use activity_task::ActivityTask;
     use serde::{Deserialize, Serialize};
@@ -253,7 +259,7 @@ pub mod coresdk {
         tonic::include_proto!("coresdk.common");
         use super::external_data::LocalActivityMarkerData;
         use crate::{
-            coresdk::{AsJsonPayloadExt, IntoPayloadsExt},
+            coresdk::{AsJsonPayloadExt, FromJsonPayloadExt, IntoPayloadsExt},
             temporal::api::common::v1::{Payload, Payloads},
         };
         use std::collections::HashMap;
@@ -263,18 +269,33 @@ pub mod coresdk {
             deprecated: bool,
         ) -> HashMap<String, Payloads> {
             let mut hm = HashMap::new();
-            hm.insert("patch_id".to_string(), patch_id.as_bytes().into());
-            let deprecated = deprecated as u8;
-            hm.insert("deprecated".to_string(), (&[deprecated]).into());
+            hm.insert(
+                "patch_id".to_string(),
+                patch_id.as_json_payload().unwrap().into(),
+            );
+            hm.insert(
+                "deprecated".to_string(),
+                deprecated.as_json_payload().unwrap().into(),
+            );
             hm
         }
 
         pub fn decode_change_marker_details(
             details: &HashMap<String, Payloads>,
         ) -> Option<(String, bool)> {
-            let name =
-                std::str::from_utf8(&details.get("patch_id")?.payloads.first()?.data).ok()?;
-            let deprecated = *details.get("deprecated")?.payloads.first()?.data.first()? != 0;
+            // We used to write change markers with plain bytes, so try to decode if they are
+            // json first, then fall back to that.
+            let id_entry = details.get("patch_id")?.payloads.first()?;
+            let deprecated_entry = details.get("deprecated")?.payloads.first()?;
+            if id_entry.is_json_payload() {
+                return Some((
+                    String::from_json_payload(id_entry).ok()?,
+                    bool::from_json_payload(deprecated_entry).ok()?,
+                ));
+            }
+
+            let name = std::str::from_utf8(&id_entry.data).ok()?;
+            let deprecated = *deprecated_entry.data.first()? != 0;
             Some((name.to_string(), deprecated))
         }
 
@@ -1310,7 +1331,10 @@ pub mod coresdk {
         fn as_json_payload(&self) -> anyhow::Result<Payload> {
             let as_json = serde_json::to_string(self)?;
             let mut metadata = HashMap::new();
-            metadata.insert("encoding".to_string(), b"json/plain".to_vec());
+            metadata.insert(
+                ENCODING_PAYLOAD_KEY.to_string(),
+                JSON_ENCODING_VAL.as_bytes().to_vec(),
+            );
             Ok(Payload {
                 metadata,
                 data: as_json.into_bytes(),
@@ -1326,10 +1350,7 @@ pub mod coresdk {
         T: for<'de> Deserialize<'de>,
     {
         fn from_json_payload(payload: &Payload) -> Result<Self, PayloadDeserializeErr> {
-            if !matches!(
-                payload.metadata.get("encoding").map(|v| v.as_slice()),
-                Some(b"json/plain")
-            ) {
+            if !payload.is_json_payload() {
                 return Err(PayloadDeserializeErr::DeserializerDoesNotHandle);
             }
             let payload_str = std::str::from_utf8(&payload.data).map_err(anyhow::Error::from)?;
@@ -1589,6 +1610,7 @@ pub mod temporal {
         }
         pub mod common {
             pub mod v1 {
+                use crate::{ENCODING_PAYLOAD_KEY, JSON_ENCODING_VAL};
                 use base64::{prelude::BASE64_STANDARD, Engine};
                 use std::{
                     collections::HashMap,
@@ -1604,7 +1626,7 @@ pub mod temporal {
                         // TODO: Set better encodings, whole data converter deal. Setting anything
                         //  for now at least makes it show up in the web UI.
                         let mut metadata = HashMap::new();
-                        metadata.insert("encoding".to_string(), b"binary/plain".to_vec());
+                        metadata.insert(ENCODING_PAYLOAD_KEY.to_string(), b"binary/plain".to_vec());
                         Self {
                             metadata,
                             data: v.as_ref().to_vec(),
@@ -1616,6 +1638,17 @@ pub mod temporal {
                     // Is its own function b/c asref causes implementation conflicts
                     pub fn as_slice(&self) -> &[u8] {
                         self.data.as_slice()
+                    }
+
+                    pub fn is_json_payload(&self) -> bool {
+                        if let Some(v) = self
+                            .metadata
+                            .get(ENCODING_PAYLOAD_KEY)
+                            .map(|v| v.as_slice())
+                        {
+                            return v == JSON_ENCODING_VAL.as_bytes();
+                        }
+                        false
                     }
                 }
 

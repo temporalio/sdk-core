@@ -1,3 +1,4 @@
+use crate::integ_tests::workflow_tests::patches::changes_wf;
 use assert_matches::assert_matches;
 use parking_lot::Mutex;
 use std::{collections::HashSet, sync::Arc, time::Duration};
@@ -202,6 +203,19 @@ async fn multiple_histories_can_handle_dupe_run_ids() {
         test_hist_to_replay(hist1),
     ]);
     worker.register_wf("onetimer", timers_wf(1));
+    worker.run().await.unwrap();
+}
+
+// Verifies SDK can decode patch markers before changing them to use json encoding
+#[tokio::test]
+async fn replay_old_patch_format() {
+    let mut worker = replay_sdk_worker([HistoryForReplay::new(
+        history_from_proto_binary("histories/old_change_marker_format.bin")
+            .await
+            .unwrap(),
+        "fake".to_owned(),
+    )]);
+    worker.register_wf("writes_change_markers", changes_wf);
     worker.run().await.unwrap();
 }
 

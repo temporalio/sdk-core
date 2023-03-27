@@ -64,10 +64,7 @@ async fn sends_upsert() {
     let txt_attr_payload = search_attrs.get(TXT_ATTR).unwrap();
     let int_attr_payload = search_attrs.get(INT_ATTR).unwrap();
     for payload in [txt_attr_payload, int_attr_payload] {
-        assert_eq!(
-            &b"json/plain".to_vec(),
-            payload.metadata.get("encoding").unwrap()
-        );
+        assert!(payload.is_json_payload());
     }
     assert_eq!(
         "goodbye",
