@@ -1270,6 +1270,12 @@ impl From<TimestampError> for WFMachinesError {
     }
 }
 
+impl From<anyhow::Error> for WFMachinesError {
+    fn from(value: anyhow::Error) -> Self {
+        WFMachinesError::Fatal(value.to_string())
+    }
+}
+
 fn auto_fail_to_complete_status(err: WFMachinesError) -> workflow_activation_completion::Status {
     workflow_activation_completion::Status::Failed(Failure {
         failure: Some(

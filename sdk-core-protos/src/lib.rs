@@ -22,6 +22,7 @@ pub use task_token::TaskToken;
 
 pub static ENCODING_PAYLOAD_KEY: &str = "encoding";
 pub static JSON_ENCODING_VAL: &str = "json/plain";
+pub static PATCHED_MARKER_DETAILS_KEY: &str = "patch-data";
 
 #[allow(clippy::large_enum_variant, clippy::derive_partial_eq_without_eq)]
 // I'd prefer not to do this, but there are some generated things that just don't need it.
@@ -259,25 +260,27 @@ pub mod coresdk {
         tonic::include_proto!("coresdk.common");
         use super::external_data::LocalActivityMarkerData;
         use crate::{
-            coresdk::{AsJsonPayloadExt, FromJsonPayloadExt, IntoPayloadsExt},
+            coresdk::{
+                external_data::PatchedMarkerData, AsJsonPayloadExt, FromJsonPayloadExt,
+                IntoPayloadsExt,
+            },
             temporal::api::common::v1::{Payload, Payloads},
+            PATCHED_MARKER_DETAILS_KEY,
         };
         use std::collections::HashMap;
 
         pub fn build_has_change_marker_details(
-            patch_id: &str,
+            patch_id: impl Into<String>,
             deprecated: bool,
-        ) -> HashMap<String, Payloads> {
+        ) -> anyhow::Result<HashMap<String, Payloads>> {
             let mut hm = HashMap::new();
-            hm.insert(
-                "patch_id".to_string(),
-                patch_id.as_json_payload().unwrap().into(),
-            );
-            hm.insert(
-                "deprecated".to_string(),
-                deprecated.as_json_payload().unwrap().into(),
-            );
-            hm
+            let encoded = PatchedMarkerData {
+                id: patch_id.into(),
+                deprecated,
+            }
+            .as_json_payload()?;
+            hm.insert(PATCHED_MARKER_DETAILS_KEY.to_string(), encoded.into());
+            Ok(hm)
         }
 
         pub fn decode_change_marker_details(
@@ -285,15 +288,13 @@ pub mod coresdk {
         ) -> Option<(String, bool)> {
             // We used to write change markers with plain bytes, so try to decode if they are
             // json first, then fall back to that.
-            let id_entry = details.get("patch_id")?.payloads.first()?;
-            let deprecated_entry = details.get("deprecated")?.payloads.first()?;
-            if id_entry.is_json_payload() {
-                return Some((
-                    String::from_json_payload(id_entry).ok()?,
-                    bool::from_json_payload(deprecated_entry).ok()?,
-                ));
+            if let Some(cd) = details.get(PATCHED_MARKER_DETAILS_KEY) {
+                let decoded = PatchedMarkerData::from_json_payload(cd.payloads.first()?).ok()?;
+                return Some((decoded.id, decoded.deprecated));
             }
 
+            let id_entry = details.get("patch_id")?.payloads.first()?;
+            let deprecated_entry = details.get("deprecated")?.payloads.first()?;
             let name = std::str::from_utf8(&id_entry.data).ok()?;
             let deprecated = *deprecated_entry.data.first()? != 0;
             Some((name.to_string(), deprecated))
@@ -1641,14 +1642,10 @@ pub mod temporal {
                     }
 
                     pub fn is_json_payload(&self) -> bool {
-                        if let Some(v) = self
-                            .metadata
+                        self.metadata
                             .get(ENCODING_PAYLOAD_KEY)
-                            .map(|v| v.as_slice())
-                        {
-                            return v == JSON_ENCODING_VAL.as_bytes();
-                        }
-                        false
+                            .map(|v| v.as_slice() == JSON_ENCODING_VAL.as_bytes())
+                            .unwrap_or_default()
                     }
                 }
 

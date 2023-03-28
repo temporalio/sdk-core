@@ -108,7 +108,8 @@ pub(super) fn has_change<'a>(
         attributes: Some(
             RecordMarkerCommandAttributes {
                 marker_name: PATCH_MARKER_NAME.to_string(),
-                details: build_has_change_marker_details(&shared_state.patch_id, deprecated),
+                details: build_has_change_marker_details(&shared_state.patch_id, deprecated)
+                    .context("While encoding patch marker details")?,
                 header: None,
                 failure: None,
             }

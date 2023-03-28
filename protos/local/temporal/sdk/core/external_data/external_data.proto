@@ -29,3 +29,10 @@ message LocalActivityMarkerData {
   // schedule-to-close timeouts when timer-based backoffs are used
   google.protobuf.Timestamp original_schedule_time = 7;
 }
+
+message PatchedMarkerData {
+  // The patch id
+  string id = 1;
+  // Whether or not the patch is marked deprecated.
+  bool deprecated = 2;
+}
