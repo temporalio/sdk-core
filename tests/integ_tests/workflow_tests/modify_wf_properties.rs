@@ -44,10 +44,7 @@ async fn sends_modify_wf_props() {
     let catname = memo.get(FIELD_A).unwrap();
     let cuteness = memo.get(FIELD_B).unwrap();
     for payload in [catname, cuteness] {
-        assert_eq!(
-            &b"json/plain".to_vec(),
-            payload.metadata.get("encoding").unwrap()
-        );
+        assert!(payload.is_json_payload());
     }
     assert_eq!("enchi", String::from_json_payload(catname).unwrap());
     assert_eq!(9001, usize::from_json_payload(cuteness).unwrap());
