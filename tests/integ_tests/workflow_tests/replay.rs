@@ -11,6 +11,7 @@ use temporal_sdk_core_protos::{
         workflow_commands::{ScheduleActivity, StartTimer},
         workflow_completion::WorkflowActivationCompletion,
     },
+    temporal::api::enums::v1::EventType,
     TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE,
 };
 use temporal_sdk_core_test_utils::{
@@ -130,6 +131,23 @@ async fn replay_using_wf_function() {
     worker.run().await.unwrap();
 }
 
+#[tokio::test]
+async fn replay_ending_wft_complete_with_commands_but_no_scheduled_started() {
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+
+    for i in 1..=2 {
+        let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
+        t.add_timer_fired(timer_started_event_id, i.to_string());
+        t.add_full_wf_task();
+    }
+    let func = timers_wf(3);
+    let mut worker = replay_sdk_worker([test_hist_to_replay(t)]);
+    worker.register_wf(DEFAULT_WORKFLOW_TYPE, func);
+    worker.run().await.unwrap();
+}
+
 async fn replay_abrupt_ending(t: TestHistoryBuilder) {
     let func = timers_wf(1);
     let mut worker = replay_sdk_worker([test_hist_to_replay(t)]);
@@ -217,6 +235,38 @@ async fn replay_old_patch_format() {
     )]);
     worker.register_wf("writes_change_markers", changes_wf);
     worker.run().await.unwrap();
+}
+
+#[tokio::test]
+async fn replay_ends_with_empty_wft() {
+    let core = init_core_replay_preloaded(
+        "SayHelloWorkflow",
+        [HistoryForReplay::new(
+            history_from_proto_binary("histories/ends_empty_wft_complete.bin")
+                .await
+                .unwrap(),
+            "fake".to_owned(),
+        )],
+    );
+    let task = core.poll_workflow_activation().await.unwrap();
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
+        task.run_id,
+        vec![ScheduleActivity {
+            seq: 1,
+            activity_id: "1".to_string(),
+            activity_type: "say_hello".to_string(),
+            ..Default::default()
+        }
+        .into()],
+    ))
+    .await
+    .unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(task.run_id))
+        .await
+        .unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
+    assert!(task.eviction_reason().is_some());
 }
 
 fn timers_wf(num_timers: u32) -> WorkflowFunction {
