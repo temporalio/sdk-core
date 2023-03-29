@@ -3,14 +3,16 @@
 //! users during testing.
 
 use crate::{
-    worker::client::{mocks::mock_manual_workflow_client, WorkerClient},
+    worker::{
+        client::{mocks::mock_manual_workflow_client, WorkerClient},
+        PostActivateHookData,
+    },
     Worker,
 };
 use futures::{FutureExt, Stream, StreamExt};
 use once_cell::sync::OnceCell;
 use parking_lot::Mutex;
 use std::{
-    collections::HashMap,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -147,25 +149,18 @@ impl Historator {
 
     /// Returns a callback that can be used as the post-activation hook for a worker to indicate
     /// we're ready to replay the next history, or whatever else.
-    pub(crate) fn get_post_activate_hook(&self) -> impl Fn(&Worker, &str, usize) + Send + Sync {
-        let dat = self.dat.clone();
+    pub(crate) fn get_post_activate_hook(
+        &self,
+    ) -> impl Fn(&Worker, PostActivateHookData) + Send + Sync {
         let done_tx = self.replay_done_tx.clone();
-        move |worker, activated_run_id, last_processed_event| {
-            // We can't hold the lock while evaluating the hook, or we'd deadlock.
-            let last_event_in_hist = dat
-                .lock()
-                .run_id_to_last_event_num
-                .get(activated_run_id)
-                .cloned();
-            if let Some(le) = last_event_in_hist {
-                if last_processed_event >= le {
-                    worker.request_wf_eviction(
-                        activated_run_id,
-                        "Always evict workflows after replay",
-                        EvictionReason::LangRequested,
-                    );
-                    done_tx.send(activated_run_id.to_string()).unwrap();
-                }
+        move |worker, data| {
+            if !data.replaying {
+                worker.request_wf_eviction(
+                    data.run_id,
+                    "Always evict workflows after replay",
+                    EvictionReason::LangRequested,
+                );
+                done_tx.send(data.run_id.to_string()).unwrap();
             }
         }
     }
@@ -184,7 +179,7 @@ impl Stream for Historator {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match self.iter.poll_next_unpin(cx) {
             Poll::Ready(Some(history)) => {
-                let run_id = history
+                history
                     .hist
                     .extract_run_id_from_start()
                     .expect(
@@ -192,11 +187,6 @@ impl Stream for Historator {
                                  execution started events",
                     )
                     .to_string();
-                let last_event = history.hist.last_event_id();
-                self.dat
-                    .lock()
-                    .run_id_to_last_event_num
-                    .insert(run_id, last_event as usize);
                 Poll::Ready(Some(history))
             }
             Poll::Ready(None) => {
@@ -210,6 +200,5 @@ impl Stream for Historator {
 
 #[derive(Default)]
 struct HistoratorDat {
-    run_id_to_last_event_num: HashMap<String, usize>,
     all_dispatched: bool,
 }

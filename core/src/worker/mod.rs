@@ -78,7 +78,7 @@ pub struct Worker {
     shutdown_token: CancellationToken,
     /// Will be called at the end of each activation completion
     #[allow(clippy::type_complexity)] // Sorry clippy, there's no simple way to re-use here.
-    post_activate_hook: Option<Box<dyn Fn(&Self, &str, usize) + Send + Sync>>,
+    post_activate_hook: Option<Box<dyn Fn(&Self, PostActivateHookData) + Send + Sync>>,
     /// Set when non-local activities are complete and should stop being polled
     non_local_activities_complete: Arc<AtomicBool>,
     /// Set when local activities are complete and should stop being polled
@@ -538,9 +538,9 @@ impl Worker {
         self.workflows
             .activation_completed(
                 completion,
-                self.post_activate_hook.as_ref().map(|h| {
-                    |run_id: &str, most_recent_event: usize| h(self, run_id, most_recent_event)
-                }),
+                self.post_activate_hook
+                    .as_ref()
+                    .map(|h| |data: PostActivateHookData| h(self, data)),
             )
             .await?;
         Ok(())
@@ -559,7 +559,7 @@ impl Worker {
     /// Sets a function to be called at the end of each activation completion
     pub(crate) fn set_post_activate_hook(
         &mut self,
-        callback: impl Fn(&Self, &str, usize) + Send + Sync + 'static,
+        callback: impl Fn(&Self, PostActivateHookData) + Send + Sync + 'static,
     ) {
         self.post_activate_hook = Some(Box::new(callback))
     }
@@ -586,6 +586,12 @@ impl Worker {
     fn notify_local_result(&self, run_id: &str, res: LocalResolution) {
         self.workflows.notify_of_local_result(run_id, res);
     }
+}
+
+pub struct PostActivateHookData<'a> {
+    pub run_id: &'a str,
+    pub most_recent_event: usize,
+    pub replaying: bool,
 }
 
 fn build_wf_basics(

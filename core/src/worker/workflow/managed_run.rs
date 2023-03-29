@@ -988,7 +988,8 @@ impl ManagedRun {
         let should_respond = !(self.wfm.machines.has_pending_jobs()
             || outgoing_cmds.replaying
             || is_query_playback
-            || data.activation_was_only_eviction);
+            || data.activation_was_only_eviction
+            || self.wfm.machines.have_seen_terminal_event);
         // If there are pending LA resolutions, and we're responding to a query here,
         // we want to make sure to force a new task, as otherwise once we tell lang about
         // the LA resolution there wouldn't be any task to reply to with the result of iterating
@@ -1011,10 +1012,7 @@ impl ManagedRun {
             ActivationCompleteOutcome::DoNothing
         };
         FulfillableActivationComplete {
-            result: ActivationCompleteResult {
-                most_recently_processed_event: self.wfm.machines.last_processed_event as usize,
-                outcome,
-            },
+            result: self.build_activation_complete_result(outcome),
             resp_chan,
         }
     }
@@ -1042,11 +1040,19 @@ impl ManagedRun {
         chan: Option<oneshot::Sender<ActivationCompleteResult>>,
     ) {
         if let Some(chan) = chan {
-            chan.send(ActivationCompleteResult {
-                most_recently_processed_event: self.most_recently_processed_event_number() as usize,
-                outcome,
-            })
-            .expect("Rcv half of activation reply not dropped");
+            chan.send(self.build_activation_complete_result(outcome))
+                .expect("Rcv half of activation reply not dropped");
+        }
+    }
+
+    fn build_activation_complete_result(
+        &self,
+        outcome: ActivationCompleteOutcome,
+    ) -> ActivationCompleteResult {
+        ActivationCompleteResult {
+            outcome,
+            most_recently_processed_event: self.most_recently_processed_event_number() as usize,
+            replaying: self.wfm.machines.replaying,
         }
     }
 

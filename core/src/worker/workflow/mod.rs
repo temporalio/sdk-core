@@ -43,6 +43,7 @@ use crate::{
             workflow_stream::{LocalInput, LocalInputs, WFStream},
         },
         LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
+        PostActivateHookData,
     },
     MetricsContext,
 };
@@ -295,7 +296,7 @@ impl Workflows {
                         },
                         // We need to say a type, but the type is irrelevant, so imagine some
                         // boxed function we'll never call.
-                        Option::<Box<dyn Fn(&str, usize) + Send>>::None,
+                        Option::<Box<dyn Fn(PostActivateHookData) + Send>>::None,
                     )
                     .await?;
                 }
@@ -308,7 +309,7 @@ impl Workflows {
                             run_id,
                             status: Some(auto_fail_to_complete_status(machines_err)),
                         },
-                        Option::<Box<dyn Fn(&str, usize) + Send>>::None,
+                        Option::<Box<dyn Fn(PostActivateHookData) + Send>>::None,
                     )
                     .await?;
                 }
@@ -323,7 +324,7 @@ impl Workflows {
     pub(super) async fn activation_completed(
         &self,
         completion: WorkflowActivationCompletion,
-        post_activate_hook: Option<impl Fn(&str, usize)>,
+        post_activate_hook: Option<impl Fn(PostActivateHookData)>,
     ) -> Result<usize, CompleteWfError> {
         let is_empty_completion = completion.is_empty();
         let completion = validate_completion(completion)?;
@@ -448,7 +449,11 @@ impl Workflows {
         };
 
         if let Some(h) = post_activate_hook {
-            h(&run_id, completion_outcome.most_recently_processed_event);
+            h(PostActivateHookData {
+                run_id: &run_id,
+                most_recent_event: completion_outcome.most_recently_processed_event,
+                replaying: completion_outcome.replaying,
+            });
         }
 
         self.post_activation(PostActivationMsg {
@@ -956,6 +961,7 @@ struct GetStateInfoMsg {
 #[derive(Debug)]
 struct ActivationCompleteResult {
     most_recently_processed_event: usize,
+    replaying: bool,
     outcome: ActivationCompleteOutcome,
 }
 /// What needs to be done after calling [Workflows::activation_completed]

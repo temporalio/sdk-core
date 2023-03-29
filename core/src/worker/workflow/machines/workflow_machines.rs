@@ -420,6 +420,8 @@ impl WorkflowMachines {
         // then we don't need to do anything here, and in fact we need to avoid re-applying the
         // final WFT.
         if self.have_seen_terminal_event {
+            // Replay clearly counts as done now, since we return here and never do anything else.
+            self.replaying = false;
             return Ok(0);
         }
 
