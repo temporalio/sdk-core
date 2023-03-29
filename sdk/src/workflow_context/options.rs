@@ -9,7 +9,10 @@ use temporal_sdk_core_protos::{
             StartChildWorkflowExecution,
         },
     },
-    temporal::api::common::v1::{Payload, RetryPolicy},
+    temporal::api::{
+        common::v1::{Payload, RetryPolicy},
+        enums::v1::ParentClosePolicy,
+    },
 };
 
 // TODO: Before release, probably best to avoid using proto types entirely here. They're awkward.
@@ -180,6 +183,8 @@ pub struct ChildWorkflowOptions {
     pub cancel_type: ChildWorkflowCancellationType,
     /// Common options
     pub options: WorkflowOptions,
+    /// How to respond to parent workflow ending
+    pub parent_close_policy: ParentClosePolicy,
 }
 
 impl IntoWorkflowCommand for ChildWorkflowOptions {
@@ -203,6 +208,7 @@ impl IntoWorkflowCommand for ChildWorkflowOptions {
             workflow_task_timeout: self.options.task_timeout.and_then(|d| d.try_into().ok()),
             search_attributes: self.options.search_attributes.unwrap_or_default(),
             cron_schedule: self.options.cron_schedule.unwrap_or_default(),
+            parent_close_policy: self.parent_close_policy as i32,
             ..Default::default()
         }
     }
