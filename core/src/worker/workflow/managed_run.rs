@@ -34,13 +34,13 @@ use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::{
             create_evict_activation, query_to_job, remove_from_cache::EvictionReason,
-            workflow_activation_job, RemoveFromCache, WorkflowActivation,
+            workflow_activation_job, QueryWorkflow, RemoveFromCache, WorkflowActivation,
         },
         workflow_commands::QueryResult,
         workflow_completion,
     },
     temporal::api::{enums::v1::WorkflowTaskFailedCause, failure::v1::Failure},
-    TaskToken,
+    TaskToken, ENHANCED_STACK_QUERY, TIME_TRAVEL_QUERY,
 };
 use tokio::sync::oneshot;
 use tracing::Span;
@@ -176,6 +176,9 @@ impl ManagedRun {
             task_token: work.task_token,
             wf_id: work.execution.workflow_id.clone(),
         };
+        if work.alternate_cache == 1 {
+            info!("Special incoming WFT for time travel replay");
+        }
 
         let legacy_query_from_poll = work
             .legacy_query
@@ -894,8 +897,8 @@ impl ManagedRun {
                             None
                         }
                     }
-                    Some(r) => {
-                        self.insert_outstanding_activation(&r);
+                    Some(mut r) => {
+                        self.insert_outstanding_activation(&mut r);
                         Some(r)
                     }
                     None => None,
@@ -929,9 +932,32 @@ impl ManagedRun {
         }
     }
 
-    fn insert_outstanding_activation(&mut self, act: &ActivationOrAuto) {
-        let act_type = match &act {
+    fn insert_outstanding_activation(&mut self, act: &mut ActivationOrAuto) {
+        let act_type = match act {
             ActivationOrAuto::LangActivation(act) | ActivationOrAuto::ReadyForQueries(act) => {
+                // If the time travel query is pending, insert an enhanced stack trace query.
+                // TODO: Somehow do only at WFT boundaries
+                if let Some(ref wft) = self.wft {
+                    if wft.has_pending_time_travel_query() {
+                        warn!("Issuing activation, have pending TT query");
+                        // Insert enhanced stack trace query (and remove tt query, if present)
+                        act.jobs.retain(|j| {
+                            !matches!(&j.variant,
+                                      Some(workflow_activation_job::Variant::QueryWorkflow(q))
+                                      if q.query_type == TIME_TRAVEL_QUERY)
+                        });
+                        act.jobs.push(
+                            workflow_activation_job::Variant::QueryWorkflow(QueryWorkflow {
+                                query_id: "__fake_enhanced_stack".to_string(),
+                                query_type: ENHANCED_STACK_QUERY.to_string(),
+                                arguments: vec![],
+                                headers: Default::default(),
+                            })
+                            .into(),
+                        )
+                    }
+                }
+
                 if act.is_legacy_query() {
                     OutstandingActivation::LegacyQuery
                 } else {

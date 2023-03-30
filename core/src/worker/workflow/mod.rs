@@ -88,7 +88,7 @@ use temporal_sdk_core_protos::{
         taskqueue::v1::StickyExecutionAttributes,
         workflowservice::v1::{get_system_info_response, PollActivityTaskQueueResponse},
     },
-    TaskToken,
+    TaskToken, TIME_TRAVEL_QUERY,
 };
 use tokio::{
     sync::{
@@ -816,6 +816,11 @@ impl OutstandingTask {
         self.pending_queries
             .iter()
             .any(|q| q.query_id == LEGACY_QUERY_ID)
+    }
+    pub(crate) fn has_pending_time_travel_query(&self) -> bool {
+        self.pending_queries
+            .iter()
+            .any(|q| q.query_type == TIME_TRAVEL_QUERY)
     }
 }
 

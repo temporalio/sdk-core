@@ -239,18 +239,6 @@ impl WFStream {
         &mut self,
         pwft: PermittedWFT,
     ) -> Result<RunUpdateAct, HistoryFetchReq> {
-        let mut all_queries = pwft
-            .work
-            .query_requests
-            .iter()
-            .map(|q| q.query_type.as_str())
-            .chain(pwft.work.legacy_query.iter().map(|q| q.query_type.as_str()));
-        if all_queries
-            .find(|qt| *qt == "__time_travel_stack_trace")
-            .is_some()
-        {
-            info!("Saw time travel query");
-        }
         // If the run already exists, possibly buffer the work and return early if we can't handle
         // it yet.
         let pwft = if let Some(rh) = self.runs.get_mut(&pwft.work.cache_key()) {

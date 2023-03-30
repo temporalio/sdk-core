@@ -17,9 +17,12 @@ use std::{
     sync::Arc,
     task::{Context, Poll},
 };
-use temporal_sdk_core_protos::temporal::api::{
-    enums::v1::EventType,
-    history::v1::{history_event, History, HistoryEvent, WorkflowTaskCompletedEventAttributes},
+use temporal_sdk_core_protos::{
+    temporal::api::{
+        enums::v1::EventType,
+        history::v1::{history_event, History, HistoryEvent, WorkflowTaskCompletedEventAttributes},
+    },
+    TIME_TRAVEL_QUERY,
 };
 use tracing::Instrument;
 
@@ -122,9 +125,39 @@ impl HistoryPaginator {
     /// Use a new poll response to create a new [WFTPaginator], returning it and the
     /// [PreparedWFT] extracted from it that can be fed into workflow state.
     pub(super) async fn from_poll(
-        wft: ValidPollWFTQResponse,
+        mut wft: ValidPollWFTQResponse,
         client: Arc<dyn WorkerClient>,
     ) -> Result<(Self, PreparedWFT), tonic::Status> {
+        let mut alternate_cache = 0;
+        // Intercept and special time travel query
+        let mut all_queries = wft
+            .query_requests
+            .iter()
+            .map(|q| q.query_type.as_str())
+            .chain(wft.legacy_query.iter().map(|q| q.query_type.as_str()));
+        if all_queries.find(|qt| *qt == TIME_TRAVEL_QUERY).is_some() {
+            // If we see one of these, we need to fetch *all* history, attach the alternate cache
+            // key, and then break things into made up WFTs and issue enhanced stack trace queries
+            // for each one
+            info!("Time travel query from poll");
+
+            // This will force fetching all history.
+            wft.history.events = vec![];
+            alternate_cache = 1;
+
+            // // Strip the time travel query
+            // wft.query_requests
+            //     .retain(|q| q.query_type != TIME_TRAVEL_QUERY);
+            // if wft
+            //     .legacy_query
+            //     .as_ref()
+            //     .map(|q| q.query_type == TIME_TRAVEL_QUERY)
+            //     .unwrap_or_default()
+            // {
+            //     wft.legacy_query.take();
+            // }
+        }
+
         let empty_hist = wft.history.events.is_empty();
         let npt = if empty_hist {
             NextPageToken::FetchFromStart
@@ -162,7 +195,7 @@ impl HistoryPaginator {
             legacy_query: wft.legacy_query,
             query_requests: wft.query_requests,
             update,
-            alternate_cache: 0,
+            alternate_cache,
         };
         Ok((paginator, prepared))
     }

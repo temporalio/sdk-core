@@ -23,6 +23,8 @@ pub use task_token::TaskToken;
 pub static ENCODING_PAYLOAD_KEY: &str = "encoding";
 pub static JSON_ENCODING_VAL: &str = "json/plain";
 pub static PATCHED_MARKER_DETAILS_KEY: &str = "patch-data";
+pub static TIME_TRAVEL_QUERY: &str = "__time_travel_stack_trace";
+pub static ENHANCED_STACK_QUERY: &str = "__enhanced_stack_trace";
 
 #[allow(clippy::large_enum_variant, clippy::derive_partial_eq_without_eq)]
 // I'd prefer not to do this, but there are some generated things that just don't need it.
