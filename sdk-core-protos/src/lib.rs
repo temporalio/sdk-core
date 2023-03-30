@@ -454,6 +454,7 @@ pub mod coresdk {
                     }),
                 )],
                 available_internal_flags: vec![],
+                alternate_cache_key: 0,
             }
         }
 

@@ -366,6 +366,7 @@ impl WorkflowMachines {
                 .iter()
                 .copied()
                 .collect(),
+            alternate_cache_key: 0,
         }
     }
 

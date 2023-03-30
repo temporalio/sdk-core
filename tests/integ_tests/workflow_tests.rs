@@ -12,6 +12,7 @@ mod replay;
 mod resets;
 mod signals;
 mod stickyness;
+mod time_travel_stack;
 mod timers;
 mod upsert_search_attrs;
 
