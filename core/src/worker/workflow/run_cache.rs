@@ -164,7 +164,7 @@ impl FromStr for RunCacheKey {
         Ok(if s.starts_with("!k") {
             let dash_ix = s.find('-').unwrap();
             Self {
-                run_id: s[dash_ix..].to_string(),
+                run_id: s[dash_ix + 1..].to_string(),
                 alternate_key: s[2..dash_ix].parse().unwrap(),
             }
         } else {
