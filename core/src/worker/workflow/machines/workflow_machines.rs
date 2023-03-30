@@ -27,6 +27,7 @@ use crate::{
                 upsert_search_attributes_state_machine::upsert_search_attrs_internal,
                 HistEventData,
             },
+            run_cache::RunCacheKey,
             CommandID, DrivenWorkflow, HistoryUpdate, InternalFlagsRef, LocalResolution,
             OutgoingJob, RunBasics, WFCommand, WFMachinesError, WorkflowFetcher,
             WorkflowStartedInfo,
@@ -95,6 +96,8 @@ pub(crate) struct WorkflowMachines {
     pub workflow_type: String,
     /// Identifies the current run
     pub run_id: String,
+    /// Cache key used by this run TODO: Duplicates run_id
+    pub cache_key: RunCacheKey,
     /// The time the workflow execution began, as told by the WEStarted event
     workflow_start_time: Option<SystemTime>,
     /// The time the workflow execution finished, as determined by when the machines handled
@@ -228,7 +231,8 @@ impl WorkflowMachines {
             namespace: basics.namespace,
             workflow_id: basics.workflow_id,
             workflow_type: basics.workflow_type,
-            run_id: basics.run_id,
+            run_id: basics.cache_key.run_id.clone(),
+            cache_key: basics.cache_key,
             drive_me: driven_wf,
             replaying,
             metrics: basics.metrics,
@@ -366,7 +370,7 @@ impl WorkflowMachines {
                 .iter()
                 .copied()
                 .collect(),
-            alternate_cache_key: 0,
+            alternate_cache_key: self.cache_key.to_string(),
         }
     }
 

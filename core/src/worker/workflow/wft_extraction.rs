@@ -4,8 +4,8 @@ use crate::{
     worker::{
         client::WorkerClient,
         workflow::{
-            history_update::HistoryPaginator, CacheMissFetchReq, HistoryUpdate, NextPageReq,
-            PermittedWFT,
+            history_update::HistoryPaginator, run_cache::RunCacheKey, CacheMissFetchReq,
+            HistoryUpdate, NextPageReq, PermittedWFT,
         },
     },
 };
@@ -29,7 +29,7 @@ pub(super) enum WFTExtractorOutput {
         rc: Arc<HistfetchRC>,
     },
     FailedFetch {
-        run_id: String,
+        cache_key: RunCacheKey,
         err: tonic::Status,
         auto_reply_fail_tt: Option<TaskToken>,
     },
@@ -72,7 +72,7 @@ impl WFTExtractor {
                                     paginator: pag,
                                 }),
                                 Err(err) => WFTExtractorOutput::FailedFetch {
-                                    run_id,
+                                    cache_key: run_id.parse().unwrap(),
                                     err,
                                     auto_reply_fail_tt: Some(tt),
                                 },
@@ -100,11 +100,11 @@ impl WFTExtractor {
                         // It's OK to simply drop the refcounters in the event of fetch
                         // failure. We'll just proceed with shutdown.
                         HistoryFetchReq::Full(req, rc) => {
-                            let run_id = req.original_wft.work.execution.run_id.clone();
+                            let cache_key = req.original_wft.work.cache_key();
                             match HistoryPaginator::from_fetchreq(req, client).await {
                                 Ok(r) => WFTExtractorOutput::FetchResult(r, rc),
                                 Err(err) => WFTExtractorOutput::FailedFetch {
-                                    run_id,
+                                    cache_key,
                                     err,
                                     auto_reply_fail_tt: None,
                                 },
@@ -119,7 +119,7 @@ impl WFTExtractor {
                                     rc,
                                 },
                                 Err(err) => WFTExtractorOutput::FailedFetch {
-                                    run_id: req.paginator.run_id,
+                                    cache_key: req.paginator.cache_key,
                                     err,
                                     auto_reply_fail_tt: None,
                                 },

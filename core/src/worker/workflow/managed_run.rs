@@ -9,13 +9,14 @@ use crate::{
     protosext::WorkflowActivationExt,
     worker::{
         workflow::{
-            history_update::HistoryPaginator, machines::WorkflowMachines, ActivationAction,
-            ActivationCompleteOutcome, ActivationCompleteResult, ActivationOrAuto,
-            EvictionRequestResult, FailedActivationWFTReport, HeartbeatTimeoutMsg, HistoryUpdate,
-            LocalActivityRequestSink, LocalResolution, NextPageReq, OutgoingServerCommands,
-            OutstandingActivation, OutstandingTask, PermittedWFT, RequestEvictMsg, RunBasics,
-            ServerCommandsWithWorkflowInfo, WFCommand, WFMachinesError, WFTReportStatus,
-            WorkflowBridge, WorkflowTaskInfo, WFT_HEARTBEAT_TIMEOUT_FRACTION,
+            history_update::HistoryPaginator, machines::WorkflowMachines, run_cache::RunCacheKey,
+            ActivationAction, ActivationCompleteOutcome, ActivationCompleteResult,
+            ActivationOrAuto, EvictionRequestResult, FailedActivationWFTReport,
+            HeartbeatTimeoutMsg, HistoryUpdate, LocalActivityRequestSink, LocalResolution,
+            NextPageReq, OutgoingServerCommands, OutstandingActivation, OutstandingTask,
+            PermittedWFT, RequestEvictMsg, RunBasics, ServerCommandsWithWorkflowInfo, WFCommand,
+            WFMachinesError, WFTReportStatus, WorkflowBridge, WorkflowTaskInfo,
+            WFT_HEARTBEAT_TIMEOUT_FRACTION,
         },
         LocalActRequest, LEGACY_QUERY_ID,
     },
@@ -234,7 +235,7 @@ impl ManagedRun {
                     }
                     lawait.hb_timeout_handle.abort();
                     lawait.hb_timeout_handle = sink_heartbeat_timeout_start(
-                        self.wfm.machines.run_id.clone(),
+                        self.wfm.machines.cache_key.clone(),
                         self.local_activity_request_sink.as_ref(),
                         start_time,
                         lawait.wft_timeout,
@@ -250,7 +251,7 @@ impl ManagedRun {
                 }
             } else {
                 return Ok(Some(ActivationOrAuto::Autocomplete {
-                    run_id: self.wfm.machines.run_id.clone(),
+                    cache_key: self.wfm.machines.cache_key.clone(),
                 }));
             }
         }
@@ -521,7 +522,7 @@ impl ManagedRun {
         let message = format!("Workflow activation completion failed: {:?}", &failure);
         // Blow up any cached data associated with the workflow
         let evict_req_outcome = self.request_eviction(RequestEvictMsg {
-            run_id: self.run_id().to_string(),
+            cache_key: self.cache_key().clone(),
             message,
             reason,
             auto_reply_fail_tt: None,
@@ -636,7 +637,7 @@ impl ManagedRun {
                     wft_timeout,
                     completion_dat: Some((data, completion.resp_chan)),
                     hb_timeout_handle: sink_heartbeat_timeout_start(
-                        self.run_id().to_string(),
+                        self.cache_key().clone(),
                         self.local_activity_request_sink.as_ref(),
                         start_t,
                         wft_timeout,
@@ -676,7 +677,7 @@ impl ManagedRun {
     pub(super) fn heartbeat_timeout(&mut self) -> RunUpdateAct {
         let maybe_act = if self._heartbeat_timeout() {
             Some(ActivationOrAuto::Autocomplete {
-                run_id: self.wfm.machines.run_id.clone(),
+                cache_key: self.wfm.machines.cache_key.clone(),
             })
         } else {
             None
@@ -780,7 +781,7 @@ impl ManagedRun {
         }
 
         if !self.activation_has_eviction() && self.trying_to_evict.is_none() {
-            debug!(run_id=%info.run_id, reason=%info.message, "Eviction requested");
+            debug!(run_id=%info.cache_key, reason=%info.message, "Eviction requested");
             self.trying_to_evict = Some(info);
             EvictionRequestResult::EvictionRequested(attempts, self.check_more_activations())
         } else {
@@ -919,7 +920,7 @@ impl ManagedRun {
                 } else {
                     warn!(error=?fail.source, "Error while updating workflow");
                     Some(ActivationOrAuto::AutoFail {
-                        run_id: self.run_id().to_owned(),
+                        cache_key: self.cache_key().clone(),
                         machines_err: fail.source,
                     })
                 };
@@ -1087,6 +1088,10 @@ impl ManagedRun {
     fn run_id(&self) -> &str {
         &self.wfm.machines.run_id
     }
+
+    fn cache_key(&self) -> &RunCacheKey {
+        &self.wfm.machines.cache_key
+    }
 }
 
 /// Drains pending queries from the workflow task and appends them to the activation's jobs
@@ -1111,7 +1116,7 @@ fn put_queries_in_act(act: &mut WorkflowActivation, wft: &mut OutstandingTask) {
     act.jobs.extend(query_jobs);
 }
 fn sink_heartbeat_timeout_start(
-    run_id: String,
+    cache_key: RunCacheKey,
     sink: &dyn LocalActivityRequestSink,
     wft_start_time: Instant,
     wft_timeout: Duration,
@@ -1121,7 +1126,7 @@ fn sink_heartbeat_timeout_start(
     let (abort_handle, abort_reg) = AbortHandle::new_pair();
     sink.sink_reqs(vec![LocalActRequest::StartHeartbeatTimeout {
         send_on_elapse: HeartbeatTimeoutMsg {
-            run_id,
+            cache_key,
             span: Span::current(),
         },
         deadline,

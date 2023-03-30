@@ -35,10 +35,10 @@ message WorkflowActivation {
     // internal flags may be used. This is not a delta - all previously used flags always
     // appear since this representation is cheap.
     repeated uint32 available_internal_flags = 6;
-    // If set nonzero, this activation should be cached prefixed with this number, so as not to
-    // collide with any existing cached instance of this run. Useful for capturing stack trace state
-    // over time without blowing up any already-cached instance of the run.
-    uint32 alternate_cache_key = 7;
+    // If set, this activation should be cached under they key, so as not to collide with any
+    // existing cached instance of this run. Useful for capturing stack trace state over time
+    // without blowing up any already-cached instance of the run.
+    string alternate_cache_key = 7;
 }
 
 message WorkflowActivationJob {

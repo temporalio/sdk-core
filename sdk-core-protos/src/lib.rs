@@ -454,7 +454,7 @@ pub mod coresdk {
                     }),
                 )],
                 available_internal_flags: vec![],
-                alternate_cache_key: 0,
+                alternate_cache_key: "".to_string(),
             }
         }
 
@@ -923,6 +923,7 @@ pub mod coresdk {
             let success = workflow_completion::Success::from_variants(vec![]);
             Self {
                 run_id: run_id.into(),
+                alternate_cache_key: "".to_string(),
                 status: Some(workflow_activation_completion::Status::Successful(success)),
             }
         }
@@ -932,6 +933,7 @@ pub mod coresdk {
             let success = workflow_completion::Success::from_variants(cmds);
             Self {
                 run_id: run_id.into(),
+                alternate_cache_key: "".to_string(),
                 status: Some(workflow_activation_completion::Status::Successful(success)),
             }
         }
@@ -941,6 +943,7 @@ pub mod coresdk {
             let success = workflow_completion::Success::from_variants(vec![cmd]);
             Self {
                 run_id: run_id.into(),
+                alternate_cache_key: "".to_string(),
                 status: Some(workflow_activation_completion::Status::Successful(success)),
             }
         }
@@ -948,6 +951,7 @@ pub mod coresdk {
         pub fn fail(run_id: impl Into<String>, failure: Failure) -> Self {
             Self {
                 run_id: run_id.into(),
+                alternate_cache_key: "".to_string(),
                 status: Some(workflow_activation_completion::Status::Failed(
                     workflow_completion::Failure {
                         failure: Some(failure),
@@ -1064,6 +1068,7 @@ pub mod coresdk {
             let success = self.into_iter().map(Into::into).collect::<Vec<_>>().into();
             WorkflowActivationCompletion {
                 run_id,
+                alternate_cache_key: "".to_string(),
                 status: Some(workflow_activation_completion::Status::Successful(success)),
             }
         }
