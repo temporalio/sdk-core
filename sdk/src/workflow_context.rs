@@ -34,7 +34,8 @@ use temporal_sdk_core_protos::{
         workflow_commands::{
             request_cancel_external_workflow_execution as cancel_we,
             signal_external_workflow_execution as sig_we, workflow_command,
-            ModifyWorkflowProperties, RequestCancelExternalWorkflowExecution, SetPatchMarker,
+            CancelChildWorkflowExecution, ModifyWorkflowProperties,
+            RequestCancelExternalWorkflowExecution, SetPatchMarker,
             SignalExternalWorkflowExecution, StartTimer, UpsertWorkflowSearchAttributes,
         },
     },
@@ -679,13 +680,13 @@ impl StartedChildWorkflow {
     }
 
     /// Cancel the child workflow
-    pub fn cancel(&self, cx: &WfContext) -> impl Future<Output = CancelExternalWfResult> {
-        let target = NamespacedWorkflowExecution {
-            namespace: cx.namespace().to_string(),
-            workflow_id: self.common.workflow_id.clone(),
-            ..Default::default()
-        };
-        cx.cancel_external(target)
+    pub fn cancel(&self, cx: &WfContext) {
+        cx.send(RustWfCmd::NewNonblockingCmd(
+            CancelChildWorkflowExecution {
+                child_workflow_seq: self.common.result_future.cancellable_id.seq_num(),
+            }
+            .into(),
+        ));
     }
 
     /// Signal the child workflow

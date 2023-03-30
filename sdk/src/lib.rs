@@ -549,11 +549,13 @@ pub enum TimerResult {
 }
 
 /// Successful result of sending a signal to an external workflow
+#[derive(Debug)]
 pub struct SignalExternalOk;
 /// Result of awaiting on sending a signal to an external workflow
 pub type SignalExternalWfResult = Result<SignalExternalOk, Failure>;
 
 /// Successful result of sending a cancel request to an external workflow
+#[derive(Debug)]
 pub struct CancelExternalOk;
 /// Result of awaiting on sending a cancel request to an external workflow
 pub type CancelExternalWfResult = Result<CancelExternalOk, Failure>;
@@ -654,6 +656,20 @@ pub enum CancellableID {
         /// Set to true if this workflow is a child of the issuing workflow
         only_child: bool,
     },
+}
+
+impl CancellableID {
+    /// Returns the type-specific sequence number used for this command
+    pub fn seq_num(&self) -> u32 {
+        match self {
+            CancellableID::Timer(seq) => *seq,
+            CancellableID::Activity(seq) => *seq,
+            CancellableID::LocalActivity(seq) => *seq,
+            CancellableID::ChildWorkflow(seq) => *seq,
+            CancellableID::SignalExternalWorkflow(seq) => *seq,
+            CancellableID::ExternalWorkflow { seqnum, .. } => *seqnum,
+        }
+    }
 }
 
 #[derive(derive_more::From)]

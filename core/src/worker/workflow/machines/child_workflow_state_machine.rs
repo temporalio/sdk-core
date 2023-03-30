@@ -74,6 +74,8 @@ fsm! {
 
     // Ignore any spurious cancellations after resolution
     Cancelled --(Cancel) --> Cancelled;
+    Cancelled --(ChildWorkflowExecutionCancelled,
+        on_child_workflow_execution_cancelled) --> Cancelled;
     Failed --(Cancel) --> Failed;
     StartFailed --(Cancel) --> StartFailed;
     TimedOut --(Cancel) --> TimedOut;
@@ -111,7 +113,30 @@ pub(super) struct ChildWorkflowInitiatedData {
 }
 
 #[derive(Default, Clone)]
-pub(super) struct Cancelled {}
+pub(super) struct Cancelled {
+    seen_cancelled_event: bool,
+}
+
+impl Cancelled {
+    pub(super) fn on_child_workflow_execution_cancelled(
+        self,
+    ) -> ChildWorkflowMachineTransition<Cancelled> {
+        if self.seen_cancelled_event {
+            ChildWorkflowMachineTransition::Err(WFMachinesError::Fatal(
+                "Child workflow has already seen a ChildWorkflowExecutionCanceledEvent, and now \
+                 another is being applied! This is a bug, please report."
+                    .to_string(),
+            ))
+        } else {
+            ChildWorkflowMachineTransition::ok(
+                [],
+                Cancelled {
+                    seen_cancelled_event: true,
+                },
+            )
+        }
+    }
+}
 
 #[derive(Default, Clone)]
 pub(super) struct Completed {}
@@ -263,7 +288,12 @@ impl Started {
         )
     }
     fn on_child_workflow_execution_cancelled(self) -> ChildWorkflowMachineTransition<Cancelled> {
-        ChildWorkflowMachineTransition::ok(vec![ChildWorkflowCommand::Cancel], Cancelled::default())
+        ChildWorkflowMachineTransition::ok(
+            vec![ChildWorkflowCommand::Cancel],
+            Cancelled {
+                seen_cancelled_event: true,
+            },
+        )
     }
     fn on_child_workflow_execution_terminated(
         self,
@@ -870,7 +900,9 @@ mod test {
     #[test]
     fn cancels_ignored_terminal() {
         for state in [
-            ChildWorkflowMachineState::Cancelled(Cancelled {}),
+            ChildWorkflowMachineState::Cancelled(Cancelled {
+                seen_cancelled_event: false,
+            }),
             Failed {}.into(),
             StartFailed {}.into(),
             TimedOut {}.into(),

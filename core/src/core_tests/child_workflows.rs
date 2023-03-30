@@ -88,11 +88,12 @@ async fn parent_cancels_child_wf(ctx: WfContext) -> WorkflowResult<()> {
         .await
         .into_started()
         .expect("Child should get started");
-    let cancel_fut = start_res.cancel(&ctx);
-    let resfut = start_res.result();
-    let (cancel_res, res) = join!(cancel_fut, resfut);
-    cancel_res.expect("cancel result is ok");
-    let stat = res.status.expect("child wf result is ok");
+    start_res.cancel(&ctx);
+    let stat = start_res
+        .result()
+        .await
+        .status
+        .expect("child wf result is ok");
     assert_matches!(stat, child_workflow_result::Status::Cancelled(_));
     Ok(().into())
 }
