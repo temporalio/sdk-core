@@ -1226,7 +1226,7 @@ impl WFCommand {
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
-enum CommandID {
+pub(crate) enum CommandID {
     Timer(u32),
     Activity(u32),
     LocalActivity(u32),

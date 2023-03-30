@@ -4,6 +4,7 @@ mod managed_wf_test;
 #[cfg(test)]
 pub(crate) use managed_wf_test::ManagedWFFunc;
 
+use crate::worker::workflow::CommandID;
 use crate::{
     abstractions::dbg_panic,
     protosext::WorkflowActivationExt,
@@ -30,13 +31,18 @@ use std::{
     sync::mpsc::Sender,
     time::{Duration, Instant},
 };
+use temporal_sdk_core_api::builtin_queries::{
+    EnhancedStackTrace, InternalCommandType, InternalEnhancedStackTrace, StackTrace,
+};
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::{
             create_evict_activation, query_to_job, remove_from_cache::EvictionReason,
             workflow_activation_job, QueryWorkflow, RemoveFromCache, WorkflowActivation,
         },
+        workflow_commands::query_result::Variant::Succeeded as QuerySucceeded,
         workflow_commands::QueryResult,
+        workflow_commands::QuerySuccess,
         workflow_completion,
     },
     temporal::api::{enums::v1::WorkflowTaskFailedCause, failure::v1::Failure},
@@ -93,6 +99,7 @@ pub(super) struct ManagedRun {
     /// We store the paginator used for our own run's history fetching
     paginator: Option<HistoryPaginator>,
     completion_waiting_on_page_fetch: Option<RunActivationCompletion>,
+    special_query_ids: Vec<String>,
 }
 impl ManagedRun {
     pub(super) fn new(
@@ -114,6 +121,7 @@ impl ManagedRun {
             metrics,
             paginator: None,
             completion_waiting_on_page_fetch: None,
+            special_query_ids: vec![],
         }
     }
 
@@ -201,6 +209,12 @@ impl ManagedRun {
             pending_queries.push(lq);
         }
 
+        self.special_query_ids = pending_queries
+            .iter()
+            .filter(|q| q.query_type == "__enhanced_stack_trace")
+            .map(|q| q.query_id.clone())
+            .collect();
+
         self.paginator = Some(pwft.paginator);
         self.wft = Some(OutstandingTask {
             info: wft_info,
@@ -268,8 +282,8 @@ impl ManagedRun {
         &mut self,
         report_status: WFTReportStatus,
     ) -> Option<OutstandingTask> {
-        debug!("Marking WFT completed");
         let retme = self.wft.take();
+        self.special_query_ids = vec![];
 
         // Only record latency metrics if we genuinely reported to server
         if matches!(report_status, WFTReportStatus::Reported) {
@@ -392,10 +406,67 @@ impl ManagedRun {
         if matches!(&commands.as_slice(),
                     &[WFCommand::QueryResponse(qr)] if qr.query_id == LEGACY_QUERY_ID)
         {
-            let qr = match commands.remove(0) {
+            let mut qr = match commands.remove(0) {
                 WFCommand::QueryResponse(qr) => qr,
                 _ => unreachable!("We just verified this is the only command"),
             };
+            if self.special_query_ids.contains(&LEGACY_QUERY_ID.to_owned()) {
+                if let Some(QuerySucceeded(QuerySuccess { response })) = qr.variant.as_mut() {
+                    if let Some(payload) = response {
+                        if payload.is_json_payload() {
+                            if let Ok(internal_trace) =
+                                serde_json::from_slice::<InternalEnhancedStackTrace>(
+                                    payload.data.as_slice(),
+                                )
+                            {
+                                let mut stacks =
+                                    Vec::<StackTrace>::with_capacity(internal_trace.stacks.len());
+                                for stack in internal_trace.stacks.iter() {
+                                    let mut correlating_event_ids = vec![];
+                                    for command in stack.commands.iter() {
+                                        let command_id = match command.r#type {
+                                            InternalCommandType::ScheduleActivity => {
+                                                CommandID::Activity(command.seq)
+                                            }
+                                            InternalCommandType::StartTimer => {
+                                                CommandID::Timer(command.seq)
+                                            }
+                                        };
+                                        if let Some(event_id) =
+                                            self.wfm.machines.command_id_to_event_id(&command_id)
+                                        {
+                                            correlating_event_ids.push(event_id);
+                                        }
+                                    }
+                                    stacks.push(StackTrace {
+                                        locations: stack.locations.clone(),
+                                        correlating_event_ids,
+                                    });
+                                }
+                                let trace = EnhancedStackTrace {
+                                    sdk: internal_trace.sdk,
+                                    stacks,
+                                    sources: internal_trace.sources,
+                                };
+                                if let Ok(data) = serde_json::to_vec(&trace) {
+                                    payload.data = data;
+                                } else {
+                                    warn!("Could not encode enhanced stack trace to JSON");
+                                }
+                            } else {
+                                warn!(
+                                    "Could not interpret enhanced stack trace response from lang"
+                                );
+                            }
+                        } else {
+                            warn!(
+                                "Could got invalid payload type from lang in response to {}",
+                                "__enhanced_stack_trace"
+                            );
+                        }
+                    }
+                }
+            }
             self.reply_to_complete(
                 ActivationCompleteOutcome::ReportWFTSuccess(ServerCommandsWithWorkflowInfo {
                     task_token,

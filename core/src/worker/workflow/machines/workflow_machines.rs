@@ -123,7 +123,8 @@ pub(crate) struct WorkflowMachines {
 
     /// Maps command ids as created by workflow authors to their associated machines.
     id_to_machine: HashMap<CommandID, MachineKey>,
-
+    // TODO: consdier mantaining this guy
+    // command_id_to_machine_id: HashMap<CommandID, i64>,
     /// Queued commands which have been produced by machines and await processing / being sent to
     /// the server.
     commands: VecDeque<CommandAndMachine>,
@@ -1293,6 +1294,16 @@ impl WorkflowMachines {
             }
         }
         attrs
+    }
+
+    pub fn command_id_to_event_id(&self, id: &CommandID) -> Option<i64> {
+        self.id_to_machine.get(id).and_then(|machine_id| {
+            self.machines_by_event_id
+                .iter()
+                .find(|(_, m_id)| &machine_id == m_id)
+                .map(|(event_id, _)| event_id)
+                .copied()
+        })
     }
 }
 
