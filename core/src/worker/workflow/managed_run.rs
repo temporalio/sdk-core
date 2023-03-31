@@ -88,6 +88,7 @@ pub(super) struct ManagedRun {
     buffered_resp: Option<PermittedWFT>,
     /// Is set if an eviction has been requested for this run
     trying_to_evict: Option<RequestEvictMsg>,
+    started_id_upon_activation: i64,
 
     /// We track if we have recorded useful debugging values onto a certain span yet, to overcome
     /// duplicating field values. Remove this once https://github.com/tokio-rs/tracing/issues/2334
@@ -114,6 +115,7 @@ impl ManagedRun {
             activation: None,
             buffered_resp: None,
             trying_to_evict: None,
+            started_id_upon_activation: 0,
             recorded_span_ids: Default::default(),
             metrics,
             paginator: None,
@@ -667,6 +669,10 @@ impl ManagedRun {
             }
         })();
 
+        info!(
+            "Completion done, wft_started: {}",
+            self.wfm.machines.get_current_wft_started_id()
+        );
         match outcome {
             Ok(None) => Ok(Some(self.prepare_complete_resp(
                 completion.resp_chan,
@@ -974,6 +980,7 @@ impl ManagedRun {
     }
 
     fn insert_outstanding_activation(&mut self, act: &mut ActivationOrAuto) {
+        self.started_id_upon_activation = self.wfm.machines.get_current_wft_started_id();
         let act_type = match act {
             ActivationOrAuto::LangActivation(act) | ActivationOrAuto::ReadyForQueries(act) => {
                 let is_leg_q = act.is_legacy_query();
@@ -1022,9 +1029,6 @@ impl ManagedRun {
                 }
 
                 if is_leg_q {
-                    warn!("lg query: have wft {} act {:?}", self.wft.is_some(), act);
-                    // TODO: Make work with normal path too
-                    // If the time travel query is here, then
                     OutstandingActivation::LegacyQuery
                 } else {
                     OutstandingActivation::Normal {
@@ -1121,6 +1125,8 @@ impl ManagedRun {
             .as_mut()
             .and_then(|wft| wft.time_travel_aggregation.as_mut())
         {
+            let wft_id = self.started_id_upon_activation;
+            info!("trying to aggregate stacks for wft id {}", wft_id);
             // If time travel aggregation is ongoing, strip any inserted fake enhanced stack trace
             // queries and merge them into the time travel aggregation.
             // TODO: Could dedupe w/ other mention of drain_filter
@@ -1137,8 +1143,10 @@ impl ManagedRun {
                         });
                         tta.sdk = mapped.sdk;
                         tta.sources.extend(mapped.sources.into_iter());
-                        let wft_id = self.wfm.machines.get_current_wft_started_id();
-                        tta.stacks.insert(wft_id as u32, mapped.stacks);
+                        info!("Aggregating stacks for wft id {}", wft_id);
+                        if !mapped.stacks.is_empty() {
+                            tta.stacks.insert(wft_id as u32, mapped.stacks);
+                        }
                     } else {
                         error!("Couldn't decode fake stack trace query");
                     }
