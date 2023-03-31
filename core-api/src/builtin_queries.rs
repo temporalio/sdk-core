@@ -69,14 +69,15 @@ impl TryFrom<&QueryResult> for InternalEnhancedStackTrace {
     type Error = ();
 
     fn try_from(qr: &QueryResult) -> Result<Self, Self::Error> {
-        if let Some(query_result::Variant::Succeeded(QuerySuccess { ref response })) = qr.variant {
-            if let Some(payload) = response {
-                if payload.is_json_payload() {
-                    if let Ok(internal_trace) = serde_json::from_slice::<InternalEnhancedStackTrace>(
-                        payload.data.as_slice(),
-                    ) {
-                        return Ok(internal_trace);
-                    }
+        if let Some(query_result::Variant::Succeeded(QuerySuccess {
+            response: Some(ref payload),
+        })) = qr.variant
+        {
+            if payload.is_json_payload() {
+                if let Ok(internal_trace) =
+                    serde_json::from_slice::<InternalEnhancedStackTrace>(payload.data.as_slice())
+                {
+                    return Ok(internal_trace);
                 }
             }
         }

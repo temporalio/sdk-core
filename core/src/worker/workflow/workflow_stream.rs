@@ -127,7 +127,7 @@ impl WFStream {
                     WFStreamInput::Local(local_input) => {
                         let _span_g = local_input.span.enter();
                         if let Some(key) = local_input.input.cache_key() {
-                            if let Some(rh) = state.runs.get_mut(&key) {
+                            if let Some(rh) = state.runs.get_mut(key) {
                                 rh.record_span_fields(&local_input.span);
                             }
                         }
@@ -277,7 +277,7 @@ impl WFStream {
     }
 
     fn process_completion(&mut self, complete: NewOrFetchedComplete) -> Vec<ActivationOrAuto> {
-        let rh = if let Some(rh) = self.runs.get_mut(&complete.cache_key()) {
+        let rh = if let Some(rh) = self.runs.get_mut(complete.cache_key()) {
             rh
         } else {
             dbg_panic!("Run missing during completion {:?}", complete);

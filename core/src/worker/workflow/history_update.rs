@@ -135,7 +135,7 @@ impl HistoryPaginator {
             .iter()
             .map(|q| q.query_type.as_str())
             .chain(wft.legacy_query.iter().map(|q| q.query_type.as_str()));
-        if all_queries.find(|qt| *qt == TIME_TRAVEL_QUERY).is_some() {
+        if all_queries.any(|qt| qt == TIME_TRAVEL_QUERY) {
             // If we see one of these, we need to fetch *all* history, attach the alternate cache
             // key, and then break things into made up WFTs and issue enhanced stack trace queries
             // for each one

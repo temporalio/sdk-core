@@ -84,7 +84,7 @@ impl RunCache {
                 namespace: self.namespace.clone(),
                 workflow_id: pwft.work.execution.workflow_id.clone(),
                 workflow_type: pwft.work.workflow_type.clone(),
-                cache_key: pwft.work.cache_key().clone(),
+                cache_key: pwft.work.cache_key(),
                 history: history_update,
                 metrics,
                 capabilities: &self.server_capabilities,
@@ -181,7 +181,7 @@ pub(crate) trait CacheKeyGetter {
 }
 impl CacheKeyGetter for WorkflowActivationCompletion {
     fn cache_key(&self) -> RunCacheKey {
-        if self.alternate_cache_key == "" {
+        if self.alternate_cache_key.is_empty() {
             RunCacheKey {
                 run_id: self.run_id.clone(),
                 alternate_key: 0,

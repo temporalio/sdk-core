@@ -24,7 +24,7 @@ async fn time_travel_stacks_example() {
     });
     worker.register_activity("echo", |_: ActContext, str: String| async { Ok(str) });
 
-    let run_id = worker
+    worker
         .submit_wf(
             wf_name.to_owned(),
             wf_name.to_owned(),

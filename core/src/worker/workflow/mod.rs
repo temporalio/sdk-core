@@ -1398,12 +1398,11 @@ fn internal_to_enhanced_stack_trace(
             correlating_event_ids,
         });
     }
-    let trace = EnhancedStackTrace {
+    EnhancedStackTrace {
         sdk: internal_trace.sdk,
         stacks,
         sources: internal_trace.sources,
-    };
-    trace
+    }
 }
 
 #[cfg(test)]
