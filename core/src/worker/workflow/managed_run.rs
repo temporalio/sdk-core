@@ -4,20 +4,19 @@ mod managed_wf_test;
 #[cfg(test)]
 pub(crate) use managed_wf_test::ManagedWFFunc;
 
-use crate::worker::workflow::CommandID;
 use crate::{
     abstractions::dbg_panic,
     protosext::WorkflowActivationExt,
     worker::{
         workflow::{
-            history_update::HistoryPaginator, machines::WorkflowMachines, run_cache::RunCacheKey,
-            ActivationAction, ActivationCompleteOutcome, ActivationCompleteResult,
-            ActivationOrAuto, EvictionRequestResult, FailedActivationWFTReport,
-            HeartbeatTimeoutMsg, HistoryUpdate, LocalActivityRequestSink, LocalResolution,
-            NextPageReq, OutgoingServerCommands, OutstandingActivation, OutstandingTask,
-            PermittedWFT, RequestEvictMsg, RunBasics, ServerCommandsWithWorkflowInfo, WFCommand,
-            WFMachinesError, WFTReportStatus, WorkflowBridge, WorkflowTaskInfo,
-            WFT_HEARTBEAT_TIMEOUT_FRACTION,
+            history_update::HistoryPaginator, internal_to_enhanced_stack_trace,
+            machines::WorkflowMachines, run_cache::RunCacheKey, ActivationAction,
+            ActivationCompleteOutcome, ActivationCompleteResult, ActivationOrAuto,
+            EvictionRequestResult, FailedActivationWFTReport, HeartbeatTimeoutMsg, HistoryUpdate,
+            LocalActivityRequestSink, LocalResolution, NextPageReq, OutgoingServerCommands,
+            OutstandingActivation, OutstandingTask, PermittedWFT, RequestEvictMsg, RunBasics,
+            ServerCommandsWithWorkflowInfo, WFCommand, WFMachinesError, WFTReportStatus,
+            WorkflowBridge, WorkflowTaskInfo, WFT_HEARTBEAT_TIMEOUT_FRACTION,
         },
         LocalActRequest, LEGACY_QUERY_ID,
     },
@@ -31,19 +30,15 @@ use std::{
     sync::mpsc::Sender,
     time::{Duration, Instant},
 };
-use temporal_sdk_core_api::builtin_queries::{
-    EnhancedStackTrace, InternalCommandType, InternalEnhancedStackTrace, StackTrace,
-};
+use temporal_sdk_core_api::builtin_queries::TimeTravelStackTrace;
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::{
             create_evict_activation, query_to_job, remove_from_cache::EvictionReason,
             workflow_activation_job, QueryWorkflow, RemoveFromCache, WorkflowActivation,
         },
-        workflow_commands::query_result::Variant::Succeeded as QuerySucceeded,
-        workflow_commands::QueryResult,
-        workflow_commands::QuerySuccess,
-        workflow_completion,
+        workflow_commands::{QueryResult, QuerySuccess},
+        workflow_completion, AsJsonPayloadExt,
     },
     temporal::api::{enums::v1::WorkflowTaskFailedCause, failure::v1::Failure},
     TaskToken, ENHANCED_STACK_QUERY, TIME_TRAVEL_QUERY,
@@ -51,6 +46,9 @@ use temporal_sdk_core_protos::{
 use tokio::sync::oneshot;
 use tracing::Span;
 
+static FAKE_ENHANCED_STACK_QUERY_ID: &str = "__fake_enhanced_stack";
+// must start with the above
+static FAKE_ENHANCED_STACK_QUERY_ID_FINAL_LEGACY: &str = "__fake_enhanced_stack_final";
 type Result<T, E = WFMachinesError> = std::result::Result<T, E>;
 pub(super) type RunUpdateAct = Option<ActivationOrAuto>;
 
@@ -99,6 +97,7 @@ pub(super) struct ManagedRun {
     /// We store the paginator used for our own run's history fetching
     paginator: Option<HistoryPaginator>,
     completion_waiting_on_page_fetch: Option<RunActivationCompletion>,
+    // TODO: Can probably eliminate
     special_query_ids: Vec<String>,
 }
 impl ManagedRun {
@@ -184,9 +183,13 @@ impl ManagedRun {
             task_token: work.task_token,
             wf_id: work.execution.workflow_id.clone(),
         };
-        if work.alternate_cache == 1 {
+
+        let time_travel_aggregation = if work.alternate_cache == 1 {
             info!("Special incoming WFT for time travel replay");
-        }
+            Some(TimeTravelStackTrace::default())
+        } else {
+            None
+        };
 
         let legacy_query_from_poll = work
             .legacy_query
@@ -222,6 +225,7 @@ impl ManagedRun {
             pending_queries,
             start_time,
             permit: pwft.permit,
+            time_travel_aggregation,
         });
 
         // The update field is only populated in the event we hit the cache
@@ -284,6 +288,7 @@ impl ManagedRun {
     ) -> Option<OutstandingTask> {
         let retme = self.wft.take();
         self.special_query_ids = vec![];
+        info!("Marking wft complete");
 
         // Only record latency metrics if we genuinely reported to server
         if matches!(report_status, WFTReportStatus::Reported) {
@@ -404,69 +409,30 @@ impl ManagedRun {
         // If the only command from the activation is a legacy query response, that means we need
         // to respond differently than a typical activation.
         if matches!(&commands.as_slice(),
-                    &[WFCommand::QueryResponse(qr)] if qr.query_id == LEGACY_QUERY_ID)
+                    &[WFCommand::QueryResponse(qr)]
+            if qr.query_id == LEGACY_QUERY_ID ||
+               qr.query_id == FAKE_ENHANCED_STACK_QUERY_ID_FINAL_LEGACY)
         {
             let mut qr = match commands.remove(0) {
                 WFCommand::QueryResponse(qr) => qr,
                 _ => unreachable!("We just verified this is the only command"),
             };
             if self.special_query_ids.contains(&LEGACY_QUERY_ID.to_owned()) {
-                if let Some(QuerySucceeded(QuerySuccess { response })) = qr.variant.as_mut() {
-                    if let Some(payload) = response {
-                        if payload.is_json_payload() {
-                            if let Ok(internal_trace) =
-                                serde_json::from_slice::<InternalEnhancedStackTrace>(
-                                    payload.data.as_slice(),
-                                )
-                            {
-                                let mut stacks =
-                                    Vec::<StackTrace>::with_capacity(internal_trace.stacks.len());
-                                for stack in internal_trace.stacks.iter() {
-                                    let mut correlating_event_ids = vec![];
-                                    for command in stack.commands.iter() {
-                                        let command_id = match command.r#type {
-                                            InternalCommandType::ScheduleActivity => {
-                                                CommandID::Activity(command.seq)
-                                            }
-                                            InternalCommandType::StartTimer => {
-                                                CommandID::Timer(command.seq)
-                                            }
-                                        };
-                                        if let Some(event_id) =
-                                            self.wfm.machines.command_id_to_event_id(&command_id)
-                                        {
-                                            correlating_event_ids.push(event_id);
-                                        }
-                                    }
-                                    stacks.push(StackTrace {
-                                        locations: stack.locations.clone(),
-                                        correlating_event_ids,
-                                    });
-                                }
-                                let trace = EnhancedStackTrace {
-                                    sdk: internal_trace.sdk,
-                                    stacks,
-                                    sources: internal_trace.sources,
-                                };
-                                if let Ok(data) = serde_json::to_vec(&trace) {
-                                    payload.data = data;
-                                } else {
-                                    warn!("Could not encode enhanced stack trace to JSON");
-                                }
-                            } else {
-                                warn!(
-                                    "Could not interpret enhanced stack trace response from lang"
-                                );
-                            }
-                        } else {
-                            warn!(
-                                "Could got invalid payload type from lang in response to {}",
-                                "__enhanced_stack_trace"
-                            );
-                        }
-                    }
-                }
+                self.fixup_enhanced_stack_query(&mut qr);
             }
+
+            qr = if qr.query_id == FAKE_ENHANCED_STACK_QUERY_ID_FINAL_LEGACY {
+                // Merge with the time travel aggregation, then reply with it
+                self.aggregate_time_travel_query(&mut vec![qr]);
+                QueryResult {
+                    query_id: LEGACY_QUERY_ID.to_string(),
+                    variant: Some(self.take_time_travel_as_query_success().into()),
+                }
+            } else {
+                qr
+            };
+
+            warn!("Replying leg q {:?}", qr);
             self.reply_to_complete(
                 ActivationCompleteOutcome::ReportWFTSuccess(ServerCommandsWithWorkflowInfo {
                     task_token,
@@ -535,6 +501,23 @@ impl ManagedRun {
             }
 
             Ok(self.process_completion(rac))
+        }
+    }
+
+    /// Will update a query result to map command ids to event ids in an enhanced stack trace.
+    fn fixup_enhanced_stack_query(&self, qr: &mut QueryResult) {
+        if let Ok(as_internal) = (&*qr).try_into() {
+            if let Some(payload) = qr.payload_mut() {
+                info!("Fixing up enhanced stack query!");
+                let trace = internal_to_enhanced_stack_trace(as_internal, |c| {
+                    self.wfm.machines.command_id_to_event_id(c)
+                });
+                if let Ok(data) = serde_json::to_vec(&trace) {
+                    payload.data = data;
+                } else {
+                    warn!("Could not encode enhanced stack trace to JSON");
+                }
+            }
         }
     }
 
@@ -1006,11 +989,12 @@ impl ManagedRun {
     fn insert_outstanding_activation(&mut self, act: &mut ActivationOrAuto) {
         let act_type = match act {
             ActivationOrAuto::LangActivation(act) | ActivationOrAuto::ReadyForQueries(act) => {
+                let is_leg_q = act.is_legacy_query();
                 // If the time travel query is pending, insert an enhanced stack trace query.
                 // TODO: Somehow do only at WFT boundaries
                 if let Some(ref wft) = self.wft {
                     if wft.has_pending_time_travel_query() {
-                        warn!("Issuing activation, have pending TT query");
+                        warn!("Issuing activation, have pending TT query {:?}", act);
                         // Insert enhanced stack trace query (and remove tt query, if present)
                         act.jobs.retain(|j| {
                             !matches!(&j.variant,
@@ -1019,17 +1003,41 @@ impl ManagedRun {
                         });
                         act.jobs.push(
                             workflow_activation_job::Variant::QueryWorkflow(QueryWorkflow {
-                                query_id: "__fake_enhanced_stack".to_string(),
+                                query_id: FAKE_ENHANCED_STACK_QUERY_ID.to_string(),
                                 query_type: ENHANCED_STACK_QUERY.to_string(),
                                 arguments: vec![],
                                 headers: Default::default(),
                             })
                             .into(),
                         )
+                    } else {
+                        // Check if the time travel query is *in* the activation, IE: it is no
+                        // longer pending. This means we should conclude aggregation after this
+                        // final activation.
+                        // TODO: Dedupe
+                        if let Some(ttq) = act.jobs.iter().position(|j| {
+                            matches!(&j.variant,
+                                      Some(workflow_activation_job::Variant::QueryWorkflow(q))
+                                      if q.query_type == TIME_TRAVEL_QUERY)
+                        }) {
+                            act.jobs.remove(ttq);
+                            act.jobs.push(
+                                workflow_activation_job::Variant::QueryWorkflow(QueryWorkflow {
+                                    query_id: FAKE_ENHANCED_STACK_QUERY_ID_FINAL_LEGACY.to_string(),
+                                    query_type: ENHANCED_STACK_QUERY.to_string(),
+                                    arguments: vec![],
+                                    headers: Default::default(),
+                                })
+                                .into(),
+                            )
+                        }
                     }
                 }
 
-                if act.is_legacy_query() {
+                if is_leg_q {
+                    warn!("lg query: have wft {} act {:?}", self.wft.is_some(), act);
+                    // TODO: Make work with normal path too
+                    // If the time travel query is here, then
                     OutstandingActivation::LegacyQuery
                 } else {
                     OutstandingActivation::Normal {
@@ -1056,7 +1064,7 @@ impl ManagedRun {
     fn prepare_complete_resp(
         &mut self,
         resp_chan: Option<oneshot::Sender<ActivationCompleteResult>>,
-        data: CompletionDataForWFT,
+        mut data: CompletionDataForWFT,
         due_to_heartbeat_timeout: bool,
     ) -> FulfillableActivationComplete {
         let mut outgoing_cmds = self.wfm.get_server_commands();
@@ -1073,6 +1081,11 @@ impl ManagedRun {
             }
         }
 
+        self.aggregate_time_travel_query(&mut data.query_responses);
+
+        for qr in data.query_responses.iter_mut() {
+            self.fixup_enhanced_stack_query(qr);
+        }
         let query_responses = data.query_responses;
         let has_query_responses = !query_responses.is_empty();
         let is_query_playback = data.has_pending_query && !has_query_responses;
@@ -1112,6 +1125,56 @@ impl ManagedRun {
         FulfillableActivationComplete {
             result: self.build_activation_complete_result(outcome),
             resp_chan,
+        }
+    }
+
+    fn aggregate_time_travel_query(&mut self, query_resps: &mut Vec<QueryResult>) {
+        if let Some(tta) = self
+            .wft
+            .as_mut()
+            .and_then(|wft| wft.time_travel_aggregation.as_mut())
+        {
+            // If time travel aggregation is ongoing, strip any inserted fake enhanced stack trace
+            // queries and merge them into the time travel aggregation.
+            // TODO: Could dedupe w/ other mention of drain_filter
+            let mut i = 0;
+            while i < query_resps.len() {
+                if query_resps[i]
+                    .query_id
+                    .starts_with(FAKE_ENHANCED_STACK_QUERY_ID)
+                {
+                    let qr = query_resps.remove(i);
+                    if let Ok(internal) = (&qr).try_into() {
+                        let mapped = internal_to_enhanced_stack_trace(internal, |c| {
+                            self.wfm.machines.command_id_to_event_id(c)
+                        });
+                        tta.sdk = mapped.sdk;
+                        tta.sources.extend(mapped.sources.into_iter());
+                        let wft_id = self.wfm.machines.get_current_wft_started_id();
+                        tta.stacks.insert(wft_id as u32, mapped.stacks);
+                    } else {
+                        error!("Couldn't decode fake stack trace query");
+                    }
+                } else {
+                    i += 1;
+                }
+            }
+        }
+    }
+
+    fn take_time_travel_as_query_success(&mut self) -> QuerySuccess {
+        let payload = if let Some(tta) = self
+            .wft
+            .as_mut()
+            .and_then(|wft| wft.time_travel_aggregation.take())
+        {
+            tta.as_json_payload().expect("Serializes fine")
+        } else {
+            error!("Expected to take time travel aggregation, but it wasn't there.");
+            Default::default()
+        };
+        QuerySuccess {
+            response: Some(payload),
         }
     }
 

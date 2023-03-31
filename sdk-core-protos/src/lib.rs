@@ -709,7 +709,10 @@ pub mod coresdk {
     pub mod workflow_commands {
         tonic::include_proto!("coresdk.workflow_commands");
 
-        use crate::temporal::api::{common::v1::Payloads, enums::v1::QueryResultType};
+        use crate::temporal::api::{
+            common::v1::{Payload, Payloads},
+            enums::v1::QueryResultType,
+        };
         use std::fmt::{Display, Formatter};
 
         impl Display for WorkflowCommand {
@@ -881,6 +884,15 @@ pub mod coresdk {
                         None,
                         "Query response was empty".to_string(),
                     ),
+                }
+            }
+
+            pub fn payload_mut(&mut self) -> Option<&mut Payload> {
+                match self.variant.as_mut() {
+                    Some(query_result::Variant::Succeeded(QuerySuccess { response: Some(p) })) => {
+                        Some(p)
+                    }
+                    _ => None,
                 }
             }
         }

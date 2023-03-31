@@ -1,14 +1,17 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use temporal_sdk_core_protos::coresdk::workflow_commands::{
+    query_result, QueryResult, QuerySuccess,
+};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SDKInfo {
     pub name: String,
     pub version: String,
 }
 
 /// Represents a slice of a file starting at line_offset
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct FileSlice {
     /// slice of a file with `\n` (newline) line terminator.
@@ -18,7 +21,7 @@ pub struct FileSlice {
 }
 
 /// A pointer to a location in a file
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct FileLocation {
     /// Path to source file (absolute or relative).
@@ -46,23 +49,42 @@ pub struct InternalCommand {
     pub seq: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct InternalStackTrace {
     pub locations: Vec<FileLocation>,
     pub commands: Vec<InternalCommand>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct InternalEnhancedStackTrace {
     pub sdk: SDKInfo,
-    /// Mapping of file path to file contents.
-    /// SDK may choose to send no, some or all sources.
-    /// Sources might be trimmed, and some time only the file(s) of the top element of the trace will be sent.
+    /// Mapping of file path to file contents. SDK may choose to send no, some or all sources.
+    /// Sources might be trimmed, and some time only the file(s) of the top element of the trace
+    /// will be sent.
     pub sources: HashMap<String, Vec<FileSlice>>,
     pub stacks: Vec<InternalStackTrace>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+impl TryFrom<&QueryResult> for InternalEnhancedStackTrace {
+    type Error = ();
+
+    fn try_from(qr: &QueryResult) -> Result<Self, Self::Error> {
+        if let Some(query_result::Variant::Succeeded(QuerySuccess { ref response })) = qr.variant {
+            if let Some(payload) = response {
+                if payload.is_json_payload() {
+                    if let Ok(internal_trace) = serde_json::from_slice::<InternalEnhancedStackTrace>(
+                        payload.data.as_slice(),
+                    ) {
+                        return Ok(internal_trace);
+                    }
+                }
+            }
+        }
+        Err(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct StackTrace {
     pub locations: Vec<FileLocation>,
@@ -70,25 +92,26 @@ pub struct StackTrace {
 }
 
 // Used as the result for the enhanced stack trace query
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct EnhancedStackTrace {
     pub sdk: SDKInfo,
-    /// Mapping of file path to file contents.
-    /// SDK may choose to send no, some or all sources.
-    /// Sources might be trimmed, and some time only the file(s) of the top element of the trace will be sent.
+    /// Mapping of file path to file contents. SDK may choose to send no, some or all sources.
+    /// Sources might be trimmed, and some time only the file(s) of the top element of the trace
+    /// will be sent.
     pub sources: HashMap<String, Vec<FileSlice>>,
     pub stacks: Vec<StackTrace>,
 }
 
-// export interface TimeTravelStackTrace {
-// sdk: SDKInfo;
-// /**
-//  * Mapping of file path to file contents.
-//  * SDK may choose to send no, some or all sources.
-//  * Sources might be trimmed, and some time only the file(s) of the top element of the trace will be sent.
-//  */
-// sources: Record<String, FileSlice[]>;
-// /** A mapping of workflow task started event ID to active stack traces. */
-// stacks: Record<number, StackTrace[]>;
-// }
+// Used as the result for the time travel stack trace query
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct TimeTravelStackTrace {
+    pub sdk: SDKInfo,
+    /// Mapping of file path to file contents. SDK may choose to send no, some or all sources.
+    /// Sources might be trimmed, and some time only the file(s) of the top element of the trace
+    /// will be sent.
+    pub sources: HashMap<String, Vec<FileSlice>>,
+    /// Maps WFT started event ids to active stack traces upon completion of that WFT
+    pub stacks: HashMap<u32, Vec<StackTrace>>,
+}

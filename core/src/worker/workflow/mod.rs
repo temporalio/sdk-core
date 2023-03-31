@@ -66,7 +66,13 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use temporal_sdk_core_api::errors::{CompleteWfError, PollWfError};
+use temporal_sdk_core_api::{
+    builtin_queries::{
+        EnhancedStackTrace, InternalCommandType, InternalEnhancedStackTrace, StackTrace,
+        TimeTravelStackTrace,
+    },
+    errors::{CompleteWfError, PollWfError},
+};
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::{
@@ -809,6 +815,7 @@ pub(crate) struct OutstandingTask {
     /// The WFT permit owned by this task, ensures we don't exceed max concurrent WFT, and makes
     /// sure the permit is automatically freed when we delete the task.
     pub permit: UsedMeteredSemPermit,
+    pub time_travel_aggregation: Option<TimeTravelStackTrace>,
 }
 
 impl OutstandingTask {
@@ -1368,6 +1375,35 @@ fn sort_act_jobs(wfa: &mut WorkflowActivation) {
         }
         variant_ordinal(j1v).cmp(&variant_ordinal(j2v))
     })
+}
+
+fn internal_to_enhanced_stack_trace(
+    internal_trace: InternalEnhancedStackTrace,
+    mapper: impl Fn(&CommandID) -> Option<i64>,
+) -> EnhancedStackTrace {
+    let mut stacks = Vec::with_capacity(internal_trace.stacks.len());
+    for stack in internal_trace.stacks.iter() {
+        let mut correlating_event_ids = vec![];
+        for command in stack.commands.iter() {
+            let command_id = match command.r#type {
+                InternalCommandType::ScheduleActivity => CommandID::Activity(command.seq),
+                InternalCommandType::StartTimer => CommandID::Timer(command.seq),
+            };
+            if let Some(event_id) = mapper(&command_id) {
+                correlating_event_ids.push(event_id);
+            }
+        }
+        stacks.push(StackTrace {
+            locations: stack.locations.clone(),
+            correlating_event_ids,
+        });
+    }
+    let trace = EnhancedStackTrace {
+        sdk: internal_trace.sdk,
+        stacks,
+        sources: internal_trace.sources,
+    };
+    trace
 }
 
 #[cfg(test)]

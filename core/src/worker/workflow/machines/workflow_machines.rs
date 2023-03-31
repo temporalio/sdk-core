@@ -278,6 +278,10 @@ impl WorkflowMachines {
         Ok(())
     }
 
+    pub(crate) fn get_current_wft_started_id(&self) -> i64 {
+        self.current_started_event_id
+    }
+
     /// Let this workflow know that something we've been waiting locally on has resolved, like a
     /// local activity or side effect
     ///

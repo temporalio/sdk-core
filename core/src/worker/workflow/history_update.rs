@@ -144,18 +144,6 @@ impl HistoryPaginator {
             // This will force fetching all history.
             wft.history.events = vec![];
             alternate_cache = 1;
-
-            // // Strip the time travel query
-            // wft.query_requests
-            //     .retain(|q| q.query_type != TIME_TRAVEL_QUERY);
-            // if wft
-            //     .legacy_query
-            //     .as_ref()
-            //     .map(|q| q.query_type == TIME_TRAVEL_QUERY)
-            //     .unwrap_or_default()
-            // {
-            //     wft.legacy_query.take();
-            // }
         }
 
         let empty_hist = wft.history.events.is_empty();
