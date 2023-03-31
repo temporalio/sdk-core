@@ -7,15 +7,25 @@ use crate::{
     MetricsContext,
 };
 use lru::LruCache;
-use std::{mem, num::NonZeroUsize, rc::Rc};
-use temporal_sdk_core_protos::temporal::api::workflowservice::v1::get_system_info_response;
+use std::{
+    convert::Infallible,
+    fmt::{Display, Formatter},
+    mem,
+    num::NonZeroUsize,
+    rc::Rc,
+    str::FromStr,
+};
+use temporal_sdk_core_protos::{
+    coresdk::workflow_completion::WorkflowActivationCompletion,
+    temporal::api::workflowservice::v1::get_system_info_response,
+};
 
 pub(super) struct RunCache {
     max: usize,
     namespace: String,
     server_capabilities: get_system_info_response::Capabilities,
     /// Run id -> Data
-    runs: LruCache<String, ManagedRun>,
+    runs: LruCache<RunCacheKey, ManagedRun>,
     local_activity_request_sink: Rc<dyn LocalActivityRequestSink>,
 
     metrics: MetricsContext,
@@ -50,9 +60,12 @@ impl RunCache {
 
     pub fn instantiate_or_update(&mut self, mut pwft: PermittedWFT) -> RunUpdateAct {
         let cur_num_cached_runs = self.runs.len();
-        let run_id = &pwft.work.execution.run_id;
+        let cache_key = RunCacheKey {
+            run_id: pwft.work.execution.run_id.clone(),
+            alternate_key: pwft.work.alternate_cache,
+        };
 
-        if let Some(run_handle) = self.runs.get_mut(run_id) {
+        if let Some(run_handle) = self.runs.get_mut(&cache_key) {
             let rur = run_handle.incoming_wft(pwft);
             self.metrics.cache_size(cur_num_cached_runs as u64);
             return rur;
@@ -71,46 +84,45 @@ impl RunCache {
                 namespace: self.namespace.clone(),
                 workflow_id: pwft.work.execution.workflow_id.clone(),
                 workflow_type: pwft.work.workflow_type.clone(),
-                run_id: pwft.work.execution.run_id.clone(),
+                cache_key: pwft.work.cache_key(),
                 history: history_update,
                 metrics,
                 capabilities: &self.server_capabilities,
             },
             self.local_activity_request_sink.clone(),
         );
-        let run_id = run_id.to_string();
         let rur = mrh.incoming_wft(pwft);
-        if self.runs.push(run_id, mrh).is_some() {
+        if self.runs.push(cache_key, mrh).is_some() {
             panic!("Overflowed run cache! Cache owner is expected to avoid this!");
         }
         self.metrics.cache_size(cur_num_cached_runs as u64 + 1);
         rur
     }
-    pub fn remove(&mut self, k: &str) -> Option<ManagedRun> {
+    pub fn remove(&mut self, k: &RunCacheKey) -> Option<ManagedRun> {
         let r = self.runs.pop(k);
         self.metrics.cache_size(self.len() as u64);
         r
     }
 
-    pub fn get_mut(&mut self, k: &str) -> Option<&mut ManagedRun> {
+    pub fn get_mut(&mut self, k: &RunCacheKey) -> Option<&mut ManagedRun> {
         self.runs.get_mut(k)
     }
-    pub fn get(&mut self, k: &str) -> Option<&ManagedRun> {
+    pub fn get(&mut self, k: &RunCacheKey) -> Option<&ManagedRun> {
         self.runs.get(k)
     }
 
     /// Returns the current least-recently-used run. Returns `None` when cache empty.
-    pub fn current_lru_run(&self) -> Option<&str> {
-        self.runs.peek_lru().map(|(run_id, _)| run_id.as_str())
+    pub fn current_lru_run(&self) -> Option<&RunCacheKey> {
+        self.runs.peek_lru().map(|(run_id, _)| run_id)
     }
     /// Returns an iterator yielding cached runs in LRU order
-    pub fn runs_lru_order(&self) -> impl Iterator<Item = (&str, &ManagedRun)> {
-        self.runs.iter().rev().map(|(k, v)| (k.as_str(), v))
+    pub fn runs_lru_order(&self) -> impl Iterator<Item = (&RunCacheKey, &ManagedRun)> {
+        self.runs.iter().rev().map(|(k, v)| (k, v))
     }
-    pub fn peek(&self, k: &str) -> Option<&ManagedRun> {
+    pub fn peek(&self, k: &RunCacheKey) -> Option<&ManagedRun> {
         self.runs.peek(k)
     }
-    pub fn has_run(&self, k: &str) -> bool {
+    pub fn has_run(&self, k: &RunCacheKey) -> bool {
         self.runs.contains(k)
     }
     pub fn handles(&self) -> impl Iterator<Item = &ManagedRun> {
@@ -124,5 +136,58 @@ impl RunCache {
     }
     pub fn cache_capacity(&self) -> usize {
         self.max
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(
+    feature = "save_wf_inputs",
+    derive(serde::Serialize, serde::Deserialize)
+)]
+pub(crate) struct RunCacheKey {
+    pub run_id: String,
+    pub alternate_key: u32,
+}
+
+impl Display for RunCacheKey {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        if self.alternate_key == 0 {
+            return f.write_str(&self.run_id);
+        }
+        f.write_fmt(format_args!("!k{}-{}", self.alternate_key, self.run_id))
+    }
+}
+impl FromStr for RunCacheKey {
+    type Err = Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(if s.starts_with("!k") {
+            let dash_ix = s.find('-').unwrap();
+            Self {
+                run_id: s[dash_ix + 1..].to_string(),
+                alternate_key: s[2..dash_ix].parse().unwrap(),
+            }
+        } else {
+            Self {
+                run_id: s.to_string(),
+                alternate_key: 0,
+            }
+        })
+    }
+}
+
+pub(crate) trait CacheKeyGetter {
+    fn cache_key(&self) -> RunCacheKey;
+}
+impl CacheKeyGetter for WorkflowActivationCompletion {
+    fn cache_key(&self) -> RunCacheKey {
+        if self.alternate_cache_key.is_empty() {
+            RunCacheKey {
+                run_id: self.run_id.clone(),
+                alternate_key: 0,
+            }
+        } else {
+            self.alternate_cache_key.parse().unwrap()
+        }
     }
 }

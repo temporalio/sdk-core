@@ -5,11 +5,12 @@ mod managed_wf_test;
 pub(crate) use managed_wf_test::ManagedWFFunc;
 
 use crate::{
-    abstractions::dbg_panic,
+    abstractions::{dbg_panic, lame_drain_filter},
     protosext::WorkflowActivationExt,
     worker::{
         workflow::{
-            history_update::HistoryPaginator, machines::WorkflowMachines, ActivationAction,
+            history_update::HistoryPaginator, internal_to_enhanced_stack_trace,
+            machines::WorkflowMachines, run_cache::RunCacheKey, ActivationAction,
             ActivationCompleteOutcome, ActivationCompleteResult, ActivationOrAuto,
             EvictionRequestResult, FailedActivationWFTReport, HeartbeatTimeoutMsg, HistoryUpdate,
             LocalActivityRequestSink, LocalResolution, NextPageReq, OutgoingServerCommands,
@@ -22,6 +23,7 @@ use crate::{
     MetricsContext,
 };
 use futures_util::future::AbortHandle;
+use itertools::{Either, Itertools};
 use std::{
     collections::HashSet,
     ops::Add,
@@ -29,14 +31,18 @@ use std::{
     sync::mpsc::Sender,
     time::{Duration, Instant},
 };
+use temporal_sdk_core_api::builtin_queries::{
+    enhanced_stack_query_job, TimeTravelStackTrace, FAKE_ENHANCED_STACK_QUERY_ID,
+    FAKE_ENHANCED_STACK_QUERY_ID_FINAL_LEGACY,
+};
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::{
             create_evict_activation, query_to_job, remove_from_cache::EvictionReason,
             workflow_activation_job, RemoveFromCache, WorkflowActivation,
         },
-        workflow_commands::QueryResult,
-        workflow_completion,
+        workflow_commands::{QueryResult, QuerySuccess},
+        workflow_completion, AsJsonPayloadExt,
     },
     temporal::api::{enums::v1::WorkflowTaskFailedCause, failure::v1::Failure},
     TaskToken,
@@ -83,6 +89,7 @@ pub(super) struct ManagedRun {
     buffered_resp: Option<PermittedWFT>,
     /// Is set if an eviction has been requested for this run
     trying_to_evict: Option<RequestEvictMsg>,
+    started_id_upon_activation: i64,
 
     /// We track if we have recorded useful debugging values onto a certain span yet, to overcome
     /// duplicating field values. Remove this once https://github.com/tokio-rs/tracing/issues/2334
@@ -109,6 +116,7 @@ impl ManagedRun {
             activation: None,
             buffered_resp: None,
             trying_to_evict: None,
+            started_id_upon_activation: 0,
             recorded_span_ids: Default::default(),
             metrics,
             paginator: None,
@@ -176,6 +184,13 @@ impl ManagedRun {
             wf_id: work.execution.workflow_id.clone(),
         };
 
+        let time_travel_aggregation = if work.alternate_cache == 1 {
+            info!("Special incoming WFT for time travel replay");
+            Some(TimeTravelStackTrace::default())
+        } else {
+            None
+        };
+
         let legacy_query_from_poll = work
             .legacy_query
             .map(|q| query_to_job(LEGACY_QUERY_ID.to_string(), q));
@@ -204,6 +219,7 @@ impl ManagedRun {
             pending_queries,
             start_time,
             permit: pwft.permit,
+            time_travel_aggregation,
         });
 
         // The update field is only populated in the event we hit the cache
@@ -234,7 +250,7 @@ impl ManagedRun {
                     }
                     lawait.hb_timeout_handle.abort();
                     lawait.hb_timeout_handle = sink_heartbeat_timeout_start(
-                        self.wfm.machines.run_id.clone(),
+                        self.wfm.machines.cache_key.clone(),
                         self.local_activity_request_sink.as_ref(),
                         start_time,
                         lawait.wft_timeout,
@@ -250,7 +266,7 @@ impl ManagedRun {
                 }
             } else {
                 return Ok(Some(ActivationOrAuto::Autocomplete {
-                    run_id: self.wfm.machines.run_id.clone(),
+                    cache_key: self.wfm.machines.cache_key.clone(),
                 }));
             }
         }
@@ -264,8 +280,8 @@ impl ManagedRun {
         &mut self,
         report_status: WFTReportStatus,
     ) -> Option<OutstandingTask> {
-        debug!("Marking WFT completed");
         let retme = self.wft.take();
+        info!("Marking wft complete");
 
         // Only record latency metrics if we genuinely reported to server
         if matches!(report_status, WFTReportStatus::Reported) {
@@ -386,12 +402,27 @@ impl ManagedRun {
         // If the only command from the activation is a legacy query response, that means we need
         // to respond differently than a typical activation.
         if matches!(&commands.as_slice(),
-                    &[WFCommand::QueryResponse(qr)] if qr.query_id == LEGACY_QUERY_ID)
+                    &[WFCommand::QueryResponse(qr)]
+            if qr.query_id == LEGACY_QUERY_ID ||
+               qr.query_id == FAKE_ENHANCED_STACK_QUERY_ID_FINAL_LEGACY)
         {
-            let qr = match commands.remove(0) {
+            let mut qr = match commands.remove(0) {
                 WFCommand::QueryResponse(qr) => qr,
                 _ => unreachable!("We just verified this is the only command"),
             };
+            self.fixup_enhanced_stack_query(&mut qr);
+
+            qr = if qr.query_id == FAKE_ENHANCED_STACK_QUERY_ID_FINAL_LEGACY {
+                // Merge with the time travel aggregation, then reply with it
+                self.aggregate_time_travel_query(&mut vec![qr]);
+                QueryResult {
+                    query_id: LEGACY_QUERY_ID.to_string(),
+                    variant: Some(self.take_time_travel_as_query_success().into()),
+                }
+            } else {
+                qr
+            };
+
             self.reply_to_complete(
                 ActivationCompleteOutcome::ReportWFTSuccess(ServerCommandsWithWorkflowInfo {
                     task_token,
@@ -404,18 +435,11 @@ impl ManagedRun {
             Ok(None)
         } else {
             // First strip out query responses from other commands that actually affect machines
-            // Would be prettier with `drain_filter`
-            let mut i = 0;
-            let mut query_responses = vec![];
-            while i < commands.len() {
-                if matches!(commands[i], WFCommand::QueryResponse(_)) {
-                    if let WFCommand::QueryResponse(qr) = commands.remove(i) {
-                        query_responses.push(qr);
-                    }
-                } else {
-                    i += 1;
-                }
-            }
+            let (query_responses, commands): (Vec<_>, Vec<_>) =
+                commands.into_iter().partition_map(|c| match c {
+                    WFCommand::QueryResponse(qr) => Either::Left(qr),
+                    o => Either::Right(o),
+                });
 
             if activation_was_only_eviction && !commands.is_empty() {
                 dbg_panic!("Reply to an eviction only containing an eviction included commands");
@@ -460,6 +484,22 @@ impl ManagedRun {
             }
 
             Ok(self.process_completion(rac))
+        }
+    }
+
+    /// Will update a query result to map command ids to event ids in an enhanced stack trace.
+    fn fixup_enhanced_stack_query(&self, qr: &mut QueryResult) {
+        if let Ok(as_internal) = (&*qr).try_into() {
+            if let Some(payload) = qr.payload_mut() {
+                let trace = internal_to_enhanced_stack_trace(as_internal, |c| {
+                    self.wfm.machines.command_id_to_event_id(c)
+                });
+                if let Ok(data) = serde_json::to_vec(&trace) {
+                    payload.data = data;
+                } else {
+                    warn!("Could not encode enhanced stack trace to JSON");
+                }
+            }
         }
     }
 
@@ -521,7 +561,7 @@ impl ManagedRun {
         let message = format!("Workflow activation completion failed: {:?}", &failure);
         // Blow up any cached data associated with the workflow
         let evict_req_outcome = self.request_eviction(RequestEvictMsg {
-            run_id: self.run_id().to_string(),
+            cache_key: self.cache_key().clone(),
             message,
             reason,
             auto_reply_fail_tt: None,
@@ -622,6 +662,10 @@ impl ManagedRun {
             }
         })();
 
+        info!(
+            "Completion done, wft_started: {}",
+            self.wfm.machines.get_current_wft_started_id()
+        );
         match outcome {
             Ok(None) => Ok(Some(self.prepare_complete_resp(
                 completion.resp_chan,
@@ -636,7 +680,7 @@ impl ManagedRun {
                     wft_timeout,
                     completion_dat: Some((data, completion.resp_chan)),
                     hb_timeout_handle: sink_heartbeat_timeout_start(
-                        self.run_id().to_string(),
+                        self.cache_key().clone(),
                         self.local_activity_request_sink.as_ref(),
                         start_t,
                         wft_timeout,
@@ -676,7 +720,7 @@ impl ManagedRun {
     pub(super) fn heartbeat_timeout(&mut self) -> RunUpdateAct {
         let maybe_act = if self._heartbeat_timeout() {
             Some(ActivationOrAuto::Autocomplete {
-                run_id: self.wfm.machines.run_id.clone(),
+                cache_key: self.wfm.machines.cache_key.clone(),
             })
         } else {
             None
@@ -780,7 +824,7 @@ impl ManagedRun {
         }
 
         if !self.activation_has_eviction() && self.trying_to_evict.is_none() {
-            debug!(run_id=%info.run_id, reason=%info.message, "Eviction requested");
+            debug!(run_id=%info.cache_key, reason=%info.message, "Eviction requested");
             self.trying_to_evict = Some(info);
             EvictionRequestResult::EvictionRequested(attempts, self.check_more_activations())
         } else {
@@ -893,8 +937,8 @@ impl ManagedRun {
                             None
                         }
                     }
-                    Some(r) => {
-                        self.insert_outstanding_activation(&r);
+                    Some(mut r) => {
+                        self.insert_outstanding_activation(&mut r);
                         Some(r)
                     }
                     None => None,
@@ -919,7 +963,7 @@ impl ManagedRun {
                 } else {
                     warn!(error=?fail.source, "Error while updating workflow");
                     Some(ActivationOrAuto::AutoFail {
-                        run_id: self.run_id().to_owned(),
+                        cache_key: self.cache_key().clone(),
                         machines_err: fail.source,
                     })
                 };
@@ -928,10 +972,34 @@ impl ManagedRun {
         }
     }
 
-    fn insert_outstanding_activation(&mut self, act: &ActivationOrAuto) {
-        let act_type = match &act {
+    fn insert_outstanding_activation(&mut self, act: &mut ActivationOrAuto) {
+        self.started_id_upon_activation = self.wfm.machines.get_current_wft_started_id();
+        let act_type = match act {
             ActivationOrAuto::LangActivation(act) | ActivationOrAuto::ReadyForQueries(act) => {
-                if act.is_legacy_query() {
+                let is_leg_q = act.is_legacy_query();
+
+                // If the time travel query is pending, insert an enhanced stack trace query for
+                // the activation
+                // TODO: Optimization: Somehow do only at WFT boundaries - we only end up keeping
+                //  the final stack before we complete the WFT, so capturing them for activations
+                //  before the last is technically a waste.
+                if let Some(ref wft) = self.wft {
+                    if wft.has_pending_time_travel_query() {
+                        // Insert enhanced stack trace query (and remove tt query, if present)
+                        act.jobs.retain(|j| !j.is_time_travel_query());
+                        act.jobs.push(enhanced_stack_query_job(false));
+                    } else {
+                        // Check if the time travel query is *in* the activation, IE: it is no
+                        // longer pending. This means we should conclude aggregation after this
+                        // final activation.
+                        if let Some(ttq) = act.jobs.iter().position(|j| j.is_time_travel_query()) {
+                            act.jobs.remove(ttq);
+                            act.jobs.push(enhanced_stack_query_job(true));
+                        }
+                    }
+                }
+
+                if is_leg_q {
                     OutstandingActivation::LegacyQuery
                 } else {
                     OutstandingActivation::Normal {
@@ -958,7 +1026,7 @@ impl ManagedRun {
     fn prepare_complete_resp(
         &mut self,
         resp_chan: Option<oneshot::Sender<ActivationCompleteResult>>,
-        data: CompletionDataForWFT,
+        mut data: CompletionDataForWFT,
         due_to_heartbeat_timeout: bool,
     ) -> FulfillableActivationComplete {
         let mut outgoing_cmds = self.wfm.get_server_commands();
@@ -975,6 +1043,11 @@ impl ManagedRun {
             }
         }
 
+        self.aggregate_time_travel_query(&mut data.query_responses);
+
+        for qr in data.query_responses.iter_mut() {
+            self.fixup_enhanced_stack_query(qr);
+        }
         let query_responses = data.query_responses;
         let has_query_responses = !query_responses.is_empty();
         let is_query_playback = data.has_pending_query && !has_query_responses;
@@ -1014,6 +1087,52 @@ impl ManagedRun {
         FulfillableActivationComplete {
             result: self.build_activation_complete_result(outcome),
             resp_chan,
+        }
+    }
+
+    fn aggregate_time_travel_query(&mut self, query_resps: &mut Vec<QueryResult>) {
+        if let Some(tta) = self
+            .wft
+            .as_mut()
+            .and_then(|wft| wft.time_travel_aggregation.as_mut())
+        {
+            let wft_id = self.started_id_upon_activation;
+            // If time travel aggregation is ongoing, strip any inserted fake enhanced stack trace
+            // queries and merge them into the time travel aggregation.
+            let enhanced_queries = lame_drain_filter(query_resps, |qr| {
+                qr.query_id.starts_with(FAKE_ENHANCED_STACK_QUERY_ID)
+            });
+            for qr in enhanced_queries {
+                if let Ok(internal) = (&qr).try_into() {
+                    let mapped = internal_to_enhanced_stack_trace(internal, |c| {
+                        self.wfm.machines.command_id_to_event_id(c)
+                    });
+                    tta.sdk = mapped.sdk;
+                    tta.sources.extend(mapped.sources.into_iter());
+                    info!("Aggregating stacks for wft id {}", wft_id);
+                    if !mapped.stacks.is_empty() {
+                        tta.stacks.insert(wft_id as u32, mapped.stacks);
+                    }
+                } else {
+                    error!("Couldn't decode fake stack trace query");
+                }
+            }
+        }
+    }
+
+    fn take_time_travel_as_query_success(&mut self) -> QuerySuccess {
+        let payload = if let Some(tta) = self
+            .wft
+            .as_mut()
+            .and_then(|wft| wft.time_travel_aggregation.take())
+        {
+            tta.as_json_payload().expect("Serializes fine")
+        } else {
+            error!("Expected to take time travel aggregation, but it wasn't there.");
+            Default::default()
+        };
+        QuerySuccess {
+            response: Some(payload),
         }
     }
 
@@ -1087,6 +1206,10 @@ impl ManagedRun {
     fn run_id(&self) -> &str {
         &self.wfm.machines.run_id
     }
+
+    fn cache_key(&self) -> &RunCacheKey {
+        &self.wfm.machines.cache_key
+    }
 }
 
 /// Drains pending queries from the workflow task and appends them to the activation's jobs
@@ -1111,7 +1234,7 @@ fn put_queries_in_act(act: &mut WorkflowActivation, wft: &mut OutstandingTask) {
     act.jobs.extend(query_jobs);
 }
 fn sink_heartbeat_timeout_start(
-    run_id: String,
+    cache_key: RunCacheKey,
     sink: &dyn LocalActivityRequestSink,
     wft_start_time: Instant,
     wft_timeout: Duration,
@@ -1121,7 +1244,7 @@ fn sink_heartbeat_timeout_start(
     let (abort_handle, abort_reg) = AbortHandle::new_pair();
     sink.sink_reqs(vec![LocalActRequest::StartHeartbeatTimeout {
         send_on_elapse: HeartbeatTimeoutMsg {
-            run_id,
+            cache_key,
             span: Span::current(),
         },
         deadline,

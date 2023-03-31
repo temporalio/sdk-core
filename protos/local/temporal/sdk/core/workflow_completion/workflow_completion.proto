@@ -12,6 +12,8 @@ import "temporal/sdk/core/workflow_commands/workflow_commands.proto";
 message WorkflowActivationCompletion {
     // The run id from the workflow activation you are completing
     string run_id = 1;
+    // If this was set on the incoming activation, you must use the same key on this completion.
+    string alternate_cache_key = 4;
     oneof status {
         Success successful = 2;
         Failure failed = 3;

@@ -268,6 +268,22 @@ macro_rules! dbg_panic {
 }
 pub(crate) use dbg_panic;
 
+/// Get rid of me once https://doc.rust-lang.org/std/vec/struct.Vec.html#method.drain_filter is
+/// stable
+pub(crate) fn lame_drain_filter<T>(vec: &mut Vec<T>, pred: impl Fn(&T) -> bool) -> Vec<T> {
+    let mut drained = vec![];
+    let mut i = 0;
+    while i < vec.len() {
+        if pred(&vec[i]) {
+            let val = vec.remove(i);
+            drained.push(val);
+        } else {
+            i += 1;
+        }
+    }
+    drained
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

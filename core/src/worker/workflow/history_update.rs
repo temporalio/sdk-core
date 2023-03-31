@@ -2,7 +2,7 @@ use crate::{
     protosext::ValidPollWFTQResponse,
     worker::{
         client::WorkerClient,
-        workflow::{CacheMissFetchReq, PermittedWFT, PreparedWFT},
+        workflow::{run_cache::RunCacheKey, CacheMissFetchReq, PermittedWFT, PreparedWFT},
     },
 };
 use futures::{future::BoxFuture, FutureExt, Stream};
@@ -17,9 +17,12 @@ use std::{
     sync::Arc,
     task::{Context, Poll},
 };
-use temporal_sdk_core_protos::temporal::api::{
-    enums::v1::EventType,
-    history::v1::{history_event, History, HistoryEvent, WorkflowTaskCompletedEventAttributes},
+use temporal_sdk_core_protos::{
+    temporal::api::{
+        enums::v1::EventType,
+        history::v1::{history_event, History, HistoryEvent, WorkflowTaskCompletedEventAttributes},
+    },
+    TIME_TRAVEL_QUERY,
 };
 use tracing::Instrument;
 
@@ -73,7 +76,7 @@ pub enum NextWFT {
 }
 
 #[derive(derive_more::DebugCustom)]
-#[debug(fmt = "HistoryPaginator(run_id: {run_id})")]
+#[debug(fmt = "HistoryPaginator(cache_key: {cache_key})")]
 #[cfg_attr(
     feature = "save_wf_inputs",
     derive(serde::Serialize, serde::Deserialize),
@@ -81,7 +84,7 @@ pub enum NextWFT {
 )]
 pub struct HistoryPaginator {
     pub(crate) wf_id: String,
-    pub(crate) run_id: String,
+    pub(crate) cache_key: RunCacheKey,
     pub(crate) previous_wft_started_id: i64,
     pub(crate) wft_started_event_id: i64,
 
@@ -122,9 +125,27 @@ impl HistoryPaginator {
     /// Use a new poll response to create a new [WFTPaginator], returning it and the
     /// [PreparedWFT] extracted from it that can be fed into workflow state.
     pub(super) async fn from_poll(
-        wft: ValidPollWFTQResponse,
+        mut wft: ValidPollWFTQResponse,
         client: Arc<dyn WorkerClient>,
     ) -> Result<(Self, PreparedWFT), tonic::Status> {
+        let mut alternate_cache = 0;
+        // Intercept and special time travel query
+        let mut all_queries = wft
+            .query_requests
+            .iter()
+            .map(|q| q.query_type.as_str())
+            .chain(wft.legacy_query.iter().map(|q| q.query_type.as_str()));
+        if all_queries.any(|qt| qt == TIME_TRAVEL_QUERY) {
+            // If we see one of these, we need to fetch *all* history, attach the alternate cache
+            // key, and then break things into made up WFTs and issue enhanced stack trace queries
+            // for each one
+            info!("Time travel query from poll");
+
+            // This will force fetching all history.
+            wft.history.events = vec![];
+            alternate_cache = 1;
+        }
+
         let empty_hist = wft.history.events.is_empty();
         let npt = if empty_hist {
             NextPageToken::FetchFromStart
@@ -162,6 +183,7 @@ impl HistoryPaginator {
             legacy_query: wft.legacy_query,
             query_requests: wft.query_requests,
             update,
+            alternate_cache,
         };
         Ok((paginator, prepared))
     }
@@ -172,7 +194,7 @@ impl HistoryPaginator {
     ) -> Result<PermittedWFT, tonic::Status> {
         let mut paginator = Self {
             wf_id: req.original_wft.work.execution.workflow_id.clone(),
-            run_id: req.original_wft.work.execution.run_id.clone(),
+            cache_key: req.original_wft.work.cache_key(),
             previous_wft_started_id: req.original_wft.work.update.previous_wft_started_id,
             wft_started_event_id: req.original_wft.work.update.wft_started_id,
             client,
@@ -206,7 +228,9 @@ impl HistoryPaginator {
             client,
             event_queue,
             wf_id,
-            run_id,
+            // TODO: At least, with what's happening for this hack, the key never needs to start
+            //  with an alternate, but this is a bit ugly
+            cache_key: run_id.parse().unwrap(),
             next_page_token,
             final_events,
             previous_wft_started_id,
@@ -221,7 +245,10 @@ impl HistoryPaginator {
             client: Arc::new(mock_manual_workflow_client()),
             event_queue: Default::default(),
             wf_id: "".to_string(),
-            run_id: "".to_string(),
+            cache_key: RunCacheKey {
+                run_id: "".to_string(),
+                alternate_key: 0,
+            },
             next_page_token: NextPageToken::FetchFromStart,
             final_events: vec![],
             previous_wft_started_id: -2,
@@ -292,10 +319,14 @@ impl HistoryPaginator {
                 NextPageToken::FetchFromStart => vec![],
                 NextPageToken::Next(v) => v,
             };
-            debug!(run_id=%self.run_id, "Fetching new history page");
+            debug!(run_id=%self.cache_key, "Fetching new history page");
             let fetch_res = self
                 .client
-                .get_workflow_execution_history(self.wf_id.clone(), Some(self.run_id.clone()), npt)
+                .get_workflow_execution_history(
+                    self.wf_id.clone(),
+                    Some(self.cache_key.run_id.clone()),
+                    npt,
+                )
                 .instrument(span!(tracing::Level::TRACE, "fetch_history_in_paginator"))
                 .await?;
 

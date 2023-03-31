@@ -549,11 +549,12 @@ impl Worker {
     /// Request a workflow eviction
     pub(crate) fn request_wf_eviction(
         &self,
-        run_id: &str,
+        cache_key: &str,
         message: impl Into<String>,
         reason: EvictionReason,
     ) {
-        self.workflows.request_eviction(run_id, message, reason);
+        self.workflows
+            .request_eviction(cache_key.parse().unwrap(), message, reason);
     }
 
     /// Sets a function to be called at the end of each activation completion
@@ -583,8 +584,9 @@ impl Worker {
         )
     }
 
-    fn notify_local_result(&self, run_id: &str, res: LocalResolution) {
-        self.workflows.notify_of_local_result(run_id, res);
+    fn notify_local_result(&self, cache_key: &str, res: LocalResolution) {
+        self.workflows
+            .notify_of_local_result(cache_key.parse().unwrap(), res);
     }
 }
 

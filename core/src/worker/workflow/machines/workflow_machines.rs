@@ -27,6 +27,7 @@ use crate::{
                 upsert_search_attributes_state_machine::upsert_search_attrs_internal,
                 HistEventData,
             },
+            run_cache::RunCacheKey,
             CommandID, DrivenWorkflow, HistoryUpdate, InternalFlagsRef, LocalResolution,
             OutgoingJob, RunBasics, WFCommand, WFMachinesError, WorkflowFetcher,
             WorkflowStartedInfo,
@@ -95,6 +96,8 @@ pub(crate) struct WorkflowMachines {
     pub workflow_type: String,
     /// Identifies the current run
     pub run_id: String,
+    /// Cache key used by this run TODO: Duplicates run_id
+    pub cache_key: RunCacheKey,
     /// The time the workflow execution began, as told by the WEStarted event
     workflow_start_time: Option<SystemTime>,
     /// The time the workflow execution finished, as determined by when the machines handled
@@ -120,7 +123,8 @@ pub(crate) struct WorkflowMachines {
 
     /// Maps command ids as created by workflow authors to their associated machines.
     id_to_machine: HashMap<CommandID, MachineKey>,
-
+    // TODO: consdier mantaining this guy
+    // command_id_to_machine_id: HashMap<CommandID, i64>,
     /// Queued commands which have been produced by machines and await processing / being sent to
     /// the server.
     commands: VecDeque<CommandAndMachine>,
@@ -228,7 +232,8 @@ impl WorkflowMachines {
             namespace: basics.namespace,
             workflow_id: basics.workflow_id,
             workflow_type: basics.workflow_type,
-            run_id: basics.run_id,
+            run_id: basics.cache_key.run_id.clone(),
+            cache_key: basics.cache_key,
             drive_me: driven_wf,
             replaying,
             metrics: basics.metrics,
@@ -271,6 +276,10 @@ impl WorkflowMachines {
         self.replaying = self.last_history_from_server.previous_wft_started_id > 0;
         self.apply_next_wft_from_history()?;
         Ok(())
+    }
+
+    pub(crate) fn get_current_wft_started_id(&self) -> i64 {
+        self.current_started_event_id
     }
 
     /// Let this workflow know that something we've been waiting locally on has resolved, like a
@@ -366,6 +375,7 @@ impl WorkflowMachines {
                 .iter()
                 .copied()
                 .collect(),
+            alternate_cache_key: self.cache_key.to_string(),
         }
     }
 
@@ -1288,6 +1298,16 @@ impl WorkflowMachines {
             }
         }
         attrs
+    }
+
+    pub fn command_id_to_event_id(&self, id: &CommandID) -> Option<i64> {
+        self.id_to_machine.get(id).and_then(|machine_id| {
+            self.machines_by_event_id
+                .iter()
+                .find(|(_, m_id)| &machine_id == m_id)
+                .map(|(event_id, _)| event_id)
+                .copied()
+        })
     }
 }
 

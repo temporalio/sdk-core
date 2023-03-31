@@ -794,6 +794,7 @@ pub(crate) async fn poll_and_reply_clears_outstanding_evicts<'a>(
                 // Eviction plus some work, we still want to issue the reply
                 WorkflowActivationCompletion {
                     run_id: res.run_id.clone(),
+                    alternate_cache_key: "".to_string(),
                     status: Some(reply.clone()),
                 }
             };

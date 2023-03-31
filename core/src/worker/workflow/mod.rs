@@ -38,6 +38,7 @@ use crate::{
         workflow::{
             history_update::HistoryPaginator,
             managed_run::RunUpdateAct,
+            run_cache::{CacheKeyGetter, RunCacheKey},
             wft_extraction::{HistoryFetchReq, WFTExtractor},
             wft_poller::validate_wft,
             workflow_stream::{LocalInput, LocalInputs, WFStream},
@@ -65,7 +66,13 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use temporal_sdk_core_api::errors::{CompleteWfError, PollWfError};
+use temporal_sdk_core_api::{
+    builtin_queries::{
+        EnhancedStackTrace, InternalCommandType, InternalEnhancedStackTrace, StackTrace,
+        TimeTravelStackTrace,
+    },
+    errors::{CompleteWfError, PollWfError},
+};
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::{
@@ -87,7 +94,7 @@ use temporal_sdk_core_protos::{
         taskqueue::v1::StickyExecutionAttributes,
         workflowservice::v1::{get_system_info_response, PollActivityTaskQueueResponse},
     },
-    TaskToken,
+    TaskToken, TIME_TRAVEL_QUERY,
 };
 use tokio::{
     sync::{
@@ -150,7 +157,7 @@ pub(crate) struct RunBasics<'a> {
     pub namespace: String,
     pub workflow_id: String,
     pub workflow_type: String,
-    pub run_id: String,
+    pub cache_key: RunCacheKey,
     pub history: HistoryUpdate,
     pub metrics: MetricsContext,
     pub capabilities: &'a get_system_info_response::Capabilities,
@@ -286,10 +293,11 @@ impl Workflows {
                     debug!(activation=%act, "Sending activation to lang");
                     break Ok(act);
                 }
-                ActivationOrAuto::Autocomplete { run_id } => {
+                ActivationOrAuto::Autocomplete { cache_key } => {
                     self.activation_completed(
                         WorkflowActivationCompletion {
-                            run_id,
+                            alternate_cache_key: cache_key.to_string(),
+                            run_id: cache_key.run_id,
                             status: Some(
                                 workflow_completion::Success::from_variants(vec![]).into(),
                             ),
@@ -301,12 +309,13 @@ impl Workflows {
                     .await?;
                 }
                 ActivationOrAuto::AutoFail {
-                    run_id,
+                    cache_key,
                     machines_err,
                 } => {
                     self.activation_completed(
                         WorkflowActivationCompletion {
-                            run_id,
+                            alternate_cache_key: cache_key.to_string(),
+                            run_id: cache_key.run_id,
                             status: Some(auto_fail_to_complete_status(machines_err)),
                         },
                         Option::<Box<dyn Fn(PostActivateHookData) + Send>>::None,
@@ -328,6 +337,7 @@ impl Workflows {
     ) -> Result<usize, CompleteWfError> {
         let is_empty_completion = completion.is_empty();
         let completion = validate_completion(completion)?;
+        let cache_key = completion.cache_key().clone();
         let run_id = completion.run_id().to_string();
         let (tx, rx) = oneshot::channel();
         let was_sent = self.send_local(WFActCompleteMsg {
@@ -388,7 +398,7 @@ impl Workflows {
                     }
                     completion.sticky_attributes = sticky_attrs;
 
-                    self.handle_wft_reporting_errs(&run_id, || async {
+                    self.handle_wft_reporting_errs(&cache_key, || async {
                         let maybe_wft = self.client.complete_workflow_task(completion).await?;
                         if let Some(wft) = maybe_wft.workflow_task {
                             wft_from_complete = Some(validate_wft(wft)?);
@@ -413,7 +423,7 @@ impl Workflows {
             ActivationCompleteOutcome::ReportWFTFail(outcome) => match outcome {
                 FailedActivationWFTReport::Report(tt, cause, failure) => {
                     warn!(run_id=%run_id, failure=?failure, "Failing workflow task");
-                    self.handle_wft_reporting_errs(&run_id, || async {
+                    self.handle_wft_reporting_errs(&cache_key, || async {
                         self.client
                             .fail_workflow_task(tt, cause, failure.failure.map(Into::into))
                             .await
@@ -437,7 +447,7 @@ impl Workflows {
                 Ok((paginator, pwft)) => Some((pwft, paginator)),
                 Err(e) => {
                     self.request_eviction(
-                        &run_id,
+                        cache_key.clone(),
                         format!("Failed to paginate workflow task from completion: {e:?}"),
                         EvictionReason::Fatal,
                     );
@@ -457,7 +467,7 @@ impl Workflows {
         }
 
         self.post_activation(PostActivationMsg {
-            run_id,
+            cache_key,
             wft_report_status,
             wft_from_complete: maybe_pwft,
         });
@@ -466,13 +476,9 @@ impl Workflows {
     }
 
     /// Tell workflow that a local activity has finished with the provided result
-    pub(super) fn notify_of_local_result(
-        &self,
-        run_id: impl Into<String>,
-        resolved: LocalResolution,
-    ) {
+    pub(super) fn notify_of_local_result(&self, cache_key: RunCacheKey, resolved: LocalResolution) {
         self.send_local(LocalResolutionMsg {
-            run_id: run_id.into(),
+            cache_key,
             res: resolved,
         });
     }
@@ -480,12 +486,12 @@ impl Workflows {
     /// Request eviction of a workflow
     pub(super) fn request_eviction(
         &self,
-        run_id: impl Into<String>,
+        cache_key: RunCacheKey,
         message: impl Into<String>,
         reason: EvictionReason,
     ) {
         self.send_local(RequestEvictMsg {
-            run_id: run_id.into(),
+            cache_key,
             message: message.into(),
             reason,
             auto_reply_fail_tt: None,
@@ -538,8 +544,11 @@ impl Workflows {
 
     /// Handle server errors from either completing or failing a workflow task. Un-handleable errors
     /// trigger a workflow eviction and are logged.
-    async fn handle_wft_reporting_errs<T, Fut>(&self, run_id: &str, completer: impl FnOnce() -> Fut)
-    where
+    async fn handle_wft_reporting_errs<T, Fut>(
+        &self,
+        cache_key: &RunCacheKey,
+        completer: impl FnOnce() -> Fut,
+    ) where
         Fut: Future<Output = Result<T, tonic::Status>>,
     {
         let mut should_evict = None;
@@ -548,11 +557,12 @@ impl Workflows {
                 // Silence unhandled command errors since the lang SDK cannot do anything
                 // about them besides poll again, which it will do anyway.
                 tonic::Code::InvalidArgument if err.message() == "UnhandledCommand" => {
-                    debug!(error = %err, run_id, "Unhandled command response when completing");
+                    debug!(error = %err, cache_key=%cache_key,
+                           "Unhandled command response when completing");
                     should_evict = Some(EvictionReason::UnhandledCommand);
                 }
                 tonic::Code::NotFound => {
-                    warn!(error = %err, run_id, "Task not found when completing");
+                    warn!(error = %err, cache_key=%cache_key, "Task not found when completing");
                     should_evict = Some(EvictionReason::TaskNotFound);
                 }
                 _ => {
@@ -562,7 +572,7 @@ impl Workflows {
             }
         }
         if let Some(reason) = should_evict {
-            self.request_eviction(run_id, "Error reporting WFT to server", reason);
+            self.request_eviction(cache_key.clone(), "Error reporting WFT to server", reason);
         }
     }
 
@@ -722,13 +732,13 @@ enum ActivationOrAuto {
     /// This type should only be filled with an empty activation which is ready to have queries
     /// inserted into the joblist
     ReadyForQueries(WorkflowActivation),
-    #[display(fmt = "Autocomplete(run_id={run_id})")]
+    #[display(fmt = "Autocomplete(run_id={0})", "cache_key.run_id")]
     Autocomplete {
-        run_id: String,
+        cache_key: RunCacheKey,
     },
-    #[display(fmt = "AutoFail(run_id={run_id})")]
+    #[display(fmt = "AutoFail(run_id={0})", "cache_key.run_id")]
     AutoFail {
-        run_id: String,
+        cache_key: RunCacheKey,
         machines_err: WFMachinesError,
     },
 }
@@ -736,9 +746,9 @@ impl ActivationOrAuto {
     pub fn run_id(&self) -> &str {
         match self {
             ActivationOrAuto::LangActivation(act) => &act.run_id,
-            ActivationOrAuto::Autocomplete { run_id, .. } => run_id,
+            ActivationOrAuto::Autocomplete { cache_key, .. } => cache_key.run_id.as_str(),
             ActivationOrAuto::ReadyForQueries(act) => &act.run_id,
-            ActivationOrAuto::AutoFail { run_id, .. } => run_id,
+            ActivationOrAuto::AutoFail { cache_key, .. } => cache_key.run_id.as_str(),
         }
     }
 }
@@ -776,6 +786,7 @@ struct PreparedWFT {
     legacy_query: Option<WorkflowQuery>,
     query_requests: Vec<QueryWorkflow>,
     update: HistoryUpdate,
+    alternate_cache: u32,
 }
 impl PreparedWFT {
     /// Returns true if the contained history update is incremental (IE: expects to hit a cached
@@ -784,6 +795,13 @@ impl PreparedWFT {
         let start_event_id = self.update.first_event_id();
         let poll_resp_is_incremental = start_event_id.map(|eid| eid > 1).unwrap_or_default();
         poll_resp_is_incremental || start_event_id.is_none()
+    }
+
+    pub fn cache_key(&self) -> RunCacheKey {
+        RunCacheKey {
+            run_id: self.execution.run_id.clone(),
+            alternate_key: self.alternate_cache,
+        }
     }
 }
 
@@ -797,6 +815,7 @@ pub(crate) struct OutstandingTask {
     /// The WFT permit owned by this task, ensures we don't exceed max concurrent WFT, and makes
     /// sure the permit is automatically freed when we delete the task.
     pub permit: UsedMeteredSemPermit,
+    pub time_travel_aggregation: Option<TimeTravelStackTrace>,
 }
 
 impl OutstandingTask {
@@ -804,6 +823,11 @@ impl OutstandingTask {
         self.pending_queries
             .iter()
             .any(|q| q.query_id == LEGACY_QUERY_ID)
+    }
+    pub(crate) fn has_pending_time_travel_query(&self) -> bool {
+        self.pending_queries
+            .iter()
+            .any(|q| q.query_type == TIME_TRAVEL_QUERY)
     }
 }
 
@@ -920,7 +944,7 @@ struct WFActCompleteMsg {
     derive(serde::Serialize, serde::Deserialize)
 )]
 struct LocalResolutionMsg {
-    run_id: String,
+    cache_key: RunCacheKey,
     res: LocalResolution,
 }
 #[derive(Debug)]
@@ -929,7 +953,7 @@ struct LocalResolutionMsg {
     derive(serde::Serialize, serde::Deserialize)
 )]
 struct PostActivationMsg {
-    run_id: String,
+    cache_key: RunCacheKey,
     wft_report_status: WFTReportStatus,
     wft_from_complete: Option<(PreparedWFT, HistoryPaginator)>,
 }
@@ -939,7 +963,7 @@ struct PostActivationMsg {
     derive(serde::Serialize, serde::Deserialize)
 )]
 struct RequestEvictMsg {
-    run_id: String,
+    cache_key: RunCacheKey,
     message: String,
     reason: EvictionReason,
     /// If set, we requested eviction because something went wrong processing a brand new poll task,
@@ -949,7 +973,7 @@ struct RequestEvictMsg {
 }
 #[derive(Debug)]
 pub(crate) struct HeartbeatTimeoutMsg {
-    pub(crate) run_id: String,
+    pub(crate) cache_key: RunCacheKey,
     pub(crate) span: Span,
 }
 #[derive(Debug)]
@@ -997,6 +1021,7 @@ enum WFTReportStatus {
 fn validate_completion(
     completion: WorkflowActivationCompletion,
 ) -> Result<ValidatedCompletion, CompleteWfError> {
+    let cache_key = completion.cache_key();
     match completion.status {
         Some(workflow_activation_completion::Status::Successful(success)) => {
             // Convert to wf commands
@@ -1038,16 +1063,13 @@ fn validate_completion(
             }
 
             Ok(ValidatedCompletion::Success {
-                run_id: completion.run_id,
+                cache_key,
                 commands,
                 used_flags: success.used_internal_flags,
             })
         }
         Some(workflow_activation_completion::Status::Failed(failure)) => {
-            Ok(ValidatedCompletion::Fail {
-                run_id: completion.run_id,
-                failure,
-            })
+            Ok(ValidatedCompletion::Fail { cache_key, failure })
         }
         None => Err(CompleteWfError::MalformedWorkflowCompletion {
             reason: "Workflow completion had empty status field".to_owned(),
@@ -1064,21 +1086,25 @@ fn validate_completion(
 #[allow(clippy::large_enum_variant)]
 enum ValidatedCompletion {
     Success {
-        run_id: String,
+        cache_key: RunCacheKey,
         commands: Vec<WFCommand>,
         used_flags: Vec<u32>,
     },
     Fail {
-        run_id: String,
+        cache_key: RunCacheKey,
         failure: Failure,
     },
 }
 
 impl ValidatedCompletion {
     pub fn run_id(&self) -> &str {
+        self.cache_key().run_id.as_str()
+    }
+
+    pub fn cache_key(&self) -> &RunCacheKey {
         match self {
-            ValidatedCompletion::Success { run_id, .. } => run_id,
-            ValidatedCompletion::Fail { run_id, .. } => run_id,
+            ValidatedCompletion::Success { cache_key, .. } => cache_key,
+            ValidatedCompletion::Fail { cache_key, .. } => cache_key,
         }
     }
 }
@@ -1207,7 +1233,7 @@ impl WFCommand {
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
-enum CommandID {
+pub(crate) enum CommandID {
     Timer(u32),
     Activity(u32),
     LocalActivity(u32),
@@ -1349,6 +1375,37 @@ fn sort_act_jobs(wfa: &mut WorkflowActivation) {
         }
         variant_ordinal(j1v).cmp(&variant_ordinal(j2v))
     })
+}
+
+fn internal_to_enhanced_stack_trace(
+    internal_trace: InternalEnhancedStackTrace,
+    mapper: impl Fn(&CommandID) -> Option<i64>,
+) -> EnhancedStackTrace {
+    let mut stacks = Vec::with_capacity(internal_trace.stacks.len());
+    for stack in internal_trace.stacks.iter() {
+        let mut correlating_event_ids = vec![];
+        for command in stack.commands.iter() {
+            let command_id = match command.r#type {
+                InternalCommandType::ScheduleActivity => CommandID::Activity(command.seq),
+                InternalCommandType::StartTimer => CommandID::Timer(command.seq),
+                InternalCommandType::StartChildWorkflow => {
+                    CommandID::ChildWorkflowStart(command.seq)
+                }
+            };
+            if let Some(event_id) = mapper(&command_id) {
+                correlating_event_ids.push(event_id);
+            }
+        }
+        stacks.push(StackTrace {
+            locations: stack.locations.clone(),
+            correlating_event_ids,
+        });
+    }
+    EnhancedStackTrace {
+        sdk: internal_trace.sdk,
+        stacks,
+        sources: internal_trace.sources,
+    }
 }
 
 #[cfg(test)]

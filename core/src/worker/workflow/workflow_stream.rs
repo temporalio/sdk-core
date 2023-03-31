@@ -126,8 +126,8 @@ impl WFStream {
                     }
                     WFStreamInput::Local(local_input) => {
                         let _span_g = local_input.span.enter();
-                        if let Some(rid) = local_input.input.run_id() {
-                            if let Some(rh) = state.runs.get_mut(rid) {
+                        if let Some(key) = local_input.input.cache_key() {
+                            if let Some(rh) = state.runs.get_mut(key) {
                                 rh.record_span_fields(&local_input.span);
                             }
                         }
@@ -149,7 +149,7 @@ impl WFStream {
                             }
                             LocalInputs::LocalResolution(res) => state.local_resolution(res),
                             LocalInputs::HeartbeatTimeout(hbt) => {
-                                state.process_heartbeat_timeout(hbt)
+                                state.process_heartbeat_timeout(&hbt)
                             }
                             LocalInputs::RequestEviction(evict) => {
                                 state.request_eviction(evict).into_run_update_resp()
@@ -164,12 +164,12 @@ impl WFStream {
                         }
                     }
                     WFStreamInput::FailedFetch {
-                        run_id,
+                        cache_key: run_id,
                         err,
                         auto_reply_fail_tt,
                     } => state
                         .request_eviction(RequestEvictMsg {
-                            run_id,
+                            cache_key: run_id,
                             message: format!("Fetching history failed: {err:?}"),
                             reason: EvictionReason::PaginationOrHistoryFetch,
                             auto_reply_fail_tt,
@@ -241,7 +241,7 @@ impl WFStream {
     ) -> Result<RunUpdateAct, HistoryFetchReq> {
         // If the run already exists, possibly buffer the work and return early if we can't handle
         // it yet.
-        let pwft = if let Some(rh) = self.runs.get_mut(&pwft.work.execution.run_id) {
+        let pwft = if let Some(rh) = self.runs.get_mut(&pwft.work.cache_key()) {
             if let Some(w) = rh.buffer_wft_if_outstanding_work(pwft) {
                 w
             } else {
@@ -251,10 +251,10 @@ impl WFStream {
             pwft
         };
 
-        let run_id = pwft.work.execution.run_id.clone();
+        let cache_key = pwft.work.cache_key();
         // If our cache is full and this WFT is for an unseen run we must first evict a run before
         // we can deal with this task. So, buffer the task in that case.
-        if !self.runs.has_run(&run_id) && self.runs.is_full() {
+        if !self.runs.has_run(&cache_key) && self.runs.is_full() {
             self.buffer_resp_on_full_cache(pwft);
             return Ok(None);
         }
@@ -262,8 +262,8 @@ impl WFStream {
         // This check can't really be lifted up higher since we could EX: See it's in the cache,
         // not fetch more history, send the task, see cache is full, buffer it, then evict that
         // run, and now we still have a cache miss.
-        if !self.runs.has_run(&run_id) && pwft.work.is_incremental() {
-            debug!(run_id=?run_id, "Workflow task has partial history, but workflow is not in \
+        if !self.runs.has_run(&cache_key) && pwft.work.is_incremental() {
+            debug!(run_id=?cache_key, "Workflow task has partial history, but workflow is not in \
                    cache. Will fetch history");
             self.metrics.sticky_cache_miss();
             return Err(HistoryFetchReq::Full(
@@ -277,7 +277,7 @@ impl WFStream {
     }
 
     fn process_completion(&mut self, complete: NewOrFetchedComplete) -> Vec<ActivationOrAuto> {
-        let rh = if let Some(rh) = self.runs.get_mut(complete.run_id()) {
+        let rh = if let Some(rh) = self.runs.get_mut(complete.cache_key()) {
             rh
         } else {
             dbg_panic!("Run missing during completion {:?}", complete);
@@ -321,15 +321,15 @@ impl WFStream {
     }
 
     fn process_post_activation(&mut self, report: PostActivationMsg) -> RunUpdateAct {
-        let run_id = &report.run_id;
+        let cache_key = &report.cache_key;
         let wft_from_complete = report.wft_from_complete;
         if let Some((wft, _)) = &wft_from_complete {
-            if &wft.execution.run_id != run_id {
+            if &wft.cache_key() != cache_key {
                 dbg_panic!(
                     "Server returned a WFT on completion for a different run ({}) than the \
                      one being completed ({}). This is a server bug.",
                     wft.execution.run_id,
-                    run_id
+                    cache_key.run_id
                 );
             }
         }
@@ -337,19 +337,19 @@ impl WFStream {
         let mut res = None;
 
         // If we reported to server, we always want to mark it complete.
-        let maybe_t = self.complete_wft(run_id, report.wft_report_status);
+        let maybe_t = self.complete_wft(cache_key, report.wft_report_status);
         // Delete the activation
         let activation = self
             .runs
-            .get_mut(run_id)
+            .get_mut(cache_key)
             .and_then(|rh| rh.delete_activation());
 
         // Evict the run if the activation contained an eviction
         let mut applied_buffered_poll_for_this_run = false;
         if activation.map(|a| a.has_eviction()).unwrap_or_default() {
-            debug!(run_id=%run_id, "Evicting run");
+            debug!(run_id=%cache_key, "Evicting run");
 
-            if let Some(mut rh) = self.runs.remove(run_id) {
+            if let Some(mut rh) = self.runs.remove(cache_key) {
                 if let Some(buff) = rh.take_buffered_wft() {
                     // Don't try to apply a buffered poll for this run if we just got a new WFT
                     // from completing, because by definition that buffered poll is now an
@@ -382,7 +382,7 @@ impl WFStream {
         }
 
         if res.is_none() {
-            if let Some(rh) = self.runs.get_mut(run_id) {
+            if let Some(rh) = self.runs.get_mut(cache_key) {
                 // Attempt to produce the next activation if needed
                 res = rh.check_more_activations();
             }
@@ -391,7 +391,7 @@ impl WFStream {
     }
 
     fn local_resolution(&mut self, msg: LocalResolutionMsg) -> RunUpdateAct {
-        let run_id = msg.run_id;
+        let run_id = msg.cache_key;
         if let Some(rh) = self.runs.get_mut(&run_id) {
             rh.local_resolution(msg.res)
         } else {
@@ -403,8 +403,8 @@ impl WFStream {
         }
     }
 
-    fn process_heartbeat_timeout(&mut self, run_id: String) -> RunUpdateAct {
-        if let Some(rh) = self.runs.get_mut(&run_id) {
+    fn process_heartbeat_timeout(&mut self, cache_key: &RunCacheKey) -> RunUpdateAct {
+        if let Some(rh) = self.runs.get_mut(cache_key) {
             rh.heartbeat_timeout()
         } else {
             None
@@ -415,19 +415,18 @@ impl WFStream {
     /// activation to evict the workflow from the lang side. Workflow will not *actually* be evicted
     /// until lang replies to that activation
     fn request_eviction(&mut self, info: RequestEvictMsg) -> EvictionRequestResult {
-        if let Some(rh) = self.runs.get_mut(&info.run_id) {
+        if let Some(rh) = self.runs.get_mut(&info.cache_key) {
             rh.request_eviction(info)
         } else {
-            debug!(run_id=%info.run_id, "Eviction requested for unknown run");
+            debug!(run_id=%info.cache_key, "Eviction requested for unknown run");
             EvictionRequestResult::NotFound
         }
     }
 
     fn request_eviction_of_lru_run(&mut self) -> EvictionRequestResult {
         if let Some(lru_run_id) = self.runs.current_lru_run() {
-            let run_id = lru_run_id.to_string();
             self.request_eviction(RequestEvictMsg {
-                run_id,
+                cache_key: lru_run_id.clone(),
                 message: "Workflow cache full".to_string(),
                 reason: EvictionReason::CacheFull,
                 auto_reply_fail_tt: None,
@@ -440,7 +439,7 @@ impl WFStream {
 
     fn complete_wft(
         &mut self,
-        run_id: &str,
+        cache_key: &RunCacheKey,
         wft_report_status: WFTReportStatus,
     ) -> Option<OutstandingTask> {
         // If the WFT completion wasn't sent to the server, but we did see the final event, we still
@@ -450,14 +449,14 @@ impl WFStream {
         // but they are very useful for testing complete replay.
         let saw_final = self
             .runs
-            .get(run_id)
+            .get(cache_key)
             .map(|r| r.have_seen_terminal_event())
             .unwrap_or_default();
         if !saw_final && matches!(wft_report_status, WFTReportStatus::NotReported) {
             return None;
         }
 
-        if let Some(rh) = self.runs.get_mut(run_id) {
+        if let Some(rh) = self.runs.get_mut(cache_key) {
             // Can't mark the WFT complete if there are pending queries, as doing so would destroy
             // them.
             if rh
@@ -509,14 +508,14 @@ impl WFStream {
             }
             if !handle.has_buffered_wft() {
                 num_evicts_needed -= 1;
-                evict_these.push(rid.to_string());
+                evict_these.push(rid.clone());
             }
         }
         let mut acts = vec![];
-        for run_id in evict_these {
+        for cache_key in evict_these {
             acts.extend(
                 self.request_eviction(RequestEvictMsg {
-                    run_id,
+                    cache_key,
                     message: "Workflow cache full".to_string(),
                     reason: EvictionReason::CacheFull,
                     auto_reply_fail_tt: None,
@@ -550,13 +549,13 @@ impl WFStream {
 
     // Useful when debugging
     #[allow(dead_code)]
-    fn info_dump(&self, run_id: &str) {
-        if let Some(r) = self.runs.peek(run_id) {
-            info!(run_id, wft=?r.wft(), activation=?r.activation(),
+    fn info_dump(&self, cache_key: &RunCacheKey) {
+        if let Some(r) = self.runs.peek(cache_key) {
+            info!(cache_key=%cache_key, wft=?r.wft(), activation=?r.activation(),
                   buffered_wft=r.has_buffered_wft(),
                   trying_to_evict=r.is_trying_to_evict(), more_work=r.more_pending_work());
         } else {
-            info!(run_id, "Run not found");
+            info!(cache_key=%cache_key, "Run not found");
         }
     }
 }
@@ -582,7 +581,7 @@ enum WFStreamInput {
         tonic::Status,
     ),
     FailedFetch {
-        run_id: String,
+        cache_key: RunCacheKey,
         #[cfg_attr(
             feature = "save_wf_inputs",
             serde(with = "tonic_status_serde::SerdeStatus")
@@ -607,7 +606,7 @@ pub(super) struct LocalInput {
 impl From<HeartbeatTimeoutMsg> for LocalInput {
     fn from(hb: HeartbeatTimeoutMsg) -> Self {
         Self {
-            input: LocalInputs::HeartbeatTimeout(hb.run_id),
+            input: LocalInputs::HeartbeatTimeout(hb.cache_key),
             span: hb.span,
         }
     }
@@ -628,18 +627,18 @@ pub(super) enum LocalInputs {
     LocalResolution(LocalResolutionMsg),
     PostActivation(PostActivationMsg),
     RequestEviction(RequestEvictMsg),
-    HeartbeatTimeout(String),
+    HeartbeatTimeout(RunCacheKey),
     #[cfg_attr(feature = "save_wf_inputs", serde(skip))]
     GetStateInfo(GetStateInfoMsg),
 }
 impl LocalInputs {
-    fn run_id(&self) -> Option<&str> {
+    fn cache_key(&self) -> Option<&RunCacheKey> {
         Some(match self {
-            LocalInputs::Completion(c) => c.completion.run_id(),
-            LocalInputs::FetchedPageCompletion { paginator, .. } => &paginator.run_id,
-            LocalInputs::LocalResolution(lr) => &lr.run_id,
-            LocalInputs::PostActivation(pa) => &pa.run_id,
-            LocalInputs::RequestEviction(re) => &re.run_id,
+            LocalInputs::Completion(c) => c.completion.cache_key(),
+            LocalInputs::FetchedPageCompletion { paginator, .. } => &paginator.cache_key,
+            LocalInputs::LocalResolution(lr) => &lr.cache_key,
+            LocalInputs::PostActivation(pa) => &pa.cache_key,
+            LocalInputs::RequestEviction(re) => &re.cache_key,
             LocalInputs::HeartbeatTimeout(hb) => hb,
             LocalInputs::GetStateInfo(_) => return None,
         })
@@ -658,7 +657,7 @@ enum ExternalPollerInputs {
         span: Span,
     },
     FailedFetch {
-        run_id: String,
+        cache_key: RunCacheKey,
         err: tonic::Status,
         auto_reply_fail_tt: Option<TaskToken>,
     },
@@ -671,11 +670,11 @@ impl From<ExternalPollerInputs> for WFStreamInput {
             ExternalPollerInputs::PollerError(e) => WFStreamInput::PollerError(e),
             ExternalPollerInputs::FetchedUpdate(wft) => WFStreamInput::NewWft(wft),
             ExternalPollerInputs::FailedFetch {
-                run_id,
+                cache_key,
                 err,
                 auto_reply_fail_tt,
             } => WFStreamInput::FailedFetch {
-                run_id,
+                cache_key,
                 err,
                 auto_reply_fail_tt,
             },
@@ -708,11 +707,11 @@ impl From<Result<WFTExtractorOutput, tonic::Status>> for ExternalPollerInputs {
                 span,
             },
             Ok(WFTExtractorOutput::FailedFetch {
-                run_id,
+                cache_key: run_id,
                 err,
                 auto_reply_fail_tt,
             }) => ExternalPollerInputs::FailedFetch {
-                run_id,
+                cache_key: run_id,
                 err,
                 auto_reply_fail_tt,
             },
@@ -727,10 +726,10 @@ enum NewOrFetchedComplete {
     Fetched(HistoryUpdate, HistoryPaginator),
 }
 impl NewOrFetchedComplete {
-    fn run_id(&self) -> &str {
+    fn cache_key(&self) -> &RunCacheKey {
         match self {
-            NewOrFetchedComplete::New(c) => c.completion.run_id(),
-            NewOrFetchedComplete::Fetched(_, p) => &p.run_id,
+            NewOrFetchedComplete::New(c) => c.completion.cache_key(),
+            NewOrFetchedComplete::Fetched(_, p) => &p.cache_key,
         }
     }
 }

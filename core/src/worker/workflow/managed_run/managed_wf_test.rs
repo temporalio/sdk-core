@@ -92,7 +92,7 @@ impl ManagedWFFunc {
                 namespace: "test_namespace".to_string(),
                 workflow_id: "wfid".to_string(),
                 workflow_type: "wftype".to_string(),
-                run_id: "runid".to_string(),
+                cache_key: "runid".parse().unwrap(),
                 history: hist,
                 metrics: MetricsContext::no_op(),
                 capabilities: &DEFAULT_TEST_CAPABILITIES,
