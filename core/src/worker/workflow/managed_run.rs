@@ -5,7 +5,7 @@ mod managed_wf_test;
 pub(crate) use managed_wf_test::ManagedWFFunc;
 
 use crate::{
-    abstractions::dbg_panic,
+    abstractions::{dbg_panic, lame_drain_filter},
     protosext::WorkflowActivationExt,
     worker::{
         workflow::{
@@ -23,6 +23,7 @@ use crate::{
     MetricsContext,
 };
 use futures_util::future::AbortHandle;
+use itertools::{Either, Itertools};
 use std::{
     collections::HashSet,
     ops::Add,
@@ -30,25 +31,25 @@ use std::{
     sync::mpsc::Sender,
     time::{Duration, Instant},
 };
-use temporal_sdk_core_api::builtin_queries::TimeTravelStackTrace;
+use temporal_sdk_core_api::builtin_queries::{
+    enhanced_stack_query_job, TimeTravelStackTrace, FAKE_ENHANCED_STACK_QUERY_ID,
+    FAKE_ENHANCED_STACK_QUERY_ID_FINAL_LEGACY,
+};
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::{
             create_evict_activation, query_to_job, remove_from_cache::EvictionReason,
-            workflow_activation_job, QueryWorkflow, RemoveFromCache, WorkflowActivation,
+            workflow_activation_job, RemoveFromCache, WorkflowActivation,
         },
         workflow_commands::{QueryResult, QuerySuccess},
         workflow_completion, AsJsonPayloadExt,
     },
     temporal::api::{enums::v1::WorkflowTaskFailedCause, failure::v1::Failure},
-    TaskToken, ENHANCED_STACK_QUERY, TIME_TRAVEL_QUERY,
+    TaskToken,
 };
 use tokio::sync::oneshot;
 use tracing::Span;
 
-static FAKE_ENHANCED_STACK_QUERY_ID: &str = "__fake_enhanced_stack";
-// must start with the above
-static FAKE_ENHANCED_STACK_QUERY_ID_FINAL_LEGACY: &str = "__fake_enhanced_stack_final";
 type Result<T, E = WFMachinesError> = std::result::Result<T, E>;
 pub(super) type RunUpdateAct = Option<ActivationOrAuto>;
 
@@ -434,18 +435,11 @@ impl ManagedRun {
             Ok(None)
         } else {
             // First strip out query responses from other commands that actually affect machines
-            // Would be prettier with `drain_filter`
-            let mut i = 0;
-            let mut query_responses = vec![];
-            while i < commands.len() {
-                if matches!(commands[i], WFCommand::QueryResponse(_)) {
-                    if let WFCommand::QueryResponse(qr) = commands.remove(i) {
-                        query_responses.push(qr);
-                    }
-                } else {
-                    i += 1;
-                }
-            }
+            let (query_responses, commands): (Vec<_>, Vec<_>) =
+                commands.into_iter().partition_map(|c| match c {
+                    WFCommand::QueryResponse(qr) => Either::Left(qr),
+                    o => Either::Right(o),
+                });
 
             if activation_was_only_eviction && !commands.is_empty() {
                 dbg_panic!("Reply to an eviction only containing an eviction included commands");
@@ -497,7 +491,6 @@ impl ManagedRun {
     fn fixup_enhanced_stack_query(&self, qr: &mut QueryResult) {
         if let Ok(as_internal) = (&*qr).try_into() {
             if let Some(payload) = qr.payload_mut() {
-                info!("Fixing up enhanced stack query!");
                 let trace = internal_to_enhanced_stack_trace(as_internal, |c| {
                     self.wfm.machines.command_id_to_event_id(c)
                 });
@@ -984,46 +977,24 @@ impl ManagedRun {
         let act_type = match act {
             ActivationOrAuto::LangActivation(act) | ActivationOrAuto::ReadyForQueries(act) => {
                 let is_leg_q = act.is_legacy_query();
-                // If the time travel query is pending, insert an enhanced stack trace query.
-                // TODO: Somehow do only at WFT boundaries
+
+                // If the time travel query is pending, insert an enhanced stack trace query for
+                // the activation
+                // TODO: Optimization: Somehow do only at WFT boundaries - we only end up keeping
+                //  the final stack before we complete the WFT, so capturing them for activations
+                //  before the last is technically a waste.
                 if let Some(ref wft) = self.wft {
                     if wft.has_pending_time_travel_query() {
-                        warn!("Issuing activation, have pending TT query {:?}", act);
                         // Insert enhanced stack trace query (and remove tt query, if present)
-                        act.jobs.retain(|j| {
-                            !matches!(&j.variant,
-                                      Some(workflow_activation_job::Variant::QueryWorkflow(q))
-                                      if q.query_type == TIME_TRAVEL_QUERY)
-                        });
-                        act.jobs.push(
-                            workflow_activation_job::Variant::QueryWorkflow(QueryWorkflow {
-                                query_id: FAKE_ENHANCED_STACK_QUERY_ID.to_string(),
-                                query_type: ENHANCED_STACK_QUERY.to_string(),
-                                arguments: vec![],
-                                headers: Default::default(),
-                            })
-                            .into(),
-                        )
+                        act.jobs.retain(|j| !j.is_time_travel_query());
+                        act.jobs.push(enhanced_stack_query_job(false));
                     } else {
                         // Check if the time travel query is *in* the activation, IE: it is no
                         // longer pending. This means we should conclude aggregation after this
                         // final activation.
-                        // TODO: Dedupe
-                        if let Some(ttq) = act.jobs.iter().position(|j| {
-                            matches!(&j.variant,
-                                      Some(workflow_activation_job::Variant::QueryWorkflow(q))
-                                      if q.query_type == TIME_TRAVEL_QUERY)
-                        }) {
+                        if let Some(ttq) = act.jobs.iter().position(|j| j.is_time_travel_query()) {
                             act.jobs.remove(ttq);
-                            act.jobs.push(
-                                workflow_activation_job::Variant::QueryWorkflow(QueryWorkflow {
-                                    query_id: FAKE_ENHANCED_STACK_QUERY_ID_FINAL_LEGACY.to_string(),
-                                    query_type: ENHANCED_STACK_QUERY.to_string(),
-                                    arguments: vec![],
-                                    headers: Default::default(),
-                                })
-                                .into(),
-                            )
+                            act.jobs.push(enhanced_stack_query_job(true));
                         }
                     }
                 }
@@ -1126,32 +1097,24 @@ impl ManagedRun {
             .and_then(|wft| wft.time_travel_aggregation.as_mut())
         {
             let wft_id = self.started_id_upon_activation;
-            info!("trying to aggregate stacks for wft id {}", wft_id);
             // If time travel aggregation is ongoing, strip any inserted fake enhanced stack trace
             // queries and merge them into the time travel aggregation.
-            // TODO: Could dedupe w/ other mention of drain_filter
-            let mut i = 0;
-            while i < query_resps.len() {
-                if query_resps[i]
-                    .query_id
-                    .starts_with(FAKE_ENHANCED_STACK_QUERY_ID)
-                {
-                    let qr = query_resps.remove(i);
-                    if let Ok(internal) = (&qr).try_into() {
-                        let mapped = internal_to_enhanced_stack_trace(internal, |c| {
-                            self.wfm.machines.command_id_to_event_id(c)
-                        });
-                        tta.sdk = mapped.sdk;
-                        tta.sources.extend(mapped.sources.into_iter());
-                        info!("Aggregating stacks for wft id {}", wft_id);
-                        if !mapped.stacks.is_empty() {
-                            tta.stacks.insert(wft_id as u32, mapped.stacks);
-                        }
-                    } else {
-                        error!("Couldn't decode fake stack trace query");
+            let enhanced_queries = lame_drain_filter(query_resps, |qr| {
+                qr.query_id.starts_with(FAKE_ENHANCED_STACK_QUERY_ID)
+            });
+            for qr in enhanced_queries {
+                if let Ok(internal) = (&qr).try_into() {
+                    let mapped = internal_to_enhanced_stack_trace(internal, |c| {
+                        self.wfm.machines.command_id_to_event_id(c)
+                    });
+                    tta.sdk = mapped.sdk;
+                    tta.sources.extend(mapped.sources.into_iter());
+                    info!("Aggregating stacks for wft id {}", wft_id);
+                    if !mapped.stacks.is_empty() {
+                        tta.stacks.insert(wft_id as u32, mapped.stacks);
                     }
                 } else {
-                    i += 1;
+                    error!("Couldn't decode fake stack trace query");
                 }
             }
         }

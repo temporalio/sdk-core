@@ -430,6 +430,7 @@ pub mod coresdk {
                 },
                 query::v1::WorkflowQuery,
             },
+            TIME_TRAVEL_QUERY,
         };
         use prost_wkt_types::Timestamp;
         use std::{
@@ -515,6 +516,16 @@ pub mod coresdk {
                     workflow_activation_job::Variant::RemoveFromCache(evict_job),
                 );
                 self.jobs.push(evict_job);
+            }
+        }
+
+        impl WorkflowActivationJob {
+            pub fn is_time_travel_query(&self) -> bool {
+                matches!(
+                    &self.variant,
+                    Some(workflow_activation_job::Variant::QueryWorkflow(q))
+                    if q.query_type == TIME_TRAVEL_QUERY
+                )
             }
         }
 

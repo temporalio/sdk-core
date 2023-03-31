@@ -1,8 +1,16 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use temporal_sdk_core_protos::coresdk::workflow_commands::{
-    query_result, QueryResult, QuerySuccess,
+use temporal_sdk_core_protos::{
+    coresdk::{
+        workflow_activation::{workflow_activation_job, QueryWorkflow, WorkflowActivationJob},
+        workflow_commands::{query_result, QueryResult, QuerySuccess},
+    },
+    ENHANCED_STACK_QUERY,
 };
+
+pub static FAKE_ENHANCED_STACK_QUERY_ID: &str = "__fake_enhanced_stack";
+// must start with the above
+pub static FAKE_ENHANCED_STACK_QUERY_ID_FINAL_LEGACY: &str = "__fake_enhanced_stack_final";
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SDKInfo {
@@ -116,4 +124,22 @@ pub struct TimeTravelStackTrace {
     pub sources: HashMap<String, Vec<FileSlice>>,
     /// Maps WFT started event ids to active stack traces upon completion of that WFT
     pub stacks: HashMap<u32, Vec<StackTrace>>,
+}
+
+/// Generate an activation job with an enhanced stack trace query.
+/// * `final_legacy` - Set to true if this is the final query before aggregation will be completed,
+///   and we should respond to the *legacy query* with the aggregation result when ready.
+pub fn enhanced_stack_query_job(final_legacy: bool) -> WorkflowActivationJob {
+    let id = if final_legacy {
+        FAKE_ENHANCED_STACK_QUERY_ID_FINAL_LEGACY
+    } else {
+        FAKE_ENHANCED_STACK_QUERY_ID
+    };
+    workflow_activation_job::Variant::QueryWorkflow(QueryWorkflow {
+        query_id: id.to_string(),
+        query_type: ENHANCED_STACK_QUERY.to_string(),
+        arguments: vec![],
+        headers: Default::default(),
+    })
+    .into()
 }
