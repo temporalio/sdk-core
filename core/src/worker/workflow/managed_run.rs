@@ -97,8 +97,6 @@ pub(super) struct ManagedRun {
     /// We store the paginator used for our own run's history fetching
     paginator: Option<HistoryPaginator>,
     completion_waiting_on_page_fetch: Option<RunActivationCompletion>,
-    // TODO: Can probably eliminate
-    special_query_ids: Vec<String>,
 }
 impl ManagedRun {
     pub(super) fn new(
@@ -120,7 +118,6 @@ impl ManagedRun {
             metrics,
             paginator: None,
             completion_waiting_on_page_fetch: None,
-            special_query_ids: vec![],
         }
     }
 
@@ -212,12 +209,6 @@ impl ManagedRun {
             pending_queries.push(lq);
         }
 
-        self.special_query_ids = pending_queries
-            .iter()
-            .filter(|q| q.query_type == "__enhanced_stack_trace")
-            .map(|q| q.query_id.clone())
-            .collect();
-
         self.paginator = Some(pwft.paginator);
         self.wft = Some(OutstandingTask {
             info: wft_info,
@@ -287,7 +278,6 @@ impl ManagedRun {
         report_status: WFTReportStatus,
     ) -> Option<OutstandingTask> {
         let retme = self.wft.take();
-        self.special_query_ids = vec![];
         info!("Marking wft complete");
 
         // Only record latency metrics if we genuinely reported to server
@@ -417,9 +407,7 @@ impl ManagedRun {
                 WFCommand::QueryResponse(qr) => qr,
                 _ => unreachable!("We just verified this is the only command"),
             };
-            if self.special_query_ids.contains(&LEGACY_QUERY_ID.to_owned()) {
-                self.fixup_enhanced_stack_query(&mut qr);
-            }
+            self.fixup_enhanced_stack_query(&mut qr);
 
             qr = if qr.query_id == FAKE_ENHANCED_STACK_QUERY_ID_FINAL_LEGACY {
                 // Merge with the time travel aggregation, then reply with it
@@ -432,7 +420,6 @@ impl ManagedRun {
                 qr
             };
 
-            warn!("Replying leg q {:?}", qr);
             self.reply_to_complete(
                 ActivationCompleteOutcome::ReportWFTSuccess(ServerCommandsWithWorkflowInfo {
                     task_token,

@@ -1388,6 +1388,9 @@ fn internal_to_enhanced_stack_trace(
             let command_id = match command.r#type {
                 InternalCommandType::ScheduleActivity => CommandID::Activity(command.seq),
                 InternalCommandType::StartTimer => CommandID::Timer(command.seq),
+                InternalCommandType::StartChildWorkflow => {
+                    CommandID::ChildWorkflowStart(command.seq)
+                }
             };
             if let Some(event_id) = mapper(&command_id) {
                 correlating_event_ids.push(event_id);

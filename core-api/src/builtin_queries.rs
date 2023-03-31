@@ -40,6 +40,7 @@ pub struct FileLocation {
 pub enum InternalCommandType {
     ScheduleActivity,
     StartTimer,
+    StartChildWorkflow,
 }
 
 /// An internal (Lang<->Core) command identifier
