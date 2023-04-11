@@ -294,6 +294,7 @@ impl Workflows {
                                 workflow_completion::Success::from_variants(vec![]).into(),
                             ),
                         },
+                        true,
                         // We need to say a type, but the type is irrelevant, so imagine some
                         // boxed function we'll never call.
                         Option::<Box<dyn Fn(PostActivateHookData) + Send>>::None,
@@ -309,6 +310,7 @@ impl Workflows {
                             run_id,
                             status: Some(auto_fail_to_complete_status(machines_err)),
                         },
+                        true,
                         Option::<Box<dyn Fn(PostActivateHookData) + Send>>::None,
                     )
                     .await?;
@@ -324,6 +326,7 @@ impl Workflows {
     pub(super) async fn activation_completed(
         &self,
         completion: WorkflowActivationCompletion,
+        is_autocomplete: bool,
         post_activate_hook: Option<impl Fn(PostActivateHookData)>,
     ) -> Result<(), CompleteWfError> {
         let is_empty_completion = completion.is_empty();
@@ -469,6 +472,7 @@ impl Workflows {
             run_id,
             wft_report_status,
             wft_from_complete: maybe_pwft,
+            is_autocomplete,
         });
 
         Ok(())
@@ -941,6 +945,7 @@ struct PostActivationMsg {
     run_id: String,
     wft_report_status: WFTReportStatus,
     wft_from_complete: Option<(PreparedWFT, HistoryPaginator)>,
+    is_autocomplete: bool,
 }
 #[derive(Debug, Clone)]
 #[cfg_attr(

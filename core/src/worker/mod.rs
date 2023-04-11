@@ -538,6 +538,7 @@ impl Worker {
         self.workflows
             .activation_completed(
                 completion,
+                false,
                 self.post_activate_hook
                     .as_ref()
                     .map(|h| |data: PostActivateHookData| h(self, data)),
