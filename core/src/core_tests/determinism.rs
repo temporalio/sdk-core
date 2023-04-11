@@ -13,8 +13,11 @@ use temporal_sdk::{
     ActivityOptions, ChildWorkflowOptions, LocalActivityOptions, WfContext, WorkflowResult,
 };
 use temporal_sdk_core_protos::{
-    temporal::api::{enums::v1::WorkflowTaskFailedCause, failure::v1::Failure},
-    DEFAULT_ACTIVITY_TYPE,
+    temporal::api::{
+        enums::v1::{EventType, WorkflowTaskFailedCause},
+        failure::v1::Failure,
+    },
+    TestHistoryBuilder, DEFAULT_ACTIVITY_TYPE,
 };
 
 static DID_FAIL: AtomicBool = AtomicBool::new(false);
@@ -254,6 +257,47 @@ async fn child_wf_id_or_type_change_is_nondeterministic(
         })
         .start(&ctx)
         .await;
+        Ok(().into())
+    });
+
+    worker
+        .submit_wf(
+            wf_id.to_owned(),
+            wf_type.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+}
+
+/// Repros a situation where if, upon completing a task there is some internal error which causes
+/// us to want to auto-fail the workflow task while there is also an outstanding eviction, the wf
+/// would get evicted but then try to send some info down the completion channel afterward, causing
+/// a panic.
+#[tokio::test]
+async fn repro_channel_missing_because_nondeterminism() {
+    let wf_id = "fakeid";
+    let wf_type = DEFAULT_WORKFLOW_TYPE;
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    t.add_has_change_marker("patch-1", false);
+    let _ts = t.add_by_type(EventType::TimerStarted);
+    t.add_workflow_task_scheduled_and_started();
+
+    let mock = mock_workflow_client();
+    let mut mh =
+        MockPollCfg::from_resp_batches(wf_id, t, [1.into(), ResponseType::AllHistory], mock);
+    mh.num_expected_fails = 1;
+    let mut worker = mock_sdk_cfg(mh, |cfg| {
+        cfg.max_cached_workflows = 2;
+    });
+
+    worker.register_wf(wf_type.to_owned(), move |ctx: WfContext| async move {
+        ctx.patched("wrongid");
+        ctx.timer(Duration::from_secs(1)).await;
         Ok(().into())
     });
 
