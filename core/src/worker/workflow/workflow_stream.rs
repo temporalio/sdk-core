@@ -338,29 +338,16 @@ impl WFStream {
 
         // If we reported to server, we always want to mark it complete.
         let maybe_t = self.complete_wft(run_id, report.wft_report_status);
-        // Delete the activation
-        // TODO: Need to not delete this but only if report is autocomplete but activation isn't
-        //    -- this is all messy though.
-        let act_is_autocomplete = self
-            .runs
-            .get(run_id)
-            .and_then(|r| r.activation())
-            .map(|a| matches!(a, OutstandingActivation::Autocomplete))
-            .unwrap_or_default();
-        if !report.is_autocomplete || act_is_autocomplete {
-            let activation = self
-                .runs
-                .get_mut(run_id)
-                .and_then(|rh| rh.delete_activation());
-
-            // Evict the run if the activation contained an eviction, and this isn't some internal
-            // auto-completion - we want to see the reply from lang.
+        // Delete the activation, but only if the report came from lang, or we know the outstanding
+        // activation is expected to be completed internally.
+        if let Some(activation) = self.runs.get_mut(run_id).and_then(|rh| {
+            rh.delete_activation(|act| {
+                !report.is_autocomplete || matches!(act, OutstandingActivation::Autocomplete)
+            })
+        }) {
+            // Evict the run if the activation contained an eviction
             let mut applied_buffered_poll_for_this_run = false;
-            warn!(
-                "Huh {:?} report is auto {}",
-                activation, report.is_autocomplete
-            );
-            if activation.map(|a| a.has_eviction()).unwrap_or_default() && !report.is_autocomplete {
+            if activation.has_eviction() {
                 debug!(run_id=%run_id, "Evicting run");
 
                 if let Some(mut rh) = self.runs.remove(run_id) {

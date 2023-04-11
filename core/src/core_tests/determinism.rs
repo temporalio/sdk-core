@@ -278,37 +278,40 @@ async fn child_wf_id_or_type_change_is_nondeterministic(
 /// a panic.
 #[tokio::test]
 async fn repro_channel_missing_because_nondeterminism() {
-    let wf_id = "fakeid";
-    let wf_type = DEFAULT_WORKFLOW_TYPE;
-    let mut t = TestHistoryBuilder::default();
-    t.add_by_type(EventType::WorkflowExecutionStarted);
-    t.add_full_wf_task();
-    t.add_has_change_marker("patch-1", false);
-    let _ts = t.add_by_type(EventType::TimerStarted);
-    t.add_workflow_task_scheduled_and_started();
+    for _ in 1..50 {
+        let wf_id = "fakeid";
+        let wf_type = DEFAULT_WORKFLOW_TYPE;
+        let mut t = TestHistoryBuilder::default();
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        t.add_full_wf_task();
+        t.add_has_change_marker("patch-1", false);
+        let _ts = t.add_by_type(EventType::TimerStarted);
+        t.add_workflow_task_scheduled_and_started();
 
-    let mock = mock_workflow_client();
-    let mut mh =
-        MockPollCfg::from_resp_batches(wf_id, t, [1.into(), ResponseType::AllHistory], mock);
-    mh.num_expected_fails = 1;
-    let mut worker = mock_sdk_cfg(mh, |cfg| {
-        cfg.max_cached_workflows = 2;
-    });
+        let mock = mock_workflow_client();
+        let mut mh =
+            MockPollCfg::from_resp_batches(wf_id, t, [1.into(), ResponseType::AllHistory], mock);
+        mh.num_expected_fails = 1;
+        let mut worker = mock_sdk_cfg(mh, |cfg| {
+            cfg.max_cached_workflows = 2;
+            cfg.ignore_evicts_on_shutdown = false;
+        });
 
-    worker.register_wf(wf_type.to_owned(), move |ctx: WfContext| async move {
-        ctx.patched("wrongid");
-        ctx.timer(Duration::from_secs(1)).await;
-        Ok(().into())
-    });
+        worker.register_wf(wf_type.to_owned(), move |ctx: WfContext| async move {
+            ctx.patched("wrongid");
+            ctx.timer(Duration::from_secs(1)).await;
+            Ok(().into())
+        });
 
-    worker
-        .submit_wf(
-            wf_id.to_owned(),
-            wf_type.to_owned(),
-            vec![],
-            WorkflowOptions::default(),
-        )
-        .await
-        .unwrap();
-    worker.run_until_done().await.unwrap();
+        worker
+            .submit_wf(
+                wf_id.to_owned(),
+                wf_type.to_owned(),
+                vec![],
+                WorkflowOptions::default(),
+            )
+            .await
+            .unwrap();
+        worker.run_until_done().await.unwrap();
+    }
 }
