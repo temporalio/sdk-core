@@ -924,10 +924,7 @@ impl WorkflowMachines {
                     }
                     ProtoCmdAttrs::UpsertWorkflowSearchAttributesCommandAttributes(attrs) => {
                         self.add_cmd_to_wf_task(
-                            upsert_search_attrs_internal(
-                                attrs,
-                                self.observed_internal_flags.clone(),
-                            ),
+                            upsert_search_attrs_internal(attrs),
                             CommandIdKind::NeverResolves,
                         );
                     }

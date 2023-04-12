@@ -550,8 +550,15 @@ impl ManagedRun {
 
     /// Delete the currently tracked workflow activation and return it, if any. Should be called
     /// after the processing of the activation completion, and WFT reporting.
-    pub(super) fn delete_activation(&mut self) -> Option<OutstandingActivation> {
-        self.activation.take()
+    pub(super) fn delete_activation(
+        &mut self,
+        pred: impl FnOnce(&OutstandingActivation) -> bool,
+    ) -> Option<OutstandingActivation> {
+        if self.activation().map(pred).unwrap_or_default() {
+            self.activation.take()
+        } else {
+            None
+        }
     }
 
     /// Called when local activities resolve
@@ -929,6 +936,7 @@ impl ManagedRun {
     }
 
     fn insert_outstanding_activation(&mut self, act: &ActivationOrAuto) {
+        warn!("Inserting {:?}", act);
         let act_type = match &act {
             ActivationOrAuto::LangActivation(act) | ActivationOrAuto::ReadyForQueries(act) => {
                 if act.is_legacy_query() {

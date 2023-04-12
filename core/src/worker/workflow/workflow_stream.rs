@@ -338,37 +338,39 @@ impl WFStream {
 
         // If we reported to server, we always want to mark it complete.
         let maybe_t = self.complete_wft(run_id, report.wft_report_status);
-        // Delete the activation
-        let activation = self
-            .runs
-            .get_mut(run_id)
-            .and_then(|rh| rh.delete_activation());
+        // Delete the activation, but only if the report came from lang, or we know the outstanding
+        // activation is expected to be completed internally.
+        if let Some(activation) = self.runs.get_mut(run_id).and_then(|rh| {
+            rh.delete_activation(|act| {
+                !report.is_autocomplete || matches!(act, OutstandingActivation::Autocomplete)
+            })
+        }) {
+            // Evict the run if the activation contained an eviction
+            let mut applied_buffered_poll_for_this_run = false;
+            if activation.has_eviction() {
+                debug!(run_id=%run_id, "Evicting run");
 
-        // Evict the run if the activation contained an eviction
-        let mut applied_buffered_poll_for_this_run = false;
-        if activation.map(|a| a.has_eviction()).unwrap_or_default() {
-            debug!(run_id=%run_id, "Evicting run");
-
-            if let Some(mut rh) = self.runs.remove(run_id) {
-                if let Some(buff) = rh.take_buffered_wft() {
-                    // Don't try to apply a buffered poll for this run if we just got a new WFT
-                    // from completing, because by definition that buffered poll is now an
-                    // out-of-date WFT.
-                    if wft_from_complete.is_none() {
-                        res = self.instantiate_or_update(buff);
-                        applied_buffered_poll_for_this_run = true;
+                if let Some(mut rh) = self.runs.remove(run_id) {
+                    if let Some(buff) = rh.take_buffered_wft() {
+                        // Don't try to apply a buffered poll for this run if we just got a new WFT
+                        // from completing, because by definition that buffered poll is now an
+                        // out-of-date WFT.
+                        if wft_from_complete.is_none() {
+                            res = self.instantiate_or_update(buff);
+                            applied_buffered_poll_for_this_run = true;
+                        }
                     }
                 }
-            }
 
-            // Attempt to apply a buffered poll for some *other* run, if we didn't have a wft
-            // from complete or a buffered poll for *this* run.
-            if wft_from_complete.is_none() && !applied_buffered_poll_for_this_run {
-                if let Some(buff) = self.buffered_polls_need_cache_slot.pop_front() {
-                    res = self.instantiate_or_update(buff);
+                // Attempt to apply a buffered poll for some *other* run, if we didn't have a wft
+                // from complete or a buffered poll for *this* run.
+                if wft_from_complete.is_none() && !applied_buffered_poll_for_this_run {
+                    if let Some(buff) = self.buffered_polls_need_cache_slot.pop_front() {
+                        res = self.instantiate_or_update(buff);
+                    }
                 }
-            }
-        };
+            };
+        }
 
         if let Some((wft, pag)) = wft_from_complete {
             debug!(run_id=%wft.execution.run_id, "New WFT from completion");

@@ -47,20 +47,6 @@ impl InternalFlags {
         }
     }
 
-    #[cfg(test)]
-    pub fn all_core_enabled() -> Self {
-        Self {
-            enabled: true,
-            core: BTreeSet::from([
-                CoreInternalFlags::IdAndTypeDeterminismChecks,
-                CoreInternalFlags::UpsertSearchAttributeOnPatch,
-            ]),
-            lang: Default::default(),
-            core_since_last_complete: Default::default(),
-            lang_since_last_complete: Default::default(),
-        }
-    }
-
     pub fn add_from_complete(&mut self, e: &WorkflowTaskCompletedEventAttributes) {
         if !self.enabled {
             return;
