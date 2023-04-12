@@ -33,7 +33,7 @@ use crate::{
     workflow_handle::UntypedWorkflowHandle,
 };
 use backoff::{exponential, ExponentialBackoff, SystemClock};
-use http::uri::InvalidUri;
+use http::{uri::InvalidUri, Uri};
 use once_cell::sync::OnceCell;
 use parking_lot::RwLock;
 use std::{
@@ -114,6 +114,11 @@ pub struct ClientOptions {
     /// Retry configuration for the server client. Default is [RetryConfig::default]
     #[builder(default)]
     pub retry_config: RetryConfig,
+
+    /// If set, override the origin used when connecting. May be useful in conjunction with
+    /// [TlsConfig::domain] when routing connections through some form of proxy.
+    #[builder(default)]
+    pub override_origin: Option<Uri>,
 }
 
 /// Configuration options for TLS
@@ -124,8 +129,7 @@ pub struct TlsConfig {
     /// Cloud offering).
     pub server_root_ca_cert: Option<Vec<u8>>,
     /// Sets the domain name against which to verify the server's TLS certificate. If not provided,
-    /// the domain name will be extracted from the URL used to connect. Will also set the `host`
-    /// header key to this value if not otherwise specified by passed-in headers.
+    /// the domain name will be extracted from the URL used to connect.
     pub domain: Option<String>,
     /// TLS info for the client. If specified, core will attempt to use mTLS.
     pub client_tls_config: Option<ClientTlsConfig>,
@@ -310,6 +314,11 @@ impl ClientOptions {
     ) -> Result<RetryClient<ConfiguredClient<TemporalServiceClientWithMetrics>>, ClientInitError>
     {
         let channel = Channel::from_shared(self.target_url.to_string())?;
+        let channel = if let Some(origin) = self.override_origin.clone() {
+            channel.origin(origin)
+        } else {
+            channel
+        };
         let channel = self.add_tls_to_channel(channel).await?;
         let channel = channel.connect().await?;
         let service = ServiceBuilder::new()
@@ -319,16 +328,6 @@ impl ClientOptions {
             })
             .service(channel);
         let headers = headers.unwrap_or_default();
-        // Explicitly set host header to tls domain name override if present
-        if let Some(tls_cfg) = self.tls_cfg.as_ref() {
-            if let (Some(dname), false) =
-                (tls_cfg.domain.as_ref(), headers.read().contains_key("host"))
-            {
-                headers
-                    .write()
-                    .insert("host".to_string(), dname.to_string());
-            }
-        }
         let interceptor = ServiceCallInterceptor {
             opts: self.clone(),
             headers: headers.clone(),
