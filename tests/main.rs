@@ -16,7 +16,6 @@ mod integ_tests {
     mod visibility_tests;
     mod workflow_tests;
 
-    use http::Uri;
     use std::str::FromStr;
     use temporal_client::WorkflowService;
     use temporal_sdk_core::{
@@ -72,10 +71,6 @@ mod integ_tests {
             .target_url(Url::from_str("https://spencer.temporal-dev.tmprl.cloud:7233").unwrap())
             .client_name("tls_tester")
             .client_version("clientver")
-            // Not necessary, but illustrates functionality for people using proxies, etc.
-            .override_origin(Some(Uri::from_static(
-                "https://spencer.temporal-dev.tmprl.cloud",
-            )))
             .tls_cfg(TlsConfig {
                 server_root_ca_cert: Some(root),
                 // Not necessary, but illustrates functionality for people using proxies, etc.
@@ -91,8 +86,9 @@ mod integ_tests {
             .connect("spencer.temporal-dev".to_string(), None, None)
             .await
             .unwrap();
-        con.list_workflow_executions(100, vec![], "".to_string())
+        dbg!(con
+            .list_workflow_executions(100, vec![], "".to_string())
             .await
-            .unwrap();
+            .unwrap());
     }
 }
