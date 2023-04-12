@@ -14,3 +14,4 @@ src/protos/*.rs
 /machine_coverage/
 /bindings/
 /core/machine_coverage/
+/.cloud_certs/

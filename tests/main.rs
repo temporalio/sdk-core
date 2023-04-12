@@ -25,7 +25,7 @@ mod integ_tests {
     use temporal_sdk_core_api::worker::WorkerConfigBuilder;
     use temporal_sdk_core_protos::temporal::api::workflowservice::v1::ListNamespacesRequest;
     use temporal_sdk_core_test_utils::{
-        get_integ_server_options, get_integ_telem_options, NAMESPACE,
+        get_integ_server_options, get_integ_telem_options, init_integ_telem,
     };
     use url::Url;
 
@@ -58,35 +58,23 @@ mod integ_tests {
             .await;
     }
 
-    // TODO: Currently ignored because starting up the docker image with TLS requires some hoop
-    //  jumping. We should upgrade CI to be able to do that but this was manually run against
-    //  https://github.com/temporalio/customization-samples/tree/master/tls/tls-simple
+    // Manually run to verify tls works against cloud. You will need certs in place in the
+    // indicated directory.
     #[tokio::test]
     #[ignore]
     async fn tls_test() {
-        // Load certs/keys
-        let root = tokio::fs::read(
-            "/home/sushi/dev/temporal/customization-samples/tls/tls-simple/certs/ca.cert",
-        )
-        .await
-        .unwrap();
-        let client_cert = tokio::fs::read(
-            "/home/sushi/dev/temporal/customization-samples/tls/tls-simple/certs/client.pem",
-        )
-        .await
-        .unwrap();
-        let client_private_key = tokio::fs::read(
-            "/home/sushi/dev/temporal/customization-samples/tls/tls-simple/certs/client.key",
-        )
-        .await
-        .unwrap();
+        init_integ_telem();
+        let root = tokio::fs::read("../.cloud_certs/ca.pem").await.unwrap();
+        let client_cert = tokio::fs::read("../.cloud_certs/client.pem").await.unwrap();
+        let client_private_key = tokio::fs::read("../.cloud_certs/client.key").await.unwrap();
         let sgo = ClientOptionsBuilder::default()
-            .target_url(Url::from_str("https://localhost:7233").unwrap())
+            .target_url(Url::from_str("https://spencer.temporal-dev.tmprl.cloud:7233").unwrap())
             .client_name("tls_tester")
             .client_version("clientver")
             .tls_cfg(TlsConfig {
                 server_root_ca_cert: Some(root),
-                domain: Some("tls-sample".to_string()),
+                // Not necessary, but illustrates functionality for people using proxies, etc.
+                domain: Some("spencer.temporal-dev.tmprl.cloud".to_string()),
                 client_tls_config: Some(ClientTlsConfig {
                     client_cert,
                     client_private_key,
@@ -95,9 +83,12 @@ mod integ_tests {
             .build()
             .unwrap();
         let con = sgo
-            .connect(NAMESPACE.to_string(), None, None)
+            .connect("spencer.temporal-dev".to_string(), None, None)
             .await
             .unwrap();
-        con.list_namespaces().await.unwrap();
+        dbg!(con
+            .list_workflow_executions(100, vec![], "".to_string())
+            .await
+            .unwrap());
     }
 }

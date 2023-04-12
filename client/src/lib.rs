@@ -33,7 +33,7 @@ use crate::{
     workflow_handle::UntypedWorkflowHandle,
 };
 use backoff::{exponential, ExponentialBackoff, SystemClock};
-use http::uri::InvalidUri;
+use http::{uri::InvalidUri, Uri};
 use once_cell::sync::OnceCell;
 use parking_lot::RwLock;
 use std::{
@@ -114,6 +114,14 @@ pub struct ClientOptions {
     /// Retry configuration for the server client. Default is [RetryConfig::default]
     #[builder(default)]
     pub retry_config: RetryConfig,
+
+    /// If set, override the origin used when connecting. May be useful in rare situations where tls
+    /// verification needs to use a different name from what should be set as the `:authority`
+    /// header. If [TlsConfig::domain] is set, and this is not, this will be set to
+    /// `https://<domain>`, effectively making the `:authority` header consistent with the domain
+    /// override.
+    #[builder(default)]
+    pub override_origin: Option<Uri>,
 }
 
 /// Configuration options for TLS
@@ -310,6 +318,11 @@ impl ClientOptions {
     {
         let channel = Channel::from_shared(self.target_url.to_string())?;
         let channel = self.add_tls_to_channel(channel).await?;
+        let channel = if let Some(origin) = self.override_origin.clone() {
+            channel.origin(origin)
+        } else {
+            channel
+        };
         let channel = channel.connect().await?;
         let service = ServiceBuilder::new()
             .layer_fn(|channel| GrpcMetricSvc {
@@ -347,10 +360,7 @@ impl ClientOptions {
 
     /// If TLS is configured, set the appropriate options on the provided channel and return it.
     /// Passes it through if TLS options not set.
-    async fn add_tls_to_channel(
-        &self,
-        channel: Endpoint,
-    ) -> Result<Endpoint, tonic::transport::Error> {
+    async fn add_tls_to_channel(&self, mut channel: Endpoint) -> Result<Endpoint, ClientInitError> {
         if let Some(tls_cfg) = &self.tls_cfg {
             let mut tls = tonic::transport::ClientTlsConfig::new();
 
@@ -361,6 +371,13 @@ impl ClientOptions {
 
             if let Some(domain) = &tls_cfg.domain {
                 tls = tls.domain_name(domain);
+
+                // This song and dance ultimately is just to make sure the `:authority` header ends
+                // up correct on requests while we use TLS. Setting the header directly in our
+                // interceptor doesn't work since seemingly it is overridden at some point by
+                // something lower level.
+                let uri: Uri = format!("https://{}", domain).parse()?;
+                channel = channel.origin(uri);
             }
 
             if let Some(client_opts) = &tls_cfg.client_tls_config {
@@ -369,7 +386,7 @@ impl ClientOptions {
                 tls = tls.identity(client_identity);
             }
 
-            return channel.tls_config(tls);
+            return channel.tls_config(tls).map_err(Into::into);
         }
         Ok(channel)
     }
