@@ -38,7 +38,7 @@ fsm! {
     // upon observing a history event indicating that the command has been recorded. Note that this
     // does not imply that the command has been _executed_, only that it _will be_ executed at some
     // point in the future.
-    CommandIssued --(CommandRecorded(CmdRecDat), shared on_command_recorded) --> Done;
+    CommandIssued --(CommandRecorded, on_command_recorded) --> Done;
 }
 
 /// Instantiates an UpsertSearchAttributesMachine and packs it together with an initial command
@@ -62,37 +62,21 @@ pub(super) fn upsert_search_attrs(
         );
         // We must still create the command to preserve compatability with anyone previously doing
         // this.
-        create_new(Default::default(), true, internal_flags)
+        create_new(Default::default())
     } else {
-        create_new(attribs.search_attributes.into(), false, internal_flags)
+        create_new(attribs.search_attributes.into())
     }
 }
 
 /// May be used by other state machines / internal needs which desire upserting search attributes.
 pub(super) fn upsert_search_attrs_internal(
     attribs: UpsertWorkflowSearchAttributesCommandAttributes,
-    internal_flags: InternalFlagsRef,
 ) -> NewMachineWithCommand {
-    create_new(
-        attribs.search_attributes.unwrap_or_default(),
-        true,
-        internal_flags,
-    )
+    create_new(attribs.search_attributes.unwrap_or_default())
 }
 
-fn create_new(
-    sa_map: SearchAttributes,
-    should_skip_determinism: bool,
-    internal_flags: InternalFlagsRef,
-) -> NewMachineWithCommand {
-    let sm = UpsertSearchAttributesMachine::from_parts(
-        Created {}.into(),
-        SharedState {
-            sa_map: sa_map.clone(),
-            should_skip_determinism,
-            internal_flags,
-        },
-    );
+fn create_new(sa_map: SearchAttributes) -> NewMachineWithCommand {
+    let sm = UpsertSearchAttributesMachine::from_parts(Created {}.into(), SharedState {});
     let cmd = Command {
         command_type: CommandType::UpsertWorkflowSearchAttributes as i32,
         attributes: Some(
@@ -110,11 +94,7 @@ fn create_new(
 }
 
 #[derive(Clone)]
-pub(super) struct SharedState {
-    should_skip_determinism: bool,
-    sa_map: SearchAttributes,
-    internal_flags: InternalFlagsRef,
-}
+pub(super) struct SharedState {}
 
 /// The state-machine-specific set of commands that are the results of state transition in the
 /// UpsertSearchAttributesMachine. There are none of these because this state machine emits the
@@ -131,30 +111,9 @@ pub(super) struct Created {}
 /// higher-level machinery, it transitions into this state.
 #[derive(Debug, Default, Clone, derive_more::Display)]
 pub(super) struct CommandIssued {}
-pub(super) struct CmdRecDat {
-    sa_map: Option<SearchAttributes>,
-    replaying: bool,
-}
 
 impl CommandIssued {
-    pub(super) fn on_command_recorded(
-        self,
-        shared: &mut SharedState,
-        dat: CmdRecDat,
-    ) -> UpsertSearchAttributesMachineTransition<Done> {
-        if shared.internal_flags.borrow_mut().try_use(
-            CoreInternalFlags::UpsertSearchAttributeOnPatch,
-            !dat.replaying,
-        ) {
-            let sa = dat.sa_map.unwrap_or_default();
-            if !shared.should_skip_determinism && shared.sa_map != sa {
-                return TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
-                    "Search attribute upsert calls must remain deterministic, but {:?} does not \
-                 match the attributes from history: {:?}",
-                    shared.sa_map, sa
-                )));
-            }
-        }
+    pub(super) fn on_command_recorded(self) -> UpsertSearchAttributesMachineTransition<Done> {
         TransitionResult::default()
     }
 }
@@ -198,14 +157,9 @@ impl TryFrom<HistEventData> for UpsertSearchAttributesMachineEvents {
 
     fn try_from(e: HistEventData) -> Result<Self, Self::Error> {
         match e.event.attributes {
-            Some(history_event::Attributes::UpsertWorkflowSearchAttributesEventAttributes(
-                attrs,
-            )) => Ok(UpsertSearchAttributesMachineEvents::CommandRecorded(
-                CmdRecDat {
-                    sa_map: attrs.search_attributes,
-                    replaying: e.replaying,
-                },
-            )),
+            Some(history_event::Attributes::UpsertWorkflowSearchAttributesEventAttributes(_)) => {
+                Ok(UpsertSearchAttributesMachineEvents::CommandRecorded)
+            }
             _ => Err(Self::Error::Nondeterminism(format!(
                 "UpsertWorkflowSearchAttributesMachine does not handle {e}"
             ))),
@@ -241,7 +195,6 @@ impl From<Created> for CommandIssued {
 mod tests {
     use super::{super::OnEventWrapper, *};
     use crate::{
-        internal_flags::InternalFlags,
         replay::TestHistoryBuilder,
         test_help::{build_mock_pollers, mock_worker, MockPollCfg, ResponseType},
         worker::{
@@ -249,8 +202,8 @@ mod tests {
             workflow::{machines::patch_state_machine::VERSION_SEARCH_ATTR_KEY, ManagedWFFunc},
         },
     };
-    use rustfsm::{MachineError, StateMachine};
-    use std::{cell::RefCell, collections::HashMap, rc::Rc};
+    use rustfsm::StateMachine;
+    use std::collections::HashMap;
     use temporal_sdk::{WfContext, WorkflowFunction};
     use temporal_sdk_core_api::Worker;
     use temporal_sdk_core_protos::{
@@ -317,25 +270,14 @@ mod tests {
     }
 
     #[rstest::rstest]
-    fn upsert_search_attrs_sm(#[values(true, false)] nondetermistic: bool) {
-        let mut sm = UpsertSearchAttributesMachine::from_parts(
-            Created {}.into(),
-            SharedState {
-                sa_map: Default::default(),
-                should_skip_determinism: false,
-                internal_flags: Rc::new(RefCell::new(InternalFlags::all_core_enabled())),
-            },
-        );
+    fn upsert_search_attrs_sm() {
+        let mut sm = UpsertSearchAttributesMachine::from_parts(Created {}.into(), SharedState {});
 
-        let sa_attribs = if nondetermistic {
-            UpsertWorkflowSearchAttributesEventAttributes {
-                workflow_task_completed_event_id: 0,
-                search_attributes: Some(SearchAttributes {
-                    indexed_fields: HashMap::from([("Yo".to_string(), Payload::default())]),
-                }),
-            }
-        } else {
-            Default::default()
+        let sa_attribs = UpsertWorkflowSearchAttributesEventAttributes {
+            workflow_task_completed_event_id: 0,
+            search_attributes: Some(SearchAttributes {
+                indexed_fields: HashMap::from([("Yo".to_string(), Payload::default())]),
+            }),
         };
         let recorded_history_event = HistoryEvent {
             event_type: EventType::UpsertWorkflowSearchAttributes as i32,
@@ -365,15 +307,8 @@ mod tests {
         assert_eq!(CommandIssued {}.to_string(), sm.state().to_string());
 
         let recorded_res = OnEventWrapper::on_event_mut(&mut sm, cmd_recorded_sm_event);
-        if nondetermistic {
-            assert_matches!(
-                recorded_res.unwrap_err(),
-                MachineError::Underlying(WFMachinesError::Nondeterminism(_))
-            );
-        } else {
-            recorded_res.expect("CommandRecorded should transition CommandIssued -> Done");
-            assert_eq!(Done {}.to_string(), sm.state().to_string());
-        }
+        recorded_res.expect("CommandRecorded should transition CommandIssued -> Done");
+        assert_eq!(Done {}.to_string(), sm.state().to_string());
     }
 
     #[rstest::rstest]
