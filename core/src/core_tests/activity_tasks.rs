@@ -58,7 +58,7 @@ use temporal_sdk_core_protos::{
     TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE,
 };
 use temporal_sdk_core_test_utils::{fanout_tasks, start_timer_cmd, TestWorker};
-use tokio::{sync::Barrier, time::sleep};
+use tokio::{join, sync::Barrier, time::sleep};
 use tokio_util::sync::CancellationToken;
 
 fn three_tasks() -> VecDeque<PollActivityTaskQueueResponse> {
@@ -288,7 +288,7 @@ async fn activity_cancel_interrupts_poll() {
     // Perform first poll to get the activity registered
     let act = core.poll_activity_task().await.unwrap();
     // Poll should block until heartbeat is sent, issuing the cancel, and interrupting the poll
-    tokio::join! {
+    join! {
         async {
             core.record_activity_heartbeat(ActivityHeartbeat {
                 task_token: act.task_token,
@@ -310,7 +310,7 @@ async fn activity_cancel_interrupts_poll() {
             last_finisher.store(2, Ordering::SeqCst);
             shutdown_token_clone.cancel();
         }
-    };
+    }
     // So that we know we blocked
     assert_eq!(last_finisher.load(Ordering::Acquire), 2);
     core.drain_activity_poller_and_shutdown().await;
@@ -984,7 +984,7 @@ async fn activity_tasks_from_completion_reserve_slots() {
     // This wf poll should *not* set the flag that it wants tasks back since both slots are
     // occupied
     let run_fut = async { worker.run_until_done().await.unwrap() };
-    tokio::join!(run_fut, act_completer);
+    join!(run_fut, act_completer);
 }
 
 #[tokio::test]
@@ -1052,9 +1052,11 @@ async fn cant_complete_activity_with_unset_result_payload() {
     )
 }
 
+#[rstest::rstest]
 #[tokio::test]
-async fn graceful_shutdown() {
+async fn graceful_shutdown(#[values(true, false)] at_max_outstanding: bool) {
     let _task_q = "q";
+    let grace_period = Duration::from_millis(200);
     let mut tasks = three_tasks();
     let mut mock_client = mock_workflow_client();
     mock_client
@@ -1067,15 +1069,21 @@ async fn graceful_shutdown() {
         .times(3)
         .returning(|_, _| Ok(Default::default()));
 
+    let max_outstanding = if at_max_outstanding { 3_usize } else { 100 };
     let worker = Worker::new_test(
         test_worker_cfg()
-            .graceful_shutdown_period(Duration::from_millis(500))
+            .graceful_shutdown_period(grace_period)
+            .max_outstanding_activities(max_outstanding)
             .build()
             .unwrap(),
         mock_client,
     );
 
     let _1 = worker.poll_activity_task().await.unwrap();
+
+    // Wait at least the grace period after one poll - ensuring it doesn't trigger prematurely
+    tokio::time::sleep(grace_period.mul_f32(1.1)).await;
+
     let _2 = worker.poll_activity_task().await.unwrap();
     let _3 = worker.poll_activity_task().await.unwrap();
 

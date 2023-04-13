@@ -207,6 +207,7 @@ impl WorkerActivityTasks {
             complete_notify: complete_notify.clone(),
             grace_period: graceful_shutdown,
             cancels_tx,
+            shutdown_initiated_token: shutdown_initiated_token.clone(),
             metrics: metrics.clone(),
         }
         .streamify();
@@ -250,7 +251,6 @@ impl WorkerActivityTasks {
                         _ = eager_activities_semaphore.close_complete() => {
                             // Once shutting down, we stop accepting eager activities
                             non_poll_tasks_rx.close();
-                            warn!("Done non-poll act tasks");
                             continue;
                         }
                     }
@@ -438,6 +438,8 @@ struct ActivityTaskStream<SrcStrm> {
     complete_notify: Arc<Notify>,
     grace_period: Option<Duration>,
     cancels_tx: UnboundedSender<PendingActivityCancel>,
+    /// Token which is cancelled once shutdown is beginning
+    shutdown_initiated_token: CancellationToken,
     metrics: MetricsContext,
 }
 
@@ -458,7 +460,6 @@ where
                 async move {
                     match source {
                         ActivityTaskSource::PendingCancel(next_pc) => {
-                            warn!("Yo cancel {:?}", next_pc);
                             // It's possible that activity has been completed and we no longer have
                             // an outstanding activity task. This is fine because it means that we
                             // no longer need to cancel this activity, so we'll just ignore such
@@ -489,33 +490,44 @@ where
                         }
                         ActivityTaskSource::PendingStart(res) => {
                             Some(res.map(|(task, is_eager)| {
-                                Self::about_to_issue_task(
-                                    outstanding_tasks,
-                                    task,
-                                    is_eager,
-                                    metrics,
-                                )
+                                if let Some(ref act_type) = task.resp.activity_type {
+                                    if let Some(ref wf_type) = task.resp.workflow_type {
+                                        metrics
+                                            .with_new_attrs([
+                                                activity_type(act_type.name.clone()),
+                                                workflow_type(wf_type.name.clone()),
+                                                eager(is_eager),
+                                            ])
+                                            .act_task_received();
+                                    }
+                                }
+                                // There could be an else statement here but since the response
+                                // should always contain both activity_type and workflow_type, we
+                                // won't bother.
+
+                                if let Some(dur) = task.resp.sched_to_start() {
+                                    metrics.act_sched_to_start_latency(dur);
+                                };
+
+                                outstanding_tasks.insert(
+                                    task.resp.task_token.clone().into(),
+                                    RemoteInFlightActInfo::new(&task.resp, task.permit.into_used()),
+                                );
+
+                                ActivityTask::start_from_poll_resp(task.resp)
                             }))
                         }
                     }
                 }
             })
             .take_until(async move {
-                warn!("Taking until");
                 // Once we've been told to begin cancelling, wait the grace period and then start
                 // cancelling anything outstanding.
-                self.start_tasks_stream_complete.cancelled().await;
-                warn!("Start tasks complete");
-                // Issue cancels for any still-living act tasks after the grace period
                 let (grace_killer, stop_grace) = futures_util::future::abortable(async {
                     if let Some(gp) = self.grace_period {
-                        // Make sure we've waited at least the grace period. This way if waiting for
-                        // starts to finish took a while, we subtract that from the grace period.
-                        warn!("Before grace");
+                        self.shutdown_initiated_token.cancelled().await;
                         tokio::time::sleep(gp).await;
-                        warn!("Done grace period");
                         for mapref in outstanding_tasks_clone.iter() {
-                            warn!("Sending cancel");
                             let _ = self.cancels_tx.send(PendingActivityCancel::new(
                                 mapref.key().clone(),
                                 ActivityCancelReason::WorkerShutdown,
@@ -525,6 +537,7 @@ where
                 });
                 join!(
                     async {
+                        self.start_tasks_stream_complete.cancelled().await;
                         while !outstanding_tasks_clone.is_empty() {
                             self.complete_notify.notified().await
                         }
@@ -535,39 +548,6 @@ where
                     grace_killer
                 )
             })
-    }
-
-    /// Called when there is a new [ActivityTask] about to be bubbled up out of the stream
-    fn about_to_issue_task(
-        outstanding_tasks: Arc<DashMap<TaskToken, RemoteInFlightActInfo>>,
-        task: PermittedTqResp,
-        is_eager: bool,
-        metrics: MetricsContext,
-    ) -> ActivityTask {
-        if let Some(ref act_type) = task.resp.activity_type {
-            if let Some(ref wf_type) = task.resp.workflow_type {
-                metrics
-                    .with_new_attrs([
-                        activity_type(act_type.name.clone()),
-                        workflow_type(wf_type.name.clone()),
-                        eager(is_eager),
-                    ])
-                    .act_task_received();
-            }
-        }
-        // There could be an else statement here but since the response should always contain both
-        // activity_type and workflow_type, we won't bother.
-
-        if let Some(dur) = task.resp.sched_to_start() {
-            metrics.act_sched_to_start_latency(dur);
-        };
-
-        outstanding_tasks.insert(
-            task.resp.task_token.clone().into(),
-            RemoteInFlightActInfo::new(&task.resp, task.permit.into_used()),
-        );
-
-        ActivityTask::start_from_poll_resp(task.resp)
     }
 }
 
