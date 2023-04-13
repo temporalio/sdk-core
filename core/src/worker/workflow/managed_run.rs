@@ -936,7 +936,6 @@ impl ManagedRun {
     }
 
     fn insert_outstanding_activation(&mut self, act: &ActivationOrAuto) {
-        warn!("Inserting {:?}", act);
         let act_type = match &act {
             ActivationOrAuto::LangActivation(act) | ActivationOrAuto::ReadyForQueries(act) => {
                 if act.is_legacy_query() {
