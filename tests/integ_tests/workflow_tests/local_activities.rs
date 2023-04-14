@@ -1,3 +1,4 @@
+use crate::integ_tests::activity_functions::echo;
 use anyhow::anyhow;
 use futures::future::join_all;
 use std::{
@@ -12,9 +13,10 @@ use temporal_sdk::{
 use temporal_sdk_core::replay::HistoryForReplay;
 use temporal_sdk_core_protos::{
     coresdk::{
-        workflow_commands::workflow_command::Variant, workflow_commands::ActivityCancellationType,
-        workflow_completion, workflow_completion::workflow_activation_completion,
-        workflow_completion::WorkflowActivationCompletion, AsJsonPayloadExt,
+        workflow_commands::{workflow_command::Variant, ActivityCancellationType},
+        workflow_completion,
+        workflow_completion::{workflow_activation_completion, WorkflowActivationCompletion},
+        AsJsonPayloadExt,
     },
     temporal::api::{common::v1::RetryPolicy, enums::v1::TimeoutType},
     TestHistoryBuilder,
@@ -24,10 +26,6 @@ use temporal_sdk_core_test_utils::{
     CoreWfStarter,
 };
 use tokio_util::sync::CancellationToken;
-
-pub async fn echo(_ctx: ActContext, e: String) -> anyhow::Result<String> {
-    Ok(e)
-}
 
 pub async fn one_local_activity_wf(ctx: WfContext) -> WorkflowResult<()> {
     let initial_workflow_time = ctx.workflow_time().expect("Workflow time should be set");

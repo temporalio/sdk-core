@@ -331,6 +331,11 @@ impl WorkflowMachines {
     /// sent off to the server. They are not removed from the internal queue, that happens when
     /// corresponding history events from the server are being handled.
     pub(crate) fn get_commands(&self) -> Vec<ProtoCommand> {
+        // Since we're about to write a WFT, record any internal flags we know about which aren't
+        // already recorded.
+        (*self.observed_internal_flags)
+            .borrow_mut()
+            .write_all_known();
         self.commands
             .iter()
             .filter_map(|c| {
@@ -363,8 +368,6 @@ impl WorkflowMachines {
             available_internal_flags: (*self.observed_internal_flags)
                 .borrow()
                 .all_lang()
-                .iter()
-                .copied()
                 .collect(),
         }
     }

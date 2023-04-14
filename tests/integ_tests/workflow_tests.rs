@@ -15,6 +15,7 @@ mod stickyness;
 mod timers;
 mod upsert_search_attrs;
 
+use crate::integ_tests::activity_functions::echo;
 use assert_matches::assert_matches;
 use futures::{channel::mpsc::UnboundedReceiver, future, SinkExt, StreamExt};
 use std::{
@@ -26,9 +27,7 @@ use std::{
     time::Duration,
 };
 use temporal_client::{WorkflowClientTrait, WorkflowOptions};
-use temporal_sdk::{
-    interceptors::WorkerInterceptor, ActContext, ActivityOptions, WfContext, WorkflowResult,
-};
+use temporal_sdk::{interceptors::WorkerInterceptor, ActivityOptions, WfContext, WorkflowResult};
 use temporal_sdk_core::replay::HistoryForReplay;
 use temporal_sdk_core_api::{errors::PollWfError, Worker};
 use temporal_sdk_core_protos::{
@@ -564,10 +563,7 @@ async fn slow_completes_with_small_cache() {
         }
         Ok(().into())
     });
-    worker.register_activity(
-        "echo_activity",
-        |_ctx: ActContext, echo_me: String| async move { Ok(echo_me) },
-    );
+    worker.register_activity("echo_activity", echo);
     for i in 0..20 {
         worker
             .submit_wf(

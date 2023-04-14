@@ -1,7 +1,11 @@
 //! Utilities for and tracking of internal versions which alter history in incompatible ways
 //! so that we can use older code paths for workflows executed on older core versions.
 
-use std::collections::{BTreeSet, HashSet};
+use itertools::Either;
+use std::{
+    collections::{BTreeSet, HashSet},
+    iter,
+};
 use temporal_sdk_core_protos::temporal::api::{
     history::v1::WorkflowTaskCompletedEventAttributes, sdk::v1::WorkflowTaskCompletedMetadata,
     workflowservice::v1::get_system_info_response,
@@ -15,7 +19,7 @@ use temporal_sdk_core_protos::temporal::api::{
 /// that removing older variants does not create any change in existing values. Removed flag
 /// variants must be reserved forever (a-la protobuf), and should be called out in a comment.
 #[repr(u32)]
-#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Copy, Clone, Debug)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Copy, Clone, Debug, enum_iterator::Sequence)]
 pub(crate) enum CoreInternalFlags {
     /// In this flag additional checks were added to a number of state machines to ensure that
     /// the ID and type of activities, local activities, and child workflows match during replay.
@@ -28,64 +32,85 @@ pub(crate) enum CoreInternalFlags {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct InternalFlags {
-    enabled: bool,
-    core: BTreeSet<CoreInternalFlags>,
-    lang: BTreeSet<u32>,
-    core_since_last_complete: HashSet<CoreInternalFlags>,
-    lang_since_last_complete: HashSet<u32>,
+pub(crate) enum InternalFlags {
+    Enabled {
+        core: BTreeSet<CoreInternalFlags>,
+        lang: BTreeSet<u32>,
+        core_since_last_complete: HashSet<CoreInternalFlags>,
+        lang_since_last_complete: HashSet<u32>,
+    },
+    Disabled,
 }
 
 impl InternalFlags {
     pub fn new(server_capabilities: &get_system_info_response::Capabilities) -> Self {
-        Self {
-            enabled: server_capabilities.sdk_metadata,
-            core: Default::default(),
-            lang: Default::default(),
-            core_since_last_complete: Default::default(),
-            lang_since_last_complete: Default::default(),
+        match server_capabilities.sdk_metadata {
+            true => Self::Enabled {
+                core: Default::default(),
+                lang: Default::default(),
+                core_since_last_complete: Default::default(),
+                lang_since_last_complete: Default::default(),
+            },
+            false => Self::Disabled,
         }
     }
 
     pub fn add_from_complete(&mut self, e: &WorkflowTaskCompletedEventAttributes) {
-        if !self.enabled {
-            return;
-        }
-
-        if let Some(metadata) = e.sdk_metadata.as_ref() {
-            self.core.extend(
-                metadata
-                    .core_used_flags
-                    .iter()
-                    .map(|u| CoreInternalFlags::from_u32(*u)),
-            );
-            self.lang.extend(metadata.lang_used_flags.iter());
+        if let Self::Enabled { core, lang, .. } = self {
+            if let Some(metadata) = e.sdk_metadata.as_ref() {
+                core.extend(
+                    metadata
+                        .core_used_flags
+                        .iter()
+                        .map(|u| CoreInternalFlags::from_u32(*u)),
+                );
+                lang.extend(metadata.lang_used_flags.iter());
+            }
         }
     }
 
     pub fn add_lang_used(&mut self, flags: impl IntoIterator<Item = u32>) {
-        if !self.enabled {
-            return;
+        if let Self::Enabled {
+            lang_since_last_complete,
+            ..
+        } = self
+        {
+            lang_since_last_complete.extend(flags.into_iter());
         }
-
-        self.lang_since_last_complete.extend(flags.into_iter());
     }
 
     /// Returns true if this flag may currently be used. If `should_record` is true, always returns
     /// true and records the flag as being used, for taking later via
     /// [Self::gather_for_wft_complete].
     pub fn try_use(&mut self, core_patch: CoreInternalFlags, should_record: bool) -> bool {
-        if !self.enabled {
+        match self {
+            Self::Enabled {
+                core,
+                core_since_last_complete,
+                ..
+            } => {
+                if should_record {
+                    core_since_last_complete.insert(core_patch);
+                    true
+                } else {
+                    core.contains(&core_patch)
+                }
+            }
             // If the server does not support the metadata field, we must assume we can never use
             // any internal flags since they can't be recorded for future use
-            return false;
+            Self::Disabled => false,
         }
+    }
 
-        if should_record {
-            self.core_since_last_complete.insert(core_patch);
-            true
-        } else {
-            self.core.contains(&core_patch)
+    /// Writes all known core flags to the set which should be recorded in the current WFT if not
+    /// already known. Must only be called if not replaying.
+    pub fn write_all_known(&mut self) {
+        if let Self::Enabled {
+            core_since_last_complete,
+            ..
+        } = self
+        {
+            core_since_last_complete.extend(CoreInternalFlags::all_except_too_high());
         }
     }
 
@@ -93,18 +118,39 @@ impl InternalFlags {
     /// sdk metadata message that can be combined with any existing data before sending the WFT
     /// complete
     pub fn gather_for_wft_complete(&mut self) -> WorkflowTaskCompletedMetadata {
-        WorkflowTaskCompletedMetadata {
-            core_used_flags: self
-                .core_since_last_complete
-                .drain()
-                .map(|p| p as u32)
-                .collect(),
-            lang_used_flags: self.lang_since_last_complete.drain().collect(),
+        match self {
+            Self::Enabled {
+                core_since_last_complete,
+                lang_since_last_complete,
+                core,
+                lang,
+            } => {
+                let core_newly_used: Vec<_> = core_since_last_complete
+                    .iter()
+                    .filter(|f| !core.contains(f))
+                    .map(|p| *p as u32)
+                    .collect();
+                let lang_newly_used: Vec<_> = lang_since_last_complete
+                    .iter()
+                    .filter(|f| !lang.contains(f))
+                    .copied()
+                    .collect();
+                core.extend(core_since_last_complete.iter());
+                lang.extend(lang_since_last_complete.iter());
+                WorkflowTaskCompletedMetadata {
+                    core_used_flags: core_newly_used,
+                    lang_used_flags: lang_newly_used,
+                }
+            }
+            Self::Disabled => WorkflowTaskCompletedMetadata::default(),
         }
     }
 
-    pub fn all_lang(&self) -> &BTreeSet<u32> {
-        &self.lang
+    pub fn all_lang(&self) -> impl Iterator<Item = u32> + '_ {
+        match self {
+            Self::Enabled { lang, .. } => Either::Left(lang.iter().copied()),
+            Self::Disabled => Either::Right(iter::empty()),
+        }
     }
 }
 
@@ -115,6 +161,11 @@ impl CoreInternalFlags {
             2 => Self::UpsertSearchAttributeOnPatch,
             _ => Self::TooHigh,
         }
+    }
+
+    pub fn all_except_too_high() -> impl Iterator<Item = CoreInternalFlags> {
+        enum_iterator::all::<CoreInternalFlags>()
+            .filter(|f| !matches!(f, CoreInternalFlags::TooHigh))
     }
 }
 
@@ -134,6 +185,41 @@ mod tests {
             }),
             ..Default::default()
         });
+        let gathered = f.gather_for_wft_complete();
+        assert_matches!(gathered.core_used_flags.as_slice(), &[]);
+        assert_matches!(gathered.lang_used_flags.as_slice(), &[]);
+    }
+
+    #[test]
+    fn all_have_u32_from_impl() {
+        let all_known = CoreInternalFlags::all_except_too_high();
+        for flag in all_known {
+            let as_u32 = flag as u32;
+            assert_eq!(CoreInternalFlags::from_u32(as_u32), flag);
+        }
+    }
+
+    #[test]
+    fn only_writes_new_flags() {
+        let mut f = InternalFlags::new(&Capabilities {
+            sdk_metadata: true,
+            ..Default::default()
+        });
+        f.add_lang_used([1]);
+        f.try_use(CoreInternalFlags::IdAndTypeDeterminismChecks, true);
+        let gathered = f.gather_for_wft_complete();
+        assert_matches!(gathered.core_used_flags.as_slice(), &[1]);
+        assert_matches!(gathered.lang_used_flags.as_slice(), &[1]);
+
+        f.add_from_complete(&WorkflowTaskCompletedEventAttributes {
+            sdk_metadata: Some(WorkflowTaskCompletedMetadata {
+                core_used_flags: vec![2],
+                lang_used_flags: vec![2],
+            }),
+            ..Default::default()
+        });
+        f.add_lang_used([2]);
+        f.try_use(CoreInternalFlags::UpsertSearchAttributeOnPatch, true);
         let gathered = f.gather_for_wft_complete();
         assert_matches!(gathered.core_used_flags.as_slice(), &[]);
         assert_matches!(gathered.lang_used_flags.as_slice(), &[]);

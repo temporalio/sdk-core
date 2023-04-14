@@ -2,7 +2,6 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
     time::Duration,
 };
-
 use temporal_sdk::{ActivityOptions, WfContext, WorkflowResult};
 use temporal_sdk_core_test_utils::CoreWfStarter;
 

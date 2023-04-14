@@ -1,3 +1,4 @@
+use crate::integ_tests::activity_functions::echo;
 use anyhow::anyhow;
 use assert_matches::assert_matches;
 use futures_util::future::join_all;
@@ -52,10 +53,7 @@ async fn one_activity() {
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
     worker.register_wf(wf_name.to_owned(), one_activity_wf);
-    worker.register_activity(
-        "echo_activity",
-        |_ctx: ActContext, echo_me: String| async move { Ok(echo_me) },
-    );
+    worker.register_activity("echo_activity", echo);
 
     let run_id = worker
         .submit_wf(

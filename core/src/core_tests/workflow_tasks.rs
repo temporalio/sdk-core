@@ -1,5 +1,7 @@
 use crate::{
-    advance_fut, job_assert,
+    advance_fut,
+    internal_flags::CoreInternalFlags,
+    job_assert,
     replay::TestHistoryBuilder,
     test_help::{
         build_fake_worker, build_mock_pollers, build_multihist_mock_sg, canned_histories,
@@ -16,7 +18,7 @@ use rstest::{fixture, rstest};
 use std::{
     collections::{HashMap, VecDeque},
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicU64, Ordering},
         Arc,
     },
     time::Duration,
@@ -54,9 +56,7 @@ use temporal_sdk_core_protos::{
     },
     DEFAULT_ACTIVITY_TYPE, DEFAULT_WORKFLOW_TYPE,
 };
-use temporal_sdk_core_test_utils::{
-    fanout_tasks, schedule_activity_cmd, start_timer_cmd, WorkerTestHelpers,
-};
+use temporal_sdk_core_test_utils::{fanout_tasks, start_timer_cmd, WorkerTestHelpers};
 use tokio::{
     join,
     sync::{Barrier, Semaphore},
@@ -2380,53 +2380,32 @@ async fn lang_internal_flags() {
     core.shutdown().await;
 }
 
-// Verify we send flags to server when they're used
+// Verify we send all core internal flags on the first non-replay WFT
 #[tokio::test]
 async fn core_internal_flags() {
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
-    t.add_full_wf_task();
-    let act_scheduled_event_id = t.add_activity_task_scheduled("act-id");
-    let act_started_event_id = t.add_activity_task_started(act_scheduled_event_id);
-    t.add_activity_task_completed(
-        act_scheduled_event_id,
-        act_started_event_id,
-        Default::default(),
-    );
-    t.add_full_wf_task();
-    t.add_workflow_execution_completed();
+    t.add_workflow_task_scheduled_and_started();
 
     let mut mh = MockPollCfg::from_resp_batches(
         "fake_wf_id",
         t,
-        [ResponseType::ToTaskNum(1), ResponseType::ToTaskNum(2)],
+        [ResponseType::ToTaskNum(1)],
         mock_workflow_client(),
     );
-    let first_poll = AtomicBool::new(true);
     mh.completion_asserts = Some(Box::new(move |c| {
-        if !first_poll.load(Ordering::Acquire) {
-            assert_matches!(c.sdk_metadata.core_used_flags.as_slice(), &[1]);
-        }
-        first_poll.store(false, Ordering::Release);
+        assert_eq!(
+            c.sdk_metadata.core_used_flags.as_slice(),
+            CoreInternalFlags::all_except_too_high()
+                .into_iter()
+                .map(|f| f as u32)
+                .collect::<Vec<_>>()
+                .as_slice()
+        );
     }));
     let mut mock = build_mock_pollers(mh);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 1);
     let core = mock_worker(mock);
-
-    let act = core.poll_workflow_activation().await.unwrap();
-    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-        act.run_id,
-        schedule_activity_cmd(
-            1,
-            "whatever",
-            "act-id",
-            ActivityCancellationType::TryCancel,
-            Duration::from_secs(60),
-            Duration::from_secs(60),
-        ),
-    ))
-    .await
-    .unwrap();
 
     let act = core.poll_workflow_activation().await.unwrap();
     core.complete_execution(&act.run_id).await;
