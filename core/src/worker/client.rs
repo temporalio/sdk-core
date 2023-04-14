@@ -7,12 +7,15 @@ use temporal_sdk_core_protos::{
     coresdk::workflow_commands::QueryResult,
     temporal::api::{
         command::v1::Command,
-        common::v1::{MeteringMetadata, Payloads, WorkflowExecution},
+        common::v1::{
+            MeteringMetadata, Payloads, WorkerVersionCapabilities, WorkerVersionStamp,
+            WorkflowExecution,
+        },
         enums::v1::{TaskQueueKind, WorkflowTaskFailedCause},
         failure::v1::Failure,
         query::v1::WorkflowQueryResult,
         sdk::v1::WorkflowTaskCompletedMetadata,
-        taskqueue::v1::{StickyExecutionAttributes, TaskQueue, TaskQueueMetadata, VersionId},
+        taskqueue::v1::{StickyExecutionAttributes, TaskQueue, TaskQueueMetadata},
         workflowservice::v1::{get_system_info_response::Capabilities, *},
     },
     TaskToken,
@@ -138,8 +141,8 @@ impl WorkerClient for WorkerClientBag {
             } else {
                 self.worker_build_id.clone()
             },
-            worker_versioning_id: Some(VersionId {
-                worker_build_id: self.versioning_build_id(),
+            worker_version_capabilities: Some(WorkerVersionCapabilities {
+                build_id: self.versioning_build_id(),
             }),
         };
 
@@ -166,8 +169,8 @@ impl WorkerClient for WorkerClientBag {
             task_queue_metadata: max_tasks_per_sec.map(|tps| TaskQueueMetadata {
                 max_tasks_per_second: Some(tps),
             }),
-            worker_versioning_id: Some(VersionId {
-                worker_build_id: self.versioning_build_id(),
+            worker_version_capabilities: Some(WorkerVersionCapabilities {
+                build_id: self.versioning_build_id(),
             }),
         };
 
@@ -190,8 +193,9 @@ impl WorkerClient for WorkerClientBag {
             sticky_attributes: request.sticky_attributes,
             return_new_workflow_task: request.return_new_workflow_task,
             force_create_new_workflow_task: request.force_create_new_workflow_task,
-            worker_versioning_id: Some(VersionId {
-                worker_build_id: self.versioning_build_id(),
+            worker_version_stamp: Some(WorkerVersionStamp {
+                build_id: self.versioning_build_id(),
+                bundle_id: "".to_string(),
             }),
             messages: vec![],
             binary_checksum: self.worker_build_id.clone(),

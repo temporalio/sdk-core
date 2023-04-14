@@ -121,3 +121,20 @@ message MeteringMetadata {
     //     aip.dev/not-precedent: Negative values make no sense to represent. --)
     uint32 nonfirst_local_activity_execution_attempts = 13;
 }
+
+// Identifies the version(s) of a worker that processed a task
+message WorkerVersionStamp {
+    // An opaque whole-worker identifier
+    string build_id = 1;
+    // Set if the worker used a dynamically loadable bundle to process
+    // the task. The bundle could be a WASM blob, JS bundle, etc.
+    string bundle_id = 2;
+}
+
+// Identifies the version(s) that a worker is compatible with when polling or identifying itself
+message WorkerVersionCapabilities {
+    // An opaque whole-worker identifier
+    string build_id = 1;
+
+    // Later, may include info like "I can process WASM and/or JS bundles"
+}

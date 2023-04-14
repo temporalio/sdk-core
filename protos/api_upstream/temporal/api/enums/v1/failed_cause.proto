@@ -108,6 +108,8 @@ enum SignalExternalWorkflowExecutionFailedCause {
     SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_FAILED_CAUSE_UNSPECIFIED = 0;
     SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_FAILED_CAUSE_EXTERNAL_WORKFLOW_EXECUTION_NOT_FOUND = 1;
     SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_FAILED_CAUSE_NAMESPACE_NOT_FOUND = 2;
+    // Signal count limit is per workflow and controlled by server dynamic config "history.maximumSignalsPerExecution"
+    SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_FAILED_CAUSE_SIGNAL_COUNT_LIMIT_EXCEEDED = 3;
 }
 
 enum ResourceExhaustedCause {

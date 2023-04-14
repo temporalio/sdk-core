@@ -180,6 +180,10 @@ message StartWorkflowExecutionRequest {
     // StartWorkflowExecution.
     temporal.api.failure.v1.Failure continued_failure = 18;
     temporal.api.common.v1.Payloads last_completion_result = 19;
+    // Time to wait before dispatching the first workflow task. Cannot be used with `cron_schedule`.
+    // If the workflow gets a signal before the delay, a workflow task will be dispatched and the rest
+    // of the delay will be ignored.
+    google.protobuf.Duration workflow_start_delay = 20 [(gogoproto.stdduration) = true];
 }
 
 message StartWorkflowExecutionResponse {
@@ -237,12 +241,12 @@ message PollWorkflowTaskQueueRequest {
     // Each worker process should provide an ID unique to the specific set of code it is running
     // "checksum" in this field name isn't very accurate, it should be though of as an id.
     string binary_checksum = 4;
-    // If set, the worker is opting in to build-id based versioning and wishes to only
-    // receive tasks that are considered compatible with the version provided.
-    // Doing so only makes sense in conjunction with the `UpdateWorkerBuildIdOrdering` API.
-    // When `worker_versioning_id` has a `worker_build_id`, and `binary_checksum` is not
+    // If set, the worker is opting in to versioning and wishes to only
+    // receive tasks that are considered compatible with the version capabilities provided.
+    // Doing so only makes sense in conjunction with the `UpdateWorkerBuildIdCompatibility` API.
+    // When this field has a `worker_build_id`, and `binary_checksum` is not
     // set, that value should also be considered as the `binary_checksum`.
-    temporal.api.taskqueue.v1.VersionId worker_versioning_id = 5;
+    temporal.api.common.v1.WorkerVersionCapabilities worker_version_capabilities = 5;
 }
 
 message PollWorkflowTaskQueueResponse {
@@ -310,11 +314,12 @@ message RespondWorkflowTaskCompletedRequest {
     // Responses to the `queries` field in the task being responded to
     map<string, temporal.api.query.v1.WorkflowQueryResult> query_results = 8;
     string namespace = 9;
-    // If using versioning, worker should send the same id here that it used to
-    // poll for the workflow task.
-    // When `worker_versioning_id` has a `worker_build_id`, and `binary_checksum` is not
-    // set, that value should also be considered as the `binary_checksum`.
-    temporal.api.taskqueue.v1.VersionId worker_versioning_id = 10;
+    // If using versioning, the worker uses this field to indicate what version(s) it used to
+    // process the task. When this field has a `worker_build_id`, and `binary_checksum` is not set,
+    // that value should also be considered as the `binary_checksum`. Leaving this field empty when
+    // replying to a task has had this field previously populated in history in an error, and such
+    // a completion will be rejected.
+    temporal.api.common.v1.WorkerVersionStamp worker_version_stamp = 10;
     // Protocol messages piggybacking on a WFT as a transport
     repeated temporal.api.protocol.v1.Message messages = 11;
     // Data the SDK wishes to record for itself, but server need not interpret, and does not
@@ -359,10 +364,10 @@ message PollActivityTaskQueueRequest {
     // The identity of the worker/client
     string identity = 3;
     temporal.api.taskqueue.v1.TaskQueueMetadata task_queue_metadata = 4;
-    // If set, the worker is opting in to build-id based versioning and wishes to only
-    // receive tasks that are considered compatible with the version provided.
-    // Doing so only makes sense in conjunction with the `UpdateWorkerBuildIdOrdering` API.
-    temporal.api.taskqueue.v1.VersionId worker_versioning_id = 5;
+    // If set, the worker is opting in to versioning and wishes to only
+    // receive tasks that are considered compatible with the capabilities provided.
+    // Doing so only makes sense in conjunction with the `UpdateWorkerBuildIdCompatibility` API.
+    temporal.api.common.v1.WorkerVersionCapabilities worker_version_capabilities = 5;
 }
 
 message PollActivityTaskQueueResponse {
@@ -587,6 +592,8 @@ message SignalWorkflowExecutionRequest {
     // Headers that are passed with the signal to the processing workflow.
     // These can include things like auth or tracing tokens.
     temporal.api.common.v1.Header header = 8;
+    // Indicates that a new workflow task should not be generated when this signal is received.
+    bool skip_generate_workflow_task = 9;
 }
 
 message SignalWorkflowExecutionResponse {
@@ -624,6 +631,15 @@ message SignalWithStartWorkflowExecutionRequest {
     temporal.api.common.v1.Memo memo = 17;
     temporal.api.common.v1.SearchAttributes search_attributes = 18;
     temporal.api.common.v1.Header header = 19;
+    // Time to wait before dispatching the first workflow task. Cannot be used with `cron_schedule`.
+    // Note that the signal will be delivered with the first workflow task. If the workflow gets
+    // another SignalWithStartWorkflow before the delay and `skip_generate_workflow_task` is false
+    // or not set, a workflow task will be dispatched immediately and the rest of the delay period
+    // will be ignored, even if that request also had a delay. Signal via SignalWorkflowExecution
+    // will not unblock the workflow.
+    google.protobuf.Duration workflow_start_delay = 20 [(gogoproto.stdduration) = true];
+    // Indicates that a new workflow task should not be generated when this signal is received.
+    bool skip_generate_workflow_task = 21;
 }
 
 message SignalWithStartWorkflowExecutionResponse {
@@ -1038,47 +1054,106 @@ message ListSchedulesResponse {
 }
 
 // (-- api-linter: core::0134::request-mask-required=disabled
-//     aip.dev/not-precedent: UpdateWorkerBuildIdOrderingRequest doesn't follow Google API format --)
+//     aip.dev/not-precedent: UpdateWorkerBuildIdCompatibilityRequest doesn't follow Google API format --)
 // (-- api-linter: core::0134::request-resource-required=disabled
-//     aip.dev/not-precedent: UpdateWorkerBuildIdOrderingRequest RPC doesn't follow Google API format. --)
-message UpdateWorkerBuildIdOrderingRequest {
+//     aip.dev/not-precedent: UpdateWorkerBuildIdCompatibilityRequest RPC doesn't follow Google API format. --)
+message UpdateWorkerBuildIdCompatibilityRequest {
+    message AddNewCompatibleVersion {
+        // A new id to be added to an existing compatible set.
+        string new_build_id = 1;
+        // A build id which must already exist in the version sets known by the task queue. The new
+        // id will be stored in the set containing this id, marking it as compatible with
+        // the versions within.
+        string existing_compatible_build_id = 2;
+        // When set, establishes the compatible set being targeted as the overall default for the
+        // queue. If a different set was the current default, the targeted set will replace it as
+        // the new default.
+        bool make_set_default = 3;
+    }
+
     string namespace = 1;
-    // Must be set, the task queue to apply changes to. Because all workers on
-    // a given task queue must have the same set of workflow & activity
-    // implementations, there is no reason to specify a task queue type here.
+    // Must be set, the task queue to apply changes to. Because all workers on a given task queue
+    // must have the same set of workflow & activity implementations, there is no reason to specify
+    // a task queue type here.
     string task_queue = 2;
-    // The version id we are targeting.
-    temporal.api.taskqueue.v1.VersionId version_id = 3;
-    // When set, indicates that the `version_id` in this message is compatible
-    // with the one specified in this field. Because compatability should form
-    // a DAG, any build id can only be the "next compatible" version for one
-    // other ID of a certain type at a time, and any setting which would create a cycle is invalid.
-    temporal.api.taskqueue.v1.VersionId previous_compatible = 4;
-    // When set, establishes the specified `version_id` as the default of it's type
-    // for the queue. Workers matching it will begin processing new workflow executions.
-    // The existing default will be marked as a previous incompatible version
-    // to this one, assuming it is not also in `is_compatible_with`.
-    bool become_default = 5;
+    oneof operation {
+        // A new build id. This operation will create a new set which will be the new overall
+        // default version for the queue, with this id as its only member. This new set is
+        // incompatible with all previous sets/versions.
+        //
+        // (-- api-linter: core::0140::prepositions=disabled
+        //     aip.dev/not-precedent: In makes perfect sense here. --)
+        string add_new_build_id_in_new_default_set = 3;
+        // Adds a new id to an existing compatible set, see sub-message definition for more.
+        AddNewCompatibleVersion add_new_compatible_build_id = 4;
+        // Promote an existing set to be the current default (if it isn't already) by targeting
+        // an existing build id within it. This field's value is the extant build id.
+        //
+        // (-- api-linter: core::0140::prepositions=disabled
+        //     aip.dev/not-precedent: Names are hard. --)
+        string promote_set_by_build_id = 5;
+        // Promote an existing build id within some set to be the current default for that set.
+        //
+        // (-- api-linter: core::0140::prepositions=disabled
+        //     aip.dev/not-precedent: Within makes perfect sense here. --)
+        string promote_build_id_within_set = 6;
+    }
 }
-message UpdateWorkerBuildIdOrderingResponse {}
+message UpdateWorkerBuildIdCompatibilityResponse {
+    // The id of the compatible set that the updated version was added to, or exists in. Users don't
+    // need to understand or care about this value, but it has value for debugging purposes.
+    string version_set_id = 1;
+}
 
 // (-- api-linter: core::0134::request-resource-required=disabled
-//     aip.dev/not-precedent: GetWorkerBuildIdOrderingRequest RPC doesn't follow Google API format. --)
-message GetWorkerBuildIdOrderingRequest {
+//     aip.dev/not-precedent: GetWorkerBuildIdCompatibilityRequest RPC doesn't follow Google API format. --)
+message GetWorkerBuildIdCompatibilityRequest {
     string namespace = 1;
-    // Must be set, the task queue to interrogate about worker id ordering
+    // Must be set, the task queue to interrogate about worker id compatibility.
     string task_queue = 2;
-    // Limits how deep the returned DAG will go. 1 will return only the
-    // default build id. A default/0 value will return the entire graph.
-    int32 max_depth = 3;
+    // Limits how many compatible sets will be returned. Specify 1 to only return the current
+    // default major version set. 0 returns all sets.
+    int32 max_sets = 3;
+    // If set, the response will include information about worker versions which are ready to be
+    // retired.
+    bool include_retirement_candidates = 4;
+    // If set, the response will include information about which versions have open workflows, and
+    // whether or not there are currently polling workers who are compatible with those versions.
+    bool include_poller_compatibility = 5;
 }
-message GetWorkerBuildIdOrderingResponse {
-    // The currently established default version
-    temporal.api.taskqueue.v1.VersionIdNode current_default = 1;
-    // Other current latest-compatible versions who are not the overall default. These are the
-    // versions that will be used when generating new tasks by following the graph from the
-    // version of the last task out to a leaf.
-    repeated temporal.api.taskqueue.v1.VersionIdNode compatible_leaves = 2;
+message GetWorkerBuildIdCompatibilityResponse {
+    // Major version sets, in order from oldest to newest. The last element of the list will always
+    // be the current default major version. IE: New workflows will target the most recent version
+    // in that version set.
+    //
+    // There may be fewer sets returned than exist, if the request chose to limit this response.
+    repeated temporal.api.taskqueue.v1.CompatibleVersionSet major_version_sets = 1;
+
+    message RetirementCandidate {
+        // The worker build id which is ready for retirement
+        string build_id = 1;
+        // If true, there are no open *or* closed workflows, meaning there is no reason at all
+        // to keep the worker alive, not even to service queries on closed workflows. If not true,
+        // then there are no open workflows, but some closed ones.
+        bool all_workflows_are_archived = 2;
+        // Currently polling workers who match the build id ready for retirement
+        repeated temporal.api.taskqueue.v1.PollerInfo pollers = 3;
+    }
+
+    // A list of workers who are still live and polling the task queue, but may no longer be needed
+    // to make progress on open workflows.
+    repeated RetirementCandidate retirement_candidates = 2;
+
+    message VersionsWithCompatiblePollers {
+        // The latest build id which completed a workflow task on some open workflow
+        string most_recent_build_id = 1;
+        // Currently polling workers who are compatible with `most_recent_build_id`.
+        repeated temporal.api.taskqueue.v1.PollerInfo pollers = 2;
+    }
+
+    // A list of versions and pollers who are capable of processing tasks at that version (if any)
+    // for which there are currently open workflows.
+    repeated VersionsWithCompatiblePollers active_versions_and_pollers = 3;
 }
 
 // (-- api-linter: core::0134=disabled
@@ -1196,4 +1271,26 @@ message ListBatchOperationsResponse {
     // BatchOperationInfo contains the basic info about batch operation
     repeated temporal.api.batch.v1.BatchOperationInfo operation_info = 1;
     bytes next_page_token = 2;
+}
+
+message PollWorkflowExecutionUpdateRequest {
+    // The namespace of the workflow execution to which the update was
+    // originally issued.
+    string namespace = 1;
+    // The update reference returned in the initial
+    // UpdateWorkflowExecutionResponse
+    temporal.api.update.v1.UpdateRef update_ref = 2;
+    // The identity of the worker/client who is polling this update outcome
+    string identity = 3;
+    // Describes when this poll request should return a response
+    temporal.api.update.v1.WaitPolicy wait_policy = 4;
+}
+
+message PollWorkflowExecutionUpdateResponse {
+    // The outcome of the update if and only if the update has completed. If
+    // this response is being returned before the update has completed (e.g. due
+    // to the specification of a wait policy that only waits on
+    // UPDATE_WORKFLOW_EXECUTION_LIFECYCLE_STAGE_ACCEPTED) then this field will
+    // not be set.
+    temporal.api.update.v1.Outcome outcome = 1;
 }

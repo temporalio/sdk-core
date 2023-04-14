@@ -740,9 +740,9 @@ proxier! {
         }
     );
     (
-        update_worker_build_id_ordering,
-        UpdateWorkerBuildIdOrderingRequest,
-        UpdateWorkerBuildIdOrderingResponse,
+        update_worker_build_id_compatibility,
+        UpdateWorkerBuildIdCompatibilityRequest,
+        UpdateWorkerBuildIdCompatibilityResponse,
         |r| {
             let mut labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             labels.task_q_str(r.get_ref().task_queue.clone());
@@ -750,9 +750,9 @@ proxier! {
         }
     );
     (
-        get_worker_build_id_ordering,
-        GetWorkerBuildIdOrderingRequest,
-        GetWorkerBuildIdOrderingResponse,
+        get_worker_build_id_compatibility,
+        GetWorkerBuildIdCompatibilityRequest,
+        GetWorkerBuildIdCompatibilityResponse,
         |r| {
             let mut labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             labels.task_q_str(r.get_ref().task_queue.clone());
@@ -763,6 +763,15 @@ proxier! {
         update_workflow_execution,
         UpdateWorkflowExecutionRequest,
         UpdateWorkflowExecutionResponse,
+        |r| {
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        poll_workflow_execution_update,
+        PollWorkflowExecutionUpdateRequest,
+        PollWorkflowExecutionUpdateResponse,
         |r| {
             let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             r.extensions_mut().insert(labels);

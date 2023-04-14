@@ -38,6 +38,7 @@ import "google/protobuf/wrappers.proto";
 import "dependencies/gogoproto/gogo.proto";
 
 import "temporal/api/enums/v1/task_queue.proto";
+import "temporal/api/common/v1/message.proto";
 
 // See https://docs.temporal.io/docs/concepts/task-queues/
 message TaskQueue {
@@ -71,13 +72,12 @@ message TaskQueuePartitionMetadata {
 }
 
 message PollerInfo {
-    // Unix Nano
     google.protobuf.Timestamp last_access_time = 1 [(gogoproto.stdtime) = true];
     string identity = 2;
     double rate_per_second = 3;
-    // If a worker has specified an ID for use with the worker versioning feature while polling,
-    // that id must appear here.
-    VersionId worker_versioning_id = 4;
+    // If a worker has opted into the worker versioning feature while polling, its capabilities will
+    // appear here.
+    temporal.api.common.v1.WorkerVersionCapabilities worker_version_capabilities = 4;
 }
 
 message StickyExecutionAttributes {
@@ -87,22 +87,12 @@ message StickyExecutionAttributes {
     google.protobuf.Duration schedule_to_start_timeout = 2 [(gogoproto.stdduration) = true];
 }
 
-// Used by the worker versioning APIs, represents a node in the version graph for a particular
-// task queue
-message VersionIdNode {
-    VersionId version = 1;
-    // A pointer to the previous version this version is considered to be compatible with
-    VersionIdNode previous_compatible = 2;
-    // A pointer to the last incompatible version (previous major version)
-    VersionIdNode previous_incompatible = 3;
+// Used by the worker versioning APIs, represents an ordering of one or more versions which are
+// considered to be compatible with each other. Currently the versions are always worker build ids.
+message CompatibleVersionSet {
+    // A unique identifier for this version set. Users don't need to understand or care about this
+    // value, but it has value for debugging purposes.
+    string version_set_id = 1;
+    // All the compatible versions, ordered from oldest to newest
+    repeated string build_ids = 2;
 }
-
-// Used by the worker versioning APIs, represents a specific version of something
-// Currently, that's just a whole-worker id. In the future, if we support
-// WASM workflow bundle based versioning, for example, then the inside of this
-// message may become a oneof of different version types.
-message VersionId {
-    // An opaque whole-worker identifier
-    string worker_build_id = 1;
-}
-

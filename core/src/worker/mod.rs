@@ -146,6 +146,13 @@ impl WorkerTrait for Worker {
 
     /// Begins the shutdown process, tells pollers they should stop. Is idempotent.
     fn initiate_shutdown(&self) {
+        if !self.shutdown_token.is_cancelled() {
+            info!(
+                task_queue=%self.config.task_queue,
+                namespace=%self.config.namespace,
+                "Initiated shutdown",
+            );
+        }
         self.shutdown_token.cancel();
         // First, we want to stop polling of both activity and workflow tasks
         if let Some(atm) = self.at_task_mgr.as_ref() {
@@ -157,11 +164,6 @@ impl WorkerTrait for Worker {
         if !self.workflows.ever_polled() {
             self.local_act_mgr.workflows_have_shutdown();
         }
-        info!(
-            task_queue=%self.config.task_queue,
-            namespace=%self.config.namespace,
-            "Initiated shutdown",
-        );
     }
 
     async fn shutdown(&self) {

@@ -7,6 +7,7 @@ extern crate temporal_sdk_core_test_utils;
 
 #[cfg(test)]
 mod integ_tests {
+    mod activity_functions;
     mod client_tests;
     mod ephemeral_server_tests;
     mod heartbeat_tests;
