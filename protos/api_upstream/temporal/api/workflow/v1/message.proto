@@ -57,6 +57,8 @@ message WorkflowExecutionInfo {
     string task_queue = 13;
     int64 state_transition_count = 14;
     int64 history_size_bytes = 15;
+    // If set, the most recent worker version stamp that appeared in a workflow task completion
+    temporal.api.common.v1.WorkerVersionStamp most_recent_worker_version_stamp = 16;
 }
 
 message WorkflowExecutionConfig {

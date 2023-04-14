@@ -193,9 +193,10 @@ message WorkflowTaskCompletedEventAttributes {
     string identity = 3;
     // Binary ID of the worker who completed this task
     string binary_checksum = 4;
-    // ID of the worker who picked up this workflow task, or missing if worker
-    // is not using versioning.
-    temporal.api.taskqueue.v1.VersionId worker_versioning_id = 5;
+    // Version info of the worker who processed this workflow task, or missing if worker is not
+    // using versioning. If present, the `build_id` field within is also used as `binary_checksum`,
+    // which may be omitted in that case (it may also be populated to preserve compatibility).
+    temporal.api.common.v1.WorkerVersionStamp worker_version = 5;
     // Data the SDK wishes to record for itself, but server need not interpret, and does not
     // directly impact workflow state.
     temporal.api.sdk.v1.WorkflowTaskCompletedMetadata sdk_metadata = 6;
@@ -409,6 +410,8 @@ message WorkflowExecutionSignaledEventAttributes {
     // Headers that were passed by the sender of the signal and copied by temporal 
     // server into the workflow task.
     temporal.api.common.v1.Header header = 4;
+    // Indicates the signal did not generate a new workflow task when received.
+    bool skip_generate_workflow_task = 5;
 }
 
 message WorkflowExecutionTerminatedEventAttributes {
