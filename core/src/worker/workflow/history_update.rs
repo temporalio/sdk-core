@@ -84,6 +84,7 @@ pub struct HistoryPaginator {
     pub(crate) run_id: String,
     pub(crate) previous_wft_started_id: i64,
     pub(crate) wft_started_event_id: i64,
+    id_of_last_event_in_last_extracted_update: Option<i64>,
 
     #[cfg_attr(feature = "save_wf_inputs", serde(skip))]
     client: Arc<dyn WorkerClient>,
@@ -175,6 +176,7 @@ impl HistoryPaginator {
             run_id: req.original_wft.work.execution.run_id.clone(),
             previous_wft_started_id: req.original_wft.work.update.previous_wft_started_id,
             wft_started_event_id: req.original_wft.work.update.wft_started_id,
+            id_of_last_event_in_last_extracted_update: None,
             client,
             event_queue: Default::default(),
             next_page_token: NextPageToken::FetchFromStart,
@@ -211,6 +213,7 @@ impl HistoryPaginator {
             final_events,
             previous_wft_started_id,
             wft_started_event_id,
+            id_of_last_event_in_last_extracted_update: None,
         }
     }
 
@@ -226,6 +229,7 @@ impl HistoryPaginator {
             final_events: vec![],
             previous_wft_started_id: -2,
             wft_started_event_id: -2,
+            id_of_last_event_in_last_extracted_update: None,
         }
     }
 
@@ -240,14 +244,45 @@ impl HistoryPaginator {
     /// we have two, or until we are at the end of history.
     pub(crate) async fn extract_next_update(&mut self) -> Result<HistoryUpdate, tonic::Status> {
         loop {
-            let no_next_page = !self.get_next_page().await?;
+            let fetch_happened = !self.get_next_page().await?;
             let current_events = mem::take(&mut self.event_queue);
             let seen_enough_events = current_events
                 .back()
                 .map(|e| e.event_id)
                 .unwrap_or_default()
                 >= self.wft_started_event_id;
-            if current_events.is_empty() || (no_next_page && !seen_enough_events) {
+
+            // This handles a special case where the server might send us a page token along with
+            // a real page which ends at the current end of history. The page token then points to
+            // en empty page. We need to detect this, and consider it the end of history.
+            //
+            // This case unfortunately cannot be handled earlier, because we might fetch a page
+            // from the server which contains two complete WFTs, and thus we are happy to return
+            // an update at that time. But, if the page has a next page token, we *cannot* conclude
+            // we are done with replay until we fetch that page. So, we have to wait until the next
+            // extraction to determine (after fetching the next page and finding it to be empty)
+            // that we are done. Fetching the page eagerly is another option, but would be wasteful
+            // the overwhelming majority of the time.
+            let already_sent_update_with_enough_events = self
+                .id_of_last_event_in_last_extracted_update
+                .unwrap_or_default()
+                >= self.wft_started_event_id;
+            if current_events.is_empty()
+                && !fetch_happened
+                && already_sent_update_with_enough_events
+            {
+                // We must return an empty update which also says is contains the final WFT so we
+                // know we're done with replay.
+                return Ok(HistoryUpdate::from_events(
+                    [],
+                    self.previous_wft_started_id,
+                    self.wft_started_event_id,
+                    true,
+                )
+                .0);
+            }
+
+            if current_events.is_empty() || (fetch_happened && !seen_enough_events) {
                 // If next page fetching happened, and we still ended up with no or insufficient
                 // events, something is wrong. We're expecting there to be more events to be able to
                 // extract this update, but server isn't giving us any. We have no choice except to
@@ -278,6 +313,8 @@ impl HistoryPaginator {
                 // There was not a meaningful WFT in the whole page. We must fetch more.
                 continue;
             }
+            self.id_of_last_event_in_last_extracted_update =
+                update.events.last().map(|e| e.event_id);
             return Ok(update);
         }
     }
@@ -1168,4 +1205,51 @@ pub mod tests {
 
     // TODO: Test we dont re-feed pointless updates if fetching returns <= events we already
     //   processed
+
+    #[tokio::test]
+    async fn handles_fetching_page_with_complete_wft_and_page_token_to_empty_page() {
+        let timer_hist = canned_histories::single_timer("t");
+        let workflow_task = timer_hist.get_full_history_info().unwrap();
+        let prev_started_wft_id = workflow_task.previous_started_event_id();
+        let wft_started_id = workflow_task.workflow_task_started_event_id();
+
+        let mut full_resp_with_npt: GetWorkflowExecutionHistoryResponse =
+            timer_hist.get_full_history_info().unwrap().into();
+        full_resp_with_npt.next_page_token = vec![1];
+
+        let mut mock_client = mock_workflow_client();
+        mock_client
+            .expect_get_workflow_execution_history()
+            .returning(move |_, _, _| Ok(full_resp_with_npt.clone()))
+            .times(1);
+        mock_client
+            .expect_get_workflow_execution_history()
+            .returning(move |_, _, _| {
+                Ok(GetWorkflowExecutionHistoryResponse {
+                    history: Some(History { events: vec![] }),
+                    raw_history: vec![],
+                    next_page_token: vec![],
+                    archived: false,
+                })
+            })
+            .times(1);
+
+        let mut paginator = HistoryPaginator::new(
+            workflow_task.into(),
+            prev_started_wft_id,
+            wft_started_id,
+            "wfid".to_string(),
+            "runid".to_string(),
+            NextPageToken::FetchFromStart,
+            Arc::new(mock_client),
+        );
+        let mut update = paginator.extract_next_update().await.unwrap();
+        let seq = update.take_next_wft_sequence(0).unwrap_events();
+        assert_eq!(seq.last().unwrap().event_id, 3);
+        let seq = update.take_next_wft_sequence(3).unwrap_events();
+        assert_eq!(seq.last().unwrap().event_id, 8);
+        assert_matches!(update.take_next_wft_sequence(8), NextWFT::NeedFetch);
+        let mut update = paginator.extract_next_update().await.unwrap();
+        assert_matches!(update.take_next_wft_sequence(8), NextWFT::ReplayOver);
+    }
 }

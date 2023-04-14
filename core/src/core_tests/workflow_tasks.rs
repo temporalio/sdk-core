@@ -2297,7 +2297,7 @@ async fn ensure_fetching_fail_during_complete_sends_task_failure() {
     mock.expect_get_workflow_execution_history()
         .returning(move |_, _, _| {
             error!("Called fetch second time!");
-            Ok(really_empty_fetch_resp.clone())
+            Err(tonic::Status::not_found("Ahh broken"))
         })
         .times(1);
     mock.expect_fail_workflow_task()

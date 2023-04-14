@@ -22,7 +22,8 @@ use std::{
     time::Duration,
 };
 use temporal_client::{
-    Client, RetryClient, WorkflowClientTrait, WorkflowExecutionInfo, WorkflowOptions,
+    Client, ClientTlsConfig, RetryClient, TlsConfig, WorkflowClientTrait, WorkflowExecutionInfo,
+    WorkflowOptions,
 };
 use temporal_sdk::{
     interceptors::{FailOnNondeterminismInterceptor, WorkerInterceptor},
@@ -34,8 +35,8 @@ use temporal_sdk_core::{
     replay::HistoryForReplay,
     ClientOptions, ClientOptionsBuilder, CoreRuntime, WorkerConfig, WorkerConfigBuilder,
 };
-use temporal_sdk_core_api::errors::{PollActivityError, PollWfError};
 use temporal_sdk_core_api::{
+    errors::{PollActivityError, PollWfError},
     telemetry::{
         Logger, MetricsExporter, OtelCollectorOptions, TelemetryOptions, TelemetryOptionsBuilder,
         TraceExportConfig, TraceExporter,
@@ -60,6 +61,7 @@ pub const NAMESPACE: &str = "default";
 pub const TEST_Q: &str = "q";
 /// The env var used to specify where the integ tests should point
 pub const INTEG_SERVER_TARGET_ENV_VAR: &str = "TEMPORAL_SERVICE_ADDRESS";
+pub const INTEG_USE_TLS_ENV_VAR: &str = "TEMPORAL_USE_TLS";
 /// This env var is set (to any value) if temporal CLI dev server is in use
 pub const INTEG_TEMPORAL_DEV_SERVER_USED_ENV_VAR: &str = "INTEG_TEMPORAL_DEV_SERVER_ON";
 /// This env var is set (to any value) if the test server is in use
@@ -533,13 +535,33 @@ pub fn get_integ_server_options() -> ClientOptions {
         Err(_) => "http://localhost:7233".to_owned(),
     };
     let url = Url::try_from(&*temporal_server_address).unwrap();
-    ClientOptionsBuilder::default()
-        .identity("integ_tester".to_string())
+    let mut cb = ClientOptionsBuilder::default();
+    cb.identity("integ_tester".to_string())
         .target_url(url)
         .client_name("temporal-core".to_string())
-        .client_version("0.1.0".to_string())
-        .build()
-        .unwrap()
+        .client_version("0.1.0".to_string());
+    if let Some(tls) = get_integ_tls_config() {
+        cb.tls_cfg(tls);
+    };
+    cb.build().unwrap()
+}
+
+pub fn get_integ_tls_config() -> Option<TlsConfig> {
+    if env::var(INTEG_USE_TLS_ENV_VAR).is_ok() {
+        let root = std::fs::read("../.cloud_certs/ca.pem").unwrap();
+        let client_cert = std::fs::read("../.cloud_certs/client.pem").unwrap();
+        let client_private_key = std::fs::read("../.cloud_certs/client.key").unwrap();
+        Some(TlsConfig {
+            server_root_ca_cert: Some(root),
+            domain: None,
+            client_tls_config: Some(ClientTlsConfig {
+                client_cert,
+                client_private_key,
+            }),
+        })
+    } else {
+        None
+    }
 }
 
 pub fn get_integ_telem_options() -> TelemetryOptions {
