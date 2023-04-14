@@ -542,13 +542,13 @@ where
                     if let Some(gp) = self.grace_period {
                         self.shutdown_initiated_token.cancelled().await;
                         tokio::time::sleep(gp).await;
+                        should_issue_immediate_cancel_clone.store(true, Ordering::Release);
                         for mapref in outstanding_tasks_clone.iter() {
                             let _ = self.cancels_tx.send(PendingActivityCancel::new(
                                 mapref.key().clone(),
                                 ActivityCancelReason::WorkerShutdown,
                             ));
                         }
-                        should_issue_immediate_cancel_clone.store(true, Ordering::Release);
                     }
                 });
                 join!(
