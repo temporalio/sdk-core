@@ -1,11 +1,14 @@
-use crate::abstractions::MeteredSemaphore;
-use crate::worker::activities::PermittedTqResp;
-use crate::{pollers::BoxedActPoller, MetricsContext};
+use crate::{
+    abstractions::MeteredSemaphore, pollers::BoxedActPoller, worker::activities::PermittedTqResp,
+    MetricsContext,
+};
 use futures::{stream, Stream};
-use governor::clock::DefaultClock;
-use governor::middleware::NoOpMiddleware;
-use governor::state::{InMemoryState, NotKeyed};
-use governor::RateLimiter;
+use governor::{
+    clock::DefaultClock,
+    middleware::NoOpMiddleware,
+    state::{InMemoryState, NotKeyed},
+    RateLimiter,
+};
 use std::sync::Arc;
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse;
 use tokio::select;
