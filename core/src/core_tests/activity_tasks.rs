@@ -310,7 +310,7 @@ async fn activity_cancel_interrupts_poll() {
             last_finisher.store(2, Ordering::SeqCst);
             shutdown_token_clone.cancel();
         }
-    }
+    };
     // So that we know we blocked
     assert_eq!(last_finisher.load(Ordering::Acquire), 2);
     core.drain_activity_poller_and_shutdown().await;
