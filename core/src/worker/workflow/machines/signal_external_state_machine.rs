@@ -234,7 +234,10 @@ impl WFMachinesAdapter for SignalExternalMachine {
                     SignalExternalWorkflowExecutionFailedCause::Unspecified => "unknown",
                     SignalExternalWorkflowExecutionFailedCause::ExternalWorkflowExecutionNotFound
                     | SignalExternalWorkflowExecutionFailedCause::NamespaceNotFound =>
-                        "it was not found"
+                        "it was not found",
+                    SignalExternalWorkflowExecutionFailedCause::SignalCountLimitExceeded => {
+                        "The per-workflow signal limit was exceeded"
+                    }
                 };
                 vec![ResolveSignalExternalWorkflow {
                     seq: self.shared_state.seq,
