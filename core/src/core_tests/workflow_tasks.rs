@@ -16,7 +16,7 @@ use crate::{
 use futures::{stream, FutureExt};
 use rstest::{fixture, rstest};
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
@@ -2395,12 +2395,15 @@ async fn core_internal_flags() {
     );
     mh.completion_asserts = Some(Box::new(move |c| {
         assert_eq!(
-            c.sdk_metadata.core_used_flags.as_slice(),
+            c.sdk_metadata
+                .core_used_flags
+                .iter()
+                .copied()
+                .collect::<HashSet<_>>(),
             CoreInternalFlags::all_except_too_high()
                 .into_iter()
                 .map(|f| f as u32)
-                .collect::<Vec<_>>()
-                .as_slice()
+                .collect()
         );
     }));
     let mut mock = build_mock_pollers(mh);
