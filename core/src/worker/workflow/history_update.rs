@@ -288,6 +288,9 @@ impl HistoryPaginator {
                 // extract this update, but server isn't giving us any. We have no choice except to
                 // give up and evict.
                 error!(
+                    current_events=?current_events,
+                    no_next_page,
+                    seen_enough_events,
                     "We expected to be able to fetch more events but server says there are none"
                 );
                 return Err(EMPTY_FETCH_ERR.clone());
@@ -1360,7 +1363,7 @@ pub mod tests {
             let sig_ctr_clone = sig_ctr_clone.clone();
             async move {
                 let mut sigchan = ctx.make_signal_channel("hi");
-                while let Some(v) = sigchan.next().await {
+                while sigchan.next().await.is_some() {
                     if sig_ctr_clone.fetch_add(1, Ordering::AcqRel) == 1 {
                         break;
                     }
