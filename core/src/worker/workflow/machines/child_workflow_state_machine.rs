@@ -531,7 +531,7 @@ impl TryFrom<HistEventData> for ChildWorkflowMachineEvents {
                 Self::ChildWorkflowExecutionCancelled
             }
             _ => {
-                return Err(WFMachinesError::Fatal(format!(
+                return Err(WFMachinesError::Nondeterminism(format!(
                     "Child workflow machine does not handle this event: {e:?}"
                 )))
             }
