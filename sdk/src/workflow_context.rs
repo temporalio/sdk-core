@@ -11,7 +11,7 @@ use crate::{
     SignalExternalWfResult, TimerResult, UnblockEvent, Unblockable,
 };
 use crossbeam::channel::{Receiver, Sender};
-use futures::{task::Context, FutureExt, Stream};
+use futures::{task::Context, FutureExt, Stream, StreamExt};
 use parking_lot::RwLock;
 use std::{
     collections::HashMap,
@@ -394,6 +394,14 @@ impl DrainableSignalStream {
         let mut receiver = self.0.into_inner();
         let mut signals = vec![];
         while let Ok(s) = receiver.try_recv() {
+            signals.push(s);
+        }
+        signals
+    }
+
+    pub fn drain_ready(&mut self) -> Vec<SignalData> {
+        let mut signals = vec![];
+        while let Some(s) = self.0.next().now_or_never().flatten() {
             signals.push(s);
         }
         signals

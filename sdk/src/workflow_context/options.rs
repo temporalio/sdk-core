@@ -272,7 +272,7 @@ impl Signal {
 }
 
 /// Data contained within a signal
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct SignalData {
     /// The arguments the signal will receive
     pub input: Vec<Payload>,
