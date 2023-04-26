@@ -355,8 +355,18 @@ impl HistoryPaginator {
             break fetch_res.history;
         };
 
-        self.event_queue
-            .extend(history.map(|h| h.events).unwrap_or_default());
+        let queue_back_id = self
+            .event_queue
+            .back()
+            .map(|e| e.event_id)
+            .unwrap_or_default();
+        self.event_queue.extend(
+            history
+                .map(|h| h.events)
+                .unwrap_or_default()
+                .into_iter()
+                .skip_while(|e| e.event_id <= queue_back_id),
+        );
         if matches!(&self.next_page_token, NextPageToken::Done) {
             // If finished, we need to extend the queue with the final events, skipping any
             // which are already present.
@@ -454,8 +464,11 @@ impl HistoryUpdate {
         <I as IntoIterator>::IntoIter: Send + 'static,
     {
         let mut all_events: Vec<_> = events.into_iter().collect();
-        let mut last_end =
-            find_end_index_of_next_wft_seq(all_events.as_slice(), previous_wft_started_id, has_last_wft);
+        let mut last_end = find_end_index_of_next_wft_seq(
+            all_events.as_slice(),
+            previous_wft_started_id,
+            has_last_wft,
+        );
         if matches!(last_end, NextWFTSeqEndIndex::Incomplete(_)) {
             return if has_last_wft {
                 (
@@ -483,8 +496,12 @@ impl HistoryUpdate {
             let next_end_eid = all_events[next_end_ix].event_id;
             // To save skipping all events at the front of this slice, only pass the relevant
             // portion, but that means the returned index must be adjusted, hence the addition.
-            let next_end = find_end_index_of_next_wft_seq(&all_events[next_end_ix..], next_end_eid, has_last_wft)
-                .add(next_end_ix);
+            let next_end = find_end_index_of_next_wft_seq(
+                &all_events[next_end_ix..],
+                next_end_eid,
+                has_last_wft,
+            )
+            .add(next_end_ix);
             if matches!(next_end, NextWFTSeqEndIndex::Incomplete(_)) {
                 break;
             }
@@ -539,7 +556,8 @@ impl HistoryUpdate {
         if let Some(ix_first_relevant) = self.starting_index_after_skipping(from_wft_started_id) {
             self.events.drain(0..ix_first_relevant);
         }
-        let next_wft_ix = find_end_index_of_next_wft_seq(&self.events, from_wft_started_id, self.has_last_wft);
+        let next_wft_ix =
+            find_end_index_of_next_wft_seq(&self.events, from_wft_started_id, self.has_last_wft);
         match next_wft_ix {
             NextWFTSeqEndIndex::Incomplete(siz) => {
                 if self.has_last_wft {
@@ -580,14 +598,17 @@ impl HistoryUpdate {
         if relevant_events.is_empty() {
             return relevant_events;
         }
-        let ix_end = find_end_index_of_next_wft_seq(relevant_events, from_wft_started_id, self.has_last_wft).index();
+        let ix_end =
+            find_end_index_of_next_wft_seq(relevant_events, from_wft_started_id, self.has_last_wft)
+                .index();
         &relevant_events[0..=ix_end]
     }
 
     /// Returns true if this update has the next needed WFT sequence, false if events will need to
     /// be fetched in order to create a complete update with the entire next WFT sequence.
     pub fn can_take_next_wft_sequence(&self, from_wft_started_id: i64) -> bool {
-        let next_wft_ix = find_end_index_of_next_wft_seq(&self.events, from_wft_started_id, self.has_last_wft);
+        let next_wft_ix =
+            find_end_index_of_next_wft_seq(&self.events, from_wft_started_id, self.has_last_wft);
         if let NextWFTSeqEndIndex::Incomplete(_) = next_wft_ix {
             if !self.has_last_wft {
                 return false;
@@ -653,7 +674,7 @@ fn find_end_index_of_next_wft_seq(
         return NextWFTSeqEndIndex::Incomplete(0);
     }
     let mut last_index = 0;
-    let mut saw_any_non_wft_event = false;
+    let mut saw_any_command_event = false;
     for (ix, e) in events.iter().enumerate() {
         last_index = ix;
 
@@ -663,15 +684,8 @@ fn find_end_index_of_next_wft_seq(
             continue;
         }
 
-        if !matches!(
-            e.event_type(),
-            EventType::WorkflowTaskFailed
-                | EventType::WorkflowTaskTimedOut
-                | EventType::WorkflowTaskScheduled
-                | EventType::WorkflowTaskStarted
-                | EventType::WorkflowTaskCompleted
-        ) {
-            saw_any_non_wft_event = true;
+        if e.is_command_event() || e.event_type() == EventType::WorkflowExecutionStarted {
+            saw_any_command_event = true;
         }
         if e.is_final_wf_execution_event() {
             return NextWFTSeqEndIndex::Complete(last_index);
@@ -699,20 +713,21 @@ fn find_end_index_of_next_wft_seq(
                     if let Some(next_next_event) = events.get(ix + 2) {
                         if next_next_event.event_type() == EventType::WorkflowTaskScheduled {
                             continue;
-                        } else {
-                            // FIX: Do not set `saw_any_non_wft_event` while looking ahead
-                            // saw_any_non_wft_event = true;
+                        } else if next_next_event.is_command_event() {
+                            saw_any_command_event = true;
                         }
                     } else if !has_last_wft {
-                        // Don't have enough events to look ahead of the WorkflowTaskCompleted. Need to fetch more.
+                        // Don't have enough events to look ahead of the WorkflowTaskCompleted. Need
+                        // to fetch more.
                         continue;
                     }
                 }
-            } else if !has_last_wft {
-                // Don't have enough events to look ahead of the WorkflowTaskStarted. Need to fetch more.
+            } else if !has_last_wft && !saw_any_command_event {
+                // Don't have enough events to look ahead of the WorkflowTaskStarted. Need to fetch
+                // more.
                 continue;
             }
-            if saw_any_non_wft_event {
+            if saw_any_command_event {
                 return NextWFTSeqEndIndex::Complete(ix);
             }
         }
@@ -1025,14 +1040,13 @@ pub mod tests {
     }
 
     // Like the above, but if the history happens to be cut off at a wft boundary, (even though
-    // there may have been many heartbeats after we have no way of knowing about), it's going to
-    // count events 7-20 as a WFT since there is started, completed, timer command, ..heartbeats..
+    // there may have been many heartbeats after we have no way of knowing about)
     #[tokio::test]
     async fn needs_fetch_after_complete_seq_with_heartbeats() {
         let t = three_wfts_then_heartbeats();
         let mut ends_in_middle_of_seq = t.as_history_update().events;
         ends_in_middle_of_seq.truncate(20);
-        let (mut update, remaining) = HistoryUpdate::from_events(
+        let (mut update, _) = HistoryUpdate::from_events(
             ends_in_middle_of_seq,
             0,
             t.get_full_history_info()
@@ -1040,7 +1054,6 @@ pub mod tests {
                 .workflow_task_started_event_id(),
             false,
         );
-        assert!(remaining.is_empty());
         let seq = update.take_next_wft_sequence(0).unwrap_events();
         assert_eq!(seq.last().unwrap().event_id, 3);
         let seq = update.take_next_wft_sequence(3).unwrap_events();
@@ -1276,7 +1289,6 @@ pub mod tests {
 
     #[tokio::test]
     async fn weird_pagination_doesnt_drop_wft_events() {
-        crate::telemetry::test_telem_console();
         let wf_id = "fakeid";
         // 1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
         // 2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
@@ -1395,8 +1407,6 @@ pub mod tests {
 
     #[tokio::test]
     async fn extreme_pagination_doesnt_drop_wft_events_paginator() {
-        crate::telemetry::test_telem_console();
-
         // 1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
         // 2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
         // 3: EVENT_TYPE_WORKFLOW_TASK_STARTED // <- previous_started_event_id
@@ -1441,46 +1451,55 @@ pub mod tests {
             // Add an empty page
             mock_client
                 .expect_get_workflow_execution_history()
-                .returning(move |_, _, _| Ok(GetWorkflowExecutionHistoryResponse {
-                    history: Some(History { events: vec![] }),
-                    raw_history: vec![],
-                    next_page_token: vec![(i * 10) as u8],
-                    archived: false,
-                }))
-            .times(1);
+                .returning(move |_, _, _| {
+                    Ok(GetWorkflowExecutionHistoryResponse {
+                        history: Some(History { events: vec![] }),
+                        raw_history: vec![],
+                        next_page_token: vec![(i * 10) as u8],
+                        archived: false,
+                    })
+                })
+                .times(1);
 
             // Add a page with only event i
             let event = events[i].clone();
             mock_client
                 .expect_get_workflow_execution_history()
-                .returning(move |_, _, _| Ok(GetWorkflowExecutionHistoryResponse {
-                    history: Some(History { events: vec![event.clone().into()] }),
-                    raw_history: vec![],
-                    next_page_token: vec![(i * 10 + 1) as u8],
-                    archived: false,
-                }))
-            .times(1);
+                .returning(move |_, _, _| {
+                    Ok(GetWorkflowExecutionHistoryResponse {
+                        history: Some(History {
+                            events: vec![event.clone().into()],
+                        }),
+                        raw_history: vec![],
+                        next_page_token: vec![(i * 10 + 1) as u8],
+                        archived: false,
+                    })
+                })
+                .times(1);
         }
 
         // Add an extra empty page at the end, with no NPT
         mock_client
             .expect_get_workflow_execution_history()
-            .returning(move |_, _, _| Ok(GetWorkflowExecutionHistoryResponse {
-                history: Some(History { events: vec![] }),
-                raw_history: vec![],
-                next_page_token: vec![],
-                archived: false,
-            }))
-        .times(1);
+            .returning(move |_, _, _| {
+                Ok(GetWorkflowExecutionHistoryResponse {
+                    history: Some(History { events: vec![] }),
+                    raw_history: vec![],
+                    next_page_token: vec![],
+                    archived: false,
+                })
+            })
+            .times(1);
 
         let mut paginator = HistoryPaginator::new(
-            History { events: vec![first_event] },
+            History {
+                events: vec![first_event],
+            },
             3,
             15,
             "wfid".to_string(),
             "runid".to_string(),
-            // vec![1],
-            vec![],
+            vec![1],
             Arc::new(mock_client),
         );
 
@@ -1492,27 +1511,10 @@ pub mod tests {
         let seq = update.take_next_wft_sequence(3).unwrap_events();
         assert_eq!(seq.first().unwrap().event_id, 4);
         assert_eq!(seq.last().unwrap().event_id, 15);
-
-        // let seq = update.take_next_wft_sequence(3).unwrap_events();
-        // assert_eq!(seq.first().unwrap().event_id, 4);
-        // assert_eq!(seq.last().unwrap().event_id, 7);
-
-        // assert_matches!(update.take_next_wft_sequence(7), NextWFT::NeedFetch);
-
-        // let mut update = paginator.extract_next_update().await.unwrap();
-        // let seq = update.take_next_wft_sequence(7).unwrap_events();
-        // assert_eq!(seq.first().unwrap().event_id, 8);
-        // assert_eq!(seq.last().unwrap().event_id, 15);
-
-        // assert_matches!(update.take_next_wft_sequence(15), NextWFT::NeedFetch);
-
-        // let mut update = paginator.extract_next_update().await.unwrap();
-        // assert_matches!(update.take_next_wft_sequence(15), NextWFT::ReplayOver);
     }
 
     #[tokio::test]
     async fn extreme_pagination_doesnt_drop_wft_events_worker() {
-        crate::telemetry::test_telem_console();
         let wf_id = "fakeid";
 
         // In this test, we add empty pages between each event
@@ -1564,37 +1566,45 @@ pub mod tests {
             // Add an empty page
             mock_client
                 .expect_get_workflow_execution_history()
-                .returning(move |_, _, _| Ok(GetWorkflowExecutionHistoryResponse {
-                    history: Some(History { events: vec![] }),
-                    raw_history: vec![],
-                    next_page_token: vec![(i * 10 + 1) as u8],
-                    archived: false,
-                }))
-            .times(1);
+                .returning(move |_, _, _| {
+                    Ok(GetWorkflowExecutionHistoryResponse {
+                        history: Some(History { events: vec![] }),
+                        raw_history: vec![],
+                        next_page_token: vec![(i * 10 + 1) as u8],
+                        archived: false,
+                    })
+                })
+                .times(1);
 
             // Add a page with just event i
             let event = events[i].clone();
             mock_client
                 .expect_get_workflow_execution_history()
-                .returning(move |_, _, _| Ok(GetWorkflowExecutionHistoryResponse {
-                    history: Some(History { events: vec![event.clone().into()] }),
-                    raw_history: vec![],
-                    next_page_token: vec![(i * 10) as u8],
-                    archived: false,
-                }))
-            .times(1);
+                .returning(move |_, _, _| {
+                    Ok(GetWorkflowExecutionHistoryResponse {
+                        history: Some(History {
+                            events: vec![event.clone().into()],
+                        }),
+                        raw_history: vec![],
+                        next_page_token: vec![(i * 10) as u8],
+                        archived: false,
+                    })
+                })
+                .times(1);
         }
 
         // Add an extra empty page at the end, with no NPT
         mock_client
             .expect_get_workflow_execution_history()
-            .returning(move |_, _, _| Ok(GetWorkflowExecutionHistoryResponse {
-                history: Some(History { events: vec![] }),
-                raw_history: vec![],
-                next_page_token: vec![],
-                archived: false,
-            }))
-        .times(1);
+            .returning(move |_, _, _| {
+                Ok(GetWorkflowExecutionHistoryResponse {
+                    history: Some(History { events: vec![] }),
+                    raw_history: vec![],
+                    next_page_token: vec![],
+                    archived: false,
+                })
+            })
+            .times(1);
 
         let first_event = events[0].clone();
         let workflow_task = t.get_full_history_info().unwrap();
@@ -1603,7 +1613,9 @@ pub mod tests {
             workflow_id: wf_id.to_string(),
             run_id: t.get_orig_run_id().to_string(),
         });
-        wft_resp.history = Some(History { events: vec![first_event] } );
+        wft_resp.history = Some(History {
+            events: vec![first_event],
+        });
         wft_resp.next_page_token = vec![1];
         wft_resp.previous_started_event_id = 3;
         wft_resp.started_event_id = 15;
@@ -1623,7 +1635,7 @@ pub mod tests {
             async move {
                 let mut sigchan = ctx.make_signal_channel("hi");
                 while sigchan.next().await.is_some() {
-                    if sig_ctr_clone.fetch_add(1, Ordering::AcqRel) == 1 {
+                    if sig_ctr_clone.fetch_add(1, Ordering::AcqRel) == 5 {
                         break;
                     }
                 }
@@ -1642,5 +1654,53 @@ pub mod tests {
             .unwrap();
         worker.run_until_done().await.unwrap();
         assert_eq!(sig_ctr.load(Ordering::Acquire), 6);
+    }
+
+    #[tokio::test]
+    async fn finding_end_index_with_started_as_last_event() {
+        let wf_id = "fakeid";
+        let mut t = TestHistoryBuilder::default();
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        t.add_full_wf_task();
+
+        t.add_we_signaled("hi", vec![]);
+        t.add_workflow_task_scheduled_and_started();
+        // We need to see more after this - it's not sufficient to end on a started event when
+        // we know there might be more
+
+        let workflow_task = t.get_history_info(1).unwrap();
+        let prev_started_wft_id = workflow_task.previous_started_event_id();
+        let wft_started_id = workflow_task.workflow_task_started_event_id();
+        let mut wft_resp = workflow_task.as_poll_wft_response();
+        wft_resp.workflow_execution = Some(WorkflowExecution {
+            workflow_id: wf_id.to_string(),
+            run_id: t.get_orig_run_id().to_string(),
+        });
+        wft_resp.next_page_token = vec![1];
+
+        let mut resp_1: GetWorkflowExecutionHistoryResponse =
+            t.get_full_history_info().unwrap().into();
+        resp_1.next_page_token = vec![2];
+
+        let mut mock_client = mock_workflow_client();
+        mock_client
+            .expect_get_workflow_execution_history()
+            .returning(move |_, _, _| Ok(resp_1.clone()))
+            .times(1);
+
+        let mut paginator = HistoryPaginator::new(
+            workflow_task.into(),
+            prev_started_wft_id,
+            wft_started_id,
+            "wfid".to_string(),
+            "runid".to_string(),
+            NextPageToken::FetchFromStart,
+            Arc::new(mock_client),
+        );
+        let mut update = paginator.extract_next_update().await.unwrap();
+        let seq = update.take_next_wft_sequence(0).unwrap_events();
+        assert_eq!(seq.last().unwrap().event_id, 3);
+        let next = update.take_next_wft_sequence(3);
+        assert_matches!(next, NextWFT::NeedFetch);
     }
 }
