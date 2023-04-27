@@ -752,7 +752,7 @@ fn find_end_index_of_next_wft_seq(
                         } else {
                             return NextWFTSeqEndIndex::Complete(ix);
                         }
-                    } else if !has_last_wft {
+                    } else if !has_last_wft && !saw_any_command_event {
                         // Don't have enough events to look ahead of the WorkflowTaskCompleted. Need
                         // to fetch more.
                         continue;
