@@ -896,10 +896,7 @@ async fn workflow_failures_only_reported_once() {
 #[tokio::test]
 async fn max_wft_respected() {
     let total_wfs = 100;
-    let wf_ids: Vec<_> = (0..total_wfs)
-        .into_iter()
-        .map(|i| format!("fake-wf-{i}"))
-        .collect();
+    let wf_ids: Vec<_> = (0..total_wfs).map(|i| format!("fake-wf-{i}")).collect();
     let hists = wf_ids.iter().map(|wf_id| {
         let hist = canned_histories::single_timer("1");
         FakeWfResponses {
@@ -1027,7 +1024,7 @@ async fn activity_not_canceled_when_also_completed_repro(hist_batches: &'static 
 #[tokio::test]
 async fn lots_of_workflows() {
     let total_wfs = 500;
-    let hists = (0..total_wfs).into_iter().map(|i| {
+    let hists = (0..total_wfs).map(|i| {
         let wf_id = format!("fake-wf-{i}");
         let hist = canned_histories::single_timer("1");
         FakeWfResponses {
@@ -1705,9 +1702,7 @@ async fn pagination_works_with_tasks_from_completion() {
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
     t.add_we_signaled("sig", vec![]);
-    t.add_full_wf_task();
-    t.add_workflow_execution_completed();
-    let get_exec_resp: GetWorkflowExecutionHistoryResponse = t.get_history_info(2).unwrap().into();
+    t.add_workflow_task_scheduled_and_started();
 
     let mut mock = mock_workflow_client();
     let mut needs_pag_resp = hist_to_poll_resp(&t, wfid.to_owned(), ResponseType::OneTask(2)).resp;
@@ -1722,9 +1717,13 @@ async fn pagination_works_with_tasks_from_completion() {
     mock.expect_complete_workflow_task()
         .times(1)
         .returning(|_| Ok(Default::default()));
+
+    let get_exec_resp: GetWorkflowExecutionHistoryResponse =
+        t.get_full_history_info().unwrap().into();
     mock.expect_get_workflow_execution_history()
         .returning(move |_, _, _| Ok(get_exec_resp.clone()))
         .times(1);
+
     let mut mock = single_hist_mock_sg(wfid, t, [1], mock, true);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 2);
     let core = mock_worker(mock);
@@ -2162,10 +2161,6 @@ async fn fetching_to_continue_replay_works() {
     t.add_full_wf_task(); // end 14
     let mut fetch_resp: GetWorkflowExecutionHistoryResponse =
         t.get_full_history_info().unwrap().into();
-    // Should only contain events after 7
-    if let Some(ref mut h) = fetch_resp.history {
-        h.events.retain(|e| e.event_id >= 8);
-    }
     // And indicate that even *more* needs to be fetched after this, so we see a request for the
     // next page happen.
     fetch_resp.next_page_token = vec![2];
@@ -2173,12 +2168,8 @@ async fn fetching_to_continue_replay_works() {
     let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
     t.add_timer_fired(timer_started_event_id, "1".to_string());
     t.add_full_wf_task();
-    let mut final_fetch_resp: GetWorkflowExecutionHistoryResponse =
+    let final_fetch_resp: GetWorkflowExecutionHistoryResponse =
         t.get_full_history_info().unwrap().into();
-    // Should have only the final event
-    if let Some(ref mut h) = final_fetch_resp.history {
-        h.events.retain(|e| e.event_id >= 15);
-    }
 
     let tasks = vec![
         ResponseType::ToTaskNum(1),
@@ -2273,15 +2264,25 @@ async fn ensure_fetching_fail_during_complete_sends_task_failure() {
     t.add_full_wf_task(); // started 3
     t.add_we_signaled("sig1", vec![]);
     t.add_full_wf_task(); // started 7
-    t.add_we_signaled("sig2", vec![]);
+
+    // Need a command event after here so the paginator will know it has two complete WFTs and
+    // processing can begin before needing to fetch again
+    t.add_by_type(EventType::TimerStarted);
     t.add_full_wf_task(); // started 11
     t.add_workflow_execution_completed();
 
-    let mut first_poll = hist_to_poll_resp(&t, wfid, ResponseType::ToTaskNum(1)).resp;
-    first_poll.next_page_token = vec![1];
-    first_poll.previous_started_event_id = 3;
+    let mut first_poll = hist_to_poll_resp(&t, wfid, ResponseType::OneTask(4)).resp;
+    // History is partial so fetch will happen. We have to lie here and make up a previous started
+    // which really makes no sense, otherwise the paginator eagerly fetches and will fail before we
+    // ever start anything -- which is good -- but this test wants to make sure a fetching failure
+    // during a completion is handled correctly. That may no longer actually be a thing that can
+    // happen.
+    first_poll.previous_started_event_id = 0;
+    first_poll.started_event_id = 11;
 
-    let mut next_page: GetWorkflowExecutionHistoryResponse = t.get_history_info(2).unwrap().into();
+    let mut next_page: GetWorkflowExecutionHistoryResponse =
+        t.get_full_history_info().unwrap().into();
+    next_page.history.as_mut().unwrap().events.truncate(9);
     next_page.next_page_token = vec![2];
 
     let mut mock = mock_workflow_client();
@@ -2291,9 +2292,6 @@ async fn ensure_fetching_fail_during_complete_sends_task_failure() {
             Ok(next_page.clone())
         })
         .times(1);
-    let mut really_empty_fetch_resp: GetWorkflowExecutionHistoryResponse =
-        t.get_history_info(1).unwrap().into();
-    really_empty_fetch_resp.history = Some(Default::default());
     mock.expect_get_workflow_execution_history()
         .returning(move |_, _, _| {
             error!("Called fetch second time!");
@@ -2314,24 +2312,13 @@ async fn ensure_fetching_fail_during_complete_sends_task_failure() {
         .await
         .unwrap();
 
-    let wf_task = core.poll_workflow_activation().await.unwrap();
-    assert_matches!(
-        wf_task.jobs.as_slice(),
-        [WorkflowActivationJob {
-            variant: Some(workflow_activation_job::Variant::SignalWorkflow(_)),
-        },]
-    );
-    core.complete_workflow_activation(WorkflowActivationCompletion::empty(wf_task.run_id))
-        .await
-        .unwrap();
-
     // Expect to see eviction b/c of history fetching error here.
     let wf_task = core.poll_workflow_activation().await.unwrap();
     assert_matches!(
         wf_task.jobs.as_slice(),
         [WorkflowActivationJob {
-            variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
-        },]
+            variant: Some(workflow_activation_job::Variant::RemoveFromCache(c)),
+        }] if c.message.contains("Fetching history")
     );
 
     core.shutdown().await;
@@ -2401,7 +2388,6 @@ async fn core_internal_flags() {
                 .copied()
                 .collect::<HashSet<_>>(),
             CoreInternalFlags::all_except_too_high()
-                .into_iter()
                 .map(|f| f as u32)
                 .collect()
         );

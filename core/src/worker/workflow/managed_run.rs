@@ -1031,9 +1031,6 @@ impl ManagedRun {
         new_local_acts: Vec<LocalActRequest>,
     ) -> Result<(), WFMachinesError> {
         let immediate_resolutions = self.local_activity_request_sink.sink_reqs(new_local_acts);
-        if !immediate_resolutions.is_empty() {
-            warn!("Immediate res: {:?}", &immediate_resolutions);
-        }
         for resolution in immediate_resolutions {
             self.wfm
                 .notify_of_local_result(LocalResolution::LocalActivity(resolution))?;
