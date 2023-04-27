@@ -2164,10 +2164,6 @@ async fn fetching_to_continue_replay_works() {
     t.add_full_wf_task(); // end 14
     let mut fetch_resp: GetWorkflowExecutionHistoryResponse =
         t.get_full_history_info().unwrap().into();
-    // Should only contain events after 7
-    if let Some(ref mut h) = fetch_resp.history {
-        h.events.retain(|e| e.event_id >= 8);
-    }
     // And indicate that even *more* needs to be fetched after this, so we see a request for the
     // next page happen.
     fetch_resp.next_page_token = vec![2];
@@ -2175,12 +2171,8 @@ async fn fetching_to_continue_replay_works() {
     let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
     t.add_timer_fired(timer_started_event_id, "1".to_string());
     t.add_full_wf_task();
-    let mut final_fetch_resp: GetWorkflowExecutionHistoryResponse =
+    let final_fetch_resp: GetWorkflowExecutionHistoryResponse =
         t.get_full_history_info().unwrap().into();
-    // Should have only the final event
-    if let Some(ref mut h) = final_fetch_resp.history {
-        h.events.retain(|e| e.event_id >= 15);
-    }
 
     let tasks = vec![
         ResponseType::ToTaskNum(1),
@@ -2282,9 +2274,13 @@ async fn ensure_fetching_fail_during_complete_sends_task_failure() {
     t.add_full_wf_task(); // started 11
     t.add_workflow_execution_completed();
 
-    let mut first_poll = hist_to_poll_resp(&t, wfid, ResponseType::ToTaskNum(1)).resp;
-    first_poll.next_page_token = vec![1];
-    first_poll.previous_started_event_id = 3;
+    let mut first_poll = hist_to_poll_resp(&t, wfid, ResponseType::OneTask(4)).resp;
+    // History is partial so fetch will happen. We have to lie here and make up a previous started
+    // which really makes no sense, otherwise the paginator eagerly fetches and will fail before we
+    // ever start anything -- which is good -- but this test wants to make sure a fetching failure
+    // during a completion is handled correctly. That may no longer actually be a thing that can
+    // happen.
+    first_poll.previous_started_event_id = 0;
     first_poll.started_event_id = 11;
 
     let mut next_page: GetWorkflowExecutionHistoryResponse =
@@ -2299,9 +2295,6 @@ async fn ensure_fetching_fail_during_complete_sends_task_failure() {
             Ok(next_page.clone())
         })
         .times(1);
-    let mut really_empty_fetch_resp: GetWorkflowExecutionHistoryResponse =
-        t.get_history_info(1).unwrap().into();
-    really_empty_fetch_resp.history = Some(Default::default());
     mock.expect_get_workflow_execution_history()
         .returning(move |_, _, _| {
             error!("Called fetch second time!");

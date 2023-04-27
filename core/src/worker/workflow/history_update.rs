@@ -48,6 +48,7 @@ pub struct HistoryUpdate {
     /// True if this update contains the final WFT in history, and no more attempts to extract
     /// additional updates should be made.
     has_last_wft: bool,
+    wft_count: usize,
 }
 impl Debug for HistoryUpdate {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -305,6 +306,16 @@ impl HistoryPaginator {
                 self.wft_started_event_id,
                 no_more,
             );
+
+            // If there are potentially more events and we haven't extracted two WFTs yet, keep
+            // trying.
+            if !matches!(self.next_page_token, NextPageToken::Done) && update.wft_count < 2 {
+                // Unwrap the update and stuff it all back in the queue
+                self.event_queue.extend(update.events);
+                self.event_queue.extend(extra);
+                continue;
+            }
+
             let extra_eid_same = extra
                 .first()
                 .map(|e| e.event_id == first_event_id)
@@ -441,6 +452,7 @@ impl HistoryUpdate {
             previous_wft_started_id: -1,
             wft_started_id: -1,
             has_last_wft: false,
+            wft_count: 0,
         }
     }
     pub fn is_real(&self) -> bool {
@@ -477,6 +489,7 @@ impl HistoryUpdate {
                         previous_wft_started_id,
                         wft_started_id,
                         has_last_wft,
+                        wft_count: 1,
                     },
                     vec![],
                 )
@@ -487,12 +500,15 @@ impl HistoryUpdate {
                         previous_wft_started_id,
                         wft_started_id,
                         has_last_wft,
+                        wft_count: 0,
                     },
                     all_events,
                 )
             };
         }
+        let mut wft_count = 0;
         while let NextWFTSeqEndIndex::Complete(next_end_ix) = last_end {
+            wft_count += 1;
             let next_end_eid = all_events[next_end_ix].event_id;
             // To save skipping all events at the front of this slice, only pass the relevant
             // portion, but that means the returned index must be adjusted, hence the addition.
@@ -507,7 +523,9 @@ impl HistoryUpdate {
             }
             last_end = next_end;
         }
-        let remaining_events = if all_events.is_empty() {
+        // If we have the last WFT, there's no point in there being "remaining" events, because
+        // they must be considered part of the last sequence
+        let remaining_events = if all_events.is_empty() || has_last_wft {
             vec![]
         } else {
             all_events.split_off(last_end.index() + 1)
@@ -519,6 +537,7 @@ impl HistoryUpdate {
                 previous_wft_started_id,
                 wft_started_id,
                 has_last_wft,
+                wft_count,
             },
             remaining_events,
         )
@@ -541,6 +560,7 @@ impl HistoryUpdate {
             previous_wft_started_id,
             wft_started_id,
             has_last_wft: true,
+            wft_count: 0,
         }
     }
 
@@ -713,8 +733,8 @@ fn find_end_index_of_next_wft_seq(
                     if let Some(next_next_event) = events.get(ix + 2) {
                         if next_next_event.event_type() == EventType::WorkflowTaskScheduled {
                             continue;
-                        } else if next_next_event.is_command_event() {
-                            saw_any_command_event = true;
+                        } else {
+                            return NextWFTSeqEndIndex::Complete(ix);
                         }
                     } else if !has_last_wft {
                         // Don't have enough events to look ahead of the WorkflowTaskCompleted. Need
@@ -741,7 +761,7 @@ pub mod tests {
     use super::*;
     use crate::{
         replay::{HistoryInfo, TestHistoryBuilder},
-        test_help::{canned_histories, mock_sdk_cfg, MockPollCfg, ResponseType},
+        test_help::{canned_histories, hist_to_poll_resp, mock_sdk_cfg, MockPollCfg, ResponseType},
         worker::client::mocks::mock_workflow_client,
     };
     use futures::StreamExt;
@@ -1282,8 +1302,6 @@ pub mod tests {
         assert_eq!(seq.last().unwrap().event_id, 3);
         let seq = update.take_next_wft_sequence(3).unwrap_events();
         assert_eq!(seq.last().unwrap().event_id, 8);
-        assert_matches!(update.take_next_wft_sequence(8), NextWFT::NeedFetch);
-        let mut update = paginator.extract_next_update().await.unwrap();
         assert_matches!(update.take_next_wft_sequence(8), NextWFT::ReplayOver);
     }
 
@@ -1687,6 +1705,12 @@ pub mod tests {
             .expect_get_workflow_execution_history()
             .returning(move |_, _, _| Ok(resp_1.clone()))
             .times(1);
+        // Since there aren't sufficient events, we should try to see another fetch, and that'll
+        // say there aren't any
+        mock_client
+            .expect_get_workflow_execution_history()
+            .returning(move |_, _, _| Ok(Default::default()))
+            .times(1);
 
         let mut paginator = HistoryPaginator::new(
             workflow_task.into(),
@@ -1700,7 +1724,83 @@ pub mod tests {
         let mut update = paginator.extract_next_update().await.unwrap();
         let seq = update.take_next_wft_sequence(0).unwrap_events();
         assert_eq!(seq.last().unwrap().event_id, 3);
-        let next = update.take_next_wft_sequence(3);
-        assert_matches!(next, NextWFT::NeedFetch);
+        let seq = update.take_next_wft_sequence(3).unwrap_events();
+        // We're done since the last fetch revealed nothing
+        assert_eq!(seq.last().unwrap().event_id, 7);
+    }
+
+    #[tokio::test]
+    async fn just_signal_is_complete_wft() {
+        let mut t = TestHistoryBuilder::default();
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        t.add_full_wf_task();
+        t.add_we_signaled("whatever", vec![]);
+        t.add_full_wf_task();
+        t.add_we_signaled("whatever", vec![]);
+        t.add_full_wf_task();
+        t.add_workflow_execution_completed();
+
+        let workflow_task = t.get_full_history_info().unwrap();
+        let prev_started_wft_id = workflow_task.previous_started_event_id();
+        let wft_started_id = workflow_task.workflow_task_started_event_id();
+        let mock_client = mock_workflow_client();
+        let mut paginator = HistoryPaginator::new(
+            workflow_task.into(),
+            prev_started_wft_id,
+            wft_started_id,
+            "wfid".to_string(),
+            "runid".to_string(),
+            NextPageToken::Done,
+            Arc::new(mock_client),
+        );
+        let mut update = paginator.extract_next_update().await.unwrap();
+        let seq = next_check_peek(&mut update, 0);
+        assert_eq!(seq.len(), 3);
+        let seq = next_check_peek(&mut update, 3);
+        assert_eq!(seq.len(), 4);
+        let seq = next_check_peek(&mut update, 7);
+        assert_eq!(seq.len(), 4);
+        let seq = next_check_peek(&mut update, 11);
+        assert_eq!(seq.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn heartbeats_then_signal() {
+        let mut t = TestHistoryBuilder::default();
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        t.add_full_wf_task();
+        t.add_full_wf_task();
+        let mut need_fetch_resp =
+            hist_to_poll_resp(&t, "wfid".to_owned(), ResponseType::AllHistory).resp;
+        need_fetch_resp.next_page_token = vec![1];
+        t.add_full_wf_task();
+        t.add_we_signaled("whatever", vec![]);
+        t.add_workflow_task_scheduled_and_started();
+
+        let full_resp: GetWorkflowExecutionHistoryResponse =
+            t.get_full_history_info().unwrap().into();
+
+        let mut mock_client = mock_workflow_client();
+        mock_client
+            .expect_get_workflow_execution_history()
+            .returning(move |_, _, _| Ok(full_resp.clone()))
+            .times(1);
+
+        let mut paginator = HistoryPaginator::new(
+            need_fetch_resp.history.unwrap(),
+            // Pretend we have already processed first WFT
+            3,
+            6,
+            "wfid".to_string(),
+            "runid".to_string(),
+            NextPageToken::Next(vec![1]),
+            Arc::new(mock_client),
+        );
+        let mut update = paginator.extract_next_update().await.unwrap();
+        // Starting past first wft
+        let seq = next_check_peek(&mut update, 3);
+        assert_eq!(seq.len(), 6);
+        let seq = next_check_peek(&mut update, 9);
+        assert_eq!(seq.len(), 4);
     }
 }
