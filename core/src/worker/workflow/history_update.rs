@@ -1,5 +1,4 @@
 use crate::{
-    abstractions::dbg_panic,
     protosext::ValidPollWFTQResponse,
     worker::{
         client::WorkerClient,
@@ -330,9 +329,8 @@ impl HistoryPaginator {
             }
             self.id_of_last_event_in_last_extracted_update =
                 update.events.last().map(|e| e.event_id);
-            if cfg!(debug_assertions) {
-                update.assert_contiguous();
-            }
+            #[cfg(debug_assertions)]
+            update.assert_contiguous();
             return Ok(update);
         }
     }
@@ -468,14 +466,13 @@ impl HistoryUpdate {
 
     #[cfg(debug_assertions)]
     fn assert_contiguous(&self) -> bool {
+        use crate::abstractions::dbg_panic;
+
         for win in self.events.as_slice().windows(2) {
-            match &win {
-                &[e1, e2] => {
-                    if e2.event_id != e1.event_id + 1 {
-                        dbg_panic!("HistoryUpdate isn't contiguous! {:?} -> {:?}", e1, e2);
-                    }
+            if let &[e1, e2] = &win {
+                if e2.event_id != e1.event_id + 1 {
+                    dbg_panic!("HistoryUpdate isn't contiguous! {:?} -> {:?}", e1, e2);
                 }
-                _ => {}
             }
         }
         true
@@ -1484,7 +1481,7 @@ pub mod tests {
 
         let events: Vec<HistoryEvent> = t.get_full_history_info().unwrap().into_events();
         let first_event = events[0].clone();
-        for i in 1..events.len() {
+        for (i, event) in events.into_iter().enumerate() {
             // Add an empty page
             mock_client
                 .expect_get_workflow_execution_history()
@@ -1499,13 +1496,12 @@ pub mod tests {
                 .times(1);
 
             // Add a page with only event i
-            let event = events[i].clone();
             mock_client
                 .expect_get_workflow_execution_history()
                 .returning(move |_, _, _| {
                     Ok(GetWorkflowExecutionHistoryResponse {
                         history: Some(History {
-                            events: vec![event.clone().into()],
+                            events: vec![event.clone()],
                         }),
                         raw_history: vec![],
                         next_page_token: vec![(i * 10 + 1) as u8],
@@ -1595,11 +1591,11 @@ pub mod tests {
         /////
 
         let events: Vec<HistoryEvent> = t.get_full_history_info().unwrap().into_events();
+        let first_event = events[0].clone();
 
         let mut mock_client = mock_workflow_client();
 
-        // iterate on events 1..n
-        for i in 1..events.len() {
+        for (i, event) in events.into_iter().enumerate() {
             // Add an empty page
             mock_client
                 .expect_get_workflow_execution_history()
@@ -1614,13 +1610,12 @@ pub mod tests {
                 .times(1);
 
             // Add a page with just event i
-            let event = events[i].clone();
             mock_client
                 .expect_get_workflow_execution_history()
                 .returning(move |_, _, _| {
                     Ok(GetWorkflowExecutionHistoryResponse {
                         history: Some(History {
-                            events: vec![event.clone().into()],
+                            events: vec![event.clone()],
                         }),
                         raw_history: vec![],
                         next_page_token: vec![(i * 10) as u8],
@@ -1643,7 +1638,6 @@ pub mod tests {
             })
             .times(1);
 
-        let first_event = events[0].clone();
         let workflow_task = t.get_full_history_info().unwrap();
         let mut wft_resp = workflow_task.as_poll_wft_response();
         wft_resp.workflow_execution = Some(WorkflowExecution {

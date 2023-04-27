@@ -4,3 +4,5 @@ wf-input-replay = ["run", "--package", "temporal-sdk-core", "--features", "save_
                    "--example", "wf_input_replay", "--"]
 lint = ["clippy", "--workspace", "--examples", "--all-features",
         "--test", "integ_tests", "--test", "heavy_tests", "--", "--D", "warnings"]
+test-lint = ["clippy", "--all", "--all-features", "--examples", "--workspace",
+             "--tests", "--", "--D", "warnings"]

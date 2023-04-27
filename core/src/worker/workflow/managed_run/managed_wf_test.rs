@@ -95,7 +95,7 @@ impl ManagedWFFunc {
                 run_id: "runid".to_string(),
                 history: hist,
                 metrics: MetricsContext::no_op(),
-                capabilities: &DEFAULT_TEST_CAPABILITIES,
+                capabilities: DEFAULT_TEST_CAPABILITIES,
             },
             Box::new(driver).into(),
         );

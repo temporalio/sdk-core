@@ -896,10 +896,7 @@ async fn workflow_failures_only_reported_once() {
 #[tokio::test]
 async fn max_wft_respected() {
     let total_wfs = 100;
-    let wf_ids: Vec<_> = (0..total_wfs)
-        .into_iter()
-        .map(|i| format!("fake-wf-{i}"))
-        .collect();
+    let wf_ids: Vec<_> = (0..total_wfs).map(|i| format!("fake-wf-{i}")).collect();
     let hists = wf_ids.iter().map(|wf_id| {
         let hist = canned_histories::single_timer("1");
         FakeWfResponses {
@@ -1027,7 +1024,7 @@ async fn activity_not_canceled_when_also_completed_repro(hist_batches: &'static 
 #[tokio::test]
 async fn lots_of_workflows() {
     let total_wfs = 500;
-    let hists = (0..total_wfs).into_iter().map(|i| {
+    let hists = (0..total_wfs).map(|i| {
         let wf_id = format!("fake-wf-{i}");
         let hist = canned_histories::single_timer("1");
         FakeWfResponses {
@@ -2391,7 +2388,6 @@ async fn core_internal_flags() {
                 .copied()
                 .collect::<HashSet<_>>(),
             CoreInternalFlags::all_except_too_high()
-                .into_iter()
                 .map(|f| f as u32)
                 .collect()
         );

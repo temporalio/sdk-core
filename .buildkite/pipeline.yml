@@ -17,7 +17,7 @@ steps:
     agents:
       queue: "default"
       docker: "*"
-    command: "cargo lint"
+    command: "cargo lint && cargo test-lint"
     timeout_in_minutes: 15
     plugins:
       - docker-compose#v3.0.0:
