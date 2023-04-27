@@ -1,4 +1,5 @@
 use crate::{
+    abstractions::dbg_panic,
     protosext::ValidPollWFTQResponse,
     worker::{
         client::WorkerClient,
@@ -329,6 +330,9 @@ impl HistoryPaginator {
             }
             self.id_of_last_event_in_last_extracted_update =
                 update.events.last().map(|e| e.event_id);
+            if cfg!(debug_assertions) {
+                update.assert_contiguous();
+            }
             return Ok(update);
         }
     }
@@ -460,6 +464,21 @@ impl HistoryUpdate {
     }
     pub fn first_event_id(&self) -> Option<i64> {
         self.events.get(0).map(|e| e.event_id)
+    }
+
+    #[cfg(debug_assertions)]
+    fn assert_contiguous(&self) -> bool {
+        for win in self.events.as_slice().windows(2) {
+            match &win {
+                &[e1, e2] => {
+                    if e2.event_id != e1.event_id + 1 {
+                        dbg_panic!("HistoryUpdate isn't contiguous! {:?} -> {:?}", e1, e2);
+                    }
+                }
+                _ => {}
+            }
+        }
+        true
     }
 
     /// Create an instance of an update directly from events. If the passed in event iterator has a
@@ -1802,5 +1821,57 @@ pub mod tests {
         assert_eq!(seq.len(), 6);
         let seq = next_check_peek(&mut update, 9);
         assert_eq!(seq.len(), 4);
+    }
+
+    #[tokio::test]
+    async fn cache_miss_with_only_one_wft_available_orders_properly() {
+        let mut t = TestHistoryBuilder::default();
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        t.add_full_wf_task();
+        t.add_by_type(EventType::TimerStarted);
+        t.add_full_wf_task();
+        t.add_by_type(EventType::TimerStarted);
+        t.add_workflow_task_scheduled_and_started();
+
+        let incremental_task =
+            hist_to_poll_resp(&t, "wfid".to_owned(), ResponseType::OneTask(3)).resp;
+
+        let mut mock_client = mock_workflow_client();
+        let mut one_task_resp: GetWorkflowExecutionHistoryResponse =
+            t.get_history_info(1).unwrap().into();
+        one_task_resp.next_page_token = vec![1];
+        mock_client
+            .expect_get_workflow_execution_history()
+            .returning(move |_, _, _| Ok(one_task_resp.clone()))
+            .times(1);
+        let mut up_to_sched_start: GetWorkflowExecutionHistoryResponse =
+            t.get_full_history_info().unwrap().into();
+        up_to_sched_start
+            .history
+            .as_mut()
+            .unwrap()
+            .events
+            .truncate(9);
+        mock_client
+            .expect_get_workflow_execution_history()
+            .returning(move |_, _, _| Ok(up_to_sched_start.clone()))
+            .times(1);
+
+        let mut paginator = HistoryPaginator::new(
+            incremental_task.history.unwrap(),
+            6,
+            9,
+            "wfid".to_string(),
+            "runid".to_string(),
+            NextPageToken::FetchFromStart,
+            Arc::new(mock_client),
+        );
+        let mut update = paginator.extract_next_update().await.unwrap();
+        let seq = next_check_peek(&mut update, 0);
+        assert_eq!(seq.last().unwrap().event_id, 3);
+        let seq = next_check_peek(&mut update, 3);
+        assert_eq!(seq.last().unwrap().event_id, 7);
+        let seq = next_check_peek(&mut update, 7);
+        assert_eq!(seq.last().unwrap().event_id, 11);
     }
 }
