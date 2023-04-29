@@ -21,7 +21,8 @@ use std::{
 };
 use temporal_client::WorkflowOptions;
 use temporal_sdk::{
-    ActContext, ActivityCancelledError, LocalActivityOptions, WfContext, WorkflowResult,
+    ActContext, ActExitValue, ActivityCancelledError, LocalActivityOptions, WfContext, WfExitValue,
+    WorkflowResult,
 };
 use temporal_sdk_core_api::{
     errors::{PollActivityError, PollWfError},
@@ -38,7 +39,7 @@ use temporal_sdk_core_protos::{
         ActivityTaskCompletion, AsJsonPayloadExt,
     },
     temporal::api::{
-        common::v1::RetryPolicy,
+        common::v1::{Payload, RetryPolicy},
         enums::v1::{EventType, TimeoutType, WorkflowTaskFailedCause},
         failure::v1::{failure::FailureInfo, Failure},
         query::v1::WorkflowQuery,
@@ -50,8 +51,8 @@ use temporal_sdk_core_test_utils::{
 };
 use tokio::{join, sync::Barrier};
 
-async fn echo(_ctx: ActContext, e: String) -> anyhow::Result<String> {
-    Ok(e)
+async fn echo(ctx: ActContext) -> anyhow::Result<ActExitValue<Payload>> {
+    Ok(ActExitValue::Normal(ctx.get_args()[0].clone()))
 }
 
 /// This test verifies that when replaying we are able to resolve local activities whose data we
@@ -92,12 +93,14 @@ async fn local_act_two_wfts_before_marker(#[case] replay: bool, #[case] cached: 
         |ctx: WfContext| async move {
             let la = ctx.local_activity(LocalActivityOptions {
                 activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
-                input: "hi".as_json_payload().expect("serializes fine"),
+                input: vec!["hi".as_json_payload().expect("serializes fine")],
                 ..Default::default()
             });
             ctx.timer(Duration::from_secs(1)).await;
             la.await;
-            Ok(().into())
+            Ok(WfExitValue::Normal(
+                "success".as_json_payload().expect("serializes fine"),
+            ))
         },
     );
     worker.register_activity(DEFAULT_ACTIVITY_TYPE, echo);
@@ -113,21 +116,23 @@ async fn local_act_two_wfts_before_marker(#[case] replay: bool, #[case] cached: 
     worker.run_until_done().await.unwrap();
 }
 
-pub async fn local_act_fanout_wf(ctx: WfContext) -> WorkflowResult<()> {
+pub async fn local_act_fanout_wf(ctx: WfContext) -> WorkflowResult<Payload> {
     let las: Vec<_> = (1..=50)
         .map(|i| {
             ctx.local_activity(LocalActivityOptions {
                 activity_type: "echo".to_string(),
-                input: format!("Hi {i}")
+                input: vec![format!("Hi {i}")
                     .as_json_payload()
-                    .expect("serializes fine"),
+                    .expect("serializes fine")],
                 ..Default::default()
             })
         })
         .collect();
     ctx.timer(Duration::from_secs(1)).await;
     join_all(las).await;
-    Ok(().into())
+    Ok(WfExitValue::Normal(
+        "success".as_json_payload().expect("serializes fine"),
+    ))
 }
 
 #[tokio::test]
@@ -199,20 +204,22 @@ async fn local_act_heartbeat(#[case] shutdown_middle: bool) {
         |ctx: WfContext| async move {
             ctx.local_activity(LocalActivityOptions {
                 activity_type: "echo".to_string(),
-                input: "hi".as_json_payload().expect("serializes fine"),
+                input: vec!["hi".as_json_payload().expect("serializes fine")],
                 ..Default::default()
             })
             .await;
-            Ok(().into())
+            Ok(WfExitValue::Normal(
+                "success".as_json_payload().expect("serializes fine"),
+            ))
         },
     );
-    worker.register_activity("echo", move |_ctx: ActContext, str: String| async move {
+    worker.register_activity("echo", move |ctx: ActContext| async move {
         if shutdown_middle {
             shutdown_barr.wait().await;
         }
         // Take slightly more than two workflow tasks
         tokio::time::sleep(wft_timeout.mul_f32(2.2)).await;
-        Ok(str)
+        Ok(ActExitValue::Normal(ctx.get_args()[0].clone()))
     });
     worker
         .submit_wf(
@@ -255,7 +262,7 @@ async fn local_act_fail_and_retry(#[case] eventually_pass: bool) {
             let la_res = ctx
                 .local_activity(LocalActivityOptions {
                     activity_type: "echo".to_string(),
-                    input: "hi".as_json_payload().expect("serializes fine"),
+                    input: vec!["hi".as_json_payload().expect("serializes fine")],
                     retry_policy: RetryPolicy {
                         initial_interval: Some(prost_dur!(from_millis(50))),
                         backoff_coefficient: 1.2,
@@ -271,14 +278,16 @@ async fn local_act_fail_and_retry(#[case] eventually_pass: bool) {
             } else {
                 assert!(la_res.failed())
             }
-            Ok(().into())
+            Ok(WfExitValue::Normal(
+                "success".as_json_payload().expect("serializes fine"),
+            ))
         },
     );
     let attempts: &'static _ = Box::leak(Box::new(AtomicUsize::new(0)));
-    worker.register_activity("echo", move |_ctx: ActContext, _: String| async move {
+    worker.register_activity("echo", move |ctx: ActContext| async move {
         // Succeed on 3rd attempt (which is ==2 since fetch_add returns prev val)
         if 2 == attempts.fetch_add(1, Ordering::Relaxed) && eventually_pass {
-            Ok(())
+            Ok(ActExitValue::Normal(ctx.get_args()[0].clone()))
         } else {
             Err(anyhow!("Oh no I failed!"))
         }
@@ -336,7 +345,7 @@ async fn local_act_retry_long_backoff_uses_timer() {
             let la_res = ctx
                 .local_activity(LocalActivityOptions {
                     activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
-                    input: "hi".as_json_payload().expect("serializes fine"),
+                    input: vec!["hi".as_json_payload().expect("serializes fine")],
                     retry_policy: RetryPolicy {
                         initial_interval: Some(prost_dur!(from_millis(65))),
                         // This will make the second backoff 65 seconds, plenty to use timer
@@ -351,15 +360,14 @@ async fn local_act_retry_long_backoff_uses_timer() {
             assert!(la_res.failed());
             // Extra timer just to have an extra workflow task which we can return full history for
             ctx.timer(Duration::from_secs(1)).await;
-            Ok(().into())
+            Ok(WfExitValue::Normal(
+                "success".as_json_payload().expect("serializes fine"),
+            ))
         },
     );
-    worker.register_activity(
-        DEFAULT_ACTIVITY_TYPE,
-        move |_ctx: ActContext, _: String| async move {
-            Result::<(), _>::Err(anyhow!("Oh no I failed!"))
-        },
-    );
+    worker.register_activity(DEFAULT_ACTIVITY_TYPE, move |_ctx: ActContext| async move {
+        Err(anyhow!("Oh no I failed!"))
+    });
     worker
         .submit_wf(
             wf_id.to_owned(),
@@ -390,14 +398,18 @@ async fn local_act_null_result() {
         |ctx: WfContext| async move {
             ctx.local_activity(LocalActivityOptions {
                 activity_type: "nullres".to_string(),
-                input: "hi".as_json_payload().expect("serializes fine"),
+                input: vec!["hi".as_json_payload().expect("serializes fine")],
                 ..Default::default()
             })
             .await;
-            Ok(().into())
+            Ok(WfExitValue::Normal(
+                "success".as_json_payload().expect("serializes fine"),
+            ))
         },
     );
-    worker.register_activity("nullres", |_ctx: ActContext, _: String| async { Ok(()) });
+    worker.register_activity("nullres", |ctx: ActContext| async move {
+        Ok(ActExitValue::Normal(ctx.get_args()[0].clone()))
+    });
     worker
         .submit_wf(
             wf_id.to_owned(),
@@ -433,15 +445,19 @@ async fn local_act_command_immediately_follows_la_marker() {
         |ctx: WfContext| async move {
             ctx.local_activity(LocalActivityOptions {
                 activity_type: "nullres".to_string(),
-                input: "hi".as_json_payload().expect("serializes fine"),
+                input: vec!["hi".as_json_payload().expect("serializes fine")],
                 ..Default::default()
             })
             .await;
             ctx.timer(Duration::from_secs(1)).await;
-            Ok(().into())
+            Ok(WfExitValue::Normal(
+                "success".as_json_payload().expect("serializes fine"),
+            ))
         },
     );
-    worker.register_activity("nullres", |_ctx: ActContext, _: String| async { Ok(()) });
+    worker.register_activity("nullres", |ctx: ActContext| async move {
+        Ok(ActExitValue::Normal(ctx.get_args()[0].clone()))
+    });
     worker
         .submit_wf(
             wf_id.to_owned(),
@@ -758,7 +774,7 @@ async fn test_schedule_to_start_timeout() {
             let la_res = ctx
                 .local_activity(LocalActivityOptions {
                     activity_type: "echo".to_string(),
-                    input: "hi".as_json_payload().expect("serializes fine"),
+                    input: vec!["hi".as_json_payload().expect("serializes fine")],
                     // Impossibly small timeout so we timeout in the queue
                     schedule_to_start_timeout: prost_dur!(from_nanos(1)),
                     ..Default::default()
@@ -774,13 +790,14 @@ async fn test_schedule_to_start_timeout() {
                 rfail.cause.unwrap().failure_info,
                 Some(FailureInfo::TimeoutFailureInfo(_))
             );
-            Ok(().into())
+            Ok(WfExitValue::Normal(
+                "success".as_json_payload().expect("serializes fine"),
+            ))
         },
     );
-    worker.register_activity(
-        "echo",
-        move |_ctx: ActContext, _: String| async move { Ok(()) },
-    );
+    worker.register_activity("echo", move |ctx: ActContext| async move {
+        Ok(ActExitValue::Normal(ctx.get_args()[0].clone()))
+    });
     worker
         .submit_wf(
             wf_id.to_owned(),
@@ -846,7 +863,7 @@ async fn test_schedule_to_start_timeout_not_based_on_original_time(
             let la_res = ctx
                 .local_activity(LocalActivityOptions {
                     activity_type: "echo".to_string(),
-                    input: "hi".as_json_payload().expect("serializes fine"),
+                    input: vec!["hi".as_json_payload().expect("serializes fine")],
                     retry_policy: RetryPolicy {
                         initial_interval: Some(prost_dur!(from_millis(50))),
                         backoff_coefficient: 1.2,
@@ -864,13 +881,14 @@ async fn test_schedule_to_start_timeout_not_based_on_original_time(
             } else {
                 assert_eq!(la_res.timed_out(), Some(TimeoutType::ScheduleToClose));
             }
-            Ok(().into())
+            Ok(WfExitValue::Normal(
+                "success".as_json_payload().expect("serializes fine"),
+            ))
         },
     );
-    worker.register_activity(
-        "echo",
-        move |_ctx: ActContext, _: String| async move { Ok(()) },
-    );
+    worker.register_activity("echo", move |ctx: ActContext| async move {
+        Ok(ActExitValue::Normal(ctx.get_args()[0].clone()))
+    });
     worker
         .submit_wf(
             wf_id.to_owned(),
@@ -903,7 +921,7 @@ async fn wft_failure_cancels_running_las() {
         |ctx: WfContext| async move {
             let la_handle = ctx.local_activity(LocalActivityOptions {
                 activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
-                input: "hi".as_json_payload().expect("serializes fine"),
+                input: vec!["hi".as_json_payload().expect("serializes fine")],
                 ..Default::default()
             });
             tokio::join!(
@@ -913,19 +931,18 @@ async fn wft_failure_cancels_running_las() {
                 },
                 la_handle
             );
-            Ok(().into())
+            Ok(WfExitValue::Normal(
+                "success".as_json_payload().expect("serializes fine"),
+            ))
         },
     );
-    worker.register_activity(
-        DEFAULT_ACTIVITY_TYPE,
-        move |ctx: ActContext, _: String| async move {
-            let res = tokio::time::timeout(Duration::from_millis(500), ctx.cancelled()).await;
-            if res.is_err() {
-                panic!("Activity must be cancelled!!!!");
-            }
-            Result::<(), _>::Err(ActivityCancelledError::default().into())
-        },
-    );
+    worker.register_activity(DEFAULT_ACTIVITY_TYPE, move |ctx: ActContext| async move {
+        let res = tokio::time::timeout(Duration::from_millis(500), ctx.cancelled()).await;
+        if res.is_err() {
+            panic!("Activity must be cancelled!!!!");
+        }
+        Err(ActivityCancelledError::default().into())
+    });
     worker
         .submit_wf(
             wf_id.to_owned(),
@@ -969,17 +986,16 @@ async fn resolved_las_not_recorded_if_wft_fails_many_times() {
         |ctx: WfContext| async move {
             ctx.local_activity(LocalActivityOptions {
                 activity_type: "echo".to_string(),
-                input: "hi".as_json_payload().expect("serializes fine"),
+                input: vec!["hi".as_json_payload().expect("serializes fine")],
                 ..Default::default()
             })
             .await;
             panic!("Oh nooooo")
         },
     );
-    worker.register_activity(
-        "echo",
-        move |_: ActContext, _: String| async move { Ok(()) },
-    );
+    worker.register_activity("echo", move |ctx: ActContext| async move {
+        Ok(ActExitValue::Normal(ctx.get_args()[0].clone()))
+    });
     worker
         .submit_wf(
             wf_id.to_owned(),
@@ -1023,7 +1039,7 @@ async fn local_act_records_nonfirst_attempts_ok() {
         |ctx: WfContext| async move {
             ctx.local_activity(LocalActivityOptions {
                 activity_type: "echo".to_string(),
-                input: "hi".as_json_payload().expect("serializes fine"),
+                input: vec!["hi".as_json_payload().expect("serializes fine")],
                 retry_policy: RetryPolicy {
                     initial_interval: Some(prost_dur!(from_millis(10))),
                     backoff_coefficient: 1.0,
@@ -1034,11 +1050,13 @@ async fn local_act_records_nonfirst_attempts_ok() {
                 ..Default::default()
             })
             .await;
-            Ok(().into())
+            Ok(WfExitValue::Normal(
+                "success".as_json_payload().expect("serializes fine"),
+            ))
         },
     );
-    worker.register_activity("echo", move |_ctx: ActContext, _: String| async move {
-        Result::<(), _>::Err(anyhow!("I fail"))
+    worker.register_activity("echo", move |_ctx: ActContext| async move {
+        Err(anyhow!("I fail"))
     });
     worker
         .submit_wf(

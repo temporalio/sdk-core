@@ -1,10 +1,11 @@
 use std::time::Duration;
 use temporal_client::WorkflowClientTrait;
 use temporal_sdk::{WfContext, WfExitValue, WorkflowResult};
+use temporal_sdk_core_protos::temporal::api::common::v1::Payload;
 use temporal_sdk_core_protos::temporal::api::enums::v1::WorkflowExecutionStatus;
 use temporal_sdk_core_test_utils::CoreWfStarter;
 
-async fn cancelled_wf(mut ctx: WfContext) -> WorkflowResult<()> {
+async fn cancelled_wf(mut ctx: WfContext) -> WorkflowResult<Payload> {
     let cancelled = tokio::select! {
         _ = ctx.timer(Duration::from_secs(500)) => false,
         _ = ctx.cancelled() => true

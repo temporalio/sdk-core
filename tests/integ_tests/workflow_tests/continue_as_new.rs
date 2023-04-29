@@ -2,9 +2,11 @@ use std::time::Duration;
 use temporal_client::WorkflowOptions;
 use temporal_sdk::{WfContext, WfExitValue, WorkflowResult};
 use temporal_sdk_core_protos::coresdk::workflow_commands::ContinueAsNewWorkflowExecution;
+use temporal_sdk_core_protos::coresdk::AsJsonPayloadExt;
+use temporal_sdk_core_protos::temporal::api::common::v1::Payload;
 use temporal_sdk_core_test_utils::CoreWfStarter;
 
-async fn continue_as_new_wf(ctx: WfContext) -> WorkflowResult<()> {
+async fn continue_as_new_wf(ctx: WfContext) -> WorkflowResult<Payload> {
     let run_ct = ctx.get_args()[0].data[0];
     ctx.timer(Duration::from_millis(500)).await;
     Ok(if run_ct < 5 {
@@ -13,7 +15,7 @@ async fn continue_as_new_wf(ctx: WfContext) -> WorkflowResult<()> {
             ..Default::default()
         })
     } else {
-        ().into()
+        WfExitValue::Normal("success".as_json_payload().expect("serializes fine"))
     })
 }
 

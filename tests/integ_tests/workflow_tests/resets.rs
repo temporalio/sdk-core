@@ -1,9 +1,12 @@
 use futures::StreamExt;
 use std::{sync::Arc, time::Duration};
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions, WorkflowService};
-use temporal_sdk::WfContext;
-use temporal_sdk_core_protos::temporal::api::{
-    common::v1::WorkflowExecution, workflowservice::v1::ResetWorkflowExecutionRequest,
+use temporal_sdk::{WfContext, WfExitValue};
+use temporal_sdk_core_protos::{
+    coresdk::AsJsonPayloadExt,
+    temporal::api::{
+        common::v1::WorkflowExecution, workflowservice::v1::ResetWorkflowExecutionRequest,
+    },
 };
 use temporal_sdk_core_test_utils::{CoreWfStarter, NAMESPACE};
 use tokio::sync::Notify;
@@ -33,7 +36,9 @@ async fn reset_workflow() {
                 .next()
                 .await
                 .unwrap();
-            Ok(().into())
+            Ok(WfExitValue::Normal(
+                "success".as_json_payload().expect("serializes fine"),
+            ))
         }
     });
 

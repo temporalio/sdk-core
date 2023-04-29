@@ -5,16 +5,19 @@ use temporal_client::{
     SignalWithStartOptions, WorkflowClientTrait, WorkflowExecutionInfo, WorkflowOptions,
 };
 use temporal_sdk::{
-    ChildWorkflowOptions, Signal, SignalWorkflowOptions, WfContext, WorkflowResult,
+    ChildWorkflowOptions, Signal, SignalWorkflowOptions, WfContext, WfExitValue, WorkflowResult,
 };
-use temporal_sdk_core_protos::{coresdk::IntoPayloadsExt, temporal::api::common::v1::Payload};
+use temporal_sdk_core_protos::{
+    coresdk::{AsJsonPayloadExt, IntoPayloadsExt},
+    temporal::api::common::v1::Payload,
+};
 use temporal_sdk_core_test_utils::CoreWfStarter;
 use uuid::Uuid;
 
 const SIGNAME: &str = "signame";
 const RECEIVER_WFID: &str = "sends-signal-signal-receiver";
 
-async fn signal_sender(ctx: WfContext) -> WorkflowResult<()> {
+async fn signal_sender(ctx: WfContext) -> WorkflowResult<Payload> {
     let run_id = std::str::from_utf8(&ctx.get_args()[0].data)
         .unwrap()
         .to_owned();
@@ -27,7 +30,9 @@ async fn signal_sender(ctx: WfContext) -> WorkflowResult<()> {
     } else {
         sigres.unwrap();
     }
-    Ok(().into())
+    Ok(WfExitValue::Normal(
+        "success".as_json_payload().expect("serializes fine"),
+    ))
 }
 
 #[tokio::test]
@@ -50,24 +55,28 @@ async fn sends_signal_to_missing_wf() {
     worker.run_until_done().await.unwrap();
 }
 
-async fn signal_receiver(ctx: WfContext) -> WorkflowResult<()> {
+async fn signal_receiver(ctx: WfContext) -> WorkflowResult<Payload> {
     let res = ctx.make_signal_channel(SIGNAME).next().await.unwrap();
     assert_eq!(&res.input, &[b"hi!".into()]);
     assert_eq!(
         *res.headers.get("tupac").expect("tupac header exists"),
         b"shakur".into()
     );
-    Ok(().into())
+    Ok(WfExitValue::Normal(
+        "success".as_json_payload().expect("serializes fine"),
+    ))
 }
 
-async fn signal_with_create_wf_receiver(ctx: WfContext) -> WorkflowResult<()> {
+async fn signal_with_create_wf_receiver(ctx: WfContext) -> WorkflowResult<Payload> {
     let res = ctx.make_signal_channel(SIGNAME).next().await.unwrap();
     assert_eq!(&res.input, &[b"tada".into()]);
     assert_eq!(
         *res.headers.get("tupac").expect("tupac header exists"),
         b"shakur".into()
     );
-    Ok(().into())
+    Ok(WfExitValue::Normal(
+        "success".as_json_payload().expect("serializes fine"),
+    ))
 }
 
 #[tokio::test]
@@ -132,7 +141,7 @@ async fn sends_signal_with_create_wf() {
     worker.run_until_done().await.unwrap();
 }
 
-async fn signals_child(ctx: WfContext) -> WorkflowResult<()> {
+async fn signals_child(ctx: WfContext) -> WorkflowResult<Payload> {
     let started_child = ctx
         .child_workflow(ChildWorkflowOptions {
             workflow_id: "my_precious_child".to_string(),
@@ -147,7 +156,9 @@ async fn signals_child(ctx: WfContext) -> WorkflowResult<()> {
     sig.data.with_header("tupac", b"shakur");
     started_child.signal(&ctx, sig).await.unwrap();
     started_child.result().await.status.unwrap();
-    Ok(().into())
+    Ok(WfExitValue::Normal(
+        "success".as_json_payload().expect("serializes fine"),
+    ))
 }
 
 #[tokio::test]

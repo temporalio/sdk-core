@@ -42,6 +42,8 @@ You can buld and test the project using cargo:
 Run integ tests with `cargo integ-test`. You will need to already be running the server:
 `docker-compose -f .buildkite/docker/docker-compose.yaml up`
 
+Run load tests with `cargo test --features=save_wf_inputs --test heavy_tests`.
+
 ## Formatting
 To format all code run:
 `cargo fmt --all`

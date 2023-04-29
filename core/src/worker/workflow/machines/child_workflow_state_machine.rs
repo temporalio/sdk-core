@@ -726,11 +726,13 @@ mod test {
     use rstest::{fixture, rstest};
     use std::{cell::RefCell, mem::discriminant, rc::Rc};
     use temporal_sdk::{
-        CancellableFuture, ChildWorkflowOptions, WfContext, WorkflowFunction, WorkflowResult,
+        CancellableFuture, ChildWorkflowOptions, WfContext, WfExitValue, WorkflowFunction,
+        WorkflowResult,
     };
     use temporal_sdk_core_protos::coresdk::{
         child_workflow::child_workflow_result,
         workflow_activation::resolve_child_workflow_execution_start::Status as StartStatus,
+        AsJsonPayloadExt,
     };
 
     #[derive(Clone, Copy)]
@@ -775,7 +777,7 @@ mod test {
         ManagedWFFunc::new(t, func, vec![[Expectation::StartFailure as u8].into()])
     }
 
-    async fn parent_wf(ctx: WfContext) -> WorkflowResult<()> {
+    async fn parent_wf(ctx: WfContext) -> WorkflowResult<Payload> {
         let expectation = Expectation::try_from_u8(ctx.get_args()[0].data[0]).unwrap();
         let child = ctx.child_workflow(ChildWorkflowOptions {
             workflow_id: "child-id-1".to_string(),
@@ -786,17 +788,23 @@ mod test {
         let start_res = child.start(&ctx).await;
         match (expectation, &start_res.status) {
             (Expectation::Success | Expectation::Failure, StartStatus::Succeeded(_)) => {}
-            (Expectation::StartFailure, StartStatus::Failed(_)) => return Ok(().into()),
+            (Expectation::StartFailure, StartStatus::Failed(_)) => {
+                return Ok(WfExitValue::Normal(
+                    "failure".as_json_payload().expect("serializes fine"),
+                ))
+            }
             _ => return Err(anyhow!("Unexpected start status")),
         };
         match (
             expectation,
             start_res.into_started().unwrap().result().await.status,
         ) {
-            (Expectation::Success, Some(child_workflow_result::Status::Completed(_))) => {
-                Ok(().into())
-            }
-            (Expectation::Failure, _) => Ok(().into()),
+            (Expectation::Success, Some(child_workflow_result::Status::Completed(_))) => Ok(
+                WfExitValue::Normal("success".as_json_payload().expect("serializes fine")),
+            ),
+            (Expectation::Failure, _) => Ok(WfExitValue::Normal(
+                "failure".as_json_payload().expect("serializes fine"),
+            )),
             _ => Err(anyhow!("Unexpected child WF status")),
         }
     }
@@ -853,7 +861,7 @@ mod test {
         wfm.shutdown().await.unwrap();
     }
 
-    async fn cancel_before_send_wf(ctx: WfContext) -> WorkflowResult<()> {
+    async fn cancel_before_send_wf(ctx: WfContext) -> WorkflowResult<Payload> {
         let workflow_id = "child-id-1";
         let child = ctx.child_workflow(ChildWorkflowOptions {
             workflow_id: workflow_id.to_string(),
@@ -863,7 +871,9 @@ mod test {
         let start = child.start(&ctx);
         start.cancel(&ctx);
         match start.await.status {
-            StartStatus::Cancelled(_) => Ok(().into()),
+            StartStatus::Cancelled(_) => Ok(WfExitValue::Normal(
+                "success".as_json_payload().expect("serializes fine"),
+            )),
             _ => Err(anyhow!("Unexpected start status")),
         }
     }

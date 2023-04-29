@@ -118,8 +118,9 @@ mod tests {
     use crate::{test_help::canned_histories, worker::workflow::ManagedWFFunc};
     use std::time::Duration;
     use temporal_sdk::{WfContext, WfExitValue, WorkflowFunction, WorkflowResult};
+    use temporal_sdk_core_protos::temporal::api::common::v1::Payload;
 
-    async fn wf_with_timer(ctx: WfContext) -> WorkflowResult<()> {
+    async fn wf_with_timer(ctx: WfContext) -> WorkflowResult<Payload> {
         ctx.timer(Duration::from_millis(500)).await;
         Ok(WfExitValue::continue_as_new(
             ContinueAsNewWorkflowExecution {

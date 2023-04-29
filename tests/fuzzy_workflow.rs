@@ -2,8 +2,12 @@ use futures_util::{sink, stream::FuturesUnordered, FutureExt, StreamExt};
 use rand::{prelude::Distribution, rngs::SmallRng, Rng, SeedableRng};
 use std::{future, time::Duration};
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
-use temporal_sdk::{ActContext, ActivityOptions, LocalActivityOptions, WfContext, WorkflowResult};
+use temporal_sdk::{
+    ActContext, ActExitValue, ActivityOptions, LocalActivityOptions, WfContext, WfExitValue,
+    WorkflowResult,
+};
 use temporal_sdk_core_protos::coresdk::{AsJsonPayloadExt, FromJsonPayloadExt, IntoPayloadsExt};
+use temporal_sdk_core_protos::temporal::api::common::v1::Payload;
 use temporal_sdk_core_test_utils::CoreWfStarter;
 use tokio_util::sync::CancellationToken;
 
@@ -28,11 +32,11 @@ impl Distribution<FuzzyWfAction> for FuzzyWfActionSampler {
     }
 }
 
-async fn echo(_ctx: ActContext, echo_me: String) -> Result<String, anyhow::Error> {
-    Ok(echo_me)
+async fn echo(ctx: ActContext) -> Result<ActExitValue<Payload>, anyhow::Error> {
+    Ok(ActExitValue::Normal(ctx.get_args()[0].clone()))
 }
 
-async fn fuzzy_wf_def(ctx: WfContext) -> WorkflowResult<()> {
+async fn fuzzy_wf_def(ctx: WfContext) -> WorkflowResult<Payload> {
     let sigchan = ctx
         .make_signal_channel(FUZZY_SIG)
         .map(|sd| FuzzyWfAction::from_json_payload(&sd.input[0]).expect("Can deserialize signal"));
@@ -47,7 +51,7 @@ async fn fuzzy_wf_def(ctx: WfContext) -> WorkflowResult<()> {
                     .activity(ActivityOptions {
                         activity_type: "echo_activity".to_string(),
                         start_to_close_timeout: Some(Duration::from_secs(5)),
-                        input: "hi!".as_json_payload().expect("serializes fine"),
+                        input: vec!["hi!".as_json_payload().expect("serializes fine")],
                         ..Default::default()
                     })
                     .map(|_| ())
@@ -56,7 +60,7 @@ async fn fuzzy_wf_def(ctx: WfContext) -> WorkflowResult<()> {
                     .local_activity(LocalActivityOptions {
                         activity_type: "echo_activity".to_string(),
                         start_to_close_timeout: Some(Duration::from_secs(5)),
-                        input: "hi!".as_json_payload().expect("serializes fine"),
+                        input: vec!["hi!".as_json_payload().expect("serializes fine")],
                         ..Default::default()
                     })
                     .map(|_| ())
@@ -70,7 +74,9 @@ async fn fuzzy_wf_def(ctx: WfContext) -> WorkflowResult<()> {
         })
         .await;
 
-    Ok(().into())
+    Ok(WfExitValue::Normal(
+        "success".as_json_payload().expect("serializes fine"),
+    ))
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

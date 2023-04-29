@@ -285,7 +285,7 @@ mod tests {
         collections::{hash_map::RandomState, HashSet, VecDeque},
         time::Duration,
     };
-    use temporal_sdk::{ActivityOptions, WfContext, WorkflowFunction};
+    use temporal_sdk::{ActivityOptions, WfContext, WfExitValue, WorkflowFunction};
     use temporal_sdk_core_protos::{
         constants::PATCH_MARKER_NAME,
         coresdk::{
@@ -458,7 +458,9 @@ mod tests {
                 }
                 _ => panic!("Invalid workflow version for test setup"),
             }
-            Ok(().into())
+            Ok(WfExitValue::Normal(
+                "success".as_json_payload().expect("serializes fine"),
+            ))
         });
 
         let t = patch_marker_single_activity(marker_type, workflow_version, replaying);
@@ -648,7 +650,9 @@ mod tests {
             } else {
                 ctx.timer(ONE_SECOND).await;
             }
-            Ok(().into())
+            Ok(WfExitValue::Normal(
+                "success".as_json_payload().expect("serializes fine"),
+            ))
         });
 
         let mut t = TestHistoryBuilder::default();
@@ -786,7 +790,9 @@ mod tests {
                     let _dontcare = ctx.patched(&format!("patch-{i}"));
                     ctx.timer(ONE_SECOND).await;
                 }
-                Ok(().into())
+                Ok(WfExitValue::Normal(
+                    "success".as_json_payload().expect("serializes fine"),
+                ))
             }),
             vec![],
         );

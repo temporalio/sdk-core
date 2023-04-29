@@ -6,15 +6,21 @@ use crate::{
     worker::{client::mocks::mock_workflow_client, ManagedWFFunc},
 };
 use temporal_client::WorkflowOptions;
-use temporal_sdk::{ChildWorkflowOptions, Signal, WfContext, WorkflowFunction, WorkflowResult};
+use temporal_sdk::{
+    ChildWorkflowOptions, Signal, WfContext, WfExitValue, WorkflowFunction, WorkflowResult,
+};
 use temporal_sdk_core_api::Worker;
-use temporal_sdk_core_protos::coresdk::{
-    child_workflow::{child_workflow_result, ChildWorkflowCancellationType},
-    workflow_activation::{workflow_activation_job, WorkflowActivationJob},
-    workflow_commands::{
-        CancelChildWorkflowExecution, CompleteWorkflowExecution, StartChildWorkflowExecution,
+use temporal_sdk_core_protos::{
+    coresdk::{
+        child_workflow::{child_workflow_result, ChildWorkflowCancellationType},
+        workflow_activation::{workflow_activation_job, WorkflowActivationJob},
+        workflow_commands::{
+            CancelChildWorkflowExecution, CompleteWorkflowExecution, StartChildWorkflowExecution,
+        },
+        workflow_completion::WorkflowActivationCompletion,
+        AsJsonPayloadExt,
     },
-    workflow_completion::WorkflowActivationCompletion,
+    temporal::api::common::v1::Payload,
 };
 use tokio::join;
 
@@ -59,7 +65,9 @@ async fn signal_child_workflow(#[case] serial: bool) {
         };
         sigres.expect("signal result is ok");
         res.status.expect("child wf result is ok");
-        Ok(().into())
+        Ok(WfExitValue::Normal(
+            "success".as_json_payload().expect("serializes fine"),
+        ))
     };
 
     worker.register_wf(wf_type.to_owned(), wf);
@@ -75,7 +83,7 @@ async fn signal_child_workflow(#[case] serial: bool) {
     worker.run_until_done().await.unwrap();
 }
 
-async fn parent_cancels_child_wf(ctx: WfContext) -> WorkflowResult<()> {
+async fn parent_cancels_child_wf(ctx: WfContext) -> WorkflowResult<Payload> {
     let child = ctx.child_workflow(ChildWorkflowOptions {
         workflow_id: "child-id-1".to_string(),
         workflow_type: "child".to_string(),
@@ -95,7 +103,9 @@ async fn parent_cancels_child_wf(ctx: WfContext) -> WorkflowResult<()> {
         .status
         .expect("child wf result is ok");
     assert_matches!(stat, child_workflow_result::Status::Cancelled(_));
-    Ok(().into())
+    Ok(WfExitValue::Normal(
+        "success".as_json_payload().expect("serializes fine"),
+    ))
 }
 
 #[tokio::test]

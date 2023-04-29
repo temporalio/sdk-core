@@ -308,22 +308,29 @@ mod tests {
     use crate::{replay::TestHistoryBuilder, worker::workflow::ManagedWFFunc};
     use std::mem::discriminant;
     use temporal_sdk::{
-        CancellableFuture, SignalWorkflowOptions, WfContext, WorkflowFunction, WorkflowResult,
+        CancellableFuture, SignalWorkflowOptions, WfContext, WfExitValue, WorkflowFunction,
+        WorkflowResult,
     };
-    use temporal_sdk_core_protos::coresdk::workflow_activation::{
-        workflow_activation_job, WorkflowActivationJob,
+    use temporal_sdk_core_protos::{
+        coresdk::{
+            workflow_activation::{workflow_activation_job, WorkflowActivationJob},
+            AsJsonPayloadExt,
+        },
+        temporal::api::common::v1::Payload,
     };
 
     const SIGNAME: &str = "signame";
 
-    async fn signal_sender(ctx: WfContext) -> WorkflowResult<()> {
+    async fn signal_sender(ctx: WfContext) -> WorkflowResult<Payload> {
         let mut dat = SignalWorkflowOptions::new("fake_wid", "fake_rid", SIGNAME, [b"hi!"]);
         dat.with_header("tupac", b"shakur");
         let res = ctx.signal_workflow(dat).await;
         if res.is_err() {
             Err(anyhow::anyhow!("Signal fail!"))
         } else {
-            Ok(().into())
+            Ok(WfExitValue::Normal(
+                "success".as_json_payload().expect("serializes fine"),
+            ))
         }
     }
 
@@ -393,7 +400,9 @@ mod tests {
             ));
             sig.cancel(&ctx);
             let _res = sig.await;
-            Ok(().into())
+            Ok(WfExitValue::Normal(
+                "success".as_json_payload().expect("serializes fine"),
+            ))
         });
         let mut wfm = ManagedWFFunc::new(t, wff, vec![]);
 

@@ -9,7 +9,7 @@
 //! An example of running an activity worker:
 //! ```no_run
 //! use std::{str::FromStr, sync::Arc};
-//! use temporal_sdk::{sdk_client_options, ActContext, Worker};
+//! use temporal_sdk::{sdk_client_options, ActContext, ActExitValue, Worker};
 //! use temporal_sdk_core::{init_worker, Url, CoreRuntime};
 //! use temporal_sdk_core_api::{worker::WorkerConfigBuilder, telemetry::TelemetryOptionsBuilder};
 //!
@@ -32,7 +32,7 @@
 //!     let mut worker = Worker::new_from_core(Arc::new(core_worker), "task_queue");
 //!     worker.register_activity(
 //!         "echo_activity",
-//!         |_ctx: ActContext, echo_me: String| async move { Ok(echo_me) },
+//!         |ctx: ActContext| async move { Ok(ActExitValue::Normal(ctx.get_args()[0].clone())) },
 //!     );
 //!
 //!     worker.run().await?;
@@ -147,7 +147,7 @@ struct WorkflowData {
     activation_chan: UnboundedSender<WorkflowActivation>,
 }
 
-struct WorkflowFutureHandle<F: Future<Output = Result<WorkflowResult<()>, JoinError>>> {
+struct WorkflowFutureHandle<F: Future<Output = Result<WorkflowResult<Payload>, JoinError>>> {
     join_handle: F,
     run_id: String,
 }
@@ -193,10 +193,10 @@ impl Worker {
 
     /// Register a Workflow function to invoke when the Worker is asked to run a workflow of
     /// `workflow_type`
-    pub fn register_wf<F: Into<WorkflowFunction>>(
+    pub fn register_wf(
         &mut self,
         workflow_type: impl Into<String>,
-        wf_function: F,
+        wf_function: impl Into<WorkflowFunction>,
     ) {
         self.workflow_half
             .workflow_fns
@@ -206,17 +206,14 @@ impl Worker {
 
     /// Register an Activity function to invoke when the Worker is asked to run an activity of
     /// `activity_type`
-    pub fn register_activity<A, R, O>(
+    pub fn register_activity(
         &mut self,
         activity_type: impl Into<String>,
-        act_function: impl IntoActivityFunc<A, R, O>,
+        act_function: impl Into<ActivityFunction>,
     ) {
-        self.activity_half.activity_fns.insert(
-            activity_type.into(),
-            ActivityFunction {
-                act_func: act_function.into_activity_fn(),
-            },
-        );
+        self.activity_half
+            .activity_fns
+            .insert(activity_type.into(), act_function.into());
     }
 
     /// Insert Custom App Context for Workflows and Activities
@@ -383,7 +380,9 @@ impl WorkflowHalf {
         activation: WorkflowActivation,
         completions_tx: &UnboundedSender<WorkflowActivationCompletion>,
     ) -> Result<
-        Option<WorkflowFutureHandle<impl Future<Output = Result<WorkflowResult<()>, JoinError>>>>,
+        Option<
+            WorkflowFutureHandle<impl Future<Output = Result<WorkflowResult<Payload>, JoinError>>>,
+        >,
         anyhow::Error,
     > {
         let mut res = None;
@@ -474,7 +473,7 @@ impl ActivityHalf {
                 self.task_tokens_to_cancels
                     .insert(task_token.clone().into(), ct.clone());
 
-                let (ctx, arg) = ActContext::new(
+                let ctx = ActContext::new(
                     worker.clone(),
                     app_data,
                     ct,
@@ -483,7 +482,7 @@ impl ActivityHalf {
                     start,
                 );
                 tokio::spawn(async move {
-                    let output = AssertUnwindSafe((act_fn.act_func)(ctx, arg))
+                    let output = AssertUnwindSafe((act_fn.act_func)(ctx))
                         .catch_unwind()
                         .await;
                     let result = match output {
@@ -694,7 +693,10 @@ struct CommandSubscribeChildWorkflowCompletion {
     unblocker: oneshot::Sender<UnblockEvent>,
 }
 
-type WfFunc = dyn Fn(WfContext) -> BoxFuture<'static, WorkflowResult<()>> + Send + Sync + 'static;
+type WfFunc = dyn Fn(WfContext) -> BoxFuture<'static, Result<WfExitValue<Payload>, anyhow::Error>>
+    + Send
+    + Sync
+    + 'static;
 
 /// The user's async function / workflow code
 pub struct WorkflowFunction {
@@ -704,7 +706,7 @@ pub struct WorkflowFunction {
 impl<F, Fut> From<F> for WorkflowFunction
 where
     F: Fn(WfContext) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = WorkflowResult<()>> + Send + 'static,
+    Fut: Future<Output = Result<WfExitValue<Payload>, anyhow::Error>> + Send + 'static,
 {
     fn from(wf_func: F) -> Self {
         Self::new(wf_func)
@@ -716,7 +718,7 @@ impl WorkflowFunction {
     pub fn new<F, Fut>(wf_func: F) -> Self
     where
         F: Fn(WfContext) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = WorkflowResult<()>> + Send + 'static,
+        Fut: Future<Output = Result<WfExitValue<Payload>, anyhow::Error>> + Send + 'static,
     {
         Self {
             wf_func: Box::new(move |ctx: WfContext| wf_func(ctx).boxed()),
@@ -750,6 +752,9 @@ impl<T: Debug> WfExitValue<T> {
     }
 }
 
+/// The result of running an activity
+pub type ActivityResult<T> = Result<ActExitValue<T>, anyhow::Error>;
+
 /// Activity functions may return these values when exiting
 #[derive(derive_more::From)]
 pub enum ActExitValue<T: Debug> {
@@ -761,7 +766,7 @@ pub enum ActExitValue<T: Debug> {
 }
 
 type BoxActFn = Arc<
-    dyn Fn(ActContext, Payload) -> BoxFuture<'static, Result<ActExitValue<Payload>, anyhow::Error>>
+    dyn Fn(ActContext) -> BoxFuture<'static, Result<ActExitValue<Payload>, anyhow::Error>>
         + Send
         + Sync,
 >;
@@ -770,6 +775,29 @@ type BoxActFn = Arc<
 #[derive(Clone)]
 pub struct ActivityFunction {
     act_func: BoxActFn,
+}
+
+impl<F, Fut> From<F> for ActivityFunction
+where
+    F: Fn(ActContext) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = Result<ActExitValue<Payload>, anyhow::Error>> + Send + 'static,
+{
+    fn from(act_func: F) -> Self {
+        Self::new(act_func)
+    }
+}
+
+impl ActivityFunction {
+    /// Create new activity function
+    pub fn new<F, Fut>(act_func: F) -> Self
+    where
+        F: Fn(ActContext) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<ActExitValue<Payload>, anyhow::Error>> + Send + 'static,
+    {
+        Self {
+            act_func: Arc::new(move |ctx: ActContext| act_func(ctx).boxed()),
+        }
+    }
 }
 
 /// Return this error to indicate your activity is cancelling
@@ -817,10 +845,10 @@ where
     O: AsJsonPayloadExt + Debug,
 {
     fn into_activity_fn(self) -> BoxActFn {
-        let wrapper = move |ctx: ActContext, input: Payload| {
+        let wrapper = move |ctx: ActContext| {
             // Some minor gymnastics are required to avoid needing to clone the function
-            match A::from_json_payload(&input) {
-                Ok(deser) => (self)(ctx, deser)
+            match A::from_json_payload(&ctx.get_args()[0]) {
+                Ok(a) => (self)(ctx, a)
                     .map(|r| {
                         r.and_then(|r| {
                             let exit_val: ActExitValue<O> = r.into();

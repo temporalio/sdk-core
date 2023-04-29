@@ -3,12 +3,13 @@ use std::{
     time::Duration,
 };
 
-use temporal_sdk::{WfContext, WorkflowResult};
+use temporal_sdk::{WfContext, WfExitValue, WorkflowResult};
+use temporal_sdk_core_protos::{coresdk::AsJsonPayloadExt, temporal::api::common::v1::Payload};
 use temporal_sdk_core_test_utils::CoreWfStarter;
 
 const MY_PATCH_ID: &str = "integ_test_change_name";
 
-pub async fn changes_wf(ctx: WfContext) -> WorkflowResult<()> {
+pub async fn changes_wf(ctx: WfContext) -> WorkflowResult<Payload> {
     if ctx.patched(MY_PATCH_ID) {
         ctx.timer(Duration::from_millis(100)).await;
     } else {
@@ -20,7 +21,9 @@ pub async fn changes_wf(ctx: WfContext) -> WorkflowResult<()> {
     } else {
         ctx.timer(Duration::from_millis(200)).await;
     }
-    Ok(().into())
+    Ok(WfExitValue::Normal(
+        "success".as_json_payload().expect("serializes fine"),
+    ))
 }
 
 #[tokio::test]
@@ -38,7 +41,7 @@ async fn writes_change_markers() {
 /// This one simulates a run as if the worker had the "old" code, then it fails at the end as
 /// a cheapo way of being re-run, at which point it runs with change checks and the "new" code.
 static DID_DIE: AtomicBool = AtomicBool::new(false);
-pub async fn no_change_then_change_wf(ctx: WfContext) -> WorkflowResult<()> {
+pub async fn no_change_then_change_wf(ctx: WfContext) -> WorkflowResult<Payload> {
     if DID_DIE.load(Ordering::Acquire) {
         assert!(!ctx.patched(MY_PATCH_ID));
     }
@@ -53,7 +56,9 @@ pub async fn no_change_then_change_wf(ctx: WfContext) -> WorkflowResult<()> {
         DID_DIE.store(true, Ordering::Release);
         ctx.force_task_fail(anyhow::anyhow!("i'm ded"));
     }
-    Ok(().into())
+    Ok(WfExitValue::Normal(
+        "success".as_json_payload().expect("serializes fine"),
+    ))
 }
 
 #[tokio::test]
@@ -69,14 +74,16 @@ async fn can_add_change_markers() {
 }
 
 static DID_DIE_2: AtomicBool = AtomicBool::new(false);
-pub async fn replay_with_change_marker_wf(ctx: WfContext) -> WorkflowResult<()> {
+pub async fn replay_with_change_marker_wf(ctx: WfContext) -> WorkflowResult<Payload> {
     assert!(ctx.patched(MY_PATCH_ID));
     ctx.timer(Duration::from_millis(200)).await;
     if !DID_DIE_2.load(Ordering::Acquire) {
         DID_DIE_2.store(true, Ordering::Release);
         ctx.force_task_fail(anyhow::anyhow!("i'm ded"));
     }
-    Ok(().into())
+    Ok(WfExitValue::Normal(
+        "success".as_json_payload().expect("serializes fine"),
+    ))
 }
 
 #[tokio::test]
@@ -111,7 +118,9 @@ async fn patched_on_second_workflow_task_is_deterministic() {
         }
         assert!(ctx.patched(MY_PATCH_ID));
         ctx.timer(Duration::from_millis(1)).await;
-        Ok(().into())
+        Ok(WfExitValue::Normal(
+            "success".as_json_payload().expect("serializes fine"),
+        ))
     });
 
     starter.start_with_worker(wf_name, &mut worker).await;

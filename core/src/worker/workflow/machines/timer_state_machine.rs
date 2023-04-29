@@ -268,8 +268,8 @@ mod test {
     };
     use rstest::{fixture, rstest};
     use std::{mem::discriminant, time::Duration};
-    use temporal_sdk::{CancellableFuture, WfContext, WorkflowFunction};
-
+    use temporal_sdk::{CancellableFuture, WfContext, WfExitValue, WorkflowFunction};
+    use temporal_sdk_core_protos::coresdk::AsJsonPayloadExt;
     #[fixture]
     fn happy_wfm() -> ManagedWFFunc {
         /*
@@ -285,7 +285,9 @@ mod test {
         */
         let func = WorkflowFunction::new(|command_sink: WfContext| async move {
             command_sink.timer(Duration::from_secs(5)).await;
-            Ok(().into())
+            Ok(WfExitValue::Normal(
+                "success".as_json_payload().expect("serializes fine"),
+            ))
         });
 
         let t = canned_histories::single_timer("1");
@@ -329,7 +331,9 @@ mod test {
     async fn mismatched_timer_ids_errors() {
         let func = WorkflowFunction::new(|command_sink: WfContext| async move {
             command_sink.timer(Duration::from_secs(5)).await;
-            Ok(().into())
+            Ok(WfExitValue::Normal(
+                "success".as_json_payload().expect("serializes fine"),
+            ))
         });
 
         let t = canned_histories::single_timer("badid");
@@ -350,7 +354,9 @@ mod test {
             // Cancel the first timer after having waited on the second
             cancel_timer_fut.cancel(&ctx);
             cancel_timer_fut.await;
-            Ok(().into())
+            Ok(WfExitValue::Normal(
+                "success".as_json_payload().expect("serializes fine"),
+            ))
         });
 
         let t = canned_histories::cancel_timer("2", "1");
@@ -399,7 +405,9 @@ mod test {
             // Immediately cancel the timer
             cancel_timer_fut.cancel(&ctx);
             cancel_timer_fut.await;
-            Ok(().into())
+            Ok(WfExitValue::Normal(
+                "success".as_json_payload().expect("serializes fine"),
+            ))
         });
 
         let mut t = TestHistoryBuilder::default();

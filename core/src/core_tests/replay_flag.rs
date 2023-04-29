@@ -1,15 +1,16 @@
 use crate::{test_help::canned_histories, worker::ManagedWFFunc};
 use rstest::{fixture, rstest};
 use std::time::Duration;
-use temporal_sdk::{WfContext, WorkflowFunction};
-use temporal_sdk_core_protos::temporal::api::enums::v1::CommandType;
-
+use temporal_sdk::{WfContext, WfExitValue, WorkflowFunction};
+use temporal_sdk_core_protos::{coresdk::AsJsonPayloadExt, temporal::api::enums::v1::CommandType};
 fn timers_wf(num_timers: u32) -> WorkflowFunction {
     WorkflowFunction::new(move |command_sink: WfContext| async move {
         for _ in 1..=num_timers {
             command_sink.timer(Duration::from_secs(1)).await;
         }
-        Ok(().into())
+        Ok(WfExitValue::Normal(
+            "success".as_json_payload().expect("serializes fine"),
+        ))
     })
 }
 

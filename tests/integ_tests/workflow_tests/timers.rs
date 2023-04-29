@@ -1,18 +1,24 @@
 use std::time::Duration;
 
-use temporal_sdk::{WfContext, WorkflowResult};
-use temporal_sdk_core_protos::coresdk::{
-    workflow_commands::{CancelTimer, CompleteWorkflowExecution, StartTimer},
-    workflow_completion::WorkflowActivationCompletion,
+use temporal_sdk::{WfContext, WfExitValue, WorkflowResult};
+use temporal_sdk_core_protos::{
+    coresdk::{
+        workflow_commands::{CancelTimer, CompleteWorkflowExecution, StartTimer},
+        workflow_completion::WorkflowActivationCompletion,
+        AsJsonPayloadExt,
+    },
+    temporal::api::common::v1::Payload,
 };
 use temporal_sdk_core_test_utils::{
     drain_pollers_and_shutdown, init_core_and_create_wf, start_timer_cmd, CoreWfStarter,
     WorkerTestHelpers,
 };
 
-pub async fn timer_wf(command_sink: WfContext) -> WorkflowResult<()> {
+pub async fn timer_wf(command_sink: WfContext) -> WorkflowResult<Payload> {
     command_sink.timer(Duration::from_secs(1)).await;
-    Ok(().into())
+    Ok(WfExitValue::Normal(
+        "success".as_json_payload().expect("serializes fine"),
+    ))
 }
 
 #[tokio::test]
@@ -100,11 +106,13 @@ async fn timer_immediate_cancel_workflow() {
     .unwrap();
 }
 
-async fn parallel_timer_wf(command_sink: WfContext) -> WorkflowResult<()> {
+async fn parallel_timer_wf(command_sink: WfContext) -> WorkflowResult<Payload> {
     let t1 = command_sink.timer(Duration::from_secs(1));
     let t2 = command_sink.timer(Duration::from_secs(1));
     let _ = tokio::join!(t1, t2);
-    Ok(().into())
+    Ok(WfExitValue::Normal(
+        "success".as_json_payload().expect("serializes fine"),
+    ))
 }
 
 #[tokio::test]

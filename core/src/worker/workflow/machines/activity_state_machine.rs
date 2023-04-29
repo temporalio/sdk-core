@@ -803,10 +803,15 @@ mod test {
     use rstest::{fixture, rstest};
     use std::{cell::RefCell, mem::discriminant, rc::Rc};
     use temporal_sdk::{
-        ActivityOptions, CancellableFuture, WfContext, WorkflowFunction, WorkflowResult,
+        ActivityOptions, CancellableFuture, WfContext, WfExitValue, WorkflowFunction,
+        WorkflowResult,
     };
     use temporal_sdk_core_protos::{
-        coresdk::workflow_activation::{workflow_activation_job, WorkflowActivationJob},
+        coresdk::{
+            workflow_activation::{workflow_activation_job, WorkflowActivationJob},
+            AsJsonPayloadExt,
+        },
+        temporal::api::common::v1::Payload,
         DEFAULT_ACTIVITY_TYPE,
     };
 
@@ -826,7 +831,7 @@ mod test {
         ManagedWFFunc::new(t, func, vec![])
     }
 
-    async fn activity_wf(command_sink: WfContext) -> WorkflowResult<()> {
+    async fn activity_wf(command_sink: WfContext) -> WorkflowResult<Payload> {
         command_sink
             .activity(ActivityOptions {
                 activity_id: Some("activity-id-1".to_string()),
@@ -834,7 +839,9 @@ mod test {
                 ..Default::default()
             })
             .await;
-        Ok(().into())
+        Ok(WfExitValue::Normal(
+            "success".as_json_payload().expect("serializes fine"),
+        ))
     }
 
     #[rstest(
@@ -886,7 +893,9 @@ mod test {
             // Immediately cancel the activity
             cancel_activity_future.cancel(&ctx);
             cancel_activity_future.await;
-            Ok(().into())
+            Ok(WfExitValue::Normal(
+                "success".as_json_payload().expect("serializes fine"),
+            ))
         });
 
         let mut t = TestHistoryBuilder::default();

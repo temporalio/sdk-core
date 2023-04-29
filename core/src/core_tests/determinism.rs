@@ -10,10 +10,13 @@ use std::{
 };
 use temporal_client::WorkflowOptions;
 use temporal_sdk::{
-    ActivityOptions, ChildWorkflowOptions, LocalActivityOptions, WfContext, WorkflowResult,
+    ActivityOptions, ChildWorkflowOptions, LocalActivityOptions, WfContext, WfExitValue,
+    WorkflowResult,
 };
 use temporal_sdk_core_protos::{
+    coresdk::AsJsonPayloadExt,
     temporal::api::{
+        common::v1::Payload,
         enums::v1::{EventType, WorkflowTaskFailedCause},
         failure::v1::Failure,
     },
@@ -21,7 +24,7 @@ use temporal_sdk_core_protos::{
 };
 
 static DID_FAIL: AtomicBool = AtomicBool::new(false);
-pub async fn timer_wf_fails_once(ctx: WfContext) -> WorkflowResult<()> {
+pub async fn timer_wf_fails_once(ctx: WfContext) -> WorkflowResult<Payload> {
     ctx.timer(Duration::from_secs(1)).await;
     if DID_FAIL
         .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
@@ -29,7 +32,9 @@ pub async fn timer_wf_fails_once(ctx: WfContext) -> WorkflowResult<()> {
     {
         panic!("Ahh");
     }
-    Ok(().into())
+    Ok(WfExitValue::Normal(
+        "success".as_json_payload().expect("serializes fine"),
+    ))
 }
 
 /// Verifies that workflow panics (which in this case the Rust SDK turns into workflow activation
@@ -97,7 +102,9 @@ async fn test_wf_task_rejected_properly_due_to_nondeterminism(#[case] use_cache:
             ctx.timer(Duration::from_secs(1)).await;
         }
         ctx.timer(Duration::from_secs(1)).await;
-        Ok(().into())
+        Ok(WfExitValue::Normal(
+            "success".as_json_payload().expect("serializes fine"),
+        ))
     });
 
     worker
@@ -188,7 +195,9 @@ async fn activity_id_or_type_change_is_nondeterministic(
             })
             .await;
         }
-        Ok(().into())
+        Ok(WfExitValue::Normal(
+            "success".as_json_payload().expect("serializes fine"),
+        ))
     });
 
     worker
@@ -257,7 +266,9 @@ async fn child_wf_id_or_type_change_is_nondeterministic(
         })
         .start(&ctx)
         .await;
-        Ok(().into())
+        Ok(WfExitValue::Normal(
+            "success".as_json_payload().expect("serializes fine"),
+        ))
     });
 
     worker
@@ -300,7 +311,9 @@ async fn repro_channel_missing_because_nondeterminism() {
         worker.register_wf(wf_type.to_owned(), move |ctx: WfContext| async move {
             ctx.patched("wrongid");
             ctx.timer(Duration::from_secs(1)).await;
-            Ok(().into())
+            Ok(WfExitValue::Normal(
+                "success".as_json_payload().expect("serializes fine"),
+            ))
         });
 
         worker

@@ -50,7 +50,7 @@ impl WorkflowFunction {
         args: Vec<Payload>,
         outgoing_completions: UnboundedSender<WorkflowActivationCompletion>,
     ) -> (
-        impl Future<Output = WorkflowResult<()>>,
+        impl Future<Output = WorkflowResult<Payload>>,
         UnboundedSender<WorkflowActivation>,
     ) {
         let (cancel_tx, cancel_rx) = watch::channel(false);
@@ -93,7 +93,7 @@ enum SigChanOrBuffer {
 
 pub struct WorkflowFuture {
     /// Future produced by calling the workflow function
-    inner: BoxFuture<'static, WorkflowResult<()>>,
+    inner: BoxFuture<'static, WorkflowResult<Payload>>,
     /// Commands produced inside user's wf code
     incoming_commands: Receiver<RustWfCmd>,
     /// Once blocked or the workflow has finished or errored out, the result is sent here
@@ -234,7 +234,7 @@ impl WorkflowFuture {
 }
 
 impl Future for WorkflowFuture {
-    type Output = WorkflowResult<()>;
+    type Output = WorkflowResult<Payload>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         'activations: loop {
@@ -443,10 +443,12 @@ impl Future for WorkflowFuture {
                 match res {
                     Ok(exit_val) => match exit_val {
                         // TODO: Generic values
-                        WfExitValue::Normal(_) => {
+                        WfExitValue::Normal(result) => {
                             activation_cmds.push(
                                 workflow_command::Variant::CompleteWorkflowExecution(
-                                    CompleteWorkflowExecution { result: None },
+                                    CompleteWorkflowExecution {
+                                        result: Some(result),
+                                    },
                                 ),
                             );
                         }

@@ -884,26 +884,31 @@ mod tests {
     use rstest::rstest;
     use std::time::Duration;
     use temporal_sdk::{
-        CancellableFuture, LocalActivityOptions, WfContext, WorkflowFunction, WorkflowResult,
+        CancellableFuture, LocalActivityOptions, WfContext, WfExitValue, WorkflowFunction,
+        WorkflowResult,
     };
     use temporal_sdk_core_protos::{
         coresdk::{
             activity_result::ActivityExecutionResult,
             workflow_activation::{workflow_activation_job, WorkflowActivationJob},
+            AsJsonPayloadExt,
         },
         temporal::api::{
-            command::v1::command, enums::v1::WorkflowTaskFailedCause, failure::v1::Failure,
+            command::v1::command, common::v1::Payload, enums::v1::WorkflowTaskFailedCause,
+            failure::v1::Failure,
         },
         DEFAULT_ACTIVITY_TYPE,
     };
 
-    async fn la_wf(ctx: WfContext) -> WorkflowResult<()> {
+    async fn la_wf(ctx: WfContext) -> WorkflowResult<Payload> {
         ctx.local_activity(LocalActivityOptions {
             activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
             ..Default::default()
         })
         .await;
-        Ok(().into())
+        Ok(WfExitValue::Normal(
+            "success".as_json_payload().expect("serializes fine"),
+        ))
     }
 
     #[rstest]
@@ -1014,7 +1019,7 @@ mod tests {
         wfm.shutdown().await.unwrap();
     }
 
-    async fn two_la_wf(ctx: WfContext) -> WorkflowResult<()> {
+    async fn two_la_wf(ctx: WfContext) -> WorkflowResult<Payload> {
         ctx.local_activity(LocalActivityOptions {
             activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
             ..Default::default()
@@ -1025,7 +1030,9 @@ mod tests {
             ..Default::default()
         })
         .await;
-        Ok(().into())
+        Ok(WfExitValue::Normal(
+            "success".as_json_payload().expect("serializes fine"),
+        ))
     }
 
     #[rstest]
@@ -1115,7 +1122,7 @@ mod tests {
         wfm.shutdown().await.unwrap();
     }
 
-    async fn two_la_wf_parallel(ctx: WfContext) -> WorkflowResult<()> {
+    async fn two_la_wf_parallel(ctx: WfContext) -> WorkflowResult<Payload> {
         tokio::join!(
             ctx.local_activity(LocalActivityOptions {
                 activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
@@ -1126,7 +1133,9 @@ mod tests {
                 ..Default::default()
             })
         );
-        Ok(().into())
+        Ok(WfExitValue::Normal(
+            "success".as_json_payload().expect("serializes fine"),
+        ))
     }
 
     #[rstest]
@@ -1206,7 +1215,7 @@ mod tests {
         wfm.shutdown().await.unwrap();
     }
 
-    async fn la_timer_la(ctx: WfContext) -> WorkflowResult<()> {
+    async fn la_timer_la(ctx: WfContext) -> WorkflowResult<Payload> {
         ctx.local_activity(LocalActivityOptions {
             activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
             ..Default::default()
@@ -1218,7 +1227,9 @@ mod tests {
             ..Default::default()
         })
         .await;
-        Ok(().into())
+        Ok(WfExitValue::Normal(
+            "success".as_json_payload().expect("serializes fine"),
+        ))
     }
 
     #[rstest]
@@ -1410,7 +1421,9 @@ mod tests {
             });
             la.cancel(&ctx);
             la.await;
-            Ok(().into())
+            Ok(WfExitValue::Normal(
+                "success".as_json_payload().expect("serializes fine"),
+            ))
         });
         let mut t = TestHistoryBuilder::default();
         t.add_by_type(EventType::WorkflowExecutionStarted);
@@ -1477,7 +1490,9 @@ mod tests {
                 rfail.cause.unwrap().failure_info,
                 Some(FailureInfo::CanceledFailureInfo(_))
             );
-            Ok(().into())
+            Ok(WfExitValue::Normal(
+                "success".as_json_payload().expect("serializes fine"),
+            ))
         });
 
         let mut t = TestHistoryBuilder::default();

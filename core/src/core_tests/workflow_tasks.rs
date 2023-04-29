@@ -24,7 +24,7 @@ use std::{
     time::Duration,
 };
 use temporal_client::WorkflowOptions;
-use temporal_sdk::{ActivityOptions, CancellableFuture, WfContext};
+use temporal_sdk::{ActivityOptions, CancellableFuture, WfContext, WfExitValue};
 use temporal_sdk_core_api::{errors::PollWfError, Worker as WorkerTrait};
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -39,6 +39,7 @@ use temporal_sdk_core_protos::{
             ScheduleActivity, SetPatchMarker,
         },
         workflow_completion::WorkflowActivationCompletion,
+        AsJsonPayloadExt,
     },
     default_act_sched, default_wes_attribs,
     temporal::api::{
@@ -491,7 +492,9 @@ async fn abandoned_activities_ignore_start_and_complete(hist_batches: &'static [
         act_fut.cancel(&ctx);
         ctx.timer(Duration::from_secs(3)).await;
         act_fut.await;
-        Ok(().into())
+        Ok(WfExitValue::Normal(
+            "success".as_json_payload().expect("serializes fine"),
+        ))
     });
     worker
         .submit_wf(wfid, wf_type, vec![], Default::default())
@@ -918,7 +921,9 @@ async fn max_wft_respected() {
                 .expect("No multiple concurrent workflow tasks!"),
         );
         ctx.timer(Duration::from_secs(1)).await;
-        Ok(().into())
+        Ok(WfExitValue::Normal(
+            "success".as_json_payload().expect("serializes fine"),
+        ))
     });
 
     for wf_id in wf_ids {
@@ -2575,7 +2580,9 @@ async fn history_length_with_fail_and_timeout(
         assert_eq!(ctx.history_length(), 14);
         ctx.timer(Duration::from_secs(1)).await;
         assert_eq!(ctx.history_length(), 19);
-        Ok(().into())
+        Ok(WfExitValue::Normal(
+            "success".as_json_payload().expect("serializes fine"),
+        ))
     });
     worker
         .submit_wf(

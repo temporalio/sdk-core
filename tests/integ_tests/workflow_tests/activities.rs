@@ -6,7 +6,7 @@ use std::time::Duration;
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowExecutionResult, WorkflowOptions};
 use temporal_sdk::{
     ActContext, ActExitValue, ActivityCancelledError, ActivityOptions, CancellableFuture,
-    WfContext, WorkflowResult,
+    WfContext, WfExitValue, WorkflowResult,
 };
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -35,15 +35,17 @@ use temporal_sdk_core_test_utils::{
 };
 use tokio::{join, sync::Semaphore, time::sleep};
 
-pub async fn one_activity_wf(ctx: WfContext) -> WorkflowResult<()> {
+pub async fn one_activity_wf(ctx: WfContext) -> WorkflowResult<Payload> {
     ctx.activity(ActivityOptions {
         activity_type: "echo_activity".to_string(),
         start_to_close_timeout: Some(Duration::from_secs(5)),
-        input: "hi!".as_json_payload().expect("serializes fine"),
+        input: vec!["hi!".as_json_payload().expect("serializes fine")],
         ..Default::default()
     })
     .await;
-    Ok(().into())
+    Ok(WfExitValue::Normal(
+        "success".as_json_payload().expect("serializes fine"),
+    ))
 }
 
 #[tokio::test]
@@ -785,7 +787,7 @@ async fn one_activity_abandon_cancelled_after_complete() {
         let act_fut = ctx.activity(ActivityOptions {
             activity_type: "echo_activity".to_string(),
             start_to_close_timeout: Some(Duration::from_secs(5)),
-            input: "hi!".as_json_payload().expect("serializes fine"),
+            input: vec!["hi!".as_json_payload().expect("serializes fine")],
             cancellation_type: ActivityCancellationType::Abandon,
             ..Default::default()
         });
@@ -793,15 +795,14 @@ async fn one_activity_abandon_cancelled_after_complete() {
         act_fut.cancel(&ctx);
         ctx.timer(Duration::from_secs(3)).await;
         act_fut.await;
-        Ok(().into())
+        Ok(WfExitValue::Normal(
+            "success".as_json_payload().expect("serializes fine"),
+        ))
     });
-    worker.register_activity(
-        "echo_activity",
-        |_ctx: ActContext, echo_me: String| async move {
-            sleep(Duration::from_secs(2)).await;
-            Ok(echo_me)
-        },
-    );
+    worker.register_activity("echo_activity", |ctx: ActContext| async move {
+        sleep(Duration::from_secs(2)).await;
+        Ok(ActExitValue::Normal(ctx.get_args()[0].clone()))
+    });
 
     let run_id = worker
         .submit_wf(
@@ -836,7 +837,7 @@ async fn it_can_complete_async() {
         let activity_resolution = ctx
             .activity(ActivityOptions {
                 activity_type: "complete_async_activity".to_string(),
-                input: "hi".as_json_payload().expect("serializes fine"),
+                input: vec!["hi".as_json_payload().expect("serializes fine")],
                 start_to_close_timeout: Some(Duration::from_secs(30)),
                 ..Default::default()
             })
@@ -850,24 +851,23 @@ async fn it_can_complete_async() {
         };
 
         assert_eq!(&res, async_response);
-        Ok(().into())
+        Ok(WfExitValue::Normal(
+            "success".as_json_payload().expect("serializes fine"),
+        ))
     });
 
     let shared_token_ref = shared_token.clone();
-    worker.register_activity(
-        "complete_async_activity",
-        move |ctx: ActContext, _: String| {
-            let shared_token_ref = shared_token_ref.clone();
-            async move {
-                // set the `activity_task_token`
-                let activity_info = ctx.get_info();
-                let task_token = &activity_info.task_token;
-                let mut shared = shared_token_ref.lock().await;
-                *shared = Some(task_token.clone());
-                Ok::<ActExitValue<()>, _>(ActExitValue::WillCompleteAsync)
-            }
-        },
-    );
+    worker.register_activity("complete_async_activity", move |ctx: ActContext| {
+        let shared_token_ref = shared_token_ref.clone();
+        async move {
+            // set the `activity_task_token`
+            let activity_info = ctx.get_info();
+            let task_token = &activity_info.task_token;
+            let mut shared = shared_token_ref.lock().await;
+            *shared = Some(task_token.clone());
+            Ok(ActExitValue::WillCompleteAsync)
+        }
+    });
 
     let shared_token_ref2 = shared_token.clone();
     tokio::spawn(async move {
@@ -918,21 +918,23 @@ async fn graceful_shutdown() {
                     ..Default::default()
                 }),
                 cancellation_type: ActivityCancellationType::WaitCancellationCompleted,
-                input: "hi".as_json_payload().unwrap(),
+                input: vec!["hi".as_json_payload().unwrap()],
                 ..Default::default()
             })
         });
         join_all(act_futs).await;
-        Ok(().into())
+        Ok(WfExitValue::Normal(
+            "success".as_json_payload().expect("serializes fine"),
+        ))
     });
     static ACTS_STARTED: Semaphore = Semaphore::const_new(0);
     static ACTS_DONE: Semaphore = Semaphore::const_new(0);
-    worker.register_activity("sleeper", |ctx: ActContext, _: String| async move {
+    worker.register_activity("sleeper", |ctx: ActContext| async move {
         ACTS_STARTED.add_permits(1);
         // just wait to be cancelled
         ctx.cancelled().await;
         ACTS_DONE.add_permits(1);
-        Result::<(), _>::Err(ActivityCancelledError::default().into())
+        Err(ActivityCancelledError::default().into())
     });
 
     worker

@@ -4,7 +4,8 @@ use std::{
     time::Duration,
 };
 use temporal_client::WorkflowOptions;
-use temporal_sdk::{WfContext, WorkflowResult};
+use temporal_sdk::{WfContext, WfExitValue, WorkflowResult};
+use temporal_sdk_core_protos::{coresdk::AsJsonPayloadExt, temporal::api::common::v1::Payload};
 use temporal_sdk_core_test_utils::CoreWfStarter;
 use tokio::sync::Barrier;
 
@@ -23,7 +24,7 @@ async fn timer_workflow_not_sticky() {
 
 static TIMED_OUT_ONCE: AtomicBool = AtomicBool::new(false);
 static RUN_CT: AtomicUsize = AtomicUsize::new(0);
-async fn timer_timeout_wf(ctx: WfContext) -> WorkflowResult<()> {
+async fn timer_timeout_wf(ctx: WfContext) -> WorkflowResult<Payload> {
     RUN_CT.fetch_add(1, Ordering::SeqCst);
     let t = ctx.timer(Duration::from_secs(1));
     if !TIMED_OUT_ONCE.load(Ordering::SeqCst) {
@@ -31,7 +32,9 @@ async fn timer_timeout_wf(ctx: WfContext) -> WorkflowResult<()> {
         TIMED_OUT_ONCE.store(true, Ordering::SeqCst);
     }
     t.await;
-    Ok(().into())
+    Ok(WfExitValue::Normal(
+        "success".as_json_payload().expect("serializes fine"),
+    ))
 }
 
 #[tokio::test]
@@ -62,7 +65,9 @@ async fn cache_miss_ok() {
     worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| async move {
         barr.wait().await;
         ctx.timer(Duration::from_secs(1)).await;
-        Ok(().into())
+        Ok(WfExitValue::Normal(
+            "success".as_json_payload().expect("serializes fine"),
+        ))
     });
 
     let run_id = worker

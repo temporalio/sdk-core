@@ -1,7 +1,7 @@
 use assert_matches::assert_matches;
 use std::time::Duration;
 use temporal_client::{WfClientExt, WorkflowOptions};
-use temporal_sdk::{ActContext, ActivityOptions, WfContext};
+use temporal_sdk::{ActContext, ActExitValue, ActivityOptions, WfContext, WfExitValue};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{
@@ -180,18 +180,15 @@ async fn activity_doesnt_heartbeat_hits_timeout_then_completes() {
     let mut starter = CoreWfStarter::new(wf_name);
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
-    worker.register_activity(
-        "echo_activity",
-        |_ctx: ActContext, echo_me: String| async move {
-            sleep(Duration::from_secs(4)).await;
-            Ok(echo_me)
-        },
-    );
+    worker.register_activity("echo_activity", |ctx: ActContext| async move {
+        sleep(Duration::from_secs(4)).await;
+        Ok(ActExitValue::Normal(ctx.get_args()[0].clone()))
+    });
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         let res = ctx
             .activity(ActivityOptions {
                 activity_type: "echo_activity".to_string(),
-                input: "hi!".as_json_payload().expect("serializes fine"),
+                input: vec!["hi!".as_json_payload().expect("serializes fine")],
                 start_to_close_timeout: Some(Duration::from_secs(10)),
                 heartbeat_timeout: Some(Duration::from_secs(2)),
                 retry_policy: Some(RetryPolicy {
@@ -202,7 +199,9 @@ async fn activity_doesnt_heartbeat_hits_timeout_then_completes() {
             })
             .await;
         assert_eq!(res.timed_out(), Some(TimeoutType::Heartbeat));
-        Ok(().into())
+        Ok(WfExitValue::Normal(
+            "success".as_json_payload().expect("serializes fine"),
+        ))
     });
 
     let run_id = worker

@@ -204,7 +204,7 @@ mod tests {
     };
     use rustfsm::StateMachine;
     use std::collections::HashMap;
-    use temporal_sdk::{WfContext, WorkflowFunction};
+    use temporal_sdk::{WfContext, WfExitValue, WorkflowFunction};
     use temporal_sdk_core_api::Worker;
     use temporal_sdk_core_protos::{
         coresdk::{
@@ -217,7 +217,6 @@ mod tests {
         },
     };
     use temporal_sdk_core_test_utils::WorkerTestHelpers;
-
     #[tokio::test]
     async fn upsert_search_attrs_from_workflow() {
         let mut t = TestHistoryBuilder::default();
@@ -244,7 +243,9 @@ mod tests {
                     },
                 ),
             ]);
-            Ok(().into())
+            Ok(WfExitValue::Normal(
+                "success".as_json_payload().expect("serializes fine"),
+            ))
         });
         let mut wfm = ManagedWFFunc::new(t, wff, vec![]);
 

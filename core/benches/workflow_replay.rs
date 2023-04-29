@@ -1,9 +1,9 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use futures::StreamExt;
 use std::time::Duration;
-use temporal_sdk::{WfContext, WorkflowFunction};
+use temporal_sdk::{WfContext, WfExitValue, WorkflowFunction};
 use temporal_sdk_core::replay::HistoryForReplay;
-use temporal_sdk_core_protos::DEFAULT_WORKFLOW_TYPE;
+use temporal_sdk_core_protos::{coresdk::AsJsonPayloadExt, DEFAULT_WORKFLOW_TYPE};
 use temporal_sdk_core_test_utils::{canned_histories, replay_sdk_worker};
 
 pub fn criterion_benchmark(c: &mut Criterion) {
@@ -58,7 +58,9 @@ fn timers_wf(num_timers: u32) -> WorkflowFunction {
         for _ in 1..=num_timers {
             ctx.timer(Duration::from_secs(1)).await;
         }
-        Ok(().into())
+        Ok(WfExitValue::Normal(
+            "success".as_json_payload().expect("serializes fine"),
+        ))
     })
 }
 
@@ -71,6 +73,8 @@ fn big_signals_wf(num_tasks: usize) -> WorkflowFunction {
             }
         }
 
-        Ok(().into())
+        Ok(WfExitValue::Normal(
+            "success".as_json_payload().expect("serializes fine"),
+        ))
     })
 }

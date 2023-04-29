@@ -227,9 +227,10 @@ impl Cancellable for CancelExternalMachine {}
 mod tests {
     use super::*;
     use crate::{replay::TestHistoryBuilder, worker::workflow::ManagedWFFunc};
-    use temporal_sdk::{WfContext, WorkflowFunction, WorkflowResult};
+    use temporal_sdk::{WfContext, WfExitValue, WorkflowFunction, WorkflowResult};
+    use temporal_sdk_core_protos::{coresdk::AsJsonPayloadExt, temporal::api::common::v1::Payload};
 
-    async fn cancel_sender(ctx: WfContext) -> WorkflowResult<()> {
+    async fn cancel_sender(ctx: WfContext) -> WorkflowResult<Payload> {
         let res = ctx
             .cancel_external(NamespacedWorkflowExecution {
                 namespace: "some_namespace".to_string(),
@@ -240,7 +241,9 @@ mod tests {
         if res.is_err() {
             Err(anyhow::anyhow!("Cancel fail!"))
         } else {
-            Ok(().into())
+            Ok(WfExitValue::Normal(
+                "success".as_json_payload().expect("serializes fine"),
+            ))
         }
     }
 

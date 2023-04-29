@@ -784,8 +784,9 @@ pub mod tests {
     use futures_util::TryStreamExt;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use temporal_client::WorkflowOptions;
-    use temporal_sdk::WfContext;
+    use temporal_sdk::{WfContext, WfExitValue};
     use temporal_sdk_core_protos::{
+        coresdk::AsJsonPayloadExt,
         temporal::api::{
             common::v1::WorkflowExecution, enums::v1::WorkflowTaskFailedCause,
             workflowservice::v1::GetWorkflowExecutionHistoryResponse,
@@ -1422,7 +1423,9 @@ pub mod tests {
                         break;
                     }
                 }
-                Ok(().into())
+                Ok(WfExitValue::Normal(
+                    "success".as_json_payload().expect("serializes fine"),
+                ))
             }
         });
 
@@ -1670,7 +1673,9 @@ pub mod tests {
                         break;
                     }
                 }
-                Ok(().into())
+                Ok(WfExitValue::Normal(
+                    "success".as_json_payload().expect("serializes fine"),
+                ))
             }
         });
 

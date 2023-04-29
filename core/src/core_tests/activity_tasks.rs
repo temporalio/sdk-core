@@ -23,7 +23,7 @@ use std::{
     time::Duration,
 };
 use temporal_client::WorkflowOptions;
-use temporal_sdk::{ActivityOptions, WfContext};
+use temporal_sdk::{ActivityOptions, WfContext, WfExitValue};
 use temporal_sdk_core_api::{
     errors::{CompleteActivityError, PollActivityError},
     Worker as WorkerTrait,
@@ -41,7 +41,7 @@ use temporal_sdk_core_protos::{
             ScheduleActivity,
         },
         workflow_completion::WorkflowActivationCompletion,
-        ActivityTaskCompletion,
+        ActivityTaskCompletion, AsJsonPayloadExt,
     },
     temporal::api::{
         command::v1::{command::Attributes, ScheduleActivityTaskCommandAttributes},
@@ -945,7 +945,9 @@ async fn activity_tasks_from_completion_reserve_slots() {
             })
             .await;
             complete_token.cancel();
-            Ok(().into())
+            Ok(WfExitValue::Normal(
+                "success".as_json_payload().expect("serializes fine"),
+            ))
         }
     });
 

@@ -118,9 +118,10 @@ impl From<Created> for CommandIssued {
 mod tests {
     use super::*;
     use crate::{replay::TestHistoryBuilder, worker::workflow::ManagedWFFunc};
-    use temporal_sdk::{WfContext, WorkflowFunction};
-    use temporal_sdk_core_protos::temporal::api::{
-        command::v1::command::Attributes, common::v1::Payload,
+    use temporal_sdk::{WfContext, WfExitValue, WorkflowFunction};
+    use temporal_sdk_core_protos::{
+        coresdk::AsJsonPayloadExt,
+        temporal::api::{command::v1::command::Attributes, common::v1::Payload},
     };
 
     #[tokio::test]
@@ -149,7 +150,9 @@ mod tests {
                     },
                 ),
             ]);
-            Ok(().into())
+            Ok(WfExitValue::Normal(
+                "success".as_json_payload().expect("serializes fine"),
+            ))
         });
         let mut wfm = ManagedWFFunc::new(t, wff, vec![]);
 

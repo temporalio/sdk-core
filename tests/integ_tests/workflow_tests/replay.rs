@@ -2,7 +2,9 @@ use crate::integ_tests::workflow_tests::patches::changes_wf;
 use assert_matches::assert_matches;
 use parking_lot::Mutex;
 use std::{collections::HashSet, sync::Arc, time::Duration};
-use temporal_sdk::{interceptors::WorkerInterceptor, WfContext, Worker, WorkflowFunction};
+use temporal_sdk::{
+    interceptors::WorkerInterceptor, WfContext, WfExitValue, Worker, WorkflowFunction,
+};
 use temporal_sdk_core::replay::{HistoryFeeder, HistoryForReplay};
 use temporal_sdk_core_api::errors::{PollActivityError, PollWfError};
 use temporal_sdk_core_protos::{
@@ -10,6 +12,7 @@ use temporal_sdk_core_protos::{
         workflow_activation::remove_from_cache::EvictionReason,
         workflow_commands::{ScheduleActivity, StartTimer},
         workflow_completion::WorkflowActivationCompletion,
+        AsJsonPayloadExt,
     },
     temporal::api::enums::v1::EventType,
     TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE,
@@ -274,7 +277,9 @@ fn timers_wf(num_timers: u32) -> WorkflowFunction {
         for _ in 1..=num_timers {
             ctx.timer(Duration::from_secs(1)).await;
         }
-        Ok(().into())
+        Ok(WfExitValue::Normal(
+            "success".as_json_payload().expect("serializes fine"),
+        ))
     })
 }
 

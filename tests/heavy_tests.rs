@@ -1,9 +1,12 @@
 use futures::{future::join_all, sink, stream::FuturesUnordered, StreamExt};
 use std::time::{Duration, Instant};
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
-use temporal_sdk::{ActContext, ActivityOptions, WfContext, WorkflowResult};
-use temporal_sdk_core_protos::coresdk::{
-    workflow_commands::ActivityCancellationType, AsJsonPayloadExt,
+use temporal_sdk::{
+    ActContext, ActExitValue, ActivityOptions, WfContext, WfExitValue, WorkflowResult,
+};
+use temporal_sdk_core_protos::{
+    coresdk::{workflow_commands::ActivityCancellationType, AsJsonPayloadExt},
+    temporal::api::common::v1::Payload,
 };
 use temporal_sdk_core_test_utils::{workflows::la_problem_workflow, CoreWfStarter};
 
@@ -32,7 +35,7 @@ async fn activity_load() {
             let activity = ActivityOptions {
                 activity_id: Some(activity_id.to_string()),
                 activity_type: "test_activity".to_string(),
-                input: payload.clone(),
+                input: vec![payload.clone()],
                 task_queue,
                 schedule_to_start_timeout: Some(activity_timeout),
                 start_to_close_timeout: Some(activity_timeout),
@@ -43,17 +46,18 @@ async fn activity_load() {
             };
             let res = ctx.activity(activity).await.unwrap_ok_payload();
             assert_eq!(res.data, payload.data);
-            Ok(().into())
+            Ok(WfExitValue::Normal(
+                "success".as_json_payload().expect("serializes fine"),
+            ))
         }
     };
 
     let starting = Instant::now();
     let wf_type = "activity_load";
     worker.register_wf(wf_type.to_owned(), wf_fn);
-    worker.register_activity(
-        "test_activity",
-        |_ctx: ActContext, echo: String| async move { Ok(echo) },
-    );
+    worker.register_activity("test_activity", |ctx: ActContext| async move {
+        Ok(ActExitValue::Normal(ctx.get_args()[0].clone()))
+    });
     join_all((0..CONCURRENCY).map(|i| {
         let worker = &worker;
         let wf_id = format!("activity_load_{i}");
@@ -99,7 +103,7 @@ async fn workflow_load() {
                 ctx.activity(ActivityOptions {
                     activity_type: "echo_activity".to_string(),
                     start_to_close_timeout: Some(Duration::from_secs(5)),
-                    input: "hi!".as_json_payload().expect("serializes fine"),
+                    input: vec!["hi!".as_json_payload().expect("serializes fine")],
                     ..Default::default()
                 })
                 .await;
@@ -111,12 +115,13 @@ async fn workflow_load() {
             _ = real_stuff => {}
         }
 
-        Ok(().into())
+        Ok(WfExitValue::Normal(
+            "success".as_json_payload().expect("serializes fine"),
+        ))
     });
-    worker.register_activity(
-        "echo_activity",
-        |_ctx: ActContext, echo_me: String| async move { Ok(echo_me) },
-    );
+    worker.register_activity("echo_activity", |ctx: ActContext| async move {
+        Ok(ActExitValue::Normal(ctx.get_args()[0].clone()))
+    });
     let client = starter.get_client().await;
 
     let mut workflow_handles = vec![];
@@ -170,9 +175,9 @@ async fn evict_while_la_running_no_interference() {
     let mut worker = starter.worker().await;
 
     worker.register_wf(wf_name.to_owned(), la_problem_workflow);
-    worker.register_activity("delay", |_: ActContext, _: String| async {
+    worker.register_activity("delay", |ctx: ActContext| async move {
         tokio::time::sleep(Duration::from_secs(15)).await;
-        Ok(())
+        Ok(ActExitValue::Normal(ctx.get_args()[0].clone()))
     });
 
     let client = starter.get_client().await;
@@ -213,7 +218,7 @@ async fn evict_while_la_running_no_interference() {
     tokio::join!(subfs.collect::<Vec<_>>(), runf);
 }
 
-pub async fn many_parallel_timers_longhist(ctx: WfContext) -> WorkflowResult<()> {
+pub async fn many_parallel_timers_longhist(ctx: WfContext) -> WorkflowResult<Payload> {
     for _ in 0..120 {
         let mut futs = vec![];
         for _ in 0..100 {
@@ -221,7 +226,9 @@ pub async fn many_parallel_timers_longhist(ctx: WfContext) -> WorkflowResult<()>
         }
         join_all(futs).await;
     }
-    Ok(().into())
+    Ok(WfExitValue::Normal(
+        "success".as_json_payload().expect("serializes fine"),
+    ))
 }
 
 #[tokio::test]

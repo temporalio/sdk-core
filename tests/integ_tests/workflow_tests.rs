@@ -27,7 +27,9 @@ use std::{
     time::Duration,
 };
 use temporal_client::{WorkflowClientTrait, WorkflowOptions};
-use temporal_sdk::{interceptors::WorkerInterceptor, ActivityOptions, WfContext, WorkflowResult};
+use temporal_sdk::{
+    interceptors::WorkerInterceptor, ActivityOptions, WfContext, WfExitValue, WorkflowResult,
+};
 use temporal_sdk_core::replay::HistoryForReplay;
 use temporal_sdk_core_api::{errors::PollWfError, Worker};
 use temporal_sdk_core_protos::{
@@ -38,7 +40,7 @@ use temporal_sdk_core_protos::{
         workflow_completion::WorkflowActivationCompletion,
         ActivityTaskCompletion, AsJsonPayloadExt, IntoCompletion,
     },
-    temporal::api::{failure::v1::Failure, history::v1::history_event},
+    temporal::api::{common::v1::Payload, failure::v1::Failure, history::v1::history_event},
 };
 use temporal_sdk_core_test_utils::{
     drain_pollers_and_shutdown, history_from_proto_binary, init_core_and_create_wf,
@@ -106,10 +108,12 @@ async fn parallel_workflows_same_queue() {
 }
 
 static RUN_CT: AtomicUsize = AtomicUsize::new(0);
-pub async fn cache_evictions_wf(command_sink: WfContext) -> WorkflowResult<()> {
+pub async fn cache_evictions_wf(command_sink: WfContext) -> WorkflowResult<Payload> {
     RUN_CT.fetch_add(1, Ordering::SeqCst);
     command_sink.timer(Duration::from_secs(1)).await;
-    Ok(().into())
+    Ok(WfExitValue::Normal(
+        "success".as_json_payload().expect("serializes fine"),
+    ))
 }
 
 #[tokio::test]
@@ -555,13 +559,15 @@ async fn slow_completes_with_small_cache() {
             ctx.activity(ActivityOptions {
                 activity_type: "echo_activity".to_string(),
                 start_to_close_timeout: Some(Duration::from_secs(5)),
-                input: "hi!".as_json_payload().expect("serializes fine"),
+                input: vec!["hi!".as_json_payload().expect("serializes fine")],
                 ..Default::default()
             })
             .await;
             ctx.timer(Duration::from_secs(1)).await;
         }
-        Ok(().into())
+        Ok(WfExitValue::Normal(
+            "success".as_json_payload().expect("serializes fine"),
+        ))
     });
     worker.register_activity("echo_activity", echo);
     for i in 0..20 {

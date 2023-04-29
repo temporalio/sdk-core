@@ -1,7 +1,10 @@
 use std::{collections::HashMap, env};
 use temporal_client::{WorkflowClientTrait, WorkflowOptions};
-use temporal_sdk::{WfContext, WorkflowResult};
-use temporal_sdk_core_protos::coresdk::{AsJsonPayloadExt, FromJsonPayloadExt};
+use temporal_sdk::{WfContext, WfExitValue, WorkflowResult};
+use temporal_sdk_core_protos::{
+    coresdk::{AsJsonPayloadExt, FromJsonPayloadExt},
+    temporal::api::common::v1::Payload,
+};
 use temporal_sdk_core_test_utils::{CoreWfStarter, INTEG_TEMPORAL_DEV_SERVER_USED_ENV_VAR};
 use tracing::warn;
 use uuid::Uuid;
@@ -11,12 +14,14 @@ use uuid::Uuid;
 static TXT_ATTR: &str = "CustomTextField";
 static INT_ATTR: &str = "CustomIntField";
 
-async fn search_attr_updater(ctx: WfContext) -> WorkflowResult<()> {
+async fn search_attr_updater(ctx: WfContext) -> WorkflowResult<Payload> {
     ctx.upsert_search_attributes([
         (TXT_ATTR.to_string(), "goodbye".as_json_payload().unwrap()),
         (INT_ATTR.to_string(), 98.as_json_payload().unwrap()),
     ]);
-    Ok(().into())
+    Ok(WfExitValue::Normal(
+        "success".as_json_payload().expect("serializes fine"),
+    ))
 }
 
 #[tokio::test]

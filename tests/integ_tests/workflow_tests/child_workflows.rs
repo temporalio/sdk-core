@@ -3,8 +3,11 @@ use std::time::Duration;
 use temporal_client::{WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{ChildWorkflowOptions, WfContext, WfExitValue, WorkflowResult};
 use temporal_sdk_core_protos::{
-    coresdk::child_workflow::{child_workflow_result, ChildWorkflowCancellationType, Success},
-    temporal::api::enums::v1::ParentClosePolicy,
+    coresdk::{
+        child_workflow::{child_workflow_result, ChildWorkflowCancellationType, Success},
+        AsJsonPayloadExt,
+    },
+    temporal::api::{common::v1::Payload, enums::v1::ParentClosePolicy},
 };
 use temporal_sdk_core_test_utils::CoreWfStarter;
 use tokio::sync::Barrier;
@@ -12,11 +15,13 @@ use tokio::sync::Barrier;
 static PARENT_WF_TYPE: &str = "parent_wf";
 static CHILD_WF_TYPE: &str = "child_wf";
 
-async fn child_wf(_ctx: WfContext) -> WorkflowResult<()> {
-    Ok(().into())
+async fn child_wf(_ctx: WfContext) -> WorkflowResult<Payload> {
+    Ok(WfExitValue::Normal(
+        "success".as_json_payload().expect("serializes fine"),
+    ))
 }
 
-async fn parent_wf(ctx: WfContext) -> WorkflowResult<()> {
+async fn parent_wf(ctx: WfContext) -> WorkflowResult<Payload> {
     let child = ctx.child_workflow(ChildWorkflowOptions {
         workflow_id: "child-1".to_owned(),
         workflow_type: CHILD_WF_TYPE.to_owned(),
@@ -29,7 +34,9 @@ async fn parent_wf(ctx: WfContext) -> WorkflowResult<()> {
         .into_started()
         .expect("Child chould start OK");
     match started.result().await.status {
-        Some(child_workflow_result::Status::Completed(Success { .. })) => Ok(().into()),
+        Some(child_workflow_result::Status::Completed(Success { .. })) => Ok(WfExitValue::Normal(
+            "success".as_json_payload().expect("serializes fine"),
+        )),
         _ => Err(anyhow!("Unexpected child WF status")),
     }
 }
@@ -86,7 +93,9 @@ async fn abandoned_child_bug_repro() {
             // Need to do something else, so we'll see the ChildWorkflowExecutionCanceled event
             ctx.timer(Duration::from_secs(1)).await;
             started.result().await;
-            Ok(().into())
+            Ok(WfExitValue::Normal(
+                "success".as_json_payload().expect("serializes fine"),
+            ))
         },
     );
     worker.register_wf(CHILD_WF_TYPE.to_string(), |mut ctx: WfContext| async move {

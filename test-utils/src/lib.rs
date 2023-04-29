@@ -27,7 +27,7 @@ use temporal_client::{
 };
 use temporal_sdk::{
     interceptors::{FailOnNondeterminismInterceptor, WorkerInterceptor},
-    IntoActivityFunc, Worker, WorkflowFunction,
+    ActivityFunction, Worker, WorkflowFunction,
 };
 use temporal_sdk_core::{
     ephemeral_server::{EphemeralExe, EphemeralExeVersion},
@@ -386,10 +386,10 @@ impl TestWorker {
         self.inner.register_wf(workflow_type, wf_function)
     }
 
-    pub fn register_activity<A, R, O>(
+    pub fn register_activity(
         &mut self,
         activity_type: impl Into<String>,
-        act_function: impl IntoActivityFunc<A, R, O>,
+        act_function: impl Into<ActivityFunction>,
     ) {
         self.inner.register_activity(activity_type, act_function)
     }

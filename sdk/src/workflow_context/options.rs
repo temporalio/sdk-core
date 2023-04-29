@@ -36,7 +36,7 @@ pub struct ActivityOptions {
     /// Type of activity to schedule
     pub activity_type: String,
     /// Input to the activity
-    pub input: Payload,
+    pub input: Vec<Payload>,
     /// Task queue to schedule the activity in
     pub task_queue: String,
     /// Time that the Activity Task can stay in the Task Queue before it is picked up by a Worker.
@@ -88,7 +88,7 @@ impl IntoWorkflowCommand for ActivityOptions {
             start_to_close_timeout: self.start_to_close_timeout.and_then(|d| d.try_into().ok()),
             heartbeat_timeout: self.heartbeat_timeout.and_then(|d| d.try_into().ok()),
             cancellation_type: self.cancellation_type as i32,
-            arguments: vec![self.input],
+            arguments: self.input,
             retry_policy: self.retry_policy,
             ..Default::default()
         }
@@ -107,7 +107,7 @@ pub struct LocalActivityOptions {
     /// Type of activity to schedule
     pub activity_type: String,
     /// Input to the activity
-    pub input: Payload,
+    pub input: Vec<Payload>,
     /// Retry policy
     pub retry_policy: RetryPolicy,
     /// Override attempt number rather than using 1.
@@ -154,7 +154,7 @@ impl IntoWorkflowCommand for LocalActivityOptions {
                 Some(aid) => aid,
             },
             activity_type: self.activity_type,
-            arguments: vec![self.input],
+            arguments: self.input,
             retry_policy: Some(self.retry_policy),
             local_retry_threshold: self.timer_backoff_threshold.and_then(|d| d.try_into().ok()),
             cancellation_type: self.cancel_type.into(),

@@ -1,18 +1,23 @@
 use temporal_client::WorkflowClientTrait;
-use temporal_sdk::{WfContext, WorkflowResult};
-use temporal_sdk_core_protos::coresdk::{AsJsonPayloadExt, FromJsonPayloadExt};
+use temporal_sdk::{WfContext, WfExitValue, WorkflowResult};
+use temporal_sdk_core_protos::{
+    coresdk::{AsJsonPayloadExt, FromJsonPayloadExt},
+    temporal::api::common::v1::Payload,
+};
 use temporal_sdk_core_test_utils::CoreWfStarter;
 use uuid::Uuid;
 
 static FIELD_A: &str = "cat_name";
 static FIELD_B: &str = "cute_level";
 
-async fn memo_upserter(ctx: WfContext) -> WorkflowResult<()> {
+async fn memo_upserter(ctx: WfContext) -> WorkflowResult<Payload> {
     ctx.upsert_memo([
         (FIELD_A.to_string(), "enchi".as_json_payload().unwrap()),
         (FIELD_B.to_string(), 9001.as_json_payload().unwrap()),
     ]);
-    Ok(().into())
+    Ok(WfExitValue::Normal(
+        "success".as_json_payload().expect("serializes fine"),
+    ))
 }
 
 #[tokio::test]

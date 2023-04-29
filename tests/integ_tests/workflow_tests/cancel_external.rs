@@ -1,11 +1,14 @@
 use temporal_client::WorkflowOptions;
-use temporal_sdk::{WfContext, WorkflowResult};
-use temporal_sdk_core_protos::coresdk::common::NamespacedWorkflowExecution;
+use temporal_sdk::{WfContext, WfExitValue, WorkflowResult};
+use temporal_sdk_core_protos::{
+    coresdk::{common::NamespacedWorkflowExecution, AsJsonPayloadExt},
+    temporal::api::common::v1::Payload,
+};
 use temporal_sdk_core_test_utils::CoreWfStarter;
 
 const RECEIVER_WFID: &str = "sends-cancel-receiver";
 
-async fn cancel_sender(ctx: WfContext) -> WorkflowResult<()> {
+async fn cancel_sender(ctx: WfContext) -> WorkflowResult<Payload> {
     let run_id = std::str::from_utf8(&ctx.get_args()[0].data)
         .unwrap()
         .to_owned();
@@ -22,12 +25,16 @@ async fn cancel_sender(ctx: WfContext) -> WorkflowResult<()> {
     } else {
         sigres.unwrap();
     }
-    Ok(().into())
+    Ok(WfExitValue::Normal(
+        "success".as_json_payload().expect("serializes fine"),
+    ))
 }
 
-async fn cancel_receiver(mut ctx: WfContext) -> WorkflowResult<()> {
+async fn cancel_receiver(mut ctx: WfContext) -> WorkflowResult<Payload> {
     ctx.cancelled().await;
-    Ok(().into())
+    Ok(WfExitValue::Normal(
+        "success".as_json_payload().expect("serializes fine"),
+    ))
 }
 
 #[tokio::test]

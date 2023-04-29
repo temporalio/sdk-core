@@ -2,11 +2,12 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
     time::Duration,
 };
-use temporal_sdk::{ActivityOptions, WfContext, WorkflowResult};
+use temporal_sdk::{ActivityOptions, WfContext, WfExitValue, WorkflowResult};
+use temporal_sdk_core_protos::{coresdk::AsJsonPayloadExt, temporal::api::common::v1::Payload};
 use temporal_sdk_core_test_utils::CoreWfStarter;
 
 static RUN_CT: AtomicUsize = AtomicUsize::new(1);
-pub async fn timer_wf_nondeterministic(ctx: WfContext) -> WorkflowResult<()> {
+pub async fn timer_wf_nondeterministic(ctx: WfContext) -> WorkflowResult<Payload> {
     let run_ct = RUN_CT.fetch_add(1, Ordering::Relaxed);
 
     match run_ct {
@@ -28,7 +29,9 @@ pub async fn timer_wf_nondeterministic(ctx: WfContext) -> WorkflowResult<()> {
         }
         _ => panic!("Ran too many times"),
     }
-    Ok(().into())
+    Ok(WfExitValue::Normal(
+        "success".as_json_payload().expect("serializes fine"),
+    ))
 }
 
 #[tokio::test]
