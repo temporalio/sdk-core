@@ -48,6 +48,8 @@ mod activity_context;
 mod app_data;
 pub mod interceptors;
 mod payload_converter;
+pub mod prelude;
+pub mod workflow;
 mod workflow_context;
 mod workflow_future;
 
@@ -730,7 +732,7 @@ impl WorkflowFunction {
 pub type WorkflowResult<T> = Result<WfExitValue<T>, anyhow::Error>;
 
 /// Workflow functions may return these values when exiting
-#[derive(Debug, derive_more::From)]
+#[derive(derive_more::From)]
 pub enum WfExitValue<T: Debug> {
     /// Continue the workflow as a new execution
     #[from(ignore)]

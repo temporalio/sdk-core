@@ -1259,6 +1259,13 @@ pub mod coresdk {
         }
     }
 
+    /// Trait to map the Failure to Rust Error for idiomatic error handling in Workflow code <br/>
+    /// NOTE: This is *NOT* the generic
+    /// [failure converter](https://docs.temporal.io/dataconversion#failure-converter)
+    pub trait FromFailureExt: std::error::Error {
+        fn from_failure(failure: Failure) -> Self;
+    }
+
     pub trait FromPayloadsExt {
         fn from_payloads(p: Option<Payloads>) -> Self;
     }
