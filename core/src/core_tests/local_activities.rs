@@ -21,7 +21,8 @@ use std::{
 };
 use temporal_client::WorkflowOptions;
 use temporal_sdk::{
-    ActContext, ActivityCancelledError, LocalActivityOptions, WfContext, WorkflowResult,
+    ActContext, ActivityCancelledError, LocalActivityOptions, WfContext, WorkflowFunction,
+    WorkflowResult,
 };
 use temporal_sdk_core_api::{
     errors::{PollActivityError, PollWfError},
@@ -964,17 +965,18 @@ async fn resolved_las_not_recorded_if_wft_fails_many_times() {
     mh.num_expected_completions = Some(0.into());
     let mut worker = mock_sdk_cfg(mh, |w| w.max_cached_workflows = 1);
 
+    #[allow(unreachable_code)]
     worker.register_wf(
         DEFAULT_WORKFLOW_TYPE.to_owned(),
-        |ctx: WfContext| async move {
+        WorkflowFunction::new::<_, _, ()>(|ctx: WfContext| async move {
             ctx.local_activity(LocalActivityOptions {
                 activity_type: "echo".to_string(),
                 input: "hi".as_json_payload().expect("serializes fine"),
                 ..Default::default()
             })
             .await;
-            panic!("Oh nooooo")
-        },
+            panic!()
+        }),
     );
     worker.register_activity(
         "echo",

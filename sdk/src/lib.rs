@@ -65,6 +65,7 @@ use crate::{
 use anyhow::{anyhow, bail, Context};
 use app_data::AppData;
 use futures::{future::BoxFuture, FutureExt, StreamExt, TryFutureExt, TryStreamExt};
+use serde::Serialize;
 use std::{
     any::{Any, TypeId},
     cell::RefCell,
@@ -147,7 +148,7 @@ struct WorkflowData {
     activation_chan: UnboundedSender<WorkflowActivation>,
 }
 
-struct WorkflowFutureHandle<F: Future<Output = Result<WorkflowResult<()>, JoinError>>> {
+struct WorkflowFutureHandle<F: Future<Output = Result<WorkflowResult<Payload>, JoinError>>> {
     join_handle: F,
     run_id: String,
 }
@@ -193,10 +194,10 @@ impl Worker {
 
     /// Register a Workflow function to invoke when the Worker is asked to run a workflow of
     /// `workflow_type`
-    pub fn register_wf<F: Into<WorkflowFunction>>(
+    pub fn register_wf(
         &mut self,
         workflow_type: impl Into<String>,
-        wf_function: F,
+        wf_function: impl Into<WorkflowFunction>,
     ) {
         self.workflow_half
             .workflow_fns
@@ -383,7 +384,9 @@ impl WorkflowHalf {
         activation: WorkflowActivation,
         completions_tx: &UnboundedSender<WorkflowActivationCompletion>,
     ) -> Result<
-        Option<WorkflowFutureHandle<impl Future<Output = Result<WorkflowResult<()>, JoinError>>>>,
+        Option<
+            WorkflowFutureHandle<impl Future<Output = Result<WorkflowResult<Payload>, JoinError>>>,
+        >,
         anyhow::Error,
     > {
         let mut res = None;
@@ -694,17 +697,21 @@ struct CommandSubscribeChildWorkflowCompletion {
     unblocker: oneshot::Sender<UnblockEvent>,
 }
 
-type WfFunc = dyn Fn(WfContext) -> BoxFuture<'static, WorkflowResult<()>> + Send + Sync + 'static;
+type WfFunc = dyn Fn(WfContext) -> BoxFuture<'static, Result<WfExitValue<Payload>, anyhow::Error>>
+    + Send
+    + Sync
+    + 'static;
 
 /// The user's async function / workflow code
 pub struct WorkflowFunction {
     wf_func: Box<WfFunc>,
 }
 
-impl<F, Fut> From<F> for WorkflowFunction
+impl<F, Fut, O> From<F> for WorkflowFunction
 where
     F: Fn(WfContext) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = WorkflowResult<()>> + Send + 'static,
+    Fut: Future<Output = Result<WfExitValue<O>, anyhow::Error>> + Send + 'static,
+    O: Serialize + Debug,
 {
     fn from(wf_func: F) -> Self {
         Self::new(wf_func)
@@ -713,13 +720,27 @@ where
 
 impl WorkflowFunction {
     /// Build a workflow function from a closure or function pointer which accepts a [WfContext]
-    pub fn new<F, Fut>(wf_func: F) -> Self
+    pub fn new<F, Fut, O>(f: F) -> Self
     where
         F: Fn(WfContext) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = WorkflowResult<()>> + Send + 'static,
+        Fut: Future<Output = Result<WfExitValue<O>, anyhow::Error>> + Send + 'static,
+        O: Serialize + Debug,
     {
         Self {
-            wf_func: Box::new(move |ctx: WfContext| wf_func(ctx).boxed()),
+            wf_func: Box::new(move |ctx: WfContext| {
+                (f)(ctx)
+                    .map(|r| {
+                        r.and_then(|r| {
+                            Ok(match r {
+                                WfExitValue::ContinueAsNew(b) => WfExitValue::ContinueAsNew(b),
+                                WfExitValue::Cancelled => WfExitValue::Cancelled,
+                                WfExitValue::Evicted => WfExitValue::Evicted,
+                                WfExitValue::Normal(o) => WfExitValue::Normal(o.as_json_payload()?),
+                            })
+                        })
+                    })
+                    .boxed()
+            }),
         }
     }
 }

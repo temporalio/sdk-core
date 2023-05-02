@@ -61,7 +61,7 @@ pub struct ManagedWFFunc {
     activation_tx: UnboundedSender<WorkflowActivation>,
     completions_rx: UnboundedReceiver<WorkflowActivationCompletion>,
     completions_sync_tx: crossbeam::channel::Sender<WorkflowActivationCompletion>,
-    future_handle: Option<JoinHandle<WorkflowResult<()>>>,
+    future_handle: Option<JoinHandle<WorkflowResult<Payload>>>,
     was_shutdown: bool,
 }
 
@@ -175,7 +175,7 @@ impl ManagedWFFunc {
         Ok(last_act)
     }
 
-    pub async fn shutdown(&mut self) -> WorkflowResult<()> {
+    pub async fn shutdown(&mut self) -> WorkflowResult<Payload> {
         self.was_shutdown = true;
         // Send an eviction to ensure wf exits if it has not finished (ex: feeding partial hist)
         let _ = self.activation_tx.send(create_evict_activation(
