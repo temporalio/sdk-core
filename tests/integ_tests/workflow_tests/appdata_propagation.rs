@@ -1,7 +1,7 @@
 use assert_matches::assert_matches;
 use std::time::Duration;
 use temporal_client::{WfClientExt, WorkflowExecutionResult, WorkflowOptions};
-use temporal_sdk::{ActContext, ActivityOptions, WfContext, WorkflowResult};
+use temporal_sdk::{ActContext, ActivityFunction, ActivityOptions, WfContext, WorkflowResult};
 use temporal_sdk_core_protos::coresdk::AsJsonPayloadExt;
 use temporal_sdk_core_test_utils::CoreWfStarter;
 
@@ -35,11 +35,11 @@ async fn appdata_access_in_activities_and_workflows() {
     worker.register_wf(wf_name.to_owned(), appdata_activity_wf);
     worker.register_activity(
         "echo_activity",
-        |ctx: ActContext, echo_me: String| async move {
+        ActivityFunction::from(|ctx: ActContext, echo_me: String| async move {
             let data = ctx.app_data::<Data>().expect("appdata exists. qed");
             assert_eq!(data.message, TEST_APPDATA_MESSAGE.to_owned());
             Ok(echo_me)
-        },
+        }),
     );
 
     let run_id = worker

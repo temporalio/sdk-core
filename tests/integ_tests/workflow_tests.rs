@@ -27,7 +27,9 @@ use std::{
     time::Duration,
 };
 use temporal_client::{WorkflowClientTrait, WorkflowOptions};
-use temporal_sdk::{interceptors::WorkerInterceptor, ActivityOptions, WfContext, WorkflowResult};
+use temporal_sdk::{
+    interceptors::WorkerInterceptor, ActivityFunction, ActivityOptions, WfContext, WorkflowResult,
+};
 use temporal_sdk_core::replay::HistoryForReplay;
 use temporal_sdk_core_api::{errors::PollWfError, Worker};
 use temporal_sdk_core_protos::{
@@ -564,7 +566,7 @@ async fn slow_completes_with_small_cache() {
         }
         Ok(().into())
     });
-    worker.register_activity("echo_activity", echo);
+    worker.register_activity("echo_activity", ActivityFunction::from(echo));
     for i in 0..20 {
         worker
             .submit_wf(

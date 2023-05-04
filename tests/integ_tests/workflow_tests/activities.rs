@@ -5,8 +5,8 @@ use futures_util::future::join_all;
 use std::time::Duration;
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowExecutionResult, WorkflowOptions};
 use temporal_sdk::{
-    ActContext, ActExitValue, ActivityCancelledError, ActivityOptions, CancellableFuture,
-    WfContext, WorkflowResult,
+    ActContext, ActExitValue, ActivityCancelledError, ActivityFunction, ActivityOptions,
+    CancellableFuture, WfContext, WorkflowResult,
 };
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -55,7 +55,7 @@ async fn one_activity() {
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
     worker.register_wf(wf_name.to_owned(), one_activity_wf);
-    worker.register_activity("echo_activity", echo);
+    worker.register_activity("echo_activity", ActivityFunction::from(echo));
 
     let run_id = worker
         .submit_wf(
@@ -806,10 +806,10 @@ async fn one_activity_abandon_cancelled_after_complete() {
     });
     worker.register_activity(
         "echo_activity",
-        |_ctx: ActContext, echo_me: String| async move {
+        ActivityFunction::from(|_ctx: ActContext, echo_me: String| async move {
             sleep(Duration::from_secs(2)).await;
             Ok(echo_me)
-        },
+        }),
     );
 
     let run_id = worker
@@ -863,20 +863,17 @@ async fn it_can_complete_async() {
     });
 
     let shared_token_ref = shared_token.clone();
-    worker.register_activity(
-        "complete_async_activity",
-        move |ctx: ActContext, _: String| {
-            let shared_token_ref = shared_token_ref.clone();
-            async move {
-                // set the `activity_task_token`
-                let activity_info = ctx.get_info();
-                let task_token = &activity_info.task_token;
-                let mut shared = shared_token_ref.lock().await;
-                *shared = Some(task_token.clone());
-                Ok::<ActExitValue<()>, _>(ActExitValue::WillCompleteAsync)
-            }
-        },
-    );
+    worker.register_activity("complete_async_activity", move |ctx: ActContext| {
+        let shared_token_ref = shared_token_ref.clone();
+        async move {
+            // set the `activity_task_token`
+            let activity_info = ctx.get_info();
+            let task_token = &activity_info.task_token;
+            let mut shared = shared_token_ref.lock().await;
+            *shared = Some(task_token.clone());
+            Ok::<ActExitValue<()>, _>(ActExitValue::WillCompleteAsync)
+        }
+    });
 
     let shared_token_ref2 = shared_token.clone();
     tokio::spawn(async move {
@@ -938,12 +935,12 @@ async fn graceful_shutdown() {
     });
     static ACTS_STARTED: Semaphore = Semaphore::const_new(0);
     static ACTS_DONE: Semaphore = Semaphore::const_new(0);
-    worker.register_activity("sleeper", |ctx: ActContext, _: String| async move {
+    worker.register_activity("sleeper", |ctx: ActContext| async move {
         ACTS_STARTED.add_permits(1);
         // just wait to be cancelled
         ctx.cancelled().await;
         ACTS_DONE.add_permits(1);
-        Result::<(), _>::Err(ActivityCancelledError::default().into())
+        Result::<ActExitValue<()>, _>::Err(ActivityCancelledError::default().into())
     });
 
     worker

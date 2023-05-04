@@ -1,7 +1,7 @@
 use assert_matches::assert_matches;
 use std::time::Duration;
 use temporal_client::{WfClientExt, WorkflowOptions};
-use temporal_sdk::{ActContext, ActivityOptions, WfContext};
+use temporal_sdk::{ActContext, ActivityFunction, ActivityOptions, WfContext};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{
@@ -182,10 +182,10 @@ async fn activity_doesnt_heartbeat_hits_timeout_then_completes() {
     let client = starter.get_client().await;
     worker.register_activity(
         "echo_activity",
-        |_ctx: ActContext, echo_me: String| async move {
+        ActivityFunction::from(|_ctx: ActContext, echo_me: String| async move {
             sleep(Duration::from_secs(4)).await;
             Ok(echo_me)
-        },
+        }),
     );
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         let res = ctx

@@ -9,7 +9,7 @@
 //! An example of running an activity worker:
 //! ```no_run
 //! use std::{str::FromStr, sync::Arc};
-//! use temporal_sdk::{sdk_client_options, ActContext, Worker};
+//! use temporal_sdk::{sdk_client_options, ActContext, ActExitValue, ActivityFunction, Worker};
 //! use temporal_sdk_core::{init_worker, Url, CoreRuntime};
 //! use temporal_sdk_core_api::{worker::WorkerConfigBuilder, telemetry::TelemetryOptionsBuilder};
 //!
@@ -32,7 +32,7 @@
 //!     let mut worker = Worker::new_from_core(Arc::new(core_worker), "task_queue");
 //!     worker.register_activity(
 //!         "echo_activity",
-//!         |_ctx: ActContext, echo_me: String| async move { Ok(echo_me) },
+//!         ActivityFunction::from(|ctx: ActContext, echo: String| async move { Ok(echo) }),
 //!     );
 //!
 //!     worker.run().await?;
@@ -207,17 +207,14 @@ impl Worker {
 
     /// Register an Activity function to invoke when the Worker is asked to run an activity of
     /// `activity_type`
-    pub fn register_activity<A, R, O>(
+    pub fn register_activity(
         &mut self,
         activity_type: impl Into<String>,
-        act_function: impl IntoActivityFunc<A, R, O>,
+        act_function: impl Into<ActivityFunction>,
     ) {
-        self.activity_half.activity_fns.insert(
-            activity_type.into(),
-            ActivityFunction {
-                act_func: act_function.into_activity_fn(),
-            },
-        );
+        self.activity_half
+            .activity_fns
+            .insert(activity_type.into(), act_function.into());
     }
 
     /// Insert Custom App Context for Workflows and Activities
@@ -477,7 +474,7 @@ impl ActivityHalf {
                 self.task_tokens_to_cancels
                     .insert(task_token.clone().into(), ct.clone());
 
-                let (ctx, arg) = ActContext::new(
+                let ctx = ActContext::new(
                     worker.clone(),
                     app_data,
                     ct,
@@ -486,7 +483,7 @@ impl ActivityHalf {
                     start,
                 );
                 tokio::spawn(async move {
-                    let output = AssertUnwindSafe((act_fn.act_func)(ctx, arg))
+                    let output = AssertUnwindSafe((act_fn.act_func)(ctx))
                         .catch_unwind()
                         .await;
                     let result = match output {
@@ -743,6 +740,39 @@ impl WorkflowFunction {
             }),
         }
     }
+
+    /// Build a workflow function from a closure or function pointer which accepts a [WfContext] and takes one argument
+    pub fn from<A, F, Fut, R, O>(f: F) -> Self
+    where
+        A: FromJsonPayloadExt + Send,
+        F: Fn(WfContext, A) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<R, anyhow::Error>> + Send + 'static,
+        R: Into<WfExitValue<O>>,
+        O: Serialize + Debug,
+    {
+        Self {
+            wf_func: Box::new(move |ctx: WfContext| {
+                match A::from_json_payload(&ctx.get_args()[0]) {
+                    Ok(a) => (f)(ctx, a)
+                        .map(|r| {
+                            r.and_then(|r| {
+                                let r = r.into();
+                                Ok(match r {
+                                    WfExitValue::ContinueAsNew(b) => WfExitValue::ContinueAsNew(b),
+                                    WfExitValue::Cancelled => WfExitValue::Cancelled,
+                                    WfExitValue::Evicted => WfExitValue::Evicted,
+                                    WfExitValue::Normal(o) => {
+                                        WfExitValue::Normal(o.as_json_payload()?)
+                                    }
+                                })
+                            })
+                        })
+                        .boxed(),
+                    Err(e) => async move { Err(anyhow::Error::new(e)) }.boxed(),
+                }
+            }),
+        }
+    }
 }
 
 /// The result of running a workflow
@@ -771,6 +801,9 @@ impl<T: Debug> WfExitValue<T> {
     }
 }
 
+/// The result of running an activity
+pub type ActivityResult<T> = Result<ActExitValue<T>, anyhow::Error>;
+
 /// Activity functions may return these values when exiting
 #[derive(derive_more::From)]
 pub enum ActExitValue<T: Debug> {
@@ -782,7 +815,7 @@ pub enum ActExitValue<T: Debug> {
 }
 
 type BoxActFn = Arc<
-    dyn Fn(ActContext, Payload) -> BoxFuture<'static, Result<ActExitValue<Payload>, anyhow::Error>>
+    dyn Fn(ActContext) -> BoxFuture<'static, Result<ActExitValue<Payload>, anyhow::Error>>
         + Send
         + Sync,
 >;
@@ -791,6 +824,77 @@ type BoxActFn = Arc<
 #[derive(Clone)]
 pub struct ActivityFunction {
     act_func: BoxActFn,
+}
+
+impl<F, Fut, O> From<F> for ActivityFunction
+where
+    F: Fn(ActContext) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = Result<ActExitValue<O>, anyhow::Error>> + Send + 'static,
+    O: Serialize + Debug,
+{
+    fn from(act_func: F) -> Self {
+        Self::new(act_func)
+    }
+}
+
+impl ActivityFunction {
+    /// Build an activity function from a closure or function pointer which accepts a [ActContext]
+    pub fn new<F, Fut, O>(act_func: F) -> Self
+    where
+        F: Fn(ActContext) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<ActExitValue<O>, anyhow::Error>> + Send + 'static,
+        O: Serialize + Debug,
+    {
+        Self {
+            act_func: Arc::new(move |ctx: ActContext| {
+                (act_func)(ctx)
+                    .map(|r| {
+                        r.and_then(|r| {
+                            Ok(match r {
+                                ActExitValue::WillCompleteAsync => ActExitValue::WillCompleteAsync,
+                                ActExitValue::Normal(o) => {
+                                    ActExitValue::Normal(o.as_json_payload()?)
+                                }
+                            })
+                        })
+                    })
+                    .boxed()
+            }),
+        }
+    }
+
+    /// Build an activity function from a closure or function pointer which accepts a [ActContext] and takes one argument
+    pub fn from<A, F, Fut, R, O>(act_func: F) -> Self
+    where
+        A: FromJsonPayloadExt + Send,
+        F: Fn(ActContext, A) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<R, anyhow::Error>> + Send + 'static,
+        R: Into<ActExitValue<O>>,
+        O: Serialize + Debug,
+    {
+        Self {
+            act_func: Arc::new(move |ctx: ActContext| {
+                match A::from_json_payload(&ctx.get_args()[0]) {
+                    Ok(a) => (act_func)(ctx, a)
+                        .map(|r| {
+                            r.and_then(|r| {
+                                let r = r.into();
+                                Ok(match r {
+                                    ActExitValue::WillCompleteAsync => {
+                                        ActExitValue::WillCompleteAsync
+                                    }
+                                    ActExitValue::Normal(o) => {
+                                        ActExitValue::Normal(o.as_json_payload()?)
+                                    }
+                                })
+                            })
+                        })
+                        .boxed(),
+                    Err(e) => async move { Err(anyhow::Error::new(e)) }.boxed(),
+                }
+            }),
+        }
+    }
 }
 
 /// Return this error to indicate your activity is cancelling
@@ -829,6 +933,7 @@ pub trait IntoActivityFunc<Args, Res, Out> {
     fn into_activity_fn(self) -> BoxActFn;
 }
 
+// TODO: Remove this later, not needed with ActivityFunction new and from functions.
 impl<A, Rf, R, O, F> IntoActivityFunc<A, Rf, O> for F
 where
     F: (Fn(ActContext, A) -> Rf) + Sync + Send + 'static,
@@ -838,9 +943,9 @@ where
     O: AsJsonPayloadExt + Debug,
 {
     fn into_activity_fn(self) -> BoxActFn {
-        let wrapper = move |ctx: ActContext, input: Payload| {
+        let wrapper = move |ctx: ActContext| {
             // Some minor gymnastics are required to avoid needing to clone the function
-            match A::from_json_payload(&input) {
+            match A::from_json_payload(&ctx.get_args()[0]) {
                 Ok(deser) => (self)(ctx, deser)
                     .map(|r| {
                         r.and_then(|r| {

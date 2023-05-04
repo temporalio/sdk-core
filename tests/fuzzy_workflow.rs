@@ -2,7 +2,9 @@ use futures_util::{sink, stream::FuturesUnordered, FutureExt, StreamExt};
 use rand::{prelude::Distribution, rngs::SmallRng, Rng, SeedableRng};
 use std::{future, time::Duration};
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
-use temporal_sdk::{ActContext, ActivityOptions, LocalActivityOptions, WfContext, WorkflowResult};
+use temporal_sdk::{
+    ActContext, ActivityFunction, ActivityOptions, LocalActivityOptions, WfContext, WorkflowResult,
+};
 use temporal_sdk_core_protos::coresdk::{AsJsonPayloadExt, FromJsonPayloadExt, IntoPayloadsExt};
 use temporal_sdk_core_test_utils::CoreWfStarter;
 use tokio_util::sync::CancellationToken;
@@ -82,7 +84,7 @@ async fn fuzzy_workflow() {
     // .enable_wf_state_input_recording();
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), fuzzy_wf_def);
-    worker.register_activity("echo_activity", echo);
+    worker.register_activity("echo_activity", ActivityFunction::from(echo));
     let client = starter.get_client().await;
 
     let mut workflow_handles = vec![];

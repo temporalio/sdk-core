@@ -60,7 +60,7 @@ impl ActContext {
         task_queue: String,
         task_token: Vec<u8>,
         task: activity_task::Start,
-    ) -> (Self, Payload) {
+    ) -> Self {
         let activity_task::Start {
             workflow_namespace,
             workflow_type,
@@ -68,7 +68,7 @@ impl ActContext {
             activity_id,
             activity_type,
             header_fields,
-            mut input,
+            input,
             heartbeat_details,
             scheduled_time,
             current_attempt_scheduled_time,
@@ -86,37 +86,32 @@ impl ActContext {
             start_to_close_timeout.as_ref(),
             schedule_to_close_timeout.as_ref(),
         );
-        let first_arg = input.pop().unwrap_or_default();
 
-        (
-            ActContext {
-                worker,
-                app_data,
-                cancellation_token,
-                input,
-                heartbeat_details,
-                header_fields,
-                info: ActivityInfo {
-                    task_token,
-                    task_queue,
-                    workflow_type,
-                    workflow_namespace,
-                    workflow_execution,
-                    activity_id,
-                    activity_type,
-                    heartbeat_timeout: heartbeat_timeout.try_into_or_none(),
-                    scheduled_time: scheduled_time.try_into_or_none(),
-                    started_time: started_time.try_into_or_none(),
-                    deadline,
-                    attempt,
-                    current_attempt_scheduled_time: current_attempt_scheduled_time
-                        .try_into_or_none(),
-                    retry_policy,
-                    is_local,
-                },
+        ActContext {
+            worker,
+            app_data,
+            cancellation_token,
+            input,
+            heartbeat_details,
+            header_fields,
+            info: ActivityInfo {
+                task_token,
+                task_queue,
+                workflow_type,
+                workflow_namespace,
+                workflow_execution,
+                activity_id,
+                activity_type,
+                heartbeat_timeout: heartbeat_timeout.try_into_or_none(),
+                scheduled_time: scheduled_time.try_into_or_none(),
+                started_time: started_time.try_into_or_none(),
+                deadline,
+                attempt,
+                current_attempt_scheduled_time: current_attempt_scheduled_time.try_into_or_none(),
+                retry_policy,
+                is_local,
             },
-            first_arg,
-        )
+        }
     }
 
     /// Returns a future the completes if and when the activity this was called inside has been
@@ -133,8 +128,8 @@ impl ActContext {
     /// Retrieve extra parameters to the Activity. The first input is always popped and passed to
     /// the Activity function for the currently executing activity. However, if more parameters are
     /// passed, perhaps from another language's SDK, explicit access is available from extra_inputs
-    pub fn extra_inputs(&mut self) -> &mut [Payload] {
-        &mut self.input
+    pub fn get_args(&self) -> &[Payload] {
+        &self.input
     }
 
     /// Extract heartbeat details from last failed attempt. This is used in combination with retry policy.

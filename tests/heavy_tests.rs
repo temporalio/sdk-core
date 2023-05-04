@@ -1,7 +1,7 @@
 use futures::{future::join_all, sink, stream::FuturesUnordered, StreamExt};
 use std::time::{Duration, Instant};
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
-use temporal_sdk::{ActContext, ActivityOptions, WfContext, WorkflowResult};
+use temporal_sdk::{ActContext, ActivityFunction, ActivityOptions, WfContext, WorkflowResult};
 use temporal_sdk_core_protos::coresdk::{
     workflow_commands::ActivityCancellationType, AsJsonPayloadExt,
 };
@@ -52,7 +52,7 @@ async fn activity_load() {
     worker.register_wf(wf_type.to_owned(), wf_fn);
     worker.register_activity(
         "test_activity",
-        |_ctx: ActContext, echo: String| async move { Ok(echo) },
+        ActivityFunction::from(|_ctx: ActContext, echo: String| async move { Ok(echo) }),
     );
     join_all((0..CONCURRENCY).map(|i| {
         let worker = &worker;
@@ -115,7 +115,7 @@ async fn workflow_load() {
     });
     worker.register_activity(
         "echo_activity",
-        |_ctx: ActContext, echo_me: String| async move { Ok(echo_me) },
+        ActivityFunction::from(|_ctx: ActContext, echo_me: String| async move { Ok(echo_me) }),
     );
     let client = starter.get_client().await;
 
@@ -170,9 +170,9 @@ async fn evict_while_la_running_no_interference() {
     let mut worker = starter.worker().await;
 
     worker.register_wf(wf_name.to_owned(), la_problem_workflow);
-    worker.register_activity("delay", |_: ActContext, _: String| async {
+    worker.register_activity("delay", |_: ActContext| async {
         tokio::time::sleep(Duration::from_secs(15)).await;
-        Ok(())
+        Ok(().into())
     });
 
     let client = starter.get_client().await;
