@@ -91,7 +91,7 @@ async fn abandoned_child_bug_repro() {
     );
     worker.register_wf(CHILD_WF_TYPE.to_string(), |mut ctx: WfContext| async move {
         ctx.cancelled().await;
-        Ok(WfExitValue::Cancelled)
+        Ok(WfExitValue::<()>::Cancelled)
     });
 
     worker
