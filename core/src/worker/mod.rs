@@ -195,8 +195,7 @@ impl Worker {
     ) -> Self {
         info!(task_queue=%config.task_queue, namespace=%config.namespace, "Initializing worker");
         let metrics = if let Some(ti) = telem_instance {
-            MetricsContext::top_level(config.namespace.clone(), ti)
-                .with_task_q(config.task_queue.clone())
+            MetricsContext::top_level(config.namespace.clone(), config.task_queue.clone(), ti)
         } else {
             MetricsContext::no_op()
         };

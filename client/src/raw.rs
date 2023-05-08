@@ -9,6 +9,7 @@ use crate::{
     LONG_POLL_TIMEOUT,
 };
 use futures::{future::BoxFuture, FutureExt, TryFutureExt};
+use temporal_sdk_core_api::telemetry::metrics::MetricKeyValue;
 use temporal_sdk_core_protos::{
     grpc::health::v1::{health_client::HealthClient, *},
     temporal::api::{
@@ -199,10 +200,10 @@ fn req_cloner<T: Clone>(cloneme: &Request<T>) -> Request<T> {
 
 #[derive(Debug)]
 pub(super) struct AttachMetricLabels {
-    pub(super) labels: Vec<opentelemetry::KeyValue>,
+    pub(super) labels: Vec<MetricKeyValue>,
 }
 impl AttachMetricLabels {
-    pub fn new(kvs: impl Into<Vec<opentelemetry::KeyValue>>) -> Self {
+    pub fn new(kvs: impl Into<Vec<MetricKeyValue>>) -> Self {
         Self { labels: kvs.into() }
     }
     pub fn namespace(ns: impl Into<String>) -> Self {

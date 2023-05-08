@@ -22,57 +22,9 @@ use temporal_client::ClientMetricProvider;
 /// appropriate k/vs have already been set.
 #[derive(Clone)]
 pub(crate) struct MetricsContext {
-    kvs: Arc<Vec<KeyValue>>,
+    meter: Arc<dyn CoreMeter>,
+    kvs: MetricAttributes,
     instruments: Arc<Instruments>,
-}
-
-/// Wraps OTel's [Meter] to ensure we name our metrics properly, or any other temporal-specific
-/// metrics customizations
-#[derive(derive_more::Constructor)]
-pub struct TemporalMeter<'a> {
-    inner: &'a Meter,
-    metrics_prefix: &'static str,
-    kvs: Arc<Vec<KeyValue>>,
-}
-
-impl<'a> TemporalMeter<'a> {
-    pub(crate) fn counter(&self, name: &'static str) -> Counter<u64> {
-        self.inner
-            .u64_counter(self.metrics_prefix.to_string() + name)
-            .init()
-    }
-
-    pub(crate) fn histogram(&self, name: &'static str) -> Histogram<u64> {
-        self.inner
-            .u64_histogram(self.metrics_prefix.to_string() + name)
-            .init()
-    }
-
-    pub(crate) fn gauge(&self, name: &'static str) -> MemoryGaugeU64 {
-        MemoryGaugeU64::new(self.metrics_prefix.to_string() + name, self.inner)
-    }
-}
-
-impl<'a> ClientMetricProvider for TemporalMeter<'a> {
-    fn counter(&self, name: &'static str) -> Counter<u64> {
-        self.counter(name)
-    }
-
-    fn histogram(&self, name: &'static str) -> Histogram<u64> {
-        self.histogram(name)
-    }
-
-    fn fixed_labels(&self) -> &[KeyValue] {
-        self.kvs.as_slice()
-    }
-}
-
-impl<'a> Deref for TemporalMeter<'a> {
-    type Target = dyn ClientMetricProvider + 'a;
-
-    fn deref(&self) -> &Self::Target {
-        self as &Self::Target
-    }
 }
 
 struct Instruments {
@@ -103,45 +55,37 @@ struct Instruments {
 
 impl MetricsContext {
     pub(crate) fn no_op() -> Self {
+        let meter = Arc::new(NoOpCoreMeter);
         Self {
-            kvs: Default::default(),
-            instruments: Arc::new(Instruments::new_explicit(TemporalMeter::new(
-                &NoopMeterProvider::new().meter("fakemeter"),
-                "fakemetrics",
-                Arc::new(vec![]),
-            ))),
+            kvs: meter.new_attributes(Default::default()),
+            instruments: Arc::new(Instruments::new_explicit(meter.as_ref())),
+            meter,
         }
     }
 
-    pub(crate) fn top_level(namespace: String, telemetry: &TelemetryInstance) -> Self {
-        let no_op_meter: Meter;
-        let meter = if let Some(meter) = telemetry.get_metric_meter() {
-            meter
+    pub(crate) fn top_level(namespace: String, tq: String, telemetry: &TelemetryInstance) -> Self {
+        if let Some(meter) = telemetry.get_metric_meter() {
+            let kvs = meter.new_attributes(MetricsAttributesOptions::new(vec![
+                MetricKeyValue::new(KEY_NAMESPACE, namespace),
+                task_queue(tq),
+            ]));
+            Self {
+                kvs,
+                instruments: Arc::new(Instruments::new(telemetry)),
+                meter,
+            }
         } else {
-            no_op_meter = NoopMeterProvider::default().meter("no_op");
-            TemporalMeter::new(&no_op_meter, "fakemetrics", Arc::new(vec![]))
-        };
-
-        let mut kvs = (*meter.kvs).clone();
-        kvs.push(KeyValue::new(KEY_NAMESPACE, namespace));
-        Self {
-            kvs: Arc::new(kvs),
-            instruments: Arc::new(Instruments::new_explicit(meter)),
+            Self::no_op()
         }
-    }
-
-    pub(crate) fn with_task_q(mut self, tq: String) -> Self {
-        Arc::make_mut(&mut self.kvs).push(task_queue(tq));
-        self
     }
 
     /// Extend an existing metrics context with new attributes
-    pub(crate) fn with_new_attrs(&self, new_kvs: impl IntoIterator<Item = KeyValue>) -> Self {
-        let mut kvs = self.kvs.clone();
-        Arc::make_mut(&mut kvs).extend(new_kvs);
+    pub(crate) fn with_new_attrs(&self, new_kvs: impl IntoIterator<Item = MetricKeyValue>) -> Self {
+        let kvs = self.kvs.with_new_attrs(new_kvs);
         Self {
             kvs,
             instruments: self.instruments.clone(),
+            meter: self.meter.clone(),
         }
     }
 
@@ -325,35 +269,35 @@ const KEY_POLLER_TYPE: &str = "poller_type";
 const KEY_WORKER_TYPE: &str = "worker_type";
 const KEY_EAGER: &str = "eager";
 
-pub(crate) fn workflow_poller() -> KeyValue {
-    KeyValue::new(KEY_POLLER_TYPE, "workflow_task")
+pub(crate) fn workflow_poller() -> MetricKeyValue {
+    MetricKeyValue::new(KEY_POLLER_TYPE, "workflow_task")
 }
-pub(crate) fn workflow_sticky_poller() -> KeyValue {
-    KeyValue::new(KEY_POLLER_TYPE, "sticky_workflow_task")
+pub(crate) fn workflow_sticky_poller() -> MetricKeyValue {
+    MetricKeyValue::new(KEY_POLLER_TYPE, "sticky_workflow_task")
 }
-pub(crate) fn activity_poller() -> KeyValue {
-    KeyValue::new(KEY_POLLER_TYPE, "activity_task")
+pub(crate) fn activity_poller() -> MetricKeyValue {
+    MetricKeyValue::new(KEY_POLLER_TYPE, "activity_task")
 }
-pub(crate) fn task_queue(tq: String) -> KeyValue {
-    KeyValue::new(KEY_TASK_QUEUE, tq)
+pub(crate) fn task_queue(tq: String) -> MetricKeyValue {
+    MetricKeyValue::new(KEY_TASK_QUEUE, tq)
 }
-pub(crate) fn activity_type(ty: String) -> KeyValue {
-    KeyValue::new(KEY_ACT_TYPE, ty)
+pub(crate) fn activity_type(ty: String) -> MetricKeyValue {
+    MetricKeyValue::new(KEY_ACT_TYPE, ty)
 }
-pub(crate) fn workflow_type(ty: String) -> KeyValue {
-    KeyValue::new(KEY_WF_TYPE, ty)
+pub(crate) fn workflow_type(ty: String) -> MetricKeyValue {
+    MetricKeyValue::new(KEY_WF_TYPE, ty)
 }
-pub(crate) fn workflow_worker_type() -> KeyValue {
-    KeyValue::new(KEY_WORKER_TYPE, "WorkflowWorker")
+pub(crate) fn workflow_worker_type() -> MetricKeyValue {
+    MetricKeyValue::new(KEY_WORKER_TYPE, "WorkflowWorker")
 }
-pub(crate) fn activity_worker_type() -> KeyValue {
-    KeyValue::new(KEY_WORKER_TYPE, "ActivityWorker")
+pub(crate) fn activity_worker_type() -> MetricKeyValue {
+    MetricKeyValue::new(KEY_WORKER_TYPE, "ActivityWorker")
 }
-pub(crate) fn local_activity_worker_type() -> KeyValue {
-    KeyValue::new(KEY_WORKER_TYPE, "LocalActivityWorker")
+pub(crate) fn local_activity_worker_type() -> MetricKeyValue {
+    MetricKeyValue::new(KEY_WORKER_TYPE, "LocalActivityWorker")
 }
-pub(crate) fn eager(is_eager: bool) -> KeyValue {
-    KeyValue::new(KEY_EAGER, is_eager)
+pub(crate) fn eager(is_eager: bool) -> MetricKeyValue {
+    MetricKeyValue::new(KEY_EAGER, is_eager)
 }
 
 const WF_E2E_LATENCY_NAME: &str = "workflow_endtoend_latency";
@@ -403,6 +347,22 @@ static TASK_SCHED_TO_START_MS_BUCKETS: &[f64] =
 /// Default buckets. Should never really be used as they will be meaningless for many things, but
 /// broadly it's trying to represent latencies in millis.
 pub(super) static DEFAULT_MS_BUCKETS: &[f64] = &[50., 100., 500., 1000., 2500., 10_000.];
+
+/// Returns the default histogram buckets that lang should use for a given metric name if they
+/// have not been overridden by the user.
+///
+/// The name must *not* be prefixed with `temporal_`
+pub fn default_buckets_for(histo_name: &str) -> &'static [f64] {
+    match histo_name {
+        WF_E2E_LATENCY_NAME => WF_LATENCY_MS_BUCKETS,
+        WF_TASK_EXECUTION_LATENCY_NAME | WF_TASK_REPLAY_LATENCY_NAME => WF_TASK_MS_BUCKETS,
+        WF_TASK_SCHED_TO_START_LATENCY_NAME | ACT_SCHED_TO_START_LATENCY_NAME => {
+            TASK_SCHED_TO_START_MS_BUCKETS
+        }
+        ACT_EXEC_LATENCY_NAME => ACT_EXE_MS_BUCKETS,
+        _ => DEFAULT_MS_BUCKETS,
+    }
+}
 
 /// Chooses appropriate aggregators for our metrics
 #[derive(Debug, Clone, Default)]

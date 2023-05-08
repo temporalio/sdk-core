@@ -1,6 +1,10 @@
+pub mod metrics;
+
+use crate::telemetry::metrics::CoreMeter;
 use std::{
     collections::HashMap,
     net::SocketAddr,
+    sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tracing_core::Level;
@@ -90,6 +94,9 @@ pub enum MetricsExporter {
     Otel(OtelCollectorOptions),
     /// Expose metrics directly via an embedded http server bound to the provided address.
     Prometheus(SocketAddr),
+    /// Export metrics calls to lang where it can inject them into whatever metrics system the
+    /// user likes
+    Lang(Arc<dyn CoreMeter>),
 }
 
 /// Control where logs go

@@ -78,20 +78,17 @@ zip = { version = "0.6.3", optional = true }
 # 1st party local deps
 [dependencies.temporal-sdk-core-api]
 path = "../core-api"
-version = "0.1"
+features = ["otel_impls"]
 
 [dependencies.temporal-sdk-core-protos]
 path = "../sdk-core-protos"
-version = "0.1"
 features = ["history_builders"]
 
 [dependencies.temporal-client]
 path = "../client"
-version = "0.1"
 
 [dependencies.rustfsm]
 path = "../fsm"
-version = "0.1"
 
 [dev-dependencies]
 assert_matches = "1.4"

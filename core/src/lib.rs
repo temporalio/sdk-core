@@ -45,9 +45,8 @@ pub use worker::{Worker, WorkerConfig, WorkerConfigBuilder};
 use crate::{
     replay::{mock_client_from_histories, Historator, HistoryForReplay},
     telemetry::{
-        metrics::{MetricsContext, TemporalMeter},
-        remove_trace_subscriber_for_current_thread, set_trace_subscriber_for_current_thread,
-        telemetry_init, TelemetryInstance,
+        metrics::MetricsContext, remove_trace_subscriber_for_current_thread,
+        set_trace_subscriber_for_current_thread, telemetry_init, TelemetryInstance,
     },
     worker::client::WorkerClientBag,
 };
@@ -56,7 +55,7 @@ use std::sync::Arc;
 use temporal_client::{ConfiguredClient, TemporalServiceClientWithMetrics};
 use temporal_sdk_core_api::{
     errors::{CompleteActivityError, PollActivityError, PollWfError},
-    telemetry::TelemetryOptions,
+    telemetry::{metrics::CoreMeter, TelemetryOptions},
     Worker as WorkerTrait,
 };
 use temporal_sdk_core_protos::coresdk::ActivityHeartbeat;
@@ -264,7 +263,7 @@ impl CoreRuntime {
     }
 
     /// Returns the metric meter used for recording metrics, if they were enabled.
-    pub fn metric_meter(&self) -> Option<TemporalMeter> {
+    pub fn metric_meter(&self) -> Option<Arc<dyn CoreMeter>> {
         self.telemetry.get_metric_meter()
     }
 

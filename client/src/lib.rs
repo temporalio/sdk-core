@@ -13,7 +13,6 @@ mod retry;
 mod workflow_handle;
 
 pub use crate::retry::{CallType, RetryClient, RETRYABLE_ERROR_CODES};
-pub use metrics::ClientMetricProvider;
 pub use raw::{HealthService, OperatorService, TestService, WorkflowService};
 pub use temporal_sdk_core_protos::temporal::api::{
     enums::v1::ArchivalState,
@@ -44,6 +43,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+use temporal_sdk_core_api::telemetry::metrics::CoreMeter;
 use temporal_sdk_core_protos::{
     coresdk::{workflow_commands::QueryResult, IntoPayloadsExt},
     grpc::health::v1::health_client::HealthClient,
@@ -294,7 +294,7 @@ impl ClientOptions {
     pub async fn connect(
         &self,
         namespace: impl Into<String>,
-        metrics_meter: Option<&dyn ClientMetricProvider>,
+        metrics_meter: Option<&dyn CoreMeter>,
         headers: Option<Arc<RwLock<HashMap<String, String>>>>,
     ) -> Result<RetryClient<Client>, ClientInitError> {
         let client = self
@@ -312,7 +312,7 @@ impl ClientOptions {
     /// See [RetryClient] for more
     pub async fn connect_no_namespace(
         &self,
-        metrics_meter: Option<&dyn ClientMetricProvider>,
+        metrics_meter: Option<&dyn CoreMeter>,
         headers: Option<Arc<RwLock<HashMap<String, String>>>>,
     ) -> Result<RetryClient<ConfiguredClient<TemporalServiceClientWithMetrics>>, ClientInitError>
     {
@@ -327,8 +327,7 @@ impl ClientOptions {
         let service = ServiceBuilder::new()
             .layer_fn(|channel| GrpcMetricSvc {
                 inner: channel,
-                metrics: metrics_meter
-                    .map(|mm| MetricsContext::new(mm.fixed_labels().to_vec(), mm)),
+                metrics: metrics_meter.map(|mm| MetricsContext::new(mm)),
             })
             .service(channel);
         let headers = headers.unwrap_or_default();

@@ -12,9 +12,14 @@ categories = ["development-tools"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+otel_impls = ["opentelemetry"]
+
 [dependencies]
 async-trait = "0.1"
 derive_builder = "0.12"
+derive_more = "0.99"
+opentelemetry = { version = "0.18", optional = true }
 prost-types = "0.11"
 serde = { version = "1.0", default_features = false, features = ["derive"] }
 serde_json = "1.0"
@@ -26,8 +31,4 @@ url = "2.3"
 
 [dependencies.temporal-sdk-core-protos]
 path = "../sdk-core-protos"
-version = "0.1"
-
-[dependencies.temporal-client]
-path = "../client"
 version = "0.1"

@@ -37,6 +37,7 @@ use std::{
     time::Duration,
 };
 use temporal_sdk_core_api::telemetry::{
+    metrics::{CoreMeter, PrefixedMetricsMeter},
     CoreLog, CoreTelemetry, Logger, MetricTemporality, MetricsExporter, OtelCollectorOptions,
     TelemetryOptions,
 };
@@ -58,7 +59,7 @@ pub fn construct_filter_string(core_level: Level, other_level: Level) -> String 
 pub struct TelemetryInstance {
     metric_prefix: &'static str,
     logs_out: Option<Mutex<CoreLogsOut>>,
-    metrics: Option<(MeterProvider, Meter)>,
+    metrics: Option<Arc<dyn CoreMeter + 'static>>,
     trace_subscriber: Arc<dyn Subscriber + Send + Sync>,
     prom_binding: Option<SocketAddr>,
     attach_service_name: bool,
@@ -70,15 +71,11 @@ impl TelemetryInstance {
         trace_subscriber: Arc<dyn Subscriber + Send + Sync>,
         logs_out: Option<Mutex<CoreLogsOut>>,
         metric_prefix: &'static str,
-        mut meter_provider: Option<MeterProvider>,
+        metrics: Option<Arc<dyn CoreMeter + 'static>>,
         prom_binding: Option<SocketAddr>,
         attach_service_name: bool,
         keepalive_rx: Receiver<()>,
     ) -> Self {
-        let metrics = meter_provider.take().map(|mp| {
-            let meter = mp.meter(TELEM_SERVICE_NAME);
-            (mp, meter)
-        });
         Self {
             metric_prefix,
             logs_out,
@@ -101,16 +98,17 @@ impl TelemetryInstance {
         self.prom_binding
     }
 
-    /// Returns our wrapper for OTel metric meters, can be used to, ex: initialize clients
-    pub fn get_metric_meter(&self) -> Option<TemporalMeter> {
-        let kvs = if self.attach_service_name {
-            vec![KeyValue::new("service_name", TELEM_SERVICE_NAME)]
-        } else {
-            vec![]
-        };
-        self.metrics
-            .as_ref()
-            .map(|(_, m)| TemporalMeter::new(m, self.metric_prefix, Arc::new(kvs)))
+    /// Returns our wrapper for metric meters, can be used to, ex: initialize clients
+    pub fn get_metric_meter(&self) -> Option<Arc<dyn CoreMeter>> {
+        // TODO: this
+        // let kvs = if self.attach_service_name {
+        //     vec![KeyValue::new("service_name", TELEM_SERVICE_NAME)]
+        // } else {
+        //     vec![]
+        // };
+        self.metrics.clone().map(|m| {
+            Arc::new(PrefixedMetricsMeter::new(self.metric_prefix, m)) as Arc<dyn CoreMeter>
+        })
     }
 }
 
@@ -250,6 +248,7 @@ pub fn telemetry_init(opts: TelemetryOptions) -> Result<TelemetryInstance, anyho
                     let mp = MeterProvider::builder().with_reader(reader);
                     Ok::<_, anyhow::Error>(Some(mp))
                 })?,
+                MetricsExporter::Lang(cm) => Some(cm.clone()),
             }
         } else {
             None
@@ -359,7 +358,6 @@ pub mod test_initters {
         .unwrap();
     }
 }
-use crate::telemetry::metrics::{augment_meter_provider_with_views, SDKAggSelector};
 #[cfg(test)]
 pub use test_initters::*;
 
