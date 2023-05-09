@@ -17,7 +17,7 @@ use temporal_sdk_core_protos::temporal::api::workflowservice::v1::{
 use tokio::{
     sync::{
         mpsc::{channel, Receiver},
-        Mutex, Semaphore,
+        Mutex,
     },
     task::JoinHandle,
 };
@@ -26,10 +26,6 @@ use tokio_util::sync::CancellationToken;
 pub struct LongPollBuffer<T> {
     buffered_polls: Mutex<Receiver<pollers::Result<T>>>,
     shutdown: CancellationToken,
-    /// This semaphore exists to ensure that we only poll server as many times as core actually
-    /// *asked* it to be polled - otherwise we might spin and buffer polls constantly. This also
-    /// means unit tests can continue to function in a predictable manner when calling mocks.
-    polls_requested: Arc<Semaphore>,
     join_handles: FuturesUnordered<JoinHandle<()>>,
     /// Called every time the number of pollers is changed
     num_pollers_changed: Option<Box<dyn Fn(usize) + Send + Sync>>,
@@ -63,7 +59,6 @@ where
         FT: Future<Output = pollers::Result<T>> + Send,
     {
         let (tx, rx) = channel(buffer_size);
-        let polls_requested = Arc::new(Semaphore::new(0));
         let active_pollers = Arc::new(AtomicUsize::new(0));
         let join_handles = FuturesUnordered::new();
         let pf = Arc::new(poll_fn);
@@ -71,23 +66,17 @@ where
             let tx = tx.clone();
             let pf = pf.clone();
             let shutdown = shutdown.clone();
-            let polls_requested = polls_requested.clone();
             let ap = active_pollers.clone();
             let jh = tokio::spawn(async move {
                 loop {
                     if shutdown.is_cancelled() {
                         break;
                     }
-                    let sp = tokio::select! {
-                        sp = polls_requested.acquire() => sp.expect("Polls semaphore not dropped"),
-                        _ = shutdown.cancelled() => continue,
-                    };
                     let _active_guard = ActiveCounter::new(ap.as_ref());
                     let r = tokio::select! {
                         r = pf() => r,
                         _ = shutdown.cancelled() => continue,
                     };
-                    sp.forget();
                     let _ = tx.send(r).await;
                 }
             });
@@ -96,7 +85,6 @@ where
         Self {
             buffered_polls: Mutex::new(rx),
             shutdown,
-            polls_requested,
             join_handles,
             num_pollers_changed: None,
             active_pollers,
@@ -127,7 +115,6 @@ where
     /// Returns `None` if the poll buffer has been shut down
     #[instrument(name = "long_poll", level = "trace", skip(self))]
     async fn poll(&self) -> Option<pollers::Result<T>> {
-        self.polls_requested.add_permits(1);
         if let Some(fun) = self.num_pollers_changed.as_ref() {
             fun(self.active_pollers.load(Ordering::Relaxed));
         }

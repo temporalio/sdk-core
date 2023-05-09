@@ -1058,26 +1058,34 @@ async fn graceful_shutdown(#[values(true, false)] at_max_outstanding: bool) {
     let _task_q = "q";
     let grace_period = Duration::from_millis(200);
     let mut tasks = three_tasks();
-    let mut mock_client = mock_workflow_client();
-    mock_client
-        .expect_poll_activity_task()
+    let mut mock_act_poller = mock_poller();
+    mock_act_poller
+        .expect_poll()
         .times(3)
-        .returning(move |_, _| Ok(tasks.pop_front().unwrap()));
+        .returning(move || Some(Ok(tasks.pop_front().unwrap())));
+    mock_act_poller
+        .expect_poll()
+        .times(1)
+        .returning(move || None);
     // They shall all be reported as failed
+    let mut mock_client = mock_workflow_client();
     mock_client
         .expect_fail_activity_task()
         .times(3)
         .returning(|_, _| Ok(Default::default()));
 
     let max_outstanding = if at_max_outstanding { 3_usize } else { 100 };
-    let worker = Worker::new_test(
-        test_worker_cfg()
+    let mw = MockWorkerInputs {
+        act_poller: Some(Box::from(mock_act_poller)),
+        config: test_worker_cfg()
             .graceful_shutdown_period(grace_period)
             .max_outstanding_activities(max_outstanding)
+            .max_concurrent_at_polls(1_usize) // Makes test logic simple
             .build()
             .unwrap(),
-        mock_client,
-    );
+        ..Default::default()
+    };
+    let worker = mock_worker(MocksHolder::from_mock_worker(mock_client, mw));
 
     let _1 = worker.poll_activity_task().await.unwrap();
 
