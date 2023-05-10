@@ -7,12 +7,16 @@ pub use temporal_client::{
     Client, ClientOptions, ClientOptionsBuilder, ClientTlsConfig, RetryClient, RetryConfig,
     TlsConfig, WorkflowClientTrait,
 };
+
+use crate::abstractions::OwnedMeteredSemPermit;
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::{
     PollActivityTaskQueueResponse, PollWorkflowTaskQueueResponse,
 };
 
 #[cfg(test)]
 use futures::Future;
+#[cfg(test)]
+pub(crate) use poll_buffer::MockPermittedPollBuffer;
 
 pub type Result<T, E = tonic::Status> = std::result::Result<T, E>;
 
@@ -31,9 +35,32 @@ where
     /// Need a separate shutdown to be able to consume boxes :(
     async fn shutdown_box(self: Box<Self>);
 }
-pub type BoxedPoller<T> = Box<dyn Poller<T> + Send + Sync + 'static>;
-pub type BoxedWFPoller = BoxedPoller<PollWorkflowTaskQueueResponse>;
-pub type BoxedActPoller = BoxedPoller<PollActivityTaskQueueResponse>;
+pub(crate) type BoxedPoller<T> = Box<dyn Poller<T> + Send + Sync + 'static>;
+pub(crate) type BoxedWFPoller = BoxedPoller<(PollWorkflowTaskQueueResponse, OwnedMeteredSemPermit)>;
+pub(crate) type BoxedActPoller =
+    BoxedPoller<(PollActivityTaskQueueResponse, OwnedMeteredSemPermit)>;
+
+#[async_trait::async_trait]
+impl<T> Poller<T> for Box<dyn Poller<T> + Send + Sync>
+where
+    T: Send + Sync + 'static,
+{
+    async fn poll(&self) -> Option<Result<T>> {
+        Poller::poll(self.as_ref()).await
+    }
+
+    fn notify_shutdown(&self) {
+        Poller::notify_shutdown(self.as_ref())
+    }
+
+    async fn shutdown(self) {
+        Poller::shutdown(self).await
+    }
+
+    async fn shutdown_box(self: Box<Self>) {
+        Poller::shutdown_box(self).await
+    }
+}
 
 #[cfg(test)]
 mockall::mock! {

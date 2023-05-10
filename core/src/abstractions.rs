@@ -4,7 +4,6 @@ pub mod take_cell;
 
 use crate::MetricsContext;
 use derive_more::DebugCustom;
-use futures::{stream, Stream, StreamExt};
 use std::{
     fmt::{Debug, Formatter},
     sync::{
@@ -45,6 +44,11 @@ impl MeteredSemaphore {
 
     pub fn available_permits(&self) -> usize {
         self.sem.available_permits()
+    }
+
+    #[cfg(test)]
+    pub fn unused_permits(&self) -> usize {
+        self.sem.available_permits() + self.unused_claimants.load(Ordering::Acquire)
     }
 
     pub async fn acquire_owned(&self) -> Result<OwnedMeteredSemPermit, AcquireError> {
@@ -114,8 +118,8 @@ impl ClosableMeteredSemaphore {
 
 impl ClosableMeteredSemaphore {
     #[cfg(test)]
-    pub fn available_permits(&self) -> usize {
-        self.inner.available_permits()
+    pub fn unused_permits(&self) -> usize {
+        self.inner.unused_permits()
     }
 
     /// Request to close the semaphore and prevent new permits from being acquired.
@@ -231,35 +235,6 @@ impl UsedMeteredSemPermit {
     }
 }
 
-/// From the input stream, create a new stream which only pulls from the input stream when allowed.
-/// When allowed is determined by the passed in `proceeder` emitting an item. The input stream is
-/// only pulled from when that future resolves.
-///
-/// This is *almost* identical to `zip`, but does not terminate early if the input stream closes.
-/// The proceeder must allow the poll before the returned stream closes. If the proceeder terminates
-/// the overall stream will terminate.
-pub(crate) fn stream_when_allowed<S, AS>(
-    input: S,
-    proceeder: AS,
-) -> impl Stream<Item = (S::Item, AS::Item)>
-where
-    S: Stream + Send + 'static,
-    AS: Stream + Send + 'static,
-{
-    let stream = stream::unfold(
-        (proceeder.boxed(), input.boxed()),
-        |(mut proceeder, mut input)| async {
-            let v = proceeder.next().await;
-            if let Some(v) = v {
-                input.next().await.map(|i| ((i, v), (proceeder, input)))
-            } else {
-                None
-            }
-        },
-    );
-    stream
-}
-
 macro_rules! dbg_panic {
   ($($arg:tt)*) => {
       error!($($arg)*);
@@ -271,49 +246,6 @@ pub(crate) use dbg_panic;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures::pin_mut;
-    use std::task::Poll;
-    use tokio::sync::mpsc::unbounded_channel;
-    use tokio_stream::wrappers::UnboundedReceiverStream;
-
-    #[test]
-    fn stream_when_allowed_works() {
-        let inputs = stream::iter([1, 2, 3]);
-        let (allow_tx, allow_rx) = unbounded_channel();
-        let when_allowed = stream_when_allowed(inputs, UnboundedReceiverStream::new(allow_rx));
-
-        let waker = futures::task::noop_waker_ref();
-        let mut cx = std::task::Context::from_waker(waker);
-        pin_mut!(when_allowed);
-
-        allow_tx.send(()).unwrap();
-        assert_eq!(
-            when_allowed.poll_next_unpin(&mut cx),
-            Poll::Ready(Some((1, ())))
-        );
-        // Now, it won't be ready
-        for _ in 1..10 {
-            assert_eq!(when_allowed.poll_next_unpin(&mut cx), Poll::Pending);
-        }
-        allow_tx.send(()).unwrap();
-        assert_eq!(
-            when_allowed.poll_next_unpin(&mut cx),
-            Poll::Ready(Some((2, ())))
-        );
-        for _ in 1..10 {
-            assert_eq!(when_allowed.poll_next_unpin(&mut cx), Poll::Pending);
-        }
-        allow_tx.send(()).unwrap();
-        assert_eq!(
-            when_allowed.poll_next_unpin(&mut cx),
-            Poll::Ready(Some((3, ())))
-        );
-        for _ in 1..10 {
-            assert_eq!(when_allowed.poll_next_unpin(&mut cx), Poll::Pending);
-        }
-        allow_tx.send(()).unwrap();
-        assert_eq!(when_allowed.poll_next_unpin(&mut cx), Poll::Ready(None));
-    }
 
     #[tokio::test]
     async fn closable_semaphore_permit_drop_returns_permit() {

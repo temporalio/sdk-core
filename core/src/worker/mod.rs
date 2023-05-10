@@ -10,21 +10,20 @@ pub(crate) use activities::{
     ExecutingLAId, LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
     NewLocalAct,
 };
-#[cfg(test)]
-pub(crate) use workflow::ManagedWFFunc;
 pub(crate) use workflow::{wft_poller::new_wft_poller, LEGACY_QUERY_ID};
 
+#[cfg(test)]
+pub(crate) use workflow::ManagedWFFunc;
+
 use crate::{
+    abstractions::MeteredSemaphore,
     errors::CompleteWfError,
-    pollers::{
-        new_activity_task_buffer, new_workflow_task_buffer, BoxedActPoller, Poller,
-        WorkflowTaskPoller,
-    },
-    protosext::{validate_activity_completion, ValidPollWFTQResponse},
+    pollers::{new_activity_task_buffer, new_workflow_task_buffer, WorkflowTaskPoller},
+    protosext::validate_activity_completion,
     telemetry::{
         metrics::{
-            activity_poller, local_activity_worker_type, workflow_poller, workflow_sticky_poller,
-            MetricsContext,
+            activity_poller, activity_worker_type, local_activity_worker_type, workflow_poller,
+            workflow_sticky_poller, workflow_worker_type, MetricsContext,
         },
         TelemetryInstance,
     },
@@ -36,7 +35,6 @@ use crate::{
     ActivityHeartbeat, CompleteActivityError, PollActivityError, PollWfError, WorkerTrait,
 };
 use activities::{LocalInFlightActInfo, WorkerActivityTasks};
-use futures::Stream;
 use std::{
     convert::TryInto,
     future,
@@ -56,12 +54,24 @@ use temporal_sdk_core_protos::{
     temporal::api::{
         enums::v1::TaskQueueKind,
         taskqueue::v1::{StickyExecutionAttributes, TaskQueue},
-        workflowservice::v1::{get_system_info_response, PollActivityTaskQueueResponse},
+        workflowservice::v1::get_system_info_response,
     },
     TaskToken,
 };
 use tokio::sync::mpsc::unbounded_channel;
 use tokio_util::sync::CancellationToken;
+
+use crate::pollers::BoxedActPoller;
+#[cfg(test)]
+use {
+    crate::{
+        pollers::{BoxedPoller, MockPermittedPollBuffer},
+        protosext::ValidPollWFTQResponse,
+    },
+    futures::stream::BoxStream,
+    futures_util::StreamExt,
+    temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse,
+};
 
 /// A worker polls on a certain task queue
 pub struct Worker {
@@ -183,9 +193,7 @@ impl Worker {
         client: Arc<dyn WorkerClient>,
         telem_instance: Option<&TelemetryInstance>,
     ) -> Self {
-        info!(task_queue=%config.task_queue,
-              namespace=%config.namespace,
-              "Initializing worker");
+        info!(task_queue=%config.task_queue, namespace=%config.namespace, "Initializing worker");
         let metrics = if let Some(ti) = telem_instance {
             MetricsContext::top_level(config.namespace.clone(), ti)
                 .with_task_q(config.task_queue.clone())
@@ -194,68 +202,13 @@ impl Worker {
         };
         metrics.worker_registered();
 
-        let shutdown_token = CancellationToken::new();
-        let max_nonsticky_polls = if sticky_queue_name.is_some() {
-            config.max_nonsticky_polls()
-        } else {
-            config.max_concurrent_wft_polls
-        };
-        let max_sticky_polls = config.max_sticky_polls();
-        let wft_metrics = metrics.with_new_attrs([workflow_poller()]);
-        let mut wf_task_poll_buffer = new_workflow_task_buffer(
-            client.clone(),
-            config.task_queue.clone(),
-            false,
-            max_nonsticky_polls,
-            max_nonsticky_polls * 2,
-            shutdown_token.child_token(),
-        );
-        wf_task_poll_buffer.set_num_pollers_handler(move |np| wft_metrics.record_num_pollers(np));
-        let sticky_queue_poller = sticky_queue_name.as_ref().map(|sqn| {
-            let sticky_metrics = metrics.with_new_attrs([workflow_sticky_poller()]);
-            let mut sp = new_workflow_task_buffer(
-                client.clone(),
-                sqn.clone(),
-                true,
-                max_sticky_polls,
-                max_sticky_polls * 2,
-                shutdown_token.child_token(),
-            );
-            sp.set_num_pollers_handler(move |np| sticky_metrics.record_num_pollers(np));
-            sp
-        });
-        let act_poll_buffer = if config.no_remote_activities {
-            None
-        } else {
-            let mut ap = new_activity_task_buffer(
-                client.clone(),
-                config.task_queue.clone(),
-                config.max_concurrent_at_polls,
-                config.max_concurrent_at_polls * 2,
-                config.max_task_queue_activities_per_second,
-                shutdown_token.child_token(),
-            );
-            let act_metrics = metrics.with_new_attrs([activity_poller()]);
-            ap.set_num_pollers_handler(move |np| act_metrics.record_num_pollers(np));
-            Some(Box::from(ap)
-                as Box<
-                    dyn Poller<PollActivityTaskQueueResponse> + Send + Sync,
-                >)
-        };
-        let wf_task_poll_buffer = Box::new(WorkflowTaskPoller::new(
-            wf_task_poll_buffer,
-            sticky_queue_poller,
-        ));
-        let wft_stream = new_wft_poller(wf_task_poll_buffer, metrics.clone());
         Self::new_with_pollers(
             config,
             sticky_queue_name,
             client,
-            wft_stream,
-            act_poll_buffer,
+            TaskPollers::Real,
             metrics,
             telem_instance,
-            shutdown_token,
         )
     }
 
@@ -269,12 +222,104 @@ impl Worker {
         mut config: WorkerConfig,
         sticky_queue_name: Option<String>,
         client: Arc<dyn WorkerClient>,
-        wft_stream: impl Stream<Item = Result<ValidPollWFTQResponse, tonic::Status>> + Send + 'static,
-        act_poller: Option<BoxedActPoller>,
+        task_pollers: TaskPollers,
         metrics: MetricsContext,
         telem_instance: Option<&TelemetryInstance>,
-        shutdown_token: CancellationToken,
     ) -> Self {
+        let shutdown_token = CancellationToken::new();
+        let wft_semaphore = Arc::new(MeteredSemaphore::new(
+            config.max_outstanding_workflow_tasks,
+            metrics.with_new_attrs([workflow_worker_type()]),
+            MetricsContext::available_task_slots,
+        ));
+        let act_semaphore = Arc::new(MeteredSemaphore::new(
+            config.max_outstanding_activities,
+            metrics.with_new_attrs([activity_worker_type()]),
+            MetricsContext::available_task_slots,
+        ));
+
+        let (wft_stream, act_poller) = match task_pollers {
+            TaskPollers::Real => {
+                let max_nonsticky_polls = if sticky_queue_name.is_some() {
+                    config.max_nonsticky_polls()
+                } else {
+                    config.max_concurrent_wft_polls
+                };
+                let max_sticky_polls = config.max_sticky_polls();
+                let wft_metrics = metrics.with_new_attrs([workflow_poller()]);
+                let mut wf_task_poll_buffer = new_workflow_task_buffer(
+                    client.clone(),
+                    config.task_queue.clone(),
+                    false,
+                    max_nonsticky_polls,
+                    wft_semaphore.clone(),
+                    shutdown_token.child_token(),
+                );
+                wf_task_poll_buffer.set_num_pollers_handler(move |np| {
+                    wft_metrics.record_num_pollers(np);
+                });
+                let sticky_queue_poller = sticky_queue_name.as_ref().map(|sqn| {
+                    let sticky_metrics = metrics.with_new_attrs([workflow_sticky_poller()]);
+                    let mut sp = new_workflow_task_buffer(
+                        client.clone(),
+                        sqn.clone(),
+                        true,
+                        max_sticky_polls,
+                        wft_semaphore.clone(),
+                        shutdown_token.child_token(),
+                    );
+                    sp.set_num_pollers_handler(move |np| {
+                        sticky_metrics.record_num_pollers(np);
+                    });
+                    sp
+                });
+                let act_poll_buffer = if config.no_remote_activities {
+                    None
+                } else {
+                    let mut ap = new_activity_task_buffer(
+                        client.clone(),
+                        config.task_queue.clone(),
+                        config.max_concurrent_at_polls,
+                        act_semaphore.clone(),
+                        config.max_task_queue_activities_per_second,
+                        shutdown_token.child_token(),
+                    );
+                    let act_metrics = metrics.with_new_attrs([activity_poller()]);
+                    ap.set_num_pollers_handler(move |np| act_metrics.record_num_pollers(np));
+                    Some(Box::from(ap) as BoxedActPoller)
+                };
+                let wf_task_poll_buffer = Box::new(WorkflowTaskPoller::new(
+                    wf_task_poll_buffer,
+                    sticky_queue_poller,
+                ));
+                let wft_stream = new_wft_poller(wf_task_poll_buffer, metrics.clone());
+                #[cfg(test)]
+                let wft_stream = wft_stream.left_stream();
+                (wft_stream, act_poll_buffer)
+            }
+            #[cfg(test)]
+            TaskPollers::Mocked {
+                wft_stream,
+                act_poller,
+            } => {
+                let ap =
+                    act_poller.map(|ap| MockPermittedPollBuffer::new(act_semaphore.clone(), ap));
+                let wft_semaphore = wft_semaphore.clone();
+                let wfs = wft_stream.then(move |s| {
+                    let wft_semaphore = wft_semaphore.clone();
+                    async move {
+                        let permit = wft_semaphore
+                            .acquire_owned()
+                            .await
+                            .expect("Mock WFT stream should not see closed semaphore");
+                        s.map(|s| (s, permit))
+                    }
+                });
+                let wfs = wfs.right_stream();
+                (wfs, ap.map(|ap| Box::new(ap) as BoxedActPoller))
+            }
+        };
+
         let (hb_tx, hb_rx) = unbounded_channel();
         let local_act_mgr = Arc::new(LocalActivityManager::new(
             config.max_outstanding_local_activities,
@@ -284,7 +329,7 @@ impl Worker {
         ));
         let at_task_mgr = act_poller.map(|ap| {
             WorkerActivityTasks::new(
-                config.max_outstanding_activities,
+                act_semaphore,
                 config.max_worker_activities_per_second,
                 ap,
                 client.clone(),
@@ -321,6 +366,7 @@ impl Worker {
                     ),
                 }),
                 client,
+                wft_semaphore,
                 wft_stream,
                 la_sink,
                 local_act_mgr.clone(),
@@ -393,8 +439,12 @@ impl Worker {
     }
 
     #[allow(unused)]
-    pub(crate) async fn available_wft_permits(&self) -> usize {
+    pub(crate) fn available_wft_permits(&self) -> usize {
         self.workflows.available_wft_permits()
+    }
+    #[cfg(test)]
+    pub(crate) fn unused_wft_permits(&self) -> usize {
+        self.workflows.unused_wft_permits()
     }
 
     /// Get new activity tasks (may be local or nonlocal). Local activities are returned first
@@ -605,7 +655,6 @@ fn build_wf_basics(
 ) -> WorkflowBasics {
     WorkflowBasics {
         max_cached_workflows: config.max_cached_workflows,
-        max_outstanding_wfts: config.max_outstanding_workflow_tasks,
         shutdown_token,
         metrics,
         namespace: config.namespace.clone(),
@@ -616,6 +665,15 @@ fn build_wf_basics(
         #[cfg(feature = "save_wf_inputs")]
         wf_state_inputs: config.wf_state_inputs.take(),
     }
+}
+
+pub(crate) enum TaskPollers {
+    Real,
+    #[cfg(test)]
+    Mocked {
+        wft_stream: BoxStream<'static, Result<ValidPollWFTQResponse, tonic::Status>>,
+        act_poller: Option<BoxedPoller<PollActivityTaskQueueResponse>>,
+    },
 }
 
 #[cfg(test)]
@@ -648,7 +706,7 @@ mod tests {
                 .as_ref()
                 .unwrap()
                 .remaining_activity_capacity(),
-            4
+            5
         );
     }
 

@@ -1,7 +1,7 @@
 pub(crate) use temporal_sdk_core_test_utils::canned_histories;
 
 use crate::{
-    pollers::{BoxedActPoller, BoxedPoller, BoxedWFPoller, MockManualPoller, MockPoller},
+    pollers::{BoxedPoller, MockManualPoller, MockPoller},
     protosext::ValidPollWFTQResponse,
     replay::TestHistoryBuilder,
     sticky_q_name_for_worker,
@@ -10,7 +10,7 @@ use crate::{
         client::{
             mocks::mock_workflow_client, MockWorkerClient, WorkerClient, WorkflowTaskCompletion,
         },
-        new_wft_poller,
+        TaskPollers,
     },
     TaskToken, Worker, WorkerConfig, WorkerConfigBuilder,
 };
@@ -53,7 +53,6 @@ use temporal_sdk_core_protos::{
 use temporal_sdk_core_test_utils::TestWorker;
 use tokio::sync::{mpsc::unbounded_channel, Notify};
 use tokio_stream::wrappers::UnboundedReceiverStream;
-use tokio_util::sync::CancellationToken;
 
 pub const TEST_Q: &str = "q";
 
@@ -148,11 +147,12 @@ pub(crate) fn mock_worker(mocks: MocksHolder) -> Worker {
         mocks.inputs.config,
         sticky_q,
         mocks.client,
-        mocks.inputs.wft_stream,
-        act_poller,
+        TaskPollers::Mocked {
+            wft_stream: mocks.inputs.wft_stream,
+            act_poller,
+        },
         MetricsContext::no_op(),
         None,
-        CancellationToken::new(),
     )
 }
 
@@ -187,7 +187,7 @@ impl MocksHolder {
     pub fn worker_cfg(&mut self, mutator: impl FnOnce(&mut WorkerConfig)) {
         mutator(&mut self.inputs.config);
     }
-    pub fn set_act_poller(&mut self, poller: BoxedActPoller) {
+    pub fn set_act_poller(&mut self, poller: BoxedPoller<PollActivityTaskQueueResponse>) {
         self.inputs.act_poller = Some(poller);
     }
     /// Can be used for tests that need to avoid auto-shutdown due to running out of mock responses
@@ -199,13 +199,13 @@ impl MocksHolder {
 
 pub struct MockWorkerInputs {
     pub wft_stream: BoxStream<'static, Result<ValidPollWFTQResponse, tonic::Status>>,
-    pub act_poller: Option<BoxedActPoller>,
+    pub act_poller: Option<BoxedPoller<PollActivityTaskQueueResponse>>,
     pub config: WorkerConfig,
 }
 
 impl Default for MockWorkerInputs {
     fn default() -> Self {
-        Self::new_from_poller(Box::from(mock_poller()))
+        Self::new(stream::empty().boxed())
     }
 }
 
@@ -215,13 +215,6 @@ impl MockWorkerInputs {
     ) -> Self {
         Self {
             wft_stream,
-            act_poller: None,
-            config: test_worker_cfg().build().unwrap(),
-        }
-    }
-    pub fn new_from_poller(wf_poller: BoxedWFPoller) -> Self {
-        Self {
-            wft_stream: new_wft_poller(wf_poller, MetricsContext::no_op()).boxed(),
             act_poller: None,
             config: test_worker_cfg().build().unwrap(),
         }

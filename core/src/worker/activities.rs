@@ -14,9 +14,7 @@ use crate::{
         TrackedOwnedMeteredSemPermit, UsedMeteredSemPermit,
     },
     pollers::BoxedActPoller,
-    telemetry::metrics::{
-        activity_type, activity_worker_type, eager, workflow_type, MetricsContext,
-    },
+    telemetry::metrics::{activity_type, eager, workflow_type, MetricsContext},
     worker::{
         activities::{
             activity_heartbeat_manager::ActivityHeartbeatError,
@@ -158,7 +156,7 @@ enum ActivityTaskSource {
 impl WorkerActivityTasks {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
-        max_activity_tasks: usize,
+        semaphore: Arc<MeteredSemaphore>,
         max_worker_act_per_sec: Option<f64>,
         poller: BoxedActPoller,
         client: Arc<dyn WorkerClient>,
@@ -167,11 +165,6 @@ impl WorkerActivityTasks {
         default_heartbeat_throttle_interval: Duration,
         graceful_shutdown: Option<Duration>,
     ) -> Self {
-        let semaphore = Arc::new(MeteredSemaphore::new(
-            max_activity_tasks,
-            metrics.with_new_attrs([activity_worker_type()]),
-            MetricsContext::available_task_slots,
-        ));
         let shutdown_initiated_token = CancellationToken::new();
         let rate_limiter = max_worker_act_per_sec.and_then(|ps| {
             Quota::with_period(Duration::from_secs_f64(ps.recip())).map(RateLimiter::direct)
@@ -179,7 +172,6 @@ impl WorkerActivityTasks {
         let outstanding_activity_tasks = Arc::new(DashMap::new());
         let server_poller_stream = new_activity_task_poller(
             poller,
-            semaphore.clone(),
             rate_limiter,
             metrics.clone(),
             shutdown_initiated_token.clone(),
@@ -430,7 +422,7 @@ impl WorkerActivityTasks {
 
     #[cfg(test)]
     pub(crate) fn remaining_activity_capacity(&self) -> usize {
-        self.eager_activities_semaphore.available_permits()
+        self.eager_activities_semaphore.unused_permits()
     }
 }
 
@@ -626,11 +618,17 @@ fn worker_shutdown_failure() -> Failure {
 mod tests {
     use super::*;
     use crate::{
-        test_help::mock_poller_from_resps, worker::client::mocks::mock_manual_workflow_client,
+        pollers::MockPermittedPollBuffer, test_help::mock_poller_from_resps,
+        worker::client::mocks::mock_manual_workflow_client,
     };
 
     #[tokio::test]
     async fn per_worker_ratelimit() {
+        let sem = Arc::new(MeteredSemaphore::new(
+            10,
+            MetricsContext::no_op(),
+            MetricsContext::available_task_slots,
+        ));
         let poller = mock_poller_from_resps([
             PollActivityTaskQueueResponse {
                 task_token: vec![1],
@@ -646,9 +644,9 @@ mod tests {
             .into(),
         ]);
         let atm = WorkerActivityTasks::new(
-            10,
+            sem.clone(),
             Some(2.0),
-            poller,
+            Box::new(MockPermittedPollBuffer::new(sem, poller)),
             Arc::new(mock_manual_workflow_client()),
             MetricsContext::no_op(),
             Duration::from_secs(1),

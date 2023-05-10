@@ -18,7 +18,7 @@ use rstest::{fixture, rstest};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
         Arc,
     },
     time::Duration,
@@ -60,6 +60,7 @@ use temporal_sdk_core_test_utils::{fanout_tasks, start_timer_cmd, WorkerTestHelp
 use tokio::{
     join,
     sync::{Barrier, Semaphore},
+    time,
 };
 
 #[fixture(hist_batches = &[])]
@@ -1535,8 +1536,6 @@ async fn failing_wft_doesnt_eat_permit_forever() {
             .unwrap();
     }
     assert_eq!(worker.outstanding_workflow_tasks().await, 0);
-    // 1 permit is in use because the next task is buffered and has re-used the permit
-    assert_eq!(worker.available_wft_permits().await, 1);
     // We should be "out of work" because the mock service thinks we didn't complete the last task,
     // which we didn't, because we don't spam failures. The real server would eventually time out
     // the task. Mock doesn't understand that, so the WFT permit is released because eventually a
@@ -1545,7 +1544,7 @@ async fn failing_wft_doesnt_eat_permit_forever() {
     outstanding_mock_tasks.unwrap().release_run(&run_id);
     let activation = worker.poll_workflow_activation().await.unwrap();
     // There should be no change in permits, since this just unbuffered the buffered task
-    assert_eq!(worker.available_wft_permits().await, 1);
+    assert_eq!(worker.available_wft_permits(), 1);
     worker
         .complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
             activation.run_id,
@@ -1554,7 +1553,7 @@ async fn failing_wft_doesnt_eat_permit_forever() {
         .await
         .unwrap();
     worker.shutdown().await;
-    assert_eq!(worker.available_wft_permits().await, 2);
+    assert_eq!(worker.available_wft_permits(), 2);
 }
 
 #[tokio::test]
@@ -1875,7 +1874,7 @@ async fn poll_faster_than_complete_wont_overflow_cache() {
 
     join!(blocking_poll, complete_evict);
     // p5 outstanding and final poll outstanding -- hence one permit available
-    assert_eq!(core.available_wft_permits().await, 1);
+    assert_eq!(core.available_wft_permits(), 1);
     assert_eq!(core.cached_workflows().await, 3);
 }
 
@@ -2587,4 +2586,73 @@ async fn history_length_with_fail_and_timeout(
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
+}
+
+#[tokio::test]
+async fn poller_wont_run_ahead_of_task_slots() {
+    let popped_tasks = Arc::new(AtomicUsize::new(0));
+    let ptc = popped_tasks.clone();
+    let mut bunch_of_first_tasks = (1..50).map(move |i| {
+        ptc.fetch_add(1, Ordering::Relaxed);
+        hist_to_poll_resp(
+            &canned_histories::single_timer(&format!("{i}")),
+            format!("wf-{i}"),
+            1.into(),
+        )
+        .resp
+    });
+    let mut mock_client = mock_workflow_client();
+    mock_client
+        .expect_poll_workflow_task()
+        .returning(move |_, _| Ok(bunch_of_first_tasks.next().unwrap()));
+    mock_client
+        .expect_complete_workflow_task()
+        .returning(|_| Ok(Default::default()));
+
+    let worker = Worker::new_test(
+        test_worker_cfg()
+            .max_cached_workflows(10_usize)
+            .max_outstanding_workflow_tasks(10_usize)
+            .max_concurrent_wft_polls(10_usize)
+            .no_remote_activities(true)
+            .build()
+            .unwrap(),
+        mock_client,
+    );
+
+    // Should be able to get up to 10 tasks
+    let mut tasks = vec![];
+    for _ in 0..10 {
+        tasks.push(worker.poll_workflow_activation().await.unwrap());
+    }
+
+    assert_eq!(worker.outstanding_workflow_tasks().await, 10);
+    assert_eq!(worker.available_wft_permits(), 0);
+    assert_eq!(worker.unused_wft_permits(), 0);
+
+    // This one should hang until we complete some tasks since we're at the limit
+    let hung_poll = async {
+        // This should end up getting shut down after the other routine finishes tasks
+        assert_matches!(
+            worker.poll_workflow_activation().await.unwrap_err(),
+            PollWfError::ShutDown
+        );
+    };
+    // Wait for a bit concurrently with above, verify no extra tasks got taken, shutdown
+    let ender = async {
+        time::sleep(Duration::from_millis(300)).await;
+        // initiate shutdown, then complete open tasks
+        worker.initiate_shutdown();
+        for t in tasks {
+            worker
+                .complete_workflow_activation(WorkflowActivationCompletion::empty(t.run_id))
+                .await
+                .unwrap();
+        }
+        worker.shutdown().await;
+    };
+    join!(hung_poll, ender);
+    // We shouldn't have got more than the 10 tasks from the poller -- verifying that the concurrent
+    // polling is not exceeding the task limit
+    assert_eq!(popped_tasks.load(Ordering::Relaxed), 10);
 }

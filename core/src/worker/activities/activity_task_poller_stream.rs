@@ -1,7 +1,4 @@
-use crate::{
-    abstractions::MeteredSemaphore, pollers::BoxedActPoller, worker::activities::PermittedTqResp,
-    MetricsContext,
-};
+use crate::{pollers::BoxedActPoller, worker::activities::PermittedTqResp, MetricsContext};
 use futures::{stream, Stream};
 use governor::{
     clock::DefaultClock,
@@ -9,14 +6,12 @@ use governor::{
     state::{InMemoryState, NotKeyed},
     RateLimiter,
 };
-use std::sync::Arc;
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse;
 use tokio::select;
 use tokio_util::sync::CancellationToken;
 
 struct StreamState {
     poller: BoxedActPoller,
-    semaphore: Arc<MeteredSemaphore>,
     rate_limiter: Option<RateLimiter<NotKeyed, InMemoryState, DefaultClock, NoOpMiddleware>>,
     metrics: MetricsContext,
     shutdown_token: CancellationToken,
@@ -25,14 +20,12 @@ struct StreamState {
 
 pub(crate) fn new_activity_task_poller(
     poller: BoxedActPoller,
-    semaphore: Arc<MeteredSemaphore>,
     rate_limiter: Option<RateLimiter<NotKeyed, InMemoryState, DefaultClock, NoOpMiddleware>>,
     metrics: MetricsContext,
     shutdown_token: CancellationToken,
 ) -> impl Stream<Item = Result<PermittedTqResp, tonic::Status>> {
     let state = StreamState {
         poller,
-        semaphore,
         rate_limiter,
         metrics,
         shutdown_token,
@@ -41,11 +34,6 @@ pub(crate) fn new_activity_task_poller(
     stream::unfold(state, |mut state| async move {
         loop {
             let poll = async {
-                let permit = state
-                    .semaphore
-                    .acquire_owned()
-                    .await
-                    .expect("outstanding activity semaphore not closed");
                 if !state.poller_was_shutdown {
                     if let Some(ref rl) = state.rate_limiter {
                         rl.until_ready().await;
@@ -53,7 +41,7 @@ pub(crate) fn new_activity_task_poller(
                 }
                 loop {
                     return match state.poller.poll().await {
-                        Some(Ok(resp)) => {
+                        Some(Ok((resp, permit))) => {
                             if resp == PollActivityTaskQueueResponse::default() {
                                 // We get the default proto in the event that the long poll times out.
                                 debug!("Poll activity task timeout");
