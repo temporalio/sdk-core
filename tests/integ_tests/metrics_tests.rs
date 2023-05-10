@@ -63,6 +63,7 @@ async fn one_slot_worker_reports_available_slot() {
         .max_outstanding_activities(1_usize)
         .max_outstanding_local_activities(1_usize)
         .max_outstanding_workflow_tasks(1_usize)
+        .max_concurrent_wft_polls(1_usize)
         .build()
         .unwrap();
 

@@ -1,6 +1,9 @@
 use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
 
+const MAX_OUTSTANDING_WFT_DEFAULT: usize = 100;
+const MAX_CONCURRENT_WFT_POLLS_DEFAULT: usize = 5;
+
 /// Defines per-worker configuration options
 #[derive(Debug, Clone, derive_builder::Builder, serde::Serialize, serde::Deserialize)]
 #[builder(setter(into), build_fn(validate = "Self::validate"))]
@@ -31,7 +34,7 @@ pub struct WorkerConfig {
     /// "outstanding" until all activations it requires have been completed.
     ///
     /// Cannot be larger than `max_cached_workflows`.
-    #[builder(default = "100")]
+    #[builder(default = "MAX_OUTSTANDING_WFT_DEFAULT")]
     pub max_outstanding_workflow_tasks: usize,
     /// The maximum number of activity tasks that will ever be given to this worker concurrently
     #[builder(default = "100")]
@@ -43,7 +46,7 @@ pub struct WorkerConfig {
     /// Maximum number of concurrent poll workflow task requests we will perform at a time on this
     /// worker's task queue. See also [WorkerConfig::nonsticky_to_sticky_poll_ratio]. Must be at
     /// least 1.
-    #[builder(default = "5")]
+    #[builder(default = "MAX_CONCURRENT_WFT_POLLS_DEFAULT")]
     pub max_concurrent_wft_polls: usize,
     /// [WorkerConfig::max_concurrent_wft_polls] * this number = the number of max pollers that will
     /// be allowed for the nonsticky queue when sticky tasks are enabled. If both defaults are used,
@@ -160,6 +163,18 @@ impl WorkerConfigBuilder {
                     "`max_worker_activities_per_second` must be positive and nonzero".to_owned(),
                 );
             }
+        }
+        if self
+            .max_concurrent_wft_polls
+            .unwrap_or(MAX_CONCURRENT_WFT_POLLS_DEFAULT)
+            > self
+                .max_outstanding_workflow_tasks
+                .unwrap_or(MAX_OUTSTANDING_WFT_DEFAULT)
+        {
+            return Err(
+                "`max_concurrent_wft_polls` cannot exceed `max_outstanding_workflow_tasks`"
+                    .to_owned(),
+            );
         }
         Ok(())
     }

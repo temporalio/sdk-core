@@ -33,7 +33,7 @@ use temporal_sdk_core::{
     ephemeral_server::{EphemeralExe, EphemeralExeVersion},
     init_replay_worker, init_worker,
     replay::HistoryForReplay,
-    ClientOptions, ClientOptionsBuilder, CoreRuntime, WorkerConfig, WorkerConfigBuilder,
+    ClientOptions, ClientOptionsBuilder, CoreRuntime, WorkerConfigBuilder,
 };
 use temporal_sdk_core_api::{
     errors::{PollActivityError, PollWfError},
@@ -153,7 +153,7 @@ pub fn init_integ_telem() {
 pub struct CoreWfStarter {
     /// Used for both the task queue and workflow id
     task_queue_name: String,
-    pub worker_config: WorkerConfig,
+    pub worker_config: WorkerConfigBuilder,
     /// Options to use when starting workflow(s)
     pub workflow_options: WorkflowOptions,
     initted_worker: OnceCell<InitializedWorker>,
@@ -169,25 +169,24 @@ impl CoreWfStarter {
         let rand_bytes: Vec<u8> = rand::thread_rng().sample_iter(&Standard).take(6).collect();
         let task_q_salt = BASE64_STANDARD.encode(rand_bytes);
         let task_queue = format!("{test_name}_{task_q_salt}");
+        let mut worker_config = WorkerConfigBuilder::default();
+        worker_config
+            .namespace(NAMESPACE)
+            .task_queue(task_queue.clone())
+            .worker_build_id("test_build_id")
+            .max_cached_workflows(1000_usize);
         Self {
-            task_queue_name: task_queue.to_owned(),
-            worker_config: WorkerConfigBuilder::default()
-                .namespace(NAMESPACE)
-                .task_queue(task_queue)
-                .worker_build_id("test_build_id")
-                .max_cached_workflows(1000_usize)
-                .build()
-                .unwrap(),
+            task_queue_name: task_queue,
+            worker_config,
             initted_worker: OnceCell::new(),
             workflow_options: Default::default(),
         }
     }
 
     pub async fn worker(&mut self) -> TestWorker {
-        let mut w = TestWorker::new(
-            self.get_worker().await,
-            self.worker_config.task_queue.clone(),
-        );
+        let w = self.get_worker().await;
+        let tq = w.get_config().task_queue.clone();
+        let mut w = TestWorker::new(w, tq);
         w.client = Some(self.get_client().await);
 
         w
@@ -227,16 +226,14 @@ impl CoreWfStarter {
     }
 
     pub async fn start_wf_with_id(&self, workflow_id: String) -> String {
-        self.initted_worker
-            .get()
-            .expect(
-                "Worker must be initted before starting a workflow.\
+        let iw = self.initted_worker.get().expect(
+            "Worker must be initted before starting a workflow.\
                              Tests must call `get_worker` first.",
-            )
-            .client
+        );
+        iw.client
             .start_workflow(
                 vec![],
-                self.worker_config.task_queue.clone(),
+                iw.worker.get_config().task_queue.clone(),
                 workflow_id,
                 self.task_queue_name.clone(),
                 None,
@@ -273,7 +270,7 @@ impl CoreWfStarter {
     }
 
     pub fn get_task_queue(&self) -> &str {
-        &self.worker_config.task_queue
+        &self.task_queue_name
     }
 
     pub fn get_wf_id(&self) -> &str {
@@ -281,60 +278,61 @@ impl CoreWfStarter {
     }
 
     pub fn max_cached_workflows(&mut self, num: usize) -> &mut Self {
-        self.worker_config.max_cached_workflows = num;
+        self.worker_config.max_cached_workflows(num);
         self
     }
 
     pub fn max_wft(&mut self, max: usize) -> &mut Self {
-        self.worker_config.max_outstanding_workflow_tasks = max;
+        self.worker_config.max_outstanding_workflow_tasks(max);
         self
     }
 
     pub fn max_at(&mut self, max: usize) -> &mut Self {
-        self.worker_config.max_outstanding_activities = max;
+        self.worker_config.max_outstanding_activities(max);
         self
     }
 
     pub fn max_local_at(&mut self, max: usize) -> &mut Self {
-        self.worker_config.max_outstanding_local_activities = max;
+        self.worker_config.max_outstanding_local_activities(max);
         self
     }
 
     pub fn max_at_polls(&mut self, max: usize) -> &mut Self {
-        self.worker_config.max_concurrent_at_polls = max;
+        self.worker_config.max_concurrent_at_polls(max);
+
         self
     }
 
     pub fn no_remote_activities(&mut self) -> &mut Self {
-        self.worker_config.no_remote_activities = true;
+        self.worker_config.no_remote_activities(true);
         self
     }
 
     pub fn enable_wf_state_input_recording(&mut self) -> &mut Self {
         let (ser_tx, ser_rx) = unbounded_channel();
-        let worker_cfg_clone = self.worker_config.clone();
+        let worker_cfg_clone = self.worker_config.build().unwrap();
         tokio::spawn(async move {
             stream_to_file(&worker_cfg_clone, ser_rx).await.unwrap();
         });
-        self.worker_config.wf_state_inputs = Some(ser_tx);
+        self.worker_config.wf_state_inputs(Some(ser_tx));
         self
     }
 
     async fn get_or_init(&mut self) -> &InitializedWorker {
         self.initted_worker
             .get_or_init(|| async {
+                let cfg = self
+                    .worker_config
+                    .build()
+                    .expect("Worker config must be valid");
                 let client = Arc::new(
                     get_integ_server_options()
-                        .connect(self.worker_config.namespace.clone(), None, None)
+                        .connect(cfg.namespace.clone(), None, None)
                         .await
                         .expect("Must connect"),
                 );
-                let worker = init_worker(
-                    INTEG_TESTS_RT.get().unwrap(),
-                    self.worker_config.clone(),
-                    client.clone(),
-                )
-                .expect("Worker inits cleanly");
+                let worker = init_worker(INTEG_TESTS_RT.get().unwrap(), cfg, client.clone())
+                    .expect("Worker inits cleanly");
                 InitializedWorker {
                     worker: Arc::new(worker),
                     client,

@@ -56,6 +56,7 @@ async fn cache_miss_ok() {
     let wf_name = "cache_miss_ok";
     let mut starter = CoreWfStarter::new(wf_name);
     starter.no_remote_activities().max_wft(1);
+    starter.worker_config.max_concurrent_wft_polls(1_usize);
     let mut worker = starter.worker().await;
 
     let barr: &'static Barrier = Box::leak(Box::new(Barrier::new(2)));
