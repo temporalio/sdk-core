@@ -33,16 +33,28 @@ pub struct LongPollBuffer<T> {
     active_pollers: Arc<AtomicUsize>,
 }
 
-struct ActiveCounter<'a>(&'a AtomicUsize);
-impl<'a> ActiveCounter<'a> {
-    fn new(a: &'a AtomicUsize) -> Self {
-        a.fetch_add(1, Ordering::Relaxed);
-        Self(a)
+struct ActiveCounter<'a, F: Fn(usize)>(&'a AtomicUsize, Option<F>);
+impl<'a, F> ActiveCounter<'a, F>
+where
+    F: Fn(usize),
+{
+    fn new(a: &'a AtomicUsize, change_fn: Option<F>) -> Self {
+        let v = a.fetch_add(1, Ordering::Relaxed) + 1;
+        if let Some(cfn) = change_fn.as_ref() {
+            cfn(v);
+        }
+        Self(a, change_fn)
     }
 }
-impl Drop for ActiveCounter<'_> {
+impl<F> Drop for ActiveCounter<'_, F>
+where
+    F: Fn(usize),
+{
     fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::Relaxed);
+        let v = self.0.fetch_sub(1, Ordering::Relaxed) - 1;
+        if let Some(cfn) = self.1.as_ref() {
+            cfn(v)
+        }
     }
 }
 
@@ -55,22 +67,25 @@ where
         poll_semaphore: Arc<MeteredSemaphore>,
         max_pollers: usize,
         shutdown: CancellationToken,
+        num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
     ) -> Self
     where
         FT: Future<Output = pollers::Result<T>> + Send,
     {
-        // TODO: Streamify?
         let (tx, rx) = unbounded_channel();
         let active_pollers = Arc::new(AtomicUsize::new(0));
         let join_handles = FuturesUnordered::new();
         let pf = Arc::new(poll_fn);
+        let nph = num_pollers_handler.map(Arc::new);
         for _ in 0..max_pollers {
             let tx = tx.clone();
             let pf = pf.clone();
             let shutdown = shutdown.clone();
             let ap = active_pollers.clone();
             let poll_semaphore = poll_semaphore.clone();
+            let nph = nph.clone();
             let jh = tokio::spawn(async move {
+                let nph = nph.as_ref().map(|a| a.as_ref());
                 loop {
                     if shutdown.is_cancelled() {
                         break;
@@ -84,7 +99,7 @@ where
                     } else {
                         break;
                     };
-                    let _active_guard = ActiveCounter::new(ap.as_ref());
+                    let _active_guard = ActiveCounter::new(ap.as_ref(), nph);
                     let r = tokio::select! {
                         r = pf() => r,
                         _ = shutdown.cancelled() => continue,
@@ -101,12 +116,6 @@ where
             num_pollers_changed: None,
             active_pollers,
         }
-    }
-
-    /// Set a function that will be called every time the number of pollers changes.
-    /// TODO: Currently a bit weird, will make more sense once we implement dynamic poller scaling.
-    pub fn set_num_pollers_handler(&mut self, handler: impl Fn(usize) + Send + Sync + 'static) {
-        self.num_pollers_changed = Some(Box::new(handler));
     }
 }
 
@@ -206,6 +215,7 @@ pub(crate) fn new_workflow_task_buffer(
     concurrent_pollers: usize,
     semaphore: Arc<MeteredSemaphore>,
     shutdown: CancellationToken,
+    num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
 ) -> PollWorkflowTaskBuffer {
     LongPollBuffer::new(
         move || {
@@ -216,6 +226,7 @@ pub(crate) fn new_workflow_task_buffer(
         semaphore,
         concurrent_pollers,
         shutdown,
+        num_pollers_handler,
     )
 }
 
@@ -227,6 +238,7 @@ pub(crate) fn new_activity_task_buffer(
     semaphore: Arc<MeteredSemaphore>,
     max_tps: Option<f64>,
     shutdown: CancellationToken,
+    num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
 ) -> PollActivityTaskBuffer {
     LongPollBuffer::new(
         move || {
@@ -237,6 +249,7 @@ pub(crate) fn new_activity_task_buffer(
         semaphore,
         concurrent_pollers,
         shutdown,
+        num_pollers_handler,
     )
 }
 
@@ -311,6 +324,7 @@ mod tests {
                 |_, _| {},
             )),
             CancellationToken::new(),
+            None::<fn(usize)>,
         );
 
         // Poll a bunch of times, "interrupting" it each time, we should only actually have polled

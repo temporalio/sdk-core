@@ -247,45 +247,44 @@ impl Worker {
                 };
                 let max_sticky_polls = config.max_sticky_polls();
                 let wft_metrics = metrics.with_new_attrs([workflow_poller()]);
-                let mut wf_task_poll_buffer = new_workflow_task_buffer(
+                let wf_task_poll_buffer = new_workflow_task_buffer(
                     client.clone(),
                     config.task_queue.clone(),
                     false,
                     max_nonsticky_polls,
                     wft_semaphore.clone(),
                     shutdown_token.child_token(),
+                    Some(move |np| {
+                        wft_metrics.record_num_pollers(np);
+                    }),
                 );
-                wf_task_poll_buffer.set_num_pollers_handler(move |np| {
-                    wft_metrics.record_num_pollers(np);
-                });
                 let sticky_queue_poller = sticky_queue_name.as_ref().map(|sqn| {
                     let sticky_metrics = metrics.with_new_attrs([workflow_sticky_poller()]);
-                    let mut sp = new_workflow_task_buffer(
+                    new_workflow_task_buffer(
                         client.clone(),
                         sqn.clone(),
                         true,
                         max_sticky_polls,
                         wft_semaphore.clone(),
                         shutdown_token.child_token(),
-                    );
-                    sp.set_num_pollers_handler(move |np| {
-                        sticky_metrics.record_num_pollers(np);
-                    });
-                    sp
+                        Some(move |np| {
+                            sticky_metrics.record_num_pollers(np);
+                        }),
+                    )
                 });
                 let act_poll_buffer = if config.no_remote_activities {
                     None
                 } else {
-                    let mut ap = new_activity_task_buffer(
+                    let act_metrics = metrics.with_new_attrs([activity_poller()]);
+                    let ap = new_activity_task_buffer(
                         client.clone(),
                         config.task_queue.clone(),
                         config.max_concurrent_at_polls,
                         act_semaphore.clone(),
                         config.max_task_queue_activities_per_second,
                         shutdown_token.child_token(),
+                        Some(move |np| act_metrics.record_num_pollers(np)),
                     );
-                    let act_metrics = metrics.with_new_attrs([activity_poller()]);
-                    ap.set_num_pollers_handler(move |np| act_metrics.record_num_pollers(np));
                     Some(Box::from(ap) as BoxedActPoller)
                 };
                 let wf_task_poll_buffer = Box::new(WorkflowTaskPoller::new(
