@@ -17,7 +17,9 @@ use temporal_sdk_core_protos::{
         workflow_activation::{
             workflow_activation_job, FireTimer, ResolveActivity, WorkflowActivationJob,
         },
-        workflow_commands::{ActivityCancellationType, RequestCancelActivity, StartTimer},
+        workflow_commands::{
+            ActivityCancellationType, RequestCancelActivity, ScheduleActivity, StartTimer,
+        },
         workflow_completion::WorkflowActivationCompletion,
         ActivityHeartbeat, ActivityTaskCompletion, AsJsonPayloadExt, FromJsonPayloadExt,
         IntoCompletion,
@@ -728,17 +730,24 @@ async fn activity_cancelled_after_heartbeat_times_out() {
     let activity_id = "act-1";
     let task = core.poll_workflow_activation().await.unwrap();
     // Complete workflow task and schedule activity
-    core.complete_workflow_activation(
-        schedule_activity_cmd(
-            0,
-            &task_q,
-            activity_id,
-            ActivityCancellationType::WaitCancellationCompleted,
-            Duration::from_secs(60),
-            Duration::from_secs(1),
-        )
-        .into_completion(task.run_id),
-    )
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+        task.run_id,
+        ScheduleActivity {
+            seq: 0,
+            activity_id: activity_id.to_string(),
+            activity_type: "dontcare".to_string(),
+            task_queue: task_q.clone(),
+            schedule_to_close_timeout: Some(prost_dur!(from_secs(10))),
+            heartbeat_timeout: Some(prost_dur!(from_secs(1))),
+            retry_policy: Some(RetryPolicy {
+                maximum_attempts: 2,
+                initial_interval: Some(prost_dur!(from_secs(5))),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+        .into(),
+    ))
     .await
     .unwrap();
     // Poll activity and verify that it's been scheduled
@@ -753,8 +762,8 @@ async fn activity_cancelled_after_heartbeat_times_out() {
 
     // Verify activity got cancelled
     let cancel_task = core.poll_activity_task().await.unwrap();
-    assert_eq!(cancel_task.task_token, task.task_token.clone());
     assert_matches!(cancel_task.variant, Some(act_task::Variant::Cancel(_)));
+    assert_eq!(cancel_task.task_token, task.task_token.clone());
 
     // Complete activity with cancelled result
     core.complete_activity_task(ActivityTaskCompletion {
@@ -770,7 +779,7 @@ async fn activity_cancelled_after_heartbeat_times_out() {
     starter
         .get_client()
         .await
-        .terminate_workflow_execution(task_q.clone(), None)
+        .terminate_workflow_execution(task_q, None)
         .await
         .unwrap();
 }
