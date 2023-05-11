@@ -92,7 +92,7 @@ where
                     }
                     let permit = tokio::select! {
                         p = poll_semaphore.acquire_owned() => p,
-                        _ = shutdown.cancelled() => continue,
+                        _ = shutdown.cancelled() => break,
                     };
                     let permit = if let Ok(p) = permit {
                         p
@@ -102,7 +102,7 @@ where
                     let _active_guard = ActiveCounter::new(ap.as_ref(), nph);
                     let r = tokio::select! {
                         r = pf() => r,
-                        _ = shutdown.cancelled() => continue,
+                        _ = shutdown.cancelled() => break,
                     };
                     let _ = tx.send(r.map(|r| (r, permit)));
                 }
