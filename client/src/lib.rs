@@ -80,6 +80,7 @@ static LONG_POLL_METHOD_NAMES: [&str; 2] = ["PollWorkflowTaskQueue", "PollActivi
 /// The server times out polls after 60 seconds. Set our timeout to be slightly beyond that.
 const LONG_POLL_TIMEOUT: Duration = Duration::from_secs(70);
 const OTHER_CALL_TIMEOUT: Duration = Duration::from_secs(30);
+const TCP_KEEPALIVE: Duration = Duration::from_secs(300);
 
 type Result<T, E = tonic::Status> = std::result::Result<T, E>;
 
@@ -316,7 +317,8 @@ impl ClientOptions {
         headers: Option<Arc<RwLock<HashMap<String, String>>>>,
     ) -> Result<RetryClient<ConfiguredClient<TemporalServiceClientWithMetrics>>, ClientInitError>
     {
-        let channel = Channel::from_shared(self.target_url.to_string())?;
+        let channel =
+            Channel::from_shared(self.target_url.to_string())?.tcp_keepalive(Some(TCP_KEEPALIVE));
         let channel = self.add_tls_to_channel(channel).await?;
         let channel = if let Some(origin) = self.override_origin.clone() {
             channel.origin(origin)
