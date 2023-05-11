@@ -61,6 +61,7 @@ pub const NAMESPACE: &str = "default";
 pub const TEST_Q: &str = "q";
 /// The env var used to specify where the integ tests should point
 pub const INTEG_SERVER_TARGET_ENV_VAR: &str = "TEMPORAL_SERVICE_ADDRESS";
+pub const INTEG_NAMESPACE_ENV_VAR: &str = "TEMPORAL_NAMESPACE";
 pub const INTEG_USE_TLS_ENV_VAR: &str = "TEMPORAL_USE_TLS";
 /// This env var is set (to any value) if temporal CLI dev server is in use
 pub const INTEG_TEMPORAL_DEV_SERVER_USED_ENV_VAR: &str = "INTEG_TEMPORAL_DEV_SERVER_ON";
@@ -171,7 +172,7 @@ impl CoreWfStarter {
         let task_queue = format!("{test_name}_{task_q_salt}");
         let mut worker_config = WorkerConfigBuilder::default();
         worker_config
-            .namespace(NAMESPACE)
+            .namespace(env::var(INTEG_NAMESPACE_ENV_VAR).unwrap_or(NAMESPACE.to_string()))
             .task_queue(task_queue.clone())
             .worker_build_id("test_build_id")
             .max_cached_workflows(1000_usize);

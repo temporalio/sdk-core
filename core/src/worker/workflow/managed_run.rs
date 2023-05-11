@@ -1039,13 +1039,26 @@ impl ManagedRun {
     }
 
     fn reply_to_complete(
-        &self,
+        &mut self,
         outcome: ActivationCompleteOutcome,
         chan: Option<oneshot::Sender<ActivationCompleteResult>>,
     ) {
         if let Some(chan) = chan {
-            chan.send(self.build_activation_complete_result(outcome))
-                .expect("Rcv half of activation reply not dropped");
+            if chan
+                .send(self.build_activation_complete_result(outcome))
+                .is_err()
+            {
+                let warnstr = "The workflow task completer went missing! This likely indicates an \
+                               SDK bug, please report."
+                    .to_string();
+                warn!(run_id=%self.run_id(), "{}", warnstr);
+                self.request_eviction(RequestEvictMsg {
+                    run_id: self.run_id().to_string(),
+                    message: warnstr,
+                    reason: EvictionReason::Fatal,
+                    auto_reply_fail_tt: None,
+                });
+            }
         }
     }
 
