@@ -1,4 +1,5 @@
 use crate::{
+    abstractions::{MeteredSemaphore, OwnedMeteredSemPermit},
     pollers::{self, Poller},
     worker::client::WorkerClient,
 };
@@ -16,36 +17,44 @@ use temporal_sdk_core_protos::temporal::api::workflowservice::v1::{
 };
 use tokio::{
     sync::{
-        mpsc::{channel, Receiver},
-        Mutex, Semaphore,
+        mpsc::{unbounded_channel, UnboundedReceiver},
+        Mutex,
     },
     task::JoinHandle,
 };
 use tokio_util::sync::CancellationToken;
 
 pub struct LongPollBuffer<T> {
-    buffered_polls: Mutex<Receiver<pollers::Result<T>>>,
+    buffered_polls: Mutex<UnboundedReceiver<pollers::Result<(T, OwnedMeteredSemPermit)>>>,
     shutdown: CancellationToken,
-    /// This semaphore exists to ensure that we only poll server as many times as core actually
-    /// *asked* it to be polled - otherwise we might spin and buffer polls constantly. This also
-    /// means unit tests can continue to function in a predictable manner when calling mocks.
-    polls_requested: Arc<Semaphore>,
     join_handles: FuturesUnordered<JoinHandle<()>>,
     /// Called every time the number of pollers is changed
     num_pollers_changed: Option<Box<dyn Fn(usize) + Send + Sync>>,
     active_pollers: Arc<AtomicUsize>,
 }
 
-struct ActiveCounter<'a>(&'a AtomicUsize);
-impl<'a> ActiveCounter<'a> {
-    fn new(a: &'a AtomicUsize) -> Self {
-        a.fetch_add(1, Ordering::Relaxed);
-        Self(a)
+struct ActiveCounter<'a, F: Fn(usize)>(&'a AtomicUsize, Option<F>);
+impl<'a, F> ActiveCounter<'a, F>
+where
+    F: Fn(usize),
+{
+    fn new(a: &'a AtomicUsize, change_fn: Option<F>) -> Self {
+        let v = a.fetch_add(1, Ordering::Relaxed) + 1;
+        if let Some(cfn) = change_fn.as_ref() {
+            cfn(v);
+        }
+        Self(a, change_fn)
     }
 }
-impl Drop for ActiveCounter<'_> {
+impl<F> Drop for ActiveCounter<'_, F>
+where
+    F: Fn(usize),
+{
     fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::Relaxed);
+        let v = self.0.fetch_sub(1, Ordering::Relaxed) - 1;
+        if let Some(cfn) = self.1.as_ref() {
+            cfn(v)
+        }
     }
 }
 
@@ -53,42 +62,49 @@ impl<T> LongPollBuffer<T>
 where
     T: Send + Debug + 'static,
 {
-    pub fn new<FT>(
+    pub(crate) fn new<FT>(
         poll_fn: impl Fn() -> FT + Send + Sync + 'static,
+        poll_semaphore: Arc<MeteredSemaphore>,
         max_pollers: usize,
-        buffer_size: usize,
         shutdown: CancellationToken,
+        num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
     ) -> Self
     where
         FT: Future<Output = pollers::Result<T>> + Send,
     {
-        let (tx, rx) = channel(buffer_size);
-        let polls_requested = Arc::new(Semaphore::new(0));
+        let (tx, rx) = unbounded_channel();
         let active_pollers = Arc::new(AtomicUsize::new(0));
         let join_handles = FuturesUnordered::new();
         let pf = Arc::new(poll_fn);
+        let nph = num_pollers_handler.map(Arc::new);
         for _ in 0..max_pollers {
             let tx = tx.clone();
             let pf = pf.clone();
             let shutdown = shutdown.clone();
-            let polls_requested = polls_requested.clone();
             let ap = active_pollers.clone();
+            let poll_semaphore = poll_semaphore.clone();
+            let nph = nph.clone();
             let jh = tokio::spawn(async move {
+                let nph = nph.as_ref().map(|a| a.as_ref());
                 loop {
                     if shutdown.is_cancelled() {
                         break;
                     }
-                    let sp = tokio::select! {
-                        sp = polls_requested.acquire() => sp.expect("Polls semaphore not dropped"),
-                        _ = shutdown.cancelled() => continue,
+                    let permit = tokio::select! {
+                        p = poll_semaphore.acquire_owned() => p,
+                        _ = shutdown.cancelled() => break,
                     };
-                    let _active_guard = ActiveCounter::new(ap.as_ref());
+                    let permit = if let Ok(p) = permit {
+                        p
+                    } else {
+                        break;
+                    };
+                    let _active_guard = ActiveCounter::new(ap.as_ref(), nph);
                     let r = tokio::select! {
                         r = pf() => r,
-                        _ = shutdown.cancelled() => continue,
+                        _ = shutdown.cancelled() => break,
                     };
-                    sp.forget();
-                    let _ = tx.send(r).await;
+                    let _ = tx.send(r.map(|r| (r, permit)));
                 }
             });
             join_handles.push(jh);
@@ -96,22 +112,15 @@ where
         Self {
             buffered_polls: Mutex::new(rx),
             shutdown,
-            polls_requested,
             join_handles,
             num_pollers_changed: None,
             active_pollers,
         }
     }
-
-    /// Set a function that will be called every time the number of pollers changes.
-    /// TODO: Currently a bit weird, will make more sense once we implement dynamic poller scaling.
-    pub fn set_num_pollers_handler(&mut self, handler: impl Fn(usize) + Send + Sync + 'static) {
-        self.num_pollers_changed = Some(Box::new(handler));
-    }
 }
 
 #[async_trait::async_trait]
-impl<T> Poller<T> for LongPollBuffer<T>
+impl<T> Poller<(T, OwnedMeteredSemPermit)> for LongPollBuffer<T>
 where
     T: Send + Sync + Debug + 'static,
 {
@@ -126,8 +135,7 @@ where
     ///
     /// Returns `None` if the poll buffer has been shut down
     #[instrument(name = "long_poll", level = "trace", skip(self))]
-    async fn poll(&self) -> Option<pollers::Result<T>> {
-        self.polls_requested.add_permits(1);
+    async fn poll(&self) -> Option<pollers::Result<(T, OwnedMeteredSemPermit)>> {
         if let Some(fun) = self.num_pollers_changed.as_ref() {
             fun(self.active_pollers.load(Ordering::Relaxed));
         }
@@ -165,8 +173,10 @@ pub struct WorkflowTaskPoller {
 }
 
 #[async_trait::async_trait]
-impl Poller<PollWorkflowTaskQueueResponse> for WorkflowTaskPoller {
-    async fn poll(&self) -> Option<pollers::Result<PollWorkflowTaskQueueResponse>> {
+impl Poller<(PollWorkflowTaskQueueResponse, OwnedMeteredSemPermit)> for WorkflowTaskPoller {
+    async fn poll(
+        &self,
+    ) -> Option<pollers::Result<(PollWorkflowTaskQueueResponse, OwnedMeteredSemPermit)>> {
         if let Some(sq) = self.sticky_poller.as_ref() {
             tokio::select! {
                 r = self.normal_poller.poll() => r,
@@ -203,8 +213,9 @@ pub(crate) fn new_workflow_task_buffer(
     task_queue: String,
     is_sticky: bool,
     concurrent_pollers: usize,
-    buffer_size: usize,
+    semaphore: Arc<MeteredSemaphore>,
     shutdown: CancellationToken,
+    num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
 ) -> PollWorkflowTaskBuffer {
     LongPollBuffer::new(
         move || {
@@ -212,9 +223,10 @@ pub(crate) fn new_workflow_task_buffer(
             let task_queue = task_queue.clone();
             async move { client.poll_workflow_task(task_queue, is_sticky).await }
         },
+        semaphore,
         concurrent_pollers,
-        buffer_size,
         shutdown,
+        num_pollers_handler,
     )
 }
 
@@ -223,9 +235,10 @@ pub(crate) fn new_activity_task_buffer(
     client: Arc<dyn WorkerClient>,
     task_queue: String,
     concurrent_pollers: usize,
-    buffer_size: usize,
+    semaphore: Arc<MeteredSemaphore>,
     max_tps: Option<f64>,
     shutdown: CancellationToken,
+    num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
 ) -> PollActivityTaskBuffer {
     LongPollBuffer::new(
         move || {
@@ -233,16 +246,55 @@ pub(crate) fn new_activity_task_buffer(
             let task_queue = task_queue.clone();
             async move { client.poll_activity_task(task_queue, max_tps).await }
         },
+        semaphore,
         concurrent_pollers,
-        buffer_size,
         shutdown,
+        num_pollers_handler,
     )
+}
+
+#[cfg(test)]
+#[derive(derive_more::Constructor)]
+pub(crate) struct MockPermittedPollBuffer<PT> {
+    sem: Arc<MeteredSemaphore>,
+    inner: PT,
+}
+
+#[cfg(test)]
+#[async_trait::async_trait]
+impl<T, PT> Poller<(T, OwnedMeteredSemPermit)> for MockPermittedPollBuffer<PT>
+where
+    T: Send + Sync + 'static,
+    PT: Poller<T> + Send + Sync + 'static,
+{
+    async fn poll(&self) -> Option<pollers::Result<(T, OwnedMeteredSemPermit)>> {
+        let p = self
+            .sem
+            .acquire_owned()
+            .await
+            .expect("Semaphore in poller not closed!");
+        self.inner.poll().await.map(|r| r.map(|r| (r, p)))
+    }
+
+    fn notify_shutdown(&self) {
+        self.inner.notify_shutdown();
+    }
+
+    async fn shutdown(self) {
+        self.inner.shutdown().await;
+    }
+
+    async fn shutdown_box(self: Box<Self>) {
+        self.inner.shutdown().await;
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::worker::client::mocks::mock_manual_workflow_client;
+    use crate::{
+        telemetry::metrics::MetricsContext, worker::client::mocks::mock_manual_workflow_client,
+    };
     use futures::FutureExt;
     use std::time::Duration;
     use tokio::{select, sync::mpsc::channel};
@@ -266,8 +318,13 @@ mod tests {
             "someq".to_string(),
             false,
             1,
-            1,
+            Arc::new(MeteredSemaphore::new(
+                10,
+                MetricsContext::no_op(),
+                |_, _| {},
+            )),
             CancellationToken::new(),
+            None::<fn(usize)>,
         );
 
         // Poll a bunch of times, "interrupting" it each time, we should only actually have polled

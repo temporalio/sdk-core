@@ -23,22 +23,19 @@ pub(crate) use managed_run::ManagedWFFunc;
 
 use crate::{
     abstractions::{
-        dbg_panic, stream_when_allowed, take_cell::TakeCell, MeteredSemaphore,
-        TrackedOwnedMeteredSemPermit, UsedMeteredSemPermit,
+        dbg_panic, take_cell::TakeCell, MeteredSemaphore, TrackedOwnedMeteredSemPermit,
+        UsedMeteredSemPermit,
     },
     internal_flags::InternalFlags,
-    protosext::{legacy_query_failure, ValidPollWFTQResponse},
-    telemetry::{
-        metrics::workflow_worker_type, set_trace_subscriber_for_current_thread, TelemetryInstance,
-        VecDisplayer,
-    },
+    protosext::legacy_query_failure,
+    telemetry::{set_trace_subscriber_for_current_thread, TelemetryInstance, VecDisplayer},
     worker::{
         activities::{ActivitiesFromWFTsHandle, LocalActivityManager, TrackedPermittedTqResp},
         client::{WorkerClient, WorkflowTaskCompletion},
         workflow::{
             history_update::HistoryPaginator,
             managed_run::RunUpdateAct,
-            wft_extraction::{HistoryFetchReq, WFTExtractor},
+            wft_extraction::{HistoryFetchReq, WFTExtractor, WFTStreamIn},
             wft_poller::validate_wft,
             workflow_stream::{LocalInput, LocalInputs, WFStream},
         },
@@ -127,14 +124,13 @@ pub(crate) struct Workflows {
     /// If set, can be used to reserve activity task slots for eager-return of new activity tasks.
     activity_tasks_handle: Option<ActivitiesFromWFTsHandle>,
     /// Ensures we stay at or below this worker's maximum concurrent workflow task limit
-    wft_semaphore: MeteredSemaphore,
+    wft_semaphore: Arc<MeteredSemaphore>,
     local_act_mgr: Arc<LocalActivityManager>,
     ever_polled: AtomicBool,
 }
 
 pub(crate) struct WorkflowBasics {
     pub max_cached_workflows: usize,
-    pub max_outstanding_wfts: usize,
     pub shutdown_token: CancellationToken,
     pub metrics: MetricsContext,
     pub namespace: String,
@@ -162,7 +158,8 @@ impl Workflows {
         basics: WorkflowBasics,
         sticky_attrs: Option<StickyExecutionAttributes>,
         client: Arc<dyn WorkerClient>,
-        wft_stream: impl Stream<Item = Result<ValidPollWFTQResponse, tonic::Status>> + Send + 'static,
+        wft_semaphore: Arc<MeteredSemaphore>,
+        wft_stream: impl Stream<Item = WFTStreamIn> + Send + 'static,
         local_activity_request_sink: impl LocalActivityRequestSink,
         local_act_mgr: Arc<LocalActivityManager>,
         heartbeat_timeout_rx: UnboundedReceiver<HeartbeatTimeoutMsg>,
@@ -173,16 +170,6 @@ impl Workflows {
         let (fetch_tx, fetch_rx) = unbounded_channel();
         let shutdown_tok = basics.shutdown_token.clone();
         let task_queue = basics.task_queue.clone();
-        let wft_semaphore = MeteredSemaphore::new(
-            basics.max_outstanding_wfts,
-            basics.metrics.with_new_attrs([workflow_worker_type()]),
-            MetricsContext::available_task_slots,
-        );
-        // Only allow polling of the new WFT stream if there are available task slots
-        let proceeder = stream::unfold(wft_semaphore.clone(), |sem| async move {
-            Some((sem.acquire_owned().await.unwrap(), sem))
-        });
-        let wft_stream = stream_when_allowed(wft_stream, proceeder);
         let extracted_wft_stream = WFTExtractor::build(
             client.clone(),
             basics.fetching_concurrency,
@@ -514,6 +501,10 @@ impl Workflows {
 
     pub(super) fn available_wft_permits(&self) -> usize {
         self.wft_semaphore.available_permits()
+    }
+    #[cfg(test)]
+    pub(super) fn unused_wft_permits(&self) -> usize {
+        self.wft_semaphore.unused_permits()
     }
 
     pub(super) async fn shutdown(&self) -> Result<(), anyhow::Error> {

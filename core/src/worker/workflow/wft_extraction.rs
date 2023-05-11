@@ -36,10 +36,7 @@ pub(super) enum WFTExtractorOutput {
     PollerDead,
 }
 
-type WFTStreamIn = (
-    Result<ValidPollWFTQResponse, tonic::Status>,
-    OwnedMeteredSemPermit,
-);
+pub(crate) type WFTStreamIn = Result<(ValidPollWFTQResponse, OwnedMeteredSemPermit), tonic::Status>;
 #[derive(derive_more::From, Debug)]
 pub(super) enum HistoryFetchReq {
     Full(CacheMissFetchReq, Arc<HistfetchRC>),
@@ -58,11 +55,11 @@ impl WFTExtractor {
     ) -> impl Stream<Item = Result<WFTExtractorOutput, tonic::Status>> + Send + 'static {
         let fetch_client = client.clone();
         let wft_stream = wft_stream
-            .map(move |(wft, permit)| {
+            .map(move |stream_in| {
                 let client = client.clone();
                 async move {
-                    match wft {
-                        Ok(wft) => {
+                    match stream_in {
+                        Ok((wft, permit)) => {
                             let run_id = wft.workflow_execution.run_id.clone();
                             let tt = wft.task_token.clone();
                             Ok(match HistoryPaginator::from_poll(wft, client).await {

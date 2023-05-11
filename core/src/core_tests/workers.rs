@@ -1,13 +1,13 @@
 use crate::{
     prost_dur,
     test_help::{
-        build_fake_worker, build_mock_pollers, canned_histories, mock_manual_poller, mock_worker,
-        MockPollCfg, MockWorkerInputs, MocksHolder, ResponseType, WorkerExt,
+        build_fake_worker, build_mock_pollers, canned_histories, mock_worker, MockPollCfg,
+        MockWorkerInputs, MocksHolder, ResponseType, WorkerExt,
     },
     worker::client::mocks::mock_workflow_client,
     PollActivityError, PollWfError,
 };
-use futures::FutureExt;
+use futures_util::{stream, stream::StreamExt};
 use std::{cell::RefCell, time::Duration};
 use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::{
@@ -16,7 +16,9 @@ use temporal_sdk_core_protos::{
         workflow_commands::{workflow_command, CompleteWorkflowExecution, StartTimer},
         workflow_completion::WorkflowActivationCompletion,
     },
-    temporal::api::workflowservice::v1::RespondWorkflowTaskCompletedResponse,
+    temporal::api::workflowservice::v1::{
+        PollWorkflowTaskQueueResponse, RespondWorkflowTaskCompletedResponse,
+    },
 };
 use temporal_sdk_core_test_utils::start_timer_cmd;
 use tokio::sync::{watch, Barrier};
@@ -87,20 +89,18 @@ async fn shutdown_worker_can_complete_pending_activation() {
 #[tokio::test]
 async fn worker_shutdown_during_poll_doesnt_deadlock() {
     let (tx, rx) = watch::channel(false);
-    let mut mock_poller = mock_manual_poller();
     let rx = rx.clone();
-    mock_poller.expect_poll().returning(move || {
-        let mut rx = rx.clone();
-        async move {
-            // Don't resolve polls until worker shuts down
-            rx.changed().await.unwrap();
-            // We don't want to return a real response here because it would get buffered and
-            // then we'd have real work to do to be able to finish shutdown.
-            Some(Ok(Default::default()))
-        }
-        .boxed()
+    let stream = stream::unfold(rx, |mut rx| async move {
+        // Don't resolve polls until worker shuts down
+        rx.changed().await.unwrap();
+        // We don't want to return a real response here because it would get buffered and
+        // then we'd have real work to do to be able to finish shutdown.
+        Some((
+            Ok(PollWorkflowTaskQueueResponse::default().try_into().unwrap()),
+            rx,
+        ))
     });
-    let mw = MockWorkerInputs::new_from_poller(Box::new(mock_poller));
+    let mw = MockWorkerInputs::new(stream.boxed());
     let mut mock_client = mock_workflow_client();
     mock_client
         .expect_complete_workflow_task()
