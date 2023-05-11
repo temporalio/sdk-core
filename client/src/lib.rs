@@ -80,12 +80,13 @@ static LONG_POLL_METHOD_NAMES: [&str; 2] = ["PollWorkflowTaskQueue", "PollActivi
 /// The server times out polls after 60 seconds. Set our timeout to be slightly beyond that.
 const LONG_POLL_TIMEOUT: Duration = Duration::from_secs(70);
 const OTHER_CALL_TIMEOUT: Duration = Duration::from_secs(30);
-const TCP_KEEPALIVE: Duration = Duration::from_secs(300);
+const TCP_KEEPALIVE: Duration = Duration::from_secs(120);
 
 type Result<T, E = tonic::Status> = std::result::Result<T, E>;
 
 /// Options for the connection to the temporal server. Construct with [ClientOptionsBuilder]
 #[derive(Clone, Debug, derive_builder::Builder)]
+#[builder(build_fn(validate = "Self::validate"))]
 #[non_exhaustive]
 pub struct ClientOptions {
     /// The URL of the Temporal server to connect to
@@ -123,6 +124,21 @@ pub struct ClientOptions {
     /// override.
     #[builder(default)]
     pub override_origin: Option<Uri>,
+
+    /// See [Endpoint::tcp_keepalive]. May not be set below 10s.
+    #[builder(default = "Some(TCP_KEEPALIVE)")]
+    pub tcp_keepalive: Option<Duration>,
+}
+
+impl ClientOptionsBuilder {
+    fn validate(&self) -> Result<(), String> {
+        if let Some(Some(ref dur)) = self.tcp_keepalive {
+            if *dur < Duration::from_secs(10) {
+                return Err("`tcp_keepalive` may not be shorter than 10 seconds.".to_string());
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Configuration options for TLS
@@ -318,7 +334,7 @@ impl ClientOptions {
     ) -> Result<RetryClient<ConfiguredClient<TemporalServiceClientWithMetrics>>, ClientInitError>
     {
         let channel =
-            Channel::from_shared(self.target_url.to_string())?.tcp_keepalive(Some(TCP_KEEPALIVE));
+            Channel::from_shared(self.target_url.to_string())?.tcp_keepalive(self.tcp_keepalive);
         let channel = self.add_tls_to_channel(channel).await?;
         let channel = if let Some(origin) = self.override_origin.clone() {
             channel.origin(origin)
