@@ -2,6 +2,9 @@
 //! to WASM not work. I've already figured out how to do all that once before with my WASM workflows
 //! hackathon
 
+mod activity_definitions;
+
+use activity_definitions::MyActFnWfCtxExt;
 use futures::future::BoxFuture;
 use std::time::Duration;
 use temporal_sdk_core_protos::{
@@ -136,6 +139,8 @@ mod tests {
             async move {
                 ctx.timer(Duration::from_secs(1)).await;
                 self.foo = 1;
+                // See activity definitions file
+                ctx.my_act_fn("Hi!").await.unwrap();
                 // The into() is unfortunately unavoidable without making C-A-N and confirm cancel
                 // be errors instead. Personally, I don't love that and I think it's not idiomatic
                 // Rust, whereas needing to `into()` something is. Other way would be macros, but
