@@ -8,7 +8,7 @@ use std::{
     fmt::Debug,
     future::Future,
     sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     },
 };
@@ -29,11 +29,9 @@ pub struct LongPollBuffer<T> {
     buffered_polls: Mutex<UnboundedReceiver<pollers::Result<(T, OwnedMeteredSemPermit)>>>,
     shutdown: CancellationToken,
     join_handles: FuturesUnordered<JoinHandle<()>>,
-    /// Called every time the number of pollers is changed
-    num_pollers_changed: Option<Box<dyn Fn(usize) + Send + Sync>>,
-    active_pollers: Arc<AtomicUsize>,
-    /// Pollers won't actually start polling until something until called
+    /// Pollers won't actually start polling until initialized & value is sent
     starter: broadcast::Sender<()>,
+    did_start: AtomicBool,
 }
 
 struct ActiveCounter<'a, F: Fn(usize)>(&'a AtomicUsize, Option<F>);
@@ -124,9 +122,8 @@ where
             buffered_polls: Mutex::new(rx),
             shutdown,
             join_handles,
-            num_pollers_changed: None,
-            active_pollers,
             starter,
+            did_start: AtomicBool::new(false),
         }
     }
 }
@@ -141,20 +138,12 @@ where
     /// Returns `None` if the poller has been shut down
     #[instrument(name = "long_poll", level = "trace", skip(self))]
     async fn poll(&self) -> Option<pollers::Result<(T, OwnedMeteredSemPermit)>> {
-        let _ = self.starter.send(());
-
-        if let Some(fun) = self.num_pollers_changed.as_ref() {
-            fun(self.active_pollers.load(Ordering::Relaxed));
+        if !self.did_start.fetch_or(true, Ordering::Relaxed) {
+            let _ = self.starter.send(());
         }
 
         let mut locked = self.buffered_polls.lock().await;
-        let res = (*locked).recv().await;
-
-        if let Some(fun) = self.num_pollers_changed.as_ref() {
-            fun(self.active_pollers.load(Ordering::Relaxed));
-        }
-
-        res
+        (*locked).recv().await
     }
 
     fn notify_shutdown(&self) {
