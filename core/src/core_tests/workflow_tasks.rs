@@ -7,7 +7,7 @@ use crate::{
         build_fake_worker, build_mock_pollers, build_multihist_mock_sg, canned_histories,
         gen_assert_and_fail, gen_assert_and_reply, hist_to_poll_resp, mock_sdk, mock_sdk_cfg,
         mock_worker, poll_and_reply, poll_and_reply_clears_outstanding_evicts, single_hist_mock_sg,
-        test_worker_cfg, FakeWfResponses, MockPollCfg, MocksHolder, ResponseType,
+        test_worker_cfg, FakeWfResponses, MockPollCfg, MocksHolder, ResponseType, WorkerExt,
         WorkflowCachingPolicy::{self, AfterEveryReply, NonSticky},
     },
     worker::client::mocks::{mock_manual_workflow_client, mock_workflow_client},
@@ -19,6 +19,7 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     sync::{
         atomic::{AtomicU64, AtomicUsize, Ordering},
+        mpsc::sync_channel,
         Arc,
     },
     time::Duration,
@@ -2655,4 +2656,34 @@ async fn poller_wont_run_ahead_of_task_slots() {
     // We shouldn't have got more than the 10 tasks from the poller -- verifying that the concurrent
     // polling is not exceeding the task limit
     assert_eq!(popped_tasks.load(Ordering::Relaxed), 10);
+}
+
+#[tokio::test]
+async fn poller_wont_poll_until_lang_polls() {
+    let mut mock_client = mock_workflow_client();
+    let (tx, rx) = sync_channel(101);
+    // Normally you'd just not set any expectations, but the problem is since we never poll
+    // the WFT stream, we'll never join the tasks running the pollers and thus the error
+    // gets printed but doesn't bubble up to the test. So we set this explicit expectation
+    // in here to ensure it isn't called.
+    mock_client
+        .expect_poll_workflow_task()
+        .returning(move |_, _| {
+            let _ = tx.send(());
+            Ok(Default::default())
+        });
+
+    let worker = Worker::new_test(
+        test_worker_cfg()
+            .no_remote_activities(true)
+            .build()
+            .unwrap(),
+        mock_client,
+    );
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    worker.drain_pollers_and_shutdown().await;
+    // Nothing should've appeared here or we did poll
+    assert!(rx.recv().is_err());
 }

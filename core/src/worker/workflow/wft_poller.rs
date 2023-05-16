@@ -1,5 +1,7 @@
 use crate::{
-    abstractions::OwnedMeteredSemPermit, pollers::BoxedWFPoller, protosext::ValidPollWFTQResponse,
+    abstractions::OwnedMeteredSemPermit,
+    pollers::{BoxedWFPoller, Poller},
+    protosext::ValidPollWFTQResponse,
     MetricsContext,
 };
 use futures::{stream, Stream};
@@ -38,7 +40,12 @@ pub(crate) fn new_wft_poller(
                 }
                 // If poller returns None, it's dead, thus we also return None to terminate this
                 // stream.
-                None => None,
+                None => {
+                    // Make sure we call the actual shutdown function here to propagate any panics
+                    // inside the polling tasks as errors.
+                    poller.shutdown_box().await;
+                    None
+                }
             };
         }
     })
@@ -72,6 +79,7 @@ mod tests {
             .times(1)
             .returning(|| Some(Ok(PollWorkflowTaskQueueResponse::default())));
         mock_poller.expect_poll().times(1).returning(|| None);
+        mock_poller.expect_shutdown().times(1).returning(|| ());
         let sem = Arc::new(MeteredSemaphore::new(
             10,
             MetricsContext::no_op(),
