@@ -1,5 +1,5 @@
 use crate::{
-    abstractions::{MeteredSemaphore, OwnedMeteredSemPermit},
+    abstractions::{dbg_panic, MeteredSemaphore, OwnedMeteredSemPermit},
     pollers::{self, Poller},
     worker::client::WorkerClient,
 };
@@ -8,7 +8,7 @@ use std::{
     fmt::Debug,
     future::Future,
     sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     },
 };
@@ -17,6 +17,7 @@ use temporal_sdk_core_protos::temporal::api::workflowservice::v1::{
 };
 use tokio::{
     sync::{
+        broadcast,
         mpsc::{unbounded_channel, UnboundedReceiver},
         Mutex,
     },
@@ -28,9 +29,9 @@ pub struct LongPollBuffer<T> {
     buffered_polls: Mutex<UnboundedReceiver<pollers::Result<(T, OwnedMeteredSemPermit)>>>,
     shutdown: CancellationToken,
     join_handles: FuturesUnordered<JoinHandle<()>>,
-    /// Called every time the number of pollers is changed
-    num_pollers_changed: Option<Box<dyn Fn(usize) + Send + Sync>>,
-    active_pollers: Arc<AtomicUsize>,
+    /// Pollers won't actually start polling until initialized & value is sent
+    starter: broadcast::Sender<()>,
+    did_start: AtomicBool,
 }
 
 struct ActiveCounter<'a, F: Fn(usize)>(&'a AtomicUsize, Option<F>);
@@ -73,6 +74,7 @@ where
         FT: Future<Output = pollers::Result<T>> + Send,
     {
         let (tx, rx) = unbounded_channel();
+        let (starter, wait_for_start) = broadcast::channel(1);
         let active_pollers = Arc::new(AtomicUsize::new(0));
         let join_handles = FuturesUnordered::new();
         let pf = Arc::new(poll_fn);
@@ -84,7 +86,14 @@ where
             let ap = active_pollers.clone();
             let poll_semaphore = poll_semaphore.clone();
             let nph = nph.clone();
+            let mut wait_for_start = wait_for_start.resubscribe();
             let jh = tokio::spawn(async move {
+                tokio::select! {
+                    _ = wait_for_start.recv() => (),
+                    _ = shutdown.cancelled() => return,
+                }
+                drop(wait_for_start);
+
                 let nph = nph.as_ref().map(|a| a.as_ref());
                 loop {
                     if shutdown.is_cancelled() {
@@ -113,8 +122,8 @@ where
             buffered_polls: Mutex::new(rx),
             shutdown,
             join_handles,
-            num_pollers_changed: None,
-            active_pollers,
+            starter,
+            did_start: AtomicBool::new(false),
         }
     }
 }
@@ -124,30 +133,17 @@ impl<T> Poller<(T, OwnedMeteredSemPermit)> for LongPollBuffer<T>
 where
     T: Send + Sync + Debug + 'static,
 {
-    /// Poll the buffer. Adds one permit to the polling pool - the point of this being that the
-    /// buffer may support many concurrent pollers, but there is no reason to have them poll unless
-    /// enough polls have actually been requested. Calling this function adds a permit that any
-    /// concurrent poller may fulfill.
+    /// Poll for the next item from this poller
     ///
-    /// EX: If this function is only ever called serially and always `await`ed, there will be no
-    /// concurrent polling. If it is called many times and the futures are awaited concurrently,
-    /// then polling will happen concurrently.
-    ///
-    /// Returns `None` if the poll buffer has been shut down
+    /// Returns `None` if the poller has been shut down
     #[instrument(name = "long_poll", level = "trace", skip(self))]
     async fn poll(&self) -> Option<pollers::Result<(T, OwnedMeteredSemPermit)>> {
-        if let Some(fun) = self.num_pollers_changed.as_ref() {
-            fun(self.active_pollers.load(Ordering::Relaxed));
+        if !self.did_start.fetch_or(true, Ordering::Relaxed) {
+            let _ = self.starter.send(());
         }
 
         let mut locked = self.buffered_polls.lock().await;
-        let res = (*locked).recv().await;
-
-        if let Some(fun) = self.num_pollers_changed.as_ref() {
-            fun(self.active_pollers.load(Ordering::Relaxed));
-        }
-
-        res
+        (*locked).recv().await
     }
 
     fn notify_shutdown(&self) {
@@ -156,7 +152,13 @@ where
 
     async fn shutdown(mut self) {
         self.notify_shutdown();
-        while self.join_handles.next().await.is_some() {}
+        while let Some(jh) = self.join_handles.next().await {
+            if let Err(e) = jh {
+                if !e.is_cancelled() {
+                    dbg_panic!("Poller task did not terminate cleanly: {:?}", e);
+                }
+            }
+        }
     }
 
     async fn shutdown_box(self: Box<Self>) {
