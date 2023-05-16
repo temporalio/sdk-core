@@ -89,6 +89,7 @@ impl RunCache {
     pub fn remove(&mut self, k: &str) -> Option<ManagedRun> {
         let r = self.runs.pop(k);
         self.metrics.cache_size(self.len() as u64);
+        self.metrics.cache_eviction();
         r
     }
 

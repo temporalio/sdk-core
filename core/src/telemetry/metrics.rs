@@ -87,6 +87,7 @@ struct Instruments {
     sticky_cache_hit: Counter<u64>,
     sticky_cache_miss: Counter<u64>,
     sticky_cache_size: Histogram<u64>,
+    sticky_cache_evictions: Counter<u64>,
 }
 
 impl MetricsContext {
@@ -288,6 +289,13 @@ impl MetricsContext {
             .sticky_cache_size
             .record(&self.ctx, size, &self.kvs);
     }
+
+    /// Count a workflow being evicted from the cache
+    pub(crate) fn cache_eviction(&self) {
+        self.instruments
+            .sticky_cache_evictions
+            .add(&self.ctx, 1, &self.kvs);
+    }
 }
 
 impl Instruments {
@@ -327,6 +335,7 @@ impl Instruments {
             sticky_cache_hit: meter.counter("sticky_cache_hit"),
             sticky_cache_miss: meter.counter("sticky_cache_miss"),
             sticky_cache_size: meter.histogram(STICKY_CACHE_SIZE_NAME),
+            sticky_cache_evictions: meter.counter("sticky_cache_total_forced_eviction"),
         }
     }
 }
