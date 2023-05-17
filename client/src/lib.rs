@@ -54,8 +54,13 @@ use temporal_sdk_core_protos::{
         operatorservice::v1::operator_service_client::OperatorServiceClient,
         query::v1::WorkflowQuery,
         replication::v1::ClusterReplicationConfig,
+        schedule::v1::{
+            BackfillRequest, Schedule, ScheduleAction, SchedulePolicies, ScheduleSpec,
+            ScheduleState,
+        },
         taskqueue::v1::TaskQueue,
         testservice::v1::test_service_client::TestServiceClient,
+        workflow::v1::NewWorkflowExecutionInfo,
         workflowservice::v1::{workflow_service_client::WorkflowServiceClient, *},
     },
     TaskToken,
@@ -923,6 +928,17 @@ pub trait WorkflowClientTrait {
     /// Get Cluster Search Attributes
     async fn get_search_attributes(&self) -> Result<GetSearchAttributesResponse>;
 
+    /// Create a scheduled workflow
+    async fn create_schedule(
+        &self,
+        schedule_id: String,
+        task_queue: String,
+        workflow_id: String,
+        workflow_type: String,
+        request_id: Option<String>,
+        options: ScheduleOptions,
+    ) -> Result<CreateScheduleResponse>;
+
     /// Returns options that were used to initialize the client
     fn get_options(&self) -> &ClientOptions;
 
@@ -951,6 +967,38 @@ pub struct WorkflowOptions {
 
     /// Optionally associate extra search attributes with a workflow
     pub search_attributes: Option<HashMap<String, Payload>>,
+}
+
+/// Optional fields supplied at start of creating a schedule
+#[derive(Debug, Clone, Default)]
+pub struct ScheduleOptions {
+    /// Descibes when actions should be taken.
+    pub spec: ScheduleSpec,
+
+    /// If set, start in paused state.
+    pub paused: bool,
+
+    /// If set to true, then the number of actions will be limited
+    /// This number will be decremented after each action is taken
+    /// until it reaches `0` and then the schedule will stop.
+    pub remaining_actions: i64,
+
+    /// If set, trigger one action immediately.
+    pub trigger_immediately: bool,
+
+    /// If set, runs though the specified time period(s) and takes actions as if that time
+    /// passed by right now, all at once. The overlap policy can be overridden for the
+    /// scope of the backfill.
+    pub backfill_request: Vec<BackfillRequest>,
+
+    /// Optionally associate extra info that will be shown in list schedules.
+    pub memo: Option<HashMap<String, Payload>>,
+
+    /// Optionally associate extra search attributes with a workflow
+    pub search_attributes: Option<HashMap<String, Payload>>,
+
+    /// Optionally include schedule policies
+    pub policies: Option<SchedulePolicies>,
 }
 
 #[async_trait::async_trait]
@@ -1403,6 +1451,54 @@ impl WorkflowClientTrait for Client {
         Ok(self
             .wf_svc()
             .get_search_attributes(GetSearchAttributesRequest {})
+            .await?
+            .into_inner())
+    }
+
+    async fn create_schedule(
+        &self,
+        schedule_id: String,
+        task_queue: String,
+        workflow_id: String,
+        workflow_type: String,
+        request_id: Option<String>,
+        options: ScheduleOptions,
+    ) -> Result<CreateScheduleResponse> {
+        Ok(self
+            .wf_svc()
+            .create_schedule(CreateScheduleRequest {
+                namespace: self.namespace.clone(),
+                schedule: Some(Schedule {
+                    spec: Some(options.spec),
+                    action: Some(ScheduleAction {
+                        action: Some(temporal_sdk_core_protos::temporal::api::schedule::v1::schedule_action::Action::StartWorkflow(NewWorkflowExecutionInfo {
+                            workflow_id,
+                            workflow_type: Some(WorkflowType {
+                                name: workflow_type,
+                                ..Default::default()
+                            }),
+                            task_queue: Some(TaskQueue {
+                                name: task_queue,
+                                kind: TaskQueueKind::Unspecified as i32,
+                            }),
+                            // TODO: put the rest of workflow options here
+                            ..Default::default()
+                        })),
+                    }),
+                    policies: options.policies,
+                    state: Some(ScheduleState {
+                        paused: options.paused,
+                        limited_actions: options.remaining_actions > 0,
+                        remaining_actions: options.remaining_actions,
+                        ..Default::default()
+                    }),
+                }),
+                schedule_id: schedule_id.clone(),
+                request_id: request_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
+                memo: options.memo.and_then(|d| d.try_into().ok()),
+                search_attributes: options.search_attributes.and_then(|d| d.try_into().ok()),
+                ..Default::default()
+            })
             .await?
             .into_inner())
     }

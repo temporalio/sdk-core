@@ -1,6 +1,7 @@
 use crate::{
     ClientOptions, ListClosedFilters, ListOpenFilters, Namespace, RegisterNamespaceOptions, Result,
-    RetryConfig, SignalWithStartOptions, StartTimeFilter, WorkflowClientTrait, WorkflowOptions,
+    RetryConfig, ScheduleOptions, SignalWithStartOptions, StartTimeFilter, WorkflowClientTrait,
+    WorkflowOptions,
 };
 use backoff::{backoff::Backoff, exponential::ExponentialBackoff, Clock, SystemClock};
 use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
@@ -540,6 +541,27 @@ where
 
     async fn get_search_attributes(&self) -> Result<GetSearchAttributesResponse> {
         retry_call!(self, get_search_attributes)
+    }
+
+    async fn create_schedule(
+        &self,
+        schedule_id: String,
+        task_queue: String,
+        workflow_id: String,
+        workflow_type: String,
+        request_id: Option<String>,
+        options: ScheduleOptions,
+    ) -> Result<CreateScheduleResponse> {
+        retry_call!(
+            self,
+            create_schedule,
+            schedule_id.clone(),
+            task_queue.clone(),
+            workflow_id.clone(),
+            workflow_type.clone(),
+            request_id.clone(),
+            options.clone()
+        )
     }
 
     fn get_options(&self) -> &ClientOptions {
