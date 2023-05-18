@@ -1502,20 +1502,13 @@ impl WorkflowClientTrait for Client {
                     action: Some(ScheduleAction {
                         action: Some(temporal_sdk_core_protos::temporal::api::schedule::v1::schedule_action::Action::StartWorkflow(NewWorkflowExecutionInfo {
                             workflow_id: options.workflow_id.unwrap_or(format!("workflow-{}", schedule_id)),
-                            workflow_type: match options.workflow_type {
-                                Some(workflow_type) => Some(WorkflowType {
-                                    name: workflow_type,
-                                    ..Default::default()
-                                }),
-                                _ => None,
-                            },
-                            task_queue: match options.task_queue {
-                                Some(task_queue) => Some(TaskQueue {
-                                    name: task_queue,
-                                    kind: TaskQueueKind::Unspecified as i32,
-                                }),
-                                _ => None,
-                            },
+                            workflow_type: options.workflow_type.map(|workflow_type| WorkflowType {
+                                name: workflow_type,
+                            }),
+                            task_queue: options.task_queue.map(|task_queue| TaskQueue {
+                                name: task_queue,
+                                kind: TaskQueueKind::Unspecified as i32,
+                            }),
                             // TODO: put the rest of workflow options here
                             ..Default::default()
                         })),
