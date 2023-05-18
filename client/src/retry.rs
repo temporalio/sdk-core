@@ -13,6 +13,7 @@ use temporal_sdk_core_protos::{
         enums::v1::WorkflowTaskFailedCause,
         failure::v1::Failure,
         query::v1::WorkflowQuery,
+        schedule::v1::{BackfillRequest, Schedule, TriggerImmediatelyRequest},
         workflowservice::v1::*,
     },
     TaskToken,
@@ -546,9 +547,6 @@ where
     async fn create_schedule(
         &self,
         schedule_id: String,
-        task_queue: String,
-        workflow_id: String,
-        workflow_type: String,
         request_id: Option<String>,
         options: ScheduleOptions,
     ) -> Result<CreateScheduleResponse> {
@@ -556,11 +554,54 @@ where
             self,
             create_schedule,
             schedule_id.clone(),
-            task_queue.clone(),
-            workflow_id.clone(),
-            workflow_type.clone(),
             request_id.clone(),
             options.clone()
+        )
+    }
+
+    async fn delete_schedule(&self, schedule_id: String) -> Result<DeleteScheduleResponse> {
+        retry_call!(self, delete_schedule, schedule_id.clone())
+    }
+
+    async fn describe_schedule(&self, schedule_id: String) -> Result<DescribeScheduleResponse> {
+        retry_call!(self, describe_schedule, schedule_id.clone())
+    }
+
+    async fn patch_schedule(
+        &self,
+        schedule_id: String,
+        trigger_immediately: Option<TriggerImmediatelyRequest>,
+        pause: Option<String>,
+        unpause: Option<String>,
+        backfill_request: Option<BackfillRequest>,
+        request_id: Option<String>,
+    ) -> Result<PatchScheduleResponse> {
+        retry_call!(
+            self,
+            patch_schedule,
+            schedule_id.clone(),
+            trigger_immediately.clone(),
+            pause.clone(),
+            unpause.clone(),
+            backfill_request.clone(),
+            request_id.clone()
+        )
+    }
+
+    async fn update_schedule(
+        &self,
+        schedule_id: String,
+        schedule: Schedule,
+        conflict_token: Vec<u8>,
+        request_id: Option<String>,
+    ) -> Result<UpdateScheduleResponse> {
+        retry_call!(
+            self,
+            update_schedule,
+            schedule_id.clone(),
+            schedule.clone(),
+            conflict_token.clone(),
+            request_id.clone()
         )
     }
 

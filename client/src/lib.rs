@@ -55,8 +55,8 @@ use temporal_sdk_core_protos::{
         query::v1::WorkflowQuery,
         replication::v1::ClusterReplicationConfig,
         schedule::v1::{
-            BackfillRequest, Schedule, ScheduleAction, SchedulePolicies, ScheduleSpec,
-            ScheduleState,
+            BackfillRequest, Schedule, ScheduleAction, SchedulePatch, SchedulePolicies,
+            ScheduleSpec, ScheduleState, TriggerImmediatelyRequest,
         },
         taskqueue::v1::TaskQueue,
         testservice::v1::test_service_client::TestServiceClient,
@@ -932,12 +932,35 @@ pub trait WorkflowClientTrait {
     async fn create_schedule(
         &self,
         schedule_id: String,
-        task_queue: String,
-        workflow_id: String,
-        workflow_type: String,
         request_id: Option<String>,
         options: ScheduleOptions,
     ) -> Result<CreateScheduleResponse>;
+
+    /// Delete an existing schedule
+    async fn delete_schedule(&self, schedule_id: String) -> Result<DeleteScheduleResponse>;
+
+    /// Returns the schedule descriptor matching the schedule id
+    async fn describe_schedule(&self, schedule_id: String) -> Result<DescribeScheduleResponse>;
+
+    /// Updates a schedule by providing a new schedule descriptor
+    async fn update_schedule(
+        &self,
+        schedule_id: String,
+        schedule: Schedule,
+        conflict_token: Vec<u8>,
+        request_id: Option<String>,
+    ) -> Result<UpdateScheduleResponse>;
+
+    /// Patches or changes the state of an existing schedule
+    async fn patch_schedule(
+        &self,
+        schedule_id: String,
+        trigger_immediately: Option<TriggerImmediatelyRequest>,
+        pause: Option<String>,
+        unpause: Option<String>,
+        backfill_request: Option<BackfillRequest>,
+        request_id: Option<String>,
+    ) -> Result<PatchScheduleResponse>;
 
     /// Returns options that were used to initialize the client
     fn get_options(&self) -> &ClientOptions;
@@ -972,24 +995,33 @@ pub struct WorkflowOptions {
 /// Optional fields supplied at start of creating a schedule
 #[derive(Debug, Clone, Default)]
 pub struct ScheduleOptions {
+    /// The task queue to use for this schedule
+    pub task_queue: Option<String>,
+
+    /// The workflow id to use for generating scheduled workflows.
+    pub workflow_id: Option<String>,
+
+    /// The workflow type name
+    pub workflow_type: Option<String>,
+
     /// Descibes when actions should be taken.
-    pub spec: ScheduleSpec,
+    pub spec: Option<ScheduleSpec>,
 
     /// If set, start in paused state.
-    pub paused: bool,
+    pub paused: Option<bool>,
 
     /// If set to true, then the number of actions will be limited
     /// This number will be decremented after each action is taken
     /// until it reaches `0` and then the schedule will stop.
-    pub remaining_actions: i64,
+    pub remaining_actions: Option<i64>,
 
     /// If set, trigger one action immediately.
-    pub trigger_immediately: bool,
+    pub trigger_immediately: Option<bool>,
 
     /// If set, runs though the specified time period(s) and takes actions as if that time
     /// passed by right now, all at once. The overlap policy can be overridden for the
     /// scope of the backfill.
-    pub backfill_request: Vec<BackfillRequest>,
+    pub backfill_request: Option<Vec<BackfillRequest>>,
 
     /// Optionally associate extra info that will be shown in list schedules.
     pub memo: Option<HashMap<String, Payload>>,
@@ -1458,9 +1490,6 @@ impl WorkflowClientTrait for Client {
     async fn create_schedule(
         &self,
         schedule_id: String,
-        task_queue: String,
-        workflow_id: String,
-        workflow_type: String,
         request_id: Option<String>,
         options: ScheduleOptions,
     ) -> Result<CreateScheduleResponse> {
@@ -1469,27 +1498,33 @@ impl WorkflowClientTrait for Client {
             .create_schedule(CreateScheduleRequest {
                 namespace: self.namespace.clone(),
                 schedule: Some(Schedule {
-                    spec: Some(options.spec),
+                    spec: options.spec,
                     action: Some(ScheduleAction {
                         action: Some(temporal_sdk_core_protos::temporal::api::schedule::v1::schedule_action::Action::StartWorkflow(NewWorkflowExecutionInfo {
-                            workflow_id,
-                            workflow_type: Some(WorkflowType {
-                                name: workflow_type,
-                                ..Default::default()
-                            }),
-                            task_queue: Some(TaskQueue {
-                                name: task_queue,
-                                kind: TaskQueueKind::Unspecified as i32,
-                            }),
+                            workflow_id: options.workflow_id.unwrap_or(format!("workflow-{}", schedule_id)),
+                            workflow_type: match options.workflow_type {
+                                Some(workflow_type) => Some(WorkflowType {
+                                    name: workflow_type,
+                                    ..Default::default()
+                                }),
+                                _ => None,
+                            },
+                            task_queue: match options.task_queue {
+                                Some(task_queue) => Some(TaskQueue {
+                                    name: task_queue,
+                                    kind: TaskQueueKind::Unspecified as i32,
+                                }),
+                                _ => None,
+                            },
                             // TODO: put the rest of workflow options here
                             ..Default::default()
                         })),
                     }),
                     policies: options.policies,
                     state: Some(ScheduleState {
-                        paused: options.paused,
-                        limited_actions: options.remaining_actions > 0,
-                        remaining_actions: options.remaining_actions,
+                        paused: options.paused.unwrap_or(false),
+                        limited_actions: options.remaining_actions.map_or(false, |ra| ra > 0),
+                        remaining_actions: options.remaining_actions.unwrap_or(0),
                         ..Default::default()
                     }),
                 }),
@@ -1497,6 +1532,95 @@ impl WorkflowClientTrait for Client {
                 request_id: request_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
                 memo: options.memo.and_then(|d| d.try_into().ok()),
                 search_attributes: options.search_attributes.and_then(|d| d.try_into().ok()),
+                ..Default::default()
+            })
+            .await?
+            .into_inner())
+    }
+
+    async fn delete_schedule(&self, schedule_id: String) -> Result<DeleteScheduleResponse> {
+        Ok(self
+            .wf_svc()
+            .delete_schedule(DeleteScheduleRequest {
+                namespace: self.namespace.clone(),
+                schedule_id: schedule_id.clone(),
+                ..Default::default()
+            })
+            .await?
+            .into_inner())
+    }
+
+    async fn describe_schedule(&self, schedule_id: String) -> Result<DescribeScheduleResponse> {
+        Ok(self
+            .wf_svc()
+            .describe_schedule(DescribeScheduleRequest {
+                namespace: self.namespace.clone(),
+                schedule_id: schedule_id.clone(),
+            })
+            .await?
+            .into_inner())
+    }
+
+    async fn patch_schedule(
+        &self,
+        schedule_id: String,
+        trigger_immediately: Option<TriggerImmediatelyRequest>,
+        pause: Option<String>,
+        unpause: Option<String>,
+        backfill_request: Option<BackfillRequest>,
+        request_id: Option<String>,
+    ) -> Result<PatchScheduleResponse> {
+        Ok(self
+            .wf_svc()
+            .patch_schedule(PatchScheduleRequest {
+                namespace: self.namespace.clone(),
+                schedule_id: schedule_id.clone(),
+                patch: Some(SchedulePatch {
+                    trigger_immediately,
+                    pause: match pause {
+                        Some(notes) => {
+                            if notes.is_empty() {
+                                "Paused".to_string()
+                            } else {
+                                notes
+                            }
+                        }
+                        None => "".to_string(),
+                    },
+                    unpause: match unpause {
+                        Some(notes) => {
+                            if notes.is_empty() {
+                                "Unpaused".to_string()
+                            } else {
+                                notes
+                            }
+                        }
+                        None => "".to_string(),
+                    },
+                    backfill_request: backfill_request.map_or(vec![], |bfr| vec![bfr]),
+                }),
+                request_id: request_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
+                ..Default::default()
+            })
+            .await?
+            .into_inner())
+    }
+
+    async fn update_schedule(
+        &self,
+        schedule_id: String,
+        schedule: Schedule,
+        conflict_token: Vec<u8>,
+        request_id: Option<String>,
+    ) -> Result<UpdateScheduleResponse> {
+        Ok(self
+            .wf_svc()
+            .update_schedule(UpdateScheduleRequest {
+                namespace: self.namespace.clone(),
+                schedule_id: schedule_id.clone(),
+                schedule: Some(schedule),
+                conflict_token,
+                request_id: request_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
                 ..Default::default()
             })
             .await?
