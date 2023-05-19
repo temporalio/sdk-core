@@ -1,18 +1,11 @@
 use crate::{pollers::BoxedActPoller, worker::activities::PermittedTqResp, MetricsContext};
 use futures::{stream, Stream};
-use governor::{
-    clock::DefaultClock,
-    middleware::NoOpMiddleware,
-    state::{InMemoryState, NotKeyed},
-    RateLimiter,
-};
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse;
 use tokio::select;
 use tokio_util::sync::CancellationToken;
 
 struct StreamState {
     poller: BoxedActPoller,
-    rate_limiter: Option<RateLimiter<NotKeyed, InMemoryState, DefaultClock, NoOpMiddleware>>,
     metrics: MetricsContext,
     shutdown_token: CancellationToken,
     poller_was_shutdown: bool,
@@ -20,13 +13,11 @@ struct StreamState {
 
 pub(crate) fn new_activity_task_poller(
     poller: BoxedActPoller,
-    rate_limiter: Option<RateLimiter<NotKeyed, InMemoryState, DefaultClock, NoOpMiddleware>>,
     metrics: MetricsContext,
     shutdown_token: CancellationToken,
 ) -> impl Stream<Item = Result<PermittedTqResp, tonic::Status>> {
     let state = StreamState {
         poller,
-        rate_limiter,
         metrics,
         shutdown_token,
         poller_was_shutdown: false,
@@ -34,16 +25,12 @@ pub(crate) fn new_activity_task_poller(
     stream::unfold(state, |mut state| async move {
         loop {
             let poll = async {
-                if !state.poller_was_shutdown {
-                    if let Some(ref rl) = state.rate_limiter {
-                        rl.until_ready().await;
-                    }
-                }
                 loop {
                     return match state.poller.poll().await {
                         Some(Ok((resp, permit))) => {
                             if resp == PollActivityTaskQueueResponse::default() {
-                                // We get the default proto in the event that the long poll times out.
+                                // We get the default proto in the event that the long poll times
+                                // out.
                                 debug!("Poll activity task timeout");
                                 state.metrics.act_poll_timeout();
                                 continue;
@@ -54,8 +41,8 @@ pub(crate) fn new_activity_task_poller(
                             warn!(error=?e, "Error while polling for activity tasks");
                             Some(Err(e))
                         }
-                        // If poller returns None, it's dead, thus we also return None to terminate this
-                        // stream.
+                        // If poller returns None, it's dead, thus we also return None to terminate
+                        // this stream.
                         None => None,
                     };
                 }

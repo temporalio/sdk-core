@@ -297,6 +297,9 @@ pub fn telemetry_init(opts: TelemetryOptions) -> Result<TelemetryInstance, anyho
             .with(forward_layer)
             .with(export_layer);
 
+        #[cfg(feature = "tokio-console")]
+        let reg = reg.with(console_subscriber::spawn());
+
         tx.send(TelemetryInstance::new(
             Arc::new(reg),
             logs_out,

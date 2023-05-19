@@ -284,6 +284,7 @@ impl Worker {
                         config.max_task_queue_activities_per_second,
                         shutdown_token.child_token(),
                         Some(move |np| act_metrics.record_num_pollers(np)),
+                        config.max_worker_activities_per_second,
                     );
                     Some(Box::from(ap) as BoxedActPoller)
                 };
@@ -329,7 +330,6 @@ impl Worker {
         let at_task_mgr = act_poller.map(|ap| {
             WorkerActivityTasks::new(
                 act_semaphore,
-                config.max_worker_activities_per_second,
                 ap,
                 client.clone(),
                 metrics.clone(),
