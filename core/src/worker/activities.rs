@@ -622,8 +622,7 @@ mod tests {
                     task_token: vec![1],
                     activity_id: "act1".to_string(),
                     ..Default::default()
-                }
-                .into())
+                })
             });
         mock_client
             .expect_poll_activity_task()
@@ -633,8 +632,7 @@ mod tests {
                     task_token: vec![2],
                     activity_id: "act2".to_string(),
                     ..Default::default()
-                }
-                .into())
+                })
             });
         mock_client
             .expect_complete_activity_task()

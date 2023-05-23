@@ -26,4 +26,4 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: integ-test
-          args: -c "--release" -c "--all-features" -t heavy_tests -- --test-threads 1
+          args: -c "--release" -c "--features=save_wf_inputs" -t heavy_tests -- --test-threads 1

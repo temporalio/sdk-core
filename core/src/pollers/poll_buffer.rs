@@ -247,6 +247,7 @@ pub(crate) fn new_workflow_task_buffer(
 }
 
 pub type PollActivityTaskBuffer = LongPollBuffer<PollActivityTaskQueueResponse>;
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn new_activity_task_buffer(
     client: Arc<dyn WorkerClient>,
     task_queue: String,
@@ -255,9 +256,9 @@ pub(crate) fn new_activity_task_buffer(
     max_tps: Option<f64>,
     shutdown: CancellationToken,
     num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
-    mac_worker_aps: Option<f64>,
+    max_worker_acts_per_sec: Option<f64>,
 ) -> PollActivityTaskBuffer {
-    let rate_limiter = mac_worker_aps.and_then(|ps| {
+    let rate_limiter = max_worker_acts_per_sec.and_then(|ps| {
         Quota::with_period(Duration::from_secs_f64(ps.recip()))
             .map(|q| Arc::new(RateLimiter::direct(q)))
     });
