@@ -2019,8 +2019,8 @@ async fn no_race_acquiring_permits() {
 
     let worker = Worker::new_test(
         test_worker_cfg()
-            .max_outstanding_workflow_tasks(1_usize)
-            .max_cached_workflows(10_usize)
+            .max_outstanding_workflow_tasks(2_usize)
+            .max_cached_workflows(0_usize)
             .build()
             .unwrap(),
         mock_client,
@@ -2057,6 +2057,7 @@ async fn no_race_acquiring_permits() {
         task_barr.wait().await;
     };
     join!(poll_1_f, poll_2_f, other_f);
+    worker.drain_pollers_and_shutdown().await;
 }
 
 #[tokio::test]

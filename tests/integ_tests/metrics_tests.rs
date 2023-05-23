@@ -59,10 +59,11 @@ async fn one_slot_worker_reports_available_slot() {
         .namespace(NAMESPACE)
         .task_queue(tq)
         .worker_build_id("test_build_id")
-        .max_cached_workflows(1_usize)
+        .max_cached_workflows(2_usize)
         .max_outstanding_activities(1_usize)
         .max_outstanding_local_activities(1_usize)
-        .max_outstanding_workflow_tasks(1_usize)
+        // Need to use two for WFTs because there are a minimum of 2 pollers b/c of sticky polling
+        .max_outstanding_workflow_tasks(2_usize)
         .max_concurrent_wft_polls(1_usize)
         .build()
         .unwrap();
@@ -147,7 +148,7 @@ async fn one_slot_worker_reports_available_slot() {
         assert!(body.contains(&format!(
             "temporal_worker_task_slots_available{{namespace=\"{NAMESPACE}\",\
              service_name=\"temporal-core-sdk\",task_queue=\"one_slot_worker_tq\",\
-             worker_type=\"WorkflowWorker\"}} 1"
+             worker_type=\"WorkflowWorker\"}} 2"
         )));
 
         // Start a workflow so that a task will get delivered
@@ -175,7 +176,7 @@ async fn one_slot_worker_reports_available_slot() {
         assert!(body.contains(&format!(
             "temporal_worker_task_slots_available{{namespace=\"{NAMESPACE}\",\
              service_name=\"temporal-core-sdk\",task_queue=\"one_slot_worker_tq\",\
-             worker_type=\"WorkflowWorker\"}} 0"
+             worker_type=\"WorkflowWorker\"}} 1"
         )));
         assert!(body.contains(&format!(
             "temporal_worker_task_slots_available{{namespace=\"{NAMESPACE}\",\
@@ -198,7 +199,7 @@ async fn one_slot_worker_reports_available_slot() {
         assert!(body.contains(&format!(
             "temporal_worker_task_slots_available{{namespace=\"{NAMESPACE}\",\
              service_name=\"temporal-core-sdk\",task_queue=\"one_slot_worker_tq\",\
-             worker_type=\"WorkflowWorker\"}} 1"
+             worker_type=\"WorkflowWorker\"}} 2"
         )));
         assert!(body.contains(&format!(
             "temporal_worker_task_slots_available{{namespace=\"{NAMESPACE}\",\
