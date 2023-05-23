@@ -31,7 +31,6 @@ use futures::{
     stream::{BoxStream, PollNext},
     Stream, StreamExt,
 };
-use governor::{Quota, RateLimiter};
 use std::{
     convert::TryInto,
     future,
@@ -157,7 +156,6 @@ impl WorkerActivityTasks {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         semaphore: Arc<MeteredSemaphore>,
-        max_worker_act_per_sec: Option<f64>,
         poller: BoxedActPoller,
         client: Arc<dyn WorkerClient>,
         metrics: MetricsContext,
@@ -166,16 +164,9 @@ impl WorkerActivityTasks {
         graceful_shutdown: Option<Duration>,
     ) -> Self {
         let shutdown_initiated_token = CancellationToken::new();
-        let rate_limiter = max_worker_act_per_sec.and_then(|ps| {
-            Quota::with_period(Duration::from_secs_f64(ps.recip())).map(RateLimiter::direct)
-        });
         let outstanding_activity_tasks = Arc::new(DashMap::new());
-        let server_poller_stream = new_activity_task_poller(
-            poller,
-            rate_limiter,
-            metrics.clone(),
-            shutdown_initiated_token.clone(),
-        );
+        let server_poller_stream =
+            new_activity_task_poller(poller, metrics.clone(), shutdown_initiated_token.clone());
         let (eager_activities_tx, eager_activities_rx) = unbounded_channel();
         let eager_activities_semaphore = ClosableMeteredSemaphore::new_arc(semaphore);
 
@@ -617,48 +608,85 @@ fn worker_shutdown_failure() -> Failure {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        pollers::MockPermittedPollBuffer, test_help::mock_poller_from_resps,
-        worker::client::mocks::mock_manual_workflow_client,
-    };
+    use crate::{pollers::new_activity_task_buffer, worker::client::mocks::mock_workflow_client};
+    use temporal_sdk_core_protos::coresdk::activity_result::ActivityExecutionResult;
 
     #[tokio::test]
     async fn per_worker_ratelimit() {
+        let mut mock_client = mock_workflow_client();
+        mock_client
+            .expect_poll_activity_task()
+            .times(1)
+            .returning(move |_, _| {
+                Ok(PollActivityTaskQueueResponse {
+                    task_token: vec![1],
+                    activity_id: "act1".to_string(),
+                    ..Default::default()
+                })
+            });
+        mock_client
+            .expect_poll_activity_task()
+            .times(1)
+            .returning(move |_, _| {
+                Ok(PollActivityTaskQueueResponse {
+                    task_token: vec![2],
+                    activity_id: "act2".to_string(),
+                    ..Default::default()
+                })
+            });
+        mock_client
+            .expect_complete_activity_task()
+            .times(2)
+            .returning(|_, _| Ok(Default::default()));
+        let mock_client = Arc::new(mock_client);
         let sem = Arc::new(MeteredSemaphore::new(
             10,
             MetricsContext::no_op(),
             MetricsContext::available_task_slots,
         ));
-        let poller = mock_poller_from_resps([
-            PollActivityTaskQueueResponse {
-                task_token: vec![1],
-                activity_id: "act1".to_string(),
-                ..Default::default()
-            }
-            .into(),
-            PollActivityTaskQueueResponse {
-                task_token: vec![2],
-                activity_id: "act2".to_string(),
-                ..Default::default()
-            }
-            .into(),
-        ]);
+        let shutdown_token = CancellationToken::new();
+        let ap = new_activity_task_buffer(
+            mock_client.clone(),
+            "tq".to_string(),
+            5, // Lots of concurrent pollers, to ensure we don't poll to much when that's the case
+            sem.clone(),
+            None,
+            shutdown_token.clone(),
+            None::<fn(usize)>,
+            Some(2.0),
+        );
         let atm = WorkerActivityTasks::new(
             sem.clone(),
-            Some(2.0),
-            Box::new(MockPermittedPollBuffer::new(sem, poller)),
-            Arc::new(mock_manual_workflow_client()),
+            Box::new(ap),
+            mock_client.clone(),
             MetricsContext::no_op(),
             Duration::from_secs(1),
             Duration::from_secs(1),
             None,
         );
         let start = Instant::now();
-        atm.poll().await.unwrap();
-        atm.poll().await.unwrap();
+        let t1 = atm.poll().await.unwrap();
+        let t2 = atm.poll().await.unwrap();
         // At least half a second will have elapsed since we only allow 2 tasks per second.
         // With no ratelimit, even on a slow CI server with lots of load, this would typically take
         // low single digit ms or less.
         assert!(start.elapsed() > Duration::from_secs_f64(0.5));
+        shutdown_token.cancel();
+        // Need to complete the tasks so shutdown will resolve
+        atm.complete(
+            TaskToken(t1.task_token),
+            ActivityExecutionResult::ok(vec![1].into()).status.unwrap(),
+            mock_client.as_ref(),
+        )
+        .await;
+        atm.complete(
+            TaskToken(t2.task_token),
+            ActivityExecutionResult::ok(vec![1].into()).status.unwrap(),
+            mock_client.as_ref(),
+        )
+        .await;
+        atm.initiate_shutdown();
+        assert_matches!(atm.poll().await.unwrap_err(), PollActivityError::ShutDown);
+        atm.shutdown().await;
     }
 }

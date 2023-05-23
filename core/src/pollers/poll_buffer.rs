@@ -4,6 +4,8 @@ use crate::{
     worker::client::WorkerClient,
 };
 use futures::{prelude::stream::FuturesUnordered, StreamExt};
+use futures_util::{future::BoxFuture, FutureExt};
+use governor::{Quota, RateLimiter};
 use std::{
     fmt::Debug,
     future::Future,
@@ -11,6 +13,7 @@ use std::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     },
+    time::Duration,
 };
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::{
     PollActivityTaskQueueResponse, PollWorkflowTaskQueueResponse,
@@ -63,15 +66,17 @@ impl<T> LongPollBuffer<T>
 where
     T: Send + Debug + 'static,
 {
-    pub(crate) fn new<FT>(
+    pub(crate) fn new<FT, DelayFut>(
         poll_fn: impl Fn() -> FT + Send + Sync + 'static,
         poll_semaphore: Arc<MeteredSemaphore>,
         max_pollers: usize,
         shutdown: CancellationToken,
         num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
+        pre_permit_delay: Option<impl Fn() -> DelayFut + Send + Sync + 'static>,
     ) -> Self
     where
         FT: Future<Output = pollers::Result<T>> + Send,
+        DelayFut: Future<Output = ()> + Send,
     {
         let (tx, rx) = unbounded_channel();
         let (starter, wait_for_start) = broadcast::channel(1);
@@ -79,6 +84,7 @@ where
         let join_handles = FuturesUnordered::new();
         let pf = Arc::new(poll_fn);
         let nph = num_pollers_handler.map(Arc::new);
+        let pre_permit_delay = pre_permit_delay.map(Arc::new);
         for _ in 0..max_pollers {
             let tx = tx.clone();
             let pf = pf.clone();
@@ -86,6 +92,7 @@ where
             let ap = active_pollers.clone();
             let poll_semaphore = poll_semaphore.clone();
             let nph = nph.clone();
+            let pre_permit_delay = pre_permit_delay.clone();
             let mut wait_for_start = wait_for_start.resubscribe();
             let jh = tokio::spawn(async move {
                 tokio::select! {
@@ -98,6 +105,12 @@ where
                 loop {
                     if shutdown.is_cancelled() {
                         break;
+                    }
+                    if let Some(ref ppd) = pre_permit_delay {
+                        tokio::select! {
+                            _ = ppd() => (),
+                            _ = shutdown.cancelled() => break,
+                        }
                     }
                     let permit = tokio::select! {
                         p = poll_semaphore.acquire_owned() => p,
@@ -229,10 +242,12 @@ pub(crate) fn new_workflow_task_buffer(
         concurrent_pollers,
         shutdown,
         num_pollers_handler,
+        None::<fn() -> BoxFuture<'static, ()>>,
     )
 }
 
 pub type PollActivityTaskBuffer = LongPollBuffer<PollActivityTaskQueueResponse>;
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn new_activity_task_buffer(
     client: Arc<dyn WorkerClient>,
     task_queue: String,
@@ -241,7 +256,12 @@ pub(crate) fn new_activity_task_buffer(
     max_tps: Option<f64>,
     shutdown: CancellationToken,
     num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
+    max_worker_acts_per_sec: Option<f64>,
 ) -> PollActivityTaskBuffer {
+    let rate_limiter = max_worker_acts_per_sec.and_then(|ps| {
+        Quota::with_period(Duration::from_secs_f64(ps.recip()))
+            .map(|q| Arc::new(RateLimiter::direct(q)))
+    });
     LongPollBuffer::new(
         move || {
             let client = client.clone();
@@ -252,6 +272,12 @@ pub(crate) fn new_activity_task_buffer(
         concurrent_pollers,
         shutdown,
         num_pollers_handler,
+        rate_limiter.map(|rl| {
+            move || {
+                let rl = rl.clone();
+                async move { rl.until_ready().await }.boxed()
+            }
+        }),
     )
 }
 

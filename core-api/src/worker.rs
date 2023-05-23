@@ -164,6 +164,19 @@ impl WorkerConfigBuilder {
                 );
             }
         }
+        if matches!(self.max_concurrent_wft_polls, Some(1))
+            && self.max_cached_workflows > Some(0)
+            && self
+                .max_outstanding_workflow_tasks
+                .unwrap_or(MAX_OUTSTANDING_WFT_DEFAULT)
+                <= 1
+        {
+            return Err(
+                "`max_outstanding_workflow_tasks` must be at at least 2 when \
+                 `max_cached_workflows` is nonzero"
+                    .to_owned(),
+            );
+        }
         if self
             .max_concurrent_wft_polls
             .unwrap_or(MAX_CONCURRENT_WFT_POLLS_DEFAULT)
