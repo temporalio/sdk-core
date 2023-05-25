@@ -12,6 +12,7 @@ extern crate tracing;
 extern crate core;
 
 mod abstractions;
+#[cfg(feature = "ephemeral-server")]
 pub mod ephemeral_server;
 mod internal_flags;
 mod pollers;
