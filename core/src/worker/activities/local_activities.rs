@@ -489,8 +489,15 @@ impl LocalActivityManager {
                 current_attempt_scheduled_time: Some(new_la.schedule_time.into()),
                 started_time: Some(SystemTime::now().into()),
                 attempt,
-                schedule_to_close_timeout: schedule_to_close.or(Some(Duration::ZERO)).and_then(|d| d.try_into().ok()),
-                start_to_close_timeout: start_to_close.or(schedule_to_close).and_then(|d| d.try_into().ok()),
+                schedule_to_close_timeout: schedule_to_close
+                    .unwrap_or(Duration::ZERO)
+                    .try_into()
+                    .ok(),
+                start_to_close_timeout: start_to_close
+                    .or(schedule_to_close)
+                    .unwrap()
+                    .try_into()
+                    .ok(),
                 heartbeat_timeout: None,
                 retry_policy: Some(sa.retry_policy),
                 is_local: true,
@@ -1203,11 +1210,14 @@ mod tests {
             // Validate that timeouts reported to lang matches what server would have provided
             // if this had been a normal activity with the same timeout configuration.
             if is_schedule {
-                assert_eq!(start.schedule_to_close_timeout, Some(timeout).and_then(|d| d.try_into().ok()));
-                assert_eq!(start.start_to_close_timeout, Some(timeout).and_then(|d| d.try_into().ok()));
+                assert_eq!(start.schedule_to_close_timeout, timeout.try_into().ok());
+                assert_eq!(start.start_to_close_timeout, timeout.try_into().ok());
             } else {
-                assert_eq!(start.schedule_to_close_timeout, Some(Duration::ZERO).and_then(|d| d.try_into().ok()));
-                assert_eq!(start.start_to_close_timeout, Some(timeout).and_then(|d| d.try_into().ok()));
+                assert_eq!(
+                    start.schedule_to_close_timeout,
+                    Duration::ZERO.try_into().ok()
+                );
+                assert_eq!(start.start_to_close_timeout, timeout.try_into().ok());
             }
         };
 
