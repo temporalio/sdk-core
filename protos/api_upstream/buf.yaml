@@ -1,12 +1,7 @@
 version: v1
 breaking:
-  ignore:
-    # TODO: Remove after PR 237
-    - temporal/api/taskqueue/v1
-    - temporal/api/workflowservice/v1
-    - temporal/api/history/v1
   use:
-    - PACKAGE
+    - WIRE_JSON
 lint:
   use:
     - DEFAULT

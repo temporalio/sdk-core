@@ -122,4 +122,6 @@ enum ResourceExhaustedCause {
     RESOURCE_EXHAUSTED_CAUSE_SYSTEM_OVERLOADED = 3;
     // Namespace exceeds persistence rate limit.
     RESOURCE_EXHAUSTED_CAUSE_PERSISTENCE_LIMIT = 4;
+    // Workflow is busy
+    RESOURCE_EXHAUSTED_CAUSE_BUSY_WORKFLOW = 5;
 }

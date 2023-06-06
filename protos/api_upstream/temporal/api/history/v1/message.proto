@@ -100,6 +100,11 @@ message WorkflowExecutionStartedEventAttributes {
     // It should be used together with parent_initiated_event_id to identify
     // a child initiated event for global namespace
     int64 parent_initiated_event_version = 26;
+    // This field is new in 1.21.
+    string workflow_id = 28;
+    // If this workflow intends to use anything other than the current overall default version for
+    // the queue, then we include it here.
+    temporal.api.common.v1.WorkerVersionStamp source_version_stamp = 29;
 }
 
 message WorkflowExecutionCompletedEventAttributes {
@@ -152,6 +157,9 @@ message WorkflowExecutionContinuedAsNewEventAttributes {
     temporal.api.common.v1.Header header = 12;
     temporal.api.common.v1.Memo memo = 13;
     temporal.api.common.v1.SearchAttributes search_attributes = 14;
+    // If this is set, the workflow executing this command wishes to continue as new using a version
+    // compatible with the version that this workflow most recently ran on.
+    bool use_compatible_version = 15;
 
     // workflow_execution_timeout is omitted as it shouldn't be overridden from within a workflow.
 }
@@ -193,13 +201,14 @@ message WorkflowTaskCompletedEventAttributes {
     string identity = 3;
     // Binary ID of the worker who completed this task
     string binary_checksum = 4;
-    // Version info of the worker who processed this workflow task, or missing if worker is not
-    // using versioning. If present, the `build_id` field within is also used as `binary_checksum`,
-    // which may be omitted in that case (it may also be populated to preserve compatibility).
+    // Version info of the worker who processed this workflow task. If present, the `build_id` field
+    // within is also used as `binary_checksum`, which may be omitted in that case (it may also be
+    // populated to preserve compatibility).
     temporal.api.common.v1.WorkerVersionStamp worker_version = 5;
     // Data the SDK wishes to record for itself, but server need not interpret, and does not
     // directly impact workflow state.
     temporal.api.sdk.v1.WorkflowTaskCompletedMetadata sdk_metadata = 6;
+
     // Local usage data sent during workflow task completion and recorded here for posterity
     temporal.api.common.v1.MeteringMetadata metering_metadata = 13;
 }
@@ -228,8 +237,13 @@ message WorkflowTaskFailedEventAttributes {
     string new_run_id = 7;
     // TODO: ?
     int64 fork_event_version = 8;
-    // If a worker explicitly failed this task, it's binary id
+    // DEPRECATED since 1.21 - use `worker_version` instead.
+    // If a worker explicitly failed this task, its binary id
     string binary_checksum = 9;
+    // Version info of the worker who processed this workflow task. If present, the `build_id` field
+    // within is also used as `binary_checksum`, which may be omitted in that case (it may also be
+    // populated to preserve compatibility).
+    temporal.api.common.v1.WorkerVersionStamp worker_version = 10;
 }
 
 message ActivityTaskScheduledEventAttributes {
@@ -270,6 +284,10 @@ message ActivityTaskScheduledEventAttributes {
     // configuration. Retries will happen up to `schedule_to_close_timeout`. To disable retries set
     // retry_policy.maximum_attempts to 1.
     temporal.api.common.v1.RetryPolicy retry_policy = 12;
+    // If this is set, the workflow executing this command wishes to start the activity using
+    // a version compatible with the version that this workflow most recently ran on, if such
+    // behavior is possible.
+    bool use_compatible_version = 13;
 }
 
 message ActivityTaskStartedEventAttributes {
@@ -295,6 +313,8 @@ message ActivityTaskCompletedEventAttributes {
     int64 started_event_id = 3;
     // id of the worker that completed this task
     string identity = 4;
+    // Version info of the worker who processed this workflow task.
+    temporal.api.common.v1.WorkerVersionStamp worker_version = 5;
 }
 
 message ActivityTaskFailedEventAttributes {
@@ -307,6 +327,8 @@ message ActivityTaskFailedEventAttributes {
     // id of the worker that failed this task
     string identity = 4;
     temporal.api.enums.v1.RetryState retry_state = 5;
+    // Version info of the worker who processed this workflow task.
+    temporal.api.common.v1.WorkerVersionStamp worker_version = 6;
 }
 
 message ActivityTaskTimedOutEventAttributes {
@@ -339,6 +361,8 @@ message ActivityTaskCanceledEventAttributes {
     int64 started_event_id = 4;
     // id of the worker who canceled this activity
     string identity = 5;
+    // Version info of the worker who processed this workflow task.
+    temporal.api.common.v1.WorkerVersionStamp worker_version = 6;
 }
 
 message TimerStartedEventAttributes {
@@ -556,6 +580,10 @@ message StartChildWorkflowExecutionInitiatedEventAttributes {
     temporal.api.common.v1.Header header = 15;
     temporal.api.common.v1.Memo memo = 16;
     temporal.api.common.v1.SearchAttributes search_attributes = 17;
+    // If this is set, the workflow executing this command wishes to start the child workflow using
+    // a version compatible with the version that this workflow most recently ran on, if such
+    // behavior is possible.
+    bool use_compatible_version = 19;
 }
 
 message StartChildWorkflowExecutionFailedEventAttributes {
@@ -697,6 +725,10 @@ message WorkflowExecutionUpdateAcceptedEventAttributes {
 message WorkflowExecutionUpdateCompletedEventAttributes {
     // The metadata about this update.
     temporal.api.update.v1.Meta meta = 1;
+
+    // The event ID indicating the acceptance of this update.
+    int64 accepted_event_id = 3;
+
     // The outcome of executing the workflow update function.
     temporal.api.update.v1.Outcome outcome = 2;
 }

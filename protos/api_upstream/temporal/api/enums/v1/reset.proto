@@ -39,3 +39,12 @@ enum ResetReapplyType {
     RESET_REAPPLY_TYPE_SIGNAL = 1;
     RESET_REAPPLY_TYPE_NONE = 2;
 }
+
+// Reset type options
+enum ResetType { 
+    RESET_TYPE_UNSPECIFIED = 0;
+    // Resets to event of the first workflow task completed, or if it does not exist, the event after task scheduled.
+    RESET_TYPE_FIRST_WORKFLOW_TASK = 1;
+    // Resets to event of the last workflow task completed, or if it does not exist, the event after task scheduled.
+    RESET_TYPE_LAST_WORKFLOW_TASK = 2;
+}

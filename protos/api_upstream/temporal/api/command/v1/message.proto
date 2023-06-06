@@ -83,6 +83,10 @@ message ScheduleActivityTaskCommandAttributes {
     // Request to start the activity directly bypassing matching service and worker polling
     // The slot for executing the activity should be reserved when setting this field to true.
     bool request_eager_execution = 12;
+    // If this is set, the workflow executing this command wishes to start the activity using
+    // a version compatible with the version that this workflow most recently ran on, if such
+    // behavior is possible.
+    bool use_compatible_version = 13;
 }
 
 message RequestCancelActivityTaskCommandAttributes {
@@ -191,6 +195,9 @@ message ContinueAsNewWorkflowExecutionCommandAttributes {
     temporal.api.common.v1.Header header = 12;
     temporal.api.common.v1.Memo memo = 13;
     temporal.api.common.v1.SearchAttributes search_attributes = 14;
+    // If this is set, the workflow executing this command wishes to continue as new using a version
+    // compatible with the version that this workflow most recently ran on.
+    bool use_compatible_version = 15;
 
     // `workflow_execution_timeout` is omitted as it shouldn't be overridden from within a workflow.
 }
@@ -218,6 +225,10 @@ message StartChildWorkflowExecutionCommandAttributes {
     temporal.api.common.v1.Header header = 14;
     temporal.api.common.v1.Memo memo = 15;
     temporal.api.common.v1.SearchAttributes search_attributes = 16;
+    // If this is set, the workflow executing this command wishes to start the child workflow using
+    // a version compatible with the version that this workflow most recently ran on, if such
+    // behavior is possible.
+    bool use_compatible_version = 17;
 }
 
 message ProtocolMessageCommandAttributes {

@@ -238,14 +238,12 @@ message PollWorkflowTaskQueueRequest {
     temporal.api.taskqueue.v1.TaskQueue task_queue = 2;
     // The identity of the worker/client who is polling this task queue
     string identity = 3;
+    // DEPRECATED since 1.21 - use `worker_version_capabilities` instead.
     // Each worker process should provide an ID unique to the specific set of code it is running
     // "checksum" in this field name isn't very accurate, it should be though of as an id.
     string binary_checksum = 4;
-    // If set, the worker is opting in to versioning and wishes to only
-    // receive tasks that are considered compatible with the version capabilities provided.
-    // Doing so only makes sense in conjunction with the `UpdateWorkerBuildIdCompatibility` API.
-    // When this field has a `worker_build_id`, and `binary_checksum` is not
-    // set, that value should also be considered as the `binary_checksum`.
+    // Information about this worker's build identifier and if it is choosing to use the versioning
+    // feature. See the `WorkerVersionCapabilities` docstring for more.
     temporal.api.common.v1.WorkerVersionCapabilities worker_version_capabilities = 5;
 }
 
@@ -309,16 +307,15 @@ message RespondWorkflowTaskCompletedRequest {
     // something useful, but cannot complete it within the workflow task timeout. Local activities
     // which run for longer than the task timeout being the prime example.
     bool force_create_new_workflow_task = 6;
+    // DEPRECATED since 1.21 - use `worker_version_stamp` instead.
     // Worker process' unique binary id
     string binary_checksum = 7;
     // Responses to the `queries` field in the task being responded to
     map<string, temporal.api.query.v1.WorkflowQueryResult> query_results = 8;
     string namespace = 9;
-    // If using versioning, the worker uses this field to indicate what version(s) it used to
-    // process the task. When this field has a `worker_build_id`, and `binary_checksum` is not set,
-    // that value should also be considered as the `binary_checksum`. Leaving this field empty when
-    // replying to a task has had this field previously populated in history in an error, and such
-    // a completion will be rejected.
+    // Version info of the worker who processed this task. This message's `build_id` field should
+    // always be set by SDKs. Workers opting into versioning will also set the `use_versioning`
+    // field to true. See message docstrings for more.
     temporal.api.common.v1.WorkerVersionStamp worker_version_stamp = 10;
     // Protocol messages piggybacking on a WFT as a transport
     repeated temporal.api.protocol.v1.Message messages = 11;
@@ -348,11 +345,16 @@ message RespondWorkflowTaskFailedRequest {
     temporal.api.failure.v1.Failure failure = 3;
     // The identity of the worker/client
     string identity = 4;
+    // DEPRECATED since 1.21 - use `worker_version_stamp` instead.
     // Worker process' unique binary id
     string binary_checksum = 5;
     string namespace = 6;
     // Protocol messages piggybacking on a WFT as a transport
     repeated temporal.api.protocol.v1.Message messages = 7;
+    // Version info of the worker who processed this task. This message's `build_id` field should
+    // always be set by SDKs. Workers opting into versioning will also set the `use_versioning`
+    // field to true. See message docstrings for more.
+    temporal.api.common.v1.WorkerVersionStamp worker_version = 8;
 }
 
 message RespondWorkflowTaskFailedResponse {
@@ -364,9 +366,8 @@ message PollActivityTaskQueueRequest {
     // The identity of the worker/client
     string identity = 3;
     temporal.api.taskqueue.v1.TaskQueueMetadata task_queue_metadata = 4;
-    // If set, the worker is opting in to versioning and wishes to only
-    // receive tasks that are considered compatible with the capabilities provided.
-    // Doing so only makes sense in conjunction with the `UpdateWorkerBuildIdCompatibility` API.
+    // Information about this worker's build identifier and if it is choosing to use the versioning
+    // feature. See the `WorkerVersionCapabilities` docstring for more.
     temporal.api.common.v1.WorkerVersionCapabilities worker_version_capabilities = 5;
 }
 
@@ -463,6 +464,10 @@ message RespondActivityTaskCompletedRequest {
     // The identity of the worker/client
     string identity = 3;
     string namespace = 4;
+    // Version info of the worker who processed this task. This message's `build_id` field should
+    // always be set by SDKs. Workers opting into versioning will also set the `use_versioning`
+    // field to true. See message docstrings for more.
+    temporal.api.common.v1.WorkerVersionStamp worker_version = 5;
 }
 
 message RespondActivityTaskCompletedResponse {
@@ -496,6 +501,10 @@ message RespondActivityTaskFailedRequest {
     string namespace = 4;
     // Additional details to be stored as last activity heartbeat
     temporal.api.common.v1.Payloads last_heartbeat_details = 5;
+    // Version info of the worker who processed this task. This message's `build_id` field should
+    // always be set by SDKs. Workers opting into versioning will also set the `use_versioning`
+    // field to true. See message docstrings for more.
+    temporal.api.common.v1.WorkerVersionStamp worker_version = 6;
 }
 
 message RespondActivityTaskFailedResponse {
@@ -535,6 +544,10 @@ message RespondActivityTaskCanceledRequest {
     // The identity of the worker/client
     string identity = 3;
     string namespace = 4;
+    // Version info of the worker who processed this task. This message's `build_id` field should
+    // always be set by SDKs. Workers opting into versioning will also set the `use_versioning`
+    // field to true. See message docstrings for more.
+    temporal.api.common.v1.WorkerVersionStamp worker_version = 5;
 }
 
 message RespondActivityTaskCanceledResponse {
@@ -1071,6 +1084,13 @@ message UpdateWorkerBuildIdCompatibilityRequest {
         bool make_set_default = 3;
     }
 
+    message MergeSets {
+        // A build ID in the set whose default will become the merged set default
+        string primary_set_build_id = 1;
+        // A build ID in the set which will be merged into the primary set
+        string secondary_set_build_id = 2;
+    }
+
     string namespace = 1;
     // Must be set, the task queue to apply changes to. Because all workers on a given task queue
     // must have the same set of workflow & activity implementations, there is no reason to specify
@@ -1097,6 +1117,12 @@ message UpdateWorkerBuildIdCompatibilityRequest {
         // (-- api-linter: core::0140::prepositions=disabled
         //     aip.dev/not-precedent: Within makes perfect sense here. --)
         string promote_build_id_within_set = 6;
+        // Merge two existing sets together, thus declaring all build IDs in both sets compatible
+        // with one another. The primary set's default will become the default for the merged set.
+        // This is useful if you've accidentally declared a new ID as incompatible you meant to
+        // declare as compatible. The unusual case of incomplete replication during failover could
+        // also result in a split set, which this operation can repair.
+        MergeSets merge_sets = 7;
     }
 }
 message UpdateWorkerBuildIdCompatibilityResponse {
@@ -1114,12 +1140,6 @@ message GetWorkerBuildIdCompatibilityRequest {
     // Limits how many compatible sets will be returned. Specify 1 to only return the current
     // default major version set. 0 returns all sets.
     int32 max_sets = 3;
-    // If set, the response will include information about worker versions which are ready to be
-    // retired.
-    bool include_retirement_candidates = 4;
-    // If set, the response will include information about which versions have open workflows, and
-    // whether or not there are currently polling workers who are compatible with those versions.
-    bool include_poller_compatibility = 5;
 }
 message GetWorkerBuildIdCompatibilityResponse {
     // Major version sets, in order from oldest to newest. The last element of the list will always
@@ -1128,32 +1148,43 @@ message GetWorkerBuildIdCompatibilityResponse {
     //
     // There may be fewer sets returned than exist, if the request chose to limit this response.
     repeated temporal.api.taskqueue.v1.CompatibleVersionSet major_version_sets = 1;
+}
 
-    message RetirementCandidate {
-        // The worker build id which is ready for retirement
-        string build_id = 1;
-        // If true, there are no open *or* closed workflows, meaning there is no reason at all
-        // to keep the worker alive, not even to service queries on closed workflows. If not true,
-        // then there are no open workflows, but some closed ones.
-        bool all_workflows_are_archived = 2;
-        // Currently polling workers who match the build id ready for retirement
-        repeated temporal.api.taskqueue.v1.PollerInfo pollers = 3;
-    }
+message GetWorkerTaskReachabilityRequest {
+    string namespace = 1;
+    // Build ids to retrieve reachability for. An empty string will be interpreted as an unversioned worker.
+    // The number of build ids that can be queried in a single API call is limited.
+    // Open source users can adjust this limit by setting the server's dynamic config value for
+    // `limit.reachabilityQueryBuildIds` with the caveat that this call can strain the visibility store.
+    repeated string build_ids = 2;
 
-    // A list of workers who are still live and polling the task queue, but may no longer be needed
-    // to make progress on open workflows.
-    repeated RetirementCandidate retirement_candidates = 2;
+    // Task queues to retrieve reachability for. Leave this empty to query for all task queues associated with given
+    // build ids in the namespace.
+    // Must specify at least one task queue if querying for an unversioned worker.
+    // The number of task queues that the server will fetch reachability information for is limited.
+    // See the `GetWorkerTaskReachabilityResponse` documentation for more information.
+    repeated string task_queues = 3;
 
-    message VersionsWithCompatiblePollers {
-        // The latest build id which completed a workflow task on some open workflow
-        string most_recent_build_id = 1;
-        // Currently polling workers who are compatible with `most_recent_build_id`.
-        repeated temporal.api.taskqueue.v1.PollerInfo pollers = 2;
-    }
+    // Type of reachability to query for.
+    // `TASK_REACHABILITY_NEW_WORKFLOWS` is always returned in the response.
+    // Use `TASK_REACHABILITY_EXISTING_WORKFLOWS` if your application needs to respond to queries on closed workflows.
+    // Otherwise, use `TASK_REACHABILITY_OPEN_WORKFLOWS`. Default is `TASK_REACHABILITY_EXISTING_WORKFLOWS` if left
+    // unspecified.
+    // See the TaskReachability docstring for information about each enum variant.
+    temporal.api.enums.v1.TaskReachability reachability = 4;
+}
 
-    // A list of versions and pollers who are capable of processing tasks at that version (if any)
-    // for which there are currently open workflows.
-    repeated VersionsWithCompatiblePollers active_versions_and_pollers = 3;
+message GetWorkerTaskReachabilityResponse {
+    // Task reachability, broken down by build id and then task queue.
+    // When requesting a large number of task queues or all task queues associated with the given build ids in a
+    // namespace, all task queues will be listed in the response but some of them may not contain reachability
+    // information due to a server enforced limit. When reaching the limit, task queues that reachability information
+    // could not be retrieved for will be marked with a single TASK_REACHABILITY_UNSPECIFIED entry. The caller may issue
+    // another call to get the reachability for those task queues.
+    //
+    // Open source users can adjust this limit by setting the server's dynamic config value for
+    // `limit.reachabilityTaskQueueScan` with the caveat that this call can strain the visibility store.
+    repeated temporal.api.taskqueue.v1.BuildIdReachability build_id_reachability = 1;
 }
 
 // (-- api-linter: core::0134=disabled
@@ -1208,6 +1239,7 @@ message StartBatchOperationRequest {
         temporal.api.batch.v1.BatchOperationSignal signal_operation = 11;
         temporal.api.batch.v1.BatchOperationCancellation cancellation_operation = 12;
         temporal.api.batch.v1.BatchOperationDeletion deletion_operation = 13;
+        temporal.api.batch.v1.BatchOperationReset reset_operation = 14;
     }
 }
 

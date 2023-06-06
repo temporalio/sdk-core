@@ -45,6 +45,9 @@ message TaskQueue {
     string name = 1;
     // Default: TASK_QUEUE_KIND_NORMAL.
     temporal.api.enums.v1.TaskQueueKind kind = 2;
+    // Iff kind == TASK_QUEUE_KIND_STICKY, then this field contains the name of
+    // the normal task queue that the sticky worker is running on.
+    string normal_name = 3;
 }
 
 // Only applies to activity task queues
@@ -87,12 +90,26 @@ message StickyExecutionAttributes {
     google.protobuf.Duration schedule_to_start_timeout = 2 [(gogoproto.stdduration) = true];
 }
 
-// Used by the worker versioning APIs, represents an ordering of one or more versions which are
-// considered to be compatible with each other. Currently the versions are always worker build ids.
+// Used by the worker versioning APIs, represents an unordered set of one or more versions which are
+// considered to be compatible with each other. Currently the versions are always worker build IDs.
 message CompatibleVersionSet {
-    // A unique identifier for this version set. Users don't need to understand or care about this
-    // value, but it has value for debugging purposes.
-    string version_set_id = 1;
-    // All the compatible versions, ordered from oldest to newest
-    repeated string build_ids = 2;
+    // All the compatible versions, unordered, except for the last element, which is considered the set "default".
+    repeated string build_ids = 1;
+}
+
+// Reachability of tasks for a worker on a single task queue.
+message TaskQueueReachability {
+    string task_queue = 1;
+    // Task reachability for a worker in a single task queue.
+    // See the TaskReachability docstring for information about each enum variant.
+    // If reachability is empty, this worker is considered unreachable in this task queue.
+    repeated temporal.api.enums.v1.TaskReachability reachability = 2;
+}
+
+// Reachability of tasks for a worker by build id, in one or more task queues.
+message BuildIdReachability {
+    // A build id or empty if unversioned.
+    string build_id = 1;
+    // Reachability per task queue.
+    repeated TaskQueueReachability task_queue_reachability = 2;
 }
