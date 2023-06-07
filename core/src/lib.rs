@@ -146,9 +146,8 @@ pub(crate) fn sticky_q_name_for_worker(
 ) -> Option<String> {
     if config.max_cached_workflows > 0 {
         Some(format!(
-            "{}-{}-{}",
+            "{}-{}",
             &process_identity,
-            &config.task_queue,
             uuid::Uuid::new_v4().simple()
         ))
     } else {
