@@ -562,6 +562,7 @@ pub fn default_wes_attribs() -> WorkflowExecutionStartedEventAttributes {
         task_queue: Some(TaskQueue {
             name: "q".to_string(),
             kind: TaskQueueKind::Normal as i32,
+            normal_name: "".to_string(),
         }),
         ..Default::default()
     }

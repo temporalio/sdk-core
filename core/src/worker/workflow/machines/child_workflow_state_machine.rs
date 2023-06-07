@@ -22,7 +22,10 @@ use temporal_sdk_core_protos::{
         workflow_commands::StartChildWorkflowExecution,
     },
     temporal::api::{
-        command::v1::{Command, RequestCancelExternalWorkflowExecutionCommandAttributes},
+        command::v1::{
+            start_child_workflow_cmd_to_api, Command,
+            RequestCancelExternalWorkflowExecutionCommandAttributes,
+        },
         common::v1::{Payload, Payloads, WorkflowExecution, WorkflowType},
         enums::v1::{
             CommandType, EventType, RetryState, StartChildWorkflowExecutionFailedCause, TimeoutType,
@@ -359,6 +362,7 @@ impl ChildWorkflowMachine {
     pub(super) fn new_scheduled(
         attribs: StartChildWorkflowExecution,
         internal_flags: InternalFlagsRef,
+        use_compatible_version: bool,
     ) -> NewMachineWithCommand {
         let mut s = Self::from_parts(
             Created {}.into(),
@@ -379,7 +383,10 @@ impl ChildWorkflowMachine {
             .expect("Scheduling child workflows doesn't fail");
         let cmd = Command {
             command_type: CommandType::StartChildWorkflowExecution as i32,
-            attributes: Some(attribs.into()),
+            attributes: Some(start_child_workflow_cmd_to_api(
+                attribs,
+                use_compatible_version,
+            )),
         };
         NewMachineWithCommand {
             command: cmd,

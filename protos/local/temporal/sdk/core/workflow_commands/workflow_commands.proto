@@ -84,6 +84,8 @@ message ScheduleActivity {
     // activity. When unset/default, workers will always attempt to do so if activity execution
     // slots are available.
     bool do_not_eagerly_execute = 14;
+    // Whether this activity should run on a worker with a compatible build id or not.
+    coresdk.common.VersioningIntent versioning_intent = 15;
 }
 
 message ScheduleLocalActivity {
@@ -198,6 +200,8 @@ message ContinueAsNewWorkflowExecution {
     // If set, the new workflow will have this retry policy. If unset, re-uses the current
     // workflow's retry policy.
     temporal.api.common.v1.RetryPolicy retry_policy = 9;
+    // Whether the continued workflow should run on a worker with a compatible build id or not.
+    coresdk.common.VersioningIntent versioning_intent = 10;
 }
 
 // Indicate a workflow has completed as cancelled. Generally sent as a response to an activation
@@ -245,6 +249,8 @@ message StartChildWorkflowExecution {
     map<string, temporal.api.common.v1.Payload> search_attributes = 17;
     // Defines behaviour of the underlying workflow when child workflow cancellation has been requested.
     child_workflow.ChildWorkflowCancellationType cancellation_type = 18;
+    // Whether this child should run on a worker with a compatible build id or not.
+    coresdk.common.VersioningIntent versioning_intent = 19;
 }
 
 // Cancel a child workflow

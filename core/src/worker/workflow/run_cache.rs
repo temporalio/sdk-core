@@ -13,6 +13,7 @@ use temporal_sdk_core_protos::temporal::api::workflowservice::v1::get_system_inf
 pub(super) struct RunCache {
     max: usize,
     namespace: String,
+    task_queue: String,
     server_capabilities: get_system_info_response::Capabilities,
     /// Run id -> Data
     runs: LruCache<String, ManagedRun>,
@@ -25,6 +26,7 @@ impl RunCache {
     pub fn new(
         max_cache_size: usize,
         namespace: String,
+        task_queue: String,
         server_capabilities: get_system_info_response::Capabilities,
         local_activity_request_sink: impl LocalActivityRequestSink,
         metrics: MetricsContext,
@@ -39,6 +41,7 @@ impl RunCache {
         Self {
             max: max_cache_size,
             namespace,
+            task_queue,
             server_capabilities,
             runs: LruCache::new(
                 NonZeroUsize::new(lru_size).expect("LRU size is guaranteed positive"),
@@ -72,6 +75,7 @@ impl RunCache {
                 workflow_id: pwft.work.execution.workflow_id.clone(),
                 workflow_type: pwft.work.workflow_type.clone(),
                 run_id: pwft.work.execution.run_id.clone(),
+                task_queue: self.task_queue.clone(),
                 history: history_update,
                 metrics,
                 capabilities: &self.server_capabilities,

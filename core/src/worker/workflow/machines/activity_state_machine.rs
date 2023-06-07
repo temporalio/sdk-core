@@ -17,7 +17,10 @@ use temporal_sdk_core_protos::{
         workflow_commands::{ActivityCancellationType, ScheduleActivity},
     },
     temporal::api::{
-        command::v1::{command, Command, RequestCancelActivityTaskCommandAttributes},
+        command::v1::{
+            command, schedule_activity_cmd_to_api, Command,
+            RequestCancelActivityTaskCommandAttributes,
+        },
         common::v1::{ActivityType, Payload, Payloads},
         enums::v1::{CommandType, EventType, RetryState},
         failure::v1::{failure::FailureInfo, ActivityFailureInfo, CanceledFailureInfo, Failure},
@@ -107,6 +110,7 @@ impl ActivityMachine {
     pub(super) fn new_scheduled(
         attrs: ScheduleActivity,
         internal_flags: InternalFlagsRef,
+        use_compatible_version: bool,
     ) -> NewMachineWithCommand {
         let mut s = Self::from_parts(
             Created {}.into(),
@@ -124,7 +128,10 @@ impl ActivityMachine {
             .expect("Scheduling activities doesn't fail");
         let command = Command {
             command_type: CommandType::ScheduleActivityTask as i32,
-            attributes: Some(s.shared_state().attrs.clone().into()),
+            attributes: Some(schedule_activity_cmd_to_api(
+                s.shared_state().attrs.clone(),
+                use_compatible_version,
+            )),
         };
         NewMachineWithCommand {
             command,

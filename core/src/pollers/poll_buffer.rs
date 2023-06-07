@@ -15,8 +15,9 @@ use std::{
     },
     time::Duration,
 };
-use temporal_sdk_core_protos::temporal::api::workflowservice::v1::{
-    PollActivityTaskQueueResponse, PollWorkflowTaskQueueResponse,
+use temporal_sdk_core_protos::temporal::api::{
+    taskqueue::v1::TaskQueue,
+    workflowservice::v1::{PollActivityTaskQueueResponse, PollWorkflowTaskQueueResponse},
 };
 use tokio::{
     sync::{
@@ -225,8 +226,7 @@ impl Poller<(PollWorkflowTaskQueueResponse, OwnedMeteredSemPermit)> for Workflow
 pub type PollWorkflowTaskBuffer = LongPollBuffer<PollWorkflowTaskQueueResponse>;
 pub(crate) fn new_workflow_task_buffer(
     client: Arc<dyn WorkerClient>,
-    task_queue: String,
-    is_sticky: bool,
+    task_queue: TaskQueue,
     concurrent_pollers: usize,
     semaphore: Arc<MeteredSemaphore>,
     shutdown: CancellationToken,
@@ -236,7 +236,7 @@ pub(crate) fn new_workflow_task_buffer(
         move || {
             let client = client.clone();
             let task_queue = task_queue.clone();
-            async move { client.poll_workflow_task(task_queue, is_sticky).await }
+            async move { client.poll_workflow_task(task_queue).await }
         },
         semaphore,
         concurrent_pollers,
@@ -325,6 +325,7 @@ mod tests {
     };
     use futures::FutureExt;
     use std::time::Duration;
+    use temporal_sdk_core_protos::temporal::api::enums::v1::TaskQueueKind;
     use tokio::{select, sync::mpsc::channel};
 
     #[tokio::test]
@@ -333,7 +334,7 @@ mod tests {
         mock_client
             .expect_poll_workflow_task()
             .times(2)
-            .returning(move |_, _| {
+            .returning(move |_| {
                 async {
                     tokio::time::sleep(Duration::from_millis(100)).await;
                     Ok(Default::default())
@@ -343,8 +344,11 @@ mod tests {
 
         let pb = new_workflow_task_buffer(
             Arc::new(mock_client),
-            "someq".to_string(),
-            false,
+            TaskQueue {
+                name: "sometq".to_string(),
+                kind: TaskQueueKind::Normal as i32,
+                normal_name: "".to_string(),
+            },
             1,
             Arc::new(MeteredSemaphore::new(
                 10,

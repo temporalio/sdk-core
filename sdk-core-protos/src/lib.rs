@@ -1500,53 +1500,57 @@ pub mod temporal {
                     }
                 }
 
-                impl From<workflow_commands::ScheduleActivity> for command::Attributes {
-                    fn from(s: workflow_commands::ScheduleActivity) -> Self {
-                        Self::ScheduleActivityTaskCommandAttributes(
-                            ScheduleActivityTaskCommandAttributes {
-                                activity_id: s.activity_id,
-                                activity_type: Some(ActivityType {
-                                    name: s.activity_type,
-                                }),
-                                task_queue: Some(s.task_queue.into()),
-                                header: Some(s.headers.into()),
-                                input: s.arguments.into_payloads(),
-                                schedule_to_close_timeout: s.schedule_to_close_timeout,
-                                schedule_to_start_timeout: s.schedule_to_start_timeout,
-                                start_to_close_timeout: s.start_to_close_timeout,
-                                heartbeat_timeout: s.heartbeat_timeout,
-                                retry_policy: s.retry_policy.map(Into::into),
-                                request_eager_execution: !s.do_not_eagerly_execute,
-                            },
-                        )
-                    }
+                pub fn schedule_activity_cmd_to_api(
+                    s: workflow_commands::ScheduleActivity,
+                    use_compatible_version: bool,
+                ) -> command::Attributes {
+                    command::Attributes::ScheduleActivityTaskCommandAttributes(
+                        ScheduleActivityTaskCommandAttributes {
+                            activity_id: s.activity_id,
+                            activity_type: Some(ActivityType {
+                                name: s.activity_type,
+                            }),
+                            task_queue: Some(s.task_queue.into()),
+                            header: Some(s.headers.into()),
+                            input: s.arguments.into_payloads(),
+                            schedule_to_close_timeout: s.schedule_to_close_timeout,
+                            schedule_to_start_timeout: s.schedule_to_start_timeout,
+                            start_to_close_timeout: s.start_to_close_timeout,
+                            heartbeat_timeout: s.heartbeat_timeout,
+                            retry_policy: s.retry_policy.map(Into::into),
+                            request_eager_execution: !s.do_not_eagerly_execute,
+                            use_compatible_version,
+                        },
+                    )
                 }
 
-                impl From<workflow_commands::StartChildWorkflowExecution> for command::Attributes {
-                    fn from(s: workflow_commands::StartChildWorkflowExecution) -> Self {
-                        Self::StartChildWorkflowExecutionCommandAttributes(
-                            StartChildWorkflowExecutionCommandAttributes {
-                                workflow_id: s.workflow_id,
-                                workflow_type: Some(WorkflowType {
-                                    name: s.workflow_type,
-                                }),
-                                control: "".into(),
-                                namespace: s.namespace,
-                                task_queue: Some(s.task_queue.into()),
-                                header: Some(s.headers.into()),
-                                memo: Some(s.memo.into()),
-                                search_attributes: Some(s.search_attributes.into()),
-                                input: s.input.into_payloads(),
-                                workflow_id_reuse_policy: s.workflow_id_reuse_policy,
-                                workflow_execution_timeout: s.workflow_execution_timeout,
-                                workflow_run_timeout: s.workflow_run_timeout,
-                                workflow_task_timeout: s.workflow_task_timeout,
-                                retry_policy: s.retry_policy.map(Into::into),
-                                cron_schedule: s.cron_schedule.clone(),
-                                parent_close_policy: s.parent_close_policy,
-                            },
-                        )
-                    }
+                pub fn start_child_workflow_cmd_to_api(
+                    s: workflow_commands::StartChildWorkflowExecution,
+                    use_compatible_version: bool,
+                ) -> command::Attributes {
+                    command::Attributes::StartChildWorkflowExecutionCommandAttributes(
+                        StartChildWorkflowExecutionCommandAttributes {
+                            workflow_id: s.workflow_id,
+                            workflow_type: Some(WorkflowType {
+                                name: s.workflow_type,
+                            }),
+                            control: "".into(),
+                            namespace: s.namespace,
+                            task_queue: Some(s.task_queue.into()),
+                            header: Some(s.headers.into()),
+                            memo: Some(s.memo.into()),
+                            search_attributes: Some(s.search_attributes.into()),
+                            input: s.input.into_payloads(),
+                            workflow_id_reuse_policy: s.workflow_id_reuse_policy,
+                            workflow_execution_timeout: s.workflow_execution_timeout,
+                            workflow_run_timeout: s.workflow_run_timeout,
+                            workflow_task_timeout: s.workflow_task_timeout,
+                            retry_policy: s.retry_policy.map(Into::into),
+                            cron_schedule: s.cron_schedule.clone(),
+                            parent_close_policy: s.parent_close_policy,
+                            use_compatible_version,
+                        },
+                    )
                 }
 
                 impl From<workflow_commands::CompleteWorkflowExecution> for command::Attributes {
@@ -1569,35 +1573,37 @@ pub mod temporal {
                     }
                 }
 
-                impl From<workflow_commands::ContinueAsNewWorkflowExecution> for command::Attributes {
-                    fn from(c: workflow_commands::ContinueAsNewWorkflowExecution) -> Self {
-                        Self::ContinueAsNewWorkflowExecutionCommandAttributes(
-                            ContinueAsNewWorkflowExecutionCommandAttributes {
-                                workflow_type: Some(c.workflow_type.into()),
-                                task_queue: Some(c.task_queue.into()),
-                                input: c.arguments.into_payloads(),
-                                workflow_run_timeout: c.workflow_run_timeout,
-                                workflow_task_timeout: c.workflow_task_timeout,
-                                memo: if c.memo.is_empty() {
-                                    None
-                                } else {
-                                    Some(c.memo.into())
-                                },
-                                header: if c.headers.is_empty() {
-                                    None
-                                } else {
-                                    Some(c.headers.into())
-                                },
-                                retry_policy: c.retry_policy,
-                                search_attributes: if c.search_attributes.is_empty() {
-                                    None
-                                } else {
-                                    Some(c.search_attributes.into())
-                                },
-                                ..Default::default()
+                pub fn continue_as_new_cmd_to_api(
+                    c: workflow_commands::ContinueAsNewWorkflowExecution,
+                    use_compatible_version: bool,
+                ) -> command::Attributes {
+                    command::Attributes::ContinueAsNewWorkflowExecutionCommandAttributes(
+                        ContinueAsNewWorkflowExecutionCommandAttributes {
+                            workflow_type: Some(c.workflow_type.into()),
+                            task_queue: Some(c.task_queue.into()),
+                            input: c.arguments.into_payloads(),
+                            workflow_run_timeout: c.workflow_run_timeout,
+                            workflow_task_timeout: c.workflow_task_timeout,
+                            memo: if c.memo.is_empty() {
+                                None
+                            } else {
+                                Some(c.memo.into())
                             },
-                        )
-                    }
+                            header: if c.headers.is_empty() {
+                                None
+                            } else {
+                                Some(c.headers.into())
+                            },
+                            retry_policy: c.retry_policy,
+                            search_attributes: if c.search_attributes.is_empty() {
+                                None
+                            } else {
+                                Some(c.search_attributes.into())
+                            },
+                            use_compatible_version,
+                            ..Default::default()
+                        },
+                    )
                 }
 
                 impl From<workflow_commands::CancelWorkflowExecution> for command::Attributes {
@@ -1971,6 +1977,7 @@ pub mod temporal {
                         Self {
                             name,
                             kind: TaskQueueKind::Normal as i32,
+                            normal_name: "".to_string(),
                         }
                     }
                 }

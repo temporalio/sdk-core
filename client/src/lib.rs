@@ -48,7 +48,9 @@ use temporal_sdk_core_protos::{
     coresdk::{workflow_commands::QueryResult, IntoPayloadsExt},
     grpc::health::v1::health_client::HealthClient,
     temporal::api::{
-        common::v1::{Header, Payload, Payloads, WorkflowExecution, WorkflowType},
+        common::v1::{
+            Header, Payload, Payloads, WorkerVersionStamp, WorkflowExecution, WorkflowType,
+        },
         enums::v1::{TaskQueueKind, WorkflowIdReusePolicy, WorkflowTaskFailedCause},
         failure::v1::Failure,
         operatorservice::v1::operator_service_client::OperatorServiceClient,
@@ -527,6 +529,8 @@ pub struct Client {
     namespace: String,
     /// If set, attach as the worker build id to relevant calls
     bound_worker_build_id: Option<String>,
+    /// If set, task completions will include the appropriate version stamp
+    use_versioning: bool,
 }
 
 impl Client {
@@ -539,6 +543,7 @@ impl Client {
             inner: client,
             namespace,
             bound_worker_build_id: None,
+            use_versioning: false,
         }
     }
 
@@ -574,8 +579,9 @@ impl Client {
 
     /// Set a worker build id to be attached to relevant requests. Unlikely to be useful outside
     /// of core.
-    pub fn set_worker_build_id(&mut self, id: String) {
-        self.bound_worker_build_id = Some(id)
+    pub fn set_worker_build_id(&mut self, id: String, using_versioning: bool) {
+        self.bound_worker_build_id = Some(id);
+        self.use_versioning = using_versioning;
     }
 
     /// Returns a reference to the underlying client
@@ -976,6 +982,7 @@ impl WorkflowClientTrait for Client {
                 task_queue: Some(TaskQueue {
                     name: task_queue,
                     kind: TaskQueueKind::Unspecified as i32,
+                    normal_name: "".to_string(),
                 }),
                 request_id: request_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
                 workflow_id_reuse_policy: options.id_reuse_policy as i32,
@@ -1023,6 +1030,7 @@ impl WorkflowClientTrait for Client {
                 result,
                 identity: self.inner.options.identity.clone(),
                 namespace: self.namespace.clone(),
+                worker_version: None,
             })
             .await?
             .into_inner())
@@ -1057,6 +1065,14 @@ impl WorkflowClientTrait for Client {
                 details,
                 identity: self.inner.options.identity.clone(),
                 namespace: self.namespace.clone(),
+                worker_version: self
+                    .bound_worker_build_id
+                    .clone()
+                    .map(|id| WorkerVersionStamp {
+                        build_id: id,
+                        bundle_id: "".to_string(),
+                        use_versioning: self.use_versioning,
+                    }),
             })
             .await?
             .into_inner())
@@ -1076,6 +1092,14 @@ impl WorkflowClientTrait for Client {
                 namespace: self.namespace.clone(),
                 // TODO: Implement - https://github.com/temporalio/sdk-core/issues/293
                 last_heartbeat_details: None,
+                worker_version: self
+                    .bound_worker_build_id
+                    .clone()
+                    .map(|id| WorkerVersionStamp {
+                        build_id: id,
+                        bundle_id: "".to_string(),
+                        use_versioning: self.use_versioning,
+                    }),
             })
             .await?
             .into_inner())
@@ -1095,6 +1119,14 @@ impl WorkflowClientTrait for Client {
             binary_checksum: self.bound_worker_build_id.clone().unwrap_or_default(),
             namespace: self.namespace.clone(),
             messages: vec![],
+            worker_version: self
+                .bound_worker_build_id
+                .clone()
+                .map(|id| WorkerVersionStamp {
+                    build_id: id,
+                    bundle_id: "".to_string(),
+                    use_versioning: self.use_versioning,
+                }),
         };
         Ok(self
             .wf_svc()
@@ -1145,6 +1177,7 @@ impl WorkflowClientTrait for Client {
                 task_queue: Some(TaskQueue {
                     name: options.task_queue,
                     kind: TaskQueueKind::Normal as i32,
+                    normal_name: "".to_string(),
                 }),
                 input: options.input,
                 signal_name: options.signal_name,
