@@ -30,6 +30,7 @@ use temporal_sdk_core_api::{errors::PollWfError, Worker as WorkerTrait};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{self as ar, activity_resolution, ActivityResolution},
+        common::VersioningIntent,
         workflow_activation::{
             remove_from_cache::EvictionReason, workflow_activation_job, FireTimer, ResolveActivity,
             StartWorkflow, UpdateRandomSeed, WorkflowActivationJob,
@@ -37,7 +38,7 @@ use temporal_sdk_core_protos::{
         workflow_commands::{
             ActivityCancellationType, CancelTimer, CompleteWorkflowExecution,
             ContinueAsNewWorkflowExecution, FailWorkflowExecution, RequestCancelActivity,
-            ScheduleActivity, SetPatchMarker,
+            ScheduleActivity, SetPatchMarker, StartChildWorkflowExecution,
         },
         workflow_completion::WorkflowActivationCompletion,
     },
@@ -2681,4 +2682,95 @@ async fn poller_wont_poll_until_lang_polls() {
     worker.drain_pollers_and_shutdown().await;
     // Nothing should've appeared here or we did poll
     assert!(rx.recv().is_err());
+}
+
+#[rstest]
+#[tokio::test]
+async fn use_compatible_version_flag(
+    #[values(
+        VersioningIntent::Unspecified,
+        VersioningIntent::Compatible,
+        VersioningIntent::Default
+    )]
+    intent: VersioningIntent,
+    #[values(true, false)] different_tq: bool,
+    #[values("activity", "child_wf", "continue_as_new")] command_type: &'static str,
+) {
+    let wfid = "fake_wf_id";
+    let mut mock_client = mock_workflow_client();
+    let hist = {
+        let mut t = TestHistoryBuilder::default();
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        t.add_full_wf_task();
+        t
+    };
+    mock_client.expect_poll_workflow_task().returning(move |_| {
+        Ok(hist_to_poll_resp(&hist, wfid.to_owned(), ResponseType::AllHistory).resp)
+    });
+    let compat_flag_expected = match intent {
+        VersioningIntent::Unspecified => {
+            if different_tq {
+                false
+            } else {
+                true
+            }
+        }
+        VersioningIntent::Compatible => true,
+        VersioningIntent::Default => false,
+    };
+    mock_client
+        .expect_complete_workflow_task()
+        .returning(move |mut c| {
+            let can_cmd = c.commands.pop().unwrap().attributes.unwrap();
+            match can_cmd {
+                Attributes::ContinueAsNewWorkflowExecutionCommandAttributes(a) => {
+                    assert_eq!(a.use_compatible_version, compat_flag_expected);
+                }
+                Attributes::ScheduleActivityTaskCommandAttributes(a) => {
+                    assert_eq!(a.use_compatible_version, compat_flag_expected);
+                }
+                Attributes::StartChildWorkflowExecutionCommandAttributes(a) => {
+                    assert_eq!(a.use_compatible_version, compat_flag_expected);
+                }
+                _ => panic!("invalid attributes type"),
+            }
+            Ok(Default::default())
+        });
+
+    let worker = Worker::new_test(test_worker_cfg().build().unwrap(), mock_client);
+    let r = worker.poll_workflow_activation().await.unwrap();
+    let task_queue = if different_tq {
+        "enchi cat!".to_string()
+    } else {
+        "".to_string()
+    };
+    let cmd = match command_type {
+        "continue_as_new" => ContinueAsNewWorkflowExecution {
+            workflow_type: "meow".to_string(),
+            versioning_intent: intent as i32,
+            task_queue,
+            ..Default::default()
+        }
+        .into(),
+        "activity" => ScheduleActivity {
+            seq: 1,
+            activity_id: "1".to_string(),
+            versioning_intent: intent as i32,
+            task_queue,
+            ..default_act_sched()
+        }
+        .into(),
+        "child_wf" => StartChildWorkflowExecution {
+            seq: 1,
+            versioning_intent: intent as i32,
+            task_queue,
+            ..Default::default()
+        }
+        .into(),
+        _ => panic!("invalid command type"),
+    };
+    worker
+        .complete_workflow_activation(WorkflowActivationCompletion::from_cmd(r.run_id, cmd))
+        .await
+        .unwrap();
 }
