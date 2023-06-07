@@ -1319,13 +1319,8 @@ impl WorkflowMachines {
             VersioningIntent::Default => false,
             VersioningIntent::Unspecified => {
                 // If the target TQ is empty, that means use same TQ.
-                if target_tq == "" || target_tq == self.task_queue {
-                    // When TQs match, use compat by default
-                    true
-                } else {
-                    // If the target TQ doesn't match our TQ, then don't try to use compat
-                    false
-                }
+                // When TQs match, use compat by default
+                target_tq.is_empty() || target_tq == self.task_queue
             }
         }
     }

@@ -2708,13 +2708,7 @@ async fn use_compatible_version_flag(
         Ok(hist_to_poll_resp(&hist, wfid.to_owned(), ResponseType::AllHistory).resp)
     });
     let compat_flag_expected = match intent {
-        VersioningIntent::Unspecified => {
-            if different_tq {
-                false
-            } else {
-                true
-            }
-        }
+        VersioningIntent::Unspecified => !different_tq,
         VersioningIntent::Compatible => true,
         VersioningIntent::Default => false,
     };
