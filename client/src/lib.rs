@@ -48,10 +48,8 @@ use temporal_sdk_core_protos::{
     coresdk::{workflow_commands::QueryResult, IntoPayloadsExt},
     grpc::health::v1::health_client::HealthClient,
     temporal::api::{
-        common::v1::{
-            Header, Payload, Payloads, WorkerVersionStamp, WorkflowExecution, WorkflowType,
-        },
-        enums::v1::{TaskQueueKind, WorkflowIdReusePolicy, WorkflowTaskFailedCause},
+        common::v1::{Header, Payload, Payloads, WorkflowExecution, WorkflowType},
+        enums::v1::{TaskQueueKind, WorkflowIdReusePolicy},
         failure::v1::Failure,
         operatorservice::v1::operator_service_client::OperatorServiceClient,
         query::v1::WorkflowQuery,
@@ -527,10 +525,6 @@ pub struct Client {
     inner: ConfiguredClient<TemporalServiceClientWithMetrics>,
     /// The namespace this client interacts with
     namespace: String,
-    /// If set, attach as the worker build id to relevant calls
-    bound_worker_build_id: Option<String>,
-    /// If set, task completions will include the appropriate version stamp
-    use_versioning: bool,
 }
 
 impl Client {
@@ -542,8 +536,6 @@ impl Client {
         Client {
             inner: client,
             namespace,
-            bound_worker_build_id: None,
-            use_versioning: false,
         }
     }
 
@@ -575,13 +567,6 @@ impl Client {
     /// Return the options this client was initialized with mutably
     pub fn options_mut(&mut self) -> &mut ClientOptions {
         Arc::make_mut(&mut self.inner.options)
-    }
-
-    /// Set a worker build id to be attached to relevant requests. Unlikely to be useful outside
-    /// of core.
-    pub fn set_worker_build_id(&mut self, id: String, using_versioning: bool) {
-        self.bound_worker_build_id = Some(id);
-        self.use_versioning = using_versioning;
     }
 
     /// Returns a reference to the underlying client
@@ -805,15 +790,6 @@ pub trait WorkflowClientTrait {
         task_token: TaskToken,
         failure: Option<Failure>,
     ) -> Result<RespondActivityTaskFailedResponse>;
-
-    /// Fail task by sending the failure to the server. `task_token` is the task token that would've
-    /// been received from polling for a workflow activation.
-    async fn fail_workflow_task(
-        &self,
-        task_token: TaskToken,
-        cause: WorkflowTaskFailedCause,
-        failure: Option<Failure>,
-    ) -> Result<RespondWorkflowTaskFailedResponse>;
 
     /// Send a signal to a certain workflow instance
     async fn signal_workflow_execution(
@@ -1065,14 +1041,7 @@ impl WorkflowClientTrait for Client {
                 details,
                 identity: self.inner.options.identity.clone(),
                 namespace: self.namespace.clone(),
-                worker_version: self
-                    .bound_worker_build_id
-                    .clone()
-                    .map(|id| WorkerVersionStamp {
-                        build_id: id,
-                        bundle_id: "".to_string(),
-                        use_versioning: self.use_versioning,
-                    }),
+                worker_version: None,
             })
             .await?
             .into_inner())
@@ -1092,45 +1061,8 @@ impl WorkflowClientTrait for Client {
                 namespace: self.namespace.clone(),
                 // TODO: Implement - https://github.com/temporalio/sdk-core/issues/293
                 last_heartbeat_details: None,
-                worker_version: self
-                    .bound_worker_build_id
-                    .clone()
-                    .map(|id| WorkerVersionStamp {
-                        build_id: id,
-                        bundle_id: "".to_string(),
-                        use_versioning: self.use_versioning,
-                    }),
+                worker_version: None,
             })
-            .await?
-            .into_inner())
-    }
-
-    async fn fail_workflow_task(
-        &self,
-        task_token: TaskToken,
-        cause: WorkflowTaskFailedCause,
-        failure: Option<Failure>,
-    ) -> Result<RespondWorkflowTaskFailedResponse> {
-        let request = RespondWorkflowTaskFailedRequest {
-            task_token: task_token.0,
-            cause: cause as i32,
-            failure,
-            identity: self.inner.options.identity.clone(),
-            binary_checksum: self.bound_worker_build_id.clone().unwrap_or_default(),
-            namespace: self.namespace.clone(),
-            messages: vec![],
-            worker_version: self
-                .bound_worker_build_id
-                .clone()
-                .map(|id| WorkerVersionStamp {
-                    build_id: id,
-                    bundle_id: "".to_string(),
-                    use_versioning: self.use_versioning,
-                }),
-        };
-        Ok(self
-            .wf_svc()
-            .respond_workflow_task_failed(request)
             .await?
             .into_inner())
     }
