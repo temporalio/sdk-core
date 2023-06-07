@@ -48,11 +48,31 @@ impl WorkerClientBag {
             use_versioning,
         }
     }
-    fn versioning_build_id(&self) -> String {
-        if self.use_versioning {
-            self.worker_build_id.clone()
-        } else {
+
+    fn binary_checksum(&self) -> String {
+        if self
+            .capabilities()
+            .map(|c| c.build_id_based_versioning)
+            .unwrap_or_default()
+        {
             "".to_string()
+        } else {
+            self.worker_build_id.clone()
+        }
+    }
+
+    fn worker_version_capabilities(&self) -> Option<WorkerVersionCapabilities> {
+        if self
+            .capabilities()
+            .map(|c| c.build_id_based_versioning)
+            .unwrap_or_default()
+        {
+            Some(WorkerVersionCapabilities {
+                build_id: self.worker_build_id.clone(),
+                use_versioning: self.use_versioning,
+            })
+        } else {
+            None
         }
     }
 }
@@ -127,15 +147,8 @@ impl WorkerClient for WorkerClientBag {
             namespace: self.namespace.clone(),
             task_queue: Some(task_queue),
             identity: self.identity.clone(),
-            binary_checksum: if self.use_versioning {
-                "".to_string()
-            } else {
-                self.worker_build_id.clone()
-            },
-            worker_version_capabilities: Some(WorkerVersionCapabilities {
-                build_id: self.versioning_build_id(),
-                use_versioning: self.use_versioning,
-            }),
+            binary_checksum: self.binary_checksum(),
+            worker_version_capabilities: self.worker_version_capabilities(),
         };
 
         Ok(self
@@ -162,10 +175,7 @@ impl WorkerClient for WorkerClientBag {
             task_queue_metadata: max_tasks_per_sec.map(|tps| TaskQueueMetadata {
                 max_tasks_per_second: Some(tps),
             }),
-            worker_version_capabilities: Some(WorkerVersionCapabilities {
-                build_id: self.versioning_build_id(),
-                use_versioning: self.use_versioning,
-            }),
+            worker_version_capabilities: self.worker_version_capabilities(),
         };
 
         Ok(self
@@ -188,12 +198,12 @@ impl WorkerClient for WorkerClientBag {
             return_new_workflow_task: request.return_new_workflow_task,
             force_create_new_workflow_task: request.force_create_new_workflow_task,
             worker_version_stamp: Some(WorkerVersionStamp {
-                build_id: self.versioning_build_id(),
+                build_id: self.binary_checksum(),
                 bundle_id: "".to_string(),
                 use_versioning: self.use_versioning,
             }),
             messages: vec![],
-            binary_checksum: self.worker_build_id.clone(),
+            binary_checksum: self.binary_checksum(),
             query_results: request
                 .query_responses
                 .into_iter()
@@ -321,7 +331,7 @@ impl WorkerClient for WorkerClientBag {
             cause: cause as i32,
             failure,
             identity: self.identity.clone(),
-            binary_checksum: self.worker_build_id.clone(),
+            binary_checksum: self.binary_checksum(),
             namespace: self.namespace.clone(),
             messages: vec![],
             worker_version: Some(WorkerVersionStamp {

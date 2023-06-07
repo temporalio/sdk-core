@@ -2085,8 +2085,8 @@ async fn continue_as_new_preserves_some_values() {
     mock_client
         .expect_complete_workflow_task()
         .returning(move |mut c| {
-            let can_cmd = c.commands.pop().unwrap().attributes.unwrap();
-            if let Attributes::ContinueAsNewWorkflowExecutionCommandAttributes(a) = can_cmd {
+            let cmd = c.commands.pop().unwrap().attributes.unwrap();
+            if let Attributes::ContinueAsNewWorkflowExecutionCommandAttributes(a) = cmd {
                 assert_eq!(a.workflow_type.unwrap().name, "meow");
                 assert_eq!(a.memo, wes_attrs.memo);
                 assert_eq!(a.search_attributes, wes_attrs.search_attributes);
