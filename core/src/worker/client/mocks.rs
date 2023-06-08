@@ -37,7 +37,7 @@ mockall::mock! {
     pub(crate) ManualWorkerClient {}
     #[allow(unused)]
     impl WorkerClient for ManualWorkerClient {
-        fn poll_workflow_task<'a, 'b>(&'a self, task_queue: String, is_sticky: bool)
+        fn poll_workflow_task<'a, 'b>(&'a self, task_queue: TaskQueue)
             -> impl Future<Output = Result<PollWorkflowTaskQueueResponse>> + Send + 'b
             where 'a: 'b, Self: 'b;
 

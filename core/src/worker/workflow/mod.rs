@@ -147,6 +147,7 @@ pub(crate) struct RunBasics<'a> {
     pub workflow_id: String,
     pub workflow_type: String,
     pub run_id: String,
+    pub task_queue: String,
     pub history: HistoryUpdate,
     pub metrics: MetricsContext,
     pub capabilities: &'a get_system_info_response::Capabilities,

@@ -93,6 +93,7 @@ impl ManagedWFFunc {
                 workflow_id: "wfid".to_string(),
                 workflow_type: "wftype".to_string(),
                 run_id: "runid".to_string(),
+                task_queue: TEST_Q.to_string(),
                 history: hist,
                 metrics: MetricsContext::no_op(),
                 capabilities: DEFAULT_TEST_CAPABILITIES,

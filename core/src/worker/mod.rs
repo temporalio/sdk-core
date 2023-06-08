@@ -249,8 +249,11 @@ impl Worker {
                 let wft_metrics = metrics.with_new_attrs([workflow_poller()]);
                 let wf_task_poll_buffer = new_workflow_task_buffer(
                     client.clone(),
-                    config.task_queue.clone(),
-                    false,
+                    TaskQueue {
+                        name: config.task_queue.clone(),
+                        kind: TaskQueueKind::Normal as i32,
+                        normal_name: "".to_string(),
+                    },
                     max_nonsticky_polls,
                     wft_semaphore.clone(),
                     shutdown_token.child_token(),
@@ -262,8 +265,11 @@ impl Worker {
                     let sticky_metrics = metrics.with_new_attrs([workflow_sticky_poller()]);
                     new_workflow_task_buffer(
                         client.clone(),
-                        sqn.clone(),
-                        true,
+                        TaskQueue {
+                            name: sqn.clone(),
+                            kind: TaskQueueKind::Sticky as i32,
+                            normal_name: config.task_queue.clone(),
+                        },
                         max_sticky_polls,
                         wft_semaphore.clone(),
                         shutdown_token.child_token(),
@@ -356,6 +362,7 @@ impl Worker {
                     worker_task_queue: Some(TaskQueue {
                         name: sq,
                         kind: TaskQueueKind::Sticky as i32,
+                        normal_name: config.task_queue.clone(),
                     }),
                     schedule_to_start_timeout: Some(
                         config

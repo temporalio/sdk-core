@@ -760,6 +760,15 @@ proxier! {
         }
     );
     (
+        get_worker_task_reachability,
+        GetWorkerTaskReachabilityRequest,
+        GetWorkerTaskReachabilityResponse,
+        |r| {
+            let mut labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
         update_workflow_execution,
         UpdateWorkflowExecutionRequest,
         UpdateWorkflowExecutionResponse,

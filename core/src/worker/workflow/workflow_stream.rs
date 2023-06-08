@@ -97,6 +97,7 @@ impl WFStream {
             runs: RunCache::new(
                 basics.max_cached_workflows,
                 basics.namespace.clone(),
+                basics.task_queue.clone(),
                 basics.server_capabilities.clone(),
                 local_activity_request_sink,
                 basics.metrics.clone(),

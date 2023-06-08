@@ -8,7 +8,7 @@ use std::convert::TryFrom;
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::ContinueAsNewWorkflowExecution,
     temporal::api::{
-        command::v1::Command,
+        command::v1::{continue_as_new_cmd_to_api, Command},
         enums::v1::{CommandType, EventType},
     },
 };
@@ -30,13 +30,16 @@ fsm! {
 #[derive(Debug, derive_more::Display)]
 pub(super) enum ContinueAsNewWorkflowCommand {}
 
-pub(super) fn continue_as_new(attribs: ContinueAsNewWorkflowExecution) -> NewMachineWithCommand {
+pub(super) fn continue_as_new(
+    attribs: ContinueAsNewWorkflowExecution,
+    use_compatible_version: bool,
+) -> NewMachineWithCommand {
     let mut machine = ContinueAsNewWorkflowMachine::from_parts(Created {}.into(), ());
     OnEventWrapper::on_event_mut(&mut machine, ContinueAsNewWorkflowMachineEvents::Schedule)
         .expect("Scheduling continue as new machine doesn't fail");
     let command = Command {
         command_type: CommandType::ContinueAsNewWorkflowExecution as i32,
-        attributes: Some(attribs.into()),
+        attributes: Some(continue_as_new_cmd_to_api(attribs, use_compatible_version)),
     };
     NewMachineWithCommand {
         command,

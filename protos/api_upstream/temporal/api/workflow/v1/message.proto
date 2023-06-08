@@ -109,8 +109,12 @@ message ResetPoints {
 }
 
 message ResetPointInfo {
+    // A worker binary version identifier, will be deprecated and superseded by a newer concept of
+    // build_id.
     string binary_checksum = 1;
+    // The first run ID in the execution chain that was touched by this worker build.
     string run_id = 2;
+    // Event ID of the first WorkflowTaskCompleted event processed by this worker build.
     int64 first_workflow_task_completed_id = 3;
     google.protobuf.Timestamp create_time = 4 [(gogoproto.stdtime) = true];
     // (-- api-linter: core::0214::resource-expiry=disabled

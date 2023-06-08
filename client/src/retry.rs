@@ -9,7 +9,6 @@ use temporal_sdk_core_protos::{
     coresdk::workflow_commands::QueryResult,
     temporal::api::{
         common::v1::{Payload, Payloads},
-        enums::v1::WorkflowTaskFailedCause,
         failure::v1::Failure,
         query::v1::WorkflowQuery,
         workflowservice::v1::*,
@@ -322,21 +321,6 @@ where
             self,
             fail_activity_task,
             task_token.clone(),
-            failure.clone()
-        )
-    }
-
-    async fn fail_workflow_task(
-        &self,
-        task_token: TaskToken,
-        cause: WorkflowTaskFailedCause,
-        failure: Option<Failure>,
-    ) -> Result<RespondWorkflowTaskFailedResponse> {
-        retry_call!(
-            self,
-            fail_workflow_task,
-            task_token.clone(),
-            cause,
             failure.clone()
         )
     }

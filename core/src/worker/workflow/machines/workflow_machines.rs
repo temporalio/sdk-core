@@ -47,7 +47,7 @@ use std::{
 };
 use temporal_sdk_core_protos::{
     coresdk::{
-        common::NamespacedWorkflowExecution,
+        common::{NamespacedWorkflowExecution, VersioningIntent},
         workflow_activation,
         workflow_activation::{
             workflow_activation_job, NotifyHasPatch, UpdateRandomSeed, WorkflowActivation,
@@ -95,6 +95,8 @@ pub(crate) struct WorkflowMachines {
     pub workflow_type: String,
     /// Identifies the current run
     pub run_id: String,
+    /// The task queue this workflow is operating within
+    pub task_queue: String,
     /// The time the workflow execution began, as told by the WEStarted event
     workflow_start_time: Option<SystemTime>,
     /// The time the workflow execution finished, as determined by when the machines handled
@@ -229,6 +231,7 @@ impl WorkflowMachines {
             workflow_id: basics.workflow_id,
             workflow_type: basics.workflow_type,
             run_id: basics.run_id,
+            task_queue: basics.task_queue,
             drive_me: driven_wf,
             replaying,
             metrics: basics.metrics,
@@ -1050,8 +1053,16 @@ impl WorkflowMachines {
                 }
                 WFCommand::AddActivity(attrs) => {
                     let seq = attrs.seq;
+                    let use_compat = self.determine_use_compatible_flag(
+                        attrs.versioning_intent(),
+                        &attrs.task_queue,
+                    );
                     self.add_cmd_to_wf_task(
-                        ActivityMachine::new_scheduled(attrs, self.observed_internal_flags.clone()),
+                        ActivityMachine::new_scheduled(
+                            attrs,
+                            self.observed_internal_flags.clone(),
+                            use_compat,
+                        ),
                         CommandID::Activity(seq).into(),
                     );
                 }
@@ -1097,7 +1108,11 @@ impl WorkflowMachines {
                 WFCommand::ContinueAsNew(attrs) => {
                     self.metrics.wf_continued_as_new();
                     let attrs = self.augment_continue_as_new_with_current_values(attrs);
-                    self.add_terminal_command(continue_as_new(attrs));
+                    let use_compat = self.determine_use_compatible_flag(
+                        attrs.versioning_intent(),
+                        &attrs.task_queue,
+                    );
+                    self.add_terminal_command(continue_as_new(attrs, use_compat));
                 }
                 WFCommand::CancelWorkflow(attrs) => {
                     self.metrics.wf_canceled();
@@ -1136,10 +1151,15 @@ impl WorkflowMachines {
                 }
                 WFCommand::AddChildWorkflow(attrs) => {
                     let seq = attrs.seq;
+                    let use_compat = self.determine_use_compatible_flag(
+                        attrs.versioning_intent(),
+                        &attrs.task_queue,
+                    );
                     self.add_cmd_to_wf_task(
                         ChildWorkflowMachine::new_scheduled(
                             attrs,
                             self.observed_internal_flags.clone(),
+                            use_compat,
                         ),
                         CommandID::ChildWorkflowStart(seq).into(),
                     );
@@ -1288,6 +1308,21 @@ impl WorkflowMachines {
             }
         }
         attrs
+    }
+
+    /// Given a user's versioning intent for a command and that command's target task queue,
+    /// returns whether or not the command should set the flag for attempting to stick within the
+    /// compatible version set
+    fn determine_use_compatible_flag(&self, intent: VersioningIntent, target_tq: &str) -> bool {
+        match intent {
+            VersioningIntent::Compatible => true,
+            VersioningIntent::Default => false,
+            VersioningIntent::Unspecified => {
+                // If the target TQ is empty, that means use same TQ.
+                // When TQs match, use compat by default
+                target_tq.is_empty() || target_tq == self.task_queue
+            }
+        }
     }
 }
 

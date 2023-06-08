@@ -48,11 +48,39 @@ impl WorkerClientBag {
             use_versioning,
         }
     }
-    fn versioning_build_id(&self) -> String {
-        if self.use_versioning {
-            self.worker_build_id.clone()
-        } else {
+
+    fn default_capabilities(&self) -> Capabilities {
+        self.capabilities().cloned().unwrap_or_default()
+    }
+
+    fn binary_checksum(&self) -> String {
+        if self.default_capabilities().build_id_based_versioning {
             "".to_string()
+        } else {
+            self.worker_build_id.clone()
+        }
+    }
+
+    fn worker_version_capabilities(&self) -> Option<WorkerVersionCapabilities> {
+        if self.default_capabilities().build_id_based_versioning {
+            Some(WorkerVersionCapabilities {
+                build_id: self.worker_build_id.clone(),
+                use_versioning: self.use_versioning,
+            })
+        } else {
+            None
+        }
+    }
+
+    fn worker_version_stamp(&self) -> Option<WorkerVersionStamp> {
+        if self.default_capabilities().build_id_based_versioning {
+            Some(WorkerVersionStamp {
+                build_id: self.worker_build_id.clone(),
+                bundle_id: "".to_string(),
+                use_versioning: self.use_versioning,
+            })
+        } else {
+            None
         }
     }
 }
@@ -64,8 +92,7 @@ impl WorkerClientBag {
 pub(crate) trait WorkerClient: Sync + Send {
     async fn poll_workflow_task(
         &self,
-        task_queue: String,
-        is_sticky: bool,
+        task_queue: TaskQueue,
     ) -> Result<PollWorkflowTaskQueueResponse>;
     async fn poll_activity_task(
         &self,
@@ -122,28 +149,14 @@ pub(crate) trait WorkerClient: Sync + Send {
 impl WorkerClient for WorkerClientBag {
     async fn poll_workflow_task(
         &self,
-        task_queue: String,
-        is_sticky: bool,
+        task_queue: TaskQueue,
     ) -> Result<PollWorkflowTaskQueueResponse> {
         let request = PollWorkflowTaskQueueRequest {
             namespace: self.namespace.clone(),
-            task_queue: Some(TaskQueue {
-                name: task_queue,
-                kind: if is_sticky {
-                    TaskQueueKind::Sticky
-                } else {
-                    TaskQueueKind::Normal
-                } as i32,
-            }),
+            task_queue: Some(task_queue),
             identity: self.identity.clone(),
-            binary_checksum: if self.use_versioning {
-                "".to_string()
-            } else {
-                self.worker_build_id.clone()
-            },
-            worker_version_capabilities: Some(WorkerVersionCapabilities {
-                build_id: self.versioning_build_id(),
-            }),
+            binary_checksum: self.binary_checksum(),
+            worker_version_capabilities: self.worker_version_capabilities(),
         };
 
         Ok(self
@@ -164,14 +177,13 @@ impl WorkerClient for WorkerClientBag {
             task_queue: Some(TaskQueue {
                 name: task_queue,
                 kind: TaskQueueKind::Normal as i32,
+                normal_name: "".to_string(),
             }),
             identity: self.identity.clone(),
             task_queue_metadata: max_tasks_per_sec.map(|tps| TaskQueueMetadata {
                 max_tasks_per_second: Some(tps),
             }),
-            worker_version_capabilities: Some(WorkerVersionCapabilities {
-                build_id: self.versioning_build_id(),
-            }),
+            worker_version_capabilities: self.worker_version_capabilities(),
         };
 
         Ok(self
@@ -193,12 +205,9 @@ impl WorkerClient for WorkerClientBag {
             sticky_attributes: request.sticky_attributes,
             return_new_workflow_task: request.return_new_workflow_task,
             force_create_new_workflow_task: request.force_create_new_workflow_task,
-            worker_version_stamp: Some(WorkerVersionStamp {
-                build_id: self.versioning_build_id(),
-                bundle_id: "".to_string(),
-            }),
+            worker_version_stamp: self.worker_version_stamp(),
             messages: vec![],
-            binary_checksum: self.worker_build_id.clone(),
+            binary_checksum: self.binary_checksum(),
             query_results: request
                 .query_responses
                 .into_iter()
@@ -239,6 +248,7 @@ impl WorkerClient for WorkerClientBag {
                 result,
                 identity: self.identity.clone(),
                 namespace: self.namespace.clone(),
+                worker_version: self.worker_version_stamp(),
             })
             .await?
             .into_inner())
@@ -275,6 +285,7 @@ impl WorkerClient for WorkerClientBag {
                 details,
                 identity: self.identity.clone(),
                 namespace: self.namespace.clone(),
+                worker_version: self.worker_version_stamp(),
             })
             .await?
             .into_inner())
@@ -295,6 +306,7 @@ impl WorkerClient for WorkerClientBag {
                 namespace: self.namespace.clone(),
                 // TODO: Implement - https://github.com/temporalio/sdk-core/issues/293
                 last_heartbeat_details: None,
+                worker_version: self.worker_version_stamp(),
             })
             .await?
             .into_inner())
@@ -311,9 +323,10 @@ impl WorkerClient for WorkerClientBag {
             cause: cause as i32,
             failure,
             identity: self.identity.clone(),
-            binary_checksum: self.worker_build_id.clone(),
+            binary_checksum: self.binary_checksum(),
             namespace: self.namespace.clone(),
             messages: vec![],
+            worker_version: self.worker_version_stamp(),
         };
         Ok(self
             .client

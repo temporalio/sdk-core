@@ -30,6 +30,7 @@ use temporal_sdk_core_api::{errors::PollWfError, Worker as WorkerTrait};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{self as ar, activity_resolution, ActivityResolution},
+        common::VersioningIntent,
         workflow_activation::{
             remove_from_cache::EvictionReason, workflow_activation_job, FireTimer, ResolveActivity,
             StartWorkflow, UpdateRandomSeed, WorkflowActivationJob,
@@ -37,7 +38,7 @@ use temporal_sdk_core_protos::{
         workflow_commands::{
             ActivityCancellationType, CancelTimer, CompleteWorkflowExecution,
             ContinueAsNewWorkflowExecution, FailWorkflowExecution, RequestCancelActivity,
-            ScheduleActivity, SetPatchMarker,
+            ScheduleActivity, SetPatchMarker, StartChildWorkflowExecution,
         },
         workflow_completion::WorkflowActivationCompletion,
     },
@@ -2002,17 +2003,15 @@ async fn no_race_acquiring_permits() {
     // We need to allow two polls to happen by triggering two processing events in the workflow
     // stream, but then delivering the actual tasks after that
     let task_barr: &'static Barrier = Box::leak(Box::new(Barrier::new(2)));
-    mock_client
-        .expect_poll_workflow_task()
-        .returning(move |_, _| {
-            let t = canned_histories::single_timer("1");
-            let poll_resp = hist_to_poll_resp(&t, wfid.to_owned(), 2.into()).resp;
-            async move {
-                task_barr.wait().await;
-                Ok(poll_resp.clone())
-            }
-            .boxed()
-        });
+    mock_client.expect_poll_workflow_task().returning(move |_| {
+        let t = canned_histories::single_timer("1");
+        let poll_resp = hist_to_poll_resp(&t, wfid.to_owned(), 2.into()).resp;
+        async move {
+            task_barr.wait().await;
+            Ok(poll_resp.clone())
+        }
+        .boxed()
+    });
     mock_client
         .expect_complete_workflow_task()
         .returning(|_| async move { Ok(Default::default()) }.boxed());
@@ -2080,16 +2079,14 @@ async fn continue_as_new_preserves_some_values() {
         t.add_full_wf_task();
         t
     };
-    mock_client
-        .expect_poll_workflow_task()
-        .returning(move |_, _| {
-            Ok(hist_to_poll_resp(&hist, wfid.to_owned(), ResponseType::AllHistory).resp)
-        });
+    mock_client.expect_poll_workflow_task().returning(move |_| {
+        Ok(hist_to_poll_resp(&hist, wfid.to_owned(), ResponseType::AllHistory).resp)
+    });
     mock_client
         .expect_complete_workflow_task()
         .returning(move |mut c| {
-            let can_cmd = c.commands.pop().unwrap().attributes.unwrap();
-            if let Attributes::ContinueAsNewWorkflowExecutionCommandAttributes(a) = can_cmd {
+            let cmd = c.commands.pop().unwrap().attributes.unwrap();
+            if let Attributes::ContinueAsNewWorkflowExecutionCommandAttributes(a) = cmd {
                 assert_eq!(a.workflow_type.unwrap().name, "meow");
                 assert_eq!(a.memo, wes_attrs.memo);
                 assert_eq!(a.search_attributes, wes_attrs.search_attributes);
@@ -2606,7 +2603,7 @@ async fn poller_wont_run_ahead_of_task_slots() {
     let mut mock_client = mock_workflow_client();
     mock_client
         .expect_poll_workflow_task()
-        .returning(move |_, _| Ok(bunch_of_first_tasks.next().unwrap()));
+        .returning(move |_| Ok(bunch_of_first_tasks.next().unwrap()));
     mock_client
         .expect_complete_workflow_task()
         .returning(|_| Ok(Default::default()));
@@ -2667,12 +2664,10 @@ async fn poller_wont_poll_until_lang_polls() {
     // the WFT stream, we'll never join the tasks running the pollers and thus the error
     // gets printed but doesn't bubble up to the test. So we set this explicit expectation
     // in here to ensure it isn't called.
-    mock_client
-        .expect_poll_workflow_task()
-        .returning(move |_, _| {
-            let _ = tx.send(());
-            Ok(Default::default())
-        });
+    mock_client.expect_poll_workflow_task().returning(move |_| {
+        let _ = tx.send(());
+        Ok(Default::default())
+    });
 
     let worker = Worker::new_test(
         test_worker_cfg()
@@ -2687,4 +2682,89 @@ async fn poller_wont_poll_until_lang_polls() {
     worker.drain_pollers_and_shutdown().await;
     // Nothing should've appeared here or we did poll
     assert!(rx.recv().is_err());
+}
+
+#[rstest]
+#[tokio::test]
+async fn use_compatible_version_flag(
+    #[values(
+        VersioningIntent::Unspecified,
+        VersioningIntent::Compatible,
+        VersioningIntent::Default
+    )]
+    intent: VersioningIntent,
+    #[values(true, false)] different_tq: bool,
+    #[values("activity", "child_wf", "continue_as_new")] command_type: &'static str,
+) {
+    let wfid = "fake_wf_id";
+    let mut mock_client = mock_workflow_client();
+    let hist = {
+        let mut t = TestHistoryBuilder::default();
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        t.add_full_wf_task();
+        t
+    };
+    mock_client.expect_poll_workflow_task().returning(move |_| {
+        Ok(hist_to_poll_resp(&hist, wfid.to_owned(), ResponseType::AllHistory).resp)
+    });
+    let compat_flag_expected = match intent {
+        VersioningIntent::Unspecified => !different_tq,
+        VersioningIntent::Compatible => true,
+        VersioningIntent::Default => false,
+    };
+    mock_client
+        .expect_complete_workflow_task()
+        .returning(move |mut c| {
+            let can_cmd = c.commands.pop().unwrap().attributes.unwrap();
+            match can_cmd {
+                Attributes::ContinueAsNewWorkflowExecutionCommandAttributes(a) => {
+                    assert_eq!(a.use_compatible_version, compat_flag_expected);
+                }
+                Attributes::ScheduleActivityTaskCommandAttributes(a) => {
+                    assert_eq!(a.use_compatible_version, compat_flag_expected);
+                }
+                Attributes::StartChildWorkflowExecutionCommandAttributes(a) => {
+                    assert_eq!(a.use_compatible_version, compat_flag_expected);
+                }
+                _ => panic!("invalid attributes type"),
+            }
+            Ok(Default::default())
+        });
+
+    let worker = Worker::new_test(test_worker_cfg().build().unwrap(), mock_client);
+    let r = worker.poll_workflow_activation().await.unwrap();
+    let task_queue = if different_tq {
+        "enchi cat!".to_string()
+    } else {
+        "".to_string()
+    };
+    let cmd = match command_type {
+        "continue_as_new" => ContinueAsNewWorkflowExecution {
+            workflow_type: "meow".to_string(),
+            versioning_intent: intent as i32,
+            task_queue,
+            ..Default::default()
+        }
+        .into(),
+        "activity" => ScheduleActivity {
+            seq: 1,
+            activity_id: "1".to_string(),
+            versioning_intent: intent as i32,
+            task_queue,
+            ..default_act_sched()
+        }
+        .into(),
+        "child_wf" => StartChildWorkflowExecution {
+            seq: 1,
+            versioning_intent: intent as i32,
+            task_queue,
+            ..Default::default()
+        }
+        .into(),
+        _ => panic!("invalid command type"),
+    };
+    worker
+        .complete_workflow_activation(WorkflowActivationCompletion::from_cmd(r.run_id, cmd))
+        .await
+        .unwrap();
 }

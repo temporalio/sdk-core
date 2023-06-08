@@ -189,6 +189,19 @@ impl WorkerConfigBuilder {
                     .to_owned(),
             );
         }
+
+        if self.use_worker_versioning.unwrap_or_default()
+            && self
+                .worker_build_id
+                .as_ref()
+                .map(|s| s.is_empty())
+                .unwrap_or_default()
+        {
+            return Err(
+                "`worker_build_id` must be non-empty when `use_worker_versioning` is true"
+                    .to_owned(),
+            );
+        }
         Ok(())
     }
 }

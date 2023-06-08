@@ -172,6 +172,7 @@ impl HistoryInfo {
                     .name
                     .clone(),
                 kind: TaskQueueKind::Normal as i32,
+                normal_name: "".to_string(),
             }),
             previous_started_event_id: self.previous_started_event_id,
             started_event_id: self.workflow_task_started_event_id,

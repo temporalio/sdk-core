@@ -57,3 +57,22 @@ enum TaskQueueType {
     // Activity type of task queue.
     TASK_QUEUE_TYPE_ACTIVITY = 2;
 }
+
+// Specifies which category of tasks may reach a worker on a versioned task queue.
+// Used both in a reachability query and its response.
+enum TaskReachability {
+    TASK_REACHABILITY_UNSPECIFIED = 0;
+    // There's a possiblity for a worker to receive new workflow tasks. Workers should *not* be retired.
+    TASK_REACHABILITY_NEW_WORKFLOWS = 1;
+    // There's a possiblity for a worker to receive existing workflow and activity tasks from existing workflows. Workers
+    // should *not* be retired.
+    // This enum value does not distinguish between open and closed workflows.
+    TASK_REACHABILITY_EXISTING_WORKFLOWS = 2;
+    // There's a possiblity for a worker to receive existing workflow and activity tasks from open workflows. Workers
+    // should *not* be retired.
+    TASK_REACHABILITY_OPEN_WORKFLOWS = 3;
+    // There's a possiblity for a worker to receive existing workflow tasks from closed workflows. Workers may be
+    // retired dependending on application requirements. For example, if there's no need to query closed workflows.
+    TASK_REACHABILITY_CLOSED_WORKFLOWS = 4;
+}
+

@@ -89,7 +89,7 @@ pub(crate) fn mock_client_from_histories(historator: Historator) -> impl WorkerC
     let hist_allow_tx = historator.replay_done_tx.clone();
     let historator = Arc::new(TokioMutex::new(historator));
 
-    mg.expect_poll_workflow_task().returning(move |_, _| {
+    mg.expect_poll_workflow_task().returning(move |_| {
         let historator = historator.clone();
         async move {
             let mut hlock = historator.lock().await;

@@ -82,7 +82,6 @@ where
     let client = {
         let ll = client.into().into_inner();
         let mut client = Client::new(*ll, worker_config.namespace.clone());
-        client.set_worker_build_id(worker_config.worker_build_id.clone());
         if let Some(ref id_override) = worker_config.client_identity_override {
             client.options_mut().identity = id_override.clone();
         }
@@ -147,9 +146,8 @@ pub(crate) fn sticky_q_name_for_worker(
 ) -> Option<String> {
     if config.max_cached_workflows > 0 {
         Some(format!(
-            "{}-{}-{}",
+            "{}-{}",
             &process_identity,
-            &config.task_queue,
             uuid::Uuid::new_v4().simple()
         ))
     } else {

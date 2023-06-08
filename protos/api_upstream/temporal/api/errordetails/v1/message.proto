@@ -106,3 +106,8 @@ message SystemWorkflowFailure {
 
 message WorkflowNotReadyFailure {
 }
+
+message NewerBuildExistsFailure {
+    // The current default compatible build ID which will receive tasks
+    string default_build_id = 1;
+}
