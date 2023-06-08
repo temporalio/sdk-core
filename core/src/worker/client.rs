@@ -248,11 +248,7 @@ impl WorkerClient for WorkerClientBag {
                 result,
                 identity: self.identity.clone(),
                 namespace: self.namespace.clone(),
-                worker_version: Some(WorkerVersionStamp {
-                    build_id: self.worker_build_id.clone(),
-                    bundle_id: "".to_string(),
-                    use_versioning: self.use_versioning,
-                }),
+                worker_version: self.worker_version_stamp(),
             })
             .await?
             .into_inner())
@@ -289,11 +285,7 @@ impl WorkerClient for WorkerClientBag {
                 details,
                 identity: self.identity.clone(),
                 namespace: self.namespace.clone(),
-                worker_version: Some(WorkerVersionStamp {
-                    build_id: self.worker_build_id.clone(),
-                    bundle_id: "".to_string(),
-                    use_versioning: self.use_versioning,
-                }),
+                worker_version: self.worker_version_stamp(),
             })
             .await?
             .into_inner())
@@ -314,11 +306,7 @@ impl WorkerClient for WorkerClientBag {
                 namespace: self.namespace.clone(),
                 // TODO: Implement - https://github.com/temporalio/sdk-core/issues/293
                 last_heartbeat_details: None,
-                worker_version: Some(WorkerVersionStamp {
-                    build_id: self.worker_build_id.clone(),
-                    bundle_id: "".to_string(),
-                    use_versioning: self.use_versioning,
-                }),
+                worker_version: self.worker_version_stamp(),
             })
             .await?
             .into_inner())
@@ -338,11 +326,7 @@ impl WorkerClient for WorkerClientBag {
             binary_checksum: self.binary_checksum(),
             namespace: self.namespace.clone(),
             messages: vec![],
-            worker_version: Some(WorkerVersionStamp {
-                build_id: self.worker_build_id.clone(),
-                bundle_id: "".to_string(),
-                use_versioning: self.use_versioning,
-            }),
+            worker_version: self.worker_version_stamp(),
         };
         Ok(self
             .client
