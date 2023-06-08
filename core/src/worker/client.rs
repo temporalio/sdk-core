@@ -49,12 +49,12 @@ impl WorkerClientBag {
         }
     }
 
+    fn default_capabilities(&self) -> Capabilities {
+        self.capabilities().cloned().unwrap_or_default()
+    }
+
     fn binary_checksum(&self) -> String {
-        if self
-            .capabilities()
-            .map(|c| c.build_id_based_versioning)
-            .unwrap_or_default()
-        {
+        if self.default_capabilities().build_id_based_versioning {
             "".to_string()
         } else {
             self.worker_build_id.clone()
@@ -62,13 +62,21 @@ impl WorkerClientBag {
     }
 
     fn worker_version_capabilities(&self) -> Option<WorkerVersionCapabilities> {
-        if self
-            .capabilities()
-            .map(|c| c.build_id_based_versioning)
-            .unwrap_or_default()
-        {
+        if self.default_capabilities().build_id_based_versioning {
             Some(WorkerVersionCapabilities {
                 build_id: self.worker_build_id.clone(),
+                use_versioning: self.use_versioning,
+            })
+        } else {
+            None
+        }
+    }
+
+    fn worker_version_stamp(&self) -> Option<WorkerVersionStamp> {
+        if self.default_capabilities().build_id_based_versioning {
+            Some(WorkerVersionStamp {
+                build_id: self.worker_build_id.clone(),
+                bundle_id: "".to_string(),
                 use_versioning: self.use_versioning,
             })
         } else {
@@ -197,11 +205,7 @@ impl WorkerClient for WorkerClientBag {
             sticky_attributes: request.sticky_attributes,
             return_new_workflow_task: request.return_new_workflow_task,
             force_create_new_workflow_task: request.force_create_new_workflow_task,
-            worker_version_stamp: Some(WorkerVersionStamp {
-                build_id: self.binary_checksum(),
-                bundle_id: "".to_string(),
-                use_versioning: self.use_versioning,
-            }),
+            worker_version_stamp: self.worker_version_stamp(),
             messages: vec![],
             binary_checksum: self.binary_checksum(),
             query_results: request
