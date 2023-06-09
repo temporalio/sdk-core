@@ -337,10 +337,7 @@ impl Default for LACloseTimeouts {
 }
 
 impl ValidScheduleLA {
-    pub fn from_schedule_la(
-        v: ScheduleLocalActivity,
-        wf_exe_timeout: Option<Duration>,
-    ) -> Result<Self, anyhow::Error> {
+    pub fn from_schedule_la(v: ScheduleLocalActivity) -> Result<Self, anyhow::Error> {
         let original_schedule_time = v
             .original_schedule_time
             .map(|x| {
@@ -354,9 +351,7 @@ impl ValidScheduleLA {
                 x.try_into()
                     .map_err(|_| anyhow!("Could not convert schedule_to_close_timeout"))
             })
-            .transpose()?
-            // Default to execution timeout if unset
-            .or(wf_exe_timeout);
+            .transpose()?;
         let mut schedule_to_start_timeout = v
             .schedule_to_start_timeout
             .map(|x| {
@@ -392,7 +387,8 @@ impl ValidScheduleLA {
             }
             (None, None) => {
                 return Err(anyhow!(
-                    "One of schedule_to_close or start_to_close timeouts must be set"
+                    "One or both of schedule_to_close or start_to_close timeouts must be set for \
+                     local activities"
                 ))
             }
         };
