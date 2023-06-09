@@ -1068,17 +1068,12 @@ impl WorkflowMachines {
                 }
                 WFCommand::AddLocalActivity(attrs) => {
                     let seq = attrs.seq;
-                    let attrs: ValidScheduleLA = ValidScheduleLA::from_schedule_la(
-                        attrs,
-                        self.get_started_info()
-                            .as_ref()
-                            .and_then(|x| x.workflow_execution_timeout),
-                    )
-                    .map_err(|e| {
-                        WFMachinesError::Fatal(format!(
-                            "Invalid schedule local activity request (seq {seq}): {e}"
-                        ))
-                    })?;
+                    let attrs: ValidScheduleLA =
+                        ValidScheduleLA::from_schedule_la(attrs).map_err(|e| {
+                            WFMachinesError::Fatal(format!(
+                                "Invalid schedule local activity request (seq {seq}): {e}"
+                            ))
+                        })?;
                     let (la, mach_resp) = new_local_activity(
                         attrs,
                         self.replaying,
