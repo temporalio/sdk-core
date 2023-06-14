@@ -106,6 +106,7 @@ impl TestHistoryBuilder {
     pub fn add_workflow_task_started(&mut self) {
         self.final_workflow_task_started_event_id = self.add(WorkflowTaskStartedEventAttributes {
             scheduled_event_id: self.workflow_task_scheduled_event_id,
+            history_size_bytes: ((self.events.len() + 1) * 10) as i64,
             ..Default::default()
         });
     }
