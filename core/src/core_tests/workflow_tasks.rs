@@ -1677,7 +1677,7 @@ async fn history_byte_size_and_can_suggestion_in_activation() {
     let activation = worker.poll_workflow_activation().await.unwrap();
     // Test builder always does num events * 10
     assert_eq!(activation.history_size_bytes, 30);
-    assert_eq!(activation.continue_as_new_suggested, false);
+    assert!(!activation.continue_as_new_suggested);
     worker
         .complete_workflow_activation(WorkflowActivationCompletion::empty(activation.run_id))
         .await
