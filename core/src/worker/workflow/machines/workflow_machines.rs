@@ -116,7 +116,7 @@ pub(crate) struct WorkflowMachines {
     /// Set on each WFT started event, the most recent size of history in bytes
     history_size_bytes: u64,
     /// Set on each WFT started event
-    continue_as_new_suggseted: bool,
+    continue_as_new_suggested: bool,
 
     all_machines: SlotMap<MachineKey, Machines>,
     /// If a machine key is in this map, that machine was created internally by core, not as a
@@ -248,7 +248,7 @@ impl WorkflowMachines {
             current_wf_time: None,
             observed_internal_flags: Rc::new(RefCell::new(observed_internal_flags)),
             history_size_bytes: 0,
-            continue_as_new_suggseted: false,
+            continue_as_new_suggested: false,
             all_machines: Default::default(),
             machine_is_core_created: Default::default(),
             machines_by_event_id: Default::default(),
@@ -378,7 +378,7 @@ impl WorkflowMachines {
                 .all_lang()
                 .collect(),
             history_size_bytes: self.history_size_bytes,
-            continue_as_new_suggested: self.continue_as_new_suggseted,
+            continue_as_new_suggested: self.continue_as_new_suggested,
         }
     }
 
@@ -649,7 +649,7 @@ impl WorkflowMachines {
             event.attributes
         {
             self.history_size_bytes = u64::try_from(attrs.history_size_bytes).unwrap_or_default();
-            self.continue_as_new_suggseted = attrs.suggest_continue_as_new;
+            self.continue_as_new_suggested = attrs.suggest_continue_as_new;
         }
 
         if let Some(initial_cmd_id) = event.get_initial_command_event_id() {
