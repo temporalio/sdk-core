@@ -454,6 +454,8 @@ pub mod coresdk {
                     }),
                 )],
                 available_internal_flags: vec![],
+                history_size_bytes: 0,
+                continue_as_new_suggested: false,
             }
         }
 

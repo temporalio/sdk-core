@@ -35,6 +35,10 @@ message WorkflowActivation {
     // internal flags may be used. This is not a delta - all previously used flags always
     // appear since this representation is cheap.
     repeated uint32 available_internal_flags = 6;
+    // The history size in bytes as of the last WFT started event
+    uint64 history_size_bytes = 7;
+    // Set true if the most recent WFT started event had this suggestion
+    bool continue_as_new_suggested = 8;
 }
 
 message WorkflowActivationJob {

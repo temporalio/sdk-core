@@ -97,6 +97,9 @@ pub(crate) struct WorkflowMachines {
     pub run_id: String,
     /// The task queue this workflow is operating within
     pub task_queue: String,
+    /// Is set to true once we've seen the final event in workflow history, to avoid accidentally
+    /// re-applying the final workflow task.
+    pub have_seen_terminal_event: bool,
     /// The time the workflow execution began, as told by the WEStarted event
     workflow_start_time: Option<SystemTime>,
     /// The time the workflow execution finished, as determined by when the machines handled
@@ -110,6 +113,10 @@ pub(crate) struct WorkflowMachines {
     /// The internal flags which have been seen so far during this run's execution and thus are
     /// usable during replay.
     observed_internal_flags: InternalFlagsRef,
+    /// Set on each WFT started event, the most recent size of history in bytes
+    history_size_bytes: u64,
+    /// Set on each WFT started event
+    continue_as_new_suggested: bool,
 
     all_machines: SlotMap<MachineKey, Machines>,
     /// If a machine key is in this map, that machine was created internally by core, not as a
@@ -138,10 +145,6 @@ pub(crate) struct WorkflowMachines {
 
     /// The workflow that is being driven by this instance of the machines
     drive_me: DrivenWorkflow,
-
-    /// Is set to true once we've seen the final event in workflow history, to avoid accidentally
-    /// re-applying the final workflow task.
-    pub have_seen_terminal_event: bool,
 
     /// Metrics context
     pub metrics: MetricsContext,
@@ -244,6 +247,8 @@ impl WorkflowMachines {
             wft_start_time: None,
             current_wf_time: None,
             observed_internal_flags: Rc::new(RefCell::new(observed_internal_flags)),
+            history_size_bytes: 0,
+            continue_as_new_suggested: false,
             all_machines: Default::default(),
             machine_is_core_created: Default::default(),
             machines_by_event_id: Default::default(),
@@ -372,6 +377,8 @@ impl WorkflowMachines {
                 .borrow()
                 .all_lang()
                 .collect(),
+            history_size_bytes: self.history_size_bytes,
+            continue_as_new_suggested: self.continue_as_new_suggested,
         }
     }
 
@@ -636,6 +643,13 @@ impl WorkflowMachines {
 
         if event.is_command_event() {
             return self.handle_command_event(event_dat, next_event);
+        }
+
+        if let Some(history_event::Attributes::WorkflowTaskStartedEventAttributes(ref attrs)) =
+            event.attributes
+        {
+            self.history_size_bytes = u64::try_from(attrs.history_size_bytes).unwrap_or_default();
+            self.continue_as_new_suggested = attrs.suggest_continue_as_new;
         }
 
         if let Some(initial_cmd_id) = event.get_initial_command_event_id() {

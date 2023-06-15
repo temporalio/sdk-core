@@ -1648,6 +1648,45 @@ async fn cache_miss_will_fetch_history() {
     worker.shutdown().await;
 }
 
+#[tokio::test]
+async fn history_byte_size_and_can_suggestion_in_activation() {
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    t.add_we_signaled("sig", vec![]);
+    t.add_full_wf_task();
+    t.add_workflow_execution_completed();
+    t.modify_event(7, |he| {
+        if let Some(history_event::Attributes::WorkflowTaskStartedEventAttributes(ref mut attrs)) =
+            he.attributes
+        {
+            attrs.suggest_continue_as_new = true;
+        }
+    });
+
+    let mh = MockPollCfg::from_resp_batches(
+        "fake_wf_id",
+        t,
+        [ResponseType::ToTaskNum(1), ResponseType::OneTask(2)],
+        mock_workflow_client(),
+    );
+    let mut mock = build_mock_pollers(mh);
+    mock.worker_cfg(|cfg| cfg.max_cached_workflows = 1);
+    let worker = mock_worker(mock);
+
+    let activation = worker.poll_workflow_activation().await.unwrap();
+    // Test builder always does num events * 10
+    assert_eq!(activation.history_size_bytes, 30);
+    assert!(!activation.continue_as_new_suggested);
+    worker
+        .complete_workflow_activation(WorkflowActivationCompletion::empty(activation.run_id))
+        .await
+        .unwrap();
+    let activation = worker.poll_workflow_activation().await.unwrap();
+    assert_eq!(activation.history_size_bytes, 70);
+    assert!(activation.continue_as_new_suggested);
+}
+
 /// This test verifies that WFTs which come as replies to completing a WFT are properly delivered
 /// via activation polling.
 #[tokio::test]
