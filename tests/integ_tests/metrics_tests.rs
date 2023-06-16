@@ -1,3 +1,4 @@
+use assert_matches::assert_matches;
 use std::{sync::Arc, time::Duration};
 use temporal_client::{WorkflowClientTrait, WorkflowOptions, WorkflowService};
 use temporal_sdk_core::{init_worker, CoreRuntime};
@@ -5,14 +6,24 @@ use temporal_sdk_core_api::{telemetry::MetricsExporter, worker::WorkerConfigBuil
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::ActivityExecutionResult,
-        workflow_commands::{ScheduleActivity, ScheduleLocalActivity},
+        workflow_activation::{workflow_activation_job, WorkflowActivationJob},
+        workflow_commands::{
+            workflow_command, CancelWorkflowExecution, CompleteWorkflowExecution,
+            ContinueAsNewWorkflowExecution, FailWorkflowExecution, QueryResult, QuerySuccess,
+            ScheduleActivity, ScheduleLocalActivity,
+        },
         workflow_completion::WorkflowActivationCompletion,
         ActivityTaskCompletion,
     },
-    temporal::api::{enums::v1::WorkflowIdReusePolicy, workflowservice::v1::ListNamespacesRequest},
+    temporal::api::{
+        enums::v1::WorkflowIdReusePolicy, failure::v1::Failure, query::v1::WorkflowQuery,
+        workflowservice::v1::ListNamespacesRequest,
+    },
 };
-use temporal_sdk_core_test_utils::{get_integ_server_options, get_integ_telem_options, NAMESPACE};
-use tokio::sync::Barrier;
+use temporal_sdk_core_test_utils::{
+    get_integ_server_options, get_integ_telem_options, CoreWfStarter, NAMESPACE,
+};
+use tokio::{join, sync::Barrier};
 
 static ANY_PORT: &str = "127.0.0.1:0";
 
@@ -237,5 +248,125 @@ async fn one_slot_worker_reports_available_slot() {
              worker_type=\"LocalActivityWorker\"}} 1"
         )));
     };
-    tokio::join!(wf_polling, act_polling, testing);
+    join!(wf_polling, act_polling, testing);
+}
+
+#[rstest::rstest]
+#[tokio::test]
+async fn query_of_closed_workflow_doesnt_tick_terminal_metric(
+    #[values(
+        CompleteWorkflowExecution { result: None }.into(),
+        FailWorkflowExecution {
+            failure: Some(Failure::application_failure("I'm ded".to_string(), false)),
+        }.into(),
+        ContinueAsNewWorkflowExecution::default().into(),
+        CancelWorkflowExecution { }.into()
+    )]
+    completion: workflow_command::Variant,
+) {
+    let mut telemopts = get_integ_telem_options();
+    telemopts.metrics = Some(MetricsExporter::Prometheus(ANY_PORT.parse().unwrap()));
+    let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
+    let addr = rt.telemetry().prom_port().unwrap();
+    let mut starter =
+        CoreWfStarter::new_with_runtime("query_of_closed_workflow_doesnt_tick_terminal_metric", rt);
+    // Disable cache to ensure replay happens completely
+    starter.max_cached_workflows(0);
+    let worker = starter.get_worker().await;
+    let run_id = starter.start_wf().await;
+    let task = worker.poll_workflow_activation().await.unwrap();
+    // Immediately complete the workflow
+    worker
+        .complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+            task.run_id,
+            completion.clone(),
+        ))
+        .await
+        .unwrap();
+
+    let metric_name = match &completion {
+        workflow_command::Variant::CompleteWorkflowExecution(_) => "temporal_workflow_completed",
+        workflow_command::Variant::FailWorkflowExecution(_) => "temporal_workflow_failed",
+        workflow_command::Variant::ContinueAsNewWorkflowExecution(_) => {
+            "temporal_workflow_continue_as_new"
+        }
+        workflow_command::Variant::CancelWorkflowExecution(_) => "temporal_workflow_canceled",
+        _ => unreachable!(),
+    };
+
+    // Verify there is one tick for the completion metric
+    let body = get_text(format!("http://{addr}/metrics")).await;
+    let matching_line = body
+        .lines()
+        .find(|l| l.starts_with(metric_name))
+        .expect("Must find matching metric");
+    assert!(matching_line.ends_with('1'));
+
+    // Handle cache eviction
+    let task = worker.poll_workflow_activation().await.unwrap();
+    worker
+        .complete_workflow_activation(WorkflowActivationCompletion::empty(task.run_id))
+        .await
+        .unwrap();
+
+    // Query the now-closed workflow
+    let client = starter.get_client().await;
+    let queryer = async {
+        client
+            .query_workflow_execution(
+                starter.get_wf_id().to_string(),
+                run_id,
+                WorkflowQuery {
+                    query_type: "fake_query".to_string(),
+                    query_args: None,
+                    header: None,
+                },
+            )
+            .await
+            .unwrap();
+    };
+    let query_reply = async {
+        // Need to re-complete b/c replay
+        let task = worker.poll_workflow_activation().await.unwrap();
+        worker
+            .complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+                task.run_id,
+                completion,
+            ))
+            .await
+            .unwrap();
+
+        let task = worker.poll_workflow_activation().await.unwrap();
+        let query = assert_matches!(
+            task.jobs.as_slice(),
+            [WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::QueryWorkflow(q)),
+            }] => q
+        );
+        worker
+            .complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+                task.run_id,
+                QueryResult {
+                    query_id: query.query_id.clone(),
+                    variant: Some(
+                        QuerySuccess {
+                            response: Some("hi".into()),
+                        }
+                        .into(),
+                    ),
+                }
+                .into(),
+            ))
+            .await
+            .unwrap()
+    };
+    join!(query_reply, queryer);
+
+    // Verify there is still only one tick
+    let body = get_text(format!("http://{addr}/metrics")).await;
+    let matching_line = body
+        .lines()
+        .find(|l| l.starts_with(metric_name))
+        .expect("Must find matching metric");
+    assert!(matching_line.ends_with('1'));
 }

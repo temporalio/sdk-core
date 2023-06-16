@@ -1107,15 +1107,21 @@ impl WorkflowMachines {
                     self.process_cancellation(CommandID::LocalActivity(attrs.seq))?;
                 }
                 WFCommand::CompleteWorkflow(attrs) => {
-                    self.metrics.wf_completed();
+                    if !self.replaying {
+                        self.metrics.wf_completed();
+                    }
                     self.add_terminal_command(complete_workflow(attrs));
                 }
                 WFCommand::FailWorkflow(attrs) => {
-                    self.metrics.wf_failed();
+                    if !self.replaying {
+                        self.metrics.wf_failed();
+                    }
                     self.add_terminal_command(fail_workflow(attrs));
                 }
                 WFCommand::ContinueAsNew(attrs) => {
-                    self.metrics.wf_continued_as_new();
+                    if !self.replaying {
+                        self.metrics.wf_continued_as_new();
+                    }
                     let attrs = self.augment_continue_as_new_with_current_values(attrs);
                     let use_compat = self.determine_use_compatible_flag(
                         attrs.versioning_intent(),
@@ -1124,7 +1130,9 @@ impl WorkflowMachines {
                     self.add_terminal_command(continue_as_new(attrs, use_compat));
                 }
                 WFCommand::CancelWorkflow(attrs) => {
-                    self.metrics.wf_canceled();
+                    if !self.replaying {
+                        self.metrics.wf_canceled();
+                    }
                     self.add_terminal_command(cancel_workflow(attrs));
                 }
                 WFCommand::SetPatchMarker(attrs) => {

@@ -158,6 +158,7 @@ pub struct CoreWfStarter {
     /// Options to use when starting workflow(s)
     pub workflow_options: WorkflowOptions,
     initted_worker: OnceCell<InitializedWorker>,
+    runtime_override: Option<CoreRuntime>,
 }
 struct InitializedWorker {
     worker: Arc<dyn CoreWorker>,
@@ -167,6 +168,14 @@ struct InitializedWorker {
 impl CoreWfStarter {
     pub fn new(test_name: &str) -> Self {
         init_integ_telem();
+        Self::_new(test_name, None)
+    }
+
+    pub fn new_with_runtime(test_name: &str, runtime: CoreRuntime) -> Self {
+        Self::_new(test_name, Some(runtime))
+    }
+
+    fn _new(test_name: &str, runtime_override: Option<CoreRuntime>) -> Self {
         let rand_bytes: Vec<u8> = rand::thread_rng().sample_iter(&Standard).take(6).collect();
         let task_q_salt = BASE64_STANDARD.encode(rand_bytes);
         let task_queue = format!("{test_name}_{task_q_salt}");
@@ -181,6 +190,7 @@ impl CoreWfStarter {
             worker_config,
             initted_worker: OnceCell::new(),
             workflow_options: Default::default(),
+            runtime_override,
         }
     }
 
@@ -332,8 +342,12 @@ impl CoreWfStarter {
                         .await
                         .expect("Must connect"),
                 );
-                let worker = init_worker(INTEG_TESTS_RT.get().unwrap(), cfg, client.clone())
-                    .expect("Worker inits cleanly");
+                let rt = if let Some(ref rto) = self.runtime_override {
+                    rto
+                } else {
+                    INTEG_TESTS_RT.get().unwrap()
+                };
+                let worker = init_worker(rt, cfg, client.clone()).expect("Worker inits cleanly");
                 InitializedWorker {
                     worker: Arc::new(worker),
                     client,
