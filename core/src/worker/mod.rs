@@ -621,10 +621,8 @@ impl Worker {
                 self.notify_local_result(&run_id, LocalResolution::LocalActivity(resolution));
                 task
             }
-            LACompleteAction::WillBeRetried | LACompleteAction::Untracked => {
-                // Nothing to do
-                None
-            }
+            LACompleteAction::WillBeRetried(task) => task,
+            LACompleteAction::Untracked => None,
         }
     }
 

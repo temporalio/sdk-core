@@ -393,7 +393,7 @@ impl LocalActivityManager {
                             .lock()
                             .la_info
                             .get(&ExecutingLAId {
-                                run_id: run_id.clone(),
+                                run_id,
                                 seq_num: resolution.seq,
                             })
                             .as_ref()
@@ -534,38 +534,40 @@ impl LocalActivityManager {
             }
 
             enum Outcome {
-                FailurePath {
-                    backoff: Option<Duration>,
-                    is_timeout: bool,
-                },
+                FailurePath { backoff: Option<Duration> },
                 JustReport,
             }
-            let outcome = match &status {
-                LocalActivityExecutionResult::Failed(fail) => Outcome::FailurePath {
-                    backoff: info.la_info.schedule_cmd.retry_policy.should_retry(
+            macro_rules! calc_backoff {
+                ($fail: ident) => {
+                    info.la_info.schedule_cmd.retry_policy.should_retry(
                         info.attempt as usize,
-                        fail.failure
+                        $fail
+                            .failure
                             .as_ref()
                             .and_then(|f| f.maybe_application_failure()),
-                    ),
-                    is_timeout: false,
+                    )
+                };
+            }
+
+            let mut is_timeout = false;
+            let outcome = match &status {
+                LocalActivityExecutionResult::Failed(fail) => Outcome::FailurePath {
+                    backoff: calc_backoff!(fail),
                 },
                 LocalActivityExecutionResult::TimedOut(fail)
                     if matches!(status.get_timeout_type(), Some(TimeoutType::StartToClose)) =>
                 {
                     // Start to close timeouts are retryable, other timeout types aren't.
+                    is_timeout = true;
                     Outcome::FailurePath {
-                        backoff: info.la_info.schedule_cmd.retry_policy.should_retry(
-                            info.attempt as usize,
-                            fail.failure
-                                .as_ref()
-                                .and_then(|f| f.maybe_application_failure()),
-                        ),
-                        is_timeout: true,
+                        backoff: calc_backoff!(fail),
                     }
                 }
+                LocalActivityExecutionResult::TimedOut(_) => {
+                    is_timeout = true;
+                    Outcome::JustReport
+                }
                 LocalActivityExecutionResult::Completed(_)
-                | LocalActivityExecutionResult::TimedOut(_)
                 | LocalActivityExecutionResult::Cancelled { .. } => Outcome::JustReport,
             };
 
@@ -577,31 +579,31 @@ impl LocalActivityManager {
                 backoff: None,
                 original_schedule_time: info.la_info.schedule_cmd.original_schedule_time,
             };
+            // We want to generate a cancel task if the reason for failure was a timeout.
+            let task = if is_timeout {
+                Some(ActivityTask {
+                    task_token: task_token.clone().0,
+                    variant: Some(activity_task::Variant::Cancel(Cancel {
+                        reason: ActivityCancelReason::TimedOut as i32,
+                    })),
+                })
+            } else {
+                None
+            };
 
             match outcome {
-                Outcome::FailurePath {
-                    backoff,
-                    is_timeout,
-                } => {
-                    let task = if is_timeout {
-                        Some(ActivityTask {
-                            task_token: task_token.clone().0,
-                            variant: Some(activity_task::Variant::Cancel(Cancel {
-                                reason: ActivityCancelReason::TimedOut as i32,
-                            })),
-                        })
-                    } else {
-                        None
-                    };
+                Outcome::FailurePath { backoff } => {
                     if let Some(backoff_dur) = backoff {
+                        let fail_or_timeout = if is_timeout { "timed out" } else { "failed" };
                         let will_use_timer =
                             backoff_dur > info.la_info.schedule_cmd.local_retry_threshold;
                         debug!(run_id = %info.la_info.workflow_exec_info.run_id,
                                seq_num = %info.la_info.schedule_cmd.seq,
                                attempt = %info.attempt,
                                will_use_timer,
-                            "Local activity failed, will retry after backing off for {:?}",
-                             backoff_dur
+                            "Local activity {}, will retry after backing off for {:?}",
+                            fail_or_timeout,
+                            backoff_dur
                         );
                         if will_use_timer {
                             // This la needs to write a failure marker, and then we will tell lang how
@@ -648,8 +650,7 @@ impl LocalActivityManager {
                                 timeout_bag: maybe_old_lai.and_then(|old| old.timeout_bag),
                             },
                         );
-
-                        LACompleteAction::WillBeRetried
+                        LACompleteAction::WillBeRetried(task)
                     } else {
                         LACompleteAction::Report {
                             run_id: info.la_info.workflow_exec_info.run_id,
@@ -663,13 +664,18 @@ impl LocalActivityManager {
                     LACompleteAction::Report {
                         run_id: info.la_info.workflow_exec_info.run_id,
                         resolution,
-                        // TODO: ... is this right?
-                        task: None,
+                        task,
                     }
                 }
             }
         } else {
-            warn!("Tried to complete untracked local activity");
+            if !matches!(
+                status,
+                LocalActivityExecutionResult::TimedOut(_)
+                    | LocalActivityExecutionResult::Cancelled { .. }
+            ) {
+                warn!("Tried to complete untracked local activity");
+            }
             LACompleteAction::Untracked
         }
     }
@@ -755,7 +761,7 @@ pub(crate) enum LACompleteAction {
     },
     /// The activity will be re-enqueued for another attempt (and so status should not be reported
     /// to the workflow)
-    WillBeRetried,
+    WillBeRetried(Option<ActivityTask>),
     /// The activity was unknown
     Untracked,
 }
@@ -1301,7 +1307,7 @@ mod tests {
         };
 
         sleep(timeout + Duration::from_millis(10)).await;
-        assert!(lam.next_pending().await.unwrap().is_timeout(!is_schedule));
+        assert!(lam.next_pending().await.unwrap().is_timeout(true));
         assert_eq!(lam.num_outstanding(), 0);
     }
 

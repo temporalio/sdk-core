@@ -49,7 +49,7 @@ use temporal_sdk_core_protos::{
 use temporal_sdk_core_test_utils::{
     schedule_local_activity_cmd, start_timer_cmd, WorkerTestHelpers,
 };
-use tokio::{join, sync::Barrier};
+use tokio::{join, select, sync::Barrier};
 
 async fn echo(_ctx: ActContext, e: String) -> anyhow::Result<String> {
     Ok(e)
@@ -884,14 +884,23 @@ async fn test_schedule_to_start_timeout_not_based_on_original_time(
     worker.run_until_done().await.unwrap();
 }
 
+#[rstest::rstest]
 #[tokio::test]
-async fn start_to_close_timeout_allows_retires() {
-    crate::telemetry::test_telem_console();
-    // TODO: Also fail completely
+async fn start_to_close_timeout_allows_retires(#[values(true, false)] la_completes: bool) {
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
-    t.add_local_activity_marker(1, "1", Some("hi".into()), None, |_| {});
+    if la_completes {
+        t.add_local_activity_marker(1, "1", Some("hi".into()), None, |_| {});
+    } else {
+        t.add_local_activity_marker(
+            1,
+            "1",
+            None,
+            Some(Failure::application_failure("la failed".to_string(), false)),
+            |_| {},
+        );
+    }
     t.add_full_wf_task();
     t.add_workflow_execution_completed();
 
@@ -923,17 +932,28 @@ async fn start_to_close_timeout_allows_retires() {
                     ..Default::default()
                 })
                 .await;
-            assert!(la_res.completed_ok());
+            if la_completes {
+                assert!(la_res.completed_ok());
+            } else {
+                assert_eq!(la_res.timed_out(), Some(TimeoutType::StartToClose));
+            }
             Ok(().into())
         },
     );
     static ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
+    static CANCELS: AtomicUsize = AtomicUsize::new(0);
     worker.register_activity(
         DEFAULT_ACTIVITY_TYPE,
-        move |_ctx: ActContext, _: String| async move {
-            // Timeout the first 4 attempts
-            if dbg!(ATTEMPTS.fetch_add(1, Ordering::AcqRel)) < 4 {
-                tokio::time::sleep(Duration::from_millis(100)).await;
+        move |ctx: ActContext, _: String| async move {
+            // Timeout the first 4 attempts, or all of them if we intend to fail
+            if ATTEMPTS.fetch_add(1, Ordering::AcqRel) < 4 || !la_completes {
+                select! {
+                    _ = tokio::time::sleep(Duration::from_millis(100)) => (),
+                    _ = ctx.cancelled() => {
+                        CANCELS.fetch_add(1, Ordering::AcqRel);
+                        return Err(anyhow!(ActivityCancelledError::default()));
+                    }
+                }
             }
             Ok(())
         },
@@ -950,6 +970,8 @@ async fn start_to_close_timeout_allows_retires() {
     worker.run_until_done().await.unwrap();
     // Activity should have been attempted all 5 times
     assert_eq!(ATTEMPTS.load(Ordering::Acquire), 5);
+    let num_cancels = if la_completes { 4 } else { 5 };
+    assert_eq!(CANCELS.load(Ordering::Acquire), num_cancels);
 }
 
 #[tokio::test]
