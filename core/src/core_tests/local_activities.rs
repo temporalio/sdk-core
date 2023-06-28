@@ -940,17 +940,17 @@ async fn start_to_close_timeout_allows_retries(#[values(true, false)] la_complet
             Ok(().into())
         },
     );
-    static ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
-    static CANCELS: AtomicUsize = AtomicUsize::new(0);
+    let attempts: &'static _ = Box::leak(Box::new(AtomicUsize::new(0)));
+    let cancels: &'static _ = Box::leak(Box::new(AtomicUsize::new(0)));
     worker.register_activity(
         DEFAULT_ACTIVITY_TYPE,
         move |ctx: ActContext, _: String| async move {
             // Timeout the first 4 attempts, or all of them if we intend to fail
-            if ATTEMPTS.fetch_add(1, Ordering::AcqRel) < 4 || !la_completes {
+            if attempts.fetch_add(1, Ordering::AcqRel) < 4 || !la_completes {
                 select! {
                     _ = tokio::time::sleep(Duration::from_millis(100)) => (),
                     _ = ctx.cancelled() => {
-                        CANCELS.fetch_add(1, Ordering::AcqRel);
+                        cancels.fetch_add(1, Ordering::AcqRel);
                         return Err(anyhow!(ActivityCancelledError::default()));
                     }
                 }
@@ -969,9 +969,9 @@ async fn start_to_close_timeout_allows_retries(#[values(true, false)] la_complet
         .unwrap();
     worker.run_until_done().await.unwrap();
     // Activity should have been attempted all 5 times
-    assert_eq!(ATTEMPTS.load(Ordering::Acquire), 5);
+    assert_eq!(attempts.load(Ordering::Acquire), 5);
     let num_cancels = if la_completes { 4 } else { 5 };
-    assert_eq!(CANCELS.load(Ordering::Acquire), num_cancels);
+    assert_eq!(cancels.load(Ordering::Acquire), num_cancels);
 }
 
 #[tokio::test]
