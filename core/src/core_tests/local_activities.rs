@@ -887,16 +887,11 @@ async fn test_schedule_to_start_timeout_not_based_on_original_time(
 #[tokio::test]
 async fn start_to_close_timeout_allows_retires() {
     crate::telemetry::test_telem_console();
+    // TODO: Also fail completely
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
-    t.add_local_activity_marker(
-        1,
-        "1",
-        None,
-        Some(Failure::application_failure("la failed".to_string(), false)),
-        |_| {},
-    );
+    t.add_local_activity_marker(1, "1", Some("hi".into()), None, |_| {});
     t.add_full_wf_task();
     t.add_workflow_execution_completed();
 
@@ -918,13 +913,13 @@ async fn start_to_close_timeout_allows_retires() {
                     activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
                     input: "hi".as_json_payload().expect("serializes fine"),
                     retry_policy: RetryPolicy {
-                        initial_interval: Some(prost_dur!(from_millis(50))),
+                        initial_interval: Some(prost_dur!(from_millis(20))),
                         backoff_coefficient: 1.0,
                         maximum_interval: None,
                         maximum_attempts: 5,
                         non_retryable_error_types: vec![],
                     },
-                    start_to_close_timeout: Some(prost_dur!(from_millis(50))),
+                    start_to_close_timeout: Some(prost_dur!(from_millis(25))),
                     ..Default::default()
                 })
                 .await;
@@ -937,7 +932,7 @@ async fn start_to_close_timeout_allows_retires() {
         DEFAULT_ACTIVITY_TYPE,
         move |_ctx: ActContext, _: String| async move {
             // Timeout the first 4 attempts
-            if ATTEMPTS.fetch_add(1, Ordering::AcqRel) < 4 {
+            if dbg!(ATTEMPTS.fetch_add(1, Ordering::AcqRel)) < 4 {
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
             Ok(())

@@ -39,15 +39,11 @@ use tokio_util::sync::CancellationToken;
 
 #[allow(clippy::large_enum_variant)] // Timeouts are relatively rare
 #[derive(Debug)]
-pub(crate) enum DispatchOrTimeoutLA {
+pub(crate) enum NextPendingLAAction {
     /// Send the activity task to lang
     Dispatch(ActivityTask),
-    /// Notify the machines (and maybe lang) that this LA has timed out
-    Timeout {
-        run_id: String,
-        resolution: LocalActivityResolution,
-        task: Option<ActivityTask>,
-    },
+    /// The worker must re-feed this completion back through the machines. Includes timeouts.
+    Autocomplete(LACompleteAction),
 }
 
 #[derive(Debug)]
@@ -86,6 +82,24 @@ impl LocalActivityExecutionResult {
                 ..Default::default()
             }),
         })
+    }
+
+    fn get_timeout_type(&self) -> Option<TimeoutType> {
+        match self {
+            Self::TimedOut(ActFail {
+                failure:
+                    Some(APIFailure {
+                        failure_info:
+                            Some(failure::FailureInfo::TimeoutFailureInfo(TimeoutFailureInfo {
+                                timeout_type,
+                                ..
+                            })),
+                        ..
+                    }),
+                ..
+            }) => TimeoutType::from_i32(*timeout_type),
+            _ => None,
+        }
     }
 }
 
@@ -368,11 +382,11 @@ impl LocalActivityManager {
 
     /// Returns the next pending local-activity related action, or None if shutdown has initiated
     /// and there are no more remaining actions to take.
-    pub(crate) async fn next_pending(&self) -> Option<DispatchOrTimeoutLA> {
+    pub(crate) async fn next_pending(&self) -> Option<NextPendingLAAction> {
         let (new_or_retry, permit) = match self.rcvs.lock().await.next().await? {
             NewOrCancel::Cancel(c) => {
                 return match c {
-                    CancelOrTimeout::Cancel(c) => Some(DispatchOrTimeoutLA::Dispatch(c)),
+                    CancelOrTimeout::Cancel(c) => Some(NextPendingLAAction::Dispatch(c)),
                     CancelOrTimeout::Timeout { run_id, resolution } => {
                         let tt = self
                             .dat
@@ -384,22 +398,14 @@ impl LocalActivityManager {
                             })
                             .as_ref()
                             .map(|lai| lai.task_token.clone());
-                        let task = if let Some(task_token) = tt {
-                            self.complete(&task_token, &resolution.result);
-                            Some(ActivityTask {
-                                task_token: task_token.0,
-                                variant: Some(activity_task::Variant::Cancel(Cancel {
-                                    reason: ActivityCancelReason::TimedOut as i32,
-                                })),
-                            })
+                        if let Some(task_token) = tt {
+                            Some(NextPendingLAAction::Autocomplete(
+                                self.complete(&task_token, resolution.result),
+                            ))
                         } else {
+                            // This timeout is for a no-longer tracked activity, so, whatever
                             None
-                        };
-                        Some(DispatchOrTimeoutLA::Timeout {
-                            run_id,
-                            resolution,
-                            task,
-                        })
+                        }
                     }
                 };
             }
@@ -435,18 +441,22 @@ impl LocalActivityManager {
         if let Some(s2s) = sa.schedule_to_start_timeout.as_ref() {
             let sat_for = new_la.schedule_time.elapsed().unwrap_or_default();
             if sat_for > *s2s {
-                return Some(DispatchOrTimeoutLA::Timeout {
-                    run_id: new_la.workflow_exec_info.run_id,
-                    resolution: LocalActivityResolution {
-                        seq: sa.seq,
-                        result: LocalActivityExecutionResult::timeout(TimeoutType::ScheduleToStart),
-                        runtime: sat_for,
-                        attempt,
-                        backoff: None,
-                        original_schedule_time: orig_sched_time,
+                return Some(NextPendingLAAction::Autocomplete(
+                    LACompleteAction::Report {
+                        run_id: new_la.workflow_exec_info.run_id,
+                        resolution: LocalActivityResolution {
+                            seq: sa.seq,
+                            result: LocalActivityExecutionResult::timeout(
+                                TimeoutType::ScheduleToStart,
+                            ),
+                            runtime: sat_for,
+                            attempt,
+                            backoff: None,
+                            original_schedule_time: orig_sched_time,
+                        },
+                        task: None,
                     },
-                    task: None,
-                });
+                ));
             }
         }
 
@@ -466,7 +476,7 @@ impl LocalActivityManager {
         );
 
         let (schedule_to_close, start_to_close) = sa.close_timeouts.into_sched_and_start();
-        Some(DispatchOrTimeoutLA::Dispatch(ActivityTask {
+        Some(NextPendingLAAction::Dispatch(ActivityTask {
             task_token: tt.0,
             variant: Some(activity_task::Variant::Start(Start {
                 workflow_namespace: self.namespace.clone(),
@@ -497,11 +507,11 @@ impl LocalActivityManager {
         }))
     }
 
-    /// Mark a local activity as having completed (pass, fail, or cancelled)
+    /// Mark a local activity as having completed
     pub(crate) fn complete(
         &self,
         task_token: &TaskToken,
-        status: &LocalActivityExecutionResult,
+        status: LocalActivityExecutionResult,
     ) -> LACompleteAction {
         let mut dlock = self.dat.lock();
         if let Some(info) = dlock.outstanding_activity_tasks.remove(task_token) {
@@ -523,21 +533,67 @@ impl LocalActivityManager {
                 }
             }
 
-            match status {
-                LocalActivityExecutionResult::Completed(_)
-                | LocalActivityExecutionResult::TimedOut(_)
-                | LocalActivityExecutionResult::Cancelled { .. } => {
-                    // Timeouts are included in this branch since they are not retried
-                    self.complete_notify.notify_one();
-                    LACompleteAction::Report(info)
-                }
-                LocalActivityExecutionResult::Failed(f) => {
-                    if let Some(backoff_dur) = info.la_info.schedule_cmd.retry_policy.should_retry(
+            enum Outcome {
+                FailurePath {
+                    backoff: Option<Duration>,
+                    is_timeout: bool,
+                },
+                JustReport,
+            }
+            let outcome = match &status {
+                LocalActivityExecutionResult::Failed(fail) => Outcome::FailurePath {
+                    backoff: info.la_info.schedule_cmd.retry_policy.should_retry(
                         info.attempt as usize,
-                        f.failure
+                        fail.failure
                             .as_ref()
                             .and_then(|f| f.maybe_application_failure()),
-                    ) {
+                    ),
+                    is_timeout: false,
+                },
+                LocalActivityExecutionResult::TimedOut(fail)
+                    if matches!(status.get_timeout_type(), Some(TimeoutType::StartToClose)) =>
+                {
+                    // Start to close timeouts are retryable, other timeout types aren't.
+                    Outcome::FailurePath {
+                        backoff: info.la_info.schedule_cmd.retry_policy.should_retry(
+                            info.attempt as usize,
+                            fail.failure
+                                .as_ref()
+                                .and_then(|f| f.maybe_application_failure()),
+                        ),
+                        is_timeout: true,
+                    }
+                }
+                LocalActivityExecutionResult::Completed(_)
+                | LocalActivityExecutionResult::TimedOut(_)
+                | LocalActivityExecutionResult::Cancelled { .. } => Outcome::JustReport,
+            };
+
+            let mut resolution = LocalActivityResolution {
+                seq: info.la_info.schedule_cmd.seq,
+                result: status,
+                runtime: info.dispatch_time.elapsed(),
+                attempt: info.attempt,
+                backoff: None,
+                original_schedule_time: info.la_info.schedule_cmd.original_schedule_time,
+            };
+
+            match outcome {
+                Outcome::FailurePath {
+                    backoff,
+                    is_timeout,
+                } => {
+                    let task = if is_timeout {
+                        Some(ActivityTask {
+                            task_token: task_token.clone().0,
+                            variant: Some(activity_task::Variant::Cancel(Cancel {
+                                reason: ActivityCancelReason::TimedOut as i32,
+                            })),
+                        })
+                    } else {
+                        None
+                    };
+                    if let Some(backoff_dur) = backoff {
                         let will_use_timer =
                             backoff_dur > info.la_info.schedule_cmd.local_retry_threshold;
                         debug!(run_id = %info.la_info.workflow_exec_info.run_id,
@@ -548,12 +604,19 @@ impl LocalActivityManager {
                              backoff_dur
                         );
                         if will_use_timer {
-                            // We want this to be reported, as the workflow will mark this
-                            // failure down, then start a timer for backoff.
-                            return LACompleteAction::LangDoesTimerBackoff(
-                                backoff_dur.try_into().expect("backoff fits into proto"),
-                                info,
-                            );
+                            // This la needs to write a failure marker, and then we will tell lang how
+                            // long of a timer to schedule to back off for. We do this because there are
+                            // no other situations where core generates "internal" commands so it is
+                            // much simpler for lang to reply with the timer / next LA command than to
+                            // do it internally. Plus, this backoff hack we'd like to eliminate
+                            // eventually.
+                            resolution.backoff =
+                                Some(backoff_dur.try_into().expect("backoff fits into proto"));
+                            return LACompleteAction::Report {
+                                run_id: info.la_info.workflow_exec_info.run_id,
+                                resolution,
+                                task,
+                            };
                         }
                         // Immediately create a new task token for the to-be-retried LA
                         let tt = dlock.gen_next_token();
@@ -588,11 +651,25 @@ impl LocalActivityManager {
 
                         LACompleteAction::WillBeRetried
                     } else {
-                        LACompleteAction::Report(info)
+                        LACompleteAction::Report {
+                            run_id: info.la_info.workflow_exec_info.run_id,
+                            resolution,
+                            task,
+                        }
+                    }
+                }
+                Outcome::JustReport => {
+                    self.complete_notify.notify_one();
+                    LACompleteAction::Report {
+                        run_id: info.la_info.workflow_exec_info.run_id,
+                        resolution,
+                        // TODO: ... is this right?
+                        task: None,
                     }
                 }
             }
         } else {
+            warn!("Tried to complete untracked local activity");
             LACompleteAction::Untracked
         }
     }
@@ -667,10 +744,15 @@ impl LocalActivityManager {
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)] // Most will be reported
 pub(crate) enum LACompleteAction {
-    /// Caller should report the status to the workflow
-    Report(LocalInFlightActInfo),
-    /// Lang needs to be told to do the schedule-a-timer-then-rerun hack
-    LangDoesTimerBackoff(prost_types::Duration, LocalInFlightActInfo),
+    /// Caller should report the status to the workflow machines - which may resolve the activity
+    /// or might result in scheduling a backoff timer.
+    Report {
+        run_id: String,
+        resolution: LocalActivityResolution,
+        /// May be set if a task also needs to be dispatched to lang. EX: Cancelling a timed-out
+        /// activity.
+        task: Option<ActivityTask>,
+    },
     /// The activity will be re-enqueued for another attempt (and so status should not be reported
     /// to the workflow)
     WillBeRetried,
@@ -808,7 +890,7 @@ impl TimeoutBag {
 
     /// Must be called once the associated local activity has been started / dispatched to lang.
     fn mark_started(&mut self) {
-        if let Some((start_to_close, mut dat)) = self.start_to_close_dur_and_dat.take() {
+        if let Some((start_to_close, mut dat)) = self.start_to_close_dur_and_dat.as_ref().cloned() {
             let started_t = Instant::now();
             let cchan = self.cancel_chan.clone();
             self.start_to_close_handle = Some(tokio::spawn(async move {
@@ -845,14 +927,23 @@ mod tests {
     };
     use tokio::task::yield_now;
 
-    impl DispatchOrTimeoutLA {
+    impl NextPendingLAAction {
         fn unwrap(self) -> ActivityTask {
             match self {
-                DispatchOrTimeoutLA::Dispatch(t) => t,
+                NextPendingLAAction::Dispatch(t) => t,
                 _ => {
                     panic!("Non-dispatched action returned")
                 }
             }
+        }
+
+        fn is_timeout(&self, with_task: bool) -> bool {
+            matches!(
+                self,
+                Self::Autocomplete(LACompleteAction::Report{ task, resolution, ..})
+                if matches!(resolution.result, LocalActivityExecutionResult::TimedOut(_)) &&
+                   task.is_some() == with_task
+            )
         }
     }
 
@@ -883,7 +974,7 @@ mod tests {
             let complete_branch = async {
                 lam.complete(
                     &next_tt,
-                    &LocalActivityExecutionResult::Completed(Default::default()),
+                    LocalActivityExecutionResult::Completed(Default::default()),
                 )
             };
             tokio::select! {
@@ -923,7 +1014,7 @@ mod tests {
                 // Spin until the receive lock has been grabbed by the call to pending, to ensure
                 // it's advanced enough
                 while lam.rcvs.try_lock().is_ok() { yield_now().await; }
-                lam.complete(&tt, &LocalActivityExecutionResult::Completed(Default::default()));
+                lam.complete(&tt, LocalActivityExecutionResult::Completed(Default::default()));
             } => (),
         };
     }
@@ -983,10 +1074,10 @@ mod tests {
         let tt = TaskToken(next.task_token);
         let res = lam.complete(
             &tt,
-            &LocalActivityExecutionResult::Failed(Default::default()),
+            LocalActivityExecutionResult::Failed(Default::default()),
         );
-        assert_matches!(res, LACompleteAction::LangDoesTimerBackoff(dur, info)
-            if dur.seconds == 10 && info.attempt == 5
+        assert_matches!(res, LACompleteAction::Report{resolution,..}
+            if resolution.backoff.as_ref().unwrap().seconds == 10 && resolution.attempt == 5
         )
     }
 
@@ -1018,7 +1109,7 @@ mod tests {
         let tt = TaskToken(next.task_token);
         let res = lam.complete(
             &tt,
-            &LocalActivityExecutionResult::Failed(ActFail {
+            LocalActivityExecutionResult::Failed(ActFail {
                 failure: Some(Failure {
                     failure_info: Some(FailureInfo::ApplicationFailureInfo(
                         ApplicationFailureInfo {
@@ -1031,7 +1122,7 @@ mod tests {
                 }),
             }),
         );
-        assert_matches!(res, LACompleteAction::Report(_));
+        assert_matches!(res, LACompleteAction::Report { .. });
     }
 
     #[tokio::test]
@@ -1065,7 +1156,7 @@ mod tests {
         let tt = TaskToken(next.task_token);
         lam.complete(
             &tt,
-            &LocalActivityExecutionResult::Failed(Default::default()),
+            LocalActivityExecutionResult::Failed(Default::default()),
         );
         // Cancel the activity, which is performing local backoff
         let immediate_res = lam.enqueue([LocalActRequest::Cancel(ExecutingLAId {
@@ -1112,7 +1203,7 @@ mod tests {
         let tt = TaskToken(next.task_token);
         lam.complete(
             &tt,
-            &LocalActivityExecutionResult::Failed(Default::default()),
+            LocalActivityExecutionResult::Failed(Default::default()),
         );
         lam.next_pending().await.unwrap().unwrap();
         assert_eq!(lam.num_in_backoff(), 0);
@@ -1149,10 +1240,7 @@ mod tests {
         // Wait more than the timeout before grabbing the task
         sleep(timeout + Duration::from_millis(10)).await;
 
-        assert_matches!(
-            lam.next_pending().await.unwrap(),
-            DispatchOrTimeoutLA::Timeout { .. }
-        );
+        assert!(dbg!(lam.next_pending().await.unwrap()).is_timeout(false));
         assert_eq!(lam.num_in_backoff(), 0);
         assert_eq!(lam.num_outstanding(), 0);
     }
@@ -1177,6 +1265,7 @@ mod tests {
                 retry_policy: RetryPolicy {
                     initial_interval: Some(prost_dur!(from_millis(10))),
                     backoff_coefficient: 1.0,
+                    maximum_attempts: 1,
                     ..Default::default()
                 },
                 local_retry_threshold: Duration::from_secs(500),
@@ -1212,10 +1301,7 @@ mod tests {
         };
 
         sleep(timeout + Duration::from_millis(10)).await;
-        assert_matches!(
-            lam.next_pending().await.unwrap(),
-            DispatchOrTimeoutLA::Timeout { .. }
-        );
+        assert!(lam.next_pending().await.unwrap().is_timeout(!is_schedule));
         assert_eq!(lam.num_outstanding(), 0);
     }
 
@@ -1279,7 +1365,7 @@ mod tests {
                 let tt = TaskToken(next.task_token);
                 lam.complete(
                     &tt,
-                    &LocalActivityExecutionResult::Failed(Default::default()),
+                    LocalActivityExecutionResult::Failed(Default::default()),
                 );
             }
         };
