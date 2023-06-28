@@ -886,7 +886,7 @@ async fn test_schedule_to_start_timeout_not_based_on_original_time(
 
 #[rstest::rstest]
 #[tokio::test]
-async fn start_to_close_timeout_allows_retires(#[values(true, false)] la_completes: bool) {
+async fn start_to_close_timeout_allows_retries(#[values(true, false)] la_completes: bool) {
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();

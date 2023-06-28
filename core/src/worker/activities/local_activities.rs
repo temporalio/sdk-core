@@ -403,7 +403,7 @@ impl LocalActivityManager {
                                 self.complete(&task_token, resolution.result),
                             ))
                         } else {
-                            // This timeout is for a no-longer tracked activity, so, whatever
+                            // This timeout is for a no-longer-tracked activity, so, whatever
                             None
                         }
                     }
@@ -946,7 +946,7 @@ mod tests {
         fn is_timeout(&self, with_task: bool) -> bool {
             matches!(
                 self,
-                Self::Autocomplete(LACompleteAction::Report{ task, resolution, ..})
+                Self::Autocomplete(LACompleteAction::Report{task, resolution, ..})
                 if matches!(resolution.result, LocalActivityExecutionResult::TimedOut(_)) &&
                    task.is_some() == with_task
             )
@@ -1082,7 +1082,7 @@ mod tests {
             &tt,
             LocalActivityExecutionResult::Failed(Default::default()),
         );
-        assert_matches!(res, LACompleteAction::Report{resolution,..}
+        assert_matches!(res, LACompleteAction::Report{resolution, ..}
             if resolution.backoff.as_ref().unwrap().seconds == 10 && resolution.attempt == 5
         )
     }
