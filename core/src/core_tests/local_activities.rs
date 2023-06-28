@@ -885,6 +885,79 @@ async fn test_schedule_to_start_timeout_not_based_on_original_time(
 }
 
 #[tokio::test]
+async fn start_to_close_timeout_allows_retires() {
+    crate::telemetry::test_telem_console();
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    t.add_local_activity_marker(
+        1,
+        "1",
+        None,
+        Some(Failure::application_failure("la failed".to_string(), false)),
+        |_| {},
+    );
+    t.add_full_wf_task();
+    t.add_workflow_execution_completed();
+
+    let wf_id = "fakeid";
+    let mock = mock_workflow_client();
+    let mh = MockPollCfg::from_resp_batches(
+        wf_id,
+        t,
+        [ResponseType::ToTaskNum(1), ResponseType::AllHistory],
+        mock,
+    );
+    let mut worker = mock_sdk_cfg(mh, |w| w.max_cached_workflows = 1);
+
+    worker.register_wf(
+        DEFAULT_WORKFLOW_TYPE.to_owned(),
+        move |ctx: WfContext| async move {
+            let la_res = ctx
+                .local_activity(LocalActivityOptions {
+                    activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
+                    input: "hi".as_json_payload().expect("serializes fine"),
+                    retry_policy: RetryPolicy {
+                        initial_interval: Some(prost_dur!(from_millis(50))),
+                        backoff_coefficient: 1.0,
+                        maximum_interval: None,
+                        maximum_attempts: 5,
+                        non_retryable_error_types: vec![],
+                    },
+                    start_to_close_timeout: Some(prost_dur!(from_millis(50))),
+                    ..Default::default()
+                })
+                .await;
+            assert!(la_res.completed_ok());
+            Ok(().into())
+        },
+    );
+    static ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
+    worker.register_activity(
+        DEFAULT_ACTIVITY_TYPE,
+        move |_ctx: ActContext, _: String| async move {
+            // Timeout the first 4 attempts
+            if ATTEMPTS.fetch_add(1, Ordering::AcqRel) < 4 {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            Ok(())
+        },
+    );
+    worker
+        .submit_wf(
+            wf_id.to_owned(),
+            DEFAULT_WORKFLOW_TYPE.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+    // Activity should have been attempted all 5 times
+    assert_eq!(ATTEMPTS.load(Ordering::Acquire), 5);
+}
+
+#[tokio::test]
 async fn wft_failure_cancels_running_las() {
     let mut t = TestHistoryBuilder::default();
     t.add_wfe_started_with_wft_timeout(Duration::from_millis(200));

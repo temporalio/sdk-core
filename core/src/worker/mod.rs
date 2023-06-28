@@ -387,7 +387,7 @@ impl Worker {
             config,
             shutdown_token,
             post_activate_hook: None,
-            // Complete if there configured not to poll on non-local activities.
+            // Non-local activities are already complete if configured not to poll for them.
             non_local_activities_complete: Arc::new(AtomicBool::new(!poll_on_non_local_activities)),
             local_activities_complete: Default::default(),
         }
