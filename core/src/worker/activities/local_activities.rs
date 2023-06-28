@@ -373,33 +373,25 @@ impl LocalActivityManager {
             NewOrCancel::Cancel(c) => {
                 return match c {
                     CancelOrTimeout::Cancel(c) => Some(DispatchOrTimeoutLA::Dispatch(c)),
-                    CancelOrTimeout::Timeout {
-                        run_id,
-                        resolution,
-                        dispatch_cancel,
-                    } => {
-                        let task = if dispatch_cancel {
-                            let tt = self
-                                .dat
-                                .lock()
-                                .la_info
-                                .get(&ExecutingLAId {
-                                    run_id: run_id.clone(),
-                                    seq_num: resolution.seq,
-                                })
-                                .as_ref()
-                                .map(|lai| lai.task_token.clone());
-                            if let Some(task_token) = tt {
-                                self.complete(&task_token, &resolution.result);
-                                Some(ActivityTask {
-                                    task_token: task_token.0,
-                                    variant: Some(activity_task::Variant::Cancel(Cancel {
-                                        reason: ActivityCancelReason::TimedOut as i32,
-                                    })),
-                                })
-                            } else {
-                                None
-                            }
+                    CancelOrTimeout::Timeout { run_id, resolution } => {
+                        let tt = self
+                            .dat
+                            .lock()
+                            .la_info
+                            .get(&ExecutingLAId {
+                                run_id: run_id.clone(),
+                                seq_num: resolution.seq,
+                            })
+                            .as_ref()
+                            .map(|lai| lai.task_token.clone());
+                        let task = if let Some(task_token) = tt {
+                            self.complete(&task_token, &resolution.result);
+                            Some(ActivityTask {
+                                task_token: task_token.0,
+                                variant: Some(activity_task::Variant::Cancel(Cancel {
+                                    reason: ActivityCancelReason::TimedOut as i32,
+                                })),
+                            })
                         } else {
                             None
                         };
@@ -702,7 +694,6 @@ enum CancelOrTimeout {
     Timeout {
         run_id: String,
         resolution: LocalActivityResolution,
-        dispatch_cancel: bool,
     },
 }
 
@@ -794,7 +785,6 @@ impl TimeoutBag {
         let timeout_dat = CancelOrTimeout::Timeout {
             run_id: new_la.workflow_exec_info.run_id.clone(),
             resolution,
-            dispatch_cancel: true,
         };
         let start_to_close_dur_and_dat = start_to_close.map(|d| (d, timeout_dat.clone()));
         let fut_dat = schedule_to_close.map(|s2c| (s2c, timeout_dat));
