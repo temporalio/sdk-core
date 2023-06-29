@@ -3,9 +3,8 @@ mod activity_task_poller_stream;
 mod local_activities;
 
 pub(crate) use local_activities::{
-    DispatchOrTimeoutLA, ExecutingLAId, LACompleteAction, LocalActRequest,
-    LocalActivityExecutionResult, LocalActivityManager, LocalActivityResolution,
-    LocalInFlightActInfo, NewLocalAct,
+    ExecutingLAId, LACompleteAction, LocalActRequest, LocalActivityExecutionResult,
+    LocalActivityManager, LocalActivityResolution, NewLocalAct, NextPendingLAAction,
 };
 
 use crate::{

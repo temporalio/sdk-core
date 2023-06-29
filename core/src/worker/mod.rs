@@ -28,13 +28,13 @@ use crate::{
         TelemetryInstance,
     },
     worker::{
-        activities::{DispatchOrTimeoutLA, LACompleteAction, LocalActivityManager},
+        activities::{LACompleteAction, LocalActivityManager, NextPendingLAAction},
         client::WorkerClient,
         workflow::{LAReqSink, LocalResolution, WorkflowBasics, Workflows},
     },
     ActivityHeartbeat, CompleteActivityError, PollActivityError, PollWfError, WorkerTrait,
 };
-use activities::{LocalInFlightActInfo, WorkerActivityTasks};
+use activities::WorkerActivityTasks;
 use std::{
     convert::TryInto,
     future,
@@ -61,7 +61,7 @@ use temporal_sdk_core_protos::{
 use tokio::sync::mpsc::unbounded_channel;
 use tokio_util::sync::CancellationToken;
 
-use crate::pollers::BoxedActPoller;
+use crate::{abstractions::dbg_panic, pollers::BoxedActPoller};
 #[cfg(test)]
 use {
     crate::{
@@ -387,7 +387,7 @@ impl Worker {
             config,
             shutdown_token,
             post_activate_hook: None,
-            // Complete if there configured not to poll on non-local activities.
+            // Non-local activities are already complete if configured not to poll for them.
             non_local_activities_complete: Arc::new(AtomicBool::new(!poll_on_non_local_activities)),
             local_activities_complete: Default::default(),
         }
@@ -493,14 +493,9 @@ impl Worker {
                 unreachable!()
             }
             match self.local_act_mgr.next_pending().await {
-                Some(DispatchOrTimeoutLA::Dispatch(r)) => Ok(Some(r)),
-                Some(DispatchOrTimeoutLA::Timeout {
-                    run_id,
-                    resolution,
-                    task,
-                }) => {
-                    self.notify_local_result(&run_id, LocalResolution::LocalActivity(resolution));
-                    Ok(task)
+                Some(NextPendingLAAction::Dispatch(r)) => Ok(Some(r)),
+                Some(NextPendingLAAction::Autocomplete(action)) => {
+                    Ok(self.handle_la_complete_action(action))
                 }
                 None => {
                     if self.shutdown_token.is_cancelled() {
@@ -541,23 +536,7 @@ impl Worker {
         validate_activity_completion(&status)?;
         if task_token.is_local_activity_task() {
             let as_la_res: LocalActivityExecutionResult = status.try_into()?;
-            match self.local_act_mgr.complete(&task_token, &as_la_res) {
-                LACompleteAction::Report(info) => self.complete_local_act(as_la_res, info, None),
-                LACompleteAction::LangDoesTimerBackoff(backoff, info) => {
-                    // This la needs to write a failure marker, and then we will tell lang how
-                    // long of a timer to schedule to back off for. We do this because there are
-                    // no other situations where core generates "internal" commands so it is much
-                    // simpler for lang to reply with the timer / next LA command than to do it
-                    // internally. Plus, this backoff hack we'd like to eliminate eventually.
-                    self.complete_local_act(as_la_res, info, Some(backoff));
-                }
-                LACompleteAction::WillBeRetried => {
-                    // Nothing to do here
-                }
-                LACompleteAction::Untracked => {
-                    warn!("Tried to complete untracked local activity {}", task_token);
-                }
-            }
+            self.complete_local_act(task_token, as_la_res);
             return Ok(());
         }
 
@@ -623,23 +602,28 @@ impl Worker {
         self.post_activate_hook = Some(Box::new(callback))
     }
 
-    fn complete_local_act(
-        &self,
-        la_res: LocalActivityExecutionResult,
-        info: LocalInFlightActInfo,
-        backoff: Option<prost_types::Duration>,
-    ) {
-        self.notify_local_result(
-            &info.la_info.workflow_exec_info.run_id,
-            LocalResolution::LocalActivity(LocalActivityResolution {
-                seq: info.la_info.schedule_cmd.seq,
-                result: la_res,
-                runtime: info.dispatch_time.elapsed(),
-                attempt: info.attempt,
-                backoff,
-                original_schedule_time: info.la_info.schedule_cmd.original_schedule_time,
-            }),
-        )
+    fn complete_local_act(&self, task_token: TaskToken, la_res: LocalActivityExecutionResult) {
+        if self
+            .handle_la_complete_action(self.local_act_mgr.complete(&task_token, la_res))
+            .is_some()
+        {
+            dbg_panic!("Should never be a task from direct completion");
+        }
+    }
+
+    fn handle_la_complete_action(&self, action: LACompleteAction) -> Option<ActivityTask> {
+        match action {
+            LACompleteAction::Report {
+                run_id,
+                resolution,
+                task,
+            } => {
+                self.notify_local_result(&run_id, LocalResolution::LocalActivity(resolution));
+                task
+            }
+            LACompleteAction::WillBeRetried(task) => task,
+            LACompleteAction::Untracked => None,
+        }
     }
 
     fn notify_local_result(&self, run_id: &str, res: LocalResolution) {

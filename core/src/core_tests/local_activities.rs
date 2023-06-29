@@ -49,7 +49,7 @@ use temporal_sdk_core_protos::{
 use temporal_sdk_core_test_utils::{
     schedule_local_activity_cmd, start_timer_cmd, WorkerTestHelpers,
 };
-use tokio::{join, sync::Barrier};
+use tokio::{join, select, sync::Barrier};
 
 async fn echo(_ctx: ActContext, e: String) -> anyhow::Result<String> {
     Ok(e)
@@ -882,6 +882,96 @@ async fn test_schedule_to_start_timeout_not_based_on_original_time(
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
+}
+
+#[rstest::rstest]
+#[tokio::test]
+async fn start_to_close_timeout_allows_retries(#[values(true, false)] la_completes: bool) {
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    if la_completes {
+        t.add_local_activity_marker(1, "1", Some("hi".into()), None, |_| {});
+    } else {
+        t.add_local_activity_marker(
+            1,
+            "1",
+            None,
+            Some(Failure::application_failure("la failed".to_string(), false)),
+            |_| {},
+        );
+    }
+    t.add_full_wf_task();
+    t.add_workflow_execution_completed();
+
+    let wf_id = "fakeid";
+    let mock = mock_workflow_client();
+    let mh = MockPollCfg::from_resp_batches(
+        wf_id,
+        t,
+        [ResponseType::ToTaskNum(1), ResponseType::AllHistory],
+        mock,
+    );
+    let mut worker = mock_sdk_cfg(mh, |w| w.max_cached_workflows = 1);
+
+    worker.register_wf(
+        DEFAULT_WORKFLOW_TYPE.to_owned(),
+        move |ctx: WfContext| async move {
+            let la_res = ctx
+                .local_activity(LocalActivityOptions {
+                    activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
+                    input: "hi".as_json_payload().expect("serializes fine"),
+                    retry_policy: RetryPolicy {
+                        initial_interval: Some(prost_dur!(from_millis(20))),
+                        backoff_coefficient: 1.0,
+                        maximum_interval: None,
+                        maximum_attempts: 5,
+                        non_retryable_error_types: vec![],
+                    },
+                    start_to_close_timeout: Some(prost_dur!(from_millis(25))),
+                    ..Default::default()
+                })
+                .await;
+            if la_completes {
+                assert!(la_res.completed_ok());
+            } else {
+                assert_eq!(la_res.timed_out(), Some(TimeoutType::StartToClose));
+            }
+            Ok(().into())
+        },
+    );
+    let attempts: &'static _ = Box::leak(Box::new(AtomicUsize::new(0)));
+    let cancels: &'static _ = Box::leak(Box::new(AtomicUsize::new(0)));
+    worker.register_activity(
+        DEFAULT_ACTIVITY_TYPE,
+        move |ctx: ActContext, _: String| async move {
+            // Timeout the first 4 attempts, or all of them if we intend to fail
+            if attempts.fetch_add(1, Ordering::AcqRel) < 4 || !la_completes {
+                select! {
+                    _ = tokio::time::sleep(Duration::from_millis(100)) => (),
+                    _ = ctx.cancelled() => {
+                        cancels.fetch_add(1, Ordering::AcqRel);
+                        return Err(anyhow!(ActivityCancelledError::default()));
+                    }
+                }
+            }
+            Ok(())
+        },
+    );
+    worker
+        .submit_wf(
+            wf_id.to_owned(),
+            DEFAULT_WORKFLOW_TYPE.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+    // Activity should have been attempted all 5 times
+    assert_eq!(attempts.load(Ordering::Acquire), 5);
+    let num_cancels = if la_completes { 4 } else { 5 };
+    assert_eq!(cancels.load(Ordering::Acquire), num_cancels);
 }
 
 #[tokio::test]
