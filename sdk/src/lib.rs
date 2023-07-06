@@ -116,7 +116,7 @@ pub fn sdk_client_options(url: impl Into<Url>) -> ClientOptionsBuilder {
     let mut builder = ClientOptionsBuilder::default();
     builder
         .target_url(url)
-        .client_name("rust-sdk".to_string())
+        .client_name("temporal-rust".to_string())
         .client_version(VERSION.to_string());
 
     builder
