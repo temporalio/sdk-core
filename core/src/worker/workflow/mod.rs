@@ -561,7 +561,7 @@ impl Workflows {
                     should_evict = Some(EvictionReason::TaskNotFound);
                 }
                 _ => {
-                    warn!(error= %err, "Network error while completing workflow activation");
+                    warn!(error= %err, "Error while completing workflow activation");
                     should_evict = Some(EvictionReason::Fatal);
                 }
             }
