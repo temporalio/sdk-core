@@ -50,7 +50,7 @@ struct Instruments {
     sticky_cache_hit: Counter<u64>,
     sticky_cache_miss: Counter<u64>,
     sticky_cache_size: MemoryGaugeU64,
-    sticky_cache_evictions: Counter<u64>,
+    sticky_cache_evictions: Arc<dyn Counter>,
 }
 
 impl MetricsContext {

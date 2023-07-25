@@ -42,6 +42,7 @@ pub struct TelemetryOptions {
     #[builder(default)]
     pub no_temporal_prefix_for_metrics: bool,
 
+    // TODO: Will move inside constructors for otel/prom
     /// Specifies the aggregation temporality for metric export. Defaults to cumulative.
     #[builder(default = "MetricTemporality::Cumulative")]
     pub metric_temporality: MetricTemporality,
