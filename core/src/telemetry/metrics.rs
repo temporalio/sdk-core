@@ -521,3 +521,129 @@ pub fn start_prometheus_metric_exporter(
         abort_handle: handle.abort_handle(),
     })
 }
+
+/// Buffers [MetricEvent]s for periodic consumption by lang
+#[derive(Debug)]
+pub struct MetricsCallBuffer {
+    instrument_ids: AtomicU64,
+    attribute_ids: AtomicU64,
+    calls_rx: crossbeam::channel::Receiver<MetricEvent>,
+    calls_tx: crossbeam::channel::Sender<MetricEvent>,
+}
+impl MetricsCallBuffer {
+    /// Create a new buffer with the given capacity
+    pub fn new(buffer_size: usize) -> Self {
+        let (calls_tx, calls_rx) = crossbeam::channel::bounded(buffer_size);
+        MetricsCallBuffer {
+            instrument_ids: AtomicU64::new(0),
+            attribute_ids: AtomicU64::new(0),
+            calls_rx,
+            calls_tx,
+        }
+    }
+    fn new_instrument(&self, name: &str, kind: MetricKind) -> BufferInstrument {
+        let id = self.instrument_ids.fetch_add(1, Ordering::AcqRel);
+        let _ = self.calls_tx.send(MetricEvent::Create {
+            name: name.to_string(),
+            id,
+            kind,
+        });
+        BufferInstrument {
+            kind,
+            id,
+            tx: self.calls_tx.clone(),
+        }
+    }
+}
+impl CoreMeter for MetricsCallBuffer {
+    fn new_attributes(&self, opts: MetricsAttributesOptions) -> MetricAttributes {
+        let id = self.attribute_ids.fetch_add(1, Ordering::AcqRel);
+        let _ = self.calls_tx.send(MetricEvent::CreateAttributes {
+            id,
+            attributes: opts.attributes,
+        });
+        MetricAttributes::Lang(LangMetricAttributes {
+            id,
+            new_attributes: vec![],
+        })
+    }
+
+    fn counter(&self, name: &str) -> Arc<dyn Counter> {
+        Arc::new(self.new_instrument(name, MetricKind::Counter))
+    }
+
+    fn histogram(&self, name: &str) -> Arc<dyn Histogram> {
+        Arc::new(self.new_instrument(name, MetricKind::Histogram))
+    }
+
+    fn gauge(&self, name: &str) -> Arc<dyn Gauge> {
+        Arc::new(self.new_instrument(name, MetricKind::Gauge))
+    }
+}
+impl MetricCallBufferer for MetricsCallBuffer {
+    fn retrieve(&mut self) -> Vec<MetricEvent> {
+        self.calls_rx.try_iter().collect()
+    }
+}
+
+struct BufferInstrument {
+    kind: MetricKind,
+    id: u64,
+    tx: crossbeam::channel::Sender<MetricEvent>,
+}
+impl BufferInstrument {
+    fn send(&self, value: u64, attributes: &MetricAttributes) {
+        let attributes = match attributes {
+            MetricAttributes::Lang(l) => l.clone(),
+            _ => panic!("MetricsCallBuffer only works with MetricAttributes::Lang"),
+        };
+        let _ = self.tx.send(MetricEvent::Update {
+            id: self.id,
+            update: match self.kind {
+                MetricKind::Counter => MetricUpdateVal::Delta(value),
+                MetricKind::Gauge | MetricKind::Histogram => MetricUpdateVal::Value(value),
+            },
+            attributes: attributes.clone(),
+        });
+    }
+}
+impl Counter for BufferInstrument {
+    fn add(&self, value: u64, attributes: &MetricAttributes) {
+        self.send(value, attributes)
+    }
+}
+impl Gauge for BufferInstrument {
+    fn record(&self, value: u64, attributes: &MetricAttributes) {
+        self.send(value, attributes)
+    }
+}
+impl Histogram for BufferInstrument {
+    fn record(&self, value: u64, attributes: &MetricAttributes) {
+        self.send(value, attributes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn metric_buffer() {
+        let mut call_buffer = MetricsCallBuffer::new(10);
+        let ctr = call_buffer.counter("ctr");
+        let histo = call_buffer.histogram("histo");
+        let gauge = call_buffer.gauge("gauge");
+        let attrs_1 = call_buffer.new_attributes(MetricsAttributesOptions {
+            attributes: vec![MetricKeyValue::new("hi", "yo")],
+        });
+        let attrs_2 = call_buffer.new_attributes(MetricsAttributesOptions {
+            attributes: vec![MetricKeyValue::new("run", "fast")],
+        });
+        ctr.add(1, &attrs_1);
+        histo.record(2, &attrs_1);
+        gauge.record(3, &attrs_2);
+
+        let calls = call_buffer.retrieve();
+        dbg!(calls);
+    }
+}

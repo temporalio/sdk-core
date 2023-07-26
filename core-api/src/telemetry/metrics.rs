@@ -5,32 +5,45 @@ use std::{fmt::Debug, sync::Arc};
 /// Core has requested.
 pub trait CoreMeter: Send + Sync + Debug {
     fn new_attributes(&self, attribs: MetricsAttributesOptions) -> MetricAttributes;
+    // TODO: Return result? One possible error: Name collisions.
     fn counter(&self, name: &str) -> Arc<dyn Counter>;
     fn histogram(&self, name: &str) -> Arc<dyn Histogram>;
     fn gauge(&self, name: &str) -> Arc<dyn Gauge>;
 }
 
-#[derive(Debug)]
-pub struct NoOpCoreMeter;
-impl CoreMeter for NoOpCoreMeter {
-    fn new_attributes(&self, _: MetricsAttributesOptions) -> MetricAttributes {
-        MetricAttributes::Lang {
-            id: 0,
-            new_attributes: vec![],
-        }
-    }
+#[derive(Debug, Clone)]
+pub enum MetricEvent {
+    Create {
+        name: String,
+        id: u64,
+        kind: MetricKind,
+    },
+    CreateAttributes {
+        id: u64,
+        attributes: Vec<MetricKeyValue>,
+    },
+    Update {
+        id: u64,
+        attributes: LangMetricAttributes,
+        update: MetricUpdateVal,
+    },
+}
+#[derive(Debug, Clone, Copy)]
+pub enum MetricKind {
+    Counter,
+    Gauge,
+    Histogram,
+}
+#[derive(Debug, Clone, Copy)]
+pub enum MetricUpdateVal {
+    // Currently all deltas are natural numbers
+    Delta(u64),
+    // Currently all values are natural numbers
+    Value(u64),
+}
 
-    fn counter(&self, _: &str) -> Arc<dyn Counter> {
-        Arc::new(NoOpInstrument)
-    }
-
-    fn histogram(&self, _: &str) -> Arc<dyn Histogram> {
-        Arc::new(NoOpInstrument)
-    }
-
-    fn gauge(&self, _: &str) -> Arc<dyn Gauge> {
-        Arc::new(NoOpInstrument)
-    }
+pub trait MetricCallBufferer: Send + Sync {
+    fn retrieve(&mut self) -> Vec<MetricEvent>;
 }
 
 #[derive(Debug)]
@@ -86,13 +99,15 @@ pub enum MetricAttributes {
         kvs: Arc<Vec<opentelemetry::KeyValue>>,
         ctx: opentelemetry::Context,
     },
-    Lang {
-        /// An opaque reference to attributes stored in lang memory
-        id: u64,
-        /// If populated, these key values should also be used in addition to the referred-to
-        /// existing attributes when recording
-        new_attributes: Vec<MetricKeyValue>,
-    },
+    Lang(LangMetricAttributes),
+}
+#[derive(Clone, Debug)]
+pub struct LangMetricAttributes {
+    /// An opaque reference to attributes stored in lang memory
+    pub id: u64,
+    /// If populated, these key values should also be used in addition to the referred-to
+    /// existing attributes when recording
+    pub new_attributes: Vec<MetricKeyValue>,
 }
 
 impl MetricAttributes {
@@ -110,11 +125,8 @@ impl MetricAttributes {
             MetricAttributes::OTel { ref mut kvs, .. } => {
                 Arc::make_mut(kvs).extend(new_kvs.into_iter().map(Into::into));
             }
-            MetricAttributes::Lang {
-                ref mut new_attributes,
-                ..
-            } => {
-                new_attributes.extend(new_kvs.into_iter());
+            MetricAttributes::Lang(ref mut attrs, ..) => {
+                attrs.new_attributes.extend(new_kvs.into_iter());
             }
         }
     }
@@ -123,7 +135,7 @@ impl MetricAttributes {
 /// Options that are attached to metrics on a per-call basis
 #[derive(Clone, Default, derive_more::Constructor)]
 pub struct MetricsAttributesOptions {
-    attributes: Vec<MetricKeyValue>,
+    pub attributes: Vec<MetricKeyValue>,
 }
 impl MetricsAttributesOptions {
     pub fn extend(&mut self, new_kvs: impl IntoIterator<Item = MetricKeyValue>) {
@@ -161,12 +173,6 @@ impl From<&'static str> for MetricValue {
     }
 }
 
-/// Histogram buckets
-#[derive(Clone, Debug)]
-pub struct Buckets {
-    buckets: Vec<f64>,
-}
-
 pub trait Counter: Send + Sync {
     fn add(&self, value: u64, attributes: &MetricAttributes);
 }
@@ -179,6 +185,29 @@ pub trait Histogram: Send + Sync {
 pub trait Gauge: Send + Sync {
     // When referring to durations, this value is in millis
     fn record(&self, value: u64, attributes: &MetricAttributes);
+}
+
+#[derive(Debug)]
+pub struct NoOpCoreMeter;
+impl CoreMeter for NoOpCoreMeter {
+    fn new_attributes(&self, _: MetricsAttributesOptions) -> MetricAttributes {
+        MetricAttributes::Lang(LangMetricAttributes {
+            id: 0,
+            new_attributes: vec![],
+        })
+    }
+
+    fn counter(&self, _: &str) -> Arc<dyn Counter> {
+        Arc::new(NoOpInstrument)
+    }
+
+    fn histogram(&self, _: &str) -> Arc<dyn Histogram> {
+        Arc::new(NoOpInstrument)
+    }
+
+    fn gauge(&self, _: &str) -> Arc<dyn Gauge> {
+        Arc::new(NoOpInstrument)
+    }
 }
 
 pub struct NoOpInstrument;

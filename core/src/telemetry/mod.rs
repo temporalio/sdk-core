@@ -10,7 +10,9 @@ use crate::telemetry::{
     metrics::TemporalMeter,
     prometheus_server::PromServer,
 };
-pub use metrics::{build_otlp_metric_exporter, start_prometheus_metric_exporter};
+pub use metrics::{
+    build_otlp_metric_exporter, start_prometheus_metric_exporter, MetricsCallBuffer,
+};
 
 use crate::telemetry::log_export::{CoreLogExportLayer, CoreLogsOut};
 use crossbeam::channel::Receiver;
@@ -268,7 +270,7 @@ pub fn telemetry_init(opts: TelemetryOptions) -> Result<TelemetryInstance, anyho
             Arc::new(reg),
             logs_out,
             metric_prefix,
-            meter_provider,
+            opts.metrics,
             opts.attach_service_name,
             keepalive_rx,
         ))
