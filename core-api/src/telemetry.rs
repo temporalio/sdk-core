@@ -10,6 +10,8 @@ use std::{
 use tracing_core::Level;
 use url::Url;
 
+pub static METRIC_PREFIX: &str = "temporal_";
+
 /// Each core runtime instance has a telemetry subsystem associated with it, this trait defines the
 /// operations that lang might want to perform on that telemetry after it's initialized.
 pub trait CoreTelemetry {
@@ -35,22 +37,11 @@ pub struct TelemetryOptions {
     pub logging: Option<Logger>,
     /// Optional metrics exporter - set as None to disable.
     #[builder(setter(into, strip_option), default)]
-    pub metrics: Option<MetricsExporter>,
-
-    /// If set true, do not prefix metrics with `temporal_`. Will be removed eventually as
-    /// the prefix is consistent with other SDKs.
+    pub metrics: Option<Arc<dyn CoreMeter>>,
+    /// If set true, strip the prefix `temporal_` from metrics, if present. Will be removed
+    /// eventually as the prefix is consistent with other SDKs.
     #[builder(default)]
     pub no_temporal_prefix_for_metrics: bool,
-
-    // TODO: Will move inside constructors for otel/prom
-    /// Specifies the aggregation temporality for metric export. Defaults to cumulative.
-    #[builder(default = "MetricTemporality::Cumulative")]
-    pub metric_temporality: MetricTemporality,
-
-    // A map of tags to be applied to all metrics
-    #[builder(default)]
-    pub global_tags: HashMap<String, String>,
-
     /// If set true (the default) explicitly attach a `service_name` label to all metrics. Turn this
     /// off if your collection system supports the `target_info` metric from the OpenMetrics spec.
     /// For more, see
@@ -60,7 +51,7 @@ pub struct TelemetryOptions {
 }
 
 /// Options for exporting to an OpenTelemetry Collector
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, derive_builder::Builder)]
 pub struct OtelCollectorOptions {
     /// The url of the OTel collector to export telemetry and metrics to. Lang SDK should also
     /// export to this same collector.
@@ -68,7 +59,29 @@ pub struct OtelCollectorOptions {
     /// Optional set of HTTP headers to send to the Collector, e.g for authentication.
     pub headers: HashMap<String, String>,
     /// Optionally specify how frequently metrics should be exported. Defaults to 1 second.
-    pub metric_periodicity: Option<Duration>,
+    #[builder(default = "Duration::from_secs(1)")]
+    pub metric_periodicity: Duration,
+    /// Specifies the aggregation temporality for metric export. Defaults to cumulative.
+    #[builder(default = "MetricTemporality::Cumulative")]
+    pub metric_temporality: MetricTemporality,
+    // A map of tags to be applied to all metrics
+    #[builder(default)]
+    pub global_tags: HashMap<String, String>,
+    /// A prefix to be applied to all metrics. Defaults to "temporal_".
+    #[builder(default = "METRIC_PREFIX")]
+    pub metric_prefix: &'static str,
+}
+
+/// Options for exporting metrics to Prometheus
+#[derive(Debug, Clone, derive_builder::Builder)]
+pub struct PrometheusExporterOptions {
+    pub socket_addr: SocketAddr,
+    // A map of tags to be applied to all metrics
+    #[builder(default)]
+    pub global_tags: HashMap<String, String>,
+    /// A prefix to be applied to all metrics. Defaults to "temporal_".
+    #[builder(default = "METRIC_PREFIX")]
+    pub metric_prefix: &'static str,
 }
 
 /// Configuration for the external export of traces
@@ -86,18 +99,6 @@ pub enum TraceExporter {
     // TODO: Remove
     /// Export traces to an OpenTelemetry Collector <https://opentelemetry.io/docs/collector/>.
     Otel(OtelCollectorOptions),
-}
-
-/// Control where metrics are exported
-#[derive(Debug, Clone)]
-pub enum MetricsExporter {
-    /// Export metrics to an OpenTelemetry Collector <https://opentelemetry.io/docs/collector/>.
-    Otel(OtelCollectorOptions),
-    /// Expose metrics directly via an embedded http server bound to the provided address.
-    Prometheus(SocketAddr),
-    /// Export metrics calls to lang where it can inject them into whatever metrics system the
-    /// user likes
-    Lang(Arc<dyn CoreMeter>),
 }
 
 /// Control where logs go

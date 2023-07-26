@@ -10,6 +10,9 @@ use crate::telemetry::{
     metrics::TemporalMeter,
     prometheus_server::PromServer,
 };
+pub use metrics::{build_otlp_metric_exporter, start_prometheus_metric_exporter};
+
+use crate::telemetry::log_export::{CoreLogExportLayer, CoreLogsOut};
 use crossbeam::channel::Receiver;
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
@@ -29,17 +32,14 @@ use std::{
     collections::{HashMap, VecDeque},
     convert::TryInto,
     env,
-    net::SocketAddr,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    time::Duration,
 };
 use temporal_sdk_core_api::telemetry::{
     metrics::{CoreMeter, PrefixedMetricsMeter},
-    CoreLog, CoreTelemetry, Logger, MetricTemporality, MetricsExporter, OtelCollectorOptions,
-    TelemetryOptions,
+    CoreLog, CoreTelemetry, Logger, MetricTemporality, OtelCollectorOptions, TelemetryOptions,
 };
 use tonic::metadata::MetadataMap;
 use tracing::{Level, Subscriber};
@@ -61,7 +61,6 @@ pub struct TelemetryInstance {
     logs_out: Option<Mutex<CoreLogsOut>>,
     metrics: Option<Arc<dyn CoreMeter + 'static>>,
     trace_subscriber: Arc<dyn Subscriber + Send + Sync>,
-    prom_binding: Option<SocketAddr>,
     attach_service_name: bool,
     _keepalive_rx: Receiver<()>,
 }
@@ -72,16 +71,14 @@ impl TelemetryInstance {
         logs_out: Option<Mutex<CoreLogsOut>>,
         metric_prefix: &'static str,
         metrics: Option<Arc<dyn CoreMeter + 'static>>,
-        prom_binding: Option<SocketAddr>,
-        attach_service_name: bool,
         keepalive_rx: Receiver<()>,
+        attach_service_name: bool,
     ) -> Self {
         Self {
             metric_prefix,
             logs_out,
             metrics,
             trace_subscriber,
-            prom_binding,
             attach_service_name,
             _keepalive_rx: keepalive_rx,
         }
@@ -91,11 +88,6 @@ impl TelemetryInstance {
     /// [set_trace_subscriber_for_current_thread] function.
     pub fn trace_subscriber(&self) -> Arc<dyn Subscriber + Send + Sync> {
         self.trace_subscriber.clone()
-    }
-
-    /// Returns the address the Prometheus server is bound to if it is running
-    pub fn prom_port(&self) -> Option<SocketAddr> {
-        self.prom_binding
     }
 
     /// Returns our wrapper for metric meters, can be used to, ex: initialize clients
@@ -176,7 +168,6 @@ pub fn telemetry_init(opts: TelemetryOptions) -> Result<TelemetryInstance, anyho
         // Parts of telem dat ====
         let mut logs_out = None;
         let metric_prefix = metric_prefix(&opts);
-        let mut prom_binding = None;
         // =======================
 
         // Tracing subscriber layers =========
@@ -221,6 +212,7 @@ pub fn telemetry_init(opts: TelemetryOptions) -> Result<TelemetryInstance, anyho
             };
         };
 
+        // TODO: Move to prom/otel initter fns
         let meter_provider = if let Some(ref metrics) = opts.metrics {
             match metrics {
                 MetricsExporter::Prometheus(addr) => {
@@ -277,7 +269,6 @@ pub fn telemetry_init(opts: TelemetryOptions) -> Result<TelemetryInstance, anyho
             logs_out,
             metric_prefix,
             meter_provider,
-            prom_binding,
             opts.attach_service_name,
             keepalive_rx,
         ))

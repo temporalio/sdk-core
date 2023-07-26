@@ -466,3 +466,58 @@ impl MemoryGaugeU64 {
             .insert(AttributeSet::from(kvs.as_slice()), val);
     }
 }
+
+/// Create an OTel meter that can be used as a [CoreMeter] to export metrics over OTLP.
+pub fn build_otlp_metric_exporter(
+    opts: OtelCollectorOptions,
+) -> Result<Arc<opentelemetry::metrics::Meter>, anyhow::Error> {
+    let aggregator = SDKAggSelector {
+        metric_prefix: opts.metric_prefix,
+    };
+    let metrics = opentelemetry_otlp::new_pipeline()
+        .metrics(
+            aggregator,
+            metric_temporality_to_selector(opts.metric_temporality),
+            runtime::Tokio,
+        )
+        .with_period(opts.metric_periodicity)
+        .with_resource(default_resource(&opts.global_tags))
+        .with_exporter(
+            opentelemetry_otlp::new_exporter()
+                .tonic()
+                .with_endpoint(opts.url.to_string())
+                .with_metadata(MetadataMap::from_headers((&opts.headers).try_into()?)),
+        )
+        .build()?;
+    Ok(Arc::new(metrics.meter(TELEM_SERVICE_NAME)))
+}
+
+pub struct StartedPromServer {
+    pub meter: Arc<opentelemetry::metrics::Meter>,
+    pub bound_addr: SocketAddr,
+    pub abort_handle: AbortHandle,
+}
+
+/// Builds and runs a prometheus endpoint which can be scraped by prom instances for metrics export.
+/// Returns the meter that can be used as a [CoreMeter].
+pub fn start_prometheus_metric_exporter(
+    opts: PrometheusExporterOptions,
+) -> Result<StartedPromServer, anyhow::Error> {
+    let aggregator = SDKAggSelector {
+        metric_prefix: opts.metric_prefix,
+    };
+    let srv = PromServer::new(
+        opts.socket_addr,
+        aggregator,
+        metric_temporality_to_selector(opts.metric_temporality),
+        &opts.global_tags,
+    )?;
+    let mp = srv.exporter.meter_provider()?;
+    let bound_addr = srv.bound_addr();
+    let handle = tokio::spawn(async move { srv.run().await });
+    Ok(StartedPromServer {
+        meter: Arc::new(mp.meter(TELEM_SERVICE_NAME)),
+        bound_addr,
+        abort_handle: handle.abort_handle(),
+    })
+}

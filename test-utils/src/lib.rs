@@ -33,13 +33,14 @@ use temporal_sdk_core::{
     ephemeral_server::{EphemeralExe, EphemeralExeVersion},
     init_replay_worker, init_worker,
     replay::HistoryForReplay,
+    telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter},
     ClientOptions, ClientOptionsBuilder, CoreRuntime, WorkerConfigBuilder,
 };
 use temporal_sdk_core_api::{
     errors::{PollActivityError, PollWfError},
     telemetry::{
-        Logger, MetricsExporter, OtelCollectorOptions, TelemetryOptions, TelemetryOptionsBuilder,
-        TraceExportConfig, TraceExporter,
+        metrics::CoreMeter, Logger, OtelCollectorOptionsBuilder, PrometheusExporterOptionsBuilder,
+        TelemetryOptions, TelemetryOptionsBuilder, TraceExportConfig, TraceExporter,
     },
     Worker as CoreWorker,
 };
@@ -585,22 +586,28 @@ pub fn get_integ_telem_options() -> TelemetryOptions {
         .ok()
         .map(|x| x.parse::<Url>().unwrap())
     {
-        let opts = OtelCollectorOptions {
-            url,
-            headers: Default::default(),
-            metric_periodicity: None,
-        };
+        let opts = OtelCollectorOptionsBuilder::default()
+            .url(url)
+            .build()
+            .unwrap();
         ob.tracing(TraceExportConfig {
             filter: filter_string.clone(),
             exporter: TraceExporter::Otel(opts.clone()),
         });
-        ob.metrics(MetricsExporter::Otel(opts));
+        ob.metrics(build_otlp_metric_exporter(opts).unwrap() as Arc<dyn CoreMeter>);
     }
     if let Some(addr) = env::var(PROM_ENABLE_ENV_VAR)
         .ok()
         .map(|x| SocketAddr::new([127, 0, 0, 1].into(), x.parse().unwrap()))
     {
-        ob.metrics(MetricsExporter::Prometheus(addr));
+        let prom_info = start_prometheus_metric_exporter(
+            PrometheusExporterOptionsBuilder::default()
+                .socket_addr(addr)
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
+        ob.metrics(prom_info.meter as Arc<dyn CoreMeter>);
     }
     ob.logging(Logger::Console {
         filter: filter_string,

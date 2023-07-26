@@ -1,8 +1,12 @@
 use assert_matches::assert_matches;
-use std::{sync::Arc, time::Duration};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 use temporal_client::{WorkflowClientTrait, WorkflowOptions, WorkflowService};
-use temporal_sdk_core::{init_worker, CoreRuntime};
-use temporal_sdk_core_api::{telemetry::MetricsExporter, worker::WorkerConfigBuilder, Worker};
+use temporal_sdk_core::{init_worker, telemetry::start_prometheus_metric_exporter, CoreRuntime};
+use temporal_sdk_core_api::{
+    telemetry::{metrics::CoreMeter, PrometheusExporterOptionsBuilder, TelemetryOptions},
+    worker::WorkerConfigBuilder,
+    Worker,
+};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::ActivityExecutionResult,
@@ -23,7 +27,7 @@ use temporal_sdk_core_protos::{
 use temporal_sdk_core_test_utils::{
     get_integ_server_options, get_integ_telem_options, CoreWfStarter, NAMESPACE,
 };
-use tokio::{join, sync::Barrier};
+use tokio::{join, sync::Barrier, task::AbortHandle};
 
 static ANY_PORT: &str = "127.0.0.1:0";
 
@@ -31,12 +35,38 @@ async fn get_text(endpoint: String) -> String {
     reqwest::get(endpoint).await.unwrap().text().await.unwrap()
 }
 
+struct AbortOnDrop {
+    ah: AbortHandle,
+}
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.ah.abort();
+    }
+}
+
+fn prom_metrics() -> (TelemetryOptions, SocketAddr, AbortOnDrop) {
+    let mut telemopts = get_integ_telem_options();
+    let prom_info = start_prometheus_metric_exporter(
+        PrometheusExporterOptionsBuilder::default()
+            .socket_addr(ANY_PORT.parse().unwrap())
+            .build()
+            .unwrap(),
+    )
+    .unwrap();
+    telemopts.metrics = Some(prom_info.meter as Arc<dyn CoreMeter>);
+    (
+        telemopts,
+        prom_info.bound_addr,
+        AbortOnDrop {
+            ah: prom_info.abort_handle,
+        },
+    )
+}
+
 #[tokio::test]
 async fn prometheus_metrics_exported() {
-    let mut telemopts = get_integ_telem_options();
-    telemopts.metrics = Some(MetricsExporter::Prometheus(ANY_PORT.parse().unwrap()));
+    let (telemopts, addr, _aborter) = prom_metrics();
     let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
-    let addr = rt.telemetry().prom_port().unwrap();
     let opts = get_integ_server_options();
     let mut raw_client = opts
         .connect_no_namespace(rt.metric_meter().as_deref(), None)
@@ -60,11 +90,9 @@ async fn prometheus_metrics_exported() {
 
 #[tokio::test]
 async fn one_slot_worker_reports_available_slot() {
-    let mut telemopts = get_integ_telem_options();
+    let (telemopts, addr, _aborter) = prom_metrics();
     let tq = "one_slot_worker_tq";
-    telemopts.metrics = Some(MetricsExporter::Prometheus(ANY_PORT.parse().unwrap()));
     let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
-    let addr = rt.telemetry().prom_port().unwrap();
 
     let worker_cfg = WorkerConfigBuilder::default()
         .namespace(NAMESPACE)
@@ -274,10 +302,8 @@ async fn query_of_closed_workflow_doesnt_tick_terminal_metric(
     )]
     completion: workflow_command::Variant,
 ) {
-    let mut telemopts = get_integ_telem_options();
-    telemopts.metrics = Some(MetricsExporter::Prometheus(ANY_PORT.parse().unwrap()));
+    let (telemopts, addr, _aborter) = prom_metrics();
     let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
-    let addr = rt.telemetry().prom_port().unwrap();
     let mut starter =
         CoreWfStarter::new_with_runtime("query_of_closed_workflow_doesnt_tick_terminal_metric", rt);
     // Disable cache to ensure replay happens completely
