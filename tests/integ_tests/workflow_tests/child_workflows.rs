@@ -137,7 +137,7 @@ async fn abandoned_child_resolves_post_cancel() {
         PARENT_WF_TYPE.to_string(),
         move |mut ctx: WfContext| async move {
             let child = ctx.child_workflow(ChildWorkflowOptions {
-                workflow_id: "abandoned-child".to_owned(),
+                workflow_id: "abandoned-child-resolve-post-cancel".to_owned(),
                 workflow_type: CHILD_WF_TYPE.to_owned(),
                 parent_close_policy: ParentClosePolicy::Abandon,
                 cancel_type: ChildWorkflowCancellationType::Abandon,
