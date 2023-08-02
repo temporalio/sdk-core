@@ -23,7 +23,6 @@ impl PromServer {
         let registry = Registry::new();
         let exporter = opentelemetry_prometheus::exporter()
             .with_aggregation_selector(aggregation)
-            .without_target_info()
             .without_scope_info()
             .with_registry(registry.clone());
         let bound_addr = AddrIncoming::bind(&addr)?;
