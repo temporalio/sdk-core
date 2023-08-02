@@ -242,7 +242,7 @@ pub fn telemetry_init(opts: TelemetryOptions) -> Result<TelemetryInstance, anyho
                             .with_endpoint(url.to_string())
                             .with_metadata(MetadataMap::from_headers(headers.try_into()?)),
                         Box::new(metric_temporality_to_selector(opts.metric_temporality)),
-                        Box::new(SDKAggSelector::default()),
+                        Box::<SDKAggSelector>::default(),
                     )?;
                     let reader = PeriodicReader::builder(exporter, runtime::Tokio)
                         .with_interval(metric_periodicity.unwrap_or_else(|| Duration::from_secs(1)))
