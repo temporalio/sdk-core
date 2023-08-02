@@ -7,23 +7,22 @@ mod prometheus_server;
 
 use crate::telemetry::{
     log_export::{CoreLogExportLayer, CoreLogsOut},
-    metrics::SDKAggSelector,
+    metrics::TemporalMeter,
     prometheus_server::PromServer,
 };
 use crossbeam::channel::Receiver;
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
 use opentelemetry::{
-    metrics::{Meter, MeterProvider},
+    metrics::{Meter, MeterProvider as MeterProviderT, MetricsError},
     runtime,
-    sdk::{
-        export::metrics::aggregation::{self, Temporality, TemporalitySelector},
-        trace::Config,
-        Resource,
-    },
+    sdk::Resource,
     KeyValue,
 };
 use opentelemetry_otlp::WithExportConfig;
+use opentelemetry_sdk::metrics::{
+    data::Temporality, reader::TemporalitySelector, InstrumentKind, MeterProvider, PeriodicReader,
+};
 use parking_lot::Mutex;
 use std::{
     cell::RefCell,
@@ -39,7 +38,7 @@ use std::{
 };
 use temporal_sdk_core_api::telemetry::{
     CoreLog, CoreTelemetry, Logger, MetricTemporality, MetricsExporter, OtelCollectorOptions,
-    TelemetryOptions, TraceExporter,
+    TelemetryOptions,
 };
 use tonic::metadata::MetadataMap;
 use tracing::{Level, Subscriber};
@@ -59,9 +58,10 @@ pub fn construct_filter_string(core_level: Level, other_level: Level) -> String 
 pub struct TelemetryInstance {
     metric_prefix: &'static str,
     logs_out: Option<Mutex<CoreLogsOut>>,
-    metrics: Option<(Box<dyn MeterProvider + Send + Sync + 'static>, Meter)>,
+    metrics: Option<(MeterProvider, Meter)>,
     trace_subscriber: Arc<dyn Subscriber + Send + Sync>,
     prom_binding: Option<SocketAddr>,
+    attach_service_name: bool,
     _keepalive_rx: Receiver<()>,
 }
 
@@ -70,8 +70,9 @@ impl TelemetryInstance {
         trace_subscriber: Arc<dyn Subscriber + Send + Sync>,
         logs_out: Option<Mutex<CoreLogsOut>>,
         metric_prefix: &'static str,
-        mut meter_provider: Option<Box<dyn MeterProvider + Send + Sync + 'static>>,
+        mut meter_provider: Option<MeterProvider>,
         prom_binding: Option<SocketAddr>,
+        attach_service_name: bool,
         keepalive_rx: Receiver<()>,
     ) -> Self {
         let metrics = meter_provider.take().map(|mp| {
@@ -84,6 +85,7 @@ impl TelemetryInstance {
             metrics,
             trace_subscriber,
             prom_binding,
+            attach_service_name,
             _keepalive_rx: keepalive_rx,
         }
     }
@@ -101,9 +103,14 @@ impl TelemetryInstance {
 
     /// Returns our wrapper for OTel metric meters, can be used to, ex: initialize clients
     pub fn get_metric_meter(&self) -> Option<TemporalMeter> {
+        let kvs = if self.attach_service_name {
+            vec![KeyValue::new("service_name", TELEM_SERVICE_NAME)]
+        } else {
+            vec![]
+        };
         self.metrics
             .as_ref()
-            .map(|(_, m)| TemporalMeter::new(m, self.metric_prefix))
+            .map(|(_, m)| TemporalMeter::new(m, self.metric_prefix, Arc::new(kvs)))
     }
 }
 
@@ -178,7 +185,6 @@ pub fn telemetry_init(opts: TelemetryOptions) -> Result<TelemetryInstance, anyho
         let mut console_pretty_layer = None;
         let mut console_compact_layer = None;
         let mut forward_layer = None;
-        let mut export_layer = None;
         // ===================================
 
         if let Some(ref logger) = opts.logging {
@@ -218,84 +224,51 @@ pub fn telemetry_init(opts: TelemetryOptions) -> Result<TelemetryInstance, anyho
         };
 
         let meter_provider = if let Some(ref metrics) = opts.metrics {
-            let aggregator = SDKAggSelector { metric_prefix };
             match metrics {
                 MetricsExporter::Prometheus(addr) => {
-                    let srv = runtime.block_on(async {
-                        PromServer::new(
-                            *addr,
-                            aggregator,
-                            metric_temporality_to_selector(opts.metric_temporality),
-                            &opts.global_tags,
-                        )
-                    })?;
+                    let (srv, exporter) = runtime
+                        .block_on(async { PromServer::new(*addr, SDKAggSelector::default()) })?;
                     prom_binding = Some(srv.bound_addr());
-                    let mp = srv.exporter.meter_provider()?;
                     runtime.spawn(async move { srv.run().await });
-                    Some(Box::new(mp) as Box<dyn MeterProvider + Send + Sync>)
+                    Some(MeterProvider::builder().with_reader(exporter))
                 }
                 MetricsExporter::Otel(OtelCollectorOptions {
                     url,
                     headers,
                     metric_periodicity,
                 }) => runtime.block_on(async {
-                    let metrics = opentelemetry_otlp::new_pipeline()
-                        .metrics(
-                            aggregator,
-                            metric_temporality_to_selector(opts.metric_temporality),
-                            runtime::Tokio,
-                        )
-                        .with_period(metric_periodicity.unwrap_or_else(|| Duration::from_secs(1)))
-                        .with_resource(default_resource(&opts.global_tags))
-                        .with_exporter(
-                            opentelemetry_otlp::new_exporter()
-                                .tonic()
-                                .with_endpoint(url.to_string())
-                                .with_metadata(MetadataMap::from_headers(headers.try_into()?)),
-                        )
-                        .build()?;
-                    Ok::<_, anyhow::Error>(Some(
-                        Box::new(metrics) as Box<dyn MeterProvider + Send + Sync>
-                    ))
+                    let exporter = opentelemetry_otlp::MetricsExporter::new(
+                        opentelemetry_otlp::TonicExporterBuilder::default()
+                            .with_endpoint(url.to_string())
+                            .with_metadata(MetadataMap::from_headers(headers.try_into()?)),
+                        Box::new(metric_temporality_to_selector(opts.metric_temporality)),
+                        Box::new(SDKAggSelector::default()),
+                    )?;
+                    let reader = PeriodicReader::builder(exporter, runtime::Tokio)
+                        .with_interval(metric_periodicity.unwrap_or_else(|| Duration::from_secs(1)))
+                        .build();
+                    let mp = MeterProvider::builder().with_reader(reader);
+                    Ok::<_, anyhow::Error>(Some(mp))
                 })?,
             }
         } else {
             None
         };
-
-        if let Some(ref tracing) = opts.tracing {
-            match &tracing.exporter {
-                TraceExporter::Otel(OtelCollectorOptions { url, headers, .. }) => {
-                    runtime.block_on(async {
-                        let tracer_cfg =
-                            Config::default().with_resource(default_resource(&opts.global_tags));
-                        let tracer = opentelemetry_otlp::new_pipeline()
-                            .tracing()
-                            .with_exporter(
-                                opentelemetry_otlp::new_exporter()
-                                    .tonic()
-                                    .with_endpoint(url.to_string())
-                                    .with_metadata(MetadataMap::from_headers(headers.try_into()?)),
-                            )
-                            .with_trace_config(tracer_cfg)
-                            .install_batch(runtime::Tokio)?;
-
-                        let opentelemetry = tracing_opentelemetry::layer()
-                            .with_tracer(tracer)
-                            .with_filter(EnvFilter::new(&tracing.filter));
-
-                        export_layer = Some(opentelemetry);
-                        Result::<(), anyhow::Error>::Ok(())
-                    })?;
-                }
-            };
-        };
+        let meter_provider = meter_provider
+            .map(|mp| {
+                Ok::<_, MetricsError>(
+                    augment_meter_provider_with_views(
+                        mp.with_resource(default_resource(&opts.global_tags)),
+                    )?
+                    .build(),
+                )
+            })
+            .transpose()?;
 
         let reg = tracing_subscriber::registry()
             .with(console_pretty_layer)
             .with(console_compact_layer)
-            .with(forward_layer)
-            .with(export_layer);
+            .with(forward_layer);
 
         #[cfg(feature = "tokio-console")]
         let reg = reg.with(console_subscriber::spawn());
@@ -306,6 +279,7 @@ pub fn telemetry_init(opts: TelemetryOptions) -> Result<TelemetryInstance, anyho
             metric_prefix,
             meter_provider,
             prom_binding,
+            opts.attach_service_name,
             keepalive_rx,
         ))
         .expect("Must be able to send telem instance out of thread");
@@ -351,21 +325,26 @@ fn default_resource(override_values: &HashMap<String, String>) -> Resource {
     Resource::new(default_resource_kvs().iter().cloned()).merge(&Resource::new(override_kvs))
 }
 
+#[derive(Clone)]
+struct ConstantTemporality(Temporality);
+impl TemporalitySelector for ConstantTemporality {
+    fn temporality(&self, _: InstrumentKind) -> Temporality {
+        self.0
+    }
+}
 fn metric_temporality_to_selector(
     t: MetricTemporality,
 ) -> impl TemporalitySelector + Send + Sync + Clone {
     match t {
-        MetricTemporality::Cumulative => {
-            aggregation::constant_temporality_selector(Temporality::Cumulative)
-        }
-        MetricTemporality::Delta => aggregation::constant_temporality_selector(Temporality::Delta),
+        MetricTemporality::Cumulative => ConstantTemporality(Temporality::Cumulative),
+        MetricTemporality::Delta => ConstantTemporality(Temporality::Delta),
     }
 }
 
 #[cfg(test)]
 pub mod test_initters {
     use super::*;
-    use temporal_sdk_core_api::telemetry::{TelemetryOptionsBuilder, TraceExportConfig};
+    use temporal_sdk_core_api::telemetry::TelemetryOptionsBuilder;
 
     #[allow(dead_code)] // Not always used, called to enable for debugging when needed
     pub fn test_telem_console() {
@@ -379,29 +358,8 @@ pub mod test_initters {
         )
         .unwrap();
     }
-
-    #[allow(dead_code)] // Not always used, called to enable for debugging when needed
-    pub fn test_telem_collector() {
-        telemetry_init_global(
-            TelemetryOptionsBuilder::default()
-                .logging(Logger::Console {
-                    filter: construct_filter_string(Level::DEBUG, Level::WARN),
-                })
-                .tracing(TraceExportConfig {
-                    filter: construct_filter_string(Level::DEBUG, Level::WARN),
-                    exporter: TraceExporter::Otel(OtelCollectorOptions {
-                        url: "grpc://localhost:4317".parse().unwrap(),
-                        headers: Default::default(),
-                        metric_periodicity: None,
-                    }),
-                })
-                .build()
-                .unwrap(),
-        )
-        .unwrap();
-    }
 }
-use crate::telemetry::metrics::TemporalMeter;
+use crate::telemetry::metrics::{augment_meter_provider_with_views, SDKAggSelector};
 #[cfg(test)]
 pub use test_initters::*;
 

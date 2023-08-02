@@ -45,6 +45,13 @@ pub struct TelemetryOptions {
     // A map of tags to be applied to all metrics
     #[builder(default)]
     pub global_tags: HashMap<String, String>,
+
+    /// If set true (the default) explicitly attach a `service_name` label to all metrics. Turn this
+    /// off if your collection system supports the `target_info` metric from the OpenMetrics spec.
+    /// For more, see
+    /// [here](https://github.com/OpenObservability/OpenMetrics/blob/main/specification/OpenMetrics.md#supporting-target-metadata-in-both-push-based-and-pull-based-systems)
+    #[builder(default = "true")]
+    pub attach_service_name: bool,
 }
 
 /// Options for exporting to an OpenTelemetry Collector
@@ -71,6 +78,7 @@ pub struct TraceExportConfig {
 /// Control where traces are exported.
 #[derive(Debug, Clone)]
 pub enum TraceExporter {
+    // TODO: Remove
     /// Export traces to an OpenTelemetry Collector <https://opentelemetry.io/docs/collector/>.
     Otel(OtelCollectorOptions),
 }

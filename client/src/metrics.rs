@@ -17,7 +17,6 @@ use tower::Service;
 // appropriate k/vs have already been set.
 #[derive(Clone, Debug)]
 pub struct MetricsContext {
-    ctx: opentelemetry::Context,
     kvs: Arc<Vec<KeyValue>>,
     poll_is_long: bool,
 
@@ -37,12 +36,13 @@ pub trait ClientMetricProvider: Send + Sync {
     fn counter(&self, name: &'static str) -> Counter<u64>;
     /// Construct a histogram metric
     fn histogram(&self, name: &'static str) -> Histogram<u64>;
+    /// Returns labels that should always be attached to metric record calls
+    fn fixed_labels(&self) -> &[KeyValue];
 }
 
 impl MetricsContext {
     pub(crate) fn new(kvs: Vec<KeyValue>, metric_provider: &dyn ClientMetricProvider) -> Self {
         Self {
-            ctx: opentelemetry::Context::current(),
             kvs: Arc::new(kvs),
             poll_is_long: false,
             svc_request: metric_provider.counter("request"),
@@ -73,18 +73,18 @@ impl MetricsContext {
     /// A request to the temporal service was made
     pub(crate) fn svc_request(&self) {
         if self.poll_is_long {
-            self.long_svc_request.add(&self.ctx, 1, &self.kvs);
+            self.long_svc_request.add(1, &self.kvs);
         } else {
-            self.svc_request.add(&self.ctx, 1, &self.kvs);
+            self.svc_request.add(1, &self.kvs);
         }
     }
 
     /// A request to the temporal service failed
     pub(crate) fn svc_request_failed(&self) {
         if self.poll_is_long {
-            self.long_svc_request_failed.add(&self.ctx, 1, &self.kvs);
+            self.long_svc_request_failed.add(1, &self.kvs);
         } else {
-            self.svc_request_failed.add(&self.ctx, 1, &self.kvs);
+            self.svc_request_failed.add(1, &self.kvs);
         }
     }
 
@@ -92,10 +92,10 @@ impl MetricsContext {
     pub(crate) fn record_svc_req_latency(&self, dur: Duration) {
         if self.poll_is_long {
             self.long_svc_request_latency
-                .record(&self.ctx, dur.as_millis() as u64, &self.kvs);
+                .record(dur.as_millis() as u64, &self.kvs);
         } else {
             self.svc_request_latency
-                .record(&self.ctx, dur.as_millis() as u64, &self.kvs);
+                .record(dur.as_millis() as u64, &self.kvs);
         }
     }
 }

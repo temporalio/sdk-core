@@ -28,7 +28,7 @@ serde = "1.0"
 tokio = { version = "1.26", features = ["rt", "rt-multi-thread", "parking_lot", "time", "fs"] }
 tokio-util = { version = "0.7" }
 tokio-stream = "0.1"
-tonic = "0.8"
+tonic = { workspace = true }
 tracing = "0.1"
 
 [dependencies.temporal-sdk-core]

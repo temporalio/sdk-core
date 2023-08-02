@@ -327,7 +327,8 @@ impl ClientOptions {
         let service = ServiceBuilder::new()
             .layer_fn(|channel| GrpcMetricSvc {
                 inner: channel,
-                metrics: metrics_meter.map(|mm| MetricsContext::new(vec![], mm)),
+                metrics: metrics_meter
+                    .map(|mm| MetricsContext::new(mm.fixed_labels().to_vec(), mm)),
             })
             .service(channel);
         let headers = headers.unwrap_or_default();
