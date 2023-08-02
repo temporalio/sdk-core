@@ -199,6 +199,16 @@ async fn one_slot_worker_reports_available_slot() {
              service_name=\"temporal-core-sdk\",task_queue=\"one_slot_worker_tq\",\
              worker_type=\"WorkflowWorker\"}} 1"
         )));
+        assert!(body.contains(&format!(
+            "temporal_worker_task_slots_available{{namespace=\"{NAMESPACE}\",\
+             service_name=\"temporal-core-sdk\",task_queue=\"one_slot_worker_tq\",\
+             worker_type=\"ActivityWorker\"}} 1"
+        )));
+        assert!(body.contains(&format!(
+            "temporal_worker_task_slots_available{{namespace=\"{NAMESPACE}\",\
+             service_name=\"temporal-core-sdk\",task_queue=\"one_slot_worker_tq\",\
+             worker_type=\"LocalActivityWorker\"}} 1"
+        )));
 
         // Now we allow the complete to proceed. Once it goes through, there should be 1 WFT slot
         // open but 0 activity slots

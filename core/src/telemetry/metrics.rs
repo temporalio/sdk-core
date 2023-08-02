@@ -4,12 +4,16 @@ use opentelemetry::{
     metrics::{noop::NoopMeterProvider, Counter, Histogram, Meter, MeterProvider},
     KeyValue,
 };
-use opentelemetry_sdk::metrics::{
-    new_view,
-    reader::{AggregationSelector, DefaultAggregationSelector},
-    Aggregation, Instrument, InstrumentKind, MeterProviderBuilder, View,
+use opentelemetry_sdk::{
+    metrics::{
+        new_view,
+        reader::{AggregationSelector, DefaultAggregationSelector},
+        Aggregation, Instrument, InstrumentKind, MeterProviderBuilder, View,
+    },
+    AttributeSet,
 };
-use std::{borrow::Cow, ops::Deref, sync::Arc, time::Duration};
+use parking_lot::RwLock;
+use std::{borrow::Cow, collections::HashMap, ops::Deref, sync::Arc, time::Duration};
 use temporal_client::ClientMetricProvider;
 
 /// Used to track context associated with metrics, and record/update them
@@ -468,23 +472,37 @@ pub(super) fn augment_meter_provider_with_views(
 /// OTel has no built-in synchronous Gauge. Histograms used to be able to serve that purpose, but
 /// they broke that. Lovely. So, we need to implement one by hand.
 pub(crate) struct MemoryGaugeU64 {
-    values_tx: crossbeam::channel::Sender<(u64, Arc<Vec<KeyValue>>)>,
+    labels_to_values: Arc<RwLock<HashMap<AttributeSet, u64>>>,
 }
 
 impl MemoryGaugeU64 {
     fn new(name: impl Into<Cow<'static, str>>, meter: &Meter) -> Self {
         let gauge = meter.u64_observable_gauge(name).init();
-        let (values_tx, values_rx) = crossbeam::channel::unbounded::<(_, Arc<Vec<KeyValue>>)>();
+        let map = Arc::new(RwLock::new(HashMap::<AttributeSet, u64>::new()));
+        let map_c = map.clone();
         meter
             .register_callback(&[gauge.as_any()], move |o| {
-                for (val, kvs) in values_rx.try_iter() {
-                    o.observe_u64(&gauge, val, kvs.as_slice())
+                // This whole thing is... extra stupid.
+                // See https://github.com/open-telemetry/opentelemetry-rust/issues/1181
+                // The performance is likely bad here, but, given this is only called when metrics
+                // are exported it should be livable for now.
+                let map_rlock = map_c.read();
+                for (kvs, val) in map_rlock.iter() {
+                    let kvs: Vec<_> = kvs
+                        .iter()
+                        .map(|(k, v)| KeyValue::new(k.clone(), v.clone()))
+                        .collect();
+                    o.observe_u64(&gauge, *val, kvs.as_slice())
                 }
             })
-            .expect("works");
-        MemoryGaugeU64 { values_tx }
+            .expect("instrument must exist we just created it");
+        MemoryGaugeU64 {
+            labels_to_values: map,
+        }
     }
     fn record(&self, val: u64, kvs: Arc<Vec<KeyValue>>) {
-        let _ = self.values_tx.send((val, kvs));
+        self.labels_to_values
+            .write()
+            .insert(AttributeSet::from(kvs.as_slice()), val);
     }
 }
