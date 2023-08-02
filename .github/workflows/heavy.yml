@@ -11,19 +11,19 @@ jobs:
     timeout-minutes: 20
     runs-on: ubuntu-latest-16-cores
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9 # v3.5.3
         with:
           submodules: recursive
-      - uses: actions-rs/toolchain@v1
+      - uses: actions-rs/toolchain@56751392ac172fc3a68fef1413f507767ed5f563 # v1.0.6
         with:
           toolchain: stable
       - name: Install protoc
-        uses: arduino/setup-protoc@v1
+        uses: arduino/setup-protoc@e58d94cc5c94a8e49c8b747feac4b1c17f199561 # v2.0.0
         with:
           version: '3.x'
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions-rs/cargo@v1
+      - uses: actions-rs/cargo@b0651d9f4d4983fd4cc8e94d927bdc0bb5566667 # v1.0.1
         with:
           command: integ-test
           args: -c "--release" -c "--features=save_wf_inputs" -t heavy_tests -- --test-threads 1
