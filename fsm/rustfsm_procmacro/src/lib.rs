@@ -5,7 +5,6 @@ use syn::{
     parenthesized,
     parse::{Parse, ParseStream, Result},
     parse_macro_input,
-    punctuated::Punctuated,
     spanned::Spanned,
     Error, Fields, Ident, Token, Type, Variant, Visibility,
 };
@@ -212,8 +211,7 @@ impl Parse for StateMachineDefinition {
             })?;
         // Then the state machine definition is simply a sequence of transitions separated by
         // semicolons
-        let transitions: Punctuated<Transition, Token![;]> =
-            input.parse_terminated(Transition::parse)?;
+        let transitions = input.parse_terminated(Transition::parse, Token![;])?;
         let transitions: Vec<_> = transitions.into_iter().collect();
         // Check for and whine about any identical transitions. We do this here because preserving
         // the order transitions were defined in is important, so simply collecting to a set is
