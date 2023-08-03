@@ -55,7 +55,7 @@ use std::sync::Arc;
 use temporal_client::{ConfiguredClient, TemporalServiceClientWithMetrics};
 use temporal_sdk_core_api::{
     errors::{CompleteActivityError, PollActivityError, PollWfError},
-    telemetry::{metrics::CoreMeter, TelemetryOptions},
+    telemetry::{metrics::TemporalMeter, TelemetryOptions},
     Worker as WorkerTrait,
 };
 use temporal_sdk_core_protos::coresdk::ActivityHeartbeat;
@@ -263,7 +263,7 @@ impl CoreRuntime {
     }
 
     /// Returns the metric meter used for recording metrics, if they were enabled.
-    pub fn metric_meter(&self) -> Option<Arc<dyn CoreMeter>> {
+    pub fn metric_meter(&self) -> Option<TemporalMeter> {
         self.telemetry.get_metric_meter()
     }
 

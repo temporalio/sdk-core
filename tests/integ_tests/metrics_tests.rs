@@ -53,7 +53,7 @@ fn prom_metrics() -> (TelemetryOptions, SocketAddr, AbortOnDrop) {
             .unwrap(),
     )
     .unwrap();
-    telemopts.metrics = Some(prom_info.meter_provider as Arc<dyn CoreMeter>);
+    telemopts.metrics = Some(prom_info.meter as Arc<dyn CoreMeter>);
     (
         telemopts,
         prom_info.bound_addr,
@@ -69,7 +69,7 @@ async fn prometheus_metrics_exported() {
     let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
     let opts = get_integ_server_options();
     let mut raw_client = opts
-        .connect_no_namespace(rt.metric_meter().as_deref(), None)
+        .connect_no_namespace(rt.metric_meter(), None)
         .await
         .unwrap();
     assert!(raw_client.get_client().capabilities().is_some());

@@ -1,4 +1,4 @@
-use std::{fmt::Debug, sync::Arc};
+use std::{collections::HashSet, fmt::Debug, sync::Arc};
 
 /// Implementors of this trait are expected to be defined in each language's bridge.
 /// The implementor is responsible for the allocation/instantiation of new metric meters which
@@ -9,6 +9,13 @@ pub trait CoreMeter: Send + Sync + Debug {
     fn counter(&self, name: &str) -> Arc<dyn Counter>;
     fn histogram(&self, name: &str) -> Arc<dyn Histogram>;
     fn gauge(&self, name: &str) -> Arc<dyn Gauge>;
+}
+
+/// Wraps a [CoreMeter] to enable the attaching of default labels to metrics. Cloning is cheap.
+#[derive(derive_more::Constructor, Clone, Debug)]
+pub struct TemporalMeter {
+    pub inner: Arc<dyn CoreMeter>,
+    pub default_attribs: MetricsAttributesOptions,
 }
 
 #[derive(Debug, Clone)]
@@ -46,44 +53,16 @@ pub trait MetricCallBufferer: Send + Sync {
     fn retrieve(&mut self) -> Vec<MetricEvent>;
 }
 
-#[derive(Debug)]
-pub struct PrefixedMetricsMeter<CM>(&'static str, CM);
-impl<CM> PrefixedMetricsMeter<CM> {
-    pub fn new(prefix: &'static str, core_meter: CM) -> Self {
-        PrefixedMetricsMeter(prefix, core_meter)
-    }
-}
-impl<CM: CoreMeter> CoreMeter for PrefixedMetricsMeter<CM> {
-    fn new_attributes(&self, attribs: MetricsAttributesOptions) -> MetricAttributes {
-        self.1.new_attributes(attribs)
-    }
-
-    fn counter(&self, name: &str) -> Arc<dyn Counter> {
-        self.1.counter(&(self.0.to_string() + name))
-    }
-
-    fn histogram(&self, name: &str) -> Arc<dyn Histogram> {
-        self.1.histogram(&(self.0.to_string() + name))
-    }
-
-    fn gauge(&self, name: &str) -> Arc<dyn Gauge> {
-        self.1.gauge(&(self.0.to_string() + name))
-    }
-}
-
 impl CoreMeter for Arc<dyn CoreMeter> {
     fn new_attributes(&self, attribs: MetricsAttributesOptions) -> MetricAttributes {
         self.as_ref().new_attributes(attribs)
     }
-
     fn counter(&self, name: &str) -> Arc<dyn Counter> {
         self.as_ref().counter(name)
     }
-
     fn histogram(&self, name: &str) -> Arc<dyn Histogram> {
         self.as_ref().histogram(name)
     }
-
     fn gauge(&self, name: &str) -> Arc<dyn Gauge> {
         self.as_ref().gauge(name)
     }
@@ -102,8 +81,9 @@ pub enum MetricAttributes {
 }
 #[derive(Clone, Debug)]
 pub struct LangMetricAttributes {
-    /// An opaque reference to attributes stored in lang memory
-    pub id: u64,
+    /// A set of references to attributes stored in lang memory. All referenced attributes should
+    /// be attached to the metric when recording.
+    pub id: HashSet<u64>,
     /// If populated, these key values should also be used in addition to the referred-to
     /// existing attributes when recording
     pub new_attributes: Vec<MetricKeyValue>,
@@ -132,7 +112,7 @@ impl MetricAttributes {
 }
 
 /// Options that are attached to metrics on a per-call basis
-#[derive(Clone, Default, derive_more::Constructor)]
+#[derive(Clone, Debug, Default, derive_more::Constructor)]
 pub struct MetricsAttributesOptions {
     pub attributes: Vec<MetricKeyValue>,
 }
@@ -191,7 +171,7 @@ pub struct NoOpCoreMeter;
 impl CoreMeter for NoOpCoreMeter {
     fn new_attributes(&self, _: MetricsAttributesOptions) -> MetricAttributes {
         MetricAttributes::Lang(LangMetricAttributes {
-            id: 0,
+            id: HashSet::new(),
             new_attributes: vec![],
         })
     }
@@ -223,7 +203,7 @@ impl Gauge for NoOpInstrument {
 #[cfg(feature = "otel_impls")]
 mod otel_impls {
     use super::*;
-    use opentelemetry::{metrics, metrics::Meter, KeyValue};
+    use opentelemetry::{metrics, KeyValue};
 
     impl From<MetricKeyValue> for KeyValue {
         fn from(kv: MetricKeyValue) -> Self {
@@ -242,26 +222,6 @@ mod otel_impls {
         }
     }
 
-    impl CoreMeter for Meter {
-        fn new_attributes(&self, attribs: MetricsAttributesOptions) -> MetricAttributes {
-            MetricAttributes::OTel {
-                kvs: Arc::new(attribs.attributes.into_iter().map(KeyValue::from).collect()),
-            }
-        }
-
-        fn counter(&self, name: &str) -> Arc<dyn Counter> {
-            Arc::new(self.u64_counter(name.to_string()).init())
-        }
-
-        fn histogram(&self, name: &str) -> Arc<dyn Histogram> {
-            Arc::new(self.u64_histogram(name.to_string()).init())
-        }
-
-        fn gauge(&self, name: &str) -> Arc<dyn Gauge> {
-            Arc::new(self.u64_histogram(name.to_string()).init())
-        }
-    }
-
     // TODO: Dbg panic
     impl Counter for metrics::Counter<u64> {
         fn add(&self, value: u64, attributes: &MetricAttributes) {
@@ -272,14 +232,6 @@ mod otel_impls {
     }
 
     impl Histogram for metrics::Histogram<u64> {
-        fn record(&self, value: u64, attributes: &MetricAttributes) {
-            if let MetricAttributes::OTel { kvs } = attributes {
-                self.record(value, kvs);
-            }
-        }
-    }
-
-    impl Gauge for metrics::Histogram<u64> {
         fn record(&self, value: u64, attributes: &MetricAttributes) {
             if let MetricAttributes::OTel { kvs } = attributes {
                 self.record(value, kvs);

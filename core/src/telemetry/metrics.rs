@@ -20,7 +20,7 @@ use opentelemetry_sdk::{
 use parking_lot::RwLock;
 use std::{
     borrow::Cow,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     net::SocketAddr,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -87,15 +87,17 @@ impl MetricsContext {
     }
 
     pub(crate) fn top_level(namespace: String, tq: String, telemetry: &TelemetryInstance) -> Self {
-        if let Some(meter) = telemetry.get_metric_meter() {
-            let kvs = meter.new_attributes(MetricsAttributesOptions::new(vec![
-                MetricKeyValue::new(KEY_NAMESPACE, namespace),
-                task_queue(tq),
-            ]));
+        if let Some(mut meter) = telemetry.get_metric_meter() {
+            meter
+                .default_attribs
+                .attributes
+                .push(MetricKeyValue::new(KEY_NAMESPACE, namespace));
+            meter.default_attribs.attributes.push(task_queue(tq));
+            let kvs = meter.inner.new_attributes(meter.default_attribs);
             Self {
                 kvs,
-                instruments: Arc::new(Instruments::new(meter.as_ref())),
-                meter,
+                instruments: Arc::new(Instruments::new(meter.inner.as_ref())),
+                meter: meter.inner,
             }
         } else {
             Self::no_op()
@@ -437,7 +439,7 @@ pub(super) fn augment_meter_provider_with_defaults(
             TASK_SCHED_TO_START_MS_BUCKETS,
         )?)
         .with_view(histo_view(ACT_EXEC_LATENCY_NAME, ACT_EXE_MS_BUCKETS)?)
-        .with_resource(default_resource(&global_tags)))
+        .with_resource(default_resource(global_tags)))
 }
 
 /// OTel has no built-in synchronous Gauge. Histograms used to be able to serve that purpose, but
@@ -471,15 +473,17 @@ impl MemoryGaugeU64 {
             labels_to_values: map,
         }
     }
-    fn record(&self, val: u64, kvs: Arc<Vec<KeyValue>>) {
+    fn record(&self, val: u64, kvs: &[KeyValue]) {
         self.labels_to_values
             .write()
-            .insert(AttributeSet::from(kvs.as_slice()), val);
+            .insert(AttributeSet::from(kvs), val);
     }
 }
 
 /// Create an OTel meter that can be used as a [CoreMeter] to export metrics over OTLP.
-pub fn build_otlp_metric_exporter(opts: OtelCollectorOptions) -> Result<Arc<Meter>, anyhow::Error> {
+pub fn build_otlp_metric_exporter(
+    opts: OtelCollectorOptions,
+) -> Result<CoreOtelMeter, anyhow::Error> {
     let exporter = opentelemetry_otlp::MetricsExporter::new(
         opentelemetry_otlp::TonicExporterBuilder::default()
             .with_endpoint(opts.url.to_string())
@@ -495,11 +499,11 @@ pub fn build_otlp_metric_exporter(opts: OtelCollectorOptions) -> Result<Arc<Mete
         &opts.global_tags,
     )?
     .build();
-    Ok::<_, anyhow::Error>(Arc::new(mp.meter(TELEM_SERVICE_NAME)))
+    Ok::<_, anyhow::Error>(CoreOtelMeter(mp.meter(TELEM_SERVICE_NAME)))
 }
 
 pub struct StartedPromServer {
-    pub meter: Arc<Meter>,
+    pub meter: Arc<CoreOtelMeter>,
     pub bound_addr: SocketAddr,
     pub abort_handle: AbortHandle,
 }
@@ -518,7 +522,7 @@ pub fn start_prometheus_metric_exporter(
     let bound_addr = srv.bound_addr();
     let handle = tokio::spawn(async move { srv.run().await });
     Ok(StartedPromServer {
-        meter: Arc::new(meter_provider.meter(TELEM_SERVICE_NAME)),
+        meter: Arc::new(CoreOtelMeter(meter_provider.meter(TELEM_SERVICE_NAME))),
         bound_addr,
         abort_handle: handle.abort_handle(),
     })
@@ -565,7 +569,7 @@ impl CoreMeter for MetricsCallBuffer {
             attributes: opts.attributes,
         });
         MetricAttributes::Lang(LangMetricAttributes {
-            id,
+            id: HashSet::from([id]),
             new_attributes: vec![],
         })
     }
@@ -622,6 +626,59 @@ impl Gauge for BufferInstrument {
 impl Histogram for BufferInstrument {
     fn record(&self, value: u64, attributes: &MetricAttributes) {
         self.send(value, attributes)
+    }
+}
+
+#[derive(Debug)]
+pub struct CoreOtelMeter(Meter);
+impl CoreMeter for CoreOtelMeter {
+    fn new_attributes(&self, attribs: MetricsAttributesOptions) -> MetricAttributes {
+        MetricAttributes::OTel {
+            kvs: Arc::new(attribs.attributes.into_iter().map(KeyValue::from).collect()),
+        }
+    }
+
+    fn counter(&self, name: &str) -> Arc<dyn Counter> {
+        Arc::new(self.0.u64_counter(name.to_string()).init())
+    }
+
+    fn histogram(&self, name: &str) -> Arc<dyn Histogram> {
+        Arc::new(self.0.u64_histogram(name.to_string()).init())
+    }
+
+    fn gauge(&self, name: &str) -> Arc<dyn Gauge> {
+        Arc::new(MemoryGaugeU64::new(name.to_string(), &self.0))
+    }
+}
+
+impl Gauge for MemoryGaugeU64 {
+    fn record(&self, value: u64, attributes: &MetricAttributes) {
+        if let MetricAttributes::OTel { kvs } = attributes {
+            self.record(value, kvs);
+        }
+    }
+}
+
+#[derive(Debug, derive_more::Constructor)]
+pub(crate) struct PrefixedMetricsMeter<CM> {
+    prefix: &'static str,
+    meter: CM,
+}
+impl<CM: CoreMeter> CoreMeter for PrefixedMetricsMeter<CM> {
+    fn new_attributes(&self, attribs: MetricsAttributesOptions) -> MetricAttributes {
+        self.meter.new_attributes(attribs)
+    }
+
+    fn counter(&self, name: &str) -> Arc<dyn Counter> {
+        self.meter.counter(&(self.prefix.to_string() + name))
+    }
+
+    fn histogram(&self, name: &str) -> Arc<dyn Histogram> {
+        self.meter.histogram(&(self.prefix.to_string() + name))
+    }
+
+    fn gauge(&self, name: &str) -> Arc<dyn Gauge> {
+        self.meter.gauge(&(self.prefix.to_string() + name))
     }
 }
 

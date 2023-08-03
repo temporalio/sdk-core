@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 use temporal_sdk_core_api::telemetry::metrics::{
-    CoreMeter, Counter, Histogram, MetricAttributes, MetricKeyValue, MetricsAttributesOptions,
+    CoreMeter, Counter, Histogram, MetricAttributes, MetricKeyValue, TemporalMeter,
 };
 use tonic::{body::BoxBody, transport::Channel};
 use tower::Service;
@@ -30,16 +30,17 @@ pub struct MetricsContext {
 }
 
 impl MetricsContext {
-    pub(crate) fn new(metric_provider: &dyn CoreMeter) -> Self {
+    pub(crate) fn new(tm: TemporalMeter) -> Self {
+        let meter = tm.inner;
         Self {
-            kvs: metric_provider.new_attributes(MetricsAttributesOptions::default()),
+            kvs: meter.new_attributes(tm.default_attribs),
             poll_is_long: false,
-            svc_request: metric_provider.counter("request"),
-            svc_request_failed: metric_provider.counter("request_failure"),
-            long_svc_request: metric_provider.counter("long_request"),
-            long_svc_request_failed: metric_provider.counter("long_request_failure"),
-            svc_request_latency: metric_provider.histogram("request_latency"),
-            long_svc_request_latency: metric_provider.histogram("long_request_latency"),
+            svc_request: meter.counter("request"),
+            svc_request_failed: meter.counter("request_failure"),
+            long_svc_request: meter.counter("long_request"),
+            long_svc_request_failed: meter.counter("long_request_failure"),
+            svc_request_latency: meter.histogram("request_latency"),
+            long_svc_request_latency: meter.histogram("long_request_latency"),
         }
     }
 

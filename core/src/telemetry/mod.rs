@@ -5,12 +5,17 @@ mod log_export;
 pub(crate) mod metrics;
 mod prometheus_server;
 
-use crate::telemetry::log_export::{CoreLogExportLayer, CoreLogsOut};
+pub use metrics::{
+    build_otlp_metric_exporter, default_buckets_for, start_prometheus_metric_exporter,
+    MetricsCallBuffer,
+};
+
+use crate::telemetry::{
+    log_export::{CoreLogExportLayer, CoreLogsOut},
+    metrics::PrefixedMetricsMeter,
+};
 use crossbeam::channel::Receiver;
 use itertools::Itertools;
-pub use metrics::{
-    build_otlp_metric_exporter, start_prometheus_metric_exporter, MetricsCallBuffer,
-};
 use once_cell::sync::OnceCell;
 use opentelemetry::{sdk::Resource, KeyValue};
 use opentelemetry_sdk::metrics::{data::Temporality, reader::TemporalitySelector, InstrumentKind};
@@ -25,7 +30,7 @@ use std::{
     },
 };
 use temporal_sdk_core_api::telemetry::{
-    metrics::{CoreMeter, PrefixedMetricsMeter},
+    metrics::{CoreMeter, MetricKeyValue, MetricsAttributesOptions, TemporalMeter},
     CoreLog, CoreTelemetry, Logger, MetricTemporality, TelemetryOptions,
 };
 use tracing::{Level, Subscriber};
@@ -77,15 +82,18 @@ impl TelemetryInstance {
     }
 
     /// Returns our wrapper for metric meters, can be used to, ex: initialize clients
-    pub fn get_metric_meter(&self) -> Option<Arc<dyn CoreMeter>> {
-        // TODO: this
-        // let kvs = if self.attach_service_name {
-        //     vec![KeyValue::new("service_name", TELEM_SERVICE_NAME)]
-        // } else {
-        //     vec![]
-        // };
+    pub fn get_metric_meter(&self) -> Option<TemporalMeter> {
         self.metrics.clone().map(|m| {
-            Arc::new(PrefixedMetricsMeter::new(self.metric_prefix, m)) as Arc<dyn CoreMeter>
+            let kvs = if self.attach_service_name {
+                vec![MetricKeyValue::new("service_name", TELEM_SERVICE_NAME)]
+            } else {
+                vec![]
+            };
+            let attribs = MetricsAttributesOptions::new(kvs);
+            TemporalMeter::new(
+                Arc::new(PrefixedMetricsMeter::new(self.metric_prefix, m)) as Arc<dyn CoreMeter>,
+                attribs,
+            )
         })
     }
 }
@@ -145,12 +153,8 @@ pub fn telemetry_init(opts: TelemetryOptions) -> Result<TelemetryInstance, anyho
     // way which is nice.
     let (tx, rx) = crossbeam::channel::bounded(0);
     let (keepalive_tx, keepalive_rx) = crossbeam::channel::bounded(0);
+    // TODO: Don't need thread..?
     let jh = std::thread::spawn(move || -> Result<(), anyhow::Error> {
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .thread_name("telemetry")
-            .worker_threads(2)
-            .enable_all()
-            .build()?;
         // Parts of telem dat ====
         let mut logs_out = None;
         let metric_prefix = metric_prefix(&opts);

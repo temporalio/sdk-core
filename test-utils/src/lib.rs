@@ -594,7 +594,7 @@ pub fn get_integ_telem_options() -> TelemetryOptions {
             filter: filter_string.clone(),
             exporter: TraceExporter::Otel(opts.clone()),
         });
-        ob.metrics(build_otlp_metric_exporter(opts).unwrap() as Arc<dyn CoreMeter>);
+        ob.metrics(Arc::new(build_otlp_metric_exporter(opts).unwrap()) as Arc<dyn CoreMeter>);
     }
     if let Some(addr) = env::var(PROM_ENABLE_ENV_VAR)
         .ok()

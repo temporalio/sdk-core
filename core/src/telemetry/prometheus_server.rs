@@ -38,9 +38,8 @@ impl PromServer {
     pub async fn run(self) -> hyper::Result<()> {
         // Spin up hyper server to serve metrics for scraping. We use hyper since we already depend
         // on it via Tonic.
-        let regclone = self.registry.clone();
         let svc = make_service_fn(move |_conn| {
-            let regclone = regclone.clone();
+            let regclone = self.registry.clone();
             async move { Ok::<_, Infallible>(service_fn(move |req| metrics_req(req, regclone.clone()))) }
         });
         let server = Server::builder(self.bound_addr).serve(svc);
