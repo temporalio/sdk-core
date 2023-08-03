@@ -53,7 +53,7 @@ fn prom_metrics() -> (TelemetryOptions, SocketAddr, AbortOnDrop) {
             .unwrap(),
     )
     .unwrap();
-    telemopts.metrics = Some(prom_info.meter as Arc<dyn CoreMeter>);
+    telemopts.metrics = Some(prom_info.meter_provider as Arc<dyn CoreMeter>);
     (
         telemopts,
         prom_info.bound_addr,

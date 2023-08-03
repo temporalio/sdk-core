@@ -97,7 +97,6 @@ pub enum MetricAttributes {
     #[cfg(feature = "otel_impls")]
     OTel {
         kvs: Arc<Vec<opentelemetry::KeyValue>>,
-        ctx: opentelemetry::Context,
     },
     Lang(LangMetricAttributes),
 }
@@ -247,45 +246,43 @@ mod otel_impls {
         fn new_attributes(&self, attribs: MetricsAttributesOptions) -> MetricAttributes {
             MetricAttributes::OTel {
                 kvs: Arc::new(attribs.attributes.into_iter().map(KeyValue::from).collect()),
-                // TODO: Pass in? Hard to make work with trait
-                ctx: opentelemetry::Context::current(),
             }
         }
 
         fn counter(&self, name: &str) -> Arc<dyn Counter> {
-            Arc::new(self.u64_counter(name).init())
+            Arc::new(self.u64_counter(name.to_string()).init())
         }
 
         fn histogram(&self, name: &str) -> Arc<dyn Histogram> {
-            Arc::new(self.u64_histogram(name).init())
+            Arc::new(self.u64_histogram(name.to_string()).init())
         }
 
         fn gauge(&self, name: &str) -> Arc<dyn Gauge> {
-            Arc::new(self.u64_histogram(name).init())
+            Arc::new(self.u64_histogram(name.to_string()).init())
         }
     }
 
     // TODO: Dbg panic
     impl Counter for metrics::Counter<u64> {
         fn add(&self, value: u64, attributes: &MetricAttributes) {
-            if let MetricAttributes::OTel { ctx, kvs } = attributes {
-                self.add(ctx, value, kvs);
+            if let MetricAttributes::OTel { kvs } = attributes {
+                self.add(value, kvs);
             }
         }
     }
 
     impl Histogram for metrics::Histogram<u64> {
         fn record(&self, value: u64, attributes: &MetricAttributes) {
-            if let MetricAttributes::OTel { ctx, kvs } = attributes {
-                self.record(ctx, value, kvs);
+            if let MetricAttributes::OTel { kvs } = attributes {
+                self.record(value, kvs);
             }
         }
     }
 
     impl Gauge for metrics::Histogram<u64> {
         fn record(&self, value: u64, attributes: &MetricAttributes) {
-            if let MetricAttributes::OTel { ctx, kvs } = attributes {
-                self.record(ctx, value, kvs);
+            if let MetricAttributes::OTel { kvs } = attributes {
+                self.record(value, kvs);
             }
         }
     }

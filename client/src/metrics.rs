@@ -25,8 +25,8 @@ pub struct MetricsContext {
     long_svc_request: Arc<dyn Counter>,
     long_svc_request_failed: Arc<dyn Counter>,
 
-    svc_request_latency: Histogram<u64>,
-    long_svc_request_latency: Histogram<u64>,
+    svc_request_latency: Arc<dyn Histogram>,
+    long_svc_request_latency: Arc<dyn Histogram>,
 }
 
 impl MetricsContext {

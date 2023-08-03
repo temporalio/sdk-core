@@ -5,34 +5,19 @@ mod log_export;
 pub(crate) mod metrics;
 mod prometheus_server;
 
-use crate::telemetry::{
-    log_export::{CoreLogExportLayer, CoreLogsOut},
-    metrics::TemporalMeter,
-    prometheus_server::PromServer,
-};
-pub use metrics::{
-    build_otlp_metric_exporter, start_prometheus_metric_exporter, MetricsCallBuffer,
-};
-
 use crate::telemetry::log_export::{CoreLogExportLayer, CoreLogsOut};
 use crossbeam::channel::Receiver;
 use itertools::Itertools;
+pub use metrics::{
+    build_otlp_metric_exporter, start_prometheus_metric_exporter, MetricsCallBuffer,
+};
 use once_cell::sync::OnceCell;
-use opentelemetry::{
-    metrics::{Meter, MeterProvider as MeterProviderT, MetricsError},
-    runtime,
-    sdk::Resource,
-    KeyValue,
-};
-use opentelemetry_otlp::WithExportConfig;
-use opentelemetry_sdk::metrics::{
-    data::Temporality, reader::TemporalitySelector, InstrumentKind, MeterProvider, PeriodicReader,
-};
+use opentelemetry::{sdk::Resource, KeyValue};
+use opentelemetry_sdk::metrics::{data::Temporality, reader::TemporalitySelector, InstrumentKind};
 use parking_lot::Mutex;
 use std::{
     cell::RefCell,
     collections::{HashMap, VecDeque},
-    convert::TryInto,
     env,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -41,9 +26,8 @@ use std::{
 };
 use temporal_sdk_core_api::telemetry::{
     metrics::{CoreMeter, PrefixedMetricsMeter},
-    CoreLog, CoreTelemetry, Logger, MetricTemporality, OtelCollectorOptions, TelemetryOptions,
+    CoreLog, CoreTelemetry, Logger, MetricTemporality, TelemetryOptions,
 };
-use tonic::metadata::MetadataMap;
 use tracing::{Level, Subscriber};
 use tracing_subscriber::{layer::SubscriberExt, EnvFilter, Layer};
 
@@ -73,8 +57,8 @@ impl TelemetryInstance {
         logs_out: Option<Mutex<CoreLogsOut>>,
         metric_prefix: &'static str,
         metrics: Option<Arc<dyn CoreMeter + 'static>>,
-        keepalive_rx: Receiver<()>,
         attach_service_name: bool,
+        keepalive_rx: Receiver<()>,
     ) -> Self {
         Self {
             metric_prefix,
@@ -213,50 +197,6 @@ pub fn telemetry_init(opts: TelemetryOptions) -> Result<TelemetryInstance, anyho
                 }
             };
         };
-
-        // TODO: Move to prom/otel initter fns
-        let meter_provider = if let Some(ref metrics) = opts.metrics {
-            match metrics {
-                MetricsExporter::Prometheus(addr) => {
-                    let (srv, exporter) = runtime
-                        .block_on(async { PromServer::new(*addr, SDKAggSelector::default()) })?;
-                    prom_binding = Some(srv.bound_addr());
-                    runtime.spawn(async move { srv.run().await });
-                    Some(MeterProvider::builder().with_reader(exporter))
-                }
-                MetricsExporter::Otel(OtelCollectorOptions {
-                    url,
-                    headers,
-                    metric_periodicity,
-                }) => runtime.block_on(async {
-                    let exporter = opentelemetry_otlp::MetricsExporter::new(
-                        opentelemetry_otlp::TonicExporterBuilder::default()
-                            .with_endpoint(url.to_string())
-                            .with_metadata(MetadataMap::from_headers(headers.try_into()?)),
-                        Box::new(metric_temporality_to_selector(opts.metric_temporality)),
-                        Box::<SDKAggSelector>::default(),
-                    )?;
-                    let reader = PeriodicReader::builder(exporter, runtime::Tokio)
-                        .with_interval(metric_periodicity.unwrap_or_else(|| Duration::from_secs(1)))
-                        .build();
-                    let mp = MeterProvider::builder().with_reader(reader);
-                    Ok::<_, anyhow::Error>(Some(mp))
-                })?,
-                MetricsExporter::Lang(cm) => Some(cm.clone()),
-            }
-        } else {
-            None
-        };
-        let meter_provider = meter_provider
-            .map(|mp| {
-                Ok::<_, MetricsError>(
-                    augment_meter_provider_with_views(
-                        mp.with_resource(default_resource(&opts.global_tags)),
-                    )?
-                    .build(),
-                )
-            })
-            .transpose()?;
 
         let reg = tracing_subscriber::registry()
             .with(console_pretty_layer)

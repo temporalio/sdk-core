@@ -1,20 +1,43 @@
-use crate::telemetry::TelemetryInstance;
+use crate::telemetry::{
+    default_resource, metric_temporality_to_selector, prometheus_server::PromServer,
+    TelemetryInstance, TELEM_SERVICE_NAME,
+};
 use opentelemetry::{
     self,
-    metrics::{noop::NoopMeterProvider, Counter, Histogram, Meter, MeterProvider},
+    metrics::{Meter, MeterProvider as MeterProviderT},
     KeyValue,
 };
+use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::{
     metrics::{
         new_view,
         reader::{AggregationSelector, DefaultAggregationSelector},
-        Aggregation, Instrument, InstrumentKind, MeterProviderBuilder, View,
+        Aggregation, Instrument, InstrumentKind, MeterProvider, MeterProviderBuilder,
+        PeriodicReader, View,
     },
-    AttributeSet,
+    runtime, AttributeSet,
 };
 use parking_lot::RwLock;
-use std::{borrow::Cow, collections::HashMap, ops::Deref, sync::Arc, time::Duration};
-use temporal_client::ClientMetricProvider;
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    net::SocketAddr,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
+use temporal_sdk_core_api::telemetry::{
+    metrics::{
+        CoreMeter, Counter, Gauge, Histogram, LangMetricAttributes, MetricAttributes,
+        MetricCallBufferer, MetricEvent, MetricKeyValue, MetricKind, MetricUpdateVal,
+        MetricsAttributesOptions, NoOpCoreMeter,
+    },
+    OtelCollectorOptions, PrometheusExporterOptions,
+};
+use tokio::task::AbortHandle;
+use tonic::metadata::MetadataMap;
 
 /// Used to track context associated with metrics, and record/update them
 ///
@@ -28,28 +51,28 @@ pub(crate) struct MetricsContext {
 }
 
 struct Instruments {
-    wf_completed_counter: Counter<u64>,
-    wf_canceled_counter: Counter<u64>,
-    wf_failed_counter: Counter<u64>,
-    wf_cont_counter: Counter<u64>,
-    wf_e2e_latency: Histogram<u64>,
-    wf_task_queue_poll_empty_counter: Counter<u64>,
-    wf_task_queue_poll_succeed_counter: Counter<u64>,
-    wf_task_execution_failure_counter: Counter<u64>,
-    wf_task_sched_to_start_latency: Histogram<u64>,
-    wf_task_replay_latency: Histogram<u64>,
-    wf_task_execution_latency: Histogram<u64>,
-    act_poll_no_task: Counter<u64>,
-    act_task_received_counter: Counter<u64>,
-    act_execution_failed: Counter<u64>,
-    act_sched_to_start_latency: Histogram<u64>,
-    act_exec_latency: Histogram<u64>,
-    worker_registered: Counter<u64>,
-    num_pollers: MemoryGaugeU64,
-    task_slots_available: MemoryGaugeU64,
-    sticky_cache_hit: Counter<u64>,
-    sticky_cache_miss: Counter<u64>,
-    sticky_cache_size: MemoryGaugeU64,
+    wf_completed_counter: Arc<dyn Counter>,
+    wf_canceled_counter: Arc<dyn Counter>,
+    wf_failed_counter: Arc<dyn Counter>,
+    wf_cont_counter: Arc<dyn Counter>,
+    wf_e2e_latency: Arc<dyn Histogram>,
+    wf_task_queue_poll_empty_counter: Arc<dyn Counter>,
+    wf_task_queue_poll_succeed_counter: Arc<dyn Counter>,
+    wf_task_execution_failure_counter: Arc<dyn Counter>,
+    wf_task_sched_to_start_latency: Arc<dyn Histogram>,
+    wf_task_replay_latency: Arc<dyn Histogram>,
+    wf_task_execution_latency: Arc<dyn Histogram>,
+    act_poll_no_task: Arc<dyn Counter>,
+    act_task_received_counter: Arc<dyn Counter>,
+    act_execution_failed: Arc<dyn Counter>,
+    act_sched_to_start_latency: Arc<dyn Histogram>,
+    act_exec_latency: Arc<dyn Histogram>,
+    worker_registered: Arc<dyn Counter>,
+    num_pollers: Arc<dyn Gauge>,
+    task_slots_available: Arc<dyn Gauge>,
+    sticky_cache_hit: Arc<dyn Counter>,
+    sticky_cache_miss: Arc<dyn Counter>,
+    sticky_cache_size: Arc<dyn Gauge>,
     sticky_cache_evictions: Arc<dyn Counter>,
 }
 
@@ -58,7 +81,7 @@ impl MetricsContext {
         let meter = Arc::new(NoOpCoreMeter);
         Self {
             kvs: meter.new_attributes(Default::default()),
-            instruments: Arc::new(Instruments::new_explicit(meter.as_ref())),
+            instruments: Arc::new(Instruments::new(meter.as_ref())),
             meter,
         }
     }
@@ -71,7 +94,7 @@ impl MetricsContext {
             ]));
             Self {
                 kvs,
-                instruments: Arc::new(Instruments::new(telemetry)),
+                instruments: Arc::new(Instruments::new(meter.as_ref())),
                 meter,
             }
         } else {
@@ -197,14 +220,12 @@ impl MetricsContext {
     pub(crate) fn available_task_slots(&self, num: usize) {
         self.instruments
             .task_slots_available
-            .record(num as u64, self.kvs.clone())
+            .record(num as u64, &self.kvs)
     }
 
     /// Record current number of pollers. Context should include poller type / task queue tag.
     pub(crate) fn record_num_pollers(&self, num: usize) {
-        self.instruments
-            .num_pollers
-            .record(num as u64, self.kvs.clone());
+        self.instruments.num_pollers.record(num as u64, &self.kvs);
     }
 
     /// A workflow task found a cached workflow to run against
@@ -219,9 +240,7 @@ impl MetricsContext {
 
     /// Record current cache size (in number of wfs, not bytes)
     pub(crate) fn cache_size(&self, size: u64) {
-        self.instruments
-            .sticky_cache_size
-            .record(size, self.kvs.clone());
+        self.instruments.sticky_cache_size.record(size, &self.kvs);
     }
 
     /// Count a workflow being evicted from the cache
@@ -231,7 +250,7 @@ impl MetricsContext {
 }
 
 impl Instruments {
-    fn new_explicit(meter: TemporalMeter) -> Self {
+    fn new(meter: &dyn CoreMeter) -> Self {
         Self {
             wf_completed_counter: meter.counter("workflow_completed"),
             wf_canceled_counter: meter.counter("workflow_canceled"),
@@ -381,13 +400,6 @@ impl AggregationSelector for SDKAggSelector {
     }
 }
 
-fn gauge_view(metric_name: &'static str) -> opentelemetry::metrics::Result<Box<dyn View>> {
-    new_view(
-        Instrument::new().name(format!("*{metric_name}")),
-        opentelemetry_sdk::metrics::Stream::new().aggregation(Aggregation::LastValue),
-    )
-}
-
 fn histo_view(
     metric_name: &'static str,
     buckets: &[f64],
@@ -403,15 +415,13 @@ fn histo_view(
     )
 }
 
-pub(super) fn augment_meter_provider_with_views(
+pub(super) fn augment_meter_provider_with_defaults(
     mpb: MeterProviderBuilder,
+    global_tags: &HashMap<String, String>,
 ) -> opentelemetry::metrics::Result<MeterProviderBuilder> {
     // Some histograms are actually gauges, but we have to use histograms otherwise they forget
     // their value between collections since we don't use callbacks.
     Ok(mpb
-        .with_view(gauge_view(STICKY_CACHE_SIZE_NAME)?)
-        .with_view(gauge_view(NUM_POLLERS_NAME)?)
-        .with_view(gauge_view(TASK_SLOTS_AVAILABLE_NAME)?)
         .with_view(histo_view(WF_E2E_LATENCY_NAME, WF_LATENCY_MS_BUCKETS)?)
         .with_view(histo_view(
             WF_TASK_EXECUTION_LATENCY_NAME,
@@ -426,7 +436,8 @@ pub(super) fn augment_meter_provider_with_views(
             ACT_SCHED_TO_START_LATENCY_NAME,
             TASK_SCHED_TO_START_MS_BUCKETS,
         )?)
-        .with_view(histo_view(ACT_EXEC_LATENCY_NAME, ACT_EXE_MS_BUCKETS)?))
+        .with_view(histo_view(ACT_EXEC_LATENCY_NAME, ACT_EXE_MS_BUCKETS)?)
+        .with_resource(default_resource(&global_tags)))
 }
 
 /// OTel has no built-in synchronous Gauge. Histograms used to be able to serve that purpose, but
@@ -468,32 +479,27 @@ impl MemoryGaugeU64 {
 }
 
 /// Create an OTel meter that can be used as a [CoreMeter] to export metrics over OTLP.
-pub fn build_otlp_metric_exporter(
-    opts: OtelCollectorOptions,
-) -> Result<Arc<opentelemetry::metrics::Meter>, anyhow::Error> {
-    let aggregator = SDKAggSelector {
-        metric_prefix: opts.metric_prefix,
-    };
-    let metrics = opentelemetry_otlp::new_pipeline()
-        .metrics(
-            aggregator,
-            metric_temporality_to_selector(opts.metric_temporality),
-            runtime::Tokio,
-        )
-        .with_period(opts.metric_periodicity)
-        .with_resource(default_resource(&opts.global_tags))
-        .with_exporter(
-            opentelemetry_otlp::new_exporter()
-                .tonic()
-                .with_endpoint(opts.url.to_string())
-                .with_metadata(MetadataMap::from_headers((&opts.headers).try_into()?)),
-        )
-        .build()?;
-    Ok(Arc::new(metrics.meter(TELEM_SERVICE_NAME)))
+pub fn build_otlp_metric_exporter(opts: OtelCollectorOptions) -> Result<Arc<Meter>, anyhow::Error> {
+    let exporter = opentelemetry_otlp::MetricsExporter::new(
+        opentelemetry_otlp::TonicExporterBuilder::default()
+            .with_endpoint(opts.url.to_string())
+            .with_metadata(MetadataMap::from_headers((&opts.headers).try_into()?)),
+        Box::new(metric_temporality_to_selector(opts.metric_temporality)),
+        Box::<SDKAggSelector>::default(),
+    )?;
+    let reader = PeriodicReader::builder(exporter, runtime::Tokio)
+        .with_interval(opts.metric_periodicity)
+        .build();
+    let mp = augment_meter_provider_with_defaults(
+        MeterProvider::builder().with_reader(reader),
+        &opts.global_tags,
+    )?
+    .build();
+    Ok::<_, anyhow::Error>(Arc::new(mp.meter(TELEM_SERVICE_NAME)))
 }
 
 pub struct StartedPromServer {
-    pub meter: Arc<opentelemetry::metrics::Meter>,
+    pub meter: Arc<Meter>,
     pub bound_addr: SocketAddr,
     pub abort_handle: AbortHandle,
 }
@@ -503,20 +509,16 @@ pub struct StartedPromServer {
 pub fn start_prometheus_metric_exporter(
     opts: PrometheusExporterOptions,
 ) -> Result<StartedPromServer, anyhow::Error> {
-    let aggregator = SDKAggSelector {
-        metric_prefix: opts.metric_prefix,
-    };
-    let srv = PromServer::new(
-        opts.socket_addr,
-        aggregator,
-        metric_temporality_to_selector(opts.metric_temporality),
+    let (srv, exporter) = PromServer::new(opts.socket_addr, SDKAggSelector::default())?;
+    let meter_provider = augment_meter_provider_with_defaults(
+        MeterProvider::builder().with_reader(exporter),
         &opts.global_tags,
-    )?;
-    let mp = srv.exporter.meter_provider()?;
+    )?
+    .build();
     let bound_addr = srv.bound_addr();
     let handle = tokio::spawn(async move { srv.run().await });
     Ok(StartedPromServer {
-        meter: Arc::new(mp.meter(TELEM_SERVICE_NAME)),
+        meter: Arc::new(meter_provider.meter(TELEM_SERVICE_NAME)),
         bound_addr,
         abort_handle: handle.abort_handle(),
     })
