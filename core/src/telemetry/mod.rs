@@ -14,7 +14,6 @@ use crate::telemetry::{
     log_export::{CoreLogExportLayer, CoreLogsOut},
     metrics::PrefixedMetricsMeter,
 };
-use crossbeam::channel::Receiver;
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
 use opentelemetry::{sdk::Resource, KeyValue};
@@ -53,7 +52,6 @@ pub struct TelemetryInstance {
     metrics: Option<Arc<dyn CoreMeter + 'static>>,
     trace_subscriber: Arc<dyn Subscriber + Send + Sync>,
     attach_service_name: bool,
-    _keepalive_rx: Receiver<()>,
 }
 
 impl TelemetryInstance {
@@ -63,7 +61,6 @@ impl TelemetryInstance {
         metric_prefix: &'static str,
         metrics: Option<Arc<dyn CoreMeter + 'static>>,
         attach_service_name: bool,
-        keepalive_rx: Receiver<()>,
     ) -> Self {
         Self {
             metric_prefix,
@@ -71,7 +68,6 @@ impl TelemetryInstance {
             metrics,
             trace_subscriber,
             attach_service_name,
-            _keepalive_rx: keepalive_rx,
         }
     }
 
@@ -151,88 +147,68 @@ pub fn telemetry_init(opts: TelemetryOptions) -> Result<TelemetryInstance, anyho
     // in one case or the other. There does not seem to be a way to tell from the current runtime
     // handle if it is single or multithreaded. Additionally, we can isolate metrics work this
     // way which is nice.
-    let (tx, rx) = crossbeam::channel::bounded(0);
-    let (keepalive_tx, keepalive_rx) = crossbeam::channel::bounded(0);
-    // TODO: Don't need thread..?
-    let jh = std::thread::spawn(move || -> Result<(), anyhow::Error> {
-        // Parts of telem dat ====
-        let mut logs_out = None;
-        let metric_prefix = metric_prefix(&opts);
-        // =======================
+    // Parts of telem dat ====
+    let mut logs_out = None;
+    let metric_prefix = metric_prefix(&opts);
+    // =======================
 
-        // Tracing subscriber layers =========
-        let mut console_pretty_layer = None;
-        let mut console_compact_layer = None;
-        let mut forward_layer = None;
-        // ===================================
+    // Tracing subscriber layers =========
+    let mut console_pretty_layer = None;
+    let mut console_compact_layer = None;
+    let mut forward_layer = None;
+    // ===================================
 
-        if let Some(ref logger) = opts.logging {
-            match logger {
-                Logger::Console { filter } => {
-                    // This is silly dupe but can't be avoided without boxing.
-                    if env::var("TEMPORAL_CORE_PRETTY_LOGS").is_ok() {
-                        console_pretty_layer = Some(
-                            tracing_subscriber::fmt::layer()
-                                .with_target(false)
-                                .event_format(
-                                    tracing_subscriber::fmt::format()
-                                        .pretty()
-                                        .with_source_location(false),
-                                )
-                                .with_filter(EnvFilter::new(filter)),
-                        )
-                    } else {
-                        console_compact_layer = Some(
-                            tracing_subscriber::fmt::layer()
-                                .with_target(false)
-                                .event_format(
-                                    tracing_subscriber::fmt::format()
-                                        .compact()
-                                        .with_source_location(false),
-                                )
-                                .with_filter(EnvFilter::new(filter)),
-                        )
-                    }
+    if let Some(ref logger) = opts.logging {
+        match logger {
+            Logger::Console { filter } => {
+                // This is silly dupe but can't be avoided without boxing.
+                if env::var("TEMPORAL_CORE_PRETTY_LOGS").is_ok() {
+                    console_pretty_layer = Some(
+                        tracing_subscriber::fmt::layer()
+                            .with_target(false)
+                            .event_format(
+                                tracing_subscriber::fmt::format()
+                                    .pretty()
+                                    .with_source_location(false),
+                            )
+                            .with_filter(EnvFilter::new(filter)),
+                    )
+                } else {
+                    console_compact_layer = Some(
+                        tracing_subscriber::fmt::layer()
+                            .with_target(false)
+                            .event_format(
+                                tracing_subscriber::fmt::format()
+                                    .compact()
+                                    .with_source_location(false),
+                            )
+                            .with_filter(EnvFilter::new(filter)),
+                    )
                 }
-                Logger::Forward { filter } => {
-                    let (export_layer, lo) = CoreLogExportLayer::new();
-                    logs_out = Some(Mutex::new(lo));
-                    forward_layer = Some(export_layer.with_filter(EnvFilter::new(filter)));
-                }
-            };
+            }
+            Logger::Forward { filter } => {
+                let (export_layer, lo) = CoreLogExportLayer::new();
+                logs_out = Some(Mutex::new(lo));
+                forward_layer = Some(export_layer.with_filter(EnvFilter::new(filter)));
+            }
         };
+    };
 
-        let reg = tracing_subscriber::registry()
-            .with(console_pretty_layer)
-            .with(console_compact_layer)
-            .with(forward_layer);
+    let reg = tracing_subscriber::registry()
+        .with(console_pretty_layer)
+        .with(console_compact_layer)
+        .with(forward_layer);
 
-        #[cfg(feature = "tokio-console")]
-        let reg = reg.with(console_subscriber::spawn());
+    #[cfg(feature = "tokio-console")]
+    let reg = reg.with(console_subscriber::spawn());
 
-        tx.send(TelemetryInstance::new(
-            Arc::new(reg),
-            logs_out,
-            metric_prefix,
-            opts.metrics,
-            opts.attach_service_name,
-            keepalive_rx,
-        ))
-        .expect("Must be able to send telem instance out of thread");
-        // Now keep the thread alive until the telemetry instance is dropped by trying to send
-        // something forever
-        let _ = keepalive_tx.send(());
-        Ok(())
-    });
-    match rx.recv() {
-        Ok(ti) => Ok(ti),
-        Err(_) => {
-            // Immediately join the thread since something went wrong in it
-            jh.join().expect("Telemetry must init cleanly")?;
-            // This can't happen. The rx channel can't be dropped unless the thread errored.
-            unreachable!("Impossible error in telemetry init thread");
-        }
-    }
+    Ok(TelemetryInstance::new(
+        Arc::new(reg),
+        logs_out,
+        metric_prefix,
+        opts.metrics,
+        opts.attach_service_name,
+    ))
 }
 
 /// Initialize telemetry/tracing globally. Useful for testing. Only takes affect when called
