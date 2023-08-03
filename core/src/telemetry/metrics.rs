@@ -593,7 +593,7 @@ impl CoreMeter for MetricsCallBuffer {
     }
 }
 impl MetricCallBufferer for MetricsCallBuffer {
-    fn retrieve(&mut self) -> Vec<MetricEvent> {
+    fn retrieve(&self) -> Vec<MetricEvent> {
         self.calls_rx.try_iter().collect()
     }
 }
@@ -691,10 +691,77 @@ impl<CM: CoreMeter> CoreMeter for PrefixedMetricsMeter<CM> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use temporal_sdk_core_api::telemetry::METRIC_PREFIX;
+    use tracing::subscriber::NoSubscriber;
+
+    #[test]
+    fn test_buffered_core_context() {
+        let no_op_subscriber = Arc::new(NoSubscriber::new());
+        let call_buffer = Arc::new(MetricsCallBuffer::new(100));
+        let telem_instance = TelemetryInstance::new(
+            no_op_subscriber,
+            None,
+            METRIC_PREFIX,
+            Some(call_buffer.clone()),
+            true,
+        );
+        let mc = MetricsContext::top_level("foo".to_string(), "q".to_string(), &telem_instance);
+        mc.cache_eviction();
+        let events = call_buffer.retrieve();
+        assert_matches!(
+            &events[0],
+            MetricEvent::CreateAttributes {
+                id: 0,
+                attributes
+            }
+            if attributes[0].key == "service_name" &&
+               attributes[1].key == "namespace" &&
+               attributes[2].key == "task_queue"
+        );
+        // Verify all metrics are created. This number will need to get updated any time a metric
+        // is added.
+        let num_metrics = 22;
+        for metric_num in 1..=num_metrics {
+            assert_matches!(&events[metric_num],
+                MetricEvent::Create { id, .. }
+                if *id == (metric_num - 1) as u64
+            );
+        }
+        assert_matches!(
+            &events[num_metrics + 2], // +2 for attrib creation (at start), then this update
+            MetricEvent::Update {
+                id: 22,
+                attributes,
+                update: MetricUpdateVal::Delta(1)
+            }
+            if attributes.ids == HashSet::from([0])
+        );
+        // Verify creating a new context with new attributes merges them properly
+        let mc2 = mc.with_new_attrs([MetricKeyValue::new("gotta", "go fast")]);
+        mc2.wf_task_latency(Duration::from_secs(1));
+        let events = call_buffer.retrieve();
+        assert_matches!(
+            &events[0],
+            MetricEvent::CreateAttributes {
+                id: 1,
+                attributes
+            }
+            if attributes[0].key == "gotta"
+        );
+        assert_matches!(
+            &events[1],
+            MetricEvent::Update {
+                id: 10,
+                attributes,
+                update: MetricUpdateVal::Value(1000) // milliseconds
+            }
+            if attributes.ids == HashSet::from([0, 1])
+        );
+    }
 
     #[test]
     fn metric_buffer() {
-        let mut call_buffer = MetricsCallBuffer::new(10);
+        let call_buffer = MetricsCallBuffer::new(10);
         let ctr = call_buffer.counter("ctr");
         let histo = call_buffer.histogram("histo");
         let gauge = call_buffer.gauge("gauge");
@@ -708,7 +775,77 @@ mod tests {
         histo.record(2, &attrs_1);
         gauge.record(3, &attrs_2);
 
-        let calls = call_buffer.retrieve();
-        dbg!(calls);
+        let mut calls = call_buffer.retrieve();
+        calls.reverse();
+        assert_matches!(
+            calls.pop(),
+            Some(MetricEvent::Create {
+                name,
+                id: 0,
+                kind: MetricKind::Counter
+            })
+            if name == "ctr"
+        );
+        assert_matches!(
+            calls.pop(),
+            Some(MetricEvent::Create {
+                name ,
+                id: 1,
+                kind: MetricKind::Histogram
+            })
+            if name == "histo"
+        );
+        assert_matches!(
+            calls.pop(),
+            Some(MetricEvent::Create {
+                name,
+                id: 2,
+                kind: MetricKind::Gauge
+            })
+            if name == "gauge"
+        );
+        assert_matches!(
+            calls.pop(),
+            Some(MetricEvent::CreateAttributes {
+                id: 0,
+                attributes
+            })
+            if attributes[0].key == "hi"
+        );
+        assert_matches!(
+            calls.pop(),
+            Some(MetricEvent::CreateAttributes {
+                id: 1,
+                attributes
+            })
+            if attributes[0].key == "run"
+        );
+        assert_matches!(
+            calls.pop(),
+            Some(MetricEvent::Update{
+                id: 0,
+                attributes,
+                update: MetricUpdateVal::Delta(1)
+            })
+            if attributes.ids == HashSet::from([0])
+        );
+        assert_matches!(
+            calls.pop(),
+            Some(MetricEvent::Update{
+                id: 1,
+                attributes,
+                update: MetricUpdateVal::Value(2)
+            })
+            if attributes.ids == HashSet::from([0])
+        );
+        assert_matches!(
+            calls.pop(),
+            Some(MetricEvent::Update{
+                id: 2,
+                attributes,
+                update: MetricUpdateVal::Value(3)
+            })
+            if attributes.ids == HashSet::from([1])
+        );
     }
 }

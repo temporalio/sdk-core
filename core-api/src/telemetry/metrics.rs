@@ -50,7 +50,7 @@ pub enum MetricUpdateVal {
 }
 
 pub trait MetricCallBufferer: Send + Sync {
-    fn retrieve(&mut self) -> Vec<MetricEvent>;
+    fn retrieve(&self) -> Vec<MetricEvent>;
 }
 
 impl CoreMeter for Arc<dyn CoreMeter> {
@@ -134,8 +134,8 @@ impl MetricsAttributesOptions {
 /// A K/V pair that can be used to label a specific recording of a metric
 #[derive(Clone, Debug)]
 pub struct MetricKeyValue {
-    key: String,
-    value: MetricValue,
+    pub key: String,
+    pub value: MetricValue,
 }
 impl MetricKeyValue {
     pub fn new(key: impl Into<String>, value: impl Into<MetricValue>) -> Self {
