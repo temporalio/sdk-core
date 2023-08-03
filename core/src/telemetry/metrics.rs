@@ -721,6 +721,7 @@ mod tests {
         // Verify all metrics are created. This number will need to get updated any time a metric
         // is added.
         let num_metrics = 22;
+        #[allow(clippy::needless_range_loop)] // Sorry clippy, this reads easier.
         for metric_num in 1..=num_metrics {
             assert_matches!(&events[metric_num],
                 MetricEvent::Create { id, .. }
