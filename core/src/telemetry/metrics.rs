@@ -105,8 +105,14 @@ impl MetricsContext {
     }
 
     /// Extend an existing metrics context with new attributes
-    pub(crate) fn with_new_attrs(&self, new_kvs: impl IntoIterator<Item = MetricKeyValue>) -> Self {
-        let kvs = self.kvs.with_new_attrs(new_kvs);
+    pub(crate) fn with_new_attrs(
+        &self,
+        new_attrs: impl IntoIterator<Item = MetricKeyValue>,
+    ) -> Self {
+        let as_attrs = self.meter.new_attributes(MetricsAttributesOptions::new(
+            new_attrs.into_iter().collect(),
+        ));
+        let kvs = self.kvs.merge(as_attrs);
         Self {
             kvs,
             instruments: self.instruments.clone(),
@@ -569,7 +575,7 @@ impl CoreMeter for MetricsCallBuffer {
             attributes: opts.attributes,
         });
         MetricAttributes::Lang(LangMetricAttributes {
-            id: HashSet::from([id]),
+            ids: HashSet::from([id]),
             new_attributes: vec![],
         })
     }

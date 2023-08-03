@@ -83,17 +83,26 @@ pub enum MetricAttributes {
 pub struct LangMetricAttributes {
     /// A set of references to attributes stored in lang memory. All referenced attributes should
     /// be attached to the metric when recording.
-    pub id: HashSet<u64>,
+    pub ids: HashSet<u64>,
     /// If populated, these key values should also be used in addition to the referred-to
     /// existing attributes when recording
     pub new_attributes: Vec<MetricKeyValue>,
 }
 
 impl MetricAttributes {
-    /// Extend existing metrics attributes with new k/vs, returning a new instance
-    pub fn with_new_attrs(&self, new_kvs: impl IntoIterator<Item = MetricKeyValue>) -> Self {
+    /// Extend existing metrics attributes with others, returning a new instance
+    pub fn merge(&self, other: MetricAttributes) -> Self {
         let mut me = self.clone();
-        me.add_new_attrs(new_kvs);
+        match (&mut me, other) {
+            (MetricAttributes::OTel { ref mut kvs }, MetricAttributes::OTel { kvs: other_kvs }) => {
+                Arc::make_mut(kvs).extend((*other_kvs).clone());
+            }
+            (MetricAttributes::Lang(ref mut l), MetricAttributes::Lang(ol)) => {
+                l.ids.extend(ol.ids);
+                l.new_attributes.extend(ol.new_attributes);
+            }
+            _ => panic!("Cannot merge metric attributes of different kinds"),
+        }
         me
     }
 
@@ -171,7 +180,7 @@ pub struct NoOpCoreMeter;
 impl CoreMeter for NoOpCoreMeter {
     fn new_attributes(&self, _: MetricsAttributesOptions) -> MetricAttributes {
         MetricAttributes::Lang(LangMetricAttributes {
-            id: HashSet::new(),
+            ids: HashSet::new(),
             new_attributes: vec![],
         })
     }
