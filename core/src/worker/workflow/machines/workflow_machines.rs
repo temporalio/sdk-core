@@ -1409,14 +1409,12 @@ fn patch_marker_handling(
                 )))
             }
         }
+    } else if patch_machine.is_some() {
+        debug!("Skipping non-matching event against patch machine");
+        Ok(EventHandlingOutcome::SkipCommand)
     } else {
-        if patch_machine.is_some() {
-            debug!("Skipping non-matching event against patch machine");
-            Ok(EventHandlingOutcome::SkipCommand)
-        } else {
-            // Not a patch machine or a patch event
-            Ok(EventHandlingOutcome::Normal)
-        }
+        // Not a patch machine or a patch event
+        Ok(EventHandlingOutcome::Normal)
     }
 }
 
