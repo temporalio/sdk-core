@@ -1,14 +1,35 @@
-use std::{collections::HashSet, fmt::Debug, sync::Arc};
+use std::{borrow::Cow, collections::HashSet, fmt::Debug, sync::Arc};
 
 /// Implementors of this trait are expected to be defined in each language's bridge.
 /// The implementor is responsible for the allocation/instantiation of new metric meters which
 /// Core has requested.
 pub trait CoreMeter: Send + Sync + Debug {
     fn new_attributes(&self, attribs: MetricsAttributesOptions) -> MetricAttributes;
-    // TODO: Return result? One possible error: Name collisions.
-    fn counter(&self, name: &str) -> Arc<dyn Counter>;
-    fn histogram(&self, name: &str) -> Arc<dyn Histogram>;
-    fn gauge(&self, name: &str) -> Arc<dyn Gauge>;
+    fn counter(&self, params: MetricParameters) -> Arc<dyn Counter>;
+    fn histogram(&self, params: MetricParameters) -> Arc<dyn Histogram>;
+    fn gauge(&self, params: MetricParameters) -> Arc<dyn Gauge>;
+}
+
+#[derive(Debug, Clone, derive_builder::Builder)]
+pub struct MetricParameters {
+    /// The name for the new metric/instrument
+    #[builder(setter(into))]
+    pub name: Cow<'static, str>,
+    /// A description that will appear in metadata if the backend supports it
+    #[builder(setter(into), default = "\"\".into()")]
+    pub description: Cow<'static, str>,
+    /// Unit information that will appear in metadata if the backend supports it
+    #[builder(setter(into), default = "\"\".into()")]
+    pub unit: Cow<'static, str>,
+}
+impl From<&'static str> for MetricParameters {
+    fn from(value: &'static str) -> Self {
+        Self {
+            name: value.into(),
+            description: Default::default(),
+            unit: Default::default(),
+        }
+    }
 }
 
 /// Wraps a [CoreMeter] to enable the attaching of default labels to metrics. Cloning is cheap.
@@ -21,7 +42,7 @@ pub struct TemporalMeter {
 #[derive(Debug, Clone)]
 pub enum MetricEvent {
     Create {
-        name: String,
+        params: MetricParameters,
         id: u64,
         kind: MetricKind,
     },
@@ -57,14 +78,14 @@ impl CoreMeter for Arc<dyn CoreMeter> {
     fn new_attributes(&self, attribs: MetricsAttributesOptions) -> MetricAttributes {
         self.as_ref().new_attributes(attribs)
     }
-    fn counter(&self, name: &str) -> Arc<dyn Counter> {
-        self.as_ref().counter(name)
+    fn counter(&self, params: MetricParameters) -> Arc<dyn Counter> {
+        self.as_ref().counter(params)
     }
-    fn histogram(&self, name: &str) -> Arc<dyn Histogram> {
-        self.as_ref().histogram(name)
+    fn histogram(&self, params: MetricParameters) -> Arc<dyn Histogram> {
+        self.as_ref().histogram(params)
     }
-    fn gauge(&self, name: &str) -> Arc<dyn Gauge> {
-        self.as_ref().gauge(name)
+    fn gauge(&self, params: MetricParameters) -> Arc<dyn Gauge> {
+        self.as_ref().gauge(params)
     }
 }
 
@@ -185,15 +206,15 @@ impl CoreMeter for NoOpCoreMeter {
         })
     }
 
-    fn counter(&self, _: &str) -> Arc<dyn Counter> {
+    fn counter(&self, _: MetricParameters) -> Arc<dyn Counter> {
         Arc::new(NoOpInstrument)
     }
 
-    fn histogram(&self, _: &str) -> Arc<dyn Histogram> {
+    fn histogram(&self, _: MetricParameters) -> Arc<dyn Histogram> {
         Arc::new(NoOpInstrument)
     }
 
-    fn gauge(&self, _: &str) -> Arc<dyn Gauge> {
+    fn gauge(&self, _: MetricParameters) -> Arc<dyn Gauge> {
         Arc::new(NoOpInstrument)
     }
 }
@@ -231,11 +252,15 @@ mod otel_impls {
         }
     }
 
-    // TODO: Dbg panic
     impl Counter for metrics::Counter<u64> {
         fn add(&self, value: u64, attributes: &MetricAttributes) {
             if let MetricAttributes::OTel { kvs } = attributes {
                 self.add(value, kvs);
+            } else {
+                debug_assert!(
+                    false,
+                    "Must use OTel attributes with an OTel metric implementation"
+                );
             }
         }
     }
@@ -244,6 +269,11 @@ mod otel_impls {
         fn record(&self, value: u64, attributes: &MetricAttributes) {
             if let MetricAttributes::OTel { kvs } = attributes {
                 self.record(value, kvs);
+            } else {
+                debug_assert!(
+                    false,
+                    "Must use OTel attributes with an OTel metric implementation"
+                );
             }
         }
     }

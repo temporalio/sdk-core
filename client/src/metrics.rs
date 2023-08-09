@@ -35,12 +35,12 @@ impl MetricsContext {
         Self {
             kvs: meter.new_attributes(tm.default_attribs),
             poll_is_long: false,
-            svc_request: meter.counter("request"),
-            svc_request_failed: meter.counter("request_failure"),
-            long_svc_request: meter.counter("long_request"),
-            long_svc_request_failed: meter.counter("long_request_failure"),
-            svc_request_latency: meter.histogram("request_latency"),
-            long_svc_request_latency: meter.histogram("long_request_latency"),
+            svc_request: meter.counter("request".into()),
+            svc_request_failed: meter.counter("request_failure".into()),
+            long_svc_request: meter.counter("long_request".into()),
+            long_svc_request_failed: meter.counter("long_request_failure".into()),
+            svc_request_latency: meter.histogram("request_latency".into()),
+            long_svc_request_latency: meter.histogram("long_request_latency".into()),
         }
     }
 
