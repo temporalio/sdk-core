@@ -249,8 +249,8 @@ impl WfContext {
 
     /// Record that this workflow history was created with the provided patch, and it is being
     /// phased out.
-    pub fn deprecate_patch(&self, patch_id: &str) {
-        self.patch_impl(patch_id, true);
+    pub fn deprecate_patch(&self, patch_id: &str) -> bool {
+        self.patch_impl(patch_id, true)
     }
 
     fn patch_impl(&self, patch_id: &str, deprecated: bool) -> bool {

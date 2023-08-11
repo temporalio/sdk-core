@@ -1,5 +1,8 @@
 use std::{
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::Duration,
 };
 
@@ -112,6 +115,37 @@ async fn patched_on_second_workflow_task_is_deterministic() {
         assert!(ctx.patched(MY_PATCH_ID));
         ctx.timer(Duration::from_millis(1)).await;
         Ok(().into())
+    });
+
+    starter.start_with_worker(wf_name, &mut worker).await;
+    worker.run_until_done().await.unwrap();
+}
+
+#[tokio::test]
+async fn can_remove_deprecated_patch_near_other_patch() {
+    let wf_name = "can_add_change_markers";
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter.no_remote_activities();
+    let mut worker = starter.worker().await;
+    let did_die = Arc::new(AtomicBool::new(false));
+    worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| {
+        let did_die = did_die.clone();
+        async move {
+            ctx.timer(Duration::from_millis(200)).await;
+            if !did_die.load(Ordering::Acquire) {
+                assert!(ctx.deprecate_patch("getting-deprecated"));
+                assert!(ctx.patched("staying"));
+            } else {
+                assert!(ctx.patched("staying"));
+            }
+            ctx.timer(Duration::from_millis(200)).await;
+
+            if !did_die.load(Ordering::Acquire) {
+                did_die.store(true, Ordering::Release);
+                ctx.force_task_fail(anyhow::anyhow!("i'm ded"));
+            }
+            Ok(().into())
+        }
     });
 
     starter.start_with_worker(wf_name, &mut worker).await;

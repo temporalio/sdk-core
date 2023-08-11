@@ -270,6 +270,13 @@ impl TryFrom<HistEventData> for PatchMachineEvents {
     }
 }
 
+impl PatchMachine {
+    /// Returns true if this patch machine has the same id as the one provided
+    pub(crate) fn matches_patch(&self, id: &str) -> bool {
+        self.shared_state.patch_id == id
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
