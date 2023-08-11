@@ -235,14 +235,14 @@ impl StartCommandCreated {
             if event_dat.wf_id != state.workflow_id {
                 return TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
                     "Child workflow id of scheduled event '{}' does not \
-                     match child workflow id of activity command '{}'",
+                     match child workflow id of command '{}'",
                     event_dat.wf_id, state.workflow_id
                 )));
             }
             if event_dat.wf_type != state.workflow_type {
                 return TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
                     "Child workflow type of scheduled event '{}' does not \
-                     match child workflow type of activity command '{}'",
+                     match child workflow type of command '{}'",
                     event_dat.wf_type, state.workflow_type
                 )));
             }
