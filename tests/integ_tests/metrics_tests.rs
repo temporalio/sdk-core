@@ -86,6 +86,8 @@ async fn prometheus_metrics_exported() {
     assert!(body.contains(
         "temporal_request_latency_count{operation=\"GetSystemInfo\",service_name=\"temporal-core-sdk\"} 1"
     ));
+    // Verify counter names are appropriate (don't end w/ '_total')
+    assert!(body.contains("temporal_request{"));
 }
 
 #[tokio::test]
@@ -311,7 +313,22 @@ async fn query_of_closed_workflow_doesnt_tick_terminal_metric(
     let worker = starter.get_worker().await;
     let run_id = starter.start_wf().await;
     let task = worker.poll_workflow_activation().await.unwrap();
+    // Fail wf task
+    worker
+        .complete_workflow_activation(WorkflowActivationCompletion::fail(
+            task.run_id,
+            "whatever".into(),
+        ))
+        .await
+        .unwrap();
+    // Handle cache eviction
+    let task = worker.poll_workflow_activation().await.unwrap();
+    worker
+        .complete_workflow_activation(WorkflowActivationCompletion::empty(task.run_id))
+        .await
+        .unwrap();
     // Immediately complete the workflow
+    let task = worker.poll_workflow_activation().await.unwrap();
     worker
         .complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
             task.run_id,
@@ -400,6 +417,7 @@ async fn query_of_closed_workflow_doesnt_tick_terminal_metric(
 
     // Verify there is still only one tick
     let body = get_text(format!("http://{addr}/metrics")).await;
+    dbg!(&body);
     let matching_line = body
         .lines()
         .find(|l| l.starts_with(metric_name))

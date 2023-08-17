@@ -24,6 +24,7 @@ impl PromServer {
         let exporter = opentelemetry_prometheus::exporter()
             .with_aggregation_selector(aggregation)
             .without_scope_info()
+            .without_counter_suffixes()
             .with_registry(registry.clone());
         let bound_addr = AddrIncoming::bind(&addr)?;
         Ok((
