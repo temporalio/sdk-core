@@ -115,6 +115,7 @@ pub struct WorkerConfig {
     #[builder(default = "5")]
     pub fetching_concurrency: usize,
 
+    // TODO: Move this out - dependency on tokio should not exist just for this
     /// If set, and the `save_wf_inputs` feature is enabled in core, will be sent a serialized
     /// instance of every input to workflow state in order. This is for testing purposes, SDK
     /// implementations never need to care about it.

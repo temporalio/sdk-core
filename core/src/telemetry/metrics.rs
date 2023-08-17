@@ -1,20 +1,45 @@
-use crate::telemetry::TelemetryInstance;
+use crate::{
+    abstractions::dbg_panic,
+    telemetry::{
+        default_resource, metric_temporality_to_selector, prometheus_server::PromServer,
+        TelemetryInstance, TELEM_SERVICE_NAME,
+    },
+};
 use opentelemetry::{
     self,
-    metrics::{noop::NoopMeterProvider, Counter, Histogram, Meter, MeterProvider},
+    metrics::{Meter, MeterProvider as MeterProviderT, Unit},
     KeyValue,
 };
+use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::{
     metrics::{
         new_view,
         reader::{AggregationSelector, DefaultAggregationSelector},
-        Aggregation, Instrument, InstrumentKind, MeterProviderBuilder, View,
+        Aggregation, Instrument, InstrumentKind, MeterProvider, MeterProviderBuilder,
+        PeriodicReader, View,
     },
-    AttributeSet,
+    runtime, AttributeSet,
 };
 use parking_lot::RwLock;
-use std::{borrow::Cow, collections::HashMap, ops::Deref, sync::Arc, time::Duration};
-use temporal_client::ClientMetricProvider;
+use std::{
+    collections::{HashMap, HashSet},
+    net::SocketAddr,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
+use temporal_sdk_core_api::telemetry::{
+    metrics::{
+        CoreMeter, Counter, Gauge, Histogram, LangMetricAttributes, MetricAttributes,
+        MetricCallBufferer, MetricEvent, MetricKeyValue, MetricKind, MetricParameters,
+        MetricUpdateVal, MetricsAttributesOptions, NoOpCoreMeter,
+    },
+    OtelCollectorOptions, PrometheusExporterOptions,
+};
+use tokio::task::AbortHandle;
+use tonic::metadata::MetadataMap;
 
 /// Used to track context associated with metrics, and record/update them
 ///
@@ -22,126 +47,78 @@ use temporal_client::ClientMetricProvider;
 /// appropriate k/vs have already been set.
 #[derive(Clone)]
 pub(crate) struct MetricsContext {
-    kvs: Arc<Vec<KeyValue>>,
+    meter: Arc<dyn CoreMeter>,
+    kvs: MetricAttributes,
     instruments: Arc<Instruments>,
 }
 
-/// Wraps OTel's [Meter] to ensure we name our metrics properly, or any other temporal-specific
-/// metrics customizations
-#[derive(derive_more::Constructor)]
-pub struct TemporalMeter<'a> {
-    inner: &'a Meter,
-    metrics_prefix: &'static str,
-    kvs: Arc<Vec<KeyValue>>,
-}
-
-impl<'a> TemporalMeter<'a> {
-    pub(crate) fn counter(&self, name: &'static str) -> Counter<u64> {
-        self.inner
-            .u64_counter(self.metrics_prefix.to_string() + name)
-            .init()
-    }
-
-    pub(crate) fn histogram(&self, name: &'static str) -> Histogram<u64> {
-        self.inner
-            .u64_histogram(self.metrics_prefix.to_string() + name)
-            .init()
-    }
-
-    pub(crate) fn gauge(&self, name: &'static str) -> MemoryGaugeU64 {
-        MemoryGaugeU64::new(self.metrics_prefix.to_string() + name, self.inner)
-    }
-}
-
-impl<'a> ClientMetricProvider for TemporalMeter<'a> {
-    fn counter(&self, name: &'static str) -> Counter<u64> {
-        self.counter(name)
-    }
-
-    fn histogram(&self, name: &'static str) -> Histogram<u64> {
-        self.histogram(name)
-    }
-
-    fn fixed_labels(&self) -> &[KeyValue] {
-        self.kvs.as_slice()
-    }
-}
-
-impl<'a> Deref for TemporalMeter<'a> {
-    type Target = dyn ClientMetricProvider + 'a;
-
-    fn deref(&self) -> &Self::Target {
-        self as &Self::Target
-    }
-}
-
 struct Instruments {
-    wf_completed_counter: Counter<u64>,
-    wf_canceled_counter: Counter<u64>,
-    wf_failed_counter: Counter<u64>,
-    wf_cont_counter: Counter<u64>,
-    wf_e2e_latency: Histogram<u64>,
-    wf_task_queue_poll_empty_counter: Counter<u64>,
-    wf_task_queue_poll_succeed_counter: Counter<u64>,
-    wf_task_execution_failure_counter: Counter<u64>,
-    wf_task_sched_to_start_latency: Histogram<u64>,
-    wf_task_replay_latency: Histogram<u64>,
-    wf_task_execution_latency: Histogram<u64>,
-    act_poll_no_task: Counter<u64>,
-    act_task_received_counter: Counter<u64>,
-    act_execution_failed: Counter<u64>,
-    act_sched_to_start_latency: Histogram<u64>,
-    act_exec_latency: Histogram<u64>,
-    worker_registered: Counter<u64>,
-    num_pollers: MemoryGaugeU64,
-    task_slots_available: MemoryGaugeU64,
-    sticky_cache_hit: Counter<u64>,
-    sticky_cache_miss: Counter<u64>,
-    sticky_cache_size: MemoryGaugeU64,
-    sticky_cache_evictions: Counter<u64>,
+    wf_completed_counter: Arc<dyn Counter>,
+    wf_canceled_counter: Arc<dyn Counter>,
+    wf_failed_counter: Arc<dyn Counter>,
+    wf_cont_counter: Arc<dyn Counter>,
+    wf_e2e_latency: Arc<dyn Histogram>,
+    wf_task_queue_poll_empty_counter: Arc<dyn Counter>,
+    wf_task_queue_poll_succeed_counter: Arc<dyn Counter>,
+    wf_task_execution_failure_counter: Arc<dyn Counter>,
+    wf_task_sched_to_start_latency: Arc<dyn Histogram>,
+    wf_task_replay_latency: Arc<dyn Histogram>,
+    wf_task_execution_latency: Arc<dyn Histogram>,
+    act_poll_no_task: Arc<dyn Counter>,
+    act_task_received_counter: Arc<dyn Counter>,
+    act_execution_failed: Arc<dyn Counter>,
+    act_sched_to_start_latency: Arc<dyn Histogram>,
+    act_exec_latency: Arc<dyn Histogram>,
+    worker_registered: Arc<dyn Counter>,
+    num_pollers: Arc<dyn Gauge>,
+    task_slots_available: Arc<dyn Gauge>,
+    sticky_cache_hit: Arc<dyn Counter>,
+    sticky_cache_miss: Arc<dyn Counter>,
+    sticky_cache_size: Arc<dyn Gauge>,
+    sticky_cache_evictions: Arc<dyn Counter>,
 }
 
 impl MetricsContext {
     pub(crate) fn no_op() -> Self {
+        let meter = Arc::new(NoOpCoreMeter);
         Self {
-            kvs: Default::default(),
-            instruments: Arc::new(Instruments::new_explicit(TemporalMeter::new(
-                &NoopMeterProvider::new().meter("fakemeter"),
-                "fakemetrics",
-                Arc::new(vec![]),
-            ))),
+            kvs: meter.new_attributes(Default::default()),
+            instruments: Arc::new(Instruments::new(meter.as_ref())),
+            meter,
         }
     }
 
-    pub(crate) fn top_level(namespace: String, telemetry: &TelemetryInstance) -> Self {
-        let no_op_meter: Meter;
-        let meter = if let Some(meter) = telemetry.get_metric_meter() {
+    pub(crate) fn top_level(namespace: String, tq: String, telemetry: &TelemetryInstance) -> Self {
+        if let Some(mut meter) = telemetry.get_metric_meter() {
             meter
+                .default_attribs
+                .attributes
+                .push(MetricKeyValue::new(KEY_NAMESPACE, namespace));
+            meter.default_attribs.attributes.push(task_queue(tq));
+            let kvs = meter.inner.new_attributes(meter.default_attribs);
+            Self {
+                kvs,
+                instruments: Arc::new(Instruments::new(meter.inner.as_ref())),
+                meter: meter.inner,
+            }
         } else {
-            no_op_meter = NoopMeterProvider::default().meter("no_op");
-            TemporalMeter::new(&no_op_meter, "fakemetrics", Arc::new(vec![]))
-        };
-
-        let mut kvs = (*meter.kvs).clone();
-        kvs.push(KeyValue::new(KEY_NAMESPACE, namespace));
-        Self {
-            kvs: Arc::new(kvs),
-            instruments: Arc::new(Instruments::new_explicit(meter)),
+            Self::no_op()
         }
-    }
-
-    pub(crate) fn with_task_q(mut self, tq: String) -> Self {
-        Arc::make_mut(&mut self.kvs).push(task_queue(tq));
-        self
     }
 
     /// Extend an existing metrics context with new attributes
-    pub(crate) fn with_new_attrs(&self, new_kvs: impl IntoIterator<Item = KeyValue>) -> Self {
-        let mut kvs = self.kvs.clone();
-        Arc::make_mut(&mut kvs).extend(new_kvs);
+    pub(crate) fn with_new_attrs(
+        &self,
+        new_attrs: impl IntoIterator<Item = MetricKeyValue>,
+    ) -> Self {
+        let as_attrs = self.meter.new_attributes(MetricsAttributesOptions::new(
+            new_attrs.into_iter().collect(),
+        ));
+        let kvs = self.kvs.merge(as_attrs);
         Self {
             kvs,
             instruments: self.instruments.clone(),
+            meter: self.meter.clone(),
         }
     }
 
@@ -253,14 +230,12 @@ impl MetricsContext {
     pub(crate) fn available_task_slots(&self, num: usize) {
         self.instruments
             .task_slots_available
-            .record(num as u64, self.kvs.clone())
+            .record(num as u64, &self.kvs)
     }
 
     /// Record current number of pollers. Context should include poller type / task queue tag.
     pub(crate) fn record_num_pollers(&self, num: usize) {
-        self.instruments
-            .num_pollers
-            .record(num as u64, self.kvs.clone());
+        self.instruments.num_pollers.record(num as u64, &self.kvs);
     }
 
     /// A workflow task found a cached workflow to run against
@@ -275,9 +250,7 @@ impl MetricsContext {
 
     /// Record current cache size (in number of wfs, not bytes)
     pub(crate) fn cache_size(&self, size: u64) {
-        self.instruments
-            .sticky_cache_size
-            .record(size, self.kvs.clone());
+        self.instruments.sticky_cache_size.record(size, &self.kvs);
     }
 
     /// Count a workflow being evicted from the cache
@@ -287,32 +260,127 @@ impl MetricsContext {
 }
 
 impl Instruments {
-    fn new_explicit(meter: TemporalMeter) -> Self {
+    fn new(meter: &dyn CoreMeter) -> Self {
         Self {
-            wf_completed_counter: meter.counter("workflow_completed"),
-            wf_canceled_counter: meter.counter("workflow_canceled"),
-            wf_failed_counter: meter.counter("workflow_failed"),
-            wf_cont_counter: meter.counter("workflow_continue_as_new"),
-            wf_e2e_latency: meter.histogram(WF_E2E_LATENCY_NAME),
-            wf_task_queue_poll_empty_counter: meter.counter("workflow_task_queue_poll_empty"),
-            wf_task_queue_poll_succeed_counter: meter.counter("workflow_task_queue_poll_succeed"),
-            wf_task_execution_failure_counter: meter.counter("workflow_task_execution_failed"),
-            wf_task_sched_to_start_latency: meter.histogram(WF_TASK_SCHED_TO_START_LATENCY_NAME),
-            wf_task_replay_latency: meter.histogram(WF_TASK_REPLAY_LATENCY_NAME),
-            wf_task_execution_latency: meter.histogram(WF_TASK_EXECUTION_LATENCY_NAME),
-            act_poll_no_task: meter.counter("activity_poll_no_task"),
-            act_task_received_counter: meter.counter("activity_task_received"),
-            act_execution_failed: meter.counter("activity_execution_failed"),
-            act_sched_to_start_latency: meter.histogram(ACT_SCHED_TO_START_LATENCY_NAME),
-            act_exec_latency: meter.histogram(ACT_EXEC_LATENCY_NAME),
+            wf_completed_counter: meter.counter(MetricParameters {
+                name: "workflow_completed".into(),
+                description: "Count of successfully completed workflows".into(),
+                unit: "".into(),
+            }),
+            wf_canceled_counter: meter.counter(MetricParameters {
+                name: "workflow_canceled".into(),
+                description: "Count of canceled workflows".into(),
+                unit: "".into(),
+            }),
+            wf_failed_counter: meter.counter(MetricParameters {
+                name: "workflow_failed".into(),
+                description: "Count of failed workflows".into(),
+                unit: "".into(),
+            }),
+            wf_cont_counter: meter.counter(MetricParameters {
+                name: "workflow_continue_as_new".into(),
+                description: "Count of continued-as-new workflows".into(),
+                unit: "".into(),
+            }),
+            wf_e2e_latency: meter.histogram(MetricParameters {
+                name: WF_E2E_LATENCY_NAME.into(),
+                unit: "ms".into(),
+                description: "Histogram of total workflow execution latencies".into(),
+            }),
+            wf_task_queue_poll_empty_counter: meter.counter(MetricParameters {
+                name: "workflow_task_queue_poll_empty".into(),
+                description: "Count of workflow task queue poll timeouts (no new task)".into(),
+                unit: "".into(),
+            }),
+            wf_task_queue_poll_succeed_counter: meter.counter(MetricParameters {
+                name: "workflow_task_queue_poll_succeed".into(),
+                description: "Count of workflow task queue poll successes".into(),
+                unit: "".into(),
+            }),
+            wf_task_execution_failure_counter: meter.counter(MetricParameters {
+                name: "workflow_task_execution_failed".into(),
+                description: "Count of workflow task execution failures".into(),
+                unit: "".into(),
+            }),
+            wf_task_sched_to_start_latency: meter.histogram(MetricParameters {
+                name: WF_TASK_SCHED_TO_START_LATENCY_NAME.into(),
+                unit: "ms".into(),
+                description: "Histogram of workflow task schedule-to-start latencies".into(),
+            }),
+            wf_task_replay_latency: meter.histogram(MetricParameters {
+                name: WF_TASK_REPLAY_LATENCY_NAME.into(),
+                unit: "ms".into(),
+                description: "Histogram of workflow task replay latencies".into(),
+            }),
+            wf_task_execution_latency: meter.histogram(MetricParameters {
+                name: WF_TASK_EXECUTION_LATENCY_NAME.into(),
+                unit: "ms".into(),
+                description: "Histogram of workflow task execution (not replay) latencies".into(),
+            }),
+            act_poll_no_task: meter.counter(MetricParameters {
+                name: "activity_poll_no_task".into(),
+                description: "Count of activity task queue poll timeouts (no new task)".into(),
+                unit: "".into(),
+            }),
+            act_task_received_counter: meter.counter(MetricParameters {
+                name: "activity_task_received".into(),
+                description: "Count of activity task queue poll successes".into(),
+                unit: "".into(),
+            }),
+            act_execution_failed: meter.counter(MetricParameters {
+                name: "activity_execution_failed".into(),
+                description: "Count of activity task execution failures".into(),
+                unit: "".into(),
+            }),
+            act_sched_to_start_latency: meter.histogram(MetricParameters {
+                name: ACT_SCHED_TO_START_LATENCY_NAME.into(),
+                unit: "ms".into(),
+                description: "Histogram of activity schedule-to-start latencies".into(),
+            }),
+            act_exec_latency: meter.histogram(MetricParameters {
+                name: ACT_EXEC_LATENCY_NAME.into(),
+                unit: "ms".into(),
+                description: "Histogram of activity execution latencies".into(),
+            }),
             // name kept as worker start for compat with old sdk / what users expect
-            worker_registered: meter.counter("worker_start"),
-            num_pollers: meter.gauge(NUM_POLLERS_NAME),
-            task_slots_available: meter.gauge(TASK_SLOTS_AVAILABLE_NAME),
-            sticky_cache_hit: meter.counter("sticky_cache_hit"),
-            sticky_cache_miss: meter.counter("sticky_cache_miss"),
-            sticky_cache_size: meter.gauge(STICKY_CACHE_SIZE_NAME),
-            sticky_cache_evictions: meter.counter("sticky_cache_total_forced_eviction"),
+            worker_registered: meter.counter(MetricParameters {
+                name: "worker_start".into(),
+                description: "Count of the number of initialized workers".into(),
+                unit: "".into(),
+            }),
+            num_pollers: meter.gauge(MetricParameters {
+                name: NUM_POLLERS_NAME.into(),
+                description: "Current number of active pollers per queue type".into(),
+                unit: "".into(),
+            }),
+            task_slots_available: meter.gauge(MetricParameters {
+                name: TASK_SLOTS_AVAILABLE_NAME.into(),
+                description: "Current number of available slots per task type".into(),
+                unit: "".into(),
+            }),
+            sticky_cache_hit: meter.counter(MetricParameters {
+                name: "sticky_cache_hit".into(),
+                description: "Count of times the workflow cache was used for a new workflow task"
+                    .into(),
+                unit: "".into(),
+            }),
+            sticky_cache_miss: meter.counter(MetricParameters {
+                name: "sticky_cache_miss".into(),
+                description:
+                    "Count of times the workflow cache was missing a workflow for a sticky task"
+                        .into(),
+                unit: "".into(),
+            }),
+            sticky_cache_size: meter.gauge(MetricParameters {
+                name: STICKY_CACHE_SIZE_NAME.into(),
+                description: "Current number of cached workflows".into(),
+                unit: "".into(),
+            }),
+            sticky_cache_evictions: meter.counter(MetricParameters {
+                name: "sticky_cache_total_forced_eviction".into(),
+                description: "Count of evictions of cached workflows".into(),
+                unit: "".into(),
+            }),
         }
     }
 }
@@ -325,35 +393,35 @@ const KEY_POLLER_TYPE: &str = "poller_type";
 const KEY_WORKER_TYPE: &str = "worker_type";
 const KEY_EAGER: &str = "eager";
 
-pub(crate) fn workflow_poller() -> KeyValue {
-    KeyValue::new(KEY_POLLER_TYPE, "workflow_task")
+pub(crate) fn workflow_poller() -> MetricKeyValue {
+    MetricKeyValue::new(KEY_POLLER_TYPE, "workflow_task")
 }
-pub(crate) fn workflow_sticky_poller() -> KeyValue {
-    KeyValue::new(KEY_POLLER_TYPE, "sticky_workflow_task")
+pub(crate) fn workflow_sticky_poller() -> MetricKeyValue {
+    MetricKeyValue::new(KEY_POLLER_TYPE, "sticky_workflow_task")
 }
-pub(crate) fn activity_poller() -> KeyValue {
-    KeyValue::new(KEY_POLLER_TYPE, "activity_task")
+pub(crate) fn activity_poller() -> MetricKeyValue {
+    MetricKeyValue::new(KEY_POLLER_TYPE, "activity_task")
 }
-pub(crate) fn task_queue(tq: String) -> KeyValue {
-    KeyValue::new(KEY_TASK_QUEUE, tq)
+pub(crate) fn task_queue(tq: String) -> MetricKeyValue {
+    MetricKeyValue::new(KEY_TASK_QUEUE, tq)
 }
-pub(crate) fn activity_type(ty: String) -> KeyValue {
-    KeyValue::new(KEY_ACT_TYPE, ty)
+pub(crate) fn activity_type(ty: String) -> MetricKeyValue {
+    MetricKeyValue::new(KEY_ACT_TYPE, ty)
 }
-pub(crate) fn workflow_type(ty: String) -> KeyValue {
-    KeyValue::new(KEY_WF_TYPE, ty)
+pub(crate) fn workflow_type(ty: String) -> MetricKeyValue {
+    MetricKeyValue::new(KEY_WF_TYPE, ty)
 }
-pub(crate) fn workflow_worker_type() -> KeyValue {
-    KeyValue::new(KEY_WORKER_TYPE, "WorkflowWorker")
+pub(crate) fn workflow_worker_type() -> MetricKeyValue {
+    MetricKeyValue::new(KEY_WORKER_TYPE, "WorkflowWorker")
 }
-pub(crate) fn activity_worker_type() -> KeyValue {
-    KeyValue::new(KEY_WORKER_TYPE, "ActivityWorker")
+pub(crate) fn activity_worker_type() -> MetricKeyValue {
+    MetricKeyValue::new(KEY_WORKER_TYPE, "ActivityWorker")
 }
-pub(crate) fn local_activity_worker_type() -> KeyValue {
-    KeyValue::new(KEY_WORKER_TYPE, "LocalActivityWorker")
+pub(crate) fn local_activity_worker_type() -> MetricKeyValue {
+    MetricKeyValue::new(KEY_WORKER_TYPE, "LocalActivityWorker")
 }
-pub(crate) fn eager(is_eager: bool) -> KeyValue {
-    KeyValue::new(KEY_EAGER, is_eager)
+pub(crate) fn eager(is_eager: bool) -> MetricKeyValue {
+    MetricKeyValue::new(KEY_EAGER, is_eager)
 }
 
 const WF_E2E_LATENCY_NAME: &str = "workflow_endtoend_latency";
@@ -404,6 +472,22 @@ static TASK_SCHED_TO_START_MS_BUCKETS: &[f64] =
 /// broadly it's trying to represent latencies in millis.
 pub(super) static DEFAULT_MS_BUCKETS: &[f64] = &[50., 100., 500., 1000., 2500., 10_000.];
 
+/// Returns the default histogram buckets that lang should use for a given metric name if they
+/// have not been overridden by the user.
+///
+/// The name must *not* be prefixed with `temporal_`
+pub fn default_buckets_for(histo_name: &str) -> &'static [f64] {
+    match histo_name {
+        WF_E2E_LATENCY_NAME => WF_LATENCY_MS_BUCKETS,
+        WF_TASK_EXECUTION_LATENCY_NAME | WF_TASK_REPLAY_LATENCY_NAME => WF_TASK_MS_BUCKETS,
+        WF_TASK_SCHED_TO_START_LATENCY_NAME | ACT_SCHED_TO_START_LATENCY_NAME => {
+            TASK_SCHED_TO_START_MS_BUCKETS
+        }
+        ACT_EXEC_LATENCY_NAME => ACT_EXE_MS_BUCKETS,
+        _ => DEFAULT_MS_BUCKETS,
+    }
+}
+
 /// Chooses appropriate aggregators for our metrics
 #[derive(Debug, Clone, Default)]
 pub struct SDKAggSelector {
@@ -421,13 +505,6 @@ impl AggregationSelector for SDKAggSelector {
     }
 }
 
-fn gauge_view(metric_name: &'static str) -> opentelemetry::metrics::Result<Box<dyn View>> {
-    new_view(
-        Instrument::new().name(format!("*{metric_name}")),
-        opentelemetry_sdk::metrics::Stream::new().aggregation(Aggregation::LastValue),
-    )
-}
-
 fn histo_view(
     metric_name: &'static str,
     buckets: &[f64],
@@ -443,15 +520,13 @@ fn histo_view(
     )
 }
 
-pub(super) fn augment_meter_provider_with_views(
+pub(super) fn augment_meter_provider_with_defaults(
     mpb: MeterProviderBuilder,
+    global_tags: &HashMap<String, String>,
 ) -> opentelemetry::metrics::Result<MeterProviderBuilder> {
     // Some histograms are actually gauges, but we have to use histograms otherwise they forget
     // their value between collections since we don't use callbacks.
     Ok(mpb
-        .with_view(gauge_view(STICKY_CACHE_SIZE_NAME)?)
-        .with_view(gauge_view(NUM_POLLERS_NAME)?)
-        .with_view(gauge_view(TASK_SLOTS_AVAILABLE_NAME)?)
         .with_view(histo_view(WF_E2E_LATENCY_NAME, WF_LATENCY_MS_BUCKETS)?)
         .with_view(histo_view(
             WF_TASK_EXECUTION_LATENCY_NAME,
@@ -466,7 +541,8 @@ pub(super) fn augment_meter_provider_with_views(
             ACT_SCHED_TO_START_LATENCY_NAME,
             TASK_SCHED_TO_START_MS_BUCKETS,
         )?)
-        .with_view(histo_view(ACT_EXEC_LATENCY_NAME, ACT_EXE_MS_BUCKETS)?))
+        .with_view(histo_view(ACT_EXEC_LATENCY_NAME, ACT_EXE_MS_BUCKETS)?)
+        .with_resource(default_resource(global_tags)))
 }
 
 /// OTel has no built-in synchronous Gauge. Histograms used to be able to serve that purpose, but
@@ -476,8 +552,12 @@ pub(crate) struct MemoryGaugeU64 {
 }
 
 impl MemoryGaugeU64 {
-    fn new(name: impl Into<Cow<'static, str>>, meter: &Meter) -> Self {
-        let gauge = meter.u64_observable_gauge(name).init();
+    fn new(params: MetricParameters, meter: &Meter) -> Self {
+        let gauge = meter
+            .u64_observable_gauge(params.name)
+            .with_unit(Unit::new(params.unit))
+            .with_description(params.description)
+            .init();
         let map = Arc::new(RwLock::new(HashMap::<AttributeSet, u64>::new()));
         let map_c = map.clone();
         meter
@@ -500,9 +580,399 @@ impl MemoryGaugeU64 {
             labels_to_values: map,
         }
     }
-    fn record(&self, val: u64, kvs: Arc<Vec<KeyValue>>) {
+    fn record(&self, val: u64, kvs: &[KeyValue]) {
         self.labels_to_values
             .write()
-            .insert(AttributeSet::from(kvs.as_slice()), val);
+            .insert(AttributeSet::from(kvs), val);
+    }
+}
+
+/// Create an OTel meter that can be used as a [CoreMeter] to export metrics over OTLP.
+pub fn build_otlp_metric_exporter(
+    opts: OtelCollectorOptions,
+) -> Result<CoreOtelMeter, anyhow::Error> {
+    let exporter = opentelemetry_otlp::MetricsExporter::new(
+        opentelemetry_otlp::TonicExporterBuilder::default()
+            .with_endpoint(opts.url.to_string())
+            .with_metadata(MetadataMap::from_headers((&opts.headers).try_into()?)),
+        Box::new(metric_temporality_to_selector(opts.metric_temporality)),
+        Box::<SDKAggSelector>::default(),
+    )?;
+    let reader = PeriodicReader::builder(exporter, runtime::Tokio)
+        .with_interval(opts.metric_periodicity)
+        .build();
+    let mp = augment_meter_provider_with_defaults(
+        MeterProvider::builder().with_reader(reader),
+        &opts.global_tags,
+    )?
+    .build();
+    Ok::<_, anyhow::Error>(CoreOtelMeter(mp.meter(TELEM_SERVICE_NAME)))
+}
+
+pub struct StartedPromServer {
+    pub meter: Arc<CoreOtelMeter>,
+    pub bound_addr: SocketAddr,
+    pub abort_handle: AbortHandle,
+}
+
+/// Builds and runs a prometheus endpoint which can be scraped by prom instances for metrics export.
+/// Returns the meter that can be used as a [CoreMeter].
+pub fn start_prometheus_metric_exporter(
+    opts: PrometheusExporterOptions,
+) -> Result<StartedPromServer, anyhow::Error> {
+    let (srv, exporter) = PromServer::new(&opts, SDKAggSelector::default())?;
+    let meter_provider = augment_meter_provider_with_defaults(
+        MeterProvider::builder().with_reader(exporter),
+        &opts.global_tags,
+    )?
+    .build();
+    let bound_addr = srv.bound_addr();
+    let handle = tokio::spawn(async move { srv.run().await });
+    Ok(StartedPromServer {
+        meter: Arc::new(CoreOtelMeter(meter_provider.meter(TELEM_SERVICE_NAME))),
+        bound_addr,
+        abort_handle: handle.abort_handle(),
+    })
+}
+
+/// Buffers [MetricEvent]s for periodic consumption by lang
+#[derive(Debug)]
+pub struct MetricsCallBuffer {
+    instrument_ids: AtomicU64,
+    attribute_ids: AtomicU64,
+    calls_rx: crossbeam::channel::Receiver<MetricEvent>,
+    calls_tx: crossbeam::channel::Sender<MetricEvent>,
+}
+impl MetricsCallBuffer {
+    /// Create a new buffer with the given capacity
+    pub fn new(buffer_size: usize) -> Self {
+        let (calls_tx, calls_rx) = crossbeam::channel::bounded(buffer_size);
+        MetricsCallBuffer {
+            instrument_ids: AtomicU64::new(0),
+            attribute_ids: AtomicU64::new(0),
+            calls_rx,
+            calls_tx,
+        }
+    }
+    fn new_instrument(&self, params: MetricParameters, kind: MetricKind) -> BufferInstrument {
+        let id = self.instrument_ids.fetch_add(1, Ordering::AcqRel);
+        let _ = self.calls_tx.send(MetricEvent::Create { params, id, kind });
+        BufferInstrument {
+            kind,
+            id,
+            tx: self.calls_tx.clone(),
+        }
+    }
+}
+impl CoreMeter for MetricsCallBuffer {
+    fn new_attributes(&self, opts: MetricsAttributesOptions) -> MetricAttributes {
+        let id = self.attribute_ids.fetch_add(1, Ordering::AcqRel);
+        let _ = self.calls_tx.send(MetricEvent::CreateAttributes {
+            id,
+            attributes: opts.attributes,
+        });
+        MetricAttributes::Lang(LangMetricAttributes {
+            ids: HashSet::from([id]),
+            new_attributes: vec![],
+        })
+    }
+
+    fn counter(&self, params: MetricParameters) -> Arc<dyn Counter> {
+        Arc::new(self.new_instrument(params, MetricKind::Counter))
+    }
+
+    fn histogram(&self, params: MetricParameters) -> Arc<dyn Histogram> {
+        Arc::new(self.new_instrument(params, MetricKind::Histogram))
+    }
+
+    fn gauge(&self, params: MetricParameters) -> Arc<dyn Gauge> {
+        Arc::new(self.new_instrument(params, MetricKind::Gauge))
+    }
+}
+impl MetricCallBufferer for MetricsCallBuffer {
+    fn retrieve(&self) -> Vec<MetricEvent> {
+        self.calls_rx.try_iter().collect()
+    }
+}
+
+struct BufferInstrument {
+    kind: MetricKind,
+    id: u64,
+    tx: crossbeam::channel::Sender<MetricEvent>,
+}
+impl BufferInstrument {
+    fn send(&self, value: u64, attributes: &MetricAttributes) {
+        let attributes = match attributes {
+            MetricAttributes::Lang(l) => l.clone(),
+            _ => panic!("MetricsCallBuffer only works with MetricAttributes::Lang"),
+        };
+        let _ = self.tx.send(MetricEvent::Update {
+            id: self.id,
+            update: match self.kind {
+                MetricKind::Counter => MetricUpdateVal::Delta(value),
+                MetricKind::Gauge | MetricKind::Histogram => MetricUpdateVal::Value(value),
+            },
+            attributes: attributes.clone(),
+        });
+    }
+}
+impl Counter for BufferInstrument {
+    fn add(&self, value: u64, attributes: &MetricAttributes) {
+        self.send(value, attributes)
+    }
+}
+impl Gauge for BufferInstrument {
+    fn record(&self, value: u64, attributes: &MetricAttributes) {
+        self.send(value, attributes)
+    }
+}
+impl Histogram for BufferInstrument {
+    fn record(&self, value: u64, attributes: &MetricAttributes) {
+        self.send(value, attributes)
+    }
+}
+
+#[derive(Debug)]
+pub struct CoreOtelMeter(Meter);
+impl CoreMeter for CoreOtelMeter {
+    fn new_attributes(&self, attribs: MetricsAttributesOptions) -> MetricAttributes {
+        MetricAttributes::OTel {
+            kvs: Arc::new(attribs.attributes.into_iter().map(KeyValue::from).collect()),
+        }
+    }
+
+    fn counter(&self, params: MetricParameters) -> Arc<dyn Counter> {
+        Arc::new(
+            self.0
+                .u64_counter(params.name)
+                .with_unit(Unit::new(params.unit))
+                .with_description(params.description)
+                .init(),
+        )
+    }
+
+    fn histogram(&self, params: MetricParameters) -> Arc<dyn Histogram> {
+        Arc::new(
+            self.0
+                .u64_histogram(params.name)
+                .with_unit(Unit::new(params.unit))
+                .with_description(params.description)
+                .init(),
+        )
+    }
+
+    fn gauge(&self, params: MetricParameters) -> Arc<dyn Gauge> {
+        Arc::new(MemoryGaugeU64::new(params, &self.0))
+    }
+}
+
+impl Gauge for MemoryGaugeU64 {
+    fn record(&self, value: u64, attributes: &MetricAttributes) {
+        if let MetricAttributes::OTel { kvs } = attributes {
+            self.record(value, kvs);
+        } else {
+            dbg_panic!("Must use OTel attributes with an OTel metric implementation");
+        }
+    }
+}
+
+#[derive(Debug, derive_more::Constructor)]
+pub(crate) struct PrefixedMetricsMeter<CM> {
+    prefix: &'static str,
+    meter: CM,
+}
+impl<CM: CoreMeter> CoreMeter for PrefixedMetricsMeter<CM> {
+    fn new_attributes(&self, attribs: MetricsAttributesOptions) -> MetricAttributes {
+        self.meter.new_attributes(attribs)
+    }
+
+    fn counter(&self, mut params: MetricParameters) -> Arc<dyn Counter> {
+        params.name = (self.prefix.to_string() + &*params.name).into();
+        self.meter.counter(params)
+    }
+
+    fn histogram(&self, mut params: MetricParameters) -> Arc<dyn Histogram> {
+        params.name = (self.prefix.to_string() + &*params.name).into();
+        self.meter.histogram(params)
+    }
+
+    fn gauge(&self, mut params: MetricParameters) -> Arc<dyn Gauge> {
+        params.name = (self.prefix.to_string() + &*params.name).into();
+        self.meter.gauge(params)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use temporal_sdk_core_api::telemetry::METRIC_PREFIX;
+    use tracing::subscriber::NoSubscriber;
+
+    #[test]
+    fn test_buffered_core_context() {
+        let no_op_subscriber = Arc::new(NoSubscriber::new());
+        let call_buffer = Arc::new(MetricsCallBuffer::new(100));
+        let telem_instance = TelemetryInstance::new(
+            no_op_subscriber,
+            None,
+            METRIC_PREFIX,
+            Some(call_buffer.clone()),
+            true,
+        );
+        let mc = MetricsContext::top_level("foo".to_string(), "q".to_string(), &telem_instance);
+        mc.cache_eviction();
+        let events = call_buffer.retrieve();
+        assert_matches!(
+            &events[0],
+            MetricEvent::CreateAttributes {
+                id: 0,
+                attributes
+            }
+            if attributes[0].key == "service_name" &&
+               attributes[1].key == "namespace" &&
+               attributes[2].key == "task_queue"
+        );
+        // Verify all metrics are created. This number will need to get updated any time a metric
+        // is added.
+        let num_metrics = 22;
+        #[allow(clippy::needless_range_loop)] // Sorry clippy, this reads easier.
+        for metric_num in 1..=num_metrics {
+            assert_matches!(&events[metric_num],
+                MetricEvent::Create { id, .. }
+                if *id == (metric_num - 1) as u64
+            );
+        }
+        assert_matches!(
+            &events[num_metrics + 2], // +2 for attrib creation (at start), then this update
+            MetricEvent::Update {
+                id: 22,
+                attributes,
+                update: MetricUpdateVal::Delta(1)
+            }
+            if attributes.ids == HashSet::from([0])
+        );
+        // Verify creating a new context with new attributes merges them properly
+        let mc2 = mc.with_new_attrs([MetricKeyValue::new("gotta", "go fast")]);
+        mc2.wf_task_latency(Duration::from_secs(1));
+        let events = call_buffer.retrieve();
+        assert_matches!(
+            &events[0],
+            MetricEvent::CreateAttributes {
+                id: 1,
+                attributes
+            }
+            if attributes[0].key == "gotta"
+        );
+        assert_matches!(
+            &events[1],
+            MetricEvent::Update {
+                id: 10,
+                attributes,
+                update: MetricUpdateVal::Value(1000) // milliseconds
+            }
+            if attributes.ids == HashSet::from([0, 1])
+        );
+    }
+
+    #[test]
+    fn metric_buffer() {
+        let call_buffer = MetricsCallBuffer::new(10);
+        let ctr = call_buffer.counter(MetricParameters {
+            name: "ctr".into(),
+            description: "a counter".into(),
+            unit: "grognaks".into(),
+        });
+        let histo = call_buffer.histogram(MetricParameters {
+            name: "histo".into(),
+            description: "a histogram".into(),
+            unit: "flubarbs".into(),
+        });
+        let gauge = call_buffer.gauge(MetricParameters {
+            name: "gauge".into(),
+            description: "a counter".into(),
+            unit: "bleezles".into(),
+        });
+        let attrs_1 = call_buffer.new_attributes(MetricsAttributesOptions {
+            attributes: vec![MetricKeyValue::new("hi", "yo")],
+        });
+        let attrs_2 = call_buffer.new_attributes(MetricsAttributesOptions {
+            attributes: vec![MetricKeyValue::new("run", "fast")],
+        });
+        ctr.add(1, &attrs_1);
+        histo.record(2, &attrs_1);
+        gauge.record(3, &attrs_2);
+
+        let mut calls = call_buffer.retrieve();
+        calls.reverse();
+        assert_matches!(
+            calls.pop(),
+            Some(MetricEvent::Create {
+                params,
+                id: 0,
+                kind: MetricKind::Counter
+            })
+            if params.name == "ctr"
+        );
+        assert_matches!(
+            calls.pop(),
+            Some(MetricEvent::Create {
+                params,
+                id: 1,
+                kind: MetricKind::Histogram
+            })
+            if params.name == "histo"
+        );
+        assert_matches!(
+            calls.pop(),
+            Some(MetricEvent::Create {
+                params,
+                id: 2,
+                kind: MetricKind::Gauge
+            })
+            if params.name == "gauge"
+        );
+        assert_matches!(
+            calls.pop(),
+            Some(MetricEvent::CreateAttributes {
+                id: 0,
+                attributes
+            })
+            if attributes[0].key == "hi"
+        );
+        assert_matches!(
+            calls.pop(),
+            Some(MetricEvent::CreateAttributes {
+                id: 1,
+                attributes
+            })
+            if attributes[0].key == "run"
+        );
+        assert_matches!(
+            calls.pop(),
+            Some(MetricEvent::Update{
+                id: 0,
+                attributes,
+                update: MetricUpdateVal::Delta(1)
+            })
+            if attributes.ids == HashSet::from([0])
+        );
+        assert_matches!(
+            calls.pop(),
+            Some(MetricEvent::Update{
+                id: 1,
+                attributes,
+                update: MetricUpdateVal::Value(2)
+            })
+            if attributes.ids == HashSet::from([0])
+        );
+        assert_matches!(
+            calls.pop(),
+            Some(MetricEvent::Update{
+                id: 2,
+                attributes,
+                update: MetricUpdateVal::Value(3)
+            })
+            if attributes.ids == HashSet::from([1])
+        );
     }
 }

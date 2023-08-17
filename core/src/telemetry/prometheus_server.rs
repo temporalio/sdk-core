@@ -8,6 +8,7 @@ use opentelemetry_prometheus::PrometheusExporter;
 use opentelemetry_sdk::metrics::reader::AggregationSelector;
 use prometheus::{Encoder, Registry, TextEncoder};
 use std::{convert::Infallible, net::SocketAddr};
+use temporal_sdk_core_api::telemetry::PrometheusExporterOptions;
 
 /// Exposes prometheus metrics for scraping
 pub(super) struct PromServer {
@@ -17,7 +18,7 @@ pub(super) struct PromServer {
 
 impl PromServer {
     pub fn new(
-        addr: SocketAddr,
+        opts: &PrometheusExporterOptions,
         aggregation: impl AggregationSelector + Send + Sync + 'static,
     ) -> Result<(Self, PrometheusExporter), anyhow::Error> {
         let registry = Registry::new();
@@ -25,7 +26,17 @@ impl PromServer {
             .with_aggregation_selector(aggregation)
             .without_scope_info()
             .with_registry(registry.clone());
-        let bound_addr = AddrIncoming::bind(&addr)?;
+        let exporter = if !opts.counters_total_suffix {
+            exporter.without_counter_suffixes()
+        } else {
+            exporter
+        };
+        let exporter = if !opts.unit_suffix {
+            exporter.without_units()
+        } else {
+            exporter
+        };
+        let bound_addr = AddrIncoming::bind(&opts.socket_addr)?;
         Ok((
             Self {
                 bound_addr,
@@ -38,9 +49,8 @@ impl PromServer {
     pub async fn run(self) -> hyper::Result<()> {
         // Spin up hyper server to serve metrics for scraping. We use hyper since we already depend
         // on it via Tonic.
-        let regclone = self.registry.clone();
         let svc = make_service_fn(move |_conn| {
-            let regclone = regclone.clone();
+            let regclone = self.registry.clone();
             async move { Ok::<_, Infallible>(service_fn(move |req| metrics_req(req, regclone.clone()))) }
         });
         let server = Server::builder(self.bound_addr).serve(svc);

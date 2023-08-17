@@ -1,13 +1,13 @@
 use crate::{AttachMetricLabels, LONG_POLL_METHOD_NAMES};
 use futures::{future::BoxFuture, FutureExt};
-use opentelemetry::{
-    metrics::{Counter, Histogram},
-    KeyValue,
-};
 use std::{
     sync::Arc,
     task::{Context, Poll},
     time::{Duration, Instant},
+};
+use temporal_sdk_core_api::telemetry::metrics::{
+    CoreMeter, Counter, Histogram, MetricAttributes, MetricKeyValue, MetricParameters,
+    TemporalMeter,
 };
 use tonic::{body::BoxBody, transport::Channel};
 use tower::Service;
@@ -15,55 +15,70 @@ use tower::Service;
 /// Used to track context associated with metrics, and record/update them
 // Possible improvement: make generic over some type tag so that methods are only exposed if the
 // appropriate k/vs have already been set.
-#[derive(Clone, Debug)]
+#[derive(Clone, derive_more::DebugCustom)]
+#[debug(fmt = "MetricsContext {{ attribs: {kvs:?}, poll_is_long: {poll_is_long} }}")]
 pub struct MetricsContext {
-    kvs: Arc<Vec<KeyValue>>,
+    kvs: MetricAttributes,
     poll_is_long: bool,
 
-    svc_request: Counter<u64>,
-    svc_request_failed: Counter<u64>,
-    long_svc_request: Counter<u64>,
-    long_svc_request_failed: Counter<u64>,
+    svc_request: Arc<dyn Counter>,
+    svc_request_failed: Arc<dyn Counter>,
+    long_svc_request: Arc<dyn Counter>,
+    long_svc_request_failed: Arc<dyn Counter>,
 
-    svc_request_latency: Histogram<u64>,
-    long_svc_request_latency: Histogram<u64>,
-}
-
-/// Things that can provide metrics for the client implement this. Trait exists to avoid having
-/// to make a whole new lower-level crate just for a tiny shared wrapper around OTel meters.
-pub trait ClientMetricProvider: Send + Sync {
-    /// Construct a counter metric
-    fn counter(&self, name: &'static str) -> Counter<u64>;
-    /// Construct a histogram metric
-    fn histogram(&self, name: &'static str) -> Histogram<u64>;
-    /// Returns labels that should always be attached to metric record calls
-    fn fixed_labels(&self) -> &[KeyValue];
+    svc_request_latency: Arc<dyn Histogram>,
+    long_svc_request_latency: Arc<dyn Histogram>,
 }
 
 impl MetricsContext {
-    pub(crate) fn new(kvs: Vec<KeyValue>, metric_provider: &dyn ClientMetricProvider) -> Self {
+    pub(crate) fn new(tm: TemporalMeter) -> Self {
+        let meter = tm.inner;
         Self {
-            kvs: Arc::new(kvs),
+            kvs: meter.new_attributes(tm.default_attribs),
             poll_is_long: false,
-            svc_request: metric_provider.counter("request"),
-            svc_request_failed: metric_provider.counter("request_failure"),
-            long_svc_request: metric_provider.counter("long_request"),
-            long_svc_request_failed: metric_provider.counter("long_request_failure"),
-            svc_request_latency: metric_provider.histogram("request_latency"),
-            long_svc_request_latency: metric_provider.histogram("long_request_latency"),
+            svc_request: meter.counter(MetricParameters {
+                name: "request".into(),
+                description: "Count of client request successes by rpc name".into(),
+                unit: "".into(),
+            }),
+            svc_request_failed: meter.counter(MetricParameters {
+                name: "request_failure".into(),
+                description: "Count of client request failures by rpc name".into(),
+                unit: "".into(),
+            }),
+            long_svc_request: meter.counter(MetricParameters {
+                name: "long_request".into(),
+                description: "Count of long-poll request successes by rpc name".into(),
+                unit: "".into(),
+            }),
+            long_svc_request_failed: meter.counter(MetricParameters {
+                name: "long_request_failure".into(),
+                description: "Count of long-poll request failures by rpc name".into(),
+                unit: "".into(),
+            }),
+            svc_request_latency: meter.histogram(MetricParameters {
+                name: "request_latency".into(),
+                unit: "ms".into(),
+                description: "Histogram of client request latencies".into(),
+            }),
+            long_svc_request_latency: meter.histogram(MetricParameters {
+                name: "long_request_latency".into(),
+                unit: "ms".into(),
+                description: "Histogram of client long-poll request latencies".into(),
+            }),
         }
     }
 
     /// Extend an existing metrics context with new attributes, returning a new one
-    pub(crate) fn with_new_attrs(&self, new_kvs: impl IntoIterator<Item = KeyValue>) -> Self {
+    pub(crate) fn with_new_attrs(&self, new_kvs: impl IntoIterator<Item = MetricKeyValue>) -> Self {
         let mut r = self.clone();
         r.add_new_attrs(new_kvs);
         r
     }
 
     /// Add new attributes to the context, mutating it
-    pub(crate) fn add_new_attrs(&mut self, new_kvs: impl IntoIterator<Item = KeyValue>) {
-        Arc::make_mut(&mut self.kvs).extend(new_kvs);
+    pub(crate) fn add_new_attrs(&mut self, new_kvs: impl IntoIterator<Item = MetricKeyValue>) {
+        self.kvs.add_new_attrs(new_kvs);
     }
 
     pub(crate) fn set_is_long_poll(&mut self) {
@@ -104,16 +119,16 @@ const KEY_NAMESPACE: &str = "namespace";
 const KEY_SVC_METHOD: &str = "operation";
 const KEY_TASK_QUEUE: &str = "task_queue";
 
-pub(crate) fn namespace_kv(ns: String) -> KeyValue {
-    KeyValue::new(KEY_NAMESPACE, ns)
+pub(crate) fn namespace_kv(ns: String) -> MetricKeyValue {
+    MetricKeyValue::new(KEY_NAMESPACE, ns)
 }
 
-pub(crate) fn task_queue_kv(tq: String) -> KeyValue {
-    KeyValue::new(KEY_TASK_QUEUE, tq)
+pub(crate) fn task_queue_kv(tq: String) -> MetricKeyValue {
+    MetricKeyValue::new(KEY_TASK_QUEUE, tq)
 }
 
-pub(crate) fn svc_operation(op: String) -> KeyValue {
-    KeyValue::new(KEY_SVC_METHOD, op)
+pub(crate) fn svc_operation(op: String) -> MetricKeyValue {
+    MetricKeyValue::new(KEY_SVC_METHOD, op)
 }
 
 /// Implements metrics functionality for gRPC (really, any http) calls
