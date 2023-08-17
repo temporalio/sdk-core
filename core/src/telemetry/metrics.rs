@@ -262,34 +262,125 @@ impl MetricsContext {
 impl Instruments {
     fn new(meter: &dyn CoreMeter) -> Self {
         Self {
-            wf_completed_counter: meter.counter("workflow_completed".into()),
-            wf_canceled_counter: meter.counter("workflow_canceled".into()),
-            wf_failed_counter: meter.counter("workflow_failed".into()),
-            wf_cont_counter: meter.counter("workflow_continue_as_new".into()),
-            wf_e2e_latency: meter.histogram(WF_E2E_LATENCY_NAME.into()),
-            wf_task_queue_poll_empty_counter: meter
-                .counter("workflow_task_queue_poll_empty".into()),
-            wf_task_queue_poll_succeed_counter: meter
-                .counter("workflow_task_queue_poll_succeed".into()),
-            wf_task_execution_failure_counter: meter
-                .counter("workflow_task_execution_failed".into()),
-            wf_task_sched_to_start_latency: meter
-                .histogram(WF_TASK_SCHED_TO_START_LATENCY_NAME.into()),
-            wf_task_replay_latency: meter.histogram(WF_TASK_REPLAY_LATENCY_NAME.into()),
-            wf_task_execution_latency: meter.histogram(WF_TASK_EXECUTION_LATENCY_NAME.into()),
-            act_poll_no_task: meter.counter("activity_poll_no_task".into()),
-            act_task_received_counter: meter.counter("activity_task_received".into()),
-            act_execution_failed: meter.counter("activity_execution_failed".into()),
-            act_sched_to_start_latency: meter.histogram(ACT_SCHED_TO_START_LATENCY_NAME.into()),
-            act_exec_latency: meter.histogram(ACT_EXEC_LATENCY_NAME.into()),
+            wf_completed_counter: meter.counter(MetricParameters {
+                name: "workflow_completed".into(),
+                description: "Count of successfully completed workflows".into(),
+                unit: "".into(),
+            }),
+            wf_canceled_counter: meter.counter(MetricParameters {
+                name: "workflow_canceled".into(),
+                description: "Count of canceled workflows".into(),
+                unit: "".into(),
+            }),
+            wf_failed_counter: meter.counter(MetricParameters {
+                name: "workflow_failed".into(),
+                description: "Count of failed workflows".into(),
+                unit: "".into(),
+            }),
+            wf_cont_counter: meter.counter(MetricParameters {
+                name: "workflow_continue_as_new".into(),
+                description: "Count of continued-as-new workflows".into(),
+                unit: "".into(),
+            }),
+            wf_e2e_latency: meter.histogram(MetricParameters {
+                name: WF_E2E_LATENCY_NAME.into(),
+                unit: "ms".into(),
+                description: "Histogram of total workflow execution latencies".into(),
+            }),
+            wf_task_queue_poll_empty_counter: meter.counter(MetricParameters {
+                name: "workflow_task_queue_poll_empty".into(),
+                description: "Count of workflow task queue poll timeouts (no new task)".into(),
+                unit: "".into(),
+            }),
+            wf_task_queue_poll_succeed_counter: meter.counter(MetricParameters {
+                name: "workflow_task_queue_poll_succeed".into(),
+                description: "Count of workflow task queue poll successes".into(),
+                unit: "".into(),
+            }),
+            wf_task_execution_failure_counter: meter.counter(MetricParameters {
+                name: "workflow_task_execution_failed".into(),
+                description: "Count of workflow task execution failures".into(),
+                unit: "".into(),
+            }),
+            wf_task_sched_to_start_latency: meter.histogram(MetricParameters {
+                name: WF_TASK_SCHED_TO_START_LATENCY_NAME.into(),
+                unit: "ms".into(),
+                description: "Histogram of workflow task schedule-to-start latencies".into(),
+            }),
+            wf_task_replay_latency: meter.histogram(MetricParameters {
+                name: WF_TASK_REPLAY_LATENCY_NAME.into(),
+                unit: "ms".into(),
+                description: "Histogram of workflow task replay latencies".into(),
+            }),
+            wf_task_execution_latency: meter.histogram(MetricParameters {
+                name: WF_TASK_EXECUTION_LATENCY_NAME.into(),
+                unit: "ms".into(),
+                description: "Histogram of workflow task execution (not replay) latencies".into(),
+            }),
+            act_poll_no_task: meter.counter(MetricParameters {
+                name: "activity_poll_no_task".into(),
+                description: "Count of activity task queue poll timeouts (no new task)".into(),
+                unit: "".into(),
+            }),
+            act_task_received_counter: meter.counter(MetricParameters {
+                name: "activity_task_received".into(),
+                description: "Count of activity task queue poll successes".into(),
+                unit: "".into(),
+            }),
+            act_execution_failed: meter.counter(MetricParameters {
+                name: "activity_execution_failed".into(),
+                description: "Count of activity task execution failures".into(),
+                unit: "".into(),
+            }),
+            act_sched_to_start_latency: meter.histogram(MetricParameters {
+                name: ACT_SCHED_TO_START_LATENCY_NAME.into(),
+                unit: "ms".into(),
+                description: "Histogram of activity schedule-to-start latencies".into(),
+            }),
+            act_exec_latency: meter.histogram(MetricParameters {
+                name: ACT_EXEC_LATENCY_NAME.into(),
+                unit: "ms".into(),
+                description: "Histogram of activity execution latencies".into(),
+            }),
             // name kept as worker start for compat with old sdk / what users expect
-            worker_registered: meter.counter("worker_start".into()),
-            num_pollers: meter.gauge(NUM_POLLERS_NAME.into()),
-            task_slots_available: meter.gauge(TASK_SLOTS_AVAILABLE_NAME.into()),
-            sticky_cache_hit: meter.counter("sticky_cache_hit".into()),
-            sticky_cache_miss: meter.counter("sticky_cache_miss".into()),
-            sticky_cache_size: meter.gauge(STICKY_CACHE_SIZE_NAME.into()),
-            sticky_cache_evictions: meter.counter("sticky_cache_total_forced_eviction".into()),
+            worker_registered: meter.counter(MetricParameters {
+                name: "worker_start".into(),
+                description: "Count of the number of initialized workers".into(),
+                unit: "".into(),
+            }),
+            num_pollers: meter.gauge(MetricParameters {
+                name: NUM_POLLERS_NAME.into(),
+                description: "Current number of active pollers per queue type".into(),
+                unit: "".into(),
+            }),
+            task_slots_available: meter.gauge(MetricParameters {
+                name: TASK_SLOTS_AVAILABLE_NAME.into(),
+                description: "Current number of available slots per task type".into(),
+                unit: "".into(),
+            }),
+            sticky_cache_hit: meter.counter(MetricParameters {
+                name: "sticky_cache_hit".into(),
+                description: "Count of times the workflow cache was used for a new workflow task"
+                    .into(),
+                unit: "".into(),
+            }),
+            sticky_cache_miss: meter.counter(MetricParameters {
+                name: "sticky_cache_miss".into(),
+                description:
+                    "Count of times the workflow cache was missing a workflow for a sticky task"
+                        .into(),
+                unit: "".into(),
+            }),
+            sticky_cache_size: meter.gauge(MetricParameters {
+                name: STICKY_CACHE_SIZE_NAME.into(),
+                description: "Current number of cached workflows".into(),
+                unit: "".into(),
+            }),
+            sticky_cache_evictions: meter.counter(MetricParameters {
+                name: "sticky_cache_total_forced_eviction".into(),
+                description: "Count of evictions of cached workflows".into(),
+                unit: "".into(),
+            }),
         }
     }
 }
@@ -529,7 +620,7 @@ pub struct StartedPromServer {
 pub fn start_prometheus_metric_exporter(
     opts: PrometheusExporterOptions,
 ) -> Result<StartedPromServer, anyhow::Error> {
-    let (srv, exporter) = PromServer::new(opts.socket_addr, SDKAggSelector::default())?;
+    let (srv, exporter) = PromServer::new(&opts, SDKAggSelector::default())?;
     let meter_provider = augment_meter_provider_with_defaults(
         MeterProvider::builder().with_reader(exporter),
         &opts.global_tags,

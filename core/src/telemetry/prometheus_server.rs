@@ -8,6 +8,7 @@ use opentelemetry_prometheus::PrometheusExporter;
 use opentelemetry_sdk::metrics::reader::AggregationSelector;
 use prometheus::{Encoder, Registry, TextEncoder};
 use std::{convert::Infallible, net::SocketAddr};
+use temporal_sdk_core_api::telemetry::PrometheusExporterOptions;
 
 /// Exposes prometheus metrics for scraping
 pub(super) struct PromServer {
@@ -17,16 +18,25 @@ pub(super) struct PromServer {
 
 impl PromServer {
     pub fn new(
-        addr: SocketAddr,
+        opts: &PrometheusExporterOptions,
         aggregation: impl AggregationSelector + Send + Sync + 'static,
     ) -> Result<(Self, PrometheusExporter), anyhow::Error> {
         let registry = Registry::new();
         let exporter = opentelemetry_prometheus::exporter()
             .with_aggregation_selector(aggregation)
             .without_scope_info()
-            .without_counter_suffixes()
             .with_registry(registry.clone());
-        let bound_addr = AddrIncoming::bind(&addr)?;
+        let exporter = if !opts.counters_total_suffix {
+            exporter.without_counter_suffixes()
+        } else {
+            exporter
+        };
+        let exporter = if !opts.unit_suffix {
+            exporter.without_units()
+        } else {
+            exporter
+        };
+        let bound_addr = AddrIncoming::bind(&opts.socket_addr)?;
         Ok((
             Self {
                 bound_addr,

@@ -6,7 +6,8 @@ use std::{
     time::{Duration, Instant},
 };
 use temporal_sdk_core_api::telemetry::metrics::{
-    CoreMeter, Counter, Histogram, MetricAttributes, MetricKeyValue, TemporalMeter,
+    CoreMeter, Counter, Histogram, MetricAttributes, MetricKeyValue, MetricParameters,
+    TemporalMeter,
 };
 use tonic::{body::BoxBody, transport::Channel};
 use tower::Service;
@@ -35,12 +36,36 @@ impl MetricsContext {
         Self {
             kvs: meter.new_attributes(tm.default_attribs),
             poll_is_long: false,
-            svc_request: meter.counter("request".into()),
-            svc_request_failed: meter.counter("request_failure".into()),
-            long_svc_request: meter.counter("long_request".into()),
-            long_svc_request_failed: meter.counter("long_request_failure".into()),
-            svc_request_latency: meter.histogram("request_latency".into()),
-            long_svc_request_latency: meter.histogram("long_request_latency".into()),
+            svc_request: meter.counter(MetricParameters {
+                name: "request".into(),
+                description: "Count of client request successes by rpc name".into(),
+                unit: "".into(),
+            }),
+            svc_request_failed: meter.counter(MetricParameters {
+                name: "request_failure".into(),
+                description: "Count of client request failures by rpc name".into(),
+                unit: "".into(),
+            }),
+            long_svc_request: meter.counter(MetricParameters {
+                name: "long_request".into(),
+                description: "Count of long-poll request successes by rpc name".into(),
+                unit: "".into(),
+            }),
+            long_svc_request_failed: meter.counter(MetricParameters {
+                name: "long_request_failure".into(),
+                description: "Count of long-poll request failures by rpc name".into(),
+                unit: "".into(),
+            }),
+            svc_request_latency: meter.histogram(MetricParameters {
+                name: "request_latency".into(),
+                unit: "ms".into(),
+                description: "Histogram of client request latencies".into(),
+            }),
+            long_svc_request_latency: meter.histogram(MetricParameters {
+                name: "long_request_latency".into(),
+                unit: "ms".into(),
+                description: "Histogram of client long-poll request latencies".into(),
+            }),
         }
     }
 

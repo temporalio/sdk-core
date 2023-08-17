@@ -82,6 +82,13 @@ pub struct PrometheusExporterOptions {
     /// A prefix to be applied to all metrics. Defaults to "temporal_".
     #[builder(default = "METRIC_PREFIX")]
     pub metric_prefix: &'static str,
+    /// If set true, all counters will include a "_total" suffix
+    #[builder(default = "false")]
+    pub counters_total_suffix: bool,
+    /// If set true, all histograms will include the unit in their name as a suffix.
+    /// Ex: "_milliseconds".
+    #[builder(default = "false")]
+    pub unit_suffix: bool,
 }
 
 /// Configuration for the external export of traces

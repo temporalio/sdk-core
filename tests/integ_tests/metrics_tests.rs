@@ -417,7 +417,6 @@ async fn query_of_closed_workflow_doesnt_tick_terminal_metric(
 
     // Verify there is still only one tick
     let body = get_text(format!("http://{addr}/metrics")).await;
-    dbg!(&body);
     let matching_line = body
         .lines()
         .find(|l| l.starts_with(metric_name))
