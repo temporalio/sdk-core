@@ -423,3 +423,30 @@ async fn query_of_closed_workflow_doesnt_tick_terminal_metric(
         .expect("Must find matching metric");
     assert!(matching_line.ends_with('1'));
 }
+
+#[test]
+fn runtime_new() {
+    let mut rt = CoreRuntime::new(
+        get_integ_telem_options(),
+        tokio::runtime::Builder::new_multi_thread(),
+    )
+    .unwrap();
+    let handle = rt.tokio_handle();
+    let _rt = handle.enter();
+    let (telemopts, addr, _aborter) = prom_metrics();
+    rt.attach_late_init_metrics(telemopts.metrics.unwrap());
+    let opts = get_integ_server_options();
+    handle.block_on(async {
+        let mut raw_client = opts
+            .connect_no_namespace(rt.metric_meter(), None)
+            .await
+            .unwrap();
+        assert!(raw_client.get_client().capabilities().is_some());
+        let _ = raw_client
+            .list_namespaces(ListNamespacesRequest::default())
+            .await
+            .unwrap();
+        let body = get_text(format!("http://{addr}/metrics")).await;
+        assert!(body.contains("temporal_request"));
+    });
+}

@@ -55,7 +55,10 @@ use std::sync::Arc;
 use temporal_client::{ConfiguredClient, TemporalServiceClientWithMetrics};
 use temporal_sdk_core_api::{
     errors::{CompleteActivityError, PollActivityError, PollWfError},
-    telemetry::{metrics::TemporalMeter, TelemetryOptions},
+    telemetry::{
+        metrics::{CoreMeter, TemporalMeter},
+        TelemetryOptions,
+    },
     Worker as WorkerTrait,
 };
 use temporal_sdk_core_protos::coresdk::ActivityHeartbeat;
@@ -277,6 +280,12 @@ impl CoreRuntime {
     /// Return a reference to the owned [TelemetryInstance]
     pub fn telemetry(&self) -> &TelemetryInstance {
         &self.telemetry
+    }
+
+    /// Some metric meters cannot be initialized until after a tokio runtime has started and after
+    /// other telemetry has initted (ex: prometheus). They can be attached here.
+    pub fn attach_late_init_metrics(&mut self, meter: Arc<dyn CoreMeter + 'static>) {
+        self.telemetry.attach_late_init_metrics(meter)
     }
 }
 

@@ -77,6 +77,12 @@ impl TelemetryInstance {
         self.trace_subscriber.clone()
     }
 
+    /// Some metric meters cannot be initialized until after a tokio runtime has started and after
+    /// other telemetry has initted (ex: prometheus). They can be attached here.
+    pub fn attach_late_init_metrics(&mut self, meter: Arc<dyn CoreMeter + 'static>) {
+        self.metrics = Some(meter);
+    }
+
     /// Returns our wrapper for metric meters, can be used to, ex: initialize clients
     pub fn get_metric_meter(&self) -> Option<TemporalMeter> {
         self.metrics.clone().map(|m| {
