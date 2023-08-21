@@ -115,6 +115,7 @@ impl MetricAttributes {
     pub fn merge(&self, other: MetricAttributes) -> Self {
         let mut me = self.clone();
         match (&mut me, other) {
+            #[cfg(feature = "otel_impls")]
             (MetricAttributes::OTel { ref mut kvs }, MetricAttributes::OTel { kvs: other_kvs }) => {
                 Arc::make_mut(kvs).extend((*other_kvs).clone());
             }
