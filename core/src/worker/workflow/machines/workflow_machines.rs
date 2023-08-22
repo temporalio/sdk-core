@@ -367,9 +367,17 @@ impl WorkflowMachines {
     /// "no work" situation. Possibly, it may know about some work the machines don't, like queries.
     pub(crate) fn get_wf_activation(&mut self) -> WorkflowActivation {
         let jobs = self.drive_me.drain_jobs();
+        // Even though technically we may have satisfied all the criteria to be done with replay,
+        // query only activations are always "replaying" to keep things sane.
+        let all_query = jobs.iter().all(|j| {
+            matches!(
+                j.variant,
+                Some(workflow_activation_job::Variant::QueryWorkflow(_))
+            )
+        });
         WorkflowActivation {
             timestamp: self.current_wf_time.map(Into::into),
-            is_replaying: self.replaying,
+            is_replaying: self.replaying || all_query,
             run_id: self.run_id.clone(),
             history_length: self.last_processed_event as u32,
             jobs,
@@ -488,7 +496,6 @@ impl WorkflowMachines {
             }
         }
 
-        let mut saw_completed = false;
         let mut do_handle_event = true;
         let mut history = events.into_iter().peekable();
         while let Some(event) = history.next() {
@@ -504,16 +511,20 @@ impl WorkflowMachines {
             // This definition of replaying here is that we are no longer replaying as soon as we
             // see new events that have never been seen or produced by the SDK.
             //
-            // Specifically, replay ends once we have seen the last command-event which was produced
-            // as a result of the last completed WFT. Thus, replay would be false for things like
-            // signals which were received and after the last completion, and thus generated the
-            // current WFT being handled.
-            if self.replaying && has_final_event && saw_completed && !event.is_command_event() {
+            // Specifically, replay ends once we have seen any non-command event (IE: events that
+            // aren't a result of something we produced in the SDK) on a WFT which has the final
+            // event in history (meaning we are processing the most recent WFT and there are no
+            // more subsequent WFTs). WFT Completed in this case does not count as a non-command
+            // event, because that will typically show up as the first event in an incremental
+            // history, and we want to ignore it and its associated commands since we "produced"
+            // them.
+            if self.replaying
+                && has_final_event
+                && event.event_type() != EventType::WorkflowTaskCompleted
+                && !event.is_command_event()
+            {
                 // Replay is finished
                 self.replaying = false;
-            }
-            if event.event_type() == EventType::WorkflowTaskCompleted {
-                saw_completed = true;
             }
 
             if do_handle_event {
