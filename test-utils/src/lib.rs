@@ -40,7 +40,7 @@ use temporal_sdk_core_api::{
     errors::{PollActivityError, PollWfError},
     telemetry::{
         metrics::CoreMeter, Logger, OtelCollectorOptionsBuilder, PrometheusExporterOptionsBuilder,
-        TelemetryOptions, TelemetryOptionsBuilder, TraceExportConfig, TraceExporter,
+        TelemetryOptions, TelemetryOptionsBuilder,
     },
     Worker as CoreWorker,
 };
@@ -590,10 +590,6 @@ pub fn get_integ_telem_options() -> TelemetryOptions {
             .url(url)
             .build()
             .unwrap();
-        ob.tracing(TraceExportConfig {
-            filter: filter_string.clone(),
-            exporter: TraceExporter::Otel(opts.clone()),
-        });
         ob.metrics(Arc::new(build_otlp_metric_exporter(opts).unwrap()) as Arc<dyn CoreMeter>);
     }
     if let Some(addr) = env::var(PROM_ENABLE_ENV_VAR)

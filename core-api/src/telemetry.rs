@@ -29,9 +29,6 @@ pub trait CoreTelemetry {
 #[derive(Debug, Clone, derive_builder::Builder)]
 #[non_exhaustive]
 pub struct TelemetryOptions {
-    /// Optional trace exporter - set as None to disable.
-    #[builder(setter(into, strip_option), default)]
-    pub tracing: Option<TraceExportConfig>,
     /// Optional logger - set as None to disable.
     #[builder(setter(into, strip_option), default)]
     pub logging: Option<Logger>,
@@ -89,23 +86,6 @@ pub struct PrometheusExporterOptions {
     /// Ex: "_milliseconds".
     #[builder(default = "false")]
     pub unit_suffix: bool,
-}
-
-/// Configuration for the external export of traces
-#[derive(Debug, Clone)]
-pub struct TraceExportConfig {
-    /// An [EnvFilter](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/struct.EnvFilter.html) filter string.
-    pub filter: String,
-    /// Where they should go
-    pub exporter: TraceExporter,
-}
-
-/// Control where traces are exported.
-#[derive(Debug, Clone)]
-pub enum TraceExporter {
-    // TODO: Remove
-    /// Export traces to an OpenTelemetry Collector <https://opentelemetry.io/docs/collector/>.
-    Otel(OtelCollectorOptions),
 }
 
 /// Control where logs go
