@@ -146,7 +146,7 @@ pub fn init_integ_telem() {
         let telemetry_options = get_integ_telem_options();
         let rt =
             CoreRuntime::new_assume_tokio(telemetry_options).expect("Core runtime inits cleanly");
-        let _ = tracing::subscriber::set_global_default(rt.trace_subscriber());
+        let _ = tracing::subscriber::set_global_default(rt.telemetry().trace_subscriber());
         rt
     });
 }

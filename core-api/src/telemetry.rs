@@ -35,16 +35,15 @@ pub struct TelemetryOptions {
     /// Optional metrics exporter - set as None to disable.
     #[builder(setter(into, strip_option), default)]
     pub metrics: Option<Arc<dyn CoreMeter>>,
-    /// If set true, strip the prefix `temporal_` from metrics, if present. Will be removed
-    /// eventually as the prefix is consistent with other SDKs.
-    #[builder(default)]
-    pub no_temporal_prefix_for_metrics: bool,
     /// If set true (the default) explicitly attach a `service_name` label to all metrics. Turn this
     /// off if your collection system supports the `target_info` metric from the OpenMetrics spec.
     /// For more, see
     /// [here](https://github.com/OpenObservability/OpenMetrics/blob/main/specification/OpenMetrics.md#supporting-target-metadata-in-both-push-based-and-pull-based-systems)
     #[builder(default = "true")]
     pub attach_service_name: bool,
+    /// A prefix to be applied to all core-created metrics. Defaults to "temporal_".
+    #[builder(default = "METRIC_PREFIX.to_string()")]
+    pub metric_prefix: String,
 }
 
 /// Options for exporting to an OpenTelemetry Collector
@@ -64,9 +63,6 @@ pub struct OtelCollectorOptions {
     // A map of tags to be applied to all metrics
     #[builder(default)]
     pub global_tags: HashMap<String, String>,
-    /// A prefix to be applied to all metrics. Defaults to "temporal_".
-    #[builder(default = "METRIC_PREFIX")]
-    pub metric_prefix: &'static str,
 }
 
 /// Options for exporting metrics to Prometheus
@@ -76,9 +72,6 @@ pub struct PrometheusExporterOptions {
     // A map of tags to be applied to all metrics
     #[builder(default)]
     pub global_tags: HashMap<String, String>,
-    /// A prefix to be applied to all metrics. Defaults to "temporal_".
-    #[builder(default = "METRIC_PREFIX")]
-    pub metric_prefix: &'static str,
     /// If set true, all counters will include a "_total" suffix
     #[builder(default = "false")]
     pub counters_total_suffix: bool,
