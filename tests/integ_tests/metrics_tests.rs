@@ -101,7 +101,7 @@ async fn prometheus_metrics_exported() {
         },
     );
     let body = get_text(format!("http://{addr}/metrics")).await;
-    assert!(body.contains("mygauge 42"));
+    assert!(body.contains("\nmygauge 42"));
 }
 
 #[tokio::test]
