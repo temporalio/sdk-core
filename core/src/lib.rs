@@ -55,10 +55,7 @@ use std::sync::Arc;
 use temporal_client::{ConfiguredClient, TemporalServiceClientWithMetrics};
 use temporal_sdk_core_api::{
     errors::{CompleteActivityError, PollActivityError, PollWfError},
-    telemetry::{
-        metrics::{CoreMeter, TemporalMeter},
-        TelemetryOptions,
-    },
+    telemetry::TelemetryOptions,
     Worker as WorkerTrait,
 };
 use temporal_sdk_core_protos::coresdk::ActivityHeartbeat;
@@ -265,27 +262,14 @@ impl CoreRuntime {
         self.runtime_handle.clone()
     }
 
-    /// Returns the metric meter used for recording metrics, if they were enabled.
-    pub fn metric_meter(&self) -> Option<TemporalMeter> {
-        self.telemetry.get_metric_meter()
-    }
-
-    /// Return the trace subscriber associated with the telemetry options/instance. Can be used
-    /// to manually set the default for a thread or globally using the `tracing` crate, or with
-    /// [set_trace_subscriber_for_current_thread]
-    pub fn trace_subscriber(&self) -> Arc<dyn tracing::Subscriber + Send + Sync> {
-        self.telemetry.trace_subscriber()
-    }
-
     /// Return a reference to the owned [TelemetryInstance]
     pub fn telemetry(&self) -> &TelemetryInstance {
         &self.telemetry
     }
 
-    /// Some metric meters cannot be initialized until after a tokio runtime has started and after
-    /// other telemetry has initted (ex: prometheus). They can be attached here.
-    pub fn attach_late_init_metrics(&mut self, meter: Arc<dyn CoreMeter + 'static>) {
-        self.telemetry.attach_late_init_metrics(meter)
+    /// Return a mutable reference to the owned [TelemetryInstance]
+    pub fn telemetry_mut(&mut self) -> &mut TelemetryInstance {
+        &mut self.telemetry
     }
 }
 

@@ -3,7 +3,10 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 use temporal_client::{WorkflowClientTrait, WorkflowOptions, WorkflowService};
 use temporal_sdk_core::{init_worker, telemetry::start_prometheus_metric_exporter, CoreRuntime};
 use temporal_sdk_core_api::{
-    telemetry::{metrics::CoreMeter, PrometheusExporterOptionsBuilder, TelemetryOptions},
+    telemetry::{
+        metrics::{CoreMeter, MetricAttributes, MetricParameters},
+        PrometheusExporterOptionsBuilder, TelemetryOptions,
+    },
     worker::WorkerConfigBuilder,
     Worker,
 };
@@ -69,7 +72,7 @@ async fn prometheus_metrics_exported() {
     let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
     let opts = get_integ_server_options();
     let mut raw_client = opts
-        .connect_no_namespace(rt.metric_meter(), None)
+        .connect_no_namespace(rt.telemetry().get_temporal_metric_meter(), None)
         .await
         .unwrap();
     assert!(raw_client.get_client().capabilities().is_some());
@@ -88,6 +91,17 @@ async fn prometheus_metrics_exported() {
     ));
     // Verify counter names are appropriate (don't end w/ '_total')
     assert!(body.contains("temporal_request{"));
+    // Verify non-temporal metrics meter does not prefix
+    let mm = rt.telemetry().get_metric_meter().unwrap();
+    let g = mm.inner.gauge(MetricParameters::from("mygauge"));
+    g.record(
+        42,
+        &MetricAttributes::OTel {
+            kvs: Arc::new(vec![]),
+        },
+    );
+    let body = get_text(format!("http://{addr}/metrics")).await;
+    assert!(body.contains("\nmygauge 42"));
 }
 
 #[tokio::test]
@@ -434,11 +448,12 @@ fn runtime_new() {
     let handle = rt.tokio_handle();
     let _rt = handle.enter();
     let (telemopts, addr, _aborter) = prom_metrics();
-    rt.attach_late_init_metrics(telemopts.metrics.unwrap());
+    rt.telemetry_mut()
+        .attach_late_init_metrics(telemopts.metrics.unwrap());
     let opts = get_integ_server_options();
     handle.block_on(async {
         let mut raw_client = opts
-            .connect_no_namespace(rt.metric_meter(), None)
+            .connect_no_namespace(rt.telemetry().get_temporal_metric_meter(), None)
             .await
             .unwrap();
         assert!(raw_client.get_client().capabilities().is_some());

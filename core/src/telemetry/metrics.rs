@@ -89,7 +89,7 @@ impl MetricsContext {
     }
 
     pub(crate) fn top_level(namespace: String, tq: String, telemetry: &TelemetryInstance) -> Self {
-        if let Some(mut meter) = telemetry.get_metric_meter() {
+        if let Some(mut meter) = telemetry.get_temporal_metric_meter() {
             meter
                 .default_attribs
                 .attributes
@@ -778,7 +778,7 @@ impl Gauge for MemoryGaugeU64 {
 
 #[derive(Debug, derive_more::Constructor)]
 pub(crate) struct PrefixedMetricsMeter<CM> {
-    prefix: &'static str,
+    prefix: String,
     meter: CM,
 }
 impl<CM: CoreMeter> CoreMeter for PrefixedMetricsMeter<CM> {
@@ -787,17 +787,17 @@ impl<CM: CoreMeter> CoreMeter for PrefixedMetricsMeter<CM> {
     }
 
     fn counter(&self, mut params: MetricParameters) -> Arc<dyn Counter> {
-        params.name = (self.prefix.to_string() + &*params.name).into();
+        params.name = (self.prefix.clone() + &*params.name).into();
         self.meter.counter(params)
     }
 
     fn histogram(&self, mut params: MetricParameters) -> Arc<dyn Histogram> {
-        params.name = (self.prefix.to_string() + &*params.name).into();
+        params.name = (self.prefix.clone() + &*params.name).into();
         self.meter.histogram(params)
     }
 
     fn gauge(&self, mut params: MetricParameters) -> Arc<dyn Gauge> {
-        params.name = (self.prefix.to_string() + &*params.name).into();
+        params.name = (self.prefix.clone() + &*params.name).into();
         self.meter.gauge(params)
     }
 }
@@ -815,7 +815,7 @@ mod tests {
         let telem_instance = TelemetryInstance::new(
             no_op_subscriber,
             None,
-            METRIC_PREFIX,
+            METRIC_PREFIX.to_string(),
             Some(call_buffer.clone()),
             true,
         );

@@ -47,7 +47,7 @@ pub fn construct_filter_string(core_level: Level, other_level: Level) -> String 
 
 /// Holds initialized tracing/metrics exporters, etc
 pub struct TelemetryInstance {
-    metric_prefix: &'static str,
+    metric_prefix: String,
     logs_out: Option<Mutex<CoreLogsOut>>,
     metrics: Option<Arc<dyn CoreMeter + 'static>>,
     trace_subscriber: Arc<dyn Subscriber + Send + Sync>,
@@ -58,7 +58,7 @@ impl TelemetryInstance {
     fn new(
         trace_subscriber: Arc<dyn Subscriber + Send + Sync>,
         logs_out: Option<Mutex<CoreLogsOut>>,
-        metric_prefix: &'static str,
+        metric_prefix: String,
         metrics: Option<Arc<dyn CoreMeter + 'static>>,
         attach_service_name: bool,
     ) -> Self {
@@ -71,8 +71,9 @@ impl TelemetryInstance {
         }
     }
 
-    /// Returns a trace subscriber which can be used with the tracing crate, or with our own
-    /// [set_trace_subscriber_for_current_thread] function.
+    /// Return the trace subscriber associated with the telemetry options/instance. Can be used
+    /// to manually set the default for a thread or globally using the `tracing` crate, or with
+    /// [set_trace_subscriber_for_current_thread]
     pub fn trace_subscriber(&self) -> Arc<dyn Subscriber + Send + Sync> {
         self.trace_subscriber.clone()
     }
@@ -83,20 +84,36 @@ impl TelemetryInstance {
         self.metrics = Some(meter);
     }
 
-    /// Returns our wrapper for metric meters, can be used to, ex: initialize clients
-    pub fn get_metric_meter(&self) -> Option<TemporalMeter> {
+    /// Returns our wrapper for metric meters, including the `metric_prefix` from
+    /// [TelemetryOptions]. This should be used to initialize clients or for any other
+    /// temporal-owned metrics. User defined metrics should use [Self::get_metric_meter].
+    pub fn get_temporal_metric_meter(&self) -> Option<TemporalMeter> {
         self.metrics.clone().map(|m| {
-            let kvs = if self.attach_service_name {
-                vec![MetricKeyValue::new("service_name", TELEM_SERVICE_NAME)]
-            } else {
-                vec![]
-            };
+            let kvs = self.default_kvs();
             let attribs = MetricsAttributesOptions::new(kvs);
             TemporalMeter::new(
-                Arc::new(PrefixedMetricsMeter::new(self.metric_prefix, m)) as Arc<dyn CoreMeter>,
+                Arc::new(PrefixedMetricsMeter::new(self.metric_prefix.clone(), m))
+                    as Arc<dyn CoreMeter>,
                 attribs,
             )
         })
+    }
+
+    /// Returns our wrapper for metric meters, including attaching the service name if enabled.
+    pub fn get_metric_meter(&self) -> Option<TemporalMeter> {
+        self.metrics.clone().map(|m| {
+            let kvs = self.default_kvs();
+            let attribs = MetricsAttributesOptions::new(kvs);
+            TemporalMeter::new(m, attribs)
+        })
+    }
+
+    fn default_kvs(&self) -> Vec<MetricKeyValue> {
+        if self.attach_service_name {
+            vec![MetricKeyValue::new("service_name", TELEM_SERVICE_NAME)]
+        } else {
+            vec![]
+        }
     }
 }
 
@@ -120,14 +137,6 @@ pub fn set_trace_subscriber_for_current_thread(sub: impl Subscriber + Send + Syn
 /// Undoes [set_trace_subscriber_for_current_thread]
 pub fn remove_trace_subscriber_for_current_thread() {
     SUB_GUARD.with(|sg| sg.take());
-}
-
-fn metric_prefix(opts: &TelemetryOptions) -> &'static str {
-    if opts.no_temporal_prefix_for_metrics {
-        ""
-    } else {
-        "temporal_"
-    }
 }
 
 impl CoreTelemetry for TelemetryInstance {
@@ -155,7 +164,6 @@ pub fn telemetry_init(opts: TelemetryOptions) -> Result<TelemetryInstance, anyho
     // way which is nice.
     // Parts of telem dat ====
     let mut logs_out = None;
-    let metric_prefix = metric_prefix(&opts);
     // =======================
 
     // Tracing subscriber layers =========
@@ -211,7 +219,7 @@ pub fn telemetry_init(opts: TelemetryOptions) -> Result<TelemetryInstance, anyho
     Ok(TelemetryInstance::new(
         Arc::new(reg),
         logs_out,
-        metric_prefix,
+        opts.metric_prefix,
         opts.metrics,
         opts.attach_service_name,
     ))
