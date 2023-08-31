@@ -50,13 +50,15 @@ pub struct TelemetryInstance {
     metric_prefix: String,
     logs_out: Option<Mutex<CoreLogsOut>>,
     metrics: Option<Arc<dyn CoreMeter + 'static>>,
-    trace_subscriber: Arc<dyn Subscriber + Send + Sync>,
+    /// The tracing subscriber which is associated with this telemetry instance. May be `None` if
+    /// the user has not opted into any tracing configuration.
+    trace_subscriber: Option<Arc<dyn Subscriber + Send + Sync>>,
     attach_service_name: bool,
 }
 
 impl TelemetryInstance {
     fn new(
-        trace_subscriber: Arc<dyn Subscriber + Send + Sync>,
+        trace_subscriber: Option<Arc<dyn Subscriber + Send + Sync>>,
         logs_out: Option<Mutex<CoreLogsOut>>,
         metric_prefix: String,
         metrics: Option<Arc<dyn CoreMeter + 'static>>,
@@ -73,8 +75,8 @@ impl TelemetryInstance {
 
     /// Return the trace subscriber associated with the telemetry options/instance. Can be used
     /// to manually set the default for a thread or globally using the `tracing` crate, or with
-    /// [set_trace_subscriber_for_current_thread]
-    pub fn trace_subscriber(&self) -> Arc<dyn Subscriber + Send + Sync> {
+    /// [set_trace_subscriber_for_current_thread].
+    pub fn trace_subscriber(&self) -> Option<Arc<dyn Subscriber + Send + Sync>> {
         self.trace_subscriber.clone()
     }
 
@@ -172,7 +174,7 @@ pub fn telemetry_init(opts: TelemetryOptions) -> Result<TelemetryInstance, anyho
     let mut forward_layer = None;
     // ===================================
 
-    if let Some(ref logger) = opts.logging {
+    let tracing_sub = opts.logging.map(|logger| {
         match logger {
             Logger::Console { filter } => {
                 // This is silly dupe but can't be avoided without boxing.
@@ -206,18 +208,18 @@ pub fn telemetry_init(opts: TelemetryOptions) -> Result<TelemetryInstance, anyho
                 forward_layer = Some(export_layer.with_filter(EnvFilter::new(filter)));
             }
         };
-    };
+        let reg = tracing_subscriber::registry()
+            .with(console_pretty_layer)
+            .with(console_compact_layer)
+            .with(forward_layer);
 
-    let reg = tracing_subscriber::registry()
-        .with(console_pretty_layer)
-        .with(console_compact_layer)
-        .with(forward_layer);
-
-    #[cfg(feature = "tokio-console")]
-    let reg = reg.with(console_subscriber::spawn());
+        #[cfg(feature = "tokio-console")]
+        let reg = reg.with(console_subscriber::spawn());
+        Arc::new(reg) as Arc<dyn Subscriber + Send + Sync>
+    });
 
     Ok(TelemetryInstance::new(
-        Arc::new(reg),
+        tracing_sub,
         logs_out,
         opts.metric_prefix,
         opts.metrics,
@@ -234,7 +236,9 @@ pub fn telemetry_init_global(opts: TelemetryOptions) -> Result<(), anyhow::Error
         .is_ok()
     {
         let ti = telemetry_init(opts)?;
-        tracing::subscriber::set_global_default(ti.trace_subscriber())?;
+        if let Some(ts) = ti.trace_subscriber() {
+            tracing::subscriber::set_global_default(ts)?;
+        }
     }
     Ok(())
 }

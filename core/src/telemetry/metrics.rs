@@ -813,7 +813,7 @@ mod tests {
         let no_op_subscriber = Arc::new(NoSubscriber::new());
         let call_buffer = Arc::new(MetricsCallBuffer::new(100));
         let telem_instance = TelemetryInstance::new(
-            no_op_subscriber,
+            Some(no_op_subscriber),
             None,
             METRIC_PREFIX.to_string(),
             Some(call_buffer.clone()),

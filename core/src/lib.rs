@@ -223,7 +223,9 @@ impl CoreRuntime {
         let runtime = tokio_builder
             .enable_all()
             .on_thread_start(move || {
-                set_trace_subscriber_for_current_thread(subscriber.clone());
+                if let Some(sub) = subscriber.as_ref() {
+                    set_trace_subscriber_for_current_thread(sub.clone());
+                }
             })
             .build()?;
         let _rg = runtime.enter();
@@ -249,7 +251,9 @@ impl CoreRuntime {
     /// If there is no currently active Tokio runtime
     pub fn new_assume_tokio_initialized_telem(telemetry: TelemetryInstance) -> Self {
         let runtime_handle = tokio::runtime::Handle::current();
-        set_trace_subscriber_for_current_thread(telemetry.trace_subscriber());
+        if let Some(sub) = telemetry.trace_subscriber() {
+            set_trace_subscriber_for_current_thread(sub);
+        }
         Self {
             telemetry,
             runtime: None,

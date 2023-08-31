@@ -146,7 +146,9 @@ pub fn init_integ_telem() {
         let telemetry_options = get_integ_telem_options();
         let rt =
             CoreRuntime::new_assume_tokio(telemetry_options).expect("Core runtime inits cleanly");
-        let _ = tracing::subscriber::set_global_default(rt.telemetry().trace_subscriber());
+        if let Some(sub) = rt.telemetry().trace_subscriber() {
+            let _ = tracing::subscriber::set_global_default(sub);
+        }
         rt
     });
 }
@@ -528,7 +530,7 @@ impl WorkerInterceptor for TestWorkerCompletionIceptor {
             func(completion);
         }
         if completion.has_execution_ending() {
-            info!("Workflow {} says it's finishing", &completion.run_id);
+            debug!("Workflow {} says it's finishing", &completion.run_id);
         }
         if let Some(n) = self.next.as_ref() {
             n.on_workflow_activation_completion(completion).await;

@@ -185,7 +185,7 @@ impl Workflows {
         let (start_polling_tx, start_polling_rx) = oneshot::channel();
         // We must spawn a task to constantly poll the activation stream, because otherwise
         // activation completions would not cause anything to happen until the next poll.
-        let tracing_sub = telem_instance.map(|ti| ti.trace_subscriber());
+        let tracing_sub = telem_instance.and_then(|ti| ti.trace_subscriber());
         let processing_task = thread::spawn(move || {
             if let Some(ts) = tracing_sub {
                 set_trace_subscriber_for_current_thread(ts);
