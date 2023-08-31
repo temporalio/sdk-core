@@ -620,7 +620,7 @@ impl Workflows {
             }
             let with_permits = reserved_act_permits
                 .into_iter()
-                .zip(eager_acts.into_iter())
+                .zip(eager_acts)
                 .map(|(permit, resp)| TrackedPermittedTqResp { permit, resp });
             if with_permits.len() > 0 {
                 debug!(

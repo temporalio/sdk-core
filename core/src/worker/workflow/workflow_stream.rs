@@ -187,7 +187,7 @@ impl WFStream {
                     }
                 };
 
-                activations.extend(maybe_act.into_iter());
+                activations.extend(maybe_act);
                 activations.extend(state.reconcile_buffered());
 
                 // Always flush *after* actually handling the input, as this allows LA sink
