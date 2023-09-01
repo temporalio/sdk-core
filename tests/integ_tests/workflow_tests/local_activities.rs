@@ -22,8 +22,7 @@ use temporal_sdk_core_protos::{
     TestHistoryBuilder,
 };
 use temporal_sdk_core_test_utils::{
-    history_from_proto_binary, init_integ_telem, replay_sdk_worker, workflows::la_problem_workflow,
-    CoreWfStarter,
+    history_from_proto_binary, replay_sdk_worker, workflows::la_problem_workflow, CoreWfStarter,
 };
 use tokio_util::sync::CancellationToken;
 
