@@ -589,7 +589,6 @@ async fn repro_nondeterminism_with_timer_bug() {
 #[rstest::rstest]
 #[tokio::test]
 async fn weird_la_nondeterminism_repro(#[values(true, false)] fix_hist: bool) {
-    init_integ_telem();
     let mut hist = history_from_proto_binary(
         "histories/evict_while_la_running_no_interference-85_history.bin",
     )
@@ -618,7 +617,6 @@ async fn weird_la_nondeterminism_repro(#[values(true, false)] fix_hist: bool) {
 
 #[tokio::test]
 async fn second_weird_la_nondeterminism_repro() {
-    init_integ_telem();
     let mut hist = history_from_proto_binary(
         "histories/evict_while_la_running_no_interference-23_history.bin",
     )
@@ -644,7 +642,6 @@ async fn second_weird_la_nondeterminism_repro() {
 
 #[tokio::test]
 async fn third_weird_la_nondeterminism_repro() {
-    init_integ_telem();
     let mut hist = history_from_proto_binary(
         "histories/evict_while_la_running_no_interference-16_history.bin",
     )

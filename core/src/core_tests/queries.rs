@@ -17,7 +17,7 @@ use temporal_sdk_core_protos::{
         },
         workflow_commands::{
             query_result, ActivityCancellationType, CompleteWorkflowExecution,
-            ContinueAsNewWorkflowExecution, QueryResult, QuerySuccess, RequestCancelActivity,
+            ContinueAsNewWorkflowExecution, QueryResult, RequestCancelActivity,
         },
         workflow_completion::WorkflowActivationCompletion,
     },
@@ -33,7 +33,9 @@ use temporal_sdk_core_protos::{
     },
     TestHistoryBuilder,
 };
-use temporal_sdk_core_test_utils::{schedule_activity_cmd, start_timer_cmd, WorkerTestHelpers};
+use temporal_sdk_core_test_utils::{
+    query_ok, schedule_activity_cmd, start_timer_cmd, WorkerTestHelpers,
+};
 
 #[rstest::rstest]
 #[case::with_history(true)]
@@ -111,16 +113,7 @@ async fn legacy_query(#[case] include_history: bool) {
     worker
         .complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
             task.run_id,
-            QueryResult {
-                query_id: query.query_id.clone(),
-                variant: Some(
-                    QuerySuccess {
-                        response: Some(query_resp.into()),
-                    }
-                    .into(),
-                ),
-            }
-            .into(),
+            query_ok(&query.query_id, query_resp),
         ))
         .await
         .unwrap();
@@ -223,18 +216,7 @@ async fn new_queries(#[values(1, 3)] num_queries: usize) {
 
     let mut commands = vec![];
     for i in 1..=num_queries {
-        commands.push(
-            QueryResult {
-                query_id: format!("q{i}"),
-                variant: Some(
-                    QuerySuccess {
-                        response: Some(query_resp.into()),
-                    }
-                    .into(),
-                ),
-            }
-            .into(),
-        );
+        commands.push(query_ok(format!("q{i}"), query_resp));
     }
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         task.run_id,
@@ -410,16 +392,7 @@ async fn legacy_query_after_complete(#[values(false, true)] full_history: bool) 
         );
         core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
             task.run_id,
-            QueryResult {
-                query_id: query.query_id.clone(),
-                variant: Some(
-                    QuerySuccess {
-                        response: Some("whatever".into()),
-                    }
-                    .into(),
-                ),
-            }
-            .into(),
+            query_ok(query.query_id.clone(), "whatever"),
         ))
         .await
         .unwrap();
@@ -533,16 +506,7 @@ async fn query_cache_miss_causes_page_fetch_dont_reply_wft_too_early(
     );
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
         task.run_id,
-        QueryResult {
-            query_id: "the-query".to_string(),
-            variant: Some(
-                QuerySuccess {
-                    response: Some(query_resp.into()),
-                }
-                .into(),
-            ),
-        }
-        .into(),
+        query_ok("the-query".to_string(), query_resp),
     ))
     .await
     .unwrap();
@@ -631,16 +595,7 @@ async fn query_replay_with_continue_as_new_doesnt_reply_empty_command() {
 
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
         task.run_id,
-        QueryResult {
-            query_id: query.query_id.clone(),
-            variant: Some(
-                QuerySuccess {
-                    response: Some("whatever".into()),
-                }
-                .into(),
-            ),
-        }
-        .into(),
+        query_ok(query.query_id.clone(), "whatever"),
     ))
     .await
     .unwrap();
@@ -689,16 +644,7 @@ async fn legacy_query_response_gets_not_found_not_fatal() {
     // Fail wft which should result in query being failed
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
         task.run_id,
-        QueryResult {
-            query_id: LEGACY_QUERY_ID.to_string(),
-            variant: Some(
-                QuerySuccess {
-                    response: Some("hi".into()),
-                }
-                .into(),
-            ),
-        }
-        .into(),
+        query_ok(LEGACY_QUERY_ID.to_string(), "hi"),
     ))
     .await
     .unwrap();
@@ -883,16 +829,7 @@ async fn legacy_query_combined_with_timer_fire_repro() {
     );
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
         task.run_id,
-        QueryResult {
-            query_id: "the-query".to_string(),
-            variant: Some(
-                QuerySuccess {
-                    response: Some("whatever".into()),
-                }
-                .into(),
-            ),
-        }
-        .into(),
+        query_ok("the-query".to_string(), "whatever"),
     ))
     .await
     .unwrap();
@@ -907,16 +844,7 @@ async fn legacy_query_combined_with_timer_fire_repro() {
     );
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
         task.run_id,
-        QueryResult {
-            query_id: LEGACY_QUERY_ID.to_string(),
-            variant: Some(
-                QuerySuccess {
-                    response: Some("whatever".into()),
-                }
-                .into(),
-            ),
-        }
-        .into(),
+        query_ok(LEGACY_QUERY_ID.to_string(), "whatever"),
     ))
     .await
     .unwrap();

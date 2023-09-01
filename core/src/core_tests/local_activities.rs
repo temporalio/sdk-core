@@ -32,9 +32,7 @@ use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::ActivityExecutionResult,
         workflow_activation::{workflow_activation_job, WorkflowActivationJob},
-        workflow_commands::{
-            ActivityCancellationType, QueryResult, QuerySuccess, ScheduleLocalActivity,
-        },
+        workflow_commands::{ActivityCancellationType, ScheduleLocalActivity},
         workflow_completion::WorkflowActivationCompletion,
         ActivityTaskCompletion, AsJsonPayloadExt,
     },
@@ -47,7 +45,7 @@ use temporal_sdk_core_protos::{
     DEFAULT_ACTIVITY_TYPE,
 };
 use temporal_sdk_core_test_utils::{
-    schedule_local_activity_cmd, start_timer_cmd, WorkerTestHelpers,
+    query_ok, schedule_local_activity_cmd, start_timer_cmd, WorkerTestHelpers,
 };
 use tokio::{join, select, sync::Barrier};
 
@@ -527,16 +525,7 @@ async fn query_during_wft_heartbeat_doesnt_accidentally_fail_to_continue_heartbe
         barrier.wait().await;
         core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
             task.run_id,
-            QueryResult {
-                query_id: query.query_id.clone(),
-                variant: Some(
-                    QuerySuccess {
-                        response: Some("whatever".into()),
-                    }
-                    .into(),
-                ),
-            }
-            .into(),
+            query_ok(&query.query_id, "whatev"),
         ))
         .await
         .unwrap();
@@ -699,16 +688,7 @@ async fn la_resolve_during_legacy_query_does_not_combine(#[case] impossible_quer
         );
         core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
             task.run_id,
-            QueryResult {
-                query_id: "q1".to_string(),
-                variant: Some(
-                    QuerySuccess {
-                        response: Some("whatev".into()),
-                    }
-                    .into(),
-                ),
-            }
-            .into(),
+            query_ok("q1", "whatev"),
         ))
         .await
         .unwrap();
@@ -717,18 +697,9 @@ async fn la_resolve_during_legacy_query_does_not_combine(#[case] impossible_quer
         if impossible_query_in_task {
             // finish last query
             let task = core.poll_workflow_activation().await.unwrap();
-            core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
+            core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
                 task.run_id,
-                vec![QueryResult {
-                    query_id: LEGACY_QUERY_ID.to_string(),
-                    variant: Some(
-                        QuerySuccess {
-                            response: Some("whatev".into()),
-                        }
-                        .into(),
-                    ),
-                }
-                .into()],
+                query_ok(LEGACY_QUERY_ID, "whatev"),
             ))
             .await
             .unwrap();
@@ -1220,4 +1191,107 @@ async fn local_activities_can_be_delivered_during_shutdown() {
     let (wf_r, act_r) = join!(wf_poller, at_poller);
     assert_matches!(wf_r.unwrap_err(), PollWfError::ShutDown);
     assert_matches!(act_r.unwrap_err(), PollActivityError::ShutDown);
+}
+
+#[tokio::test]
+async fn queries_can_be_received_while_heartbeating() {
+    let wfid = "fake_wf_id";
+    let mut t = TestHistoryBuilder::default();
+    t.add_wfe_started_with_wft_timeout(Duration::from_millis(200));
+    t.add_full_wf_task();
+    t.add_full_wf_task();
+    t.add_full_wf_task();
+
+    let tasks = [
+        hist_to_poll_resp(&t, wfid.to_owned(), ResponseType::ToTaskNum(1)),
+        {
+            let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), ResponseType::OneTask(2));
+            pr.queries = HashMap::new();
+            pr.queries.insert(
+                "q1".to_string(),
+                WorkflowQuery {
+                    query_type: "query-type".to_string(),
+                    query_args: Some(b"hi".into()),
+                    header: None,
+                },
+            );
+            pr
+        },
+        {
+            let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), ResponseType::OneTask(3));
+            pr.query = Some(WorkflowQuery {
+                query_type: "query-type".to_string(),
+                query_args: Some(b"hi".into()),
+                header: None,
+            });
+            pr
+        },
+    ];
+    let mut mock = mock_workflow_client();
+    mock.expect_respond_legacy_query()
+        .times(1)
+        .returning(move |_, _| Ok(Default::default()));
+    let mut mock = single_hist_mock_sg(wfid, t, tasks, mock, true);
+    mock.worker_cfg(|wc| wc.max_cached_workflows = 1);
+    let core = mock_worker(mock);
+
+    let task = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        task.jobs.as_slice(),
+        &[WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::StartWorkflow(_)),
+        },]
+    );
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+        task.run_id,
+        schedule_local_activity_cmd(
+            1,
+            "act-id",
+            ActivityCancellationType::TryCancel,
+            Duration::from_secs(60),
+        ),
+    ))
+    .await
+    .unwrap();
+
+    let task = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        task.jobs.as_slice(),
+        &[WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::QueryWorkflow(ref q)),
+        }]
+        if q.query_id == "q1"
+    );
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+        task.run_id,
+        query_ok("q1", "whatev"),
+    ))
+    .await
+    .unwrap();
+
+    let task = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        task.jobs.as_slice(),
+        &[WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::QueryWorkflow(ref q)),
+        }]
+        if q.query_id == LEGACY_QUERY_ID
+    );
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+        task.run_id,
+        query_ok(LEGACY_QUERY_ID, "whatev"),
+    ))
+    .await
+    .unwrap();
+
+    // Handle the activity so we can shut down cleanly
+    let act_task = core.poll_activity_task().await.unwrap();
+    core.complete_activity_task(ActivityTaskCompletion {
+        task_token: act_task.task_token,
+        result: Some(ActivityExecutionResult::ok(vec![1].into())),
+    })
+    .await
+    .unwrap();
+
+    core.drain_pollers_and_shutdown().await;
 }
