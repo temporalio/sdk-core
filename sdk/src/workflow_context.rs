@@ -298,7 +298,7 @@ impl WfContext {
         self.send(RustWfCmd::NewNonblockingCmd(
             workflow_command::Variant::UpsertWorkflowSearchAttributes(
                 UpsertWorkflowSearchAttributes {
-                    search_attributes: HashMap::from_iter(attr_iter.into_iter()),
+                    search_attributes: HashMap::from_iter(attr_iter),
                 },
             ),
         ))
@@ -309,7 +309,7 @@ impl WfContext {
         self.send(RustWfCmd::NewNonblockingCmd(
             workflow_command::Variant::ModifyWorkflowProperties(ModifyWorkflowProperties {
                 upserted_memo: Some(Memo {
-                    fields: HashMap::from_iter(attr_iter.into_iter()),
+                    fields: HashMap::from_iter(attr_iter),
                 }),
             }),
         ))

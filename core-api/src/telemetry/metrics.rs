@@ -136,7 +136,7 @@ impl MetricAttributes {
                 Arc::make_mut(kvs).extend(new_kvs.into_iter().map(Into::into));
             }
             MetricAttributes::Lang(ref mut attrs, ..) => {
-                attrs.new_attributes.extend(new_kvs.into_iter());
+                attrs.new_attributes.extend(new_kvs);
             }
         }
     }
@@ -149,7 +149,7 @@ pub struct MetricsAttributesOptions {
 }
 impl MetricsAttributesOptions {
     pub fn extend(&mut self, new_kvs: impl IntoIterator<Item = MetricKeyValue>) {
-        self.attributes.extend(new_kvs.into_iter())
+        self.attributes.extend(new_kvs)
     }
 }
 

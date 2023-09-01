@@ -166,7 +166,7 @@ mod tests {
             .build()
             .unwrap();
         let instance = telemetry_init(opts).unwrap();
-        let _g = tracing::subscriber::set_default(instance.trace_subscriber.clone());
+        let _g = tracing::subscriber::set_default(instance.trace_subscriber().unwrap().clone());
 
         let top_span = span!(Level::INFO, "yayspan", huh = "wat");
         let _guard = top_span.enter();

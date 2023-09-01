@@ -75,7 +75,7 @@ impl InternalFlags {
             ..
         } = self
         {
-            lang_since_last_complete.extend(flags.into_iter());
+            lang_since_last_complete.extend(flags);
         }
     }
 
