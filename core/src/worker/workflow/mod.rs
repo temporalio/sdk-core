@@ -272,6 +272,23 @@ impl Workflows {
                 | ActivationOrAuto::ReadyForQueries(mut act) => {
                     sort_act_jobs(&mut act);
                     debug!(activation=%act, "Sending activation to lang");
+                    // TODO: REMOVE ======(make into debug assert validation)===============
+                    let any_job_is_query = act.jobs.iter().any(|j| {
+                        matches!(
+                            j.variant,
+                            Some(workflow_activation_job::Variant::QueryWorkflow(_))
+                        )
+                    });
+                    let all_jobs_are_query = act.jobs.iter().all(|j| {
+                        matches!(
+                            j.variant,
+                            Some(workflow_activation_job::Variant::QueryWorkflow(_))
+                        )
+                    });
+                    if any_job_is_query && !all_jobs_are_query {
+                        panic!("Ahhh query job with non query jobs: {:?}", &act);
+                    }
+                    // TODO: REMOVE ===========================================================
                     break Ok(act);
                 }
                 ActivationOrAuto::Autocomplete { run_id } => {
@@ -527,7 +544,10 @@ impl Workflows {
                     r
                 })
             );
-            jh_res?.map_err(|e| anyhow!("Error joining workflow processing thread: {e:?}"))?;
+            jh_res?.map_err(|e| {
+                let as_str = e.downcast::<&str>();
+                anyhow!("Error joining workflow processing thread: {as_str:?}")
+            })?;
         }
         Ok(())
     }
@@ -795,7 +815,6 @@ impl PreparedWFT {
 #[derive(Debug)]
 pub(crate) struct OutstandingTask {
     pub info: WorkflowTaskInfo,
-    pub hit_cache: bool,
     /// Set if the outstanding task has quer(ies) which must be fulfilled upon finishing replay
     pub pending_queries: Vec<QueryWorkflow>,
     pub start_time: Instant,

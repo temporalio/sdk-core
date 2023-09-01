@@ -3,7 +3,7 @@ use crate::{
     replay::{default_wes_attribs, TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE},
     test_help::{
         hist_to_poll_resp, mock_sdk, mock_sdk_cfg, mock_worker, single_hist_mock_sg, MockPollCfg,
-        ResponseType,
+        ResponseType, WorkerExt,
     },
     worker::{client::mocks::mock_workflow_client, LEGACY_QUERY_ID},
 };
@@ -582,10 +582,8 @@ async fn la_resolve_during_legacy_query_does_not_combine(#[case] impossible_quer
     t.add_timer_fired(timer_started_event_id, "1".to_string());
 
     // nonlegacy query got here & LA started here
+    // then next task is incremental w/ legacy query (for impossible query case)
     t.add_full_wf_task();
-    // legacy query got here, at the same time that the LA is resolved
-    t.add_local_activity_result_marker(1, "1", "whatever".into());
-    t.add_workflow_execution_completed();
 
     let barr = Arc::new(Barrier::new(2));
     let barr_c = barr.clone();
@@ -612,9 +610,6 @@ async fn la_resolve_during_legacy_query_does_not_combine(#[case] impossible_quer
                 ResponseType::UntilResolved(
                     async move {
                         barr_c.wait().await;
-                        // This sleep is the only not-incredibly-invasive way to ensure the LA
-                        // resolves & updates machines before we process this task
-                        tokio::time::sleep(Duration::from_secs(1)).await;
                     }
                     .boxed(),
                     2,
@@ -662,42 +657,26 @@ async fn la_resolve_during_legacy_query_does_not_combine(#[case] impossible_quer
         ))
         .await
         .unwrap();
+
         let task = core.poll_workflow_activation().await.unwrap();
         assert_matches!(
             task.jobs.as_slice(),
-            &[
-                WorkflowActivationJob {
-                    variant: Some(workflow_activation_job::Variant::FireTimer(_)),
-                },
-                WorkflowActivationJob {
-                    variant: Some(workflow_activation_job::Variant::QueryWorkflow(_)),
-                }
-            ]
+            &[WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::FireTimer(_)),
+            },]
         );
-        core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
+        core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
             task.run_id,
-            vec![
-                schedule_local_activity_cmd(
-                    1,
-                    "act-id",
-                    ActivityCancellationType::TryCancel,
-                    Duration::from_secs(60),
-                ),
-                QueryResult {
-                    query_id: "q1".to_string(),
-                    variant: Some(
-                        QuerySuccess {
-                            response: Some("whatev".into()),
-                        }
-                        .into(),
-                    ),
-                }
-                .into(),
-            ],
+            schedule_local_activity_cmd(
+                1,
+                "act-id",
+                ActivityCancellationType::TryCancel,
+                Duration::from_secs(60),
+            ),
         ))
         .await
         .unwrap();
-        barr.wait().await;
+
         let task = core.poll_workflow_activation().await.unwrap();
         // The next task needs to be resolve, since the LA is completed immediately
         assert_matches!(
@@ -708,6 +687,33 @@ async fn la_resolve_during_legacy_query_does_not_combine(#[case] impossible_quer
         );
         // Complete workflow
         core.complete_execution(&task.run_id).await;
+
+        // Now we will get the query
+        let task = core.poll_workflow_activation().await.unwrap();
+        assert_matches!(
+            task.jobs.as_slice(),
+            &[WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::QueryWorkflow(ref q)),
+            }]
+            if q.query_id == "q1"
+        );
+        core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+            task.run_id,
+            QueryResult {
+                query_id: "q1".to_string(),
+                variant: Some(
+                    QuerySuccess {
+                        response: Some("whatev".into()),
+                    }
+                    .into(),
+                ),
+            }
+            .into(),
+        ))
+        .await
+        .unwrap();
+        barr.wait().await;
+
         if impossible_query_in_task {
             // finish last query
             let task = core.poll_workflow_activation().await.unwrap();
@@ -738,8 +744,8 @@ async fn la_resolve_during_legacy_query_does_not_combine(#[case] impossible_quer
         .unwrap();
     };
 
-    tokio::join!(wf_fut, act_fut);
-    core.shutdown().await;
+    join!(wf_fut, act_fut);
+    core.drain_pollers_and_shutdown().await;
 }
 
 #[tokio::test]

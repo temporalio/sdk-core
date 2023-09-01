@@ -149,10 +149,7 @@ async fn legacy_query(#[case] include_history: bool) {
 
 #[rstest::rstest]
 #[tokio::test]
-async fn new_queries(
-    #[values(1, 3)] num_queries: usize,
-    #[values(false, true)] query_results_after_complete: bool,
-) {
+async fn new_queries(#[values(1, 3)] num_queries: usize) {
     let wfid = "fake_wf_id";
     let query_resp = "response";
     let t = canned_histories::single_timer("1");
@@ -200,12 +197,20 @@ async fn new_queries(
 
     let task = core.poll_workflow_activation().await.unwrap();
     assert_matches!(
-        task.jobs[0],
-        WorkflowActivationJob {
+        task.jobs.as_slice(),
+        &[WorkflowActivationJob {
             variant: Some(workflow_activation_job::Variant::FireTimer(_)),
-        }
+        }]
     );
-    for i in 1..=num_queries {
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+        task.run_id,
+        CompleteWorkflowExecution { result: None }.into(),
+    ))
+    .await
+    .unwrap();
+
+    let task = core.poll_workflow_activation().await.unwrap();
+    for i in 0..num_queries {
         assert_matches!(
             task.jobs[i],
             WorkflowActivationJob {
@@ -217,9 +222,6 @@ async fn new_queries(
     }
 
     let mut commands = vec![];
-    if query_results_after_complete {
-        commands.push(CompleteWorkflowExecution { result: None }.into());
-    }
     for i in 1..=num_queries {
         commands.push(
             QueryResult {
@@ -233,9 +235,6 @@ async fn new_queries(
             }
             .into(),
         );
-    }
-    if !query_results_after_complete {
-        commands.push(CompleteWorkflowExecution { result: None }.into());
     }
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         task.run_id,
@@ -856,21 +855,9 @@ async fn legacy_query_combined_with_timer_fire_repro() {
     .unwrap();
 
     let task = core.poll_workflow_activation().await.unwrap();
-    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
         task.run_id,
-        vec![
-            RequestCancelActivity { seq: 1 }.into(),
-            QueryResult {
-                query_id: "the-query".to_string(),
-                variant: Some(
-                    QuerySuccess {
-                        response: Some("whatever".into()),
-                    }
-                    .into(),
-                ),
-            }
-            .into(),
-        ],
+        RequestCancelActivity { seq: 1 }.into(),
     ))
     .await
     .unwrap();
@@ -885,13 +872,38 @@ async fn legacy_query_combined_with_timer_fire_repro() {
     );
     core.complete_execution(&task.run_id).await;
 
-    // Then the query
+    // Then the queries
     let task = core.poll_workflow_activation().await.unwrap();
     assert_matches!(
         task.jobs.as_slice(),
         [WorkflowActivationJob {
-            variant: Some(workflow_activation_job::Variant::QueryWorkflow(_)),
+            variant: Some(workflow_activation_job::Variant::QueryWorkflow(ref q)),
         }]
+        if q.query_id == "the-query"
+    );
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+        task.run_id,
+        QueryResult {
+            query_id: "the-query".to_string(),
+            variant: Some(
+                QuerySuccess {
+                    response: Some("whatever".into()),
+                }
+                .into(),
+            ),
+        }
+        .into(),
+    ))
+    .await
+    .unwrap();
+
+    let task = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        task.jobs.as_slice(),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::QueryWorkflow(ref q)),
+        }]
+        if q.query_id == LEGACY_QUERY_ID
     );
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
         task.run_id,

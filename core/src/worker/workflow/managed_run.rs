@@ -161,7 +161,6 @@ impl ManagedRun {
         let start_time = Instant::now();
 
         let work = pwft.work;
-        let did_miss_cache = !work.is_incremental() || !work.update.is_real();
         debug!(
             run_id = %work.execution.run_id,
             task_token = %&work.task_token,
@@ -200,7 +199,6 @@ impl ManagedRun {
         self.paginator = Some(pwft.paginator);
         self.wft = Some(OutstandingTask {
             info: wft_info,
-            hit_cache: !did_miss_cache,
             pending_queries,
             start_time,
             permit: pwft.permit,
@@ -833,20 +831,7 @@ impl ManagedRun {
                     }
                 }
                 let r = match maybe_act {
-                    Some(ActivationOrAuto::LangActivation(mut activation)) => {
-                        if in_response_to_wft {
-                            let wft = self
-                                .wft
-                                .as_mut()
-                                .expect("WFT must exist for run just updated with one");
-                            // If there are in-poll queries, insert jobs for those queries into the
-                            // activation, but only if we hit the cache. If we didn't, those queries
-                            // will need to be dealt with once replay is over
-                            if wft.hit_cache {
-                                put_queries_in_act(&mut activation, wft);
-                            }
-                        }
-
+                    Some(ActivationOrAuto::LangActivation(activation)) => {
                         if activation.jobs.is_empty() {
                             dbg_panic!("Should not send lang activation with no jobs");
                         }
