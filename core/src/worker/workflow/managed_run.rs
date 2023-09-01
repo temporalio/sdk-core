@@ -148,7 +148,7 @@ impl ManagedRun {
     /// Called whenever a new workflow task is obtained for this run
     pub(super) fn incoming_wft(&mut self, pwft: PermittedWFT) -> RunUpdateAct {
         let res = self._incoming_wft(pwft);
-        self.update_to_acts(res.map(Into::into), true)
+        self.update_to_acts(res.map(Into::into))
     }
 
     fn _incoming_wft(
@@ -282,7 +282,7 @@ impl ManagedRun {
     /// Checks if any further activations need to go out for this run and produces them if so.
     pub(super) fn check_more_activations(&mut self) -> RunUpdateAct {
         let res = self._check_more_activations();
-        self.update_to_acts(res.map(Into::into), false)
+        self.update_to_acts(res.map(Into::into))
     }
 
     fn _check_more_activations(&mut self) -> Result<Option<ActivationOrAuto>, RunUpdateErr> {
@@ -443,17 +443,14 @@ impl ManagedRun {
                         span: Span::current(),
                     })
                 } else {
-                    Ok(self.update_to_acts(
-                        Err(RunUpdateErr {
-                            source: WFMachinesError::Fatal(
-                                "Run's paginator was absent when attempting to fetch next history \
+                    Ok(self.update_to_acts(Err(RunUpdateErr {
+                        source: WFMachinesError::Fatal(
+                            "Run's paginator was absent when attempting to fetch next history \
                                 page. This is a Core SDK bug."
-                                    .to_string(),
-                            ),
-                            complete_resp_chan: rac.resp_chan,
-                        }),
-                        false,
-                    ))
+                                .to_string(),
+                        ),
+                        complete_resp_chan: rac.resp_chan,
+                    })))
                 };
             }
 
@@ -471,7 +468,7 @@ impl ManagedRun {
         paginator: HistoryPaginator,
     ) -> RunUpdateAct {
         let res = self._fetched_page_completion(update, paginator);
-        self.update_to_acts(res.map(Into::into), false)
+        self.update_to_acts(res.map(Into::into))
     }
     fn _fetched_page_completion(
         &mut self,
@@ -562,12 +559,12 @@ impl ManagedRun {
     /// Called when local activities resolve
     pub(super) fn local_resolution(&mut self, res: LocalResolution) -> RunUpdateAct {
         let res = self._local_resolution(res);
-        self.update_to_acts(res.map(Into::into), false)
+        self.update_to_acts(res.map(Into::into))
     }
 
     fn process_completion(&mut self, completion: RunActivationCompletion) -> RunUpdateAct {
         let res = self._process_completion(completion, None);
-        self.update_to_acts(res.map(Into::into), false)
+        self.update_to_acts(res.map(Into::into))
     }
 
     fn _process_completion(
@@ -686,7 +683,7 @@ impl ManagedRun {
         } else {
             None
         };
-        self.update_to_acts(Ok(maybe_act).map(Into::into), false)
+        self.update_to_acts(Ok(maybe_act).map(Into::into))
     }
     /// Returns `true` if autocompletion should be issued, which will actually cause us to end up
     /// in [completion] again, at which point we'll start a new heartbeat timeout, which will
@@ -810,11 +807,7 @@ impl ManagedRun {
 
     /// Take the result of some update to ourselves and turn it into a return value of zero or more
     /// actions
-    fn update_to_acts(
-        &mut self,
-        outcome: Result<ActOrFulfill, RunUpdateErr>,
-        in_response_to_wft: bool,
-    ) -> RunUpdateAct {
+    fn update_to_acts(&mut self, outcome: Result<ActOrFulfill, RunUpdateErr>) -> RunUpdateAct {
         match outcome {
             Ok(act_or_fulfill) => {
                 let (mut maybe_act, maybe_fulfill) = match act_or_fulfill {
@@ -826,7 +819,7 @@ impl ManagedRun {
                     match self._check_more_activations() {
                         Ok(oa) => maybe_act = oa,
                         Err(e) => {
-                            return self.update_to_acts(Err(e), in_response_to_wft);
+                            return self.update_to_acts(Err(e));
                         }
                     }
                 }
