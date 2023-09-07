@@ -520,6 +520,7 @@ impl WorkflowMachines {
             // them.
             if self.replaying
                 && has_final_event
+                && event.event_id > self.last_history_from_server.previous_wft_started_id
                 && event.event_type() != EventType::WorkflowTaskCompleted
                 && !event.is_command_event()
             {
