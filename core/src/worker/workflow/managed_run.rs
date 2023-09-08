@@ -148,7 +148,7 @@ impl ManagedRun {
     /// Called whenever a new workflow task is obtained for this run
     pub(super) fn incoming_wft(&mut self, pwft: PermittedWFT) -> RunUpdateAct {
         let res = self._incoming_wft(pwft);
-        self.update_to_acts(res.map(Into::into), true)
+        self.update_to_acts(res.map(Into::into))
     }
 
     fn _incoming_wft(
@@ -161,7 +161,6 @@ impl ManagedRun {
         let start_time = Instant::now();
 
         let work = pwft.work;
-        let did_miss_cache = !work.is_incremental() || !work.update.is_real();
         debug!(
             run_id = %work.execution.run_id,
             task_token = %&work.task_token,
@@ -200,7 +199,6 @@ impl ManagedRun {
         self.paginator = Some(pwft.paginator);
         self.wft = Some(OutstandingTask {
             info: wft_info,
-            hit_cache: !did_miss_cache,
             pending_queries,
             start_time,
             permit: pwft.permit,
@@ -284,7 +282,7 @@ impl ManagedRun {
     /// Checks if any further activations need to go out for this run and produces them if so.
     pub(super) fn check_more_activations(&mut self) -> RunUpdateAct {
         let res = self._check_more_activations();
-        self.update_to_acts(res.map(Into::into), false)
+        self.update_to_acts(res.map(Into::into))
     }
 
     fn _check_more_activations(&mut self) -> Result<Option<ActivationOrAuto>, RunUpdateErr> {
@@ -445,17 +443,14 @@ impl ManagedRun {
                         span: Span::current(),
                     })
                 } else {
-                    Ok(self.update_to_acts(
-                        Err(RunUpdateErr {
-                            source: WFMachinesError::Fatal(
-                                "Run's paginator was absent when attempting to fetch next history \
+                    Ok(self.update_to_acts(Err(RunUpdateErr {
+                        source: WFMachinesError::Fatal(
+                            "Run's paginator was absent when attempting to fetch next history \
                                 page. This is a Core SDK bug."
-                                    .to_string(),
-                            ),
-                            complete_resp_chan: rac.resp_chan,
-                        }),
-                        false,
-                    ))
+                                .to_string(),
+                        ),
+                        complete_resp_chan: rac.resp_chan,
+                    })))
                 };
             }
 
@@ -473,7 +468,7 @@ impl ManagedRun {
         paginator: HistoryPaginator,
     ) -> RunUpdateAct {
         let res = self._fetched_page_completion(update, paginator);
-        self.update_to_acts(res.map(Into::into), false)
+        self.update_to_acts(res.map(Into::into))
     }
     fn _fetched_page_completion(
         &mut self,
@@ -564,12 +559,12 @@ impl ManagedRun {
     /// Called when local activities resolve
     pub(super) fn local_resolution(&mut self, res: LocalResolution) -> RunUpdateAct {
         let res = self._local_resolution(res);
-        self.update_to_acts(res.map(Into::into), false)
+        self.update_to_acts(res.map(Into::into))
     }
 
     fn process_completion(&mut self, completion: RunActivationCompletion) -> RunUpdateAct {
         let res = self._process_completion(completion, None);
-        self.update_to_acts(res.map(Into::into), false)
+        self.update_to_acts(res.map(Into::into))
     }
 
     fn _process_completion(
@@ -688,7 +683,7 @@ impl ManagedRun {
         } else {
             None
         };
-        self.update_to_acts(Ok(maybe_act).map(Into::into), false)
+        self.update_to_acts(Ok(maybe_act).map(Into::into))
     }
     /// Returns `true` if autocompletion should be issued, which will actually cause us to end up
     /// in [completion] again, at which point we'll start a new heartbeat timeout, which will
@@ -812,11 +807,7 @@ impl ManagedRun {
 
     /// Take the result of some update to ourselves and turn it into a return value of zero or more
     /// actions
-    fn update_to_acts(
-        &mut self,
-        outcome: Result<ActOrFulfill, RunUpdateErr>,
-        in_response_to_wft: bool,
-    ) -> RunUpdateAct {
+    fn update_to_acts(&mut self, outcome: Result<ActOrFulfill, RunUpdateErr>) -> RunUpdateAct {
         match outcome {
             Ok(act_or_fulfill) => {
                 let (mut maybe_act, maybe_fulfill) = match act_or_fulfill {
@@ -828,25 +819,12 @@ impl ManagedRun {
                     match self._check_more_activations() {
                         Ok(oa) => maybe_act = oa,
                         Err(e) => {
-                            return self.update_to_acts(Err(e), in_response_to_wft);
+                            return self.update_to_acts(Err(e));
                         }
                     }
                 }
                 let r = match maybe_act {
-                    Some(ActivationOrAuto::LangActivation(mut activation)) => {
-                        if in_response_to_wft {
-                            let wft = self
-                                .wft
-                                .as_mut()
-                                .expect("WFT must exist for run just updated with one");
-                            // If there are in-poll queries, insert jobs for those queries into the
-                            // activation, but only if we hit the cache. If we didn't, those queries
-                            // will need to be dealt with once replay is over
-                            if wft.hit_cache {
-                                put_queries_in_act(&mut activation, wft);
-                            }
-                        }
-
+                    Some(ActivationOrAuto::LangActivation(activation)) => {
                         if activation.jobs.is_empty() {
                             dbg_panic!("Should not send lang activation with no jobs");
                         }

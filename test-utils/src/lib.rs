@@ -47,8 +47,8 @@ use temporal_sdk_core_api::{
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_commands::{
-            workflow_command, ActivityCancellationType, CompleteWorkflowExecution,
-            ScheduleActivity, ScheduleLocalActivity, StartTimer,
+            workflow_command, ActivityCancellationType, CompleteWorkflowExecution, QueryResult,
+            QuerySuccess, ScheduleActivity, ScheduleLocalActivity, StartTimer,
         },
         workflow_completion::WorkflowActivationCompletion,
     },
@@ -670,6 +670,19 @@ pub fn start_timer_cmd(seq: u32, duration: Duration) -> workflow_command::Varian
     StartTimer {
         seq,
         start_to_fire_timeout: Some(duration.try_into().expect("duration fits")),
+    }
+    .into()
+}
+
+pub fn query_ok(id: impl Into<String>, response: impl Into<Payload>) -> workflow_command::Variant {
+    QueryResult {
+        query_id: id.into(),
+        variant: Some(
+            QuerySuccess {
+                response: Some(response.into()),
+            }
+            .into(),
+        ),
     }
     .into()
 }

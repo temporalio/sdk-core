@@ -270,7 +270,7 @@ impl Workflows {
             match al {
                 ActivationOrAuto::LangActivation(mut act)
                 | ActivationOrAuto::ReadyForQueries(mut act) => {
-                    sort_act_jobs(&mut act);
+                    prepare_to_ship_activation(&mut act);
                     debug!(activation=%act, "Sending activation to lang");
                     break Ok(act);
                 }
@@ -527,7 +527,10 @@ impl Workflows {
                     r
                 })
             );
-            jh_res?.map_err(|e| anyhow!("Error joining workflow processing thread: {e:?}"))?;
+            jh_res?.map_err(|e| {
+                let as_str = e.downcast::<&str>();
+                anyhow!("Error joining workflow processing thread: {as_str:?}")
+            })?;
         }
         Ok(())
     }
@@ -795,7 +798,6 @@ impl PreparedWFT {
 #[derive(Debug)]
 pub(crate) struct OutstandingTask {
     pub info: WorkflowTaskInfo,
-    pub hit_cache: bool,
     /// Set if the outstanding task has quer(ies) which must be fulfilled upon finishing replay
     pub pending_queries: Vec<QueryWorkflow>,
     pub start_time: Instant,
@@ -1334,9 +1336,33 @@ impl LocalActivityRequestSink for LAReqSink {
     }
 }
 
-/// Sorts jobs in an activation to be in the order lang expects:
-/// `patches -> signals -> other -> queries`
-fn sort_act_jobs(wfa: &mut WorkflowActivation) {
+/// Sorts jobs in an activation to be in the order lang expects, and confirms any invariants
+/// activations must uphold.
+///
+/// ## Ordering
+/// `patches -> signals -> other -X-> queries`
+///
+/// ## Invariants:
+/// * Queries always go in their own activation
+fn prepare_to_ship_activation(wfa: &mut WorkflowActivation) {
+    let any_job_is_query = wfa.jobs.iter().any(|j| {
+        matches!(
+            j.variant,
+            Some(workflow_activation_job::Variant::QueryWorkflow(_))
+        )
+    });
+    let all_jobs_are_query = wfa.jobs.iter().all(|j| {
+        matches!(
+            j.variant,
+            Some(workflow_activation_job::Variant::QueryWorkflow(_))
+        )
+    });
+    if any_job_is_query && !all_jobs_are_query {
+        dbg_panic!(
+            "About to issue an activation that contains query jobs with non-query jobs: {:?}",
+            &wfa
+        );
+    }
     wfa.jobs.sort_by(|j1, j2| {
         // Unwrapping is fine here since we'll never issue empty variants
         let j1v = j1.variant.as_ref().unwrap();
@@ -1348,6 +1374,9 @@ fn sort_act_jobs(wfa: &mut WorkflowActivation) {
             match v {
                 workflow_activation_job::Variant::NotifyHasPatch(_) => 1,
                 workflow_activation_job::Variant::SignalWorkflow(_) => 2,
+                // In principle we should never actually need to sort these with the others, since
+                // queries always get their own activation, but, maintaining the semantic is
+                // reasonable.
                 workflow_activation_job::Variant::QueryWorkflow(_) => 4,
                 _ => 3,
             }
@@ -1376,11 +1405,6 @@ mod tests {
                     )),
                 },
                 WorkflowActivationJob {
-                    variant: Some(workflow_activation_job::Variant::QueryWorkflow(
-                        Default::default(),
-                    )),
-                },
-                WorkflowActivationJob {
                     variant: Some(workflow_activation_job::Variant::FireTimer(
                         Default::default(),
                     )),
@@ -1393,7 +1417,7 @@ mod tests {
             ],
             ..Default::default()
         };
-        sort_act_jobs(&mut act);
+        prepare_to_ship_activation(&mut act);
         let variants = act
             .jobs
             .into_iter()
@@ -1406,8 +1430,28 @@ mod tests {
                 workflow_activation_job::Variant::SignalWorkflow(_),
                 workflow_activation_job::Variant::FireTimer(_),
                 workflow_activation_job::Variant::ResolveActivity(_),
-                workflow_activation_job::Variant::QueryWorkflow(_)
             ]
         )
+    }
+
+    #[test]
+    #[should_panic]
+    fn queries_cannot_go_with_other_jobs() {
+        let mut act = WorkflowActivation {
+            jobs: vec![
+                WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::SignalWorkflow(
+                        Default::default(),
+                    )),
+                },
+                WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::QueryWorkflow(
+                        Default::default(),
+                    )),
+                },
+            ],
+            ..Default::default()
+        };
+        prepare_to_ship_activation(&mut act);
     }
 }
