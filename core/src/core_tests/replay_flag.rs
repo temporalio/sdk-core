@@ -1,6 +1,7 @@
 use crate::{
     test_help::{
         build_mock_pollers, canned_histories, hist_to_poll_resp, mock_worker, MockPollCfg,
+        ResponseType,
     },
     worker::{client::mocks::mock_workflow_client, ManagedWFFunc, LEGACY_QUERY_ID},
 };
@@ -10,12 +11,16 @@ use temporal_sdk::{WfContext, WorkflowFunction};
 use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::{
     coresdk::{
-        workflow_commands::{workflow_command::Variant::RespondToQuery, QueryResult, QuerySuccess},
+        workflow_activation::{workflow_activation_job, WorkflowActivationJob},
         workflow_completion::WorkflowActivationCompletion,
     },
-    temporal::api::{enums::v1::CommandType, query::v1::WorkflowQuery},
+    temporal::api::{
+        enums::v1::{CommandType, EventType},
+        query::v1::WorkflowQuery,
+    },
+    TestHistoryBuilder,
 };
-use temporal_sdk_core_test_utils::start_timer_cmd;
+use temporal_sdk_core_test_utils::{query_ok, start_timer_cmd};
 
 fn timers_wf(num_timers: u32) -> WorkflowFunction {
     WorkflowFunction::new(move |command_sink: WfContext| async move {
@@ -117,19 +122,68 @@ async fn replay_flag_correct_with_query() {
     assert!(task.is_replaying);
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
         task.run_id,
-        RespondToQuery(QueryResult {
-            query_id: LEGACY_QUERY_ID.to_string(),
-            variant: Some(
-                QuerySuccess {
-                    response: Some("hi".into()),
-                }
-                .into(),
-            ),
-        }),
+        query_ok(LEGACY_QUERY_ID, "hi"),
     ))
     .await
     .unwrap();
 
     let task = core.poll_workflow_activation().await.unwrap();
     assert!(!task.is_replaying);
+}
+
+#[tokio::test]
+async fn replay_flag_correct_signal_before_query_ending_on_wft_completed() {
+    let wfid = "fake_wf_id";
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    t.add_we_signaled("signal", vec![]);
+    t.add_full_wf_task();
+    let task = {
+        let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), ResponseType::AllHistory);
+        pr.query = Some(WorkflowQuery {
+            query_type: "query-type".to_string(),
+            query_args: Some(b"hi".into()),
+            header: None,
+        });
+        pr
+    };
+
+    let mut mock = MockPollCfg::from_resp_batches(wfid, t, [task], mock_workflow_client());
+    mock.num_expected_legacy_query_resps = 1;
+    let mut mock = build_mock_pollers(mock);
+    mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
+    let core = mock_worker(mock);
+
+    let task = core.poll_workflow_activation().await.unwrap();
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(task.run_id))
+        .await
+        .unwrap();
+
+    let task = core.poll_workflow_activation().await.unwrap();
+    assert!(task.is_replaying);
+    assert_matches!(
+        task.jobs.as_slice(),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::SignalWorkflow(_)),
+        }]
+    );
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(task.run_id))
+        .await
+        .unwrap();
+
+    let task = core.poll_workflow_activation().await.unwrap();
+    assert!(task.is_replaying);
+    assert_matches!(
+        task.jobs.as_slice(),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::QueryWorkflow(_)),
+        }]
+    );
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+        task.run_id,
+        query_ok(LEGACY_QUERY_ID, "hi"),
+    ))
+    .await
+    .unwrap();
 }
