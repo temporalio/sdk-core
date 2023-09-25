@@ -4,7 +4,12 @@ use std::{borrow::Cow, collections::HashSet, fmt::Debug, sync::Arc};
 /// The implementor is responsible for the allocation/instantiation of new metric meters which
 /// Core has requested.
 pub trait CoreMeter: Send + Sync + Debug {
-    fn new_attributes(&self, attribs: MetricsAttributesOptions) -> MetricAttributes;
+    fn new_attributes(&self, attribs: NewAttributes) -> MetricAttributes;
+    fn extend_attributes(
+        &self,
+        existing: MetricAttributes,
+        attribs: NewAttributes,
+    ) -> MetricAttributes;
     fn counter(&self, params: MetricParameters) -> Arc<dyn Counter>;
     fn histogram(&self, params: MetricParameters) -> Arc<dyn Histogram>;
     fn gauge(&self, params: MetricParameters) -> Arc<dyn Gauge>;
@@ -36,7 +41,7 @@ impl From<&'static str> for MetricParameters {
 #[derive(derive_more::Constructor, Clone, Debug)]
 pub struct TemporalMeter {
     pub inner: Arc<dyn CoreMeter>,
-    pub default_attribs: MetricsAttributesOptions,
+    pub default_attribs: NewAttributes,
 }
 
 #[derive(Debug, Clone)]
@@ -52,7 +57,7 @@ pub enum MetricEvent {
     },
     Update {
         id: u64,
-        attributes: LangMetricAttributes,
+        attributes: BufferAttributes,
         update: MetricUpdateVal,
     },
 }
@@ -75,9 +80,18 @@ pub trait MetricCallBufferer: Send + Sync {
 }
 
 impl CoreMeter for Arc<dyn CoreMeter> {
-    fn new_attributes(&self, attribs: MetricsAttributesOptions) -> MetricAttributes {
+    fn new_attributes(&self, attribs: NewAttributes) -> MetricAttributes {
         self.as_ref().new_attributes(attribs)
     }
+
+    fn extend_attributes(
+        &self,
+        existing: MetricAttributes,
+        attribs: NewAttributes,
+    ) -> MetricAttributes {
+        self.as_ref().extend_attributes(existing, attribs)
+    }
+
     fn counter(&self, params: MetricParameters) -> Arc<dyn Counter> {
         self.as_ref().counter(params)
     }
@@ -98,10 +112,15 @@ pub enum MetricAttributes {
     OTel {
         kvs: Arc<Vec<opentelemetry::KeyValue>>,
     },
-    Lang(LangMetricAttributes),
+    Buffer(BufferAttributes),
+    Dynamic(Arc<dyn CustomMetricAttributes>),
 }
+
+/// A reference to some attributes created lang side.
+pub trait CustomMetricAttributes: Debug + Send + Sync {}
+
 #[derive(Clone, Debug)]
-pub struct LangMetricAttributes {
+pub struct BufferAttributes {
     /// A set of references to attributes stored in lang memory. All referenced attributes should
     /// be attached to the metric when recording.
     pub ids: HashSet<u64>,
@@ -110,46 +129,24 @@ pub struct LangMetricAttributes {
     pub new_attributes: Vec<MetricKeyValue>,
 }
 
-impl MetricAttributes {
-    /// Extend existing metrics attributes with others, returning a new instance
-    pub fn merge(&self, other: MetricAttributes) -> Self {
-        let mut me = self.clone();
-        match (&mut me, other) {
-            #[cfg(feature = "otel_impls")]
-            (MetricAttributes::OTel { ref mut kvs }, MetricAttributes::OTel { kvs: other_kvs }) => {
-                Arc::make_mut(kvs).extend((*other_kvs).clone());
-            }
-            (MetricAttributes::Lang(ref mut l), MetricAttributes::Lang(ol)) => {
-                l.ids.extend(ol.ids);
-                l.new_attributes.extend(ol.new_attributes);
-            }
-            _ => panic!("Cannot merge metric attributes of different kinds"),
-        }
-        me
-    }
-
-    /// Mutate self to add new kvs
-    pub fn add_new_attrs(&mut self, new_kvs: impl IntoIterator<Item = MetricKeyValue>) {
-        match self {
-            #[cfg(feature = "otel_impls")]
-            MetricAttributes::OTel { ref mut kvs, .. } => {
-                Arc::make_mut(kvs).extend(new_kvs.into_iter().map(Into::into));
-            }
-            MetricAttributes::Lang(ref mut attrs, ..) => {
-                attrs.new_attributes.extend(new_kvs);
-            }
-        }
-    }
-}
-
 /// Options that are attached to metrics on a per-call basis
 #[derive(Clone, Debug, Default, derive_more::Constructor)]
-pub struct MetricsAttributesOptions {
+pub struct NewAttributes {
     pub attributes: Vec<MetricKeyValue>,
 }
-impl MetricsAttributesOptions {
+impl NewAttributes {
     pub fn extend(&mut self, new_kvs: impl IntoIterator<Item = MetricKeyValue>) {
         self.attributes.extend(new_kvs)
+    }
+}
+impl<I> From<I> for NewAttributes
+where
+    I: IntoIterator<Item = MetricKeyValue>,
+{
+    fn from(value: I) -> Self {
+        Self {
+            attributes: value.into_iter().collect(),
+        }
     }
 }
 
@@ -200,11 +197,15 @@ pub trait Gauge: Send + Sync {
 #[derive(Debug)]
 pub struct NoOpCoreMeter;
 impl CoreMeter for NoOpCoreMeter {
-    fn new_attributes(&self, _: MetricsAttributesOptions) -> MetricAttributes {
-        MetricAttributes::Lang(LangMetricAttributes {
+    fn new_attributes(&self, _: NewAttributes) -> MetricAttributes {
+        MetricAttributes::Buffer(BufferAttributes {
             ids: HashSet::new(),
             new_attributes: vec![],
         })
+    }
+
+    fn extend_attributes(&self, existing: MetricAttributes, _: NewAttributes) -> MetricAttributes {
+        existing
     }
 
     fn counter(&self, _: MetricParameters) -> Arc<dyn Counter> {

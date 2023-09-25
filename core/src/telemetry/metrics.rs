@@ -32,9 +32,9 @@ use std::{
 };
 use temporal_sdk_core_api::telemetry::{
     metrics::{
-        CoreMeter, Counter, Gauge, Histogram, LangMetricAttributes, MetricAttributes,
+        BufferAttributes, CoreMeter, Counter, Gauge, Histogram, MetricAttributes,
         MetricCallBufferer, MetricEvent, MetricKeyValue, MetricKind, MetricParameters,
-        MetricUpdateVal, MetricsAttributesOptions, NoOpCoreMeter,
+        MetricUpdateVal, NewAttributes, NoOpCoreMeter,
     },
     OtelCollectorOptions, PrometheusExporterOptions,
 };
@@ -111,10 +111,9 @@ impl MetricsContext {
         &self,
         new_attrs: impl IntoIterator<Item = MetricKeyValue>,
     ) -> Self {
-        let as_attrs = self.meter.new_attributes(MetricsAttributesOptions::new(
-            new_attrs.into_iter().collect(),
-        ));
-        let kvs = self.kvs.merge(as_attrs);
+        let kvs = self
+            .meter
+            .extend_attributes(self.kvs.clone(), new_attrs.into());
         Self {
             kvs,
             instruments: self.instruments.clone(),
@@ -663,18 +662,40 @@ impl MetricsCallBuffer {
             tx: self.calls_tx.clone(),
         }
     }
-}
-impl CoreMeter for MetricsCallBuffer {
-    fn new_attributes(&self, opts: MetricsAttributesOptions) -> MetricAttributes {
+    fn send_attrib_create(&self, attribs: NewAttributes) -> u64 {
         let id = self.attribute_ids.fetch_add(1, Ordering::AcqRel);
         let _ = self.calls_tx.send(MetricEvent::CreateAttributes {
             id,
-            attributes: opts.attributes,
+            attributes: attribs.attributes,
         });
-        MetricAttributes::Lang(LangMetricAttributes {
+        id
+    }
+}
+impl CoreMeter for MetricsCallBuffer {
+    fn new_attributes(&self, opts: NewAttributes) -> MetricAttributes {
+        let id = self.send_attrib_create(opts);
+        MetricAttributes::Buffer(BufferAttributes {
             ids: HashSet::from([id]),
             new_attributes: vec![],
         })
+    }
+
+    fn extend_attributes(
+        &self,
+        existing: MetricAttributes,
+        attribs: NewAttributes,
+    ) -> MetricAttributes {
+        if let MetricAttributes::Buffer(mut ol) = existing {
+            let id = self.send_attrib_create(attribs);
+            ol.ids.insert(id);
+            MetricAttributes::Buffer(BufferAttributes {
+                ids: ol.ids,
+                new_attributes: vec![],
+            })
+        } else {
+            dbg_panic!("Must use OTel attributes with an OTel metric implementation");
+            existing
+        }
     }
 
     fn counter(&self, params: MetricParameters) -> Arc<dyn Counter> {
@@ -703,7 +724,7 @@ struct BufferInstrument {
 impl BufferInstrument {
     fn send(&self, value: u64, attributes: &MetricAttributes) {
         let attributes = match attributes {
-            MetricAttributes::Lang(l) => l.clone(),
+            MetricAttributes::Buffer(l) => l.clone(),
             _ => panic!("MetricsCallBuffer only works with MetricAttributes::Lang"),
         };
         let _ = self.tx.send(MetricEvent::Update {
@@ -735,9 +756,23 @@ impl Histogram for BufferInstrument {
 #[derive(Debug)]
 pub struct CoreOtelMeter(Meter);
 impl CoreMeter for CoreOtelMeter {
-    fn new_attributes(&self, attribs: MetricsAttributesOptions) -> MetricAttributes {
+    fn new_attributes(&self, attribs: NewAttributes) -> MetricAttributes {
         MetricAttributes::OTel {
             kvs: Arc::new(attribs.attributes.into_iter().map(KeyValue::from).collect()),
+        }
+    }
+
+    fn extend_attributes(
+        &self,
+        existing: MetricAttributes,
+        attribs: NewAttributes,
+    ) -> MetricAttributes {
+        if let MetricAttributes::OTel { mut kvs } = existing {
+            Arc::make_mut(&mut kvs).extend(attribs.attributes.into_iter().map(Into::into));
+            MetricAttributes::OTel { kvs }
+        } else {
+            dbg_panic!("Must use OTel attributes with an OTel metric implementation");
+            existing
         }
     }
 
@@ -782,8 +817,16 @@ pub(crate) struct PrefixedMetricsMeter<CM> {
     meter: CM,
 }
 impl<CM: CoreMeter> CoreMeter for PrefixedMetricsMeter<CM> {
-    fn new_attributes(&self, attribs: MetricsAttributesOptions) -> MetricAttributes {
+    fn new_attributes(&self, attribs: NewAttributes) -> MetricAttributes {
         self.meter.new_attributes(attribs)
+    }
+
+    fn extend_attributes(
+        &self,
+        existing: MetricAttributes,
+        attribs: NewAttributes,
+    ) -> MetricAttributes {
+        self.meter.extend_attributes(existing, attribs)
     }
 
     fn counter(&self, mut params: MetricParameters) -> Arc<dyn Counter> {
@@ -892,10 +935,10 @@ mod tests {
             description: "a counter".into(),
             unit: "bleezles".into(),
         });
-        let attrs_1 = call_buffer.new_attributes(MetricsAttributesOptions {
+        let attrs_1 = call_buffer.new_attributes(NewAttributes {
             attributes: vec![MetricKeyValue::new("hi", "yo")],
         });
-        let attrs_2 = call_buffer.new_attributes(MetricsAttributesOptions {
+        let attrs_2 = call_buffer.new_attributes(NewAttributes {
             attributes: vec![MetricKeyValue::new("run", "fast")],
         });
         ctr.add(1, &attrs_1);
