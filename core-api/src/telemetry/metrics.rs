@@ -4,7 +4,13 @@ use std::{borrow::Cow, collections::HashSet, fmt::Debug, sync::Arc};
 /// The implementor is responsible for the allocation/instantiation of new metric meters which
 /// Core has requested.
 pub trait CoreMeter: Send + Sync + Debug {
+    /// Given some k/v pairs, create a return a new instantiated instance of metric attributes.
+    /// Only [MetricAttributes] created by this meter can be used when calling record on instruments
+    /// created by this meter.
     fn new_attributes(&self, attribs: NewAttributes) -> MetricAttributes;
+    /// Extend some existing attributes with new values. Implementations should create new instances
+    /// when doing so, rather than mutating whatever is backing the passed in `existing` attributes.
+    /// Ideally that new instance retains a ref to the extended old attribute, promoting re-use.
     fn extend_attributes(
         &self,
         existing: MetricAttributes,
