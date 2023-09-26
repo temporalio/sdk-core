@@ -122,6 +122,10 @@ pub struct ClientOptions {
     /// override.
     #[builder(default)]
     pub override_origin: Option<Uri>,
+
+    /// If set (which it is by default), HTTP2 gRPC keep alive will be enabled.
+    #[builder(default = "Some(ClientKeepAliveConfig::default())")]
+    pub keep_alive: Option<ClientKeepAliveConfig>,
 }
 
 /// Configuration options for TLS
@@ -145,6 +149,24 @@ pub struct ClientTlsConfig {
     pub client_cert: Vec<u8>,
     /// The private key for this client
     pub client_private_key: Vec<u8>,
+}
+
+/// Client keep alive configuration.
+#[derive(Clone, Debug)]
+pub struct ClientKeepAliveConfig {
+    /// Interval to send HTTP2 keep alive pings.
+    pub interval: Duration,
+    /// Timeout that the keep alive must be responded to within or the connection will be closed.
+    pub timeout: Duration,
+}
+
+impl Default for ClientKeepAliveConfig {
+    fn default() -> Self {
+        Self {
+            interval: Duration::from_secs(30),
+            timeout: Duration::from_secs(15),
+        }
+    }
 }
 
 /// Configuration for retrying requests to the server
@@ -318,6 +340,14 @@ impl ClientOptions {
     {
         let channel = Channel::from_shared(self.target_url.to_string())?;
         let channel = self.add_tls_to_channel(channel).await?;
+        let channel = if let Some(keep_alive) = self.keep_alive.as_ref() {
+            channel
+                .keep_alive_while_idle(true)
+                .http2_keep_alive_interval(keep_alive.interval)
+                .keep_alive_timeout(keep_alive.timeout)
+        } else {
+            channel
+        };
         let channel = if let Some(origin) = self.override_origin.clone() {
             channel.origin(origin)
         } else {
@@ -1440,5 +1470,28 @@ mod tests {
         req.metadata_mut().insert("enchi", "cat".parse().unwrap());
         let next_req = iceptor.call(req).unwrap();
         assert_eq!(next_req.metadata().get("enchi").unwrap(), "cat");
+    }
+
+    #[test]
+    fn keep_alive_defaults() {
+        let mut builder = ClientOptionsBuilder::default();
+        builder
+            .identity("enchicat".to_string())
+            .target_url(Url::parse("https://smolkitty").unwrap())
+            .client_name("cute-kitty".to_string())
+            .client_version("0.1.0".to_string());
+        // If unset, defaults to Some
+        let opts = builder.build().unwrap();
+        assert_eq!(
+            opts.keep_alive.clone().unwrap().interval,
+            ClientKeepAliveConfig::default().interval
+        );
+        assert_eq!(
+            opts.keep_alive.clone().unwrap().timeout,
+            ClientKeepAliveConfig::default().timeout
+        );
+        // But can be set to none
+        let opts = builder.keep_alive(None).build().unwrap();
+        assert!(opts.keep_alive.is_none());
     }
 }
