@@ -18,6 +18,7 @@ use tower::Service;
 #[derive(Clone, derive_more::DebugCustom)]
 #[debug(fmt = "MetricsContext {{ attribs: {kvs:?}, poll_is_long: {poll_is_long} }}")]
 pub struct MetricsContext {
+    meter: Arc<dyn CoreMeter>,
     kvs: MetricAttributes,
     poll_is_long: bool,
 
@@ -66,19 +67,15 @@ impl MetricsContext {
                 unit: "ms".into(),
                 description: "Histogram of client long-poll request latencies".into(),
             }),
+            meter,
         }
     }
 
-    /// Extend an existing metrics context with new attributes, returning a new one
-    pub(crate) fn with_new_attrs(&self, new_kvs: impl IntoIterator<Item = MetricKeyValue>) -> Self {
-        let mut r = self.clone();
-        r.add_new_attrs(new_kvs);
-        r
-    }
-
-    /// Add new attributes to the context, mutating it
-    pub(crate) fn add_new_attrs(&mut self, new_kvs: impl IntoIterator<Item = MetricKeyValue>) {
-        self.kvs.add_new_attrs(new_kvs);
+    /// Mutate this metrics context with new attributes
+    pub(crate) fn with_new_attrs(&mut self, new_kvs: impl IntoIterator<Item = MetricKeyValue>) {
+        self.kvs = self
+            .meter
+            .extend_attributes(self.kvs.clone(), new_kvs.into());
     }
 
     pub(crate) fn set_is_long_poll(&mut self) {
@@ -152,19 +149,18 @@ impl Service<http::Request<BoxBody>> for GrpcMetricSvc {
         let metrics = self
             .metrics
             .clone()
-            .map(|m| {
+            .map(|mut m| {
                 // Attach labels from client wrapper
                 if let Some(other_labels) = req.extensions_mut().remove::<AttachMetricLabels>() {
                     m.with_new_attrs(other_labels.labels)
-                } else {
-                    m
                 }
+                m
             })
             .and_then(|mut metrics| {
                 // Attach method name label if possible
                 req.uri().to_string().rsplit_once('/').map(|split_tup| {
                     let method_name = split_tup.1;
-                    metrics.add_new_attrs([svc_operation(method_name.to_string())]);
+                    metrics.with_new_attrs([svc_operation(method_name.to_string())]);
                     if LONG_POLL_METHOD_NAMES.contains(&method_name) {
                         metrics.set_is_long_poll();
                     }

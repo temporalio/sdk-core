@@ -29,7 +29,7 @@ use std::{
     },
 };
 use temporal_sdk_core_api::telemetry::{
-    metrics::{CoreMeter, MetricKeyValue, MetricsAttributesOptions, TemporalMeter},
+    metrics::{CoreMeter, MetricKeyValue, NewAttributes, TemporalMeter},
     CoreLog, CoreTelemetry, Logger, MetricTemporality, TelemetryOptions,
 };
 use tracing::{Level, Subscriber};
@@ -92,7 +92,7 @@ impl TelemetryInstance {
     pub fn get_temporal_metric_meter(&self) -> Option<TemporalMeter> {
         self.metrics.clone().map(|m| {
             let kvs = self.default_kvs();
-            let attribs = MetricsAttributesOptions::new(kvs);
+            let attribs = NewAttributes::new(kvs);
             TemporalMeter::new(
                 Arc::new(PrefixedMetricsMeter::new(self.metric_prefix.clone(), m))
                     as Arc<dyn CoreMeter>,
@@ -105,7 +105,7 @@ impl TelemetryInstance {
     pub fn get_metric_meter(&self) -> Option<TemporalMeter> {
         self.metrics.clone().map(|m| {
             let kvs = self.default_kvs();
-            let attribs = MetricsAttributesOptions::new(kvs);
+            let attribs = NewAttributes::new(kvs);
             TemporalMeter::new(m, attribs)
         })
     }

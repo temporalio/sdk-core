@@ -21,20 +21,12 @@ use opentelemetry_sdk::{
     runtime, AttributeSet,
 };
 use parking_lot::RwLock;
-use std::{
-    collections::{HashMap, HashSet},
-    net::SocketAddr,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc,
-    },
-    time::Duration,
-};
+use std::{collections::HashMap, fmt::Debug, net::SocketAddr, sync::Arc, time::Duration};
 use temporal_sdk_core_api::telemetry::{
     metrics::{
-        CoreMeter, Counter, Gauge, Histogram, LangMetricAttributes, MetricAttributes,
-        MetricCallBufferer, MetricEvent, MetricKeyValue, MetricKind, MetricParameters,
-        MetricUpdateVal, MetricsAttributesOptions, NoOpCoreMeter,
+        BufferAttributes, BufferInstrumentRef, CoreMeter, Counter, Gauge, Histogram,
+        LazyBufferInstrument, MetricAttributes, MetricCallBufferer, MetricEvent, MetricKeyValue,
+        MetricKind, MetricParameters, MetricUpdateVal, NewAttributes, NoOpCoreMeter,
     },
     OtelCollectorOptions, PrometheusExporterOptions,
 };
@@ -111,10 +103,9 @@ impl MetricsContext {
         &self,
         new_attrs: impl IntoIterator<Item = MetricKeyValue>,
     ) -> Self {
-        let as_attrs = self.meter.new_attributes(MetricsAttributesOptions::new(
-            new_attrs.into_iter().collect(),
-        ));
-        let kvs = self.kvs.merge(as_attrs);
+        let kvs = self
+            .meter
+            .extend_attributes(self.kvs.clone(), new_attrs.into());
         Self {
             kvs,
             instruments: self.instruments.clone(),
@@ -637,44 +628,69 @@ pub fn start_prometheus_metric_exporter(
 
 /// Buffers [MetricEvent]s for periodic consumption by lang
 #[derive(Debug)]
-pub struct MetricsCallBuffer {
-    instrument_ids: AtomicU64,
-    attribute_ids: AtomicU64,
-    calls_rx: crossbeam::channel::Receiver<MetricEvent>,
-    calls_tx: crossbeam::channel::Sender<MetricEvent>,
+pub struct MetricsCallBuffer<I>
+where
+    I: BufferInstrumentRef,
+{
+    calls_rx: crossbeam::channel::Receiver<MetricEvent<I>>,
+    calls_tx: crossbeam::channel::Sender<MetricEvent<I>>,
 }
-impl MetricsCallBuffer {
+
+impl<I> MetricsCallBuffer<I>
+where
+    I: Clone + BufferInstrumentRef,
+{
     /// Create a new buffer with the given capacity
     pub fn new(buffer_size: usize) -> Self {
         let (calls_tx, calls_rx) = crossbeam::channel::bounded(buffer_size);
-        MetricsCallBuffer {
-            instrument_ids: AtomicU64::new(0),
-            attribute_ids: AtomicU64::new(0),
-            calls_rx,
-            calls_tx,
-        }
+        MetricsCallBuffer { calls_rx, calls_tx }
     }
-    fn new_instrument(&self, params: MetricParameters, kind: MetricKind) -> BufferInstrument {
-        let id = self.instrument_ids.fetch_add(1, Ordering::AcqRel);
-        let _ = self.calls_tx.send(MetricEvent::Create { params, id, kind });
+    fn new_instrument(&self, params: MetricParameters, kind: MetricKind) -> BufferInstrument<I> {
+        let hole = LazyBufferInstrument::hole();
+        let _ = self.calls_tx.send(MetricEvent::Create {
+            params,
+            kind,
+            populate_into: hole.clone(),
+        });
         BufferInstrument {
             kind,
-            id,
+            instrument_ref: hole,
             tx: self.calls_tx.clone(),
         }
     }
 }
-impl CoreMeter for MetricsCallBuffer {
-    fn new_attributes(&self, opts: MetricsAttributesOptions) -> MetricAttributes {
-        let id = self.attribute_ids.fetch_add(1, Ordering::AcqRel);
+
+impl<I> CoreMeter for MetricsCallBuffer<I>
+where
+    I: BufferInstrumentRef + Debug + Send + Sync + Clone + 'static,
+{
+    fn new_attributes(&self, opts: NewAttributes) -> MetricAttributes {
+        let ba = BufferAttributes::hole();
         let _ = self.calls_tx.send(MetricEvent::CreateAttributes {
-            id,
+            populate_into: ba.clone(),
+            append_from: None,
             attributes: opts.attributes,
         });
-        MetricAttributes::Lang(LangMetricAttributes {
-            ids: HashSet::from([id]),
-            new_attributes: vec![],
-        })
+        MetricAttributes::Buffer(ba)
+    }
+
+    fn extend_attributes(
+        &self,
+        existing: MetricAttributes,
+        attribs: NewAttributes,
+    ) -> MetricAttributes {
+        if let MetricAttributes::Buffer(ol) = existing {
+            let ba = BufferAttributes::hole();
+            let _ = self.calls_tx.send(MetricEvent::CreateAttributes {
+                populate_into: ba.clone(),
+                append_from: Some(ol),
+                attributes: attribs.attributes,
+            });
+            MetricAttributes::Buffer(ba)
+        } else {
+            dbg_panic!("Must use buffer attributes with a buffer metric implementation");
+            existing
+        }
     }
 
     fn counter(&self, params: MetricParameters) -> Arc<dyn Counter> {
@@ -689,25 +705,31 @@ impl CoreMeter for MetricsCallBuffer {
         Arc::new(self.new_instrument(params, MetricKind::Gauge))
     }
 }
-impl MetricCallBufferer for MetricsCallBuffer {
-    fn retrieve(&self) -> Vec<MetricEvent> {
+impl<I> MetricCallBufferer<I> for MetricsCallBuffer<I>
+where
+    I: Send + Sync + BufferInstrumentRef,
+{
+    fn retrieve(&self) -> Vec<MetricEvent<I>> {
         self.calls_rx.try_iter().collect()
     }
 }
 
-struct BufferInstrument {
+struct BufferInstrument<I: BufferInstrumentRef> {
     kind: MetricKind,
-    id: u64,
-    tx: crossbeam::channel::Sender<MetricEvent>,
+    instrument_ref: LazyBufferInstrument<I>,
+    tx: crossbeam::channel::Sender<MetricEvent<I>>,
 }
-impl BufferInstrument {
+impl<I> BufferInstrument<I>
+where
+    I: Clone + BufferInstrumentRef,
+{
     fn send(&self, value: u64, attributes: &MetricAttributes) {
         let attributes = match attributes {
-            MetricAttributes::Lang(l) => l.clone(),
+            MetricAttributes::Buffer(l) => l.clone(),
             _ => panic!("MetricsCallBuffer only works with MetricAttributes::Lang"),
         };
         let _ = self.tx.send(MetricEvent::Update {
-            id: self.id,
+            instrument: self.instrument_ref.clone(),
             update: match self.kind {
                 MetricKind::Counter => MetricUpdateVal::Delta(value),
                 MetricKind::Gauge | MetricKind::Histogram => MetricUpdateVal::Value(value),
@@ -716,17 +738,26 @@ impl BufferInstrument {
         });
     }
 }
-impl Counter for BufferInstrument {
+impl<I> Counter for BufferInstrument<I>
+where
+    I: BufferInstrumentRef + Send + Sync + Clone,
+{
     fn add(&self, value: u64, attributes: &MetricAttributes) {
         self.send(value, attributes)
     }
 }
-impl Gauge for BufferInstrument {
+impl<I> Gauge for BufferInstrument<I>
+where
+    I: BufferInstrumentRef + Send + Sync + Clone,
+{
     fn record(&self, value: u64, attributes: &MetricAttributes) {
         self.send(value, attributes)
     }
 }
-impl Histogram for BufferInstrument {
+impl<I> Histogram for BufferInstrument<I>
+where
+    I: BufferInstrumentRef + Send + Sync + Clone,
+{
     fn record(&self, value: u64, attributes: &MetricAttributes) {
         self.send(value, attributes)
     }
@@ -735,9 +766,23 @@ impl Histogram for BufferInstrument {
 #[derive(Debug)]
 pub struct CoreOtelMeter(Meter);
 impl CoreMeter for CoreOtelMeter {
-    fn new_attributes(&self, attribs: MetricsAttributesOptions) -> MetricAttributes {
+    fn new_attributes(&self, attribs: NewAttributes) -> MetricAttributes {
         MetricAttributes::OTel {
             kvs: Arc::new(attribs.attributes.into_iter().map(KeyValue::from).collect()),
+        }
+    }
+
+    fn extend_attributes(
+        &self,
+        existing: MetricAttributes,
+        attribs: NewAttributes,
+    ) -> MetricAttributes {
+        if let MetricAttributes::OTel { mut kvs } = existing {
+            Arc::make_mut(&mut kvs).extend(attribs.attributes.into_iter().map(Into::into));
+            MetricAttributes::OTel { kvs }
+        } else {
+            dbg_panic!("Must use OTel attributes with an OTel metric implementation");
+            existing
         }
     }
 
@@ -782,8 +827,16 @@ pub(crate) struct PrefixedMetricsMeter<CM> {
     meter: CM,
 }
 impl<CM: CoreMeter> CoreMeter for PrefixedMetricsMeter<CM> {
-    fn new_attributes(&self, attribs: MetricsAttributesOptions) -> MetricAttributes {
+    fn new_attributes(&self, attribs: NewAttributes) -> MetricAttributes {
         self.meter.new_attributes(attribs)
+    }
+
+    fn extend_attributes(
+        &self,
+        existing: MetricAttributes,
+        attribs: NewAttributes,
+    ) -> MetricAttributes {
+        self.meter.extend_attributes(existing, attribs)
     }
 
     fn counter(&self, mut params: MetricParameters) -> Arc<dyn Counter> {
@@ -805,8 +858,35 @@ impl<CM: CoreMeter> CoreMeter for PrefixedMetricsMeter<CM> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use temporal_sdk_core_api::telemetry::METRIC_PREFIX;
+    use std::any::Any;
+    use temporal_sdk_core_api::telemetry::{
+        metrics::{BufferInstrumentRef, CustomMetricAttributes},
+        METRIC_PREFIX,
+    };
     use tracing::subscriber::NoSubscriber;
+
+    #[derive(Debug)]
+    struct DummyCustomAttrs(usize);
+    impl CustomMetricAttributes for DummyCustomAttrs {
+        fn as_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
+            self as Arc<dyn Any + Send + Sync>
+        }
+    }
+    impl DummyCustomAttrs {
+        fn as_id(ba: &BufferAttributes) -> usize {
+            let as_dum = ba
+                .get()
+                .clone()
+                .as_any()
+                .downcast::<DummyCustomAttrs>()
+                .unwrap();
+            as_dum.0
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    struct DummyInstrumentRef(usize);
+    impl BufferInstrumentRef for DummyInstrumentRef {}
 
     #[test]
     fn test_buffered_core_context() {
@@ -822,55 +902,62 @@ mod tests {
         let mc = MetricsContext::top_level("foo".to_string(), "q".to_string(), &telem_instance);
         mc.cache_eviction();
         let events = call_buffer.retrieve();
-        assert_matches!(
+        let a1 = assert_matches!(
             &events[0],
             MetricEvent::CreateAttributes {
-                id: 0,
-                attributes
+                populate_into,
+                append_from: None,
+                attributes,
             }
             if attributes[0].key == "service_name" &&
                attributes[1].key == "namespace" &&
                attributes[2].key == "task_queue"
+            => populate_into
         );
+        a1.set(Arc::new(DummyCustomAttrs(1))).unwrap();
         // Verify all metrics are created. This number will need to get updated any time a metric
         // is added.
-        let num_metrics = 22;
+        let num_metrics = 23;
         #[allow(clippy::needless_range_loop)] // Sorry clippy, this reads easier.
         for metric_num in 1..=num_metrics {
-            assert_matches!(&events[metric_num],
-                MetricEvent::Create { id, .. }
-                if *id == (metric_num - 1) as u64
+            let hole = assert_matches!(&events[metric_num],
+                MetricEvent::Create { populate_into, .. }
+                => populate_into
             );
+            hole.set(Arc::new(DummyInstrumentRef(metric_num))).unwrap();
         }
         assert_matches!(
-            &events[num_metrics + 2], // +2 for attrib creation (at start), then this update
+            &events[num_metrics + 1], // +1 for attrib creation (at start), then this update
             MetricEvent::Update {
-                id: 22,
+                instrument,
                 attributes,
                 update: MetricUpdateVal::Delta(1)
             }
-            if attributes.ids == HashSet::from([0])
+            if DummyCustomAttrs::as_id(attributes) == 1 && instrument.get().0 == num_metrics
         );
         // Verify creating a new context with new attributes merges them properly
         let mc2 = mc.with_new_attrs([MetricKeyValue::new("gotta", "go fast")]);
         mc2.wf_task_latency(Duration::from_secs(1));
         let events = call_buffer.retrieve();
-        assert_matches!(
+        let a2 = assert_matches!(
             &events[0],
             MetricEvent::CreateAttributes {
-                id: 1,
+                populate_into,
+                append_from: Some(eh),
                 attributes
             }
-            if attributes[0].key == "gotta"
+            if attributes[0].key == "gotta" && DummyCustomAttrs::as_id(eh) == 1
+            => populate_into
         );
+        a2.set(Arc::new(DummyCustomAttrs(2))).unwrap();
         assert_matches!(
             &events[1],
             MetricEvent::Update {
-                id: 10,
+                instrument,
                 attributes,
                 update: MetricUpdateVal::Value(1000) // milliseconds
             }
-            if attributes.ids == HashSet::from([0, 1])
+            if DummyCustomAttrs::as_id(attributes) == 2 && instrument.get().0 == 11
         );
     }
 
@@ -892,10 +979,10 @@ mod tests {
             description: "a counter".into(),
             unit: "bleezles".into(),
         });
-        let attrs_1 = call_buffer.new_attributes(MetricsAttributesOptions {
+        let attrs_1 = call_buffer.new_attributes(NewAttributes {
             attributes: vec![MetricKeyValue::new("hi", "yo")],
         });
-        let attrs_2 = call_buffer.new_attributes(MetricsAttributesOptions {
+        let attrs_2 = call_buffer.new_attributes(NewAttributes {
             attributes: vec![MetricKeyValue::new("run", "fast")],
         });
         ctr.add(1, &attrs_1);
@@ -904,75 +991,87 @@ mod tests {
 
         let mut calls = call_buffer.retrieve();
         calls.reverse();
-        assert_matches!(
+        let ctr_1 = assert_matches!(
             calls.pop(),
             Some(MetricEvent::Create {
                 params,
-                id: 0,
+                populate_into,
                 kind: MetricKind::Counter
             })
             if params.name == "ctr"
+            => populate_into
         );
-        assert_matches!(
+        ctr_1.set(Arc::new(DummyInstrumentRef(1))).unwrap();
+        let hist_2 = assert_matches!(
             calls.pop(),
             Some(MetricEvent::Create {
                 params,
-                id: 1,
+                populate_into,
                 kind: MetricKind::Histogram
             })
             if params.name == "histo"
+            => populate_into
         );
-        assert_matches!(
+        hist_2.set(Arc::new(DummyInstrumentRef(2))).unwrap();
+        let gauge_3 = assert_matches!(
             calls.pop(),
             Some(MetricEvent::Create {
                 params,
-                id: 2,
+                populate_into,
                 kind: MetricKind::Gauge
             })
             if params.name == "gauge"
+            => populate_into
         );
-        assert_matches!(
+        gauge_3.set(Arc::new(DummyInstrumentRef(3))).unwrap();
+        let a1 = assert_matches!(
             calls.pop(),
             Some(MetricEvent::CreateAttributes {
-                id: 0,
+                populate_into,
+                append_from: None,
                 attributes
             })
             if attributes[0].key == "hi"
+            => populate_into
         );
-        assert_matches!(
+        a1.set(Arc::new(DummyCustomAttrs(1))).unwrap();
+        let a2 = assert_matches!(
             calls.pop(),
             Some(MetricEvent::CreateAttributes {
-                id: 1,
+                populate_into,
+                append_from: None,
                 attributes
             })
             if attributes[0].key == "run"
+            => populate_into
         );
+        a2.set(Arc::new(DummyCustomAttrs(2))).unwrap();
         assert_matches!(
             calls.pop(),
             Some(MetricEvent::Update{
-                id: 0,
+                instrument,
                 attributes,
                 update: MetricUpdateVal::Delta(1)
             })
-            if attributes.ids == HashSet::from([0])
+            if DummyCustomAttrs::as_id(&attributes) == 1 && instrument.get().0 == 1
         );
         assert_matches!(
             calls.pop(),
             Some(MetricEvent::Update{
-                id: 1,
+                instrument,
                 attributes,
                 update: MetricUpdateVal::Value(2)
             })
-            if attributes.ids == HashSet::from([0])
+            if DummyCustomAttrs::as_id(&attributes) == 1 && instrument.get().0 == 2
         );
         assert_matches!(
             calls.pop(),
             Some(MetricEvent::Update{
-                id: 2,
+                instrument,
                 attributes,
                 update: MetricUpdateVal::Value(3)
             })
-            if attributes.ids == HashSet::from([1])
+            if DummyCustomAttrs::as_id(&attributes) == 2&& instrument.get().0 == 3
         );
     }
 }
