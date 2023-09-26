@@ -1,4 +1,9 @@
-use std::{borrow::Cow, collections::HashSet, fmt::Debug, sync::Arc};
+use std::{
+    any::Any,
+    borrow::Cow,
+    fmt::Debug,
+    sync::{Arc, OnceLock},
+};
 
 /// Implementors of this trait are expected to be defined in each language's bridge.
 /// The implementor is responsible for the allocation/instantiation of new metric meters which
@@ -50,41 +55,6 @@ pub struct TemporalMeter {
     pub default_attribs: NewAttributes,
 }
 
-#[derive(Debug, Clone)]
-pub enum MetricEvent {
-    Create {
-        params: MetricParameters,
-        id: u64,
-        kind: MetricKind,
-    },
-    CreateAttributes {
-        id: u64,
-        attributes: Vec<MetricKeyValue>,
-    },
-    Update {
-        id: u64,
-        attributes: BufferAttributes,
-        update: MetricUpdateVal,
-    },
-}
-#[derive(Debug, Clone, Copy)]
-pub enum MetricKind {
-    Counter,
-    Gauge,
-    Histogram,
-}
-#[derive(Debug, Clone, Copy)]
-pub enum MetricUpdateVal {
-    // Currently all deltas are natural numbers
-    Delta(u64),
-    // Currently all values are natural numbers
-    Value(u64),
-}
-
-pub trait MetricCallBufferer: Send + Sync {
-    fn retrieve(&self) -> Vec<MetricEvent>;
-}
-
 impl CoreMeter for Arc<dyn CoreMeter> {
     fn new_attributes(&self, attribs: NewAttributes) -> MetricAttributes {
         self.as_ref().new_attributes(attribs)
@@ -123,16 +93,10 @@ pub enum MetricAttributes {
 }
 
 /// A reference to some attributes created lang side.
-pub trait CustomMetricAttributes: Debug + Send + Sync {}
-
-#[derive(Clone, Debug)]
-pub struct BufferAttributes {
-    /// A set of references to attributes stored in lang memory. All referenced attributes should
-    /// be attached to the metric when recording.
-    pub ids: HashSet<u64>,
-    /// If populated, these key values should also be used in addition to the referred-to
-    /// existing attributes when recording
-    pub new_attributes: Vec<MetricKeyValue>,
+pub trait CustomMetricAttributes: Debug + Send + Sync {
+    /// Must be implemented to work around existing type system restrictions, see
+    /// [here](https://internals.rust-lang.org/t/downcast-not-from-any-but-from-any-trait/16736/12)
+    fn as_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
 }
 
 /// Options that are attached to metrics on a per-call basis
@@ -200,14 +164,78 @@ pub trait Gauge: Send + Sync {
     fn record(&self, value: u64, attributes: &MetricAttributes);
 }
 
+#[derive(Debug, Clone)]
+pub enum MetricEvent {
+    Create {
+        params: MetricParameters,
+        id: u64,
+        kind: MetricKind,
+    },
+    CreateAttributes {
+        new_hole: BufferAttributes,
+        existing_hole: Option<BufferAttributes>,
+        attributes: Vec<MetricKeyValue>,
+    },
+    Update {
+        id: u64,
+        attributes: BufferAttributes,
+        update: MetricUpdateVal,
+    },
+}
+#[derive(Debug, Clone, Copy)]
+pub enum MetricKind {
+    Counter,
+    Gauge,
+    Histogram,
+}
+#[derive(Debug, Clone, Copy)]
+pub enum MetricUpdateVal {
+    // Currently all deltas are natural numbers
+    Delta(u64),
+    // Currently all values are natural numbers
+    Value(u64),
+}
+
+pub trait MetricCallBufferer: Send + Sync {
+    fn retrieve(&self) -> Vec<MetricEvent>;
+}
+
+#[derive(Clone, Debug)]
+pub struct BufferAttributes {
+    maybe_initted: Arc<OnceLock<Arc<dyn CustomMetricAttributes>>>,
+}
+impl BufferAttributes {
+    pub fn hole() -> Self {
+        Self {
+            maybe_initted: Arc::new(OnceLock::new()),
+        }
+    }
+
+    /// Get the custom attributes you previously initialized
+    ///
+    /// # Panics
+    /// If `set` has not already been called. You must set attributes before using them.
+    pub fn get(&self) -> &Arc<dyn CustomMetricAttributes> {
+        self.maybe_initted
+            .get()
+            .expect("You must initialize the attributes before using them")
+    }
+
+    /// Assigns created attributes to this buffer hole.
+    /// Returns according to semantics of [OnceLock].
+    pub fn set(
+        &self,
+        val: Arc<dyn CustomMetricAttributes>,
+    ) -> Result<(), Arc<dyn CustomMetricAttributes>> {
+        self.maybe_initted.set(val)
+    }
+}
+
 #[derive(Debug)]
 pub struct NoOpCoreMeter;
 impl CoreMeter for NoOpCoreMeter {
     fn new_attributes(&self, _: NewAttributes) -> MetricAttributes {
-        MetricAttributes::Buffer(BufferAttributes {
-            ids: HashSet::new(),
-            new_attributes: vec![],
-        })
+        MetricAttributes::Dynamic(Arc::new(NoOpAttributes))
     }
 
     fn extend_attributes(&self, existing: MetricAttributes, _: NewAttributes) -> MetricAttributes {
@@ -236,6 +264,14 @@ impl Histogram for NoOpInstrument {
 }
 impl Gauge for NoOpInstrument {
     fn record(&self, _: u64, _: &MetricAttributes) {}
+}
+
+#[derive(Debug, Clone)]
+pub struct NoOpAttributes;
+impl CustomMetricAttributes for NoOpAttributes {
+    fn as_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
+        self as Arc<dyn Any + Send + Sync>
+    }
 }
 
 #[cfg(feature = "otel_impls")]

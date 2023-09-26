@@ -22,7 +22,7 @@ use opentelemetry_sdk::{
 };
 use parking_lot::RwLock;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     net::SocketAddr,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -638,7 +638,6 @@ pub fn start_prometheus_metric_exporter(
 #[derive(Debug)]
 pub struct MetricsCallBuffer {
     instrument_ids: AtomicU64,
-    attribute_ids: AtomicU64,
     calls_rx: crossbeam::channel::Receiver<MetricEvent>,
     calls_tx: crossbeam::channel::Sender<MetricEvent>,
 }
@@ -648,7 +647,6 @@ impl MetricsCallBuffer {
         let (calls_tx, calls_rx) = crossbeam::channel::bounded(buffer_size);
         MetricsCallBuffer {
             instrument_ids: AtomicU64::new(0),
-            attribute_ids: AtomicU64::new(0),
             calls_rx,
             calls_tx,
         }
@@ -662,22 +660,16 @@ impl MetricsCallBuffer {
             tx: self.calls_tx.clone(),
         }
     }
-    fn send_attrib_create(&self, attribs: NewAttributes) -> u64 {
-        let id = self.attribute_ids.fetch_add(1, Ordering::AcqRel);
-        let _ = self.calls_tx.send(MetricEvent::CreateAttributes {
-            id,
-            attributes: attribs.attributes,
-        });
-        id
-    }
 }
 impl CoreMeter for MetricsCallBuffer {
     fn new_attributes(&self, opts: NewAttributes) -> MetricAttributes {
-        let id = self.send_attrib_create(opts);
-        MetricAttributes::Buffer(BufferAttributes {
-            ids: HashSet::from([id]),
-            new_attributes: vec![],
-        })
+        let ba = BufferAttributes::hole();
+        let _ = self.calls_tx.send(MetricEvent::CreateAttributes {
+            new_hole: ba.clone(),
+            existing_hole: None,
+            attributes: opts.attributes,
+        });
+        MetricAttributes::Buffer(ba)
     }
 
     fn extend_attributes(
@@ -685,15 +677,16 @@ impl CoreMeter for MetricsCallBuffer {
         existing: MetricAttributes,
         attribs: NewAttributes,
     ) -> MetricAttributes {
-        if let MetricAttributes::Buffer(mut ol) = existing {
-            let id = self.send_attrib_create(attribs);
-            ol.ids.insert(id);
-            MetricAttributes::Buffer(BufferAttributes {
-                ids: ol.ids,
-                new_attributes: vec![],
-            })
+        if let MetricAttributes::Buffer(ol) = existing {
+            let ba = BufferAttributes::hole();
+            let _ = self.calls_tx.send(MetricEvent::CreateAttributes {
+                new_hole: ba.clone(),
+                existing_hole: Some(ol),
+                attributes: attribs.attributes,
+            });
+            MetricAttributes::Buffer(ba)
         } else {
-            dbg_panic!("Must use OTel attributes with an OTel metric implementation");
+            dbg_panic!("Must use buffer attributes with a buffer metric implementation");
             existing
         }
     }
@@ -848,8 +841,28 @@ impl<CM: CoreMeter> CoreMeter for PrefixedMetricsMeter<CM> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use temporal_sdk_core_api::telemetry::METRIC_PREFIX;
+    use std::any::Any;
+    use temporal_sdk_core_api::telemetry::{metrics::CustomMetricAttributes, METRIC_PREFIX};
     use tracing::subscriber::NoSubscriber;
+
+    #[derive(Debug)]
+    struct DummyCustomAttrs(usize);
+    impl CustomMetricAttributes for DummyCustomAttrs {
+        fn as_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
+            self as Arc<dyn Any + Send + Sync>
+        }
+    }
+    impl DummyCustomAttrs {
+        fn as_id(ba: &BufferAttributes) -> usize {
+            let as_dum = ba
+                .get()
+                .clone()
+                .as_any()
+                .downcast::<DummyCustomAttrs>()
+                .unwrap();
+            as_dum.0
+        }
+    }
 
     #[test]
     fn test_buffered_core_context() {
@@ -865,16 +878,19 @@ mod tests {
         let mc = MetricsContext::top_level("foo".to_string(), "q".to_string(), &telem_instance);
         mc.cache_eviction();
         let events = call_buffer.retrieve();
-        assert_matches!(
+        let a1 = assert_matches!(
             &events[0],
             MetricEvent::CreateAttributes {
-                id: 0,
-                attributes
+                new_hole,
+                existing_hole: None,
+                attributes,
             }
             if attributes[0].key == "service_name" &&
                attributes[1].key == "namespace" &&
                attributes[2].key == "task_queue"
+            => new_hole
         );
+        a1.set(Arc::new(DummyCustomAttrs(1))).unwrap();
         // Verify all metrics are created. This number will need to get updated any time a metric
         // is added.
         let num_metrics = 22;
@@ -892,20 +908,23 @@ mod tests {
                 attributes,
                 update: MetricUpdateVal::Delta(1)
             }
-            if attributes.ids == HashSet::from([0])
+            if DummyCustomAttrs::as_id(attributes) == 1
         );
         // Verify creating a new context with new attributes merges them properly
         let mc2 = mc.with_new_attrs([MetricKeyValue::new("gotta", "go fast")]);
         mc2.wf_task_latency(Duration::from_secs(1));
         let events = call_buffer.retrieve();
-        assert_matches!(
+        let a2 = assert_matches!(
             &events[0],
             MetricEvent::CreateAttributes {
-                id: 1,
+                new_hole,
+                existing_hole: Some(eh),
                 attributes
             }
-            if attributes[0].key == "gotta"
+            if attributes[0].key == "gotta" && DummyCustomAttrs::as_id(eh) == 1
+            => new_hole
         );
+        a2.set(Arc::new(DummyCustomAttrs(2))).unwrap();
         assert_matches!(
             &events[1],
             MetricEvent::Update {
@@ -913,7 +932,7 @@ mod tests {
                 attributes,
                 update: MetricUpdateVal::Value(1000) // milliseconds
             }
-            if attributes.ids == HashSet::from([0, 1])
+            if DummyCustomAttrs::as_id(attributes) == 2
         );
     }
 
@@ -974,22 +993,28 @@ mod tests {
             })
             if params.name == "gauge"
         );
-        assert_matches!(
+        let a1 = assert_matches!(
             calls.pop(),
             Some(MetricEvent::CreateAttributes {
-                id: 0,
+                new_hole,
+                existing_hole: None,
                 attributes
             })
             if attributes[0].key == "hi"
+            => new_hole
         );
-        assert_matches!(
+        a1.set(Arc::new(DummyCustomAttrs(1))).unwrap();
+        let a2 = assert_matches!(
             calls.pop(),
             Some(MetricEvent::CreateAttributes {
-                id: 1,
+                new_hole,
+                existing_hole: None,
                 attributes
             })
             if attributes[0].key == "run"
+            => new_hole
         );
+        a2.set(Arc::new(DummyCustomAttrs(2))).unwrap();
         assert_matches!(
             calls.pop(),
             Some(MetricEvent::Update{
@@ -997,7 +1022,7 @@ mod tests {
                 attributes,
                 update: MetricUpdateVal::Delta(1)
             })
-            if attributes.ids == HashSet::from([0])
+            if DummyCustomAttrs::as_id(&attributes) == 1
         );
         assert_matches!(
             calls.pop(),
@@ -1006,7 +1031,7 @@ mod tests {
                 attributes,
                 update: MetricUpdateVal::Value(2)
             })
-            if attributes.ids == HashSet::from([0])
+            if DummyCustomAttrs::as_id(&attributes) == 1
         );
         assert_matches!(
             calls.pop(),
@@ -1015,7 +1040,7 @@ mod tests {
                 attributes,
                 update: MetricUpdateVal::Value(3)
             })
-            if attributes.ids == HashSet::from([1])
+            if DummyCustomAttrs::as_id(&attributes) == 2
         );
     }
 }
