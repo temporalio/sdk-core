@@ -165,19 +165,23 @@ pub trait Gauge: Send + Sync {
 }
 
 #[derive(Debug, Clone)]
-pub enum MetricEvent {
+pub enum MetricEvent<I> {
     Create {
         params: MetricParameters,
-        id: u64,
+        /// One you receive this event, call `set` on this with the initialized instrument reference
+        populate_into: LazyBufferInstrument<I>,
         kind: MetricKind,
     },
     CreateAttributes {
-        new_hole: BufferAttributes,
-        existing_hole: Option<BufferAttributes>,
+        /// One you receive this event, call `set` on this with the initialized attributes
+        populate_into: BufferAttributes,
+        /// If not `None`, use these already-initialized attributes as the base (extended with
+        /// `attributes`) for the ones you are about to initialize.
+        append_from: Option<BufferAttributes>,
         attributes: Vec<MetricKeyValue>,
     },
     Update {
-        id: u64,
+        instrument: LazyBufferInstrument<I>,
         attributes: BufferAttributes,
         update: MetricUpdateVal,
     },
@@ -196,38 +200,44 @@ pub enum MetricUpdateVal {
     Value(u64),
 }
 
-pub trait MetricCallBufferer: Send + Sync {
-    fn retrieve(&self) -> Vec<MetricEvent>;
+pub trait MetricCallBufferer<I>: Send + Sync {
+    fn retrieve(&self) -> Vec<MetricEvent<I>>;
 }
 
-#[derive(Clone, Debug)]
-pub struct BufferAttributes {
-    maybe_initted: Arc<OnceLock<Arc<dyn CustomMetricAttributes>>>,
+/// A lazy reference to some metrics buffer attributes
+pub type BufferAttributes = LazyRef<Arc<dyn CustomMetricAttributes + 'static>>;
+
+/// Types lang uses to contain references to its lang-side defined instrument references must
+/// implement this marker trait
+pub trait BufferInstrumentRef {}
+/// A lazy reference to a metrics buffer instrument
+pub type LazyBufferInstrument<T> = LazyRef<Arc<T>>;
+
+#[derive(Debug, Clone)]
+pub struct LazyRef<T> {
+    to_be_initted: Arc<OnceLock<T>>,
 }
-impl BufferAttributes {
+impl<T> LazyRef<T> {
     pub fn hole() -> Self {
         Self {
-            maybe_initted: Arc::new(OnceLock::new()),
+            to_be_initted: Arc::new(OnceLock::new()),
         }
     }
 
-    /// Get the custom attributes you previously initialized
+    /// Get the reference you previously initialized
     ///
     /// # Panics
-    /// If `set` has not already been called. You must set attributes before using them.
-    pub fn get(&self) -> &Arc<dyn CustomMetricAttributes> {
-        self.maybe_initted
+    /// If `set` has not already been called. You must set the reference before using it.
+    pub fn get(&self) -> &T {
+        self.to_be_initted
             .get()
-            .expect("You must initialize the attributes before using them")
+            .expect("You must initialize the reference before using it")
     }
 
-    /// Assigns created attributes to this buffer hole.
+    /// Assigns a value to fill this reference.
     /// Returns according to semantics of [OnceLock].
-    pub fn set(
-        &self,
-        val: Arc<dyn CustomMetricAttributes>,
-    ) -> Result<(), Arc<dyn CustomMetricAttributes>> {
-        self.maybe_initted.set(val)
+    pub fn set(&self, val: T) -> Result<(), T> {
+        self.to_be_initted.set(val)
     }
 }
 
