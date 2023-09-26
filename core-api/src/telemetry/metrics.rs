@@ -165,7 +165,7 @@ pub trait Gauge: Send + Sync {
 }
 
 #[derive(Debug, Clone)]
-pub enum MetricEvent<I> {
+pub enum MetricEvent<I: BufferInstrumentRef> {
     Create {
         params: MetricParameters,
         /// One you receive this event, call `set` on this with the initialized instrument reference
@@ -200,7 +200,7 @@ pub enum MetricUpdateVal {
     Value(u64),
 }
 
-pub trait MetricCallBufferer<I>: Send + Sync {
+pub trait MetricCallBufferer<I: BufferInstrumentRef>: Send + Sync {
     fn retrieve(&self) -> Vec<MetricEvent<I>>;
 }
 

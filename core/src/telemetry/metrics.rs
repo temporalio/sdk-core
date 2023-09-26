@@ -24,9 +24,9 @@ use parking_lot::RwLock;
 use std::{collections::HashMap, fmt::Debug, net::SocketAddr, sync::Arc, time::Duration};
 use temporal_sdk_core_api::telemetry::{
     metrics::{
-        BufferAttributes, CoreMeter, Counter, Gauge, Histogram, LazyBufferInstrument,
-        MetricAttributes, MetricCallBufferer, MetricEvent, MetricKeyValue, MetricKind,
-        MetricParameters, MetricUpdateVal, NewAttributes, NoOpCoreMeter,
+        BufferAttributes, BufferInstrumentRef, CoreMeter, Counter, Gauge, Histogram,
+        LazyBufferInstrument, MetricAttributes, MetricCallBufferer, MetricEvent, MetricKeyValue,
+        MetricKind, MetricParameters, MetricUpdateVal, NewAttributes, NoOpCoreMeter,
     },
     OtelCollectorOptions, PrometheusExporterOptions,
 };
@@ -628,14 +628,17 @@ pub fn start_prometheus_metric_exporter(
 
 /// Buffers [MetricEvent]s for periodic consumption by lang
 #[derive(Debug)]
-pub struct MetricsCallBuffer<I> {
+pub struct MetricsCallBuffer<I>
+where
+    I: BufferInstrumentRef,
+{
     calls_rx: crossbeam::channel::Receiver<MetricEvent<I>>,
     calls_tx: crossbeam::channel::Sender<MetricEvent<I>>,
 }
 
 impl<I> MetricsCallBuffer<I>
 where
-    I: Clone,
+    I: Clone + BufferInstrumentRef,
 {
     /// Create a new buffer with the given capacity
     pub fn new(buffer_size: usize) -> Self {
@@ -659,7 +662,7 @@ where
 
 impl<I> CoreMeter for MetricsCallBuffer<I>
 where
-    I: Debug + Send + Sync + Clone + 'static,
+    I: BufferInstrumentRef + Debug + Send + Sync + Clone + 'static,
 {
     fn new_attributes(&self, opts: NewAttributes) -> MetricAttributes {
         let ba = BufferAttributes::hole();
@@ -704,21 +707,21 @@ where
 }
 impl<I> MetricCallBufferer<I> for MetricsCallBuffer<I>
 where
-    I: Send + Sync,
+    I: Send + Sync + BufferInstrumentRef,
 {
     fn retrieve(&self) -> Vec<MetricEvent<I>> {
         self.calls_rx.try_iter().collect()
     }
 }
 
-struct BufferInstrument<I> {
+struct BufferInstrument<I: BufferInstrumentRef> {
     kind: MetricKind,
     instrument_ref: LazyBufferInstrument<I>,
     tx: crossbeam::channel::Sender<MetricEvent<I>>,
 }
 impl<I> BufferInstrument<I>
 where
-    I: Clone,
+    I: Clone + BufferInstrumentRef,
 {
     fn send(&self, value: u64, attributes: &MetricAttributes) {
         let attributes = match attributes {
@@ -737,7 +740,7 @@ where
 }
 impl<I> Counter for BufferInstrument<I>
 where
-    I: Send + Sync + Clone,
+    I: BufferInstrumentRef + Send + Sync + Clone,
 {
     fn add(&self, value: u64, attributes: &MetricAttributes) {
         self.send(value, attributes)
@@ -745,7 +748,7 @@ where
 }
 impl<I> Gauge for BufferInstrument<I>
 where
-    I: Send + Sync + Clone,
+    I: BufferInstrumentRef + Send + Sync + Clone,
 {
     fn record(&self, value: u64, attributes: &MetricAttributes) {
         self.send(value, attributes)
@@ -753,7 +756,7 @@ where
 }
 impl<I> Histogram for BufferInstrument<I>
 where
-    I: Send + Sync + Clone,
+    I: BufferInstrumentRef + Send + Sync + Clone,
 {
     fn record(&self, value: u64, attributes: &MetricAttributes) {
         self.send(value, attributes)
