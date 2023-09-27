@@ -14,6 +14,7 @@ mod integ_tests {
     mod metrics_tests;
     mod polling_tests;
     mod queries_tests;
+    mod update_tests;
     mod visibility_tests;
     mod workflow_tests;
 

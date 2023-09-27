@@ -12,6 +12,7 @@ mod modify_workflow_properties_state_machine;
 mod patch_state_machine;
 mod signal_external_state_machine;
 mod timer_state_machine;
+mod update_state_machine;
 mod upsert_search_attributes_state_machine;
 mod workflow_task_state_machine;
 

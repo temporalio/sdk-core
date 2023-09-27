@@ -526,6 +526,23 @@ where
         retry_call!(self, get_search_attributes)
     }
 
+    async fn update_workflow_execution(
+        &self,
+        workflow_id: String,
+        run_id: String,
+        name: String,
+        args: Option<Payloads>,
+    ) -> Result<UpdateWorkflowExecutionResponse> {
+        retry_call!(
+            self,
+            update_workflow_execution,
+            workflow_id.clone(),
+            run_id.clone(),
+            name.clone(),
+            args.clone()
+        )
+    }
+
     fn get_options(&self) -> &ClientOptions {
         self.client.get_options()
     }

@@ -162,10 +162,10 @@ impl ManagedRun {
 
         let work = pwft.work;
         debug!(
-            run_id = %work.execution.run_id,
             task_token = %&work.task_token,
             update = ?work.update,
             has_legacy_query = %work.legacy_query.is_some(),
+            messages = ?work.messages,
             attempt = %work.attempt,
             "Applying new workflow task from server"
         );
@@ -799,6 +799,7 @@ impl ManagedRun {
             }
             self.recorded_span_ids.insert(spid);
 
+            span.record("run_id", self.run_id());
             if let Some(wid) = self.wft().map(|wft| &wft.info.wf_id) {
                 span.record("workflow_id", wid.as_str());
             }

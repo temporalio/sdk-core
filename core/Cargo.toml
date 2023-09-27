@@ -74,6 +74,7 @@ tracing-subscriber = { version = "0.3", features = ["parking_lot", "env-filter",
 url = "2.2"
 uuid = { version = "1.1", features = ["v4"] }
 zip = { version = "0.6.3", optional = true }
+log = "0.4.20"
 
 # 1st party local deps
 [dependencies.temporal-sdk-core-api]

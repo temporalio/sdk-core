@@ -27,7 +27,7 @@ use crate::{
         UsedMeteredSemPermit,
     },
     internal_flags::InternalFlags,
-    protosext::legacy_query_failure,
+    protosext::{legacy_query_failure, protocol_messages::IncomingProtocolMessage},
     telemetry::{set_trace_subscriber_for_current_thread, TelemetryInstance, VecDisplayer},
     worker::{
         activities::{ActivitiesFromWFTsHandle, LocalActivityManager, TrackedPermittedTqResp},
@@ -266,7 +266,6 @@ impl Workflows {
                 }
                 stream.next().await.unwrap_or(Err(PollWfError::ShutDown))?
             };
-            Span::current().record("run_id", al.run_id());
             match al {
                 ActivationOrAuto::LangActivation(mut act)
                 | ActivationOrAuto::ReadyForQueries(mut act) => {
@@ -784,6 +783,7 @@ struct PreparedWFT {
     legacy_query: Option<WorkflowQuery>,
     query_requests: Vec<QueryWorkflow>,
     update: HistoryUpdate,
+    messages: Vec<IncomingProtocolMessage>,
 }
 impl PreparedWFT {
     /// Returns true if the contained history update is incremental (IE: expects to hit a cached

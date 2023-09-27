@@ -1,8 +1,12 @@
+pub(crate) mod protocol_messages;
+
 use crate::{
+    protosext::protocol_messages::IncomingProtocolMessage,
     worker::{LocalActivityExecutionResult, LEGACY_QUERY_ID},
     CompleteActivityError, TaskToken,
 };
 use anyhow::anyhow;
+use itertools::Itertools;
 use std::{
     collections::HashMap,
     convert::TryFrom,
@@ -56,6 +60,8 @@ pub struct ValidPollWFTQResponse {
     pub legacy_query: Option<WorkflowQuery>,
     /// Query requests from the `queries` field
     pub query_requests: Vec<QueryWorkflow>,
+    /// Protocol messages
+    pub messages: Vec<IncomingProtocolMessage>,
 
     /// Zero-size field to prevent explicit construction
     _cant_construct_me: (),
@@ -84,8 +90,7 @@ impl Debug for ValidPollWFTQResponse {
 }
 
 impl TryFrom<PollWorkflowTaskQueueResponse> for ValidPollWFTQResponse {
-    /// We return the poll response itself if it was invalid
-    type Error = PollWorkflowTaskQueueResponse;
+    type Error = anyhow::Error;
 
     fn try_from(value: PollWorkflowTaskQueueResponse) -> Result<Self, Self::Error> {
         match value {
@@ -101,12 +106,14 @@ impl TryFrom<PollWorkflowTaskQueueResponse> for ValidPollWFTQResponse {
                 started_event_id,
                 query,
                 queries,
+                messages,
                 ..
             } => {
                 let query_requests = queries
                     .into_iter()
                     .map(|(id, q)| query_to_job(id, q))
                     .collect();
+                let messages = messages.into_iter().map(TryInto::try_into).try_collect()?;
 
                 Ok(Self {
                     task_token: TaskToken(task_token),
@@ -120,10 +127,11 @@ impl TryFrom<PollWorkflowTaskQueueResponse> for ValidPollWFTQResponse {
                     started_event_id,
                     legacy_query: query,
                     query_requests,
+                    messages,
                     _cant_construct_me: (),
                 })
             }
-            _ => Err(value),
+            _ => Err(anyhow!("Unable to interpret poll response: {:?}", value)),
         }
     }
 }
