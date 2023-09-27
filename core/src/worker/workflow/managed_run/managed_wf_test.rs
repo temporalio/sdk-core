@@ -55,6 +55,7 @@ impl WorkflowFetcher for WFFutureDriver {
     }
 }
 
+// TODO: Get rid of this. Just use mocks with integ tests.
 #[must_use]
 pub struct ManagedWFFunc {
     mgr: WorkflowManager,
@@ -134,7 +135,7 @@ impl ManagedWFFunc {
         &mut self,
         update: HistoryUpdate,
     ) -> Result<WorkflowActivation> {
-        let res = self.mgr.feed_history_from_server(update)?;
+        let res = self.mgr.new_work_from_server(update)?;
         self.push_activation_to_wf(&res).await?;
         Ok(res)
     }

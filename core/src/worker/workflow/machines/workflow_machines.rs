@@ -13,8 +13,9 @@ use super::{
     TemporalStateMachine,
 };
 use crate::{
+    abstractions::dbg_panic,
     internal_flags::InternalFlags,
-    protosext::{HistoryEventExt, ValidScheduleLA},
+    protosext::{protocol_messages::IncomingProtocolMessage, HistoryEventExt, ValidScheduleLA},
     telemetry::{metrics::MetricsContext, VecDisplayer},
     worker::{
         workflow::{
@@ -75,6 +76,8 @@ pub(crate) struct WorkflowMachines {
     /// kept because the lang side polls & completes for every workflow task, but we do not need
     /// to poll the server that often during replay.
     last_history_from_server: HistoryUpdate,
+    /// Protocol messages that have yet to be processed for the current WFT.
+    protocol_msgs: Vec<IncomingProtocolMessage>,
     /// EventId of the last handled WorkflowTaskStarted event
     current_started_event_id: i64,
     /// The event id of the next workflow task started event that the machines need to process.
@@ -230,6 +233,7 @@ impl WorkflowMachines {
         };
         Self {
             last_history_from_server: basics.history,
+            protocol_msgs: vec![],
             namespace: basics.namespace,
             workflow_id: basics.workflow_id,
             workflow_type: basics.workflow_type,
@@ -272,6 +276,20 @@ impl WorkflowMachines {
         self.workflow_start_time
             .zip(self.workflow_end_time)
             .and_then(|(st, et)| et.duration_since(st).ok())
+    }
+
+    /// Must be called every time a new WFT is received
+    pub(crate) fn new_work_from_server(
+        &mut self,
+        update: HistoryUpdate,
+        protocol_messages: Vec<IncomingProtocolMessage>,
+    ) -> Result<()> {
+        if !self.protocol_msgs.is_empty() {
+            dbg_panic!("There are unprocessed protocol messages while receiving new work");
+        }
+        self.protocol_msgs = protocol_messages;
+        self.new_history_from_server(update)?;
+        Ok(())
     }
 
     pub(crate) fn new_history_from_server(&mut self, update: HistoryUpdate) -> Result<()> {
@@ -527,6 +545,9 @@ impl WorkflowMachines {
                 // Replay is finished
                 self.replaying = false;
             }
+
+            // Process any messages that should be processed before the event we're about to handle
+            dbg!(&self.protocol_msgs);
 
             if do_handle_event {
                 let eho = self.handle_event(

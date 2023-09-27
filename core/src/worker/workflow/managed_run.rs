@@ -6,7 +6,7 @@ pub(crate) use managed_wf_test::ManagedWFFunc;
 
 use crate::{
     abstractions::dbg_panic,
-    protosext::WorkflowActivationExt,
+    protosext::{protocol_messages::IncomingProtocolMessage, WorkflowActivationExt},
     worker::{
         workflow::{
             history_update::HistoryPaginator, machines::WorkflowMachines, ActivationAction,
@@ -207,7 +207,7 @@ impl ManagedRun {
         // The update field is only populated in the event we hit the cache
         let activation = if work.update.is_real() {
             self.metrics.sticky_cache_hit();
-            self.wfm.feed_history_from_server(work.update)?
+            self.wfm.new_work_from_server(work.update, work.messages)?
         } else {
             let r = self.wfm.get_next_activation()?;
             if r.jobs.is_empty() {
@@ -570,7 +570,7 @@ impl ManagedRun {
     fn _process_completion(
         &mut self,
         completion: RunActivationCompletion,
-        new_update: Option<HistoryUpdate>,
+        update_from_new_page: Option<HistoryUpdate>,
     ) -> Result<Option<FulfillableActivationComplete>, RunUpdateErr> {
         let data = CompletionDataForWFT {
             task_token: completion.task_token,
@@ -595,8 +595,7 @@ impl ManagedRun {
             // Send commands from lang into the machines then check if the workflow run needs
             // another activation and mark it if so
             self.wfm.push_commands_and_iterate(completion.commands)?;
-            // If there was a new update included as part of the completion, apply it.
-            if let Some(update) = new_update {
+            if let Some(update) = update_from_new_page {
                 self.wfm.feed_history_from_new_page(update)?;
             }
             // Don't bother applying the next task if we're evicting at the end of this activation
@@ -1177,17 +1176,22 @@ impl WorkflowManager {
         }
     }
 
-    /// Given history that was just obtained from the server, pipe it into this workflow's machines.
+    /// Given info that was just obtained from a new WFT from server, pipe it into this workflow's
+    /// machines.
     ///
     /// Should only be called when a workflow has caught up on replay (or is just beginning). It
     /// will return a workflow activation if one is needed.
-    fn feed_history_from_server(&mut self, update: HistoryUpdate) -> Result<WorkflowActivation> {
-        self.machines.new_history_from_server(update)?;
+    fn new_work_from_server(
+        &mut self,
+        update: HistoryUpdate,
+        messages: Vec<IncomingProtocolMessage>,
+    ) -> Result<WorkflowActivation> {
+        self.machines.new_work_from_server(update, messages)?;
         self.get_next_activation()
     }
 
     /// Update the machines with some events from fetching another page of history. Does *not*
-    /// attempt to pull the next activation, unlike [Self::feed_history_from_server].
+    /// attempt to pull the next activation, unlike [Self::new_work_from_server].
     fn feed_history_from_new_page(&mut self, update: HistoryUpdate) -> Result<()> {
         self.machines.new_history_from_server(update)
     }
