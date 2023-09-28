@@ -1,12 +1,18 @@
 use super::{workflow_machines::MachineResponse, EventInfo, WFMachinesAdapter, WFMachinesError};
-use crate::worker::workflow::machines::HistEventData;
+use crate::{
+    protosext::protocol_messages::UpdateRequest,
+    worker::workflow::machines::{Cancellable, HistEventData, NewMachineWithResponse},
+};
 use rustfsm::{fsm, StateMachine, TransitionResult};
 use std::convert::TryFrom;
-use temporal_sdk_core_protos::temporal::api::{
-    common::v1::Payloads,
-    enums::v1::{CommandType, EventType},
-    failure::v1::Failure,
-    history::v1::HistoryEvent,
+use temporal_sdk_core_protos::{
+    coresdk::workflow_activation::ValidateUpdate,
+    temporal::api::{
+        common::v1::Payloads,
+        enums::v1::{CommandType, EventType},
+        failure::v1::Failure,
+        history::v1::HistoryEvent,
+    },
 };
 
 fsm! {
@@ -30,7 +36,34 @@ pub(super) enum UpdateMachineCommand {
     Fail(Failure),
 }
 
-impl UpdateMachine {}
+#[derive(Clone)]
+pub(super) struct SharedState {
+    id: String,
+    instance_id: String,
+    request: UpdateRequest,
+}
+
+impl UpdateMachine {
+    pub(crate) fn new(
+        id: String,
+        instance_id: String,
+        request: UpdateRequest,
+    ) -> NewMachineWithResponse {
+        let me = Self::from_parts(
+            RequestInitiated {}.into(),
+            SharedState {
+                id,
+                instance_id,
+                request: request.clone(),
+            },
+        );
+        NewMachineWithResponse {
+            machine: me.into(),
+            // TODO: Shouldn't be sent on replay
+            response: MachineResponse::PushWFJob(ValidateUpdate::from(request).into()),
+        }
+    }
+}
 
 impl TryFrom<HistEventData> for UpdateMachineEvents {
     type Error = WFMachinesError;
@@ -84,9 +117,6 @@ impl TryFrom<CommandType> for UpdateMachineEvents {
     }
 }
 
-#[derive(Clone)]
-pub(super) struct SharedState {}
-
 #[derive(Default, Clone)]
 pub(super) struct RequestInitiated {}
 
@@ -97,3 +127,5 @@ impl From<RequestInitiated> for Accepted {
         Accepted {}
     }
 }
+
+impl Cancellable for UpdateMachine {}

@@ -603,6 +603,9 @@ pub mod coresdk {
                     workflow_activation_job::Variant::ResolveRequestCancelExternalWorkflow(_) => {
                         write!(f, "ResolveRequestCancelExternalWorkflow")
                     }
+                    workflow_activation_job::Variant::ValidateUpdate(_) => {
+                        write!(f, "ValidateUpdate")
+                    }
                 }
             }
         }

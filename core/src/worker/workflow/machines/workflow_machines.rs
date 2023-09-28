@@ -15,7 +15,10 @@ use super::{
 use crate::{
     abstractions::dbg_panic,
     internal_flags::InternalFlags,
-    protosext::{protocol_messages::IncomingProtocolMessage, HistoryEventExt, ValidScheduleLA},
+    protosext::{
+        protocol_messages::{IncomingProtocolMessage, IncomingProtocolMessageBody},
+        HistoryEventExt, ValidScheduleLA,
+    },
     telemetry::{metrics::MetricsContext, VecDisplayer},
     worker::{
         workflow::{
@@ -24,7 +27,7 @@ use crate::{
                 activity_state_machine::ActivityMachine,
                 child_workflow_state_machine::ChildWorkflowMachine,
                 modify_workflow_properties_state_machine::modify_workflow_properties,
-                patch_state_machine::VERSION_SEARCH_ATTR_KEY,
+                patch_state_machine::VERSION_SEARCH_ATTR_KEY, update_state_machine::UpdateMachine,
                 upsert_search_attributes_state_machine::upsert_search_attrs_internal,
                 HistEventData,
             },
@@ -125,11 +128,12 @@ pub(crate) struct WorkflowMachines {
     /// If a machine key is in this map, that machine was created internally by core, not as a
     /// command from lang.
     machine_is_core_created: SparseSecondaryMap<MachineKey, ()>,
-
     /// A mapping for accessing machines associated to a particular event, where the key is the id
     /// of the initiating event for that machine.
     machines_by_event_id: HashMap<i64, MachineKey>,
-
+    /// A mapping for accessing machines that were created as a result of protocol messages. The
+    /// key is the protocol's instance id.
+    machines_by_protocol_instance_id: HashMap<String, MachineKey>,
     /// Maps command ids as created by workflow authors to their associated machines.
     id_to_machine: HashMap<CommandID, MachineKey>,
 
@@ -256,6 +260,7 @@ impl WorkflowMachines {
             all_machines: Default::default(),
             machine_is_core_created: Default::default(),
             machines_by_event_id: Default::default(),
+            machines_by_protocol_instance_id: Default::default(),
             id_to_machine: Default::default(),
             commands: Default::default(),
             current_wf_task_commands: Default::default(),
@@ -476,6 +481,26 @@ impl WorkflowMachines {
             }
         }
 
+        fn get_processable_messages(
+            me: &mut WorkflowMachines,
+            for_event_id: i64,
+        ) -> Vec<IncomingProtocolMessage> {
+            // Another thing to replace when `drain_filter` exists
+            let mut i = 0;
+            let mut ret = vec![];
+            while i < me.protocol_msgs.len() {
+                if me.protocol_msgs[i]
+                    .processable_after_event_id()
+                    .is_some_and(|eid| eid >= for_event_id)
+                {
+                    ret.push(me.protocol_msgs.remove(i));
+                } else {
+                    i += 1;
+                }
+            }
+            ret
+        }
+
         // We update the internal flags before applying the current task (peeking to the completion
         // of this task), and also at the end (peeking to the completion of the task that lang is
         // about to generate commands for, and for which we will want those flags active).
@@ -547,7 +572,10 @@ impl WorkflowMachines {
             }
 
             // Process any messages that should be processed before the event we're about to handle
-            dbg!(&self.protocol_msgs);
+            let processable_msgs = get_processable_messages(self, event.event_id - 1);
+            for msg in processable_msgs {
+                self.handle_protocol_message(msg)?;
+            }
 
             if do_handle_event {
                 let eho = self.handle_event(
@@ -874,6 +902,23 @@ impl WorkflowMachines {
     fn submachine_handle_event(&mut self, sm: MachineKey, event: HistEventData) -> Result<()> {
         let machine_responses = self.machine_mut(sm).handle_event(event)?;
         self.process_machine_responses(sm, machine_responses)?;
+        Ok(())
+    }
+    /// Handle a single protocol message delivered in a workflow task.
+    ///
+    /// This function will attempt to apply the message to a corresponding state machine for the
+    /// appropriate protocol type, creating it if it does not exist.
+    ///
+    /// TODO: explain how replay works -- just not called? No messages then, events instead?
+    #[instrument(skip(self))]
+    fn handle_protocol_message(&mut self, message: IncomingProtocolMessage) -> Result<()> {
+        match message.body {
+            IncomingProtocolMessageBody::UpdateRequest(ur) => {
+                let um = UpdateMachine::new(message.id, message.protocol_instance_id.clone(), ur);
+                let mk = self.add_new_protocol_machine(um.machine, message.protocol_instance_id);
+                self.process_machine_responses(mk, vec![um.response])?;
+            }
+        }
         Ok(())
     }
 
@@ -1318,6 +1363,12 @@ impl WorkflowMachines {
             command: MachineAssociatedCommand::Real(Box::new(machine.command)),
             machine: k,
         }
+    }
+
+    fn add_new_protocol_machine(&mut self, machine: Machines, instance_id: String) -> MachineKey {
+        let k = self.all_machines.insert(machine);
+        self.machines_by_protocol_instance_id.insert(instance_id, k);
+        k
     }
 
     fn machine(&self, m: MachineKey) -> &Machines {

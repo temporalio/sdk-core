@@ -21,7 +21,10 @@ mod transition_coverage;
 
 pub(crate) use workflow_machines::WorkflowMachines;
 
-use crate::{telemetry::VecDisplayer, worker::workflow::WFMachinesError};
+use crate::{
+    telemetry::VecDisplayer,
+    worker::workflow::{machines::update_state_machine::UpdateMachine, WFMachinesError},
+};
 use activity_state_machine::ActivityMachine;
 use cancel_external_state_machine::CancelExternalMachine;
 use cancel_workflow_state_machine::CancelWorkflowMachine;
@@ -68,6 +71,7 @@ enum Machines {
     WorkflowTaskMachine,
     UpsertSearchAttributesMachine,
     ModifyWorkflowPropertiesMachine,
+    UpdateMachine,
 }
 
 /// Extends [rustfsm::StateMachine] with some functionality specific to the temporal SDK.
@@ -322,4 +326,9 @@ where
 struct NewMachineWithCommand {
     command: ProtoCommand,
     machine: Machines,
+}
+
+struct NewMachineWithResponse {
+    machine: Machines,
+    response: MachineResponse,
 }

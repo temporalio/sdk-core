@@ -217,6 +217,9 @@ impl WorkflowFuture {
                 Variant::ResolveRequestCancelExternalWorkflow(attrs) => {
                     self.unblock(UnblockEvent::CancelExternal(attrs.seq, attrs.failure))?;
                 }
+                Variant::ValidateUpdate(_) => {
+                    todo!("Implement updates")
+                }
 
                 Variant::RemoveFromCache(_) => {
                     // TODO: Need to abort any spawned tasks, etc. See also cancel WF.
