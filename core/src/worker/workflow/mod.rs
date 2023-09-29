@@ -79,6 +79,7 @@ use temporal_sdk_core_protos::{
         command::v1::{command::Attributes, Command as ProtoCommand, Command},
         common::v1::{Memo, MeteringMetadata, RetryPolicy, SearchAttributes, WorkflowExecution},
         enums::v1::WorkflowTaskFailedCause,
+        protocol::v1::Message as ProtocolMessage,
         query::v1::WorkflowQuery,
         sdk::v1::WorkflowTaskCompletedMetadata,
         taskqueue::v1::StickyExecutionAttributes,
@@ -355,6 +356,7 @@ impl Workflows {
                     action:
                         ActivationAction::WftComplete {
                             mut commands,
+                            messages,
                             query_responses,
                             force_new_wft,
                             sdk_metadata,
@@ -363,10 +365,12 @@ impl Workflows {
                     let reserved_act_permits =
                         self.reserve_activity_slots_for_outgoing_commands(commands.as_mut_slice());
                     debug!(commands=%commands.display(), query_responses=%query_responses.display(),
-                           force_new_wft, "Sending responses to server");
+                           messages=%messages.display(), force_new_wft,
+                           "Sending responses to server");
                     let mut completion = WorkflowTaskCompletion {
                         task_token,
                         commands,
+                        messages,
                         query_responses,
                         sticky_attributes: None,
                         return_new_workflow_task: true,
@@ -880,6 +884,7 @@ pub(crate) enum ActivationAction {
     /// We should respond that the workflow task is complete
     WftComplete {
         commands: Vec<ProtoCommand>,
+        messages: Vec<ProtocolMessage>,
         query_responses: Vec<QueryResult>,
         force_new_wft: bool,
         sdk_metadata: WorkflowTaskCompletedMetadata,
@@ -1091,9 +1096,12 @@ impl ValidatedCompletion {
     }
 }
 
+/// Contains everything workflow machine internals need to bubble up when we're getting ready to
+/// respond with a WFT completion.
 #[derive(Debug)]
-pub struct OutgoingServerCommands {
+pub struct MachinesWFTResponseContent {
     pub commands: Vec<ProtoCommand>,
+    pub messages: Vec<ProtocolMessage>,
     pub replaying: bool,
 }
 
@@ -1149,6 +1157,7 @@ pub enum WFCommand {
     CancelSignalWorkflow(CancelSignalWorkflow),
     UpsertSearchAttributes(UpsertWorkflowSearchAttributes),
     ModifyWorkflowProperties(ModifyWorkflowProperties),
+    UpdateResponse(UpdateResponse),
 }
 
 impl TryFrom<WorkflowCommand> for WFCommand {
@@ -1193,6 +1202,7 @@ impl TryFrom<WorkflowCommand> for WFCommand {
             workflow_command::Variant::ModifyWorkflowProperties(s) => {
                 Ok(Self::ModifyWorkflowProperties(s))
             }
+            workflow_command::Variant::UpdateResponse(s) => Ok(Self::UpdateResponse(s)),
         }
     }
 }

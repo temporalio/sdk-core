@@ -1,12 +1,9 @@
 use anyhow::{anyhow, bail};
 use std::collections::HashMap;
-use temporal_sdk_core_protos::{
-    coresdk::workflow_activation::ValidateUpdate,
-    temporal::api::{
-        common::v1::Payload,
-        protocol::v1::{message::SequencingId, Message},
-        update,
-    },
+use temporal_sdk_core_protos::temporal::api::{
+    common::v1::Payload,
+    protocol::v1::{message::SequencingId, Message},
+    update,
 };
 
 /// A decoded & verified of a [Message] that came with a WFT.
@@ -70,7 +67,7 @@ pub struct UpdateRequest {
     pub name: String,
     pub headers: HashMap<String, Payload>,
     pub input: Vec<Payload>,
-    pub meta: Option<update::v1::Meta>,
+    pub meta: update::v1::Meta,
 }
 
 impl TryFrom<update::v1::Request> for UpdateRequest {
@@ -80,22 +77,14 @@ impl TryFrom<update::v1::Request> for UpdateRequest {
         let inp = r
             .input
             .ok_or_else(|| anyhow!("Update request's `input` field must be populated"))?;
+        let meta = r
+            .meta
+            .ok_or_else(|| anyhow!("Update request's `meta` field must be populated"))?;
         Ok(UpdateRequest {
             name: inp.name,
             headers: inp.header.map(Into::into).unwrap_or_default(),
             input: inp.args.map(|ps| ps.payloads).unwrap_or_default(),
-            meta: r.meta,
+            meta,
         })
-    }
-}
-
-impl From<UpdateRequest> for ValidateUpdate {
-    fn from(r: UpdateRequest) -> Self {
-        Self {
-            name: r.name,
-            input: r.input,
-            headers: r.headers,
-            meta: r.meta,
-        }
     }
 }

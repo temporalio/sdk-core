@@ -603,8 +603,8 @@ pub mod coresdk {
                     workflow_activation_job::Variant::ResolveRequestCancelExternalWorkflow(_) => {
                         write!(f, "ResolveRequestCancelExternalWorkflow")
                     }
-                    workflow_activation_job::Variant::ValidateUpdate(_) => {
-                        write!(f, "ValidateUpdate")
+                    workflow_activation_job::Variant::DoUpdate(_) => {
+                        write!(f, "DoUpdate")
                     }
                 }
             }
@@ -853,6 +853,16 @@ pub mod coresdk {
                     f,
                     "ModifyWorkflowProperties(upserted memo keys: {:?})",
                     self.upserted_memo.as_ref().map(|m| m.fields.keys())
+                )
+            }
+        }
+
+        impl Display for UpdateResponse {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(
+                    f,
+                    "UpdateResponse(protocol_instance_id: {}, response: {:?})",
+                    self.protocol_instance_id, self.response
                 )
             }
         }
@@ -1455,6 +1465,14 @@ pub mod temporal {
                                 command_type: CommandType::CancelWorkflowExecution as i32,
                                 attributes: Some(a),
                             },
+                            a @ Attributes::RecordMarkerCommandAttributes(_) => Self {
+                                command_type: CommandType::RecordMarker as i32,
+                                attributes: Some(a),
+                            },
+                            a @ Attributes::ProtocolMessageCommandAttributes(_) => Self {
+                                command_type: CommandType::ProtocolMessage as i32,
+                                attributes: Some(a),
+                            },
                             _ => unimplemented!(),
                         }
                     }
@@ -1948,7 +1966,14 @@ pub mod temporal {
         }
         pub mod protocol {
             pub mod v1 {
+                use std::fmt::{Display, Formatter};
                 tonic::include_proto!("temporal.api.protocol.v1");
+
+                impl Display for Message {
+                    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                        write!(f, "ProtocolMessage({})", self.id)
+                    }
+                }
             }
         }
         pub mod query {

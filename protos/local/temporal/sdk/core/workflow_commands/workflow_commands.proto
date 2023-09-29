@@ -10,6 +10,7 @@ option ruby_package = "Temporalio::Bridge::Api::WorkflowCommands";
 
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
 import "temporal/api/common/v1/message.proto";
 import "temporal/api/enums/v1/workflow.proto";
 import "temporal/api/failure/v1/message.proto";
@@ -37,6 +38,7 @@ message WorkflowCommand {
         RequestCancelLocalActivity request_cancel_local_activity = 17;
         UpsertWorkflowSearchAttributes upsert_workflow_search_attributes = 18;
         ModifyWorkflowProperties modify_workflow_properties = 19;
+        UpdateResponse update_response = 20;
     }
 }
 
@@ -308,4 +310,21 @@ message ModifyWorkflowProperties {
     // the existing memo. If the user wants to delete values, a default/empty Payload should be
     // used as the value for the key being deleted.
     temporal.api.common.v1.Memo upserted_memo = 1;
+}
+
+// A reply to a `DoUpdate` job - lang must run the update's validator, and then immediately run
+// the handler, if the update was accepted.
+message UpdateResponse {
+    // The protocol message instance ID
+    string protocol_instance_id = 1;
+    oneof response {
+        // Must be sent if the update's validator has passed, but the update handler itself has not
+        // finished within this activation.
+        google.protobuf.Empty accepted = 2;
+        // Must be sent if the update's validator does not pass, or if the update handler fails.
+        temporal.api.failure.v1.Failure rejected = 3;
+        // Must be sent if the update handler completes successfully. If the update validates and
+        // completes within one activation, lang may send only this variant.
+        google.protobuf.Empty completed = 4;
+    }
 }

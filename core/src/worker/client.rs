@@ -13,6 +13,7 @@ use temporal_sdk_core_protos::{
         },
         enums::v1::{TaskQueueKind, WorkflowTaskFailedCause},
         failure::v1::Failure,
+        protocol::v1::Message as ProtocolMessage,
         query::v1::WorkflowQueryResult,
         sdk::v1::WorkflowTaskCompletedMetadata,
         taskqueue::v1::{StickyExecutionAttributes, TaskQueue, TaskQueueMetadata},
@@ -201,12 +202,12 @@ impl WorkerClient for WorkerClientBag {
         let request = RespondWorkflowTaskCompletedRequest {
             task_token: request.task_token.into(),
             commands: request.commands,
+            messages: request.messages,
             identity: self.identity.clone(),
             sticky_attributes: request.sticky_attributes,
             return_new_workflow_task: request.return_new_workflow_task,
             force_create_new_workflow_task: request.force_create_new_workflow_task,
             worker_version_stamp: self.worker_version_stamp(),
-            messages: vec![],
             binary_checksum: self.binary_checksum(),
             query_results: request
                 .query_responses
@@ -391,6 +392,8 @@ pub(crate) struct WorkflowTaskCompletion {
     pub task_token: TaskToken,
     /// A list of new commands to send to the server, such as starting a timer.
     pub commands: Vec<Command>,
+    /// A list of protocol messages to send to the server.
+    pub messages: Vec<ProtocolMessage>,
     /// If set, indicate that next task should be queued on sticky queue with given attributes.
     pub sticky_attributes: Option<StickyExecutionAttributes>,
     /// Responses to queries in the `queries` field of the workflow task.

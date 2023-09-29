@@ -1,7 +1,12 @@
 use assert_matches::assert_matches;
+use std::time::Duration;
 use temporal_client::WorkflowClientTrait;
-use temporal_sdk_core_protos::coresdk::workflow_completion::WorkflowActivationCompletion;
-use temporal_sdk_core_test_utils::{init_core_and_create_wf, WorkerTestHelpers};
+use temporal_sdk_core_protos::coresdk::{
+    workflow_activation::{workflow_activation_job, WorkflowActivationJob},
+    workflow_commands::{update_response, UpdateResponse},
+    workflow_completion::WorkflowActivationCompletion,
+};
+use temporal_sdk_core_test_utils::{init_core_and_create_wf, start_timer_cmd, WorkerTestHelpers};
 use tokio::join;
 
 #[tokio::test]
@@ -37,18 +42,27 @@ async fn update_workflow() {
     let processing_task = async {
         let mut res = core.poll_workflow_activation().await.unwrap();
         dbg!(&res);
-        // assert_matches!(
-        //     res.jobs.as_slice(),
-        //     [WorkflowActivationJob {
-        //         variant: Some(workflow_activation_job::Variant::SignalWorkflow(_)),
-        //     },]
-        // );
-        // core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        //     res.run_id,
-        //     vec![],
-        // ))
-        // .await
-        // .unwrap();
+        let pid = assert_matches!(
+            res.jobs.as_slice(),
+            [WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::DoUpdate(d)),
+            }] => &d.protocol_instance_id
+        );
+        core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
+            res.run_id,
+            vec![
+                UpdateResponse {
+                    protocol_instance_id: pid.to_string(),
+                    response: Some(update_response::Response::Accepted(())),
+                }
+                .into(),
+                start_timer_cmd(1, Duration::from_millis(1)),
+            ],
+        ))
+        .await
+        .unwrap();
+
+        let mut res = core.poll_workflow_activation().await.unwrap();
         core.complete_execution(&res.run_id).await;
     };
     join!(update_task, processing_task);

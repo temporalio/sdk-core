@@ -6,6 +6,7 @@ use crate::{
     internal_flags::CoreInternalFlags,
     worker::workflow::{machines::HistEventData, InternalFlagsRef},
 };
+use itertools::Itertools;
 use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
 use std::{
     convert::{TryFrom, TryInto},
@@ -750,10 +751,8 @@ impl Cancellable for ChildWorkflowMachine {
                 }
                 x => panic!("Invalid cancel event response {x:?}"),
             })
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .flatten()
-            .collect();
+            .flatten_ok()
+            .try_collect()?;
         Ok(res)
     }
 

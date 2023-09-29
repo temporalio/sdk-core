@@ -1,5 +1,8 @@
 use std::{env, path::PathBuf};
 
+static ALWAYS_SERDE: &str = "#[cfg_attr(not(feature = \"serde_serialize\"), \
+                               derive(::serde::Serialize, ::serde::Deserialize))]";
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-changed=../protos");
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
@@ -76,10 +79,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .type_attribute("coresdk.Task.variant", "#[derive(::derive_more::From)]")
         // All external data is useful to be able to JSON serialize, so it can render in web UI
-        .type_attribute(
-            ".coresdk.external_data",
-            "#[cfg_attr(not(feature = \"serde_serialize\"), derive(::serde::Serialize, ::serde::Deserialize))]",
-        )
+        .type_attribute(".coresdk.external_data", ALWAYS_SERDE)
         .type_attribute(
             ".",
             "#[cfg_attr(feature = \"serde_serialize\", derive(::serde::Serialize, ::serde::Deserialize))]",

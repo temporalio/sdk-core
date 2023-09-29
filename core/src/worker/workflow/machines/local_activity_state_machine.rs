@@ -13,6 +13,7 @@ use crate::{
         LocalActivityExecutionResult,
     },
 };
+use itertools::Itertools;
 use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
 use std::{
     convert::TryFrom,
@@ -30,7 +31,7 @@ use temporal_sdk_core_protos::{
         workflow_commands::ActivityCancellationType,
     },
     temporal::api::{
-        command::v1::{Command, RecordMarkerCommandAttributes},
+        command::v1::{command, RecordMarkerCommandAttributes},
         enums::v1::{CommandType, EventType, RetryState},
         failure::v1::{failure::FailureInfo, Failure},
         history::v1::HistoryEvent,
@@ -617,10 +618,8 @@ impl Cancellable for LocalActivityMachine {
         let mach_resps = cmds
             .into_iter()
             .map(|mc| self.adapt_response(mc, None))
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .flatten()
-            .collect();
+            .flatten_ok()
+            .try_collect()?;
         Ok(mach_resps)
     }
 
@@ -781,10 +780,9 @@ impl WFMachinesAdapter for LocalActivityMachine {
                         header: None,
                         failure: maybe_failure,
                     };
-                    responses.push(MachineResponse::IssueNewCommand(Command {
-                        command_type: CommandType::RecordMarker as i32,
-                        attributes: Some(marker_data.into()),
-                    }));
+                    responses.push(MachineResponse::IssueNewCommand(
+                        command::Attributes::RecordMarkerCommandAttributes(marker_data).into(),
+                    ));
                 }
                 Ok(responses)
             }

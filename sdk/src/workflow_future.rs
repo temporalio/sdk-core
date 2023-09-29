@@ -217,7 +217,7 @@ impl WorkflowFuture {
                 Variant::ResolveRequestCancelExternalWorkflow(attrs) => {
                     self.unblock(UnblockEvent::CancelExternal(attrs.seq, attrs.failure))?;
                 }
-                Variant::ValidateUpdate(_) => {
+                Variant::DoUpdate(_) => {
                     todo!("Implement updates")
                 }
 

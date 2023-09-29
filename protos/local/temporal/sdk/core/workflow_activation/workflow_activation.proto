@@ -70,8 +70,8 @@ message WorkflowActivationJob {
         ResolveSignalExternalWorkflow resolve_signal_external_workflow = 12;
         // An attempt to cancel an external workflow resolved
         ResolveRequestCancelExternalWorkflow resolve_request_cancel_external_workflow = 13;
-        // A request to run the validator for an update request
-        ValidateUpdate validate_update = 14;
+        // A request to handle a workflow update.
+        DoUpdate do_update = 14;
         // Remove the workflow identified by the [WorkflowActivation] containing this job from the cache
         // after performing the activation.
         //
@@ -245,15 +245,24 @@ message ResolveRequestCancelExternalWorkflow {
     temporal.api.failure.v1.Failure failure = 2;
 }
 
-message ValidateUpdate {
+// Lang is requested to invoke an update handler on the workflow. Lang should invoke the update
+// validator first and if it accepts the update, immediately invoke the update handler. Lang must
+// reply to the activation containing this job with an `UpdateResponse`.
+message DoUpdate {
+    // A workflow-unique identifier for this update
+    string id = 1;
+    // The protocol message instance ID - this is used to uniquely track the ID server side and
+    // internally.
+    string protocol_instance_id = 2;
     // The name of the update handler
-    string name = 1;
+    string name = 3;
     // The input to the update
-    repeated temporal.api.common.v1.Payload input = 2;
+    repeated temporal.api.common.v1.Payload input = 4;
     // Headers attached to the update
-    map<string, temporal.api.common.v1.Payload> headers = 3;
-    // Metadata associated with the update
-    temporal.api.update.v1.Meta meta = 4;
+    map<string, temporal.api.common.v1.Payload> headers = 5;
+    // Remaining metadata associated with the update. The `update_id` field is stripped from here
+    // and moved to `id`, since it is guaranteed to be present.
+    temporal.api.update.v1.Meta meta = 6;
 }
 
 message RemoveFromCache {

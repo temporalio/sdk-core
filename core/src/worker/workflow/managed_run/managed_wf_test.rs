@@ -121,8 +121,8 @@ impl ManagedWFFunc {
     }
 
     /// Return outgoing server commands as of the last iteration
-    pub(crate) fn get_server_commands(&mut self) -> OutgoingServerCommands {
-        self.mgr.get_server_commands()
+    pub(crate) fn get_server_commands(&mut self) -> MachinesWFTResponseContent {
+        self.mgr.prepare_for_wft_response()
     }
 
     pub(crate) fn drain_queued_local_activities(&mut self) -> Vec<LocalActRequest> {
