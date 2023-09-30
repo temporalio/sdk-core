@@ -3,7 +3,7 @@ use std::time::Duration;
 use temporal_client::WorkflowClientTrait;
 use temporal_sdk_core_protos::coresdk::{
     workflow_activation::{workflow_activation_job, WorkflowActivationJob},
-    workflow_commands::{update_response, UpdateResponse},
+    workflow_commands::{update_response, CompleteWorkflowExecution, UpdateResponse},
     workflow_completion::WorkflowActivationCompletion,
 };
 use temporal_sdk_core_test_utils::{init_core_and_create_wf, start_timer_cmd, WorkerTestHelpers};
@@ -63,7 +63,20 @@ async fn update_workflow() {
         .unwrap();
 
         let mut res = core.poll_workflow_activation().await.unwrap();
-        core.complete_execution(&res.run_id).await;
+        // Timer fires
+        core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
+            res.run_id,
+            vec![
+                UpdateResponse {
+                    protocol_instance_id: pid.to_string(),
+                    response: Some(update_response::Response::Completed("done!".into())),
+                }
+                .into(),
+                CompleteWorkflowExecution { result: None }.into(),
+            ],
+        ))
+        .await
+        .unwrap();
     };
     join!(update_task, processing_task);
 }

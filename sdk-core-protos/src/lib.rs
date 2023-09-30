@@ -1822,7 +1822,10 @@ pub mod temporal {
                             | EventType::WorkflowExecutionCanceled
                             | EventType::WorkflowExecutionCompleted
                             | EventType::WorkflowExecutionContinuedAsNew
-                            | EventType::WorkflowExecutionFailed => true,
+                            | EventType::WorkflowExecutionFailed
+                            | EventType::WorkflowExecutionUpdateAccepted
+                            | EventType::WorkflowExecutionUpdateRejected
+                            | EventType::WorkflowExecutionUpdateCompleted => true,
                             _ => false,
                         })
                     }
@@ -1862,6 +1865,16 @@ pub mod temporal {
                                 Attributes::WorkflowTaskFailedEventAttributes(a) => Some(a.scheduled_event_id),
                                 _ => None
                             }
+                        })
+                    }
+
+                    /// Return the event's associated protocol instance, if one exists.
+                    pub fn get_protocol_instance_id(&self) -> Option<&str> {
+                        self.attributes.as_ref().and_then(|a| match a {
+                            Attributes::WorkflowExecutionUpdateAcceptedEventAttributes(a) => {
+                                Some(a.protocol_instance_id.as_str())
+                            }
+                            _ => None,
                         })
                     }
 

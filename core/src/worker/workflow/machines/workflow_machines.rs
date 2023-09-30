@@ -63,7 +63,7 @@ use temporal_sdk_core_protos::{
     temporal::api::{
         command::v1::{command::Attributes as ProtoCmdAttrs, Command as ProtoCommand},
         enums::v1::EventType,
-        history::v1::{history_event, history_event::Attributes, HistoryEvent},
+        history::v1::{history_event, HistoryEvent},
         protocol::v1::{message::SequencingId, Message as ProtocolMessage},
         sdk::v1::WorkflowTaskCompletedMetadata,
     },
@@ -730,27 +730,31 @@ impl WorkflowMachines {
         }
 
         if let Some(initial_cmd_id) = event.get_initial_command_event_id() {
-            // We remove the machine while we it handles events, then return it, to avoid
-            // borrowing from ourself mutably.
-            let maybe_machine = self.machines_by_event_id.remove(&initial_cmd_id);
-            match maybe_machine {
-                Some(sm) => {
-                    self.submachine_handle_event(sm, event_dat)?;
-                    // Restore machine if not in it's final state
-                    if !self.machine(sm).is_final_state() {
-                        self.machines_by_event_id.insert(initial_cmd_id, sm);
-                    }
-                }
-                None => {
-                    return Err(WFMachinesError::Nondeterminism(format!(
+            let mkey = self
+                .machines_by_event_id
+                .get(&initial_cmd_id)
+                .ok_or_else(|| {
+                    WFMachinesError::Nondeterminism(format!(
                         "During event handling, this event had an initial command ID but we \
-                            could not find a matching command for it: {event:?}"
-                    )));
-                }
-            }
+                         could not find a matching command for it: {event:?}"
+                    ))
+                })?;
+            self.submachine_handle_event(*mkey, event_dat)?;
+        } else if let Some(protocol_instance_id) = event.get_protocol_instance_id() {
+            // TODO: This branch may not be necessary
+            let mkey = self
+                .machines_by_protocol_instance_id
+                .get(protocol_instance_id)
+                .ok_or_else(|| {
+                    WFMachinesError::Nondeterminism(format!(
+                        "During event handling, this event had an protocol instance ID but we \
+                         could not find a matching machines for it: {event:?}"
+                    ))
+                })?;
+            self.submachine_handle_event(*mkey, event_dat)?;
         } else {
             self.handle_non_stateful_event(event_dat)?;
-        }
+        };
 
         Ok(EventHandlingOutcome::Normal)
     }
@@ -1520,8 +1524,9 @@ fn patch_marker_handling(
     fn skip_one_or_two_events(next_event: Option<&HistoryEvent>) -> Result<EventHandlingOutcome> {
         // Also ignore the subsequent upsert event if present
         let mut skip_next_event = false;
-        if let Some(Attributes::UpsertWorkflowSearchAttributesEventAttributes(atts)) =
-            next_event.and_then(|ne| ne.attributes.as_ref())
+        if let Some(history_event::Attributes::UpsertWorkflowSearchAttributesEventAttributes(
+            atts,
+        )) = next_event.and_then(|ne| ne.attributes.as_ref())
         {
             if let Some(ref sa) = atts.search_attributes {
                 skip_next_event = sa.indexed_fields.contains_key(VERSION_SEARCH_ATTR_KEY);

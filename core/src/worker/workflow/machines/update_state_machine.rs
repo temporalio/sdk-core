@@ -4,6 +4,7 @@ use crate::{
     worker::workflow::machines::{Cancellable, HistEventData, NewMachineWithResponse},
 };
 use itertools::Itertools;
+use prost::EncodeError;
 use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
 use std::{convert::TryFrom, mem};
 use temporal_sdk_core_protos::{
@@ -13,12 +14,12 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::{
         command::v1::{command, ProtocolMessageCommandAttributes},
-        common::v1::Payloads,
+        common::v1::Payload,
         enums::v1::{CommandType, EventType},
         failure::v1::Failure,
         history::v1::HistoryEvent,
         protocol::v1::Message as ProtocolMessage,
-        update::v1::Acceptance,
+        update::v1::{outcome, Acceptance, Outcome, Rejection, Response},
     },
     utilities::pack_any,
 };
@@ -34,6 +35,10 @@ fsm! {
     Accepted --(CommandProtocolMessage)--> AcceptCommandCreated;
 
     AcceptCommandCreated --(WorkflowExecutionUpdateAccepted)--> AcceptCommandRecorded;
+    AcceptCommandRecorded --(Complete(UpdateOutcome), on_complete)--> Completed;
+
+    Completed --(CommandProtocolMessage)--> CompletedCommandCreated;
+    CompletedCommandCreated --(WorkflowExecutionUpdateCompleted)--> CompletedCommandRecorded;
 }
 
 #[derive(Debug, derive_more::Display)]
@@ -43,7 +48,7 @@ pub(super) enum UpdateMachineCommand {
     #[display(fmt = "Reject")]
     Reject,
     #[display(fmt = "Complete")]
-    Complete(Option<Payloads>),
+    Complete(Payload),
     #[display(fmt = "Fail")]
     Fail(Failure),
 }
@@ -54,6 +59,12 @@ pub(super) struct SharedState {
     instance_id: String,
     event_seq_id: i64,
     request: UpdateRequest,
+}
+
+#[derive(Clone, Debug)]
+pub(super) enum UpdateOutcome {
+    Ok(Payload),
+    Failure(Failure),
 }
 
 impl UpdateMachine {
@@ -104,16 +115,14 @@ impl UpdateMachine {
             Some(update_response::Response::Rejected(_)) => {
                 todo!()
             }
-            Some(update_response::Response::Completed(_)) => {
-                todo!()
+            Some(update_response::Response::Completed(p)) => {
+                self.on_event(UpdateMachineEvents::Complete(UpdateOutcome::Ok(p)))
             }
         }
         .map_err(|e| match e {
             MachineError::InvalidTransition => WFMachinesError::Fatal(format!(
-                "Invalid transition while handling update response (id {}): \
-                 response: {:?} in state {}",
+                "Invalid transition while handling update response (id {}) in state {}",
                 &self.shared_state.request.meta.update_id,
-                resp,
                 self.state(),
             )),
             MachineError::Underlying(e) => e,
@@ -124,15 +133,70 @@ impl UpdateMachine {
             .flatten_ok()
             .try_collect()?)
     }
+
+    fn build_command_msg(
+        &self,
+        outgoing_id: String,
+        msg: UpdateMsg,
+    ) -> Result<Vec<MachineResponse>, WFMachinesError> {
+        let accept_body = msg.pack().map_err(|e| {
+            WFMachinesError::Fatal(format!("Failed to serialize update response: {:?}", e))
+        })?;
+        Ok(vec![
+            MachineResponse::IssueNewMessage(ProtocolMessage {
+                id: outgoing_id.clone(),
+                protocol_instance_id: self.shared_state.instance_id.clone(),
+                body: Some(accept_body),
+                ..Default::default()
+            }),
+            MachineResponse::IssueNewCommand(
+                command::Attributes::ProtocolMessageCommandAttributes(
+                    ProtocolMessageCommandAttributes {
+                        message_id: outgoing_id,
+                    },
+                )
+                .into(),
+            ),
+        ])
+    }
+}
+
+enum UpdateMsg {
+    Accept(Acceptance),
+    Reject(Rejection),
+    Response(Response),
+}
+impl UpdateMsg {
+    fn pack(self) -> Result<prost_types::Any, EncodeError> {
+        match self {
+            UpdateMsg::Accept(m) => pack_any(
+                "type.googleapis.com/temporal.api.update.v1.Acceptance".to_string(),
+                &m,
+            ),
+            UpdateMsg::Reject(m) => pack_any(
+                "type.googleapis.com/temporal.api.update.v1.Rejection".to_string(),
+                &m,
+            ),
+            UpdateMsg::Response(m) => pack_any(
+                "type.googleapis.com/temporal.api.update.v1.Response".to_string(),
+                &m,
+            ),
+        }
+    }
 }
 
 impl TryFrom<HistEventData> for UpdateMachineEvents {
     type Error = WFMachinesError;
 
     fn try_from(e: HistEventData) -> Result<Self, Self::Error> {
-        let last_task_in_history = e.current_task_is_last_in_history;
         let e = e.event;
         Ok(match e.event_type() {
+            EventType::WorkflowExecutionUpdateAccepted => {
+                UpdateMachineEvents::WorkflowExecutionUpdateAccepted
+            }
+            EventType::WorkflowExecutionUpdateCompleted => {
+                UpdateMachineEvents::WorkflowExecutionUpdateCompleted
+            }
             _ => {
                 return Err(WFMachinesError::Nondeterminism(format!(
                     "Update machine does not handle this event: {e}"
@@ -149,43 +213,26 @@ impl WFMachinesAdapter for UpdateMachine {
         _event_info: Option<EventInfo>,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         Ok(match my_command {
-            UpdateMachineCommand::Accept => {
-                let message_id = format!("{}/accept", self.shared_state.message_id);
-                let accept_body = pack_any(
-                    "type.googleapis.com/temporal.api.update.v1.Acceptance".to_string(),
-                    &Acceptance {
-                        accepted_request_message_id: self.shared_state.message_id.clone(),
-                        accepted_request_sequencing_event_id: self.shared_state.event_seq_id,
-                        ..Default::default()
-                    },
-                )
-                .map_err(|e| {
-                    WFMachinesError::Fatal(format!(
-                        "Failed to serialize update acceptance: {:?}",
-                        e
-                    ))
-                })?;
-                vec![
-                    MachineResponse::IssueNewMessage(ProtocolMessage {
-                        id: message_id.clone(),
-                        protocol_instance_id: self.shared_state.instance_id.clone(),
-                        body: Some(accept_body),
-                        ..Default::default()
-                    }),
-                    MachineResponse::IssueNewCommand(
-                        command::Attributes::ProtocolMessageCommandAttributes(
-                            ProtocolMessageCommandAttributes { message_id },
-                        )
-                        .into(),
-                    ),
-                ]
-            }
+            UpdateMachineCommand::Accept => self.build_command_msg(
+                format!("{}/accept", self.shared_state.message_id),
+                UpdateMsg::Accept(Acceptance {
+                    accepted_request_message_id: self.shared_state.message_id.clone(),
+                    accepted_request_sequencing_event_id: self.shared_state.event_seq_id,
+                    ..Default::default()
+                }),
+            )?,
             UpdateMachineCommand::Reject => {
                 todo!()
             }
-            UpdateMachineCommand::Complete(_) => {
-                todo!()
-            }
+            UpdateMachineCommand::Complete(p) => self.build_command_msg(
+                format!("{}/complete", self.shared_state.message_id),
+                UpdateMsg::Response(Response {
+                    meta: Some(self.shared_state.request.meta.clone()),
+                    outcome: Some(Outcome {
+                        value: Some(outcome::Value::Success(p.into())),
+                    }),
+                }),
+            )?,
             UpdateMachineCommand::Fail(_) => {
                 todo!()
             }
@@ -239,9 +286,42 @@ impl From<Accepted> for AcceptCommandCreated {
 
 #[derive(Default, Clone)]
 pub(super) struct AcceptCommandRecorded {}
+impl AcceptCommandRecorded {
+    fn on_complete(self, outcome: UpdateOutcome) -> UpdateMachineTransition<Completed> {
+        let cmd = match outcome {
+            UpdateOutcome::Ok(p) => UpdateMachineCommand::Complete(p.into()),
+            UpdateOutcome::Failure(f) => UpdateMachineCommand::Fail(f),
+        };
+        UpdateMachineTransition::commands([cmd])
+    }
+}
 impl From<AcceptCommandCreated> for AcceptCommandRecorded {
     fn from(_: AcceptCommandCreated) -> Self {
         AcceptCommandRecorded {}
+    }
+}
+
+#[derive(Default, Clone)]
+pub(super) struct Completed {}
+impl From<AcceptCommandRecorded> for Completed {
+    fn from(_: AcceptCommandRecorded) -> Self {
+        Completed {}
+    }
+}
+
+#[derive(Default, Clone)]
+pub(super) struct CompletedCommandCreated {}
+impl From<Completed> for CompletedCommandCreated {
+    fn from(_: Completed) -> Self {
+        CompletedCommandCreated {}
+    }
+}
+
+#[derive(Default, Clone)]
+pub(super) struct CompletedCommandRecorded {}
+impl From<CompletedCommandCreated> for CompletedCommandRecorded {
+    fn from(_: CompletedCommandCreated) -> Self {
+        CompletedCommandRecorded {}
     }
 }
 

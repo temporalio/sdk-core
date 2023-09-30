@@ -325,6 +325,6 @@ message UpdateResponse {
         temporal.api.failure.v1.Failure rejected = 3;
         // Must be sent if the update handler completes successfully. If the update validates and
         // completes within one activation, lang may send only this variant.
-        google.protobuf.Empty completed = 4;
+        temporal.api.common.v1.Payload completed = 4;
     }
 }
