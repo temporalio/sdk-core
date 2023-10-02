@@ -1086,15 +1086,6 @@ impl ValidatedCompletion {
     }
 }
 
-/// Contains everything workflow machine internals need to bubble up when we're getting ready to
-/// respond with a WFT completion.
-#[derive(Debug)]
-pub struct MachinesWFTResponseContent {
-    pub commands: Vec<ProtoCommand>,
-    pub messages: Vec<ProtocolMessage>,
-    pub replaying: bool,
-}
-
 #[derive(Debug)]
 #[cfg_attr(
     feature = "save_wf_inputs",

@@ -32,8 +32,8 @@ use crate::{
                 HistEventData,
             },
             CommandID, DrivenWorkflow, HistoryUpdate, InternalFlagsRef, LocalResolution,
-            MachinesWFTResponseContent, OutgoingJob, RunBasics, WFCommand, WFMachinesError,
-            WorkflowFetcher, WorkflowStartedInfo,
+            OutgoingJob, RunBasics, WFCommand, WFMachinesError, WorkflowFetcher,
+            WorkflowStartedInfo,
         },
         ExecutingLAId, LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
     },
@@ -95,7 +95,7 @@ pub(crate) struct WorkflowMachines {
     /// True if the workflow is replaying from history
     pub replaying: bool,
     /// Namespace this workflow exists in
-    pub namespace: String,
+    namespace: String,
     /// Workflow identifier
     pub workflow_id: String,
     /// Workflow type identifier. (Function name, class, etc)
@@ -103,7 +103,7 @@ pub(crate) struct WorkflowMachines {
     /// Identifies the current run
     pub run_id: String,
     /// The task queue this workflow is operating within
-    pub task_queue: String,
+    task_queue: String,
     /// Is set to true once we've seen the final event in workflow history, to avoid accidentally
     /// re-applying the final workflow task.
     pub have_seen_terminal_event: bool,
@@ -367,10 +367,15 @@ impl WorkflowMachines {
     }
 
     pub(crate) fn prepare_for_wft_response(&mut self) -> MachinesWFTResponseContent {
+        error!("Preparing for wft response");
         MachinesWFTResponseContent {
             commands: self.get_commands(),
-            messages: self.message_outbox.drain(..).collect(),
             replaying: self.replaying,
+            has_pending_jobs: self.has_pending_jobs(),
+            have_seen_terminal_event: self.have_seen_terminal_event,
+            have_pending_la_resolutions: self.has_pending_la_resolutions(),
+            last_processed_event: self.last_processed_event,
+            me: self,
         }
     }
 
@@ -1081,6 +1086,7 @@ impl WorkflowMachines {
                     })
                 }
                 MachineResponse::IssueNewMessage(pm) => {
+                    error!("Pushing msg {:?}", &pm);
                     self.message_outbox.push_back(pm);
                 }
                 MachineResponse::NewCoreOriginatedCommand(attrs) => match attrs {
@@ -1526,6 +1532,32 @@ impl WorkflowMachines {
                 target_tq.is_empty() || target_tq == self.task_queue
             }
         }
+    }
+}
+
+/// Contains everything workflow machine internals need to bubble up when we're getting ready to
+/// respond with a WFT completion. Allows for lazy mutation of the machine, since mutation is not
+/// desired unless we are actually going to respond to the WFT, which may not always happen.
+pub struct MachinesWFTResponseContent<'a> {
+    me: &'a mut WorkflowMachines,
+    // TODO: make slice after getting rid of stupid managed wffunc thing
+    pub commands: Vec<ProtoCommand>,
+    pub replaying: bool,
+    pub has_pending_jobs: bool,
+    pub have_seen_terminal_event: bool,
+    pub have_pending_la_resolutions: bool,
+    pub last_processed_event: i64,
+}
+impl<'a> MachinesWFTResponseContent<'a> {
+    pub fn commands(&self) -> Vec<ProtoCommand> {
+        // TODO: No clone after removing wffunc junk
+        self.commands.clone()
+    }
+    pub fn messages(&mut self) -> Vec<ProtocolMessage> {
+        self.me.message_outbox.drain(..).collect()
+    }
+    pub fn metadata_for_complete(&mut self) -> WorkflowTaskCompletedMetadata {
+        self.me.get_metadata_for_wft_complete()
     }
 }
 

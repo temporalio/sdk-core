@@ -39,7 +39,8 @@ fsm! {
     Accepted --(CommandProtocolMessage)--> AcceptCommandCreated;
 
     AcceptCommandCreated --(WorkflowExecutionUpdateAccepted)--> AcceptCommandRecorded;
-    // TODO: Need created-complete->immediatelyacceptcreated for LA case
+    AcceptCommandCreated --(Complete(Payload), on_complete)--> CompletedImmediatelyAcceptCreated;
+    AcceptCommandCreated --(Reject(Failure), on_fail)--> CompletedImmediatelyAcceptCreated;
     AcceptCommandRecorded --(Complete(Payload), on_complete)--> Completed;
     AcceptCommandRecorded --(Reject(Failure), on_fail)--> Completed;
 
@@ -321,6 +322,14 @@ pub(super) struct AcceptCommandCreated {}
 impl From<Accepted> for AcceptCommandCreated {
     fn from(_: Accepted) -> Self {
         AcceptCommandCreated {}
+    }
+}
+impl AcceptCommandCreated {
+    fn on_complete(self, p: Payload) -> UpdateMachineTransition<CompletedImmediatelyAcceptCreated> {
+        UpdateMachineTransition::commands([UpdateMachineCommand::Complete(p.into())])
+    }
+    fn on_fail(self, f: Failure) -> UpdateMachineTransition<CompletedImmediatelyAcceptCreated> {
+        UpdateMachineTransition::commands([UpdateMachineCommand::Fail(f)])
     }
 }
 

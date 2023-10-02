@@ -19,7 +19,7 @@ mod workflow_task_state_machine;
 #[cfg(test)]
 mod transition_coverage;
 
-pub(crate) use workflow_machines::WorkflowMachines;
+pub(crate) use workflow_machines::{MachinesWFTResponseContent, WorkflowMachines};
 
 use crate::{
     telemetry::VecDisplayer,

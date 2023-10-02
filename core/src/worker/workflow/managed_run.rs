@@ -9,12 +9,13 @@ use crate::{
     protosext::{protocol_messages::IncomingProtocolMessage, WorkflowActivationExt},
     worker::{
         workflow::{
-            history_update::HistoryPaginator, machines::WorkflowMachines, ActivationAction,
-            ActivationCompleteOutcome, ActivationCompleteResult, ActivationOrAuto,
-            EvictionRequestResult, FailedActivationWFTReport, HeartbeatTimeoutMsg, HistoryUpdate,
-            LocalActivityRequestSink, LocalResolution, MachinesWFTResponseContent, NextPageReq,
-            OutstandingActivation, OutstandingTask, PermittedWFT, RequestEvictMsg, RunBasics,
-            ServerCommandsWithWorkflowInfo, WFCommand, WFMachinesError, WFTReportStatus,
+            history_update::HistoryPaginator,
+            machines::{MachinesWFTResponseContent, WorkflowMachines},
+            ActivationAction, ActivationCompleteOutcome, ActivationCompleteResult,
+            ActivationOrAuto, EvictionRequestResult, FailedActivationWFTReport,
+            HeartbeatTimeoutMsg, HistoryUpdate, LocalActivityRequestSink, LocalResolution,
+            NextPageReq, OutstandingActivation, OutstandingTask, PermittedWFT, RequestEvictMsg,
+            RunBasics, ServerCommandsWithWorkflowInfo, WFCommand, WFMachinesError, WFTReportStatus,
             WorkflowBridge, WorkflowTaskInfo, WFT_HEARTBEAT_TIMEOUT_FRACTION,
         },
         LocalActRequest, LEGACY_QUERY_ID,
@@ -948,20 +949,16 @@ impl ManagedRun {
     ) -> FulfillableActivationComplete {
         let mut machines_wft_response = self.wfm.prepare_for_wft_response();
         if data.activation_was_only_eviction
-            && (!machines_wft_response.commands.is_empty()
-                || !machines_wft_response.messages.is_empty())
+            && (
+                !machines_wft_response.commands.is_empty()
+                // || machines_wft_response.messages.len() > 0)
+            )
+            && !self.am_broken
         {
-            if self.am_broken {
-                // If we broke there could be commands or messages in the pipe that we didn't get a
-                // chance to handle properly during replay, just wipe them all out.
-                machines_wft_response.commands = vec![];
-                machines_wft_response.messages = vec![];
-            } else {
-                dbg_panic!(
-                "There should not be any outgoing commands when preparing a completion response \
-                 if the activation was only an eviction. This is an SDK bug."
-                );
-            }
+            dbg_panic!(
+                "There should not be any outgoing commands or messages when preparing a completion \
+                 response if the activation was only an eviction. This is an SDK bug."
+            );
         }
 
         let query_responses = data.query_responses;
@@ -974,35 +971,50 @@ impl ManagedRun {
         // saw the final event in the workflow, or if we are playing back for the express purpose of
         // fulfilling a query. If the activation we sent was *only* an eviction, don't send that
         // either.
-        let should_respond = !(self.wfm.machines.has_pending_jobs()
+        let should_respond = !(machines_wft_response.has_pending_jobs
             || machines_wft_response.replaying
             || is_query_playback
             || data.activation_was_only_eviction
-            || self.wfm.machines.have_seen_terminal_event);
+            || machines_wft_response.have_seen_terminal_event);
         // If there are pending LA resolutions, and we're responding to a query here,
         // we want to make sure to force a new task, as otherwise once we tell lang about
         // the LA resolution there wouldn't be any task to reply to with the result of iterating
         // the workflow.
-        if has_query_responses && self.wfm.machines.has_pending_la_resolutions() {
+        if has_query_responses && machines_wft_response.have_pending_la_resolutions {
             force_new_wft = true;
         }
 
         let outcome = if should_respond || has_query_responses {
+            // If we broke there could be commands or messages in the pipe that we didn't
+            // get a chance to handle properly during replay. Don't send them.
+            let (commands, messages) = if self.am_broken && data.activation_was_only_eviction {
+                (vec![], vec![])
+            } else {
+                (
+                    machines_wft_response.commands(),
+                    machines_wft_response.messages(),
+                )
+            };
+
             ActivationCompleteOutcome::ReportWFTSuccess(ServerCommandsWithWorkflowInfo {
                 task_token: data.task_token,
                 action: ActivationAction::WftComplete {
                     force_new_wft,
-                    commands: machines_wft_response.commands,
-                    messages: machines_wft_response.messages,
+                    commands,
+                    messages,
                     query_responses,
-                    sdk_metadata: self.wfm.machines.get_metadata_for_wft_complete(),
+                    sdk_metadata: machines_wft_response.metadata_for_complete(),
                 },
             })
         } else {
             ActivationCompleteOutcome::DoNothing
         };
         FulfillableActivationComplete {
-            result: self.build_activation_complete_result(outcome),
+            result: ActivationCompleteResult {
+                outcome,
+                most_recently_processed_event: machines_wft_response.last_processed_event as usize,
+                replaying: machines_wft_response.replaying,
+            },
             resp_chan,
         }
     }
@@ -1028,7 +1040,12 @@ impl ManagedRun {
     ) {
         if let Some(chan) = chan {
             if chan
-                .send(self.build_activation_complete_result(outcome))
+                .send(ActivationCompleteResult {
+                    outcome,
+                    most_recently_processed_event: self.most_recently_processed_event_number()
+                        as usize,
+                    replaying: self.wfm.machines.replaying,
+                })
                 .is_err()
             {
                 let warnstr = "The workflow task completer went missing! This likely indicates an \
@@ -1042,17 +1059,6 @@ impl ManagedRun {
                     auto_reply_fail_tt: None,
                 });
             }
-        }
-    }
-
-    fn build_activation_complete_result(
-        &self,
-        outcome: ActivationCompleteOutcome,
-    ) -> ActivationCompleteResult {
-        ActivationCompleteResult {
-            outcome,
-            most_recently_processed_event: self.most_recently_processed_event_number() as usize,
-            replaying: self.wfm.machines.replaying,
         }
     }
 

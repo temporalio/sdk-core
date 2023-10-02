@@ -800,18 +800,18 @@ mod tests {
         // Iterate through all activations/responses except the final one with complete workflow
         for i in 2..=num_patches + 1 {
             wfm.get_next_activation().await.unwrap();
-            let cmds = wfm.get_server_commands();
+            let cmds = wfm.get_server_commands().commands;
             wfm.new_history(t.get_history_info(i).unwrap().into())
                 .await
                 .unwrap();
             if i > SIZE_OVERFLOW_PATCH_AMOUNT {
-                assert_eq!(2, cmds.commands.len());
-                assert_matches!(cmds.commands[1].command_type(), CommandType::StartTimer);
+                assert_eq!(2, cmds.len());
+                assert_matches!(cmds[1].command_type(), CommandType::StartTimer);
                 continue;
             }
-            assert_eq!(3, cmds.commands.len());
+            assert_eq!(3, cmds.len());
             let attrs = assert_matches!(
-                cmds.commands[1].attributes.as_ref().unwrap(),
+                cmds[1].attributes.as_ref().unwrap(),
                 Attributes::UpsertWorkflowSearchAttributesCommandAttributes(
                     UpsertWorkflowSearchAttributesCommandAttributes{ search_attributes: Some(attrs) }
                 )
