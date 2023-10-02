@@ -17,7 +17,7 @@ use crate::{
     internal_flags::InternalFlags,
     protosext::{
         protocol_messages::{IncomingProtocolMessage, IncomingProtocolMessageBody},
-        HistoryEventExt, ValidScheduleLA,
+        CompleteLocalActivityData, HistoryEventExt, ValidScheduleLA,
     },
     telemetry::{metrics::MetricsContext, VecDisplayer},
     worker::{
@@ -507,7 +507,7 @@ impl WorkflowMachines {
             while i < me.protocol_msgs.len() {
                 if me.protocol_msgs[i]
                     .processable_after_event_id()
-                    .is_some_and(|eid| eid >= for_event_id)
+                    .is_some_and(|eid| eid <= for_event_id)
                 {
                     ret.push(me.protocol_msgs.remove(i));
                 } else {
@@ -579,7 +579,7 @@ impl WorkflowMachines {
             // them.
             if self.replaying
                 && has_final_event
-                && event.event_id > self.last_history_from_server.previous_wft_started_id
+                && eid > self.last_history_from_server.previous_wft_started_id
                 && event.event_type() != EventType::WorkflowTaskCompleted
                 && !event.is_command_event()
             {
@@ -588,7 +588,7 @@ impl WorkflowMachines {
             }
 
             // Process any messages that should be processed before the event we're about to handle
-            let processable_msgs = get_processable_messages(self, event.event_id - 1);
+            let processable_msgs = get_processable_messages(self, eid - 1);
             for msg in processable_msgs {
                 self.handle_protocol_message(msg)?;
             }
@@ -616,9 +616,14 @@ impl WorkflowMachines {
             self.last_processed_event = eid;
         }
 
+        // Needed to delay mutation of self until after we've iterated over peeked events.
+        enum DelayedAction {
+            WakeLa(MachineKey, CompleteLocalActivityData),
+            ProtocolMessage(IncomingProtocolMessage),
+        }
+        let mut delayed_actions = vec![];
         // Scan through to the next WFT, searching for any patch / la markers, so that we can
         // pre-resolve them.
-        let mut wake_las = vec![];
         for e in self
             .last_history_from_server
             .peek_next_wft_sequence(last_handled_wft_started_id)
@@ -640,7 +645,7 @@ impl WorkflowMachines {
                     if let Ok(mk) =
                         self.get_machine_key(CommandID::LocalActivity(la_dat.marker_dat.seq))
                     {
-                        wake_las.push((mk, la_dat));
+                        delayed_actions.push(DelayedAction::WakeLa(mk, la_dat));
                     } else {
                         self.local_activity_data.insert_peeked_marker(la_dat);
                     }
@@ -649,20 +654,49 @@ impl WorkflowMachines {
                         "Local activity marker was unparsable: {e:?}"
                     )));
                 }
+            } else if let Some(
+                history_event::Attributes::WorkflowExecutionUpdateAcceptedEventAttributes(ref atts),
+            ) = e.attributes
+            {
+                // If we see a workflow update accepted event, initialize the machine for it by
+                // pretending we received the message we would've under not-replay.
+                delayed_actions.push(DelayedAction::ProtocolMessage(IncomingProtocolMessage {
+                    id: atts.accepted_request_message_id.clone(),
+                    protocol_instance_id: atts.protocol_instance_id.clone(),
+                    sequencing_id: Some(SequencingId::EventId(
+                        atts.accepted_request_sequencing_event_id,
+                    )),
+                    body: IncomingProtocolMessageBody::UpdateRequest(
+                        atts.accepted_request
+                            .clone()
+                            // TODO: Not default, propagate error
+                            .unwrap_or_default()
+                            .try_into()?,
+                    ),
+                }));
             }
         }
-        for (mk, la_dat) in wake_las {
-            let mach = self.machine_mut(mk);
-            if let Machines::LocalActivityMachine(ref mut lam) = *mach {
-                if lam.will_accept_resolve_marker() {
-                    let resps = lam.try_resolve_with_dat(la_dat.into())?;
-                    self.process_machine_responses(mk, resps)?;
-                } else {
-                    self.local_activity_data.insert_peeked_marker(la_dat);
+        for action in delayed_actions {
+            match action {
+                DelayedAction::WakeLa(mk, la_dat) => {
+                    let mach = self.machine_mut(mk);
+                    if let Machines::LocalActivityMachine(ref mut lam) = *mach {
+                        if lam.will_accept_resolve_marker() {
+                            let resps = lam.try_resolve_with_dat(la_dat.into())?;
+                            self.process_machine_responses(mk, resps)?;
+                        } else {
+                            self.local_activity_data.insert_peeked_marker(la_dat);
+                        }
+                    }
+                }
+                DelayedAction::ProtocolMessage(pm) => {
+                    error!("HI peeked a message! {:?}", &pm);
+                    self.handle_protocol_message(pm)?;
                 }
             }
         }
 
+        // TODO: All tests pass with this removed.
         update_internal_flags(self);
 
         if !self.replaying {

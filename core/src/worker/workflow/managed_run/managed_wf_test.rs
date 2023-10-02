@@ -135,7 +135,7 @@ impl ManagedWFFunc {
         &mut self,
         update: HistoryUpdate,
     ) -> Result<WorkflowActivation> {
-        let res = self.mgr.new_work_from_server(update)?;
+        let res = self.mgr.new_work_from_server(update, vec![])?;
         self.push_activation_to_wf(&res).await?;
         Ok(res)
     }

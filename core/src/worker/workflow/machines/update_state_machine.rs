@@ -39,6 +39,7 @@ fsm! {
     Accepted --(CommandProtocolMessage)--> AcceptCommandCreated;
 
     AcceptCommandCreated --(WorkflowExecutionUpdateAccepted)--> AcceptCommandRecorded;
+    // TODO: Need created-complete->immediatelyacceptcreated for LA case
     AcceptCommandRecorded --(Complete(Payload), on_complete)--> Completed;
     AcceptCommandRecorded --(Reject(Failure), on_fail)--> Completed;
 

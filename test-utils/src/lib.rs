@@ -83,7 +83,7 @@ macro_rules! prost_dur {
 }
 
 /// Create a worker instance which will use the provided test name to base the task queue and wf id
-/// upon. Returns the instance and the task queue name (which is also the workflow id).
+/// upon. Returns the instance.
 pub async fn init_core_and_create_wf(test_name: &str) -> CoreWfStarter {
     let mut starter = CoreWfStarter::new(test_name);
     let _ = starter.get_worker().await;
