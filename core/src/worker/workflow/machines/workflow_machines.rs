@@ -953,6 +953,7 @@ impl WorkflowMachines {
                     message.protocol_instance_id.clone(),
                     seq_id,
                     ur,
+                    self.replaying,
                 );
                 let mk = self.add_new_protocol_machine(um.machine, message.protocol_instance_id);
                 self.process_machine_responses(mk, vec![um.response])?;

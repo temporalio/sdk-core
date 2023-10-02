@@ -32,6 +32,9 @@ fsm! {
 
     RequestInitiated --(Accept, on_accept)--> Accepted;
     RequestInitiated --(Reject(Failure), on_reject)--> Rejected;
+    // Lang can complete the request immediately, if the validator and handler run in the same
+    // WFT.
+    RequestInitiated --(Complete(Payload), on_complete)--> CompletedImmediately;
 
     Accepted --(CommandProtocolMessage)--> AcceptCommandCreated;
 
@@ -41,6 +44,13 @@ fsm! {
 
     Completed --(CommandProtocolMessage)--> CompletedCommandCreated;
     CompletedCommandCreated --(WorkflowExecutionUpdateCompleted)--> CompletedCommandRecorded;
+
+    // When the update is immediately completed, we create two messages in a row, and both will
+    // produce another transition for us
+    CompletedImmediately --(CommandProtocolMessage)--> CompletedImmediatelyAcceptCreated;
+    CompletedImmediatelyAcceptCreated --(CommandProtocolMessage)--> CompletedImmediatelyCompleteCreated;
+    // Then once we've seen the accepted event in history, we go back to the normal complete path
+    CompletedImmediatelyCompleteCreated --(WorkflowExecutionUpdateAccepted)--> CompletedCommandCreated;
 }
 
 #[derive(Debug, derive_more::Display)]
@@ -69,6 +79,7 @@ impl UpdateMachine {
         instance_id: String,
         event_seq_id: i64,
         mut request: UpdateRequest,
+        replaying: bool,
     ) -> NewMachineWithResponse {
         let me = Self::from_parts(
             RequestInitiated {}.into(),
@@ -86,10 +97,10 @@ impl UpdateMachine {
             input: request.input,
             headers: request.headers,
             meta: Some(request.meta),
+            run_validator: !replaying,
         };
         NewMachineWithResponse {
             machine: me.into(),
-            // TODO: Shouldn't be sent on replay
             response: MachineResponse::PushWFJob(do_update.into()),
         }
     }
@@ -288,6 +299,12 @@ impl RequestInitiated {
     fn on_reject(self, fail: Failure) -> UpdateMachineTransition<Rejected> {
         UpdateMachineTransition::commands([UpdateMachineCommand::Reject(fail)])
     }
+    fn on_complete(self, p: Payload) -> UpdateMachineTransition<CompletedImmediately> {
+        UpdateMachineTransition::commands([
+            UpdateMachineCommand::Accept,
+            UpdateMachineCommand::Complete(p),
+        ])
+    }
 }
 
 #[derive(Default, Clone)]
@@ -337,6 +354,11 @@ impl From<Completed> for CompletedCommandCreated {
         CompletedCommandCreated {}
     }
 }
+impl From<CompletedImmediatelyCompleteCreated> for CompletedCommandCreated {
+    fn from(_: CompletedImmediatelyCompleteCreated) -> Self {
+        CompletedCommandCreated {}
+    }
+}
 
 #[derive(Default, Clone)]
 pub(super) struct CompletedCommandRecorded {}
@@ -351,6 +373,25 @@ pub(super) struct Rejected {}
 impl From<RequestInitiated> for Rejected {
     fn from(_: RequestInitiated) -> Self {
         Rejected {}
+    }
+}
+
+#[derive(Default, Clone)]
+pub(super) struct CompletedImmediately {}
+
+#[derive(Default, Clone)]
+pub(super) struct CompletedImmediatelyAcceptCreated {}
+impl From<CompletedImmediately> for CompletedImmediatelyAcceptCreated {
+    fn from(_: CompletedImmediately) -> Self {
+        CompletedImmediatelyAcceptCreated {}
+    }
+}
+
+#[derive(Default, Clone)]
+pub(super) struct CompletedImmediatelyCompleteCreated {}
+impl From<CompletedImmediatelyAcceptCreated> for CompletedImmediatelyCompleteCreated {
+    fn from(_: CompletedImmediatelyAcceptCreated) -> Self {
+        CompletedImmediatelyCompleteCreated {}
     }
 }
 

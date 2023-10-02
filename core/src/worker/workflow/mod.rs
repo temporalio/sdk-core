@@ -743,16 +743,6 @@ enum ActivationOrAuto {
         machines_err: WFMachinesError,
     },
 }
-impl ActivationOrAuto {
-    pub fn run_id(&self) -> &str {
-        match self {
-            ActivationOrAuto::LangActivation(act) => &act.run_id,
-            ActivationOrAuto::Autocomplete { run_id, .. } => run_id,
-            ActivationOrAuto::ReadyForQueries(act) => &act.run_id,
-            ActivationOrAuto::AutoFail { run_id, .. } => run_id,
-        }
-    }
-}
 
 /// A processed WFT which has been validated and had a history update extracted from it
 #[derive(derive_more::DebugCustom)]

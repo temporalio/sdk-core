@@ -246,8 +246,8 @@ message ResolveRequestCancelExternalWorkflow {
 }
 
 // Lang is requested to invoke an update handler on the workflow. Lang should invoke the update
-// validator first and if it accepts the update, immediately invoke the update handler. Lang must
-// reply to the activation containing this job with an `UpdateResponse`.
+// validator first (if requested). If it accepts the update, immediately invoke the update handler.
+// Lang must reply to the activation containing this job with an `UpdateResponse`.
 message DoUpdate {
     // A workflow-unique identifier for this update
     string id = 1;
@@ -263,6 +263,9 @@ message DoUpdate {
     // Remaining metadata associated with the update. The `update_id` field is stripped from here
     // and moved to `id`, since it is guaranteed to be present.
     temporal.api.update.v1.Meta meta = 6;
+    // If set true, lang must run the update's validator before running the handler. This will be
+    // set false during replay, since validation is not re-run during replay.
+    bool run_validator = 7;
 }
 
 message RemoveFromCache {
