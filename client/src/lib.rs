@@ -942,6 +942,7 @@ pub trait WorkflowClientTrait {
         workflow_id: String,
         run_id: String,
         name: String,
+        wait_policy: update::v1::WaitPolicy,
         args: Option<Payloads>,
     ) -> Result<UpdateWorkflowExecutionResponse>;
 
@@ -1417,6 +1418,7 @@ impl WorkflowClientTrait for Client {
         workflow_id: String,
         run_id: String,
         name: String,
+        wait_policy: update::v1::WaitPolicy,
         args: Option<Payloads>,
     ) -> Result<UpdateWorkflowExecutionResponse> {
         Ok(self
@@ -1427,7 +1429,7 @@ impl WorkflowClientTrait for Client {
                     workflow_id,
                     run_id,
                 }),
-                wait_policy: None,
+                wait_policy: Some(wait_policy),
                 request: Some(update::v1::Request {
                     meta: Some(update::v1::Meta {
                         update_id: "".into(),

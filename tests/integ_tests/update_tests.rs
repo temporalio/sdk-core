@@ -1,16 +1,22 @@
 use assert_matches::assert_matches;
 use std::time::Duration;
 use temporal_client::WorkflowClientTrait;
-use temporal_sdk_core_protos::coresdk::{
-    workflow_activation::{workflow_activation_job, WorkflowActivationJob},
-    workflow_commands::{update_response, CompleteWorkflowExecution, UpdateResponse},
-    workflow_completion::WorkflowActivationCompletion,
+use temporal_sdk_core_protos::{
+    coresdk::{
+        workflow_activation::{workflow_activation_job, WorkflowActivationJob},
+        workflow_commands::{update_response, CompleteWorkflowExecution, UpdateResponse},
+        workflow_completion::WorkflowActivationCompletion,
+    },
+    temporal::api::{
+        enums::v1::UpdateWorkflowExecutionLifecycleStage, update, update::v1::WaitPolicy,
+    },
 };
 use temporal_sdk_core_test_utils::{init_core_and_create_wf, start_timer_cmd, WorkerTestHelpers};
 use tokio::join;
 
+#[rstest::rstest]
 #[tokio::test]
-async fn update_workflow() {
+async fn update_workflow(#[values(true, false)] will_fail: bool) {
     let mut starter = init_core_and_create_wf("update_workflow").await;
     let core = starter.get_worker().await;
     let client = starter.get_client().await;
@@ -33,10 +39,13 @@ async fn update_workflow() {
                 workflow_id.to_string(),
                 res.run_id.to_string(),
                 update_id.to_string(),
+                WaitPolicy {
+                    lifecycle_stage: UpdateWorkflowExecutionLifecycleStage::Completed as i32,
+                },
                 Some("hi".into()),
             )
             .await
-            .unwrap();
+            .unwrap()
     };
 
     let processing_task = async {
@@ -61,23 +70,39 @@ async fn update_workflow() {
         .await
         .unwrap();
 
+        let response = if will_fail {
+            UpdateResponse {
+                protocol_instance_id: pid.to_string(),
+                response: Some(update_response::Response::Rejected(
+                    "uh oh spaghettios!".into(),
+                )),
+            }
+        } else {
+            UpdateResponse {
+                protocol_instance_id: pid.to_string(),
+                response: Some(update_response::Response::Completed("done!".into())),
+            }
+        };
         let res = core.poll_workflow_activation().await.unwrap();
         // Timer fires
         core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
             res.run_id,
             vec![
-                UpdateResponse {
-                    protocol_instance_id: pid.to_string(),
-                    response: Some(update_response::Response::Completed("done!".into())),
-                }
-                .into(),
+                response.into(),
                 CompleteWorkflowExecution { result: None }.into(),
             ],
         ))
         .await
         .unwrap();
     };
-    join!(update_task, processing_task);
+    let (ur, _) = join!(update_task, processing_task);
+
+    let v = ur.outcome.unwrap().value.unwrap();
+    if will_fail {
+        assert_matches!(v, update::v1::outcome::Value::Failure(_));
+    } else {
+        assert_matches!(v, update::v1::outcome::Value::Success(_));
+    }
 }
 
 #[tokio::test]
@@ -104,6 +129,9 @@ async fn update_rejection() {
                 workflow_id.to_string(),
                 res.run_id.to_string(),
                 update_id.to_string(),
+                WaitPolicy {
+                    lifecycle_stage: UpdateWorkflowExecutionLifecycleStage::Completed as i32,
+                },
                 Some("hi".into()),
             )
             .await

@@ -36,7 +36,8 @@ fsm! {
     Accepted --(CommandProtocolMessage)--> AcceptCommandCreated;
 
     AcceptCommandCreated --(WorkflowExecutionUpdateAccepted)--> AcceptCommandRecorded;
-    AcceptCommandRecorded --(Complete(UpdateOutcome), on_complete)--> Completed;
+    AcceptCommandRecorded --(Complete(Payload), on_complete)--> Completed;
+    AcceptCommandRecorded --(Reject(Failure), on_fail)--> Completed;
 
     Completed --(CommandProtocolMessage)--> CompletedCommandCreated;
     CompletedCommandCreated --(WorkflowExecutionUpdateCompleted)--> CompletedCommandRecorded;
@@ -60,12 +61,6 @@ pub(super) struct SharedState {
     instance_id: String,
     event_seq_id: i64,
     request: UpdateRequest,
-}
-
-#[derive(Clone, Debug)]
-pub(super) enum UpdateOutcome {
-    Ok(Payload),
-    Failure(Failure),
 }
 
 impl UpdateMachine {
@@ -117,7 +112,7 @@ impl UpdateMachine {
                 self.on_event(UpdateMachineEvents::Reject(f))
             }
             Some(update_response::Response::Completed(p)) => {
-                self.on_event(UpdateMachineEvents::Complete(UpdateOutcome::Ok(p)))
+                self.on_event(UpdateMachineEvents::Complete(p))
             }
         }
         .map_err(|e| match e {
@@ -251,9 +246,15 @@ impl WFMachinesAdapter for UpdateMachine {
                     }),
                 }),
             )?,
-            UpdateMachineCommand::Fail(_) => {
-                todo!()
-            }
+            UpdateMachineCommand::Fail(f) => self.build_command_msg(
+                format!("{}/complete", self.shared_state.message_id),
+                UpdateMsg::Response(Response {
+                    meta: Some(self.shared_state.request.meta.clone()),
+                    outcome: Some(Outcome {
+                        value: Some(outcome::Value::Failure(f)),
+                    }),
+                }),
+            )?,
         })
     }
 
@@ -308,12 +309,11 @@ impl From<Accepted> for AcceptCommandCreated {
 #[derive(Default, Clone)]
 pub(super) struct AcceptCommandRecorded {}
 impl AcceptCommandRecorded {
-    fn on_complete(self, outcome: UpdateOutcome) -> UpdateMachineTransition<Completed> {
-        let cmd = match outcome {
-            UpdateOutcome::Ok(p) => UpdateMachineCommand::Complete(p.into()),
-            UpdateOutcome::Failure(f) => UpdateMachineCommand::Fail(f),
-        };
-        UpdateMachineTransition::commands([cmd])
+    fn on_complete(self, p: Payload) -> UpdateMachineTransition<Completed> {
+        UpdateMachineTransition::commands([UpdateMachineCommand::Complete(p.into())])
+    }
+    fn on_fail(self, f: Failure) -> UpdateMachineTransition<Completed> {
+        UpdateMachineTransition::commands([UpdateMachineCommand::Fail(f)])
     }
 }
 impl From<AcceptCommandCreated> for AcceptCommandRecorded {
