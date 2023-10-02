@@ -31,6 +31,7 @@ fsm! {
     shared_state SharedState;
 
     RequestInitiated --(Accept, on_accept)--> Accepted;
+    RequestInitiated --(Reject(Failure), on_reject)--> Rejected;
 
     Accepted --(CommandProtocolMessage)--> AcceptCommandCreated;
 
@@ -46,7 +47,7 @@ pub(super) enum UpdateMachineCommand {
     #[display(fmt = "Accept")]
     Accept,
     #[display(fmt = "Reject")]
-    Reject,
+    Reject(Failure),
     #[display(fmt = "Complete")]
     Complete(Payload),
     #[display(fmt = "Fail")]
@@ -112,8 +113,8 @@ impl UpdateMachine {
             Some(update_response::Response::Accepted(_)) => {
                 self.on_event(UpdateMachineEvents::Accept)
             }
-            Some(update_response::Response::Rejected(_)) => {
-                todo!()
+            Some(update_response::Response::Rejected(f)) => {
+                self.on_event(UpdateMachineEvents::Reject(f))
             }
             Some(update_response::Response::Completed(p)) => {
                 self.on_event(UpdateMachineEvents::Complete(UpdateOutcome::Ok(p)))
@@ -139,16 +140,9 @@ impl UpdateMachine {
         outgoing_id: String,
         msg: UpdateMsg,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
-        let accept_body = msg.pack().map_err(|e| {
-            WFMachinesError::Fatal(format!("Failed to serialize update response: {:?}", e))
-        })?;
+        let msg = self.build_msg(outgoing_id.clone(), msg)?;
         Ok(vec![
-            MachineResponse::IssueNewMessage(ProtocolMessage {
-                id: outgoing_id.clone(),
-                protocol_instance_id: self.shared_state.instance_id.clone(),
-                body: Some(accept_body),
-                ..Default::default()
-            }),
+            MachineResponse::IssueNewMessage(msg),
             MachineResponse::IssueNewCommand(
                 command::Attributes::ProtocolMessageCommandAttributes(
                     ProtocolMessageCommandAttributes {
@@ -158,6 +152,22 @@ impl UpdateMachine {
                 .into(),
             ),
         ])
+    }
+
+    fn build_msg(
+        &self,
+        outgoing_id: String,
+        msg: UpdateMsg,
+    ) -> Result<ProtocolMessage, WFMachinesError> {
+        let accept_body = msg.pack().map_err(|e| {
+            WFMachinesError::Fatal(format!("Failed to serialize update response: {:?}", e))
+        })?;
+        Ok(ProtocolMessage {
+            id: outgoing_id.clone(),
+            protocol_instance_id: self.shared_state.instance_id.clone(),
+            body: Some(accept_body),
+            ..Default::default()
+        })
     }
 }
 
@@ -221,8 +231,16 @@ impl WFMachinesAdapter for UpdateMachine {
                     ..Default::default()
                 }),
             )?,
-            UpdateMachineCommand::Reject => {
-                todo!()
+            UpdateMachineCommand::Reject(fail) => {
+                vec![MachineResponse::IssueNewMessage(self.build_msg(
+                    format!("{}/reject", self.shared_state.message_id),
+                    UpdateMsg::Reject(Rejection {
+                        rejected_request_message_id: self.shared_state.message_id.clone(),
+                        rejected_request_sequencing_event_id: self.shared_state.event_seq_id,
+                        failure: Some(fail),
+                        ..Default::default()
+                    }),
+                )?)]
             }
             UpdateMachineCommand::Complete(p) => self.build_command_msg(
                 format!("{}/complete", self.shared_state.message_id),
@@ -265,6 +283,9 @@ pub(super) struct RequestInitiated {}
 impl RequestInitiated {
     fn on_accept(self) -> UpdateMachineTransition<Accepted> {
         UpdateMachineTransition::commands([UpdateMachineCommand::Accept])
+    }
+    fn on_reject(self, fail: Failure) -> UpdateMachineTransition<Rejected> {
+        UpdateMachineTransition::commands([UpdateMachineCommand::Reject(fail)])
     }
 }
 
@@ -322,6 +343,14 @@ pub(super) struct CompletedCommandRecorded {}
 impl From<CompletedCommandCreated> for CompletedCommandRecorded {
     fn from(_: CompletedCommandCreated) -> Self {
         CompletedCommandRecorded {}
+    }
+}
+
+#[derive(Default, Clone)]
+pub(super) struct Rejected {}
+impl From<RequestInitiated> for Rejected {
+    fn from(_: RequestInitiated) -> Self {
+        Rejected {}
     }
 }
 
