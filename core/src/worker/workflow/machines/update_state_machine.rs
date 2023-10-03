@@ -32,15 +32,16 @@ fsm! {
 
     RequestInitiated --(Accept, on_accept)--> Accepted;
     RequestInitiated --(Reject(Failure), on_reject)--> Rejected;
-    // Lang can complete the request immediately, if the validator and handler run in the same
-    // WFT.
-    RequestInitiated --(Complete(Payload), on_complete)--> CompletedImmediately;
 
+    Accepted --(Complete(Payload), on_complete)--> CompletedImmediately;
     Accepted --(CommandProtocolMessage)--> AcceptCommandCreated;
 
     AcceptCommandCreated --(WorkflowExecutionUpdateAccepted)--> AcceptCommandRecorded;
+    // These transitions may be taken after we've sent the command, but not seen the event,
+    // such as during local activity execution inside of an update handler.
     AcceptCommandCreated --(Complete(Payload), on_complete)--> CompletedImmediatelyAcceptCreated;
     AcceptCommandCreated --(Reject(Failure), on_fail)--> CompletedImmediatelyAcceptCreated;
+
     AcceptCommandRecorded --(Complete(Payload), on_complete)--> Completed;
     AcceptCommandRecorded --(Reject(Failure), on_fail)--> Completed;
 
@@ -301,12 +302,6 @@ impl RequestInitiated {
     fn on_reject(self, fail: Failure) -> UpdateMachineTransition<Rejected> {
         UpdateMachineTransition::commands([UpdateMachineCommand::Reject(fail)])
     }
-    fn on_complete(self, p: Payload) -> UpdateMachineTransition<CompletedImmediately> {
-        UpdateMachineTransition::commands([
-            UpdateMachineCommand::Accept,
-            UpdateMachineCommand::Complete(p),
-        ])
-    }
 }
 
 #[derive(Default, Clone)]
@@ -314,6 +309,11 @@ pub(super) struct Accepted {}
 impl From<RequestInitiated> for Accepted {
     fn from(_: RequestInitiated) -> Self {
         Accepted {}
+    }
+}
+impl Accepted {
+    fn on_complete(self, p: Payload) -> UpdateMachineTransition<CompletedImmediately> {
+        UpdateMachineTransition::commands([UpdateMachineCommand::Complete(p.into())])
     }
 }
 

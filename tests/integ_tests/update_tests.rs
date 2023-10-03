@@ -1,4 +1,5 @@
 use assert_matches::assert_matches;
+use futures_util::future;
 use std::time::Duration;
 use temporal_client::WorkflowClientTrait;
 use temporal_sdk_core::replay::HistoryForReplay;
@@ -184,10 +185,12 @@ async fn update_rejection() {
         core.complete_execution(&res.run_id).await;
     };
     join!(update_task, processing_task);
+    // TODO: Verify no update in history
 }
 
+#[rstest::rstest]
 #[tokio::test]
-async fn update_insta_complete() {
+async fn update_insta_complete(#[values(true, false)] accept_first: bool) {
     let mut starter = init_core_and_create_wf("update_workflow").await;
     let core = starter.get_worker().await;
     let client = starter.get_client().await;
@@ -204,7 +207,7 @@ async fn update_insta_complete() {
     .unwrap();
 
     // Send the update to the server
-    let update_task = async {
+    let (update_task, stop_wait_update) = future::abortable(async {
         client
             .update_workflow_execution(
                 workflow_id.to_string(),
@@ -217,7 +220,7 @@ async fn update_insta_complete() {
             )
             .await
             .unwrap();
-    };
+    });
 
     let processing_task = async {
         let res = core.poll_workflow_activation().await.unwrap();
@@ -227,24 +230,51 @@ async fn update_insta_complete() {
                 variant: Some(workflow_activation_job::Variant::DoUpdate(d)),
             }] => &d.protocol_instance_id
         );
-        core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-            res.run_id,
-            vec![
+        let mut cmds = vec![
+            UpdateResponse {
+                protocol_instance_id: pid.to_string(),
+                response: Some(update_response::Response::Completed("done!".into())),
+            }
+            .into(),
+            start_timer_cmd(1, Duration::from_millis(1)),
+        ];
+        if accept_first {
+            cmds.insert(
+                0,
                 UpdateResponse {
                     protocol_instance_id: pid.to_string(),
-                    response: Some(update_response::Response::Completed("done!".into())),
+                    response: Some(update_response::Response::Accepted(())),
                 }
                 .into(),
-                start_timer_cmd(1, Duration::from_millis(1)),
-            ],
+            )
+        };
+        core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
+            res.run_id, cmds,
         ))
         .await
         .unwrap();
 
+        if !accept_first {
+            // evicted, because lang must send accept first before completing
+            let res = core.poll_workflow_activation().await.unwrap();
+            assert_matches!(
+                res.jobs.as_slice(),
+                [WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::RemoveFromCache(_))
+                }]
+            );
+            core.complete_workflow_activation(WorkflowActivationCompletion::empty(res.run_id))
+                .await
+                .unwrap();
+            // Need to do this b/c currently server doesn't properly terminate update client call
+            // if workflow completes
+            stop_wait_update.abort();
+        }
+
         let res = core.poll_workflow_activation().await.unwrap();
         core.complete_execution(&res.run_id).await;
     };
-    join!(update_task, processing_task);
+    let _ = join!(update_task, processing_task);
 }
 
 #[tokio::test]

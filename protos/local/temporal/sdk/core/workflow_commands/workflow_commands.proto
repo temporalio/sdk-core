@@ -318,13 +318,12 @@ message UpdateResponse {
     // The protocol message instance ID
     string protocol_instance_id = 1;
     oneof response {
-        // Must be sent if the update's validator has passed, but the update handler itself has not
-        // finished within this activation.
+        // Must be sent if the update's validator has passed.
         google.protobuf.Empty accepted = 2;
-        // Must be sent if the update's validator does not pass, or if the update handler fails.
+        // Must be sent if the update's validator does not pass, or after acceptance if the update
+        // handler fails.
         temporal.api.failure.v1.Failure rejected = 3;
-        // Must be sent if the update handler completes successfully. If the update validates and
-        // completes within one activation, lang may send only this variant.
+        // Must be sent once the update handler completes successfully.
         temporal.api.common.v1.Payload completed = 4;
     }
 }

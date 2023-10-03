@@ -367,7 +367,6 @@ impl WorkflowMachines {
     }
 
     pub(crate) fn prepare_for_wft_response(&mut self) -> MachinesWFTResponseContent {
-        error!("Preparing for wft response");
         MachinesWFTResponseContent {
             commands: self.get_commands(),
             replaying: self.replaying,
@@ -1086,7 +1085,6 @@ impl WorkflowMachines {
                     })
                 }
                 MachineResponse::IssueNewMessage(pm) => {
-                    error!("Pushing msg {:?}", &pm);
                     self.message_outbox.push_back(pm);
                 }
                 MachineResponse::NewCoreOriginatedCommand(attrs) => match attrs {
