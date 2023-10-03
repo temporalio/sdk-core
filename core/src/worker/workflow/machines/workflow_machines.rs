@@ -970,23 +970,20 @@ impl WorkflowMachines {
     /// TODO: explain how replay works -- just not called? No messages then, events instead?
     #[instrument(skip(self))]
     fn handle_protocol_message(&mut self, message: IncomingProtocolMessage) -> Result<()> {
+        static SEQIDERR: &str = "Update request messages must contain an event sequencing id! \
+                                 This is a server bug.";
+
         match message.body {
             IncomingProtocolMessageBody::UpdateRequest(ur) => {
-                let seq_id = if let SequencingId::EventId(eid) =
-                    message.sequencing_id.ok_or_else(|| {
-                        WFMachinesError::Fatal(format!(
-                            "Update request messages must contain an event sequencing id! \
-                         This is a server bug."
-                        ))
-                    })? {
+                let seq_id = if let SequencingId::EventId(eid) = message
+                    .sequencing_id
+                    .ok_or_else(|| WFMachinesError::Fatal(SEQIDERR.to_string()))?
+                {
                     eid
                 } else {
-                    return Err(WFMachinesError::Fatal(format!(
-                        "Update request messages must contain an event sequencing id! \
-                         This is a server bug."
-                    )));
+                    return Err(WFMachinesError::Fatal(SEQIDERR.to_string()));
                 };
-                let um = UpdateMachine::new(
+                let um = UpdateMachine::init(
                     message.id,
                     message.protocol_instance_id.clone(),
                     seq_id,

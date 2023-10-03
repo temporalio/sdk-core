@@ -8,6 +8,10 @@ use temporal_sdk_core_protos::temporal::api::{
 
 /// A decoded & verified of a [Message] that came with a WFT.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(
+    feature = "save_wf_inputs",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct IncomingProtocolMessage {
     pub id: String,
     pub protocol_instance_id: String,
@@ -40,6 +44,10 @@ impl TryFrom<Message> for IncomingProtocolMessage {
 /// All the protocol [Message] bodies Core understands that might come to us when receiving a new
 /// WFT.
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(
+    feature = "save_wf_inputs",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub enum IncomingProtocolMessageBody {
     UpdateRequest(UpdateRequest),
 }
@@ -63,6 +71,10 @@ impl TryFrom<Option<prost_types::Any>> for IncomingProtocolMessageBody {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+#[cfg_attr(
+    feature = "save_wf_inputs",
+    derive(serde::Serialize, serde::Deserialize)
+)]
 pub struct UpdateRequest {
     pub name: String,
     pub headers: HashMap<String, Payload>,

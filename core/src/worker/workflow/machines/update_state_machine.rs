@@ -77,7 +77,7 @@ pub(super) struct SharedState {
 }
 
 impl UpdateMachine {
-    pub(crate) fn new(
+    pub(crate) fn init(
         message_id: String,
         instance_id: String,
         event_seq_id: i64,
@@ -137,11 +137,10 @@ impl UpdateMachine {
             )),
             MachineError::Underlying(e) => e,
         })?;
-        Ok(cmds
-            .into_iter()
+        cmds.into_iter()
             .map(|c| self.adapt_response(c, None))
             .flatten_ok()
-            .try_collect()?)
+            .try_collect()
     }
 
     fn build_command_msg(
@@ -313,7 +312,7 @@ impl From<RequestInitiated> for Accepted {
 }
 impl Accepted {
     fn on_complete(self, p: Payload) -> UpdateMachineTransition<CompletedImmediately> {
-        UpdateMachineTransition::commands([UpdateMachineCommand::Complete(p.into())])
+        UpdateMachineTransition::commands([UpdateMachineCommand::Complete(p)])
     }
 }
 
@@ -326,7 +325,7 @@ impl From<Accepted> for AcceptCommandCreated {
 }
 impl AcceptCommandCreated {
     fn on_complete(self, p: Payload) -> UpdateMachineTransition<CompletedImmediatelyAcceptCreated> {
-        UpdateMachineTransition::commands([UpdateMachineCommand::Complete(p.into())])
+        UpdateMachineTransition::commands([UpdateMachineCommand::Complete(p)])
     }
     fn on_fail(self, f: Failure) -> UpdateMachineTransition<CompletedImmediatelyAcceptCreated> {
         UpdateMachineTransition::commands([UpdateMachineCommand::Fail(f)])
@@ -337,7 +336,7 @@ impl AcceptCommandCreated {
 pub(super) struct AcceptCommandRecorded {}
 impl AcceptCommandRecorded {
     fn on_complete(self, p: Payload) -> UpdateMachineTransition<Completed> {
-        UpdateMachineTransition::commands([UpdateMachineCommand::Complete(p.into())])
+        UpdateMachineTransition::commands([UpdateMachineCommand::Complete(p)])
     }
     fn on_fail(self, f: Failure) -> UpdateMachineTransition<Completed> {
         UpdateMachineTransition::commands([UpdateMachineCommand::Fail(f)])
