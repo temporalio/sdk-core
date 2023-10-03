@@ -456,6 +456,31 @@ impl WorkflowMachines {
             .add_lang_used(flags);
     }
 
+    /// Undo a speculative workflow task by resetting to a certain WFT Started ID. This can happen
+    /// when an update request is rejected.
+    pub(crate) fn reset_last_started_id(&mut self, id: i64) {
+        debug!("Resetting back to event id {} due to speculative WFT", id);
+        self.current_started_event_id = id;
+        // This is pretty nasty to just + 1 like this, but, we know WFT complete always follows
+        // WFT started, which the id given to us to reset to must be, and we need to avoid
+        // re-applying the WFT Completed event, so we make sure to consider that processed
+        self.last_processed_event = id + 1;
+        // Then, we have to drop any state machines (which should only be one workflow task machine)
+        // we may have created when servicing the speculative task.
+        // Remove when https://github.com/rust-lang/rust/issues/59618 is stable
+        let remove_these: Vec<_> = self
+            .machines_by_event_id
+            .iter()
+            .filter(|(mid, _)| **mid >= id)
+            .map(|(mid, mkey)| (*mid, *mkey))
+            .collect();
+        for (mid, mkey) in remove_these {
+            error!("Removing machine w/ event id {}", mid);
+            self.machines_by_event_id.remove(&mid);
+            self.all_machines.remove(mkey);
+        }
+    }
+
     /// Iterate the state machines, which consists of grabbing any pending outgoing commands from
     /// the workflow code, handling them, and preparing them to be sent off to the server.
     pub(crate) fn iterate_machines(&mut self) -> Result<()> {
@@ -562,14 +587,14 @@ impl WorkflowMachines {
         let mut do_handle_event = true;
         let mut history = events.into_iter().peekable();
         while let Some(event) = history.next() {
-            if event.event_id != self.last_processed_event + 1 {
+            let eid = event.event_id;
+            if eid != self.last_processed_event + 1 {
                 return Err(WFMachinesError::Fatal(format!(
                     "History is out of order. Last processed event: {}, event id: {}",
-                    self.last_processed_event, event.event_id
+                    self.last_processed_event, eid
                 )));
             }
             let next_event = history.peek();
-            let eid = event.event_id;
 
             // This definition of replaying here is that we are no longer replaying as soon as we
             // see new events that have never been seen or produced by the SDK.
@@ -876,10 +901,7 @@ impl WorkflowMachines {
     }
 
     fn handle_non_stateful_event(&mut self, event_dat: HistEventData) -> Result<()> {
-        trace!(
-            event = %event_dat.event,
-            "handling non-stateful event"
-        );
+        trace!(event = %event_dat.event, "handling non-stateful event");
         let event_id = event_dat.event.event_id;
         match EventType::from_i32(event_dat.event.event_type) {
             Some(EventType::WorkflowExecutionStarted) => {

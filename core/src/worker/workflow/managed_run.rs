@@ -267,9 +267,15 @@ impl ManagedRun {
         let retme = self.wft.take();
 
         // Only record latency metrics if we genuinely reported to server
-        if matches!(report_status, WFTReportStatus::Reported) {
+        if let WFTReportStatus::Reported {
+            reset_last_started_to,
+        } = report_status
+        {
             if let Some(ot) = &retme {
                 self.metrics.wf_task_latency(ot.start_time.elapsed());
+            }
+            if let Some(id) = reset_last_started_to {
+                self.wfm.machines.reset_last_started_id(id);
             }
             // Tell the LA manager that we're done with the WFT
             self.local_activity_request_sink.sink_reqs(vec![

@@ -391,26 +391,31 @@ impl Workflows {
                     }
                     completion.sticky_attributes = sticky_attrs;
 
+                    let mut reset_last_started_to = None;
                     self.handle_wft_reporting_errs(&run_id, || async {
-                        let maybe_wft = self.client.complete_workflow_task(completion).await?;
-                        if let Some(wft) = maybe_wft.workflow_task {
+                        let response = self.client.complete_workflow_task(completion).await?;
+                        if response.reset_history_event_id > 0 {
+                            reset_last_started_to = Some(response.reset_history_event_id);
+                        }
+                        if let Some(wft) = response.workflow_task {
                             wft_from_complete = Some(validate_wft(wft)?);
                         }
-                        self.handle_eager_activities(
-                            reserved_act_permits,
-                            maybe_wft.activity_tasks,
-                        );
+                        self.handle_eager_activities(reserved_act_permits, response.activity_tasks);
                         Ok(())
                     })
                     .await;
-                    WFTReportStatus::Reported
+                    WFTReportStatus::Reported {
+                        reset_last_started_to,
+                    }
                 }
                 ServerCommandsWithWorkflowInfo {
                     task_token,
                     action: ActivationAction::RespondLegacyQuery { result },
                 } => {
                     self.respond_legacy_query(task_token, *result).await;
-                    WFTReportStatus::Reported
+                    WFTReportStatus::Reported {
+                        reset_last_started_to: None,
+                    }
                 }
             },
             ActivationCompleteOutcome::ReportWFTFail(outcome) => match outcome {
@@ -422,13 +427,17 @@ impl Workflows {
                             .await
                     })
                     .await;
-                    WFTReportStatus::Reported
+                    WFTReportStatus::Reported {
+                        reset_last_started_to: None,
+                    }
                 }
                 FailedActivationWFTReport::ReportLegacyQueryFailure(task_token, failure) => {
                     warn!(run_id=%run_id, failure=?failure, "Failing legacy query request");
                     self.respond_legacy_query(task_token, legacy_query_failure(failure))
                         .await;
-                    WFTReportStatus::Reported
+                    WFTReportStatus::Reported {
+                        reset_last_started_to: None,
+                    }
                 }
             },
             ActivationCompleteOutcome::WFTFailedDontReport => WFTReportStatus::DropWft,
@@ -988,7 +997,9 @@ enum ActivationCompleteOutcome {
     derive(serde::Serialize, serde::Deserialize)
 )]
 enum WFTReportStatus {
-    Reported,
+    Reported {
+        reset_last_started_to: Option<i64>,
+    },
     /// The WFT completion was not reported when finishing the activation, because there's still
     /// work to be done. EX: Running LAs.
     NotReported,

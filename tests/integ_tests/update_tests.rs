@@ -21,7 +21,7 @@ use temporal_sdk_core_protos::{
 use temporal_sdk_core_test_utils::{
     init_core_and_create_wf, init_core_replay_preloaded, start_timer_cmd, WorkerTestHelpers,
 };
-use tokio::join;
+use tokio::{join, sync::Barrier};
 
 #[rstest::rstest]
 #[tokio::test]
@@ -371,4 +371,89 @@ async fn update_complete_after_accept_without_new_task() {
         .unwrap();
     };
     join!(update_task, act_polling, processing_task);
+}
+
+#[tokio::test]
+async fn update_speculative_wft() {
+    let mut starter = init_core_and_create_wf("update_workflow").await;
+    let core = starter.get_worker().await;
+    let client = starter.get_client().await;
+    let workflow_id = starter.get_task_queue().to_string();
+
+    let update_id = "some_update";
+
+    // Send update after the timer has fired
+    let barr = Barrier::new(2);
+    let sender_task = async {
+        barr.wait().await;
+        client
+            .update_workflow_execution(
+                workflow_id.to_string(),
+                "".to_string(),
+                update_id.to_string(),
+                WaitPolicy {
+                    lifecycle_stage: UpdateWorkflowExecutionLifecycleStage::Completed as i32,
+                },
+                Some("hi".into()),
+            )
+            .await
+            .unwrap();
+        barr.wait().await;
+        client
+            .signal_workflow_execution(
+                workflow_id.to_string(),
+                "".to_string(),
+                "hi".into(),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+    };
+
+    let processing_task = async {
+        let res = core.poll_workflow_activation().await.unwrap();
+        assert_matches!(
+            res.jobs.as_slice(),
+            [WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::StartWorkflow(_)),
+            }]
+        );
+        core.complete_workflow_activation(WorkflowActivationCompletion::empty(res.run_id))
+            .await
+            .unwrap();
+        barr.wait().await;
+
+        let res = core.poll_workflow_activation().await.unwrap();
+        let pid = assert_matches!(
+            res.jobs.as_slice(),
+            [WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::DoUpdate(d)),
+            }] => &d.protocol_instance_id
+        );
+        // Reject the update
+        core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
+            res.run_id,
+            vec![UpdateResponse {
+                protocol_instance_id: pid.to_string(),
+                response: Some(update_response::Response::Rejected("nope!".into())),
+            }
+            .into()],
+        ))
+        .await
+        .unwrap();
+        // Send the signal
+        barr.wait().await;
+        // Without proper implementation of last-started-wft reset, we'd get stuck here b/c we'd
+        // skip over the signal event.
+        let res = core.poll_workflow_activation().await.unwrap();
+        assert_matches!(
+            res.jobs.as_slice(),
+            [WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::SignalWorkflow(_)),
+            }]
+        );
+        core.complete_execution(&res.run_id).await;
+    };
+    join!(sender_task, processing_task);
 }
