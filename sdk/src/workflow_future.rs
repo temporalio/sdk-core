@@ -592,7 +592,7 @@ impl WorkflowFuture {
                 }
             }
         }
-        return Ok(false);
+        Ok(false)
     }
 }
 

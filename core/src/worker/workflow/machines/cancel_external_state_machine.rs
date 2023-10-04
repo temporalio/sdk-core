@@ -226,8 +226,12 @@ impl Cancellable for CancelExternalMachine {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{replay::TestHistoryBuilder, worker::workflow::ManagedWFFunc};
-    use temporal_sdk::{WfContext, WorkflowFunction, WorkflowResult};
+    use crate::{
+        replay::TestHistoryBuilder,
+        test_help::{build_fake_sdk, MockPollCfg},
+    };
+    use temporal_sdk::{WfContext, WorkflowResult};
+    use temporal_sdk_core_protos::DEFAULT_WORKFLOW_TYPE;
 
     async fn cancel_sender(ctx: WfContext) -> WorkflowResult<()> {
         let res = ctx
@@ -263,29 +267,37 @@ mod tests {
             t.add_cancel_external_wf_completed(id);
         }
         t.add_full_wf_task();
-        t.add_workflow_execution_completed();
-
-        let wff = WorkflowFunction::new(cancel_sender);
-        let mut wfm = ManagedWFFunc::new(t, wff, vec![]);
-        wfm.get_next_activation().await.unwrap();
-        let cmds = wfm.get_server_commands().commands;
-        assert_eq!(cmds.len(), 1);
-        assert_eq!(
-            cmds[0].command_type(),
-            CommandType::RequestCancelExternalWorkflowExecution
-        );
-        wfm.get_next_activation().await.unwrap();
-        let cmds = wfm.get_server_commands().commands;
-        assert_eq!(cmds.len(), 1);
         if fails {
-            assert_eq!(cmds[0].command_type(), CommandType::FailWorkflowExecution);
+            t.add_workflow_execution_failed();
         } else {
-            assert_eq!(
-                cmds[0].command_type(),
-                CommandType::CompleteWorkflowExecution
-            );
+            t.add_workflow_execution_completed();
         }
 
-        wfm.shutdown().await.unwrap();
+        let mut mock_cfg = MockPollCfg::from_hist_builder(t);
+        mock_cfg.completion_asserts_from_expectations(|mut asserts| {
+            asserts
+                .then(|wft| {
+                    assert_matches!(
+                        wft.commands[0].command_type(),
+                        CommandType::RequestCancelExternalWorkflowExecution
+                    );
+                })
+                .then(move |wft| {
+                    if fails {
+                        assert_eq!(
+                            wft.commands[0].command_type(),
+                            CommandType::FailWorkflowExecution
+                        );
+                    } else {
+                        assert_eq!(
+                            wft.commands[0].command_type(),
+                            CommandType::CompleteWorkflowExecution
+                        );
+                    }
+                });
+        });
+        let mut worker = build_fake_sdk(mock_cfg);
+        worker.register_wf(DEFAULT_WORKFLOW_TYPE, cancel_sender);
+        worker.run().await.unwrap();
     }
 }

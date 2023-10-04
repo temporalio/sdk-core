@@ -32,8 +32,7 @@ use crate::{
                 HistEventData,
             },
             CommandID, DrivenWorkflow, HistoryUpdate, InternalFlagsRef, LocalResolution,
-            OutgoingJob, RunBasics, WFCommand, WFMachinesError, WorkflowFetcher,
-            WorkflowStartedInfo,
+            OutgoingJob, RunBasics, WFCommand, WFMachinesError, WorkflowStartedInfo,
         },
         ExecutingLAId, LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
     },
@@ -475,7 +474,6 @@ impl WorkflowMachines {
             .map(|(mid, mkey)| (*mid, *mkey))
             .collect();
         for (mid, mkey) in remove_these {
-            error!("Removing machine w/ event id {}", mid);
             self.machines_by_event_id.remove(&mid);
             self.all_machines.remove(mkey);
         }

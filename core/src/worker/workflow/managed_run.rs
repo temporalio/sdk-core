@@ -1,9 +1,3 @@
-#[cfg(test)]
-mod managed_wf_test;
-
-#[cfg(test)]
-pub(crate) use managed_wf_test::ManagedWFFunc;
-
 use crate::{
     abstractions::dbg_panic,
     protosext::{protocol_messages::IncomingProtocolMessage, WorkflowActivationExt},
@@ -12,11 +6,11 @@ use crate::{
             history_update::HistoryPaginator,
             machines::{MachinesWFTResponseContent, WorkflowMachines},
             ActivationAction, ActivationCompleteOutcome, ActivationCompleteResult,
-            ActivationOrAuto, EvictionRequestResult, FailedActivationWFTReport,
+            ActivationOrAuto, DrivenWorkflow, EvictionRequestResult, FailedActivationWFTReport,
             HeartbeatTimeoutMsg, HistoryUpdate, LocalActivityRequestSink, LocalResolution,
             NextPageReq, OutstandingActivation, OutstandingTask, PermittedWFT, RequestEvictMsg,
             RunBasics, ServerCommandsWithWorkflowInfo, WFCommand, WFMachinesError, WFTReportStatus,
-            WorkflowBridge, WorkflowTaskInfo, WFT_HEARTBEAT_TIMEOUT_FRACTION,
+            WorkflowTaskInfo, WFT_HEARTBEAT_TIMEOUT_FRACTION,
         },
         LocalActRequest, LEGACY_QUERY_ID,
     },
@@ -1183,14 +1177,6 @@ impl WorkflowManager {
         Self {
             machines: state_machines,
             command_sink: Some(cmd_sink),
-        }
-    }
-
-    #[cfg(test)]
-    const fn new_from_machines(workflow_machines: WorkflowMachines) -> Self {
-        Self {
-            machines: workflow_machines,
-            command_sink: None,
         }
     }
 

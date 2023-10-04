@@ -1753,6 +1753,14 @@ pub mod temporal {
                         at.name
                     }
                 }
+
+                impl From<&str> for WorkflowType {
+                    fn from(v: &str) -> Self {
+                        Self {
+                            name: v.to_string(),
+                        }
+                    }
+                }
             }
         }
         pub mod enums {

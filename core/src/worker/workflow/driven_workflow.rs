@@ -1,34 +1,36 @@
-use crate::worker::workflow::{OutgoingJob, WFCommand, WorkflowStartedInfo};
+use crate::{
+    telemetry::VecDisplayer,
+    worker::workflow::{OutgoingJob, WFCommand, WorkflowStartedInfo},
+};
 use prost_types::Timestamp;
+use std::sync::mpsc::{self, Receiver, Sender};
 use temporal_sdk_core_protos::{
     coresdk::workflow_activation::{start_workflow_from_attribs, WorkflowActivationJob},
     temporal::api::history::v1::WorkflowExecutionStartedEventAttributes,
     utilities::TryIntoOrNone,
 };
 
-/// Abstracts away the concept of an actual workflow implementation, handling sending it new
-/// jobs and fetching output from it.
+/// Represents a connection to a lang side workflow that can have activations fed into it and
+/// command responses pulled out.
 pub struct DrivenWorkflow {
     started_attrs: Option<WorkflowStartedInfo>,
-    fetcher: Box<dyn WorkflowFetcher>,
+    incoming_commands: Receiver<Vec<WFCommand>>,
     /// Outgoing activation jobs that need to be sent to the lang sdk
     outgoing_wf_activation_jobs: Vec<OutgoingJob>,
 }
 
-impl<WF> From<Box<WF>> for DrivenWorkflow
-where
-    WF: WorkflowFetcher + 'static,
-{
-    fn from(wf: Box<WF>) -> Self {
-        Self {
-            started_attrs: None,
-            fetcher: wf,
-            outgoing_wf_activation_jobs: Default::default(),
-        }
-    }
-}
-
 impl DrivenWorkflow {
+    pub fn new() -> (Self, Sender<Vec<WFCommand>>) {
+        let (tx, rx) = mpsc::channel();
+        (
+            Self {
+                started_attrs: None,
+                incoming_commands: rx,
+                outgoing_wf_activation_jobs: vec![],
+            },
+            tx,
+        )
+    }
     /// Start the workflow
     pub fn start(
         &mut self,
@@ -72,24 +74,15 @@ impl DrivenWorkflow {
             .map(Into::into)
             .collect()
     }
-}
 
-impl WorkflowFetcher for DrivenWorkflow {
-    fn fetch_workflow_iteration_output(&mut self) -> Vec<WFCommand> {
-        self.fetcher.fetch_workflow_iteration_output()
-    }
-}
-
-/// Implementors of this trait represent a way to fetch output from executing/iterating some
-/// workflow code (or a mocked workflow).
-pub trait WorkflowFetcher: Send {
     /// Obtain any output from the workflow's recent execution(s). Because the lang sdk is
     /// responsible for calling workflow code as a result of receiving tasks from
-    /// [crate::Core::poll_task], we cannot directly iterate it here. Thus implementations of this
-    /// trait are expected to either buffer output or otherwise produce it on demand when this
-    /// function is called.
-    ///
-    /// In the case of the real [WorkflowBridge] implementation, commands are simply pulled from
-    /// a buffer that the language side sinks into when it calls [crate::Core::complete_task]
-    fn fetch_workflow_iteration_output(&mut self) -> Vec<WFCommand>;
+    /// [crate::Core::poll_task], we cannot directly iterate it here. Commands are simply pulled
+    /// from a buffer that the language side sinks into when it calls [crate::Core::complete_task]
+    pub fn fetch_workflow_iteration_output(&mut self) -> Vec<WFCommand> {
+        let in_cmds = self.incoming_commands.try_recv();
+        let in_cmds = in_cmds.unwrap_or_else(|_| vec![WFCommand::NoCommandsFromLang]);
+        debug!(in_cmds = %in_cmds.display(), "wf bridge iteration fetch");
+        in_cmds
+    }
 }

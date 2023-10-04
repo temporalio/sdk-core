@@ -4,7 +4,7 @@
 
 use crate::{
     worker::{
-        client::{mocks::mock_manual_workflow_client, WorkerClient},
+        client::mocks::{mock_manual_workflow_client, MockManualWorkerClient},
         PostActivateHookData,
     },
     Worker,
@@ -17,6 +17,7 @@ use std::{
     sync::Arc,
     task::{Context, Poll},
 };
+use temporal_sdk_core_api::worker::WorkerConfig;
 use temporal_sdk_core_protos::{
     coresdk::workflow_activation::remove_from_cache::EvictionReason,
     temporal::api::{
@@ -34,12 +35,110 @@ use tokio::sync::{mpsc, mpsc::UnboundedSender, Mutex as TokioMutex};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
 
+/// Contains inputs to a replay worker
+pub struct ReplayWorkerInput<I> {
+    /// The worker's configuration. Some portions will be overridden to required values once the
+    /// worker is instantiated.
+    pub config: WorkerConfig,
+    history_stream: I,
+    /// If specified use this as the basis for the internal mocked client
+    pub(crate) client_override: Option<MockManualWorkerClient>,
+}
+
+impl<I> ReplayWorkerInput<I>
+where
+    I: Stream<Item = HistoryForReplay> + Send + 'static,
+{
+    /// Build a replay worker
+    pub fn new(config: WorkerConfig, history_stream: I) -> Self {
+        Self {
+            config,
+            history_stream,
+            client_override: None,
+        }
+    }
+
+    pub(crate) fn into_core_worker(mut self) -> Result<Worker, anyhow::Error> {
+        self.config.max_cached_workflows = 1;
+        self.config.max_concurrent_wft_polls = 1;
+        self.config.no_remote_activities = true;
+        let historator = Historator::new(self.history_stream);
+        let post_activate = historator.get_post_activate_hook();
+        let shutdown_tok = historator.get_shutdown_setter();
+        // Create a mock client which can be used by a replay worker to serve up canned histories.
+        // It will return the entire history in one workflow task. If a workflow task failure is
+        // sent to the mock, it will send the complete response again.
+        //
+        // Once it runs out of histories to return, it will serve up default responses after a 10s
+        // delay
+        let mut client = if let Some(c) = self.client_override {
+            c
+        } else {
+            mock_manual_workflow_client()
+        };
+
+        let hist_allow_tx = historator.replay_done_tx.clone();
+        let historator = Arc::new(TokioMutex::new(historator));
+
+        // TODO: Should use `new_with_pollers` and avoid re-doing mocking stuff
+        client.expect_poll_workflow_task().returning(move |_| {
+            let historator = historator.clone();
+            async move {
+                let mut hlock = historator.lock().await;
+                // Always wait for permission before dispatching the next task
+                let _ = hlock.allow_stream.next().await;
+
+                if let Some(history) = hlock.next().await {
+                    let hist_info = HistoryInfo::new_from_history(&history.hist, None).unwrap();
+                    let mut resp = hist_info.as_poll_wft_response();
+                    resp.workflow_execution = Some(WorkflowExecution {
+                        workflow_id: history.workflow_id,
+                        run_id: hist_info.orig_run_id().to_string(),
+                    });
+                    Ok(resp)
+                } else {
+                    if let Some(wc) = hlock.worker_closer.get() {
+                        wc.cancel();
+                    }
+                    Ok(Default::default())
+                }
+            }
+            .boxed()
+        });
+
+        client.expect_complete_workflow_task().returning(move |a| {
+            dbg!(a);
+            async move { Ok(RespondWorkflowTaskCompletedResponse::default()) }.boxed()
+        });
+        client
+            .expect_fail_workflow_task()
+            .returning(move |_, _, _| {
+                hist_allow_tx.send("Failed".to_string()).unwrap();
+                async move { Ok(RespondWorkflowTaskFailedResponse::default()) }.boxed()
+            });
+        let mut worker = Worker::new(self.config, None, Arc::new(client), None);
+        worker.set_post_activate_hook(post_activate);
+        shutdown_tok(worker.shutdown_token());
+        Ok(worker)
+    }
+}
+
 /// A history which will be used during replay verification. Since histories do not include the
 /// workflow id, it must be manually attached.
 #[derive(Debug, Clone, derive_more::Constructor)]
 pub struct HistoryForReplay {
     hist: History,
     workflow_id: String,
+}
+impl From<TestHistoryBuilder> for HistoryForReplay {
+    fn from(thb: TestHistoryBuilder) -> Self {
+        thb.get_full_history_info().unwrap().into()
+    }
+}
+impl From<HistoryInfo> for HistoryForReplay {
+    fn from(histinfo: HistoryInfo) -> Self {
+        HistoryForReplay::new(histinfo.into(), "fake".to_owned())
+    }
 }
 
 /// Allows lang to feed histories into the replayer one at a time. Simply drop the feeder to signal
@@ -76,53 +175,6 @@ impl Stream for HistoryFeederStream {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         self.rcvr.poll_recv(cx)
     }
-}
-
-/// Create a mock client which can be used by a replay worker to serve up canned histories. It will
-/// return the entire history in one workflow task. If a workflow task failure is sent to the mock,
-/// it will send the complete response again.
-///
-/// Once it runs out of histories to return, it will serve up default responses after a 10s delay
-pub(crate) fn mock_client_from_histories(historator: Historator) -> impl WorkerClient {
-    let mut mg = mock_manual_workflow_client();
-
-    let hist_allow_tx = historator.replay_done_tx.clone();
-    let historator = Arc::new(TokioMutex::new(historator));
-
-    mg.expect_poll_workflow_task().returning(move |_| {
-        let historator = historator.clone();
-        async move {
-            let mut hlock = historator.lock().await;
-            // Always wait for permission before dispatching the next task
-            let _ = hlock.allow_stream.next().await;
-
-            if let Some(history) = hlock.next().await {
-                let hist_info = HistoryInfo::new_from_history(&history.hist, None).unwrap();
-                let mut resp = hist_info.as_poll_wft_response();
-                resp.workflow_execution = Some(WorkflowExecution {
-                    workflow_id: history.workflow_id,
-                    run_id: hist_info.orig_run_id().to_string(),
-                });
-                Ok(resp)
-            } else {
-                if let Some(wc) = hlock.worker_closer.get() {
-                    wc.cancel();
-                }
-                Ok(Default::default())
-            }
-        }
-        .boxed()
-    });
-
-    mg.expect_complete_workflow_task().returning(move |_| {
-        async move { Ok(RespondWorkflowTaskCompletedResponse::default()) }.boxed()
-    });
-    mg.expect_fail_workflow_task().returning(move |_, _, _| {
-        hist_allow_tx.send("Failed".to_string()).unwrap();
-        async move { Ok(RespondWorkflowTaskFailedResponse::default()) }.boxed()
-    });
-
-    mg
 }
 
 pub(crate) struct Historator {

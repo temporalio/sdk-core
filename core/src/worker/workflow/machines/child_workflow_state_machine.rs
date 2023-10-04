@@ -794,18 +794,21 @@ fn convert_payloads(
 mod test {
     use super::*;
     use crate::{
-        internal_flags::InternalFlags, replay::TestHistoryBuilder, test_help::canned_histories,
-        worker::workflow::ManagedWFFunc,
+        internal_flags::InternalFlags,
+        replay::TestHistoryBuilder,
+        test_help::{build_fake_sdk, canned_histories, MockPollCfg},
     };
     use anyhow::anyhow;
     use rstest::{fixture, rstest};
     use std::{cell::RefCell, mem::discriminant, rc::Rc};
-    use temporal_sdk::{
-        CancellableFuture, ChildWorkflowOptions, WfContext, WorkflowFunction, WorkflowResult,
-    };
-    use temporal_sdk_core_protos::coresdk::{
-        child_workflow::child_workflow_result,
-        workflow_activation::resolve_child_workflow_execution_start::Status as StartStatus,
+    use temporal_sdk::{CancellableFuture, ChildWorkflowOptions, WfContext, WorkflowResult};
+    use temporal_sdk_core_protos::{
+        coresdk::{
+            child_workflow::child_workflow_result,
+            workflow_activation::resolve_child_workflow_execution_start::Status as StartStatus,
+        },
+        temporal::api::history::v1::StartChildWorkflowExecutionInitiatedEventAttributes,
+        DEFAULT_WORKFLOW_TYPE,
     };
 
     #[derive(Clone, Copy)]
@@ -827,27 +830,17 @@ mod test {
     }
 
     #[fixture]
-    fn child_workflow_happy_hist() -> ManagedWFFunc {
-        let func = WorkflowFunction::new(parent_wf);
-        let t = canned_histories::single_child_workflow("child-id-1");
-        assert_eq!(3, t.get_full_history_info().unwrap().wf_task_count());
-        ManagedWFFunc::new(t, func, vec![[Expectation::Success as u8].into()])
+    fn child_workflow_happy_hist() -> MockPollCfg {
+        let mut t = canned_histories::single_child_workflow("child-id-1");
+        t.set_wf_input(Payload::from([Expectation::Success as u8]));
+        MockPollCfg::from_hist_builder(t)
     }
 
     #[fixture]
-    fn child_workflow_fail_hist() -> ManagedWFFunc {
-        let func = WorkflowFunction::new(parent_wf);
-        let t = canned_histories::single_child_workflow_fail("child-id-1");
-        assert_eq!(3, t.get_full_history_info().unwrap().wf_task_count());
-        ManagedWFFunc::new(t, func, vec![[Expectation::Failure as u8].into()])
-    }
-
-    #[fixture]
-    fn child_workflow_start_fail_hist() -> ManagedWFFunc {
-        let func = WorkflowFunction::new(parent_wf);
-        let t = canned_histories::single_child_workflow_start_fail("child-id-1");
-        assert_eq!(2, t.get_full_history_info().unwrap().wf_task_count());
-        ManagedWFFunc::new(t, func, vec![[Expectation::StartFailure as u8].into()])
+    fn child_workflow_fail_hist() -> MockPollCfg {
+        let mut t = canned_histories::single_child_workflow_fail("child-id-1");
+        t.set_wf_input(Payload::from([Expectation::Failure as u8]));
+        MockPollCfg::from_hist_builder(t)
     }
 
     async fn parent_wf(ctx: WfContext) -> WorkflowResult<()> {
@@ -877,55 +870,81 @@ mod test {
     }
 
     #[rstest(
-        wfm,
+        mock_cfg,
         case::success(child_workflow_happy_hist()),
         case::failure(child_workflow_fail_hist())
     )]
     #[tokio::test]
-    async fn single_child_workflow_until_completion(mut wfm: ManagedWFFunc) {
-        wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().commands;
-        assert_eq!(commands.len(), 1);
-        assert_eq!(
-            commands[0].command_type,
-            CommandType::StartChildWorkflowExecution as i32
-        );
+    async fn single_child_workflow_until_completion(mut mock_cfg: MockPollCfg) {
+        mock_cfg.completion_asserts_from_expectations(|mut asserts| {
+            asserts
+                .then(|wft| {
+                    assert_eq!(wft.commands.len(), 1);
+                    assert_matches!(
+                        wft.commands[0].command_type(),
+                        CommandType::StartChildWorkflowExecution
+                    );
+                })
+                .then(move |wft| {
+                    assert_eq!(wft.commands.len(), 0);
+                })
+                .then(move |wft| {
+                    assert_eq!(wft.commands.len(), 1);
+                    assert_matches!(
+                        wft.commands[0].command_type(),
+                        CommandType::CompleteWorkflowExecution
+                    );
+                });
+        });
 
-        wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().commands;
-        // Workflow is activated because the child WF has started.
-        // It does not generate any commands, just waits for completion.
-        assert_eq!(commands.len(), 0);
-
-        wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().commands;
-        assert_eq!(commands.len(), 1);
-        assert_eq!(
-            commands[0].command_type,
-            CommandType::CompleteWorkflowExecution as i32
-        );
-        wfm.shutdown().await.unwrap();
+        let mut worker = build_fake_sdk(mock_cfg);
+        worker.register_wf(DEFAULT_WORKFLOW_TYPE, parent_wf);
+        worker.run().await.unwrap();
     }
 
-    #[rstest(wfm, case::start_failure(child_workflow_start_fail_hist()))]
     #[tokio::test]
-    async fn single_child_workflow_start_fail(mut wfm: ManagedWFFunc) {
-        wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().commands;
-        assert_eq!(commands.len(), 1);
-        assert_eq!(
-            commands[0].command_type,
-            CommandType::StartChildWorkflowExecution as i32
-        );
+    async fn single_child_workflow_start_fail() {
+        let child_wf_id = "child-id-1";
+        let mut t = TestHistoryBuilder::default();
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        t.set_wf_input(Payload::from([Expectation::StartFailure as u8]));
+        t.add_full_wf_task();
+        let initiated_event_id = t.add(StartChildWorkflowExecutionInitiatedEventAttributes {
+            workflow_id: child_wf_id.to_owned(),
+            workflow_type: Some("child".into()),
+            ..Default::default()
+        });
+        t.add(StartChildWorkflowExecutionFailedEventAttributes {
+            workflow_id: child_wf_id.to_owned(),
+            initiated_event_id,
+            cause: StartChildWorkflowExecutionFailedCause::WorkflowAlreadyExists as i32,
+            ..Default::default()
+        });
+        t.add_full_wf_task();
+        t.add_workflow_execution_completed();
 
-        wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().commands;
-        assert_eq!(commands.len(), 1);
-        assert_eq!(
-            commands[0].command_type,
-            CommandType::CompleteWorkflowExecution as i32
-        );
-        wfm.shutdown().await.unwrap();
+        let mut mock_cfg = MockPollCfg::from_hist_builder(t);
+        mock_cfg.completion_asserts_from_expectations(|mut asserts| {
+            asserts
+                .then(|wft| {
+                    assert_eq!(wft.commands.len(), 1);
+                    assert_matches!(
+                        wft.commands[0].command_type(),
+                        CommandType::StartChildWorkflowExecution
+                    );
+                })
+                .then(move |wft| {
+                    assert_eq!(wft.commands.len(), 1);
+                    assert_matches!(
+                        wft.commands[0].command_type(),
+                        CommandType::CompleteWorkflowExecution
+                    );
+                });
+        });
+
+        let mut worker = build_fake_sdk(mock_cfg);
+        worker.register_wf(DEFAULT_WORKFLOW_TYPE, parent_wf);
+        worker.run().await.unwrap();
     }
 
     async fn cancel_before_send_wf(ctx: WfContext) -> WorkflowResult<()> {
@@ -943,33 +962,29 @@ mod test {
         }
     }
 
-    #[fixture]
-    fn child_workflow_cancel_before_sent() -> ManagedWFFunc {
-        let func = WorkflowFunction::new(cancel_before_send_wf);
+    #[tokio::test]
+    async fn single_child_workflow_cancel_before_sent() {
         let mut t = TestHistoryBuilder::default();
         t.add_by_type(EventType::WorkflowExecutionStarted);
         t.add_full_wf_task();
-        t.add_workflow_task_scheduled_and_started();
-        assert_eq!(2, t.get_full_history_info().unwrap().wf_task_count());
-        ManagedWFFunc::new(t, func, vec![])
-    }
+        t.add_workflow_execution_completed();
 
-    #[rstest(wfm, case::default(child_workflow_cancel_before_sent()))]
-    #[tokio::test]
-    async fn single_child_workflow_cancel_before_sent(mut wfm: ManagedWFFunc) {
-        wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().commands;
-        // Workflow starts and cancels the child workflow, no commands should be sent to server.
-        assert_eq!(commands.len(), 0);
+        let mut mock_cfg = MockPollCfg::from_hist_builder(t);
+        mock_cfg.completion_asserts_from_expectations(|mut asserts| {
+            asserts.then(move |wft| {
+                // Workflow starts and cancels the child workflow, no commands should be sent besides
+                // workflow completion
+                assert_eq!(wft.commands.len(), 1);
+                assert_matches!(
+                    wft.commands[0].command_type(),
+                    CommandType::CompleteWorkflowExecution
+                );
+            });
+        });
 
-        wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().commands;
-        assert_eq!(commands.len(), 1);
-        assert_eq!(
-            commands[0].command_type,
-            CommandType::CompleteWorkflowExecution as i32
-        );
-        wfm.shutdown().await.unwrap();
+        let mut worker = build_fake_sdk(mock_cfg);
+        worker.register_wf(DEFAULT_WORKFLOW_TYPE, cancel_before_send_wf);
+        worker.run().await.unwrap();
     }
 
     #[test]

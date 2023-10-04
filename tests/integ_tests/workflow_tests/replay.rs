@@ -2,7 +2,7 @@ use crate::integ_tests::workflow_tests::patches::changes_wf;
 use assert_matches::assert_matches;
 use parking_lot::Mutex;
 use std::{collections::HashSet, sync::Arc, time::Duration};
-use temporal_sdk::{interceptors::WorkerInterceptor, WfContext, Worker, WorkflowFunction};
+use temporal_sdk::{interceptors::WorkerInterceptor, WfContext, WorkflowFunction};
 use temporal_sdk_core::replay::{HistoryFeeder, HistoryForReplay};
 use temporal_sdk_core_api::errors::{PollActivityError, PollWfError};
 use temporal_sdk_core_protos::{
@@ -188,7 +188,7 @@ async fn multiple_histories_replay(#[values(false, true)] use_feeder: bool) {
     };
     let runs_ctr_i = UniqueRunsCounter::default();
     let runs_ctr = runs_ctr_i.runs.clone();
-    worker.set_worker_interceptor(Box::new(runs_ctr_i));
+    worker.set_worker_interceptor(runs_ctr_i);
     worker.register_wf("onetimer", one_timer_wf);
     worker.register_wf("seqtimer", seq_timer_wf);
 
@@ -287,6 +287,4 @@ impl WorkerInterceptor for UniqueRunsCounter {
     async fn on_workflow_activation_completion(&self, completion: &WorkflowActivationCompletion) {
         self.runs.lock().insert(completion.run_id.clone());
     }
-
-    fn on_shutdown(&self, _: &Worker) {}
 }

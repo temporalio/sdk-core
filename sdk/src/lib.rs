@@ -342,8 +342,8 @@ impl Worker {
     }
 
     /// Set a [WorkerInterceptor]
-    pub fn set_worker_interceptor(&mut self, interceptor: Box<dyn WorkerInterceptor>) {
-        self.common.worker_interceptor = Some(interceptor);
+    pub fn set_worker_interceptor(&mut self, interceptor: impl WorkerInterceptor + 'static) {
+        self.common.worker_interceptor = Some(Box::new(interceptor));
     }
 
     /// Turns this rust worker into a new worker with all the same workflows and activities

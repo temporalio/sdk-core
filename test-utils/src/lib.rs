@@ -5,8 +5,11 @@
 extern crate tracing;
 
 pub mod canned_histories;
+pub mod interceptors;
 pub mod wf_input_saver;
 pub mod workflows;
+
+pub use temporal_sdk_core::replay::HistoryForReplay;
 
 use crate::{
     stream::{Stream, TryStreamExt},
@@ -32,7 +35,7 @@ use temporal_sdk::{
 use temporal_sdk_core::{
     ephemeral_server::{EphemeralExe, EphemeralExeVersion},
     init_replay_worker, init_worker,
-    replay::HistoryForReplay,
+    replay::ReplayWorkerInput,
     telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter},
     ClientOptions, ClientOptionsBuilder, CoreRuntime, WorkerConfigBuilder,
 };
@@ -110,8 +113,8 @@ where
         .worker_build_id("test_bin_id")
         .build()
         .expect("Configuration options construct properly");
-    let worker =
-        init_replay_worker(worker_cfg, histories).expect("Replay worker must init properly");
+    let worker = init_replay_worker(ReplayWorkerInput::new(worker_cfg, histories))
+        .expect("Replay worker must init properly");
     Arc::new(worker)
 }
 pub fn replay_sdk_worker<I>(histories: I) -> Worker
@@ -127,7 +130,7 @@ where
 {
     let core = init_core_replay_stream("replay_worker_test", histories);
     let mut worker = Worker::new_from_core(core, "replay_q".to_string());
-    worker.set_worker_interceptor(Box::new(FailOnNondeterminismInterceptor {}));
+    worker.set_worker_interceptor(FailOnNondeterminismInterceptor {});
     worker
 }
 
@@ -278,7 +281,7 @@ impl CoreWfStarter {
         let with_id = HistoryForReplay::new(history, wf_id);
         let replay_worker = init_core_replay_preloaded(worker.task_queue(), [with_id]);
         worker.with_new_core_worker(replay_worker);
-        worker.set_worker_interceptor(Box::new(FailOnNondeterminismInterceptor {}));
+        worker.set_worker_interceptor(FailOnNondeterminismInterceptor {});
         worker.run().await.unwrap();
         Ok(())
     }
@@ -469,7 +472,7 @@ impl TestWorker {
         }
         iceptor.next = interceptor.map(|i| Box::new(i) as Box<dyn WorkerInterceptor>);
         let get_results_waiter = iceptor.wait_all_wfs();
-        self.inner.set_worker_interceptor(Box::new(iceptor));
+        self.inner.set_worker_interceptor(iceptor);
         tokio::try_join!(self.inner.run(), get_results_waiter)?;
         Ok(())
     }
@@ -485,7 +488,6 @@ pub enum TestWorkerShutdownCond {
 pub struct TestWorkerCompletionIceptor {
     condition: TestWorkerShutdownCond,
     shutdown_handle: Arc<dyn Fn()>,
-    every_activation: Option<BoxDynActivationHook>,
     next: Option<Box<dyn WorkerInterceptor>>,
 }
 impl TestWorkerCompletionIceptor {
@@ -493,7 +495,6 @@ impl TestWorkerCompletionIceptor {
         Self {
             condition,
             shutdown_handle,
-            every_activation: None,
             next: None,
         }
     }
@@ -526,9 +527,6 @@ impl TestWorkerCompletionIceptor {
 #[async_trait::async_trait(?Send)]
 impl WorkerInterceptor for TestWorkerCompletionIceptor {
     async fn on_workflow_activation_completion(&self, completion: &WorkflowActivationCompletion) {
-        if let Some(func) = self.every_activation.as_ref() {
-            func(completion);
-        }
         if completion.has_execution_ending() {
             debug!("Workflow {} says it's finishing", &completion.run_id);
         }

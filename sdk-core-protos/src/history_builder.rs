@@ -528,6 +528,15 @@ impl TestHistoryBuilder {
         }
     }
 
+    /// Alter the input to the workflow
+    pub fn set_wf_input(&mut self, input: impl Into<Payloads>) {
+        if let Some(Attributes::WorkflowExecutionStartedEventAttributes(wes)) =
+            self.events.get_mut(0).and_then(|e| e.attributes.as_mut())
+        {
+            wes.input = Some(input.into());
+        }
+    }
+
     /// Alter some specific event. You can easily craft nonsense histories this way, use carefully.
     pub fn modify_event(&mut self, event_id: i64, modifier: impl FnOnce(&mut HistoryEvent)) {
         let he = self

@@ -2,7 +2,6 @@
 //! lion's share of the complexity in Core). See the `ARCHITECTURE.md` file in the repo root for
 //! a diagram of the internals.
 
-mod bridge;
 mod driven_workflow;
 mod history_update;
 mod machines;
@@ -15,11 +14,8 @@ mod workflow_stream;
 #[cfg(feature = "save_wf_inputs")]
 pub use workflow_stream::replay_wf_state_inputs;
 
-pub(crate) use bridge::WorkflowBridge;
-pub(crate) use driven_workflow::{DrivenWorkflow, WorkflowFetcher};
+pub(crate) use driven_workflow::DrivenWorkflow;
 pub(crate) use history_update::HistoryUpdate;
-#[cfg(test)]
-pub(crate) use managed_run::ManagedWFFunc;
 
 use crate::{
     abstractions::{

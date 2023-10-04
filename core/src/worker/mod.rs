@@ -12,9 +12,6 @@ pub(crate) use activities::{
 };
 pub(crate) use workflow::{wft_poller::new_wft_poller, LEGACY_QUERY_ID};
 
-#[cfg(test)]
-pub(crate) use workflow::ManagedWFFunc;
-
 use crate::{
     abstractions::MeteredSemaphore,
     errors::CompleteWfError,
@@ -194,19 +191,12 @@ impl Worker {
         telem_instance: Option<&TelemetryInstance>,
     ) -> Self {
         info!(task_queue=%config.task_queue, namespace=%config.namespace, "Initializing worker");
-        let metrics = if let Some(ti) = telem_instance {
-            MetricsContext::top_level(config.namespace.clone(), config.task_queue.clone(), ti)
-        } else {
-            MetricsContext::no_op()
-        };
-        metrics.worker_registered();
 
         Self::new_with_pollers(
             config,
             sticky_queue_name,
             client,
             TaskPollers::Real,
-            metrics,
             telem_instance,
         )
     }
@@ -222,9 +212,14 @@ impl Worker {
         sticky_queue_name: Option<String>,
         client: Arc<dyn WorkerClient>,
         task_pollers: TaskPollers,
-        metrics: MetricsContext,
         telem_instance: Option<&TelemetryInstance>,
     ) -> Self {
+        let metrics = if let Some(ti) = telem_instance {
+            MetricsContext::top_level(config.namespace.clone(), config.task_queue.clone(), ti)
+        } else {
+            MetricsContext::no_op()
+        };
+        metrics.worker_registered();
         let shutdown_token = CancellationToken::new();
         let wft_semaphore = Arc::new(MeteredSemaphore::new(
             config.max_outstanding_workflow_tasks,

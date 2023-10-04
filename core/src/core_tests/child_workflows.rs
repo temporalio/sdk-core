@@ -1,12 +1,13 @@
 use crate::{
     replay::DEFAULT_WORKFLOW_TYPE,
     test_help::{
-        canned_histories, mock_sdk, mock_worker, single_hist_mock_sg, MockPollCfg, ResponseType,
+        build_fake_sdk, canned_histories, mock_sdk, mock_worker, single_hist_mock_sg, MockPollCfg,
+        ResponseType,
     },
-    worker::{client::mocks::mock_workflow_client, ManagedWFFunc},
+    worker::client::mocks::mock_workflow_client,
 };
 use temporal_client::WorkflowOptions;
-use temporal_sdk::{ChildWorkflowOptions, Signal, WfContext, WorkflowFunction, WorkflowResult};
+use temporal_sdk::{ChildWorkflowOptions, Signal, WfContext, WorkflowResult};
 use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::coresdk::{
     child_workflow::{child_workflow_result, ChildWorkflowCancellationType},
@@ -100,11 +101,10 @@ async fn parent_cancels_child_wf(ctx: WfContext) -> WorkflowResult<()> {
 
 #[tokio::test]
 async fn cancel_child_workflow() {
-    let func = WorkflowFunction::new(parent_cancels_child_wf);
     let t = canned_histories::single_child_workflow_cancelled("child-id-1");
-    let mut wfm = ManagedWFFunc::new(t, func, vec![]);
-    wfm.process_all_activations().await.unwrap();
-    wfm.shutdown().await.unwrap();
+    let mut worker = build_fake_sdk(MockPollCfg::from_resps(t, [ResponseType::AllHistory]));
+    worker.register_wf(DEFAULT_WORKFLOW_TYPE, parent_cancels_child_wf);
+    worker.run().await.unwrap();
 }
 
 #[rstest::rstest]
