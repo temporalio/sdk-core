@@ -633,7 +633,19 @@ where
     I: BufferInstrumentRef,
 {
     calls_rx: crossbeam::channel::Receiver<MetricEvent<I>>,
-    calls_tx: crossbeam::channel::Sender<MetricEvent<I>>,
+    calls_tx: LogErrOnFullSender<MetricEvent<I>>,
+}
+#[derive(Clone, Debug)]
+struct LogErrOnFullSender<I>(crossbeam::channel::Sender<I>);
+impl<I> LogErrOnFullSender<I> {
+    fn send(&self, v: I) {
+        if let Err(crossbeam::channel::TrySendError::Full(_)) = self.0.try_send(v) {
+            error!(
+                "Core's metrics buffer is full! Dropping call to record metrics. \
+                 Make sure you drain the metric buffer often!"
+            );
+        }
+    }
 }
 
 impl<I> MetricsCallBuffer<I>
@@ -643,11 +655,14 @@ where
     /// Create a new buffer with the given capacity
     pub fn new(buffer_size: usize) -> Self {
         let (calls_tx, calls_rx) = crossbeam::channel::bounded(buffer_size);
-        MetricsCallBuffer { calls_rx, calls_tx }
+        MetricsCallBuffer {
+            calls_rx,
+            calls_tx: LogErrOnFullSender(calls_tx),
+        }
     }
     fn new_instrument(&self, params: MetricParameters, kind: MetricKind) -> BufferInstrument<I> {
         let hole = LazyBufferInstrument::hole();
-        let _ = self.calls_tx.send(MetricEvent::Create {
+        self.calls_tx.send(MetricEvent::Create {
             params,
             kind,
             populate_into: hole.clone(),
@@ -666,7 +681,7 @@ where
 {
     fn new_attributes(&self, opts: NewAttributes) -> MetricAttributes {
         let ba = BufferAttributes::hole();
-        let _ = self.calls_tx.send(MetricEvent::CreateAttributes {
+        self.calls_tx.send(MetricEvent::CreateAttributes {
             populate_into: ba.clone(),
             append_from: None,
             attributes: opts.attributes,
@@ -681,7 +696,7 @@ where
     ) -> MetricAttributes {
         if let MetricAttributes::Buffer(ol) = existing {
             let ba = BufferAttributes::hole();
-            let _ = self.calls_tx.send(MetricEvent::CreateAttributes {
+            self.calls_tx.send(MetricEvent::CreateAttributes {
                 populate_into: ba.clone(),
                 append_from: Some(ol),
                 attributes: attribs.attributes,
@@ -717,7 +732,7 @@ where
 struct BufferInstrument<I: BufferInstrumentRef> {
     kind: MetricKind,
     instrument_ref: LazyBufferInstrument<I>,
-    tx: crossbeam::channel::Sender<MetricEvent<I>>,
+    tx: LogErrOnFullSender<MetricEvent<I>>,
 }
 impl<I> BufferInstrument<I>
 where
@@ -728,7 +743,7 @@ where
             MetricAttributes::Buffer(l) => l.clone(),
             _ => panic!("MetricsCallBuffer only works with MetricAttributes::Lang"),
         };
-        let _ = self.tx.send(MetricEvent::Update {
+        self.tx.send(MetricEvent::Update {
             instrument: self.instrument_ref.clone(),
             update: match self.kind {
                 MetricKind::Counter => MetricUpdateVal::Delta(value),
