@@ -410,17 +410,18 @@ impl ManagedRun {
         } else {
             // First strip out query responses from other commands that actually affect machines
             // Would be prettier with `drain_filter`
-            let mut i = 0;
             let mut query_responses = vec![];
-            while i < commands.len() {
-                if matches!(commands[i], WFCommand::QueryResponse(_)) {
-                    if let WFCommand::QueryResponse(qr) = commands.remove(i) {
+            commands = std::mem::take(&mut commands)
+                .into_iter()
+                .filter_map(|x| {
+                    if let WFCommand::QueryResponse(qr) = x {
                         query_responses.push(qr);
+                        None
+                    } else {
+                        Some(x)
                     }
-                } else {
-                    i += 1;
-                }
-            }
+                })
+                .collect();
 
             if activation_was_only_eviction && !commands.is_empty() {
                 dbg_panic!("Reply to an eviction only containing an eviction included commands");
@@ -1177,8 +1178,8 @@ impl WorkflowManager {
     /// Create a new workflow manager given workflow history and execution info as would be found
     /// in [PollWorkflowTaskQueueResponse]
     fn new(basics: RunBasics) -> Self {
-        let (wfb, cmd_sink) = WorkflowBridge::new();
-        let state_machines = WorkflowMachines::new(basics, Box::new(wfb).into());
+        let (wfb, cmd_sink) = DrivenWorkflow::new();
+        let state_machines = WorkflowMachines::new(basics, wfb);
         Self {
             machines: state_machines,
             command_sink: Some(cmd_sink),

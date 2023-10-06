@@ -531,18 +531,20 @@ impl WorkflowMachines {
             for_event_id: i64,
         ) -> Vec<IncomingProtocolMessage> {
             // Another thing to replace when `drain_filter` exists
-            let mut i = 0;
             let mut ret = vec![];
-            while i < me.protocol_msgs.len() {
-                if me.protocol_msgs[i]
-                    .processable_after_event_id()
-                    .is_some_and(|eid| eid <= for_event_id)
-                {
-                    ret.push(me.protocol_msgs.remove(i));
-                } else {
-                    i += 1;
-                }
-            }
+            me.protocol_msgs = std::mem::take(&mut me.protocol_msgs)
+                .into_iter()
+                .filter_map(|x| {
+                    if x.processable_after_event_id()
+                        .is_some_and(|eid| eid <= for_event_id)
+                    {
+                        ret.push(x);
+                        None
+                    } else {
+                        Some(x)
+                    }
+                })
+                .collect();
             ret
         }
 

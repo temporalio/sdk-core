@@ -1,7 +1,12 @@
+use std::{sync::Arc, time::Duration};
+
 use assert_matches::assert_matches;
 use futures_util::future;
-use std::time::Duration;
+use tokio::{join, sync::Barrier};
+use tokio_util::sync::CancellationToken;
+
 use temporal_client::WorkflowClientTrait;
+use temporal_sdk::{ActContext, LocalActivityOptions, UpdateContext, WfContext};
 use temporal_sdk_core::replay::HistoryForReplay;
 use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::{
@@ -12,16 +17,16 @@ use temporal_sdk_core_protos::{
             update_response, CompleteWorkflowExecution, ScheduleLocalActivity, UpdateResponse,
         },
         workflow_completion::WorkflowActivationCompletion,
-        ActivityTaskCompletion,
+        ActivityTaskCompletion, AsJsonPayloadExt, IntoPayloadsExt,
     },
     temporal::api::{
         enums::v1::UpdateWorkflowExecutionLifecycleStage, update, update::v1::WaitPolicy,
     },
 };
 use temporal_sdk_core_test_utils::{
-    init_core_and_create_wf, init_core_replay_preloaded, start_timer_cmd, WorkerTestHelpers,
+    init_core_and_create_wf, init_core_replay_preloaded, start_timer_cmd, CoreWfStarter,
+    WorkerTestHelpers,
 };
-use tokio::{join, sync::Barrier};
 
 #[rstest::rstest]
 #[tokio::test]
@@ -456,4 +461,60 @@ async fn update_speculative_wft() {
         core.complete_execution(&res.run_id).await;
     };
     join!(sender_task, processing_task);
+}
+
+#[tokio::test]
+async fn update_with_local_acts() {
+    let wf_name = "update_with_local_acts";
+    let mut starter = CoreWfStarter::new(wf_name);
+    let mut worker = starter.worker().await;
+    let client = starter.get_client().await;
+    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+        let la_done = Arc::new(CancellationToken::new());
+        let la_done_c = la_done.clone();
+        ctx.update_handler(
+            "update",
+            |_: &_, _: ()| Ok(()),
+            move |ctx: UpdateContext, _: ()| {
+                let la_done = la_done_c.clone();
+                async move {
+                    ctx.wf_ctx
+                        .local_activity(LocalActivityOptions {
+                            activity_type: "echo_activity".to_string(),
+                            input: "hi!".as_json_payload().expect("serializes fine"),
+                            ..Default::default()
+                        })
+                        .await;
+                    la_done.cancel();
+                    Ok("hi")
+                }
+            },
+        );
+        la_done.cancelled().await;
+        Ok(().into())
+    });
+    worker.register_activity(
+        "echo_activity",
+        |_ctx: ActContext, echo_me: String| async move { Ok(echo_me) },
+    );
+
+    starter.start_with_worker(wf_name, &mut worker).await;
+    let update = async {
+        client
+            .update_workflow_execution(
+                starter.get_task_queue().to_string(),
+                "".to_string(),
+                "update".to_string(),
+                WaitPolicy {
+                    lifecycle_stage: UpdateWorkflowExecutionLifecycleStage::Completed as i32,
+                },
+                [().as_json_payload().unwrap()].into_payloads(),
+            )
+            .await
+            .unwrap();
+    };
+    let run = async {
+        worker.run_until_done().await.unwrap();
+    };
+    join!(update, run);
 }

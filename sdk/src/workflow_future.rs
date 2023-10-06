@@ -1,17 +1,16 @@
 use crate::{
-    panic_formatter, workflow_context::WfContextSharedData, CancellableID, RustWfCmd, SignalData,
-    TimerResult, UnblockEvent, WfContext, WfExitValue, WorkflowFunction, WorkflowResult,
+    panic_formatter, CancellableID, RustWfCmd, SignalData, TimerResult, UnblockEvent,
+    UpdateContext, UpdateFunctions, UpdateInfo, WfContext, WfExitValue, WorkflowFunction,
+    WorkflowResult,
 };
 use anyhow::{anyhow, bail, Context as AnyhowContext, Error};
 use crossbeam::channel::Receiver;
 use futures::{future::BoxFuture, FutureExt};
-use parking_lot::RwLock;
 use std::{
     collections::{hash_map::Entry, HashMap},
     future::Future,
     panic::AssertUnwindSafe,
     pin::Pin,
-    sync::Arc,
     task::{Context, Poll},
 };
 use temporal_sdk_core_protos::{
@@ -22,12 +21,12 @@ use temporal_sdk_core_protos::{
             WorkflowActivationJob,
         },
         workflow_commands::{
-            request_cancel_external_workflow_execution as cancel_we, workflow_command,
-            CancelChildWorkflowExecution, CancelSignalWorkflow, CancelTimer,
+            request_cancel_external_workflow_execution as cancel_we, update_response,
+            workflow_command, CancelChildWorkflowExecution, CancelSignalWorkflow, CancelTimer,
             CancelWorkflowExecution, CompleteWorkflowExecution, FailWorkflowExecution,
             RequestCancelActivity, RequestCancelExternalWorkflowExecution,
             RequestCancelLocalActivity, ScheduleActivity, ScheduleLocalActivity,
-            StartChildWorkflowExecution, StartTimer,
+            StartChildWorkflowExecution, StartTimer, UpdateResponse,
         },
         workflow_completion::WorkflowActivationCompletion,
     },
@@ -58,7 +57,7 @@ impl WorkflowFunction {
         let (tx, incoming_activations) = unbounded_channel();
         (
             WorkflowFuture {
-                ctx_shared: wf_context.get_shared_data(),
+                wf_ctx: wf_context.clone(),
                 // We need to mark the workflow future as unconstrained, otherwise Tokio will impose
                 // an artificial limit on how many commands we can unblock in one poll round.
                 // TODO: Now we *need* deadlock detection or we could hose the whole system
@@ -72,6 +71,8 @@ impl WorkflowFunction {
                 cancel_sender: cancel_tx,
                 child_workflow_starts: Default::default(),
                 sig_chans: Default::default(),
+                updates: Default::default(),
+                update_futures: Default::default(),
             },
             tx,
         )
@@ -104,12 +105,16 @@ pub struct WorkflowFuture {
     command_status: HashMap<CommandID, WFCommandFutInfo>,
     /// Use to notify workflow code of cancellation
     cancel_sender: watch::Sender<bool>,
-    /// Data shared with the context
-    ctx_shared: Arc<RwLock<WfContextSharedData>>,
+    /// Copy of the workflow context
+    wf_ctx: WfContext,
     /// Mapping of sequence number to a StartChildWorkflowExecution request
     child_workflow_starts: HashMap<u32, StartChildWorkflowExecution>,
     /// Maps signal IDs to channels to send down when they are signaled
     sig_chans: HashMap<String, SigChanOrBuffer>,
+    /// Maps update handlers by name to implementations
+    updates: HashMap<String, UpdateFunctions>,
+    /// Stores in-progress update futures
+    update_futures: Vec<(String, BoxFuture<'static, Result<Payload, Error>>)>,
 }
 
 impl WorkflowFuture {
@@ -152,7 +157,11 @@ impl WorkflowFuture {
     /// the workflow task should be failed.
     ///
     /// Panics if internal assumptions are violated
-    fn handle_job(&mut self, variant: Option<Variant>) -> Result<bool, Error> {
+    fn handle_job(
+        &mut self,
+        variant: Option<Variant>,
+        outgoing_cmds: &mut Vec<workflow_command::Variant>,
+    ) -> Result<bool, Error> {
         if let Some(v) = variant {
             match v {
                 Variant::StartWorkflow(_) => {
@@ -209,7 +218,7 @@ impl WorkflowFuture {
                     }
                 }
                 Variant::NotifyHasPatch(NotifyHasPatch { patch_id }) => {
-                    self.ctx_shared.write().changes.insert(patch_id, true);
+                    self.wf_ctx.shared.write().changes.insert(patch_id, true);
                 }
                 Variant::ResolveSignalExternalWorkflow(attrs) => {
                     self.unblock(UnblockEvent::SignalExternal(attrs.seq, attrs.failure))?;
@@ -217,12 +226,54 @@ impl WorkflowFuture {
                 Variant::ResolveRequestCancelExternalWorkflow(attrs) => {
                     self.unblock(UnblockEvent::CancelExternal(attrs.seq, attrs.failure))?;
                 }
-                Variant::DoUpdate(_) => {
-                    todo!("Implement updates")
+                Variant::DoUpdate(u) => {
+                    if let Some(impls) = self.updates.get_mut(&u.name) {
+                        let info = UpdateInfo {
+                            update_id: u.id,
+                            headers: u.headers,
+                        };
+                        let defp = Payload::default();
+                        let val_res = if u.run_validator {
+                            (impls.validator)(&info, u.input.get(0).unwrap_or(&defp))
+                        } else {
+                            Ok(())
+                        };
+                        match val_res {
+                            Ok(_) => {
+                                outgoing_cmds.push(update_response(
+                                    u.protocol_instance_id.clone(),
+                                    update_response::Response::Accepted(()),
+                                ));
+                                let handler_fut = (impls.handler)(
+                                    UpdateContext {
+                                        wf_ctx: self.wf_ctx.clone(),
+                                        info,
+                                    },
+                                    u.input.get(0).unwrap_or(&defp),
+                                );
+                                self.update_futures
+                                    .push((u.protocol_instance_id, handler_fut));
+                            }
+                            Err(e) => {
+                                outgoing_cmds.push(update_response(
+                                    u.protocol_instance_id,
+                                    update_response::Response::Rejected(e.into()),
+                                ));
+                            }
+                        }
+                    } else {
+                        outgoing_cmds.push(update_response(
+                            u.protocol_instance_id,
+                            update_response::Response::Rejected(
+                                format!("No update handler registered for update name {}", u.name)
+                                    .into(),
+                            ),
+                        ));
+                    }
                 }
 
                 Variant::RemoveFromCache(_) => {
-                    // TODO: Need to abort any spawned tasks, etc. See also cancel WF.
+                    // TODO: Need to abort any user-spawned tasks, etc. See also cancel WF.
                     //   How best to do this in executor agnostic way? Is that possible?
                     //  -- tokio JoinSet does this in a nice way.
                     return Ok(true);
@@ -257,15 +308,16 @@ impl Future for WorkflowFuture {
             let is_only_eviction = activation.is_only_eviction();
             let run_id = activation.run_id;
             {
-                let mut wlock = self.ctx_shared.write();
+                let mut wlock = self.wf_ctx.shared.write();
                 wlock.is_replaying = activation.is_replaying;
                 wlock.wf_time = activation.timestamp.try_into_or_none();
                 wlock.history_length = activation.history_length;
             }
 
             let mut die_of_eviction_when_done = false;
+            let mut activation_cmds = vec![];
             for WorkflowActivationJob { variant } in activation.jobs {
-                match self.handle_job(variant) {
+                match self.handle_job(variant, &mut activation_cmds) {
                     Ok(true) => {
                         die_of_eviction_when_done = true;
                     }
@@ -284,6 +336,27 @@ impl Future for WorkflowFuture {
                     .expect("Completion channel intact");
                 return Ok(WfExitValue::Evicted).into();
             }
+
+            // Drive update functions
+            self.update_futures = std::mem::take(&mut self.update_futures)
+                .into_iter()
+                .filter_map(|(instance_id, mut update_fut)| {
+                    match update_fut.poll_unpin(cx) {
+                        Poll::Ready(v) => {
+                            activation_cmds.push(update_response(
+                                instance_id,
+                                match v {
+                                    Ok(v) => update_response::Response::Completed(v),
+                                    Err(e) => update_response::Response::Rejected(e.into()),
+                                },
+                            ));
+                            // Delete if we're done.
+                            None
+                        }
+                        Poll::Pending => Some((instance_id, update_fut)),
+                    }
+                })
+                .collect();
 
             // TODO: Make sure this is *actually* safe before un-prototyping rust sdk
             let mut res = match AssertUnwindSafe(&mut self.inner)
@@ -309,7 +382,6 @@ impl Future for WorkflowFuture {
                 Poll::Pending => Poll::Pending,
             };
 
-            let mut activation_cmds = vec![];
             while let Ok(cmd) = self.incoming_commands.try_recv() {
                 match cmd {
                     RustWfCmd::Cancel(cancellable_id) => {
@@ -438,6 +510,9 @@ impl Future for WorkflowFuture {
                         self.fail_wft(run_id, err);
                         continue 'activations;
                     }
+                    RustWfCmd::RegisterUpdate(name, impls) => {
+                        self.updates.insert(name, impls);
+                    }
                 }
             }
 
@@ -506,4 +581,15 @@ enum CommandID {
     ChildWorkflowComplete(u32),
     SignalExternal(u32),
     CancelExternal(u32),
+}
+
+fn update_response(
+    instance_id: String,
+    resp: update_response::Response,
+) -> workflow_command::Variant {
+    UpdateResponse {
+        protocol_instance_id: instance_id,
+        response: Some(resp),
+    }
+    .into()
 }
