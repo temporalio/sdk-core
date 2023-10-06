@@ -34,6 +34,7 @@ fsm! {
     RequestInitiated --(Reject(Failure), on_reject)--> Rejected;
 
     Accepted --(Complete(Payload), on_complete)--> CompletedImmediately;
+    Accepted --(Reject(Failure), on_fail)--> CompletedImmediately;
     Accepted --(CommandProtocolMessage)--> AcceptCommandCreated;
 
     AcceptCommandCreated --(WorkflowExecutionUpdateAccepted)--> AcceptCommandRecorded;
@@ -130,7 +131,7 @@ impl UpdateMachine {
             }
         }
         .map_err(|e| match e {
-            MachineError::InvalidTransition => WFMachinesError::Fatal(format!(
+            MachineError::InvalidTransition => WFMachinesError::Nondeterminism(format!(
                 "Invalid transition while handling update response (id {}) in state {}",
                 &self.shared_state.request.meta.update_id,
                 self.state(),
@@ -313,6 +314,9 @@ impl From<RequestInitiated> for Accepted {
 impl Accepted {
     fn on_complete(self, p: Payload) -> UpdateMachineTransition<CompletedImmediately> {
         UpdateMachineTransition::commands([UpdateMachineCommand::Complete(p)])
+    }
+    fn on_fail(self, f: Failure) -> UpdateMachineTransition<CompletedImmediately> {
+        UpdateMachineTransition::commands([UpdateMachineCommand::Fail(f)])
     }
 }
 

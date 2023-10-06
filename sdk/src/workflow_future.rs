@@ -316,6 +316,20 @@ impl Future for WorkflowFuture {
 
             let mut die_of_eviction_when_done = false;
             let mut activation_cmds = vec![];
+            // Lame hack to avoid hitting "unregistered" update handlers in a situation where
+            // the history has no commands until an update is accepted. Will go away w/ SDK redesign
+            if activation.jobs.iter().all(|a| {
+                matches!(
+                    a.variant,
+                    Some(Variant::StartWorkflow(_) | Variant::DoUpdate(_))
+                )
+            }) {
+                // Poll the workflow future once to get things registered
+                if self.poll_wf_future(cx, &run_id, &mut activation_cmds)? {
+                    continue;
+                }
+            }
+
             for WorkflowActivationJob { variant } in activation.jobs {
                 match self.handle_job(variant, &mut activation_cmds) {
                     Ok(true) => {
@@ -358,201 +372,8 @@ impl Future for WorkflowFuture {
                 })
                 .collect();
 
-            // TODO: Make sure this is *actually* safe before un-prototyping rust sdk
-            let mut res = match AssertUnwindSafe(&mut self.inner)
-                .catch_unwind()
-                .poll_unpin(cx)
-            {
-                Poll::Ready(Err(e)) => {
-                    let errmsg = format!("Workflow function panicked: {}", panic_formatter(e));
-                    warn!("{}", errmsg);
-                    self.outgoing_completions
-                        .send(WorkflowActivationCompletion::fail(
-                            run_id,
-                            Failure {
-                                message: errmsg,
-                                ..Default::default()
-                            },
-                        ))
-                        .expect("Completion channel intact");
-                    // Loop back up because we're about to get evicted
-                    continue;
-                }
-                Poll::Ready(Ok(r)) => Poll::Ready(r),
-                Poll::Pending => Poll::Pending,
-            };
-
-            while let Ok(cmd) = self.incoming_commands.try_recv() {
-                match cmd {
-                    RustWfCmd::Cancel(cancellable_id) => {
-                        match cancellable_id {
-                            CancellableID::Timer(seq) => {
-                                activation_cmds.push(workflow_command::Variant::CancelTimer(
-                                    CancelTimer { seq },
-                                ));
-                                self.unblock(UnblockEvent::Timer(seq, TimerResult::Cancelled))?;
-                                // Re-poll wf future since a timer is now unblocked
-                                res = self.inner.poll_unpin(cx);
-                            }
-                            CancellableID::Activity(seq) => {
-                                activation_cmds.push(
-                                    workflow_command::Variant::RequestCancelActivity(
-                                        RequestCancelActivity { seq },
-                                    ),
-                                );
-                            }
-                            CancellableID::LocalActivity(seq) => {
-                                activation_cmds.push(
-                                    workflow_command::Variant::RequestCancelLocalActivity(
-                                        RequestCancelLocalActivity { seq },
-                                    ),
-                                );
-                            }
-                            CancellableID::ChildWorkflow(seq) => {
-                                activation_cmds.push(
-                                    workflow_command::Variant::CancelChildWorkflowExecution(
-                                        CancelChildWorkflowExecution {
-                                            child_workflow_seq: seq,
-                                        },
-                                    ),
-                                );
-                            }
-                            CancellableID::SignalExternalWorkflow(seq) => {
-                                activation_cmds.push(
-                                    workflow_command::Variant::CancelSignalWorkflow(
-                                        CancelSignalWorkflow { seq },
-                                    ),
-                                );
-                            }
-                            CancellableID::ExternalWorkflow {
-                                seqnum,
-                                execution,
-                                only_child,
-                            } => {
-                                activation_cmds.push(
-                                    workflow_command::Variant::RequestCancelExternalWorkflowExecution(
-                                        RequestCancelExternalWorkflowExecution {
-                                            seq: seqnum,
-                                            target: Some(if only_child {
-                                                cancel_we::Target::ChildWorkflowId(execution.workflow_id)
-                                            } else {
-                                                cancel_we::Target::WorkflowExecution(execution)
-                                            }),
-                                        },
-                                    ),
-                                );
-                            }
-                        }
-                    }
-                    RustWfCmd::NewCmd(cmd) => {
-                        activation_cmds.push(cmd.cmd.clone());
-
-                        let command_id = match cmd.cmd {
-                            workflow_command::Variant::StartTimer(StartTimer { seq, .. }) => {
-                                CommandID::Timer(seq)
-                            }
-                            workflow_command::Variant::ScheduleActivity(ScheduleActivity {
-                                seq,
-                                ..
-                            })
-                            | workflow_command::Variant::ScheduleLocalActivity(
-                                ScheduleLocalActivity { seq, .. },
-                            ) => CommandID::Activity(seq),
-                            workflow_command::Variant::SetPatchMarker(_) => {
-                                panic!("Set patch marker should be a nonblocking command")
-                            }
-                            workflow_command::Variant::StartChildWorkflowExecution(req) => {
-                                let seq = req.seq;
-                                // Save the start request to support cancellation later
-                                self.child_workflow_starts.insert(seq, req);
-                                CommandID::ChildWorkflowStart(seq)
-                            }
-                            workflow_command::Variant::SignalExternalWorkflowExecution(req) => {
-                                CommandID::SignalExternal(req.seq)
-                            }
-                            workflow_command::Variant::RequestCancelExternalWorkflowExecution(
-                                req,
-                            ) => CommandID::CancelExternal(req.seq),
-                            _ => unimplemented!("Command type not implemented"),
-                        };
-                        self.command_status.insert(
-                            command_id,
-                            WFCommandFutInfo {
-                                unblocker: cmd.unblocker,
-                            },
-                        );
-                    }
-                    RustWfCmd::NewNonblockingCmd(cmd) => {
-                        activation_cmds.push(cmd);
-                    }
-                    RustWfCmd::SubscribeChildWorkflowCompletion(sub) => {
-                        self.command_status.insert(
-                            CommandID::ChildWorkflowComplete(sub.seq),
-                            WFCommandFutInfo {
-                                unblocker: sub.unblocker,
-                            },
-                        );
-                    }
-                    RustWfCmd::SubscribeSignal(signame, chan) => {
-                        // Deal with any buffered signal inputs for signals that were not yet
-                        // registered
-                        if let Some(SigChanOrBuffer::Buffer(buf)) = self.sig_chans.remove(&signame)
-                        {
-                            for input in buf {
-                                let _ = chan.send(input);
-                            }
-                            // Re-poll wf future since signals may be unblocked
-                            res = self.inner.poll_unpin(cx);
-                        }
-                        self.sig_chans.insert(signame, SigChanOrBuffer::Chan(chan));
-                    }
-                    RustWfCmd::ForceWFTFailure(err) => {
-                        self.fail_wft(run_id, err);
-                        continue 'activations;
-                    }
-                    RustWfCmd::RegisterUpdate(name, impls) => {
-                        self.updates.insert(name, impls);
-                    }
-                }
-            }
-
-            if let Poll::Ready(res) = res {
-                // TODO: Auto reply with cancel when cancelled (instead of normal exit value)
-                match res {
-                    Ok(exit_val) => match exit_val {
-                        // TODO: Generic values
-                        WfExitValue::Normal(result) => {
-                            activation_cmds.push(
-                                workflow_command::Variant::CompleteWorkflowExecution(
-                                    CompleteWorkflowExecution {
-                                        result: Some(result),
-                                    },
-                                ),
-                            );
-                        }
-                        WfExitValue::ContinueAsNew(cmd) => activation_cmds.push((*cmd).into()),
-                        WfExitValue::Cancelled => {
-                            activation_cmds.push(
-                                workflow_command::Variant::CancelWorkflowExecution(
-                                    CancelWorkflowExecution {},
-                                ),
-                            );
-                        }
-                        WfExitValue::Evicted => {
-                            panic!("Don't explicitly return this")
-                        }
-                    },
-                    Err(e) => {
-                        activation_cmds.push(workflow_command::Variant::FailWorkflowExecution(
-                            FailWorkflowExecution {
-                                failure: Some(Failure {
-                                    message: e.to_string(),
-                                    ..Default::default()
-                                }),
-                            },
-                        ));
-                    }
-                }
+            if self.poll_wf_future(cx, &run_id, &mut activation_cmds)? {
+                continue;
             }
 
             // TODO: deadlock detector
@@ -570,6 +391,208 @@ impl Future for WorkflowFuture {
             // We don't actually return here, since we could be queried after finishing executing,
             // and it allows us to rely on evictions for death and cache management
         }
+    }
+}
+
+// Separate impl block down here just to keep it close to the future poll implementation which
+// it is specific to.
+impl WorkflowFuture {
+    /// Returns true if the workflow future polling loop should be continued
+    fn poll_wf_future(
+        &mut self,
+        cx: &mut Context,
+        run_id: &str,
+        activation_cmds: &mut Vec<workflow_command::Variant>,
+    ) -> Result<bool, Error> {
+        // TODO: Make sure this is *actually* safe before un-prototyping rust sdk
+        let mut res = match AssertUnwindSafe(&mut self.inner)
+            .catch_unwind()
+            .poll_unpin(cx)
+        {
+            Poll::Ready(Err(e)) => {
+                let errmsg = format!("Workflow function panicked: {}", panic_formatter(e));
+                warn!("{}", errmsg);
+                self.outgoing_completions
+                    .send(WorkflowActivationCompletion::fail(
+                        run_id,
+                        Failure {
+                            message: errmsg,
+                            ..Default::default()
+                        },
+                    ))
+                    .expect("Completion channel intact");
+                // Loop back up because we're about to get evicted
+                return Ok(true);
+            }
+            Poll::Ready(Ok(r)) => Poll::Ready(r),
+            Poll::Pending => Poll::Pending,
+        };
+
+        while let Ok(cmd) = self.incoming_commands.try_recv() {
+            match cmd {
+                RustWfCmd::Cancel(cancellable_id) => {
+                    match cancellable_id {
+                        CancellableID::Timer(seq) => {
+                            activation_cmds
+                                .push(workflow_command::Variant::CancelTimer(CancelTimer { seq }));
+                            self.unblock(UnblockEvent::Timer(seq, TimerResult::Cancelled))?;
+                            // Re-poll wf future since a timer is now unblocked
+                            res = self.inner.poll_unpin(cx);
+                        }
+                        CancellableID::Activity(seq) => {
+                            activation_cmds.push(workflow_command::Variant::RequestCancelActivity(
+                                RequestCancelActivity { seq },
+                            ));
+                        }
+                        CancellableID::LocalActivity(seq) => {
+                            activation_cmds.push(
+                                workflow_command::Variant::RequestCancelLocalActivity(
+                                    RequestCancelLocalActivity { seq },
+                                ),
+                            );
+                        }
+                        CancellableID::ChildWorkflow(seq) => {
+                            activation_cmds.push(
+                                workflow_command::Variant::CancelChildWorkflowExecution(
+                                    CancelChildWorkflowExecution {
+                                        child_workflow_seq: seq,
+                                    },
+                                ),
+                            );
+                        }
+                        CancellableID::SignalExternalWorkflow(seq) => {
+                            activation_cmds.push(workflow_command::Variant::CancelSignalWorkflow(
+                                CancelSignalWorkflow { seq },
+                            ));
+                        }
+                        CancellableID::ExternalWorkflow {
+                            seqnum,
+                            execution,
+                            only_child,
+                        } => {
+                            activation_cmds.push(
+                                workflow_command::Variant::RequestCancelExternalWorkflowExecution(
+                                    RequestCancelExternalWorkflowExecution {
+                                        seq: seqnum,
+                                        target: Some(if only_child {
+                                            cancel_we::Target::ChildWorkflowId(
+                                                execution.workflow_id,
+                                            )
+                                        } else {
+                                            cancel_we::Target::WorkflowExecution(execution)
+                                        }),
+                                    },
+                                ),
+                            );
+                        }
+                    }
+                }
+                RustWfCmd::NewCmd(cmd) => {
+                    activation_cmds.push(cmd.cmd.clone());
+
+                    let command_id = match cmd.cmd {
+                        workflow_command::Variant::StartTimer(StartTimer { seq, .. }) => {
+                            CommandID::Timer(seq)
+                        }
+                        workflow_command::Variant::ScheduleActivity(ScheduleActivity {
+                            seq,
+                            ..
+                        })
+                        | workflow_command::Variant::ScheduleLocalActivity(
+                            ScheduleLocalActivity { seq, .. },
+                        ) => CommandID::Activity(seq),
+                        workflow_command::Variant::SetPatchMarker(_) => {
+                            panic!("Set patch marker should be a nonblocking command")
+                        }
+                        workflow_command::Variant::StartChildWorkflowExecution(req) => {
+                            let seq = req.seq;
+                            // Save the start request to support cancellation later
+                            self.child_workflow_starts.insert(seq, req);
+                            CommandID::ChildWorkflowStart(seq)
+                        }
+                        workflow_command::Variant::SignalExternalWorkflowExecution(req) => {
+                            CommandID::SignalExternal(req.seq)
+                        }
+                        workflow_command::Variant::RequestCancelExternalWorkflowExecution(req) => {
+                            CommandID::CancelExternal(req.seq)
+                        }
+                        _ => unimplemented!("Command type not implemented"),
+                    };
+                    self.command_status.insert(
+                        command_id,
+                        WFCommandFutInfo {
+                            unblocker: cmd.unblocker,
+                        },
+                    );
+                }
+                RustWfCmd::NewNonblockingCmd(cmd) => {
+                    activation_cmds.push(cmd);
+                }
+                RustWfCmd::SubscribeChildWorkflowCompletion(sub) => {
+                    self.command_status.insert(
+                        CommandID::ChildWorkflowComplete(sub.seq),
+                        WFCommandFutInfo {
+                            unblocker: sub.unblocker,
+                        },
+                    );
+                }
+                RustWfCmd::SubscribeSignal(signame, chan) => {
+                    // Deal with any buffered signal inputs for signals that were not yet
+                    // registered
+                    if let Some(SigChanOrBuffer::Buffer(buf)) = self.sig_chans.remove(&signame) {
+                        for input in buf {
+                            let _ = chan.send(input);
+                        }
+                        // Re-poll wf future since signals may be unblocked
+                        res = self.inner.poll_unpin(cx);
+                    }
+                    self.sig_chans.insert(signame, SigChanOrBuffer::Chan(chan));
+                }
+                RustWfCmd::ForceWFTFailure(err) => {
+                    self.fail_wft(run_id.to_string(), err);
+                    return Ok(true);
+                }
+                RustWfCmd::RegisterUpdate(name, impls) => {
+                    self.updates.insert(name, impls);
+                }
+            }
+        }
+
+        if let Poll::Ready(res) = res {
+            // TODO: Auto reply with cancel when cancelled (instead of normal exit value)
+            match res {
+                Ok(exit_val) => match exit_val {
+                    // TODO: Generic values
+                    WfExitValue::Normal(result) => {
+                        activation_cmds.push(workflow_command::Variant::CompleteWorkflowExecution(
+                            CompleteWorkflowExecution {
+                                result: Some(result),
+                            },
+                        ));
+                    }
+                    WfExitValue::ContinueAsNew(cmd) => activation_cmds.push((*cmd).into()),
+                    WfExitValue::Cancelled => {
+                        activation_cmds.push(workflow_command::Variant::CancelWorkflowExecution(
+                            CancelWorkflowExecution {},
+                        ));
+                    }
+                    WfExitValue::Evicted => {
+                        panic!("Don't explicitly return this")
+                    }
+                },
+                Err(e) => {
+                    activation_cmds.push(workflow_command::Variant::FailWorkflowExecution(
+                        FailWorkflowExecution {
+                            failure: Some(Failure {
+                                message: e.to_string(),
+                                ..Default::default()
+                            }),
+                        },
+                    ));
+                }
+            }
+        }
+        return Ok(false);
     }
 }
 

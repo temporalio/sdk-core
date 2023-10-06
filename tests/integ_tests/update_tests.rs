@@ -1,10 +1,7 @@
-use std::{sync::Arc, time::Duration};
-
+use anyhow::anyhow;
 use assert_matches::assert_matches;
-use futures_util::future;
-use tokio::{join, sync::Barrier};
-use tokio_util::sync::CancellationToken;
-
+use futures_util::{future, future::join_all, StreamExt};
+use std::time::Duration;
 use temporal_client::WorkflowClientTrait;
 use temporal_sdk::{ActContext, LocalActivityOptions, UpdateContext, WfContext};
 use temporal_sdk_core::replay::HistoryForReplay;
@@ -12,7 +9,9 @@ use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::ActivityExecutionResult,
-        workflow_activation::{workflow_activation_job, WorkflowActivationJob},
+        workflow_activation::{
+            remove_from_cache::EvictionReason, workflow_activation_job, WorkflowActivationJob,
+        },
         workflow_commands::{
             update_response, CompleteWorkflowExecution, ScheduleLocalActivity, UpdateResponse,
         },
@@ -20,13 +19,16 @@ use temporal_sdk_core_protos::{
         ActivityTaskCompletion, AsJsonPayloadExt, IntoPayloadsExt,
     },
     temporal::api::{
-        enums::v1::UpdateWorkflowExecutionLifecycleStage, update, update::v1::WaitPolicy,
+        enums::v1::{EventType, UpdateWorkflowExecutionLifecycleStage},
+        update,
+        update::v1::WaitPolicy,
     },
 };
 use temporal_sdk_core_test_utils::{
     init_core_and_create_wf, init_core_replay_preloaded, start_timer_cmd, CoreWfStarter,
     WorkerTestHelpers,
 };
+use tokio::{join, sync::Barrier};
 
 #[rstest::rstest]
 #[tokio::test]
@@ -190,7 +192,19 @@ async fn update_rejection() {
         core.complete_execution(&res.run_id).await;
     };
     join!(update_task, processing_task);
-    // TODO: Verify no update in history
+    let history = client
+        .get_workflow_execution_history(workflow_id, None, vec![])
+        .await
+        .unwrap()
+        .history
+        .unwrap();
+    let has_update_event = history.events.iter().any(|e| {
+        matches!(
+            e.event_type(),
+            EventType::WorkflowExecutionUpdateAccepted | EventType::WorkflowExecutionUpdateRejected
+        )
+    });
+    assert!(!has_update_event);
 }
 
 #[rstest::rstest]
@@ -262,12 +276,13 @@ async fn update_insta_complete(#[values(true, false)] accept_first: bool) {
         if !accept_first {
             // evicted, because lang must send accept first before completing
             let res = core.poll_workflow_activation().await.unwrap();
-            assert_matches!(
+            let cause = assert_matches!(
                 res.jobs.as_slice(),
                 [WorkflowActivationJob {
-                    variant: Some(workflow_activation_job::Variant::RemoveFromCache(_))
-                }]
+                    variant: Some(workflow_activation_job::Variant::RemoveFromCache(c))
+                }] => c
             );
+            assert_eq!(cause.reason(), EvictionReason::Nondeterminism);
             core.complete_workflow_activation(WorkflowActivationCompletion::empty(res.run_id))
                 .await
                 .unwrap();
@@ -467,30 +482,92 @@ async fn update_speculative_wft() {
 async fn update_with_local_acts() {
     let wf_name = "update_with_local_acts";
     let mut starter = CoreWfStarter::new(wf_name);
+    // Short task timeout to get activities to heartbeat without taking ages
+    starter.workflow_options.task_timeout = Some(Duration::from_secs(1));
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
-    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
-        let la_done = Arc::new(CancellationToken::new());
-        let la_done_c = la_done.clone();
+    worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| async move {
         ctx.update_handler(
             "update",
             |_: &_, _: ()| Ok(()),
-            move |ctx: UpdateContext, _: ()| {
-                let la_done = la_done_c.clone();
-                async move {
-                    ctx.wf_ctx
-                        .local_activity(LocalActivityOptions {
-                            activity_type: "echo_activity".to_string(),
-                            input: "hi!".as_json_payload().expect("serializes fine"),
-                            ..Default::default()
-                        })
-                        .await;
-                    la_done.cancel();
-                    Ok("hi")
-                }
+            move |ctx: UpdateContext, _: ()| async move {
+                ctx.wf_ctx
+                    .local_activity(LocalActivityOptions {
+                        activity_type: "echo_activity".to_string(),
+                        input: "hi!".as_json_payload().expect("serializes fine"),
+                        ..Default::default()
+                    })
+                    .await;
+                Ok("hi")
             },
         );
-        la_done.cancelled().await;
+        let mut sig = ctx.make_signal_channel("done");
+        sig.next().await;
+        Ok(().into())
+    });
+    worker.register_activity(
+        "echo_activity",
+        |_ctx: ActContext, echo_me: String| async move {
+            // Sleep so we'll heartbeat
+            tokio::time::sleep(Duration::from_secs(3)).await;
+            Ok(echo_me)
+        },
+    );
+
+    let run_id = starter.start_with_worker(wf_name, &mut worker).await;
+    let wf_id = starter.get_task_queue().to_string();
+    let update = async {
+        // make sure update has a chance to get registered
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        // do a handful at once
+        let updates = (1..=5).map(|_| {
+            client.update_workflow_execution(
+                wf_id.clone(),
+                "".to_string(),
+                "update".to_string(),
+                WaitPolicy {
+                    lifecycle_stage: UpdateWorkflowExecutionLifecycleStage::Completed as i32,
+                },
+                [().as_json_payload().unwrap()].into_payloads(),
+            )
+        });
+        for res in join_all(updates).await {
+            assert!(res.unwrap().outcome.unwrap().is_success());
+        }
+        client
+            .signal_workflow_execution(
+                wf_id.clone(),
+                "".to_string(),
+                "done".to_string(),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+    };
+    let run = async {
+        worker.run_until_done().await.unwrap();
+    };
+    join!(update, run);
+    starter
+        .fetch_history_and_replay(wf_id, run_id, worker.inner_mut())
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn update_rejection_sdk() {
+    let wf_name = "update_rejection_sdk";
+    let mut starter = CoreWfStarter::new(wf_name);
+    let mut worker = starter.worker().await;
+    let client = starter.get_client().await;
+    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+        ctx.update_handler(
+            "update",
+            |_: &_, _: ()| Err(anyhow!("ahhhhh noooo")),
+            move |_: UpdateContext, _: ()| async { Ok("hi") },
+        );
+        ctx.timer(Duration::from_secs(1)).await;
         Ok(().into())
     });
     worker.register_activity(
@@ -498,11 +575,12 @@ async fn update_with_local_acts() {
         |_ctx: ActContext, echo_me: String| async move { Ok(echo_me) },
     );
 
-    starter.start_with_worker(wf_name, &mut worker).await;
+    let run_id = starter.start_with_worker(wf_name, &mut worker).await;
+    let wf_id = starter.get_task_queue().to_string();
     let update = async {
-        client
+        let res = client
             .update_workflow_execution(
-                starter.get_task_queue().to_string(),
+                wf_id.clone(),
                 "".to_string(),
                 "update".to_string(),
                 WaitPolicy {
@@ -512,9 +590,61 @@ async fn update_with_local_acts() {
             )
             .await
             .unwrap();
+        assert!(!res.outcome.unwrap().is_success());
     };
     let run = async {
         worker.run_until_done().await.unwrap();
     };
     join!(update, run);
+    starter
+        .fetch_history_and_replay(wf_id, run_id, worker.inner_mut())
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn update_fail_sdk() {
+    let wf_name = "update_fail_sdk";
+    let mut starter = CoreWfStarter::new(wf_name);
+    let mut worker = starter.worker().await;
+    let client = starter.get_client().await;
+    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+        ctx.update_handler(
+            "update",
+            |_: &_, _: ()| Ok(()),
+            move |_: UpdateContext, _: ()| async { Err::<(), _>(anyhow!("nooooo")) },
+        );
+        ctx.timer(Duration::from_secs(1)).await;
+        Ok(().into())
+    });
+    worker.register_activity(
+        "echo_activity",
+        |_ctx: ActContext, echo_me: String| async move { Ok(echo_me) },
+    );
+
+    let run_id = starter.start_with_worker(wf_name, &mut worker).await;
+    let wf_id = starter.get_task_queue().to_string();
+    let update = async {
+        let res = client
+            .update_workflow_execution(
+                wf_id.clone(),
+                "".to_string(),
+                "update".to_string(),
+                WaitPolicy {
+                    lifecycle_stage: UpdateWorkflowExecutionLifecycleStage::Completed as i32,
+                },
+                [().as_json_payload().unwrap()].into_payloads(),
+            )
+            .await
+            .unwrap();
+        assert!(!res.outcome.unwrap().is_success());
+    };
+    let run = async {
+        worker.run_until_done().await.unwrap();
+    };
+    join!(update, run);
+    starter
+        .fetch_history_and_replay(wf_id, run_id, worker.inner_mut())
+        .await
+        .unwrap();
 }

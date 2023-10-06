@@ -721,7 +721,6 @@ impl WorkflowMachines {
                     }
                 }
                 DelayedAction::ProtocolMessage(pm) => {
-                    error!("HI peeked a message! {:?}", &pm);
                     self.handle_protocol_message(pm)?;
                 }
             }

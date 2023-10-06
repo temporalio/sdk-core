@@ -2033,7 +2033,17 @@ pub mod temporal {
         }
         pub mod update {
             pub mod v1 {
+                use crate::temporal::api::update::v1::outcome::Value;
                 tonic::include_proto!("temporal.api.update.v1");
+
+                impl Outcome {
+                    pub fn is_success(&self) -> bool {
+                        match self.value {
+                            Some(Value::Success(_)) => true,
+                            _ => false,
+                        }
+                    }
+                }
             }
         }
         pub mod version {
