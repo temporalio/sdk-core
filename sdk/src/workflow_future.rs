@@ -318,12 +318,17 @@ impl Future for WorkflowFuture {
             let mut activation_cmds = vec![];
             // Lame hack to avoid hitting "unregistered" update handlers in a situation where
             // the history has no commands until an update is accepted. Will go away w/ SDK redesign
-            if activation.jobs.iter().all(|a| {
-                matches!(
-                    a.variant,
-                    Some(Variant::StartWorkflow(_) | Variant::DoUpdate(_))
-                )
-            }) {
+            if activation
+                .jobs
+                .get(0)
+                .is_some_and(|j| matches!(j.variant, Some(Variant::StartWorkflow(_))))
+                && activation.jobs.iter().all(|a| {
+                    matches!(
+                        a.variant,
+                        Some(Variant::StartWorkflow(_) | Variant::DoUpdate(_))
+                    )
+                })
+            {
                 // Poll the workflow future once to get things registered
                 if self.poll_wf_future(cx, &run_id, &mut activation_cmds)? {
                     continue;

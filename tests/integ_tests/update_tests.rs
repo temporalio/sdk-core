@@ -648,3 +648,51 @@ async fn update_fail_sdk() {
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn update_timer_sequence() {
+    let wf_name = "update_timer_sequence";
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter.worker_config.no_remote_activities(true);
+    let mut worker = starter.worker().await;
+    let client = starter.get_client().await;
+    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+        ctx.update_handler(
+            "update",
+            |_: &_, _: ()| Ok(()),
+            move |ctx: UpdateContext, _: ()| async move {
+                ctx.wf_ctx.timer(Duration::from_millis(1)).await;
+                ctx.wf_ctx.timer(Duration::from_millis(1)).await;
+                Ok("done")
+            },
+        );
+        ctx.timer(Duration::from_secs(1)).await;
+        Ok(().into())
+    });
+
+    let run_id = starter.start_with_worker(wf_name, &mut worker).await;
+    let wf_id = starter.get_task_queue().to_string();
+    let update = async {
+        let res = client
+            .update_workflow_execution(
+                wf_id.clone(),
+                "".to_string(),
+                "update".to_string(),
+                WaitPolicy {
+                    lifecycle_stage: UpdateWorkflowExecutionLifecycleStage::Completed as i32,
+                },
+                [().as_json_payload().unwrap()].into_payloads(),
+            )
+            .await
+            .unwrap();
+        assert!(res.outcome.unwrap().is_success());
+    };
+    let run = async {
+        worker.run_until_done().await.unwrap();
+    };
+    join!(update, run);
+    starter
+        .fetch_history_and_replay(wf_id, run_id, worker.inner_mut())
+        .await
+        .unwrap();
+}

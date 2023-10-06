@@ -228,6 +228,14 @@ impl Worker {
     /// Runs the worker. Eventually resolves after the worker has been explicitly shut down,
     /// or may return early with an error in the event of some unresolvable problem.
     pub async fn run(&mut self) -> Result<(), anyhow::Error> {
+        if self.common.worker.get_config().no_remote_activities != true
+            && self.activity_half.activity_fns.is_empty()
+        {
+            bail!(
+                "Worker has no activity functions registered but has not set \
+                 `no_remote_activities` to true in config."
+            );
+        }
         let shutdown_token = CancellationToken::new();
         let (common, wf_half, act_half, app_data) = self.split_apart();
         let safe_app_data = Arc::new(
