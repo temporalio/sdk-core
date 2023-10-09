@@ -470,7 +470,7 @@ impl WorkflowMachines {
         let remove_these: Vec<_> = self
             .machines_by_event_id
             .iter()
-            .filter(|(mid, _)| **mid >= id)
+            .filter(|(mid, _)| **mid > id)
             .map(|(mid, mkey)| (*mid, *mkey))
             .collect();
         for (mid, mkey) in remove_these {

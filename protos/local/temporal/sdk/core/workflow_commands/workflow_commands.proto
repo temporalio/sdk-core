@@ -312,13 +312,22 @@ message ModifyWorkflowProperties {
     temporal.api.common.v1.Memo upserted_memo = 1;
 }
 
-// A reply to a `DoUpdate` job - lang must run the update's validator, and then immediately run
-// the handler, if the update was accepted.
+// A reply to a `DoUpdate` job - lang must run the update's validator if told to, and then
+// immediately run the handler, if the update was accepted.
+//
+// There must always be an accepted or rejected response immediately, in the same activation as
+// this job, to indicate the result of the validator. Accepted for ran and accepted or skipped, or
+// rejected for rejected.
+//
+// Then, in the same or any subsequent activation, after the update handler has completed, respond
+// with completed or rejected as appropriate for the result of the handler.
 message UpdateResponse {
     // The protocol message instance ID
     string protocol_instance_id = 1;
     oneof response {
-        // Must be sent if the update's validator has passed.
+        // Must be sent if the update's validator has passed (or lang was not asked to run it, and
+        // thus should be considered already-accepted, allowing lang to always send the same
+        // sequence on replay).
         google.protobuf.Empty accepted = 2;
         // Must be sent if the update's validator does not pass, or after acceptance if the update
         // handler fails.
