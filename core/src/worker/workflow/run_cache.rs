@@ -53,9 +53,9 @@ impl RunCache {
 
     pub fn instantiate_or_update(&mut self, mut pwft: PermittedWFT) -> RunUpdateAct {
         let cur_num_cached_runs = self.runs.len();
-        let run_id = &pwft.work.execution.run_id;
+        let run_id = pwft.work.execution.run_id.clone();
 
-        if let Some(run_handle) = self.runs.get_mut(run_id) {
+        if let Some(run_handle) = self.runs.get_mut(&run_id) {
             let rur = run_handle.incoming_wft(pwft);
             self.metrics.cache_size(cur_num_cached_runs as u64);
             return rur;
@@ -69,12 +69,13 @@ impl RunCache {
         // Replace the update in the wft with a dummy one, since we must instantiate the machines
         // with the update.
         let history_update = mem::replace(&mut pwft.work.update, HistoryUpdate::dummy());
+        // TODO: Merge `incoming_wft` into new and avoid whole dummy update thing
         let mut mrh = ManagedRun::new(
             RunBasics {
                 namespace: self.namespace.clone(),
                 workflow_id: pwft.work.execution.workflow_id.clone(),
                 workflow_type: pwft.work.workflow_type.clone(),
-                run_id: pwft.work.execution.run_id.clone(),
+                run_id: run_id.clone(),
                 task_queue: self.task_queue.clone(),
                 history: history_update,
                 metrics,
@@ -82,7 +83,6 @@ impl RunCache {
             },
             self.local_activity_request_sink.clone(),
         );
-        let run_id = run_id.to_string();
         let rur = mrh.incoming_wft(pwft);
         if self.runs.push(run_id, mrh).is_some() {
             panic!("Overflowed run cache! Cache owner is expected to avoid this!");

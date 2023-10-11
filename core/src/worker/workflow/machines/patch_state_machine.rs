@@ -282,17 +282,15 @@ mod tests {
     use crate::{
         internal_flags::CoreInternalFlags,
         replay::TestHistoryBuilder,
-        worker::workflow::{
-            machines::{patch_state_machine::VERSION_SEARCH_ATTR_KEY, WFMachinesError},
-            ManagedWFFunc,
-        },
+        test_help::{build_fake_sdk, MockPollCfg, ResponseType},
+        worker::workflow::machines::patch_state_machine::VERSION_SEARCH_ATTR_KEY,
     };
     use rstest::rstest;
     use std::{
         collections::{hash_map::RandomState, HashSet, VecDeque},
         time::Duration,
     };
-    use temporal_sdk::{ActivityOptions, WfContext, WorkflowFunction};
+    use temporal_sdk::{ActivityOptions, WfContext};
     use temporal_sdk_core_protos::{
         constants::PATCH_MARKER_NAME,
         coresdk::{
@@ -313,7 +311,9 @@ mod tests {
                 ActivityTaskStartedEventAttributes, TimerFiredEventAttributes,
             },
         },
+        DEFAULT_WORKFLOW_TYPE,
     };
+    use temporal_sdk_core_test_utils::interceptors::ActivationAssertionsInterceptor;
 
     const MY_PATCH_ID: &str = "test_patch_id";
     #[derive(Eq, PartialEq, Copy, Clone, Debug)]
@@ -448,33 +448,36 @@ mod tests {
         replaying: bool,
         marker_type: MarkerType,
         workflow_version: usize,
-    ) -> ManagedWFFunc {
-        let wfn = WorkflowFunction::new(move |mut ctx: WfContext| async move {
-            match workflow_version {
-                1 => {
-                    v1(&mut ctx).await;
-                }
-                2 => {
-                    v2(&mut ctx).await;
-                }
-                3 => {
-                    v3(&mut ctx).await;
-                }
-                4 => {
-                    v4(&mut ctx).await;
-                }
-                _ => panic!("Invalid workflow version for test setup"),
-            }
-            Ok(().into())
-        });
-
+    ) -> MockPollCfg {
         let t = patch_marker_single_activity(marker_type, workflow_version, replaying);
-        let histinfo = if replaying {
-            t.get_full_history_info()
+        if replaying {
+            MockPollCfg::from_resps(t, [ResponseType::AllHistory])
         } else {
-            t.get_history_info(1)
+            MockPollCfg::from_hist_builder(t)
+        }
+    }
+
+    macro_rules! patch_wf {
+        ($workflow_version:ident) => {
+            move |mut ctx: WfContext| async move {
+                match $workflow_version {
+                    1 => {
+                        v1(&mut ctx).await;
+                    }
+                    2 => {
+                        v2(&mut ctx).await;
+                    }
+                    3 => {
+                        v3(&mut ctx).await;
+                    }
+                    4 => {
+                        v4(&mut ctx).await;
+                    }
+                    _ => panic!("Invalid workflow version for test setup"),
+                }
+                Ok(().into())
+            }
         };
-        ManagedWFFunc::new_from_update(histinfo.unwrap().into(), wfn, vec![])
     }
 
     #[rstest]
@@ -492,43 +495,42 @@ mod tests {
         #[case] marker_type: MarkerType,
         #[case] wf_version: usize,
     ) {
-        let mut wfm = patch_setup(replaying, marker_type, wf_version);
-        // Start workflow activation
-        wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().commands;
-        assert_eq!(commands.len(), 1);
-        assert_eq!(
-            commands[0].command_type,
-            CommandType::ScheduleActivityTask as i32
-        );
-        let act = if replaying {
-            wfm.get_next_activation().await
-        } else {
-            // Feed more history
-            wfm.new_history(
-                patch_marker_single_activity(marker_type, wf_version, replaying)
-                    .get_full_history_info()
-                    .unwrap()
-                    .into(),
-            )
-            .await
-        };
+        let mut mock_cfg = patch_setup(replaying, marker_type, wf_version);
 
-        if marker_type == MarkerType::Deprecated {
-            let act = act.unwrap();
-            // Activity is resolved
-            assert_matches!(
-                act.jobs.as_slice(),
-                [WorkflowActivationJob {
-                    variant: Some(workflow_activation_job::Variant::ResolveActivity(_))
-                }]
-            );
-        } else {
+        if marker_type != MarkerType::Deprecated {
             // should explode b/c non-dep marker is present
-            assert_matches!(act.unwrap_err(), WFMachinesError::Nondeterminism(_));
+            mock_cfg.num_expected_fails = 1;
         }
 
-        wfm.shutdown().await.unwrap();
+        let mut aai = ActivationAssertionsInterceptor::default();
+        aai.skip_one().then(move |a| {
+            if marker_type == MarkerType::Deprecated {
+                // Activity is resolved
+                assert_matches!(
+                    a.jobs.as_slice(),
+                    [WorkflowActivationJob {
+                        variant: Some(workflow_activation_job::Variant::ResolveActivity(_))
+                    }]
+                );
+            }
+        });
+
+        if !replaying {
+            mock_cfg.completion_asserts_from_expectations(|mut asserts| {
+                asserts.then(|wft| {
+                    assert_eq!(wft.commands.len(), 1);
+                    assert_eq!(
+                        wft.commands[0].command_type,
+                        CommandType::ScheduleActivityTask as i32
+                    );
+                });
+            });
+        }
+
+        let mut worker = build_fake_sdk(mock_cfg);
+        worker.set_worker_interceptor(aai);
+        worker.register_wf(DEFAULT_WORKFLOW_TYPE, patch_wf!(wf_version));
+        worker.run().await.unwrap();
     }
 
     // Note that the not-replaying and no-marker cases don't make sense and hence are absent
@@ -549,89 +551,86 @@ mod tests {
         #[case] marker_type: MarkerType,
         #[case] wf_version: usize,
     ) {
-        let mut wfm = patch_setup(replaying, marker_type, wf_version);
-        let act = wfm.get_next_activation().await.unwrap();
-        // replaying cases should immediately get a resolve change activation when marker is present
-        if replaying && marker_type != MarkerType::NoMarker {
-            assert_matches!(
-                &act.jobs[1],
-                 WorkflowActivationJob {
-                    variant: Some(workflow_activation_job::Variant::NotifyHasPatch(
-                        NotifyHasPatch {
-                            patch_id,
-                        }
-                    ))
-                } => patch_id == MY_PATCH_ID
-            );
-        } else {
-            assert_eq!(act.jobs.len(), 1);
-        }
-        let mut commands = VecDeque::from(wfm.get_server_commands().commands);
-        let expected_num_cmds = if marker_type == MarkerType::NoMarker {
-            2
-        } else {
-            3
-        };
-        assert_eq!(commands.len(), expected_num_cmds);
-        let dep_flag_expected = wf_version != 2;
-        assert_matches!(
-            commands.pop_front().unwrap().attributes.as_ref().unwrap(),
-            Attributes::RecordMarkerCommandAttributes(
-                RecordMarkerCommandAttributes { marker_name, details,.. })
+        let mut mock_cfg = patch_setup(replaying, marker_type, wf_version);
 
-            if marker_name == PATCH_MARKER_NAME
-              && decode_change_marker_details(details).unwrap().1 == dep_flag_expected
-        );
-        if expected_num_cmds == 3 {
-            assert_matches!(
-                commands.pop_front().unwrap().attributes.as_ref().unwrap(),
-                Attributes::UpsertWorkflowSearchAttributesCommandAttributes(
-                    UpsertWorkflowSearchAttributesCommandAttributes{ search_attributes: Some(attrs) }
-                )
-                if attrs.indexed_fields.get(VERSION_SEARCH_ATTR_KEY).unwrap()
-                  == &[MY_PATCH_ID].as_json_payload().unwrap()
-            );
-        }
-        // The only time the "old" timer should fire is in v2, replaying, without a marker.
-        let expected_activity_id =
-            if replaying && marker_type == MarkerType::NoMarker && wf_version == 2 {
-                "no_change"
+        let mut aai = ActivationAssertionsInterceptor::default();
+        aai.then(move |act| {
+            // replaying cases should immediately get a resolve change activation when marker is present
+            if replaying && marker_type != MarkerType::NoMarker {
+                assert_matches!(
+                    &act.jobs[0],
+                     WorkflowActivationJob {
+                        variant: Some(workflow_activation_job::Variant::NotifyHasPatch(
+                            NotifyHasPatch {
+                                patch_id,
+                            }
+                        ))
+                    } => patch_id == MY_PATCH_ID
+                );
             } else {
-                "had_change"
-            };
-        assert_matches!(
-            commands.pop_front().unwrap().attributes.as_ref().unwrap(),
-            Attributes::ScheduleActivityTaskCommandAttributes(
-                ScheduleActivityTaskCommandAttributes { activity_id, .. }
-            )
-            if activity_id == expected_activity_id
-        );
+                assert_eq!(act.jobs.len(), 1);
+            }
+        })
+        .then(move |act| {
+            assert_matches!(
+                act.jobs.as_slice(),
+                [WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::ResolveActivity(_))
+                }]
+            );
+        });
 
-        let act = if replaying {
-            wfm.get_next_activation().await
-        } else {
-            // Feed more history. Since we are *not* replaying, we *always* "have" the change
-            // and the history should have the has-change timer. v3 of course always has the change
-            // regardless.
-            wfm.new_history(
-                patch_marker_single_activity(marker_type, wf_version, replaying)
-                    .get_full_history_info()
-                    .unwrap()
-                    .into(),
-            )
-            .await
-        };
+        if !replaying {
+            mock_cfg.completion_asserts_from_expectations(|mut asserts| {
+                asserts.then(move |wft| {
+                    let mut commands = VecDeque::from(wft.commands.clone());
+                    let expected_num_cmds = if marker_type == MarkerType::NoMarker {
+                        2
+                    } else {
+                        3
+                    };
+                    assert_eq!(commands.len(), expected_num_cmds);
+                    let dep_flag_expected = wf_version != 2;
+                    assert_matches!(
+                        commands.pop_front().unwrap().attributes.as_ref().unwrap(),
+                        Attributes::RecordMarkerCommandAttributes(
+                            RecordMarkerCommandAttributes { marker_name, details,.. })
+                        if marker_name == PATCH_MARKER_NAME
+                          && decode_change_marker_details(details).unwrap().1 == dep_flag_expected
+                    );
+                    if expected_num_cmds == 3 {
+                        assert_matches!(
+                            commands.pop_front().unwrap().attributes.as_ref().unwrap(),
+                            Attributes::UpsertWorkflowSearchAttributesCommandAttributes(
+                                UpsertWorkflowSearchAttributesCommandAttributes
+                                { search_attributes: Some(attrs) }
+                            )
+                            if attrs.indexed_fields.get(VERSION_SEARCH_ATTR_KEY).unwrap()
+                              == &[MY_PATCH_ID].as_json_payload().unwrap()
+                        );
+                    }
+                    // The only time the "old" timer should fire is in v2, replaying, without a marker.
+                    let expected_activity_id =
+                        if replaying && marker_type == MarkerType::NoMarker && wf_version == 2 {
+                            "no_change"
+                        } else {
+                            "had_change"
+                        };
+                    assert_matches!(
+                        commands.pop_front().unwrap().attributes.as_ref().unwrap(),
+                        Attributes::ScheduleActivityTaskCommandAttributes(
+                            ScheduleActivityTaskCommandAttributes { activity_id, .. }
+                        )
+                        if activity_id == expected_activity_id
+                    );
+                });
+            });
+        }
 
-        let act = act.unwrap();
-        // Activity is resolved
-        assert_matches!(
-            act.jobs.as_slice(),
-            [WorkflowActivationJob {
-                variant: Some(workflow_activation_job::Variant::ResolveActivity(_))
-            }]
-        );
-
-        wfm.shutdown().await.unwrap();
+        let mut worker = build_fake_sdk(mock_cfg);
+        worker.set_worker_interceptor(aai);
+        worker.register_wf(DEFAULT_WORKFLOW_TYPE, patch_wf!(wf_version));
+        worker.run().await.unwrap();
     }
 
     #[rstest]
@@ -643,21 +642,6 @@ mod tests {
     // history that then suddenly doesn't have the marker.
     #[tokio::test]
     async fn same_change_multiple_spots(#[case] have_marker_in_hist: bool, #[case] replay: bool) {
-        let wfn = WorkflowFunction::new(move |ctx: WfContext| async move {
-            if ctx.patched(MY_PATCH_ID) {
-                ctx.activity(ActivityOptions::default()).await;
-            } else {
-                ctx.timer(ONE_SECOND).await;
-            }
-            ctx.timer(ONE_SECOND).await;
-            if ctx.patched(MY_PATCH_ID) {
-                ctx.activity(ActivityOptions::default()).await;
-            } else {
-                ctx.timer(ONE_SECOND).await;
-            }
-            Ok(().into())
-        });
-
         let mut t = TestHistoryBuilder::default();
         t.add_by_type(EventType::WorkflowExecutionStarted);
         t.add_full_wf_task();
@@ -732,29 +716,29 @@ mod tests {
         t.add_full_wf_task();
         t.add_workflow_execution_completed();
 
-        let mut wfm = if replay {
-            let mut wfm = ManagedWFFunc::new_from_update(
-                t.get_full_history_info().unwrap().into(),
-                wfn,
-                vec![],
-            );
-            // Errors would appear as nondeterminism problems
-            wfm.process_all_activations().await.unwrap();
-            wfm
+        let mock_cfg = if replay {
+            MockPollCfg::from_resps(t, [ResponseType::AllHistory])
         } else {
-            let mut wfm =
-                ManagedWFFunc::new_from_update(t.get_history_info(1).unwrap().into(), wfn, vec![]);
-            wfm.process_all_activations().await.unwrap();
-            for i in 2..=4 {
-                wfm.new_history(t.get_history_info(i).unwrap().into())
-                    .await
-                    .unwrap();
-                wfm.process_all_activations().await.unwrap();
-            }
-            wfm
+            MockPollCfg::from_hist_builder(t)
         };
 
-        wfm.shutdown().await.unwrap();
+        // Errors would appear as nondeterminism problems, so just run it.
+        let mut worker = build_fake_sdk(mock_cfg);
+        worker.register_wf(DEFAULT_WORKFLOW_TYPE, move |ctx: WfContext| async move {
+            if ctx.patched(MY_PATCH_ID) {
+                ctx.activity(ActivityOptions::default()).await;
+            } else {
+                ctx.timer(ONE_SECOND).await;
+            }
+            ctx.timer(ONE_SECOND).await;
+            if ctx.patched(MY_PATCH_ID) {
+                ctx.activity(ActivityOptions::default()).await;
+            } else {
+                ctx.timer(ONE_SECOND).await;
+            }
+            Ok(().into())
+        });
+        worker.run().await.unwrap();
     }
 
     const SIZE_OVERFLOW_PATCH_AMOUNT: usize = 180;
@@ -786,45 +770,44 @@ mod tests {
         }
         t.add_workflow_execution_completed();
 
-        let mut wfm = ManagedWFFunc::new_from_update(
-            t.get_history_info(1).unwrap().into(),
-            WorkflowFunction::new(move |ctx: WfContext| async move {
-                for i in 1..=num_patches {
-                    let _dontcare = ctx.patched(&format!("patch-{i}"));
-                    ctx.timer(ONE_SECOND).await;
-                }
-                Ok(().into())
-            }),
-            vec![],
-        );
-        // Iterate through all activations/responses except the final one with complete workflow
-        for i in 2..=num_patches + 1 {
-            wfm.get_next_activation().await.unwrap();
-            let cmds = wfm.get_server_commands();
-            wfm.new_history(t.get_history_info(i).unwrap().into())
-                .await
-                .unwrap();
-            if i > SIZE_OVERFLOW_PATCH_AMOUNT {
-                assert_eq!(2, cmds.commands.len());
-                assert_matches!(cmds.commands[1].command_type(), CommandType::StartTimer);
-                continue;
+        let mut mock_cfg = MockPollCfg::from_hist_builder(t);
+        mock_cfg.completion_asserts_from_expectations(|mut asserts| {
+            // Iterate through all activations/responses except the final one with complete workflow
+            for i in 2..=num_patches + 1 {
+                asserts.then(move |wft| {
+                    let cmds = &wft.commands;
+                    if i > SIZE_OVERFLOW_PATCH_AMOUNT {
+                        assert_eq!(2, cmds.len());
+                        assert_matches!(cmds[1].command_type(), CommandType::StartTimer);
+                    } else {
+                        assert_eq!(3, cmds.len());
+                        let attrs = assert_matches!(
+                            cmds[1].attributes.as_ref().unwrap(),
+                            Attributes::UpsertWorkflowSearchAttributesCommandAttributes(
+                                UpsertWorkflowSearchAttributesCommandAttributes
+                                { search_attributes: Some(attrs) }
+                            ) => attrs
+                        );
+                        let expected_patches: HashSet<String, _> =
+                            (1..i).map(|i| format!("patch-{i}")).collect();
+                        let deserialized = HashSet::<String, RandomState>::from_json_payload(
+                            attrs.indexed_fields.get(VERSION_SEARCH_ATTR_KEY).unwrap(),
+                        )
+                        .unwrap();
+                        assert_eq!(deserialized, expected_patches);
+                    }
+                });
             }
-            assert_eq!(3, cmds.commands.len());
-            let attrs = assert_matches!(
-                cmds.commands[1].attributes.as_ref().unwrap(),
-                Attributes::UpsertWorkflowSearchAttributesCommandAttributes(
-                    UpsertWorkflowSearchAttributesCommandAttributes{ search_attributes: Some(attrs) }
-                )
-                  => attrs
-            );
-            let expected_patches: HashSet<String, _> =
-                (1..i).map(|i| format!("patch-{i}")).collect();
-            let deserialized = HashSet::<String, RandomState>::from_json_payload(
-                attrs.indexed_fields.get(VERSION_SEARCH_ATTR_KEY).unwrap(),
-            )
-            .unwrap();
-            assert_eq!(deserialized, expected_patches);
-        }
-        wfm.shutdown().await.unwrap();
+        });
+
+        let mut worker = build_fake_sdk(mock_cfg);
+        worker.register_wf(DEFAULT_WORKFLOW_TYPE, move |ctx: WfContext| async move {
+            for i in 1..=num_patches {
+                let _dontcare = ctx.patched(&format!("patch-{i}"));
+                ctx.timer(ONE_SECOND).await;
+            }
+            Ok(().into())
+        });
+        worker.run().await.unwrap();
     }
 }

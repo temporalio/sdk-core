@@ -116,12 +116,14 @@ impl Cancellable for CancelWorkflowMachine {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{test_help::canned_histories, worker::workflow::ManagedWFFunc};
+    use crate::test_help::{build_fake_sdk, canned_histories, MockPollCfg};
     use std::time::Duration;
-    use temporal_sdk::{WfContext, WfExitValue, WorkflowFunction, WorkflowResult};
-    use temporal_sdk_core_protos::coresdk::workflow_activation::{
-        workflow_activation_job, WorkflowActivationJob,
+    use temporal_sdk::{WfContext, WfExitValue, WorkflowResult};
+    use temporal_sdk_core_protos::{
+        coresdk::workflow_activation::{workflow_activation_job, WorkflowActivationJob},
+        DEFAULT_WORKFLOW_TYPE,
     };
+    use temporal_sdk_core_test_utils::interceptors::ActivationAssertionsInterceptor;
 
     async fn wf_with_timer(ctx: WfContext) -> WorkflowResult<()> {
         ctx.timer(Duration::from_millis(500)).await;
@@ -130,36 +132,50 @@ mod tests {
 
     #[tokio::test]
     async fn wf_completing_with_cancelled() {
-        let func = WorkflowFunction::new(wf_with_timer);
         let t = canned_histories::timer_wf_cancel_req_cancelled("1");
-        let mut wfm = ManagedWFFunc::new(t, func, vec![]);
-        wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().commands;
-        assert_eq!(commands.len(), 1);
-        assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
 
-        let act = wfm.get_next_activation().await.unwrap();
-        assert_matches!(
-            act.jobs.as_slice(),
-            [
-                WorkflowActivationJob {
-                    variant: Some(workflow_activation_job::Variant::FireTimer(_)),
-                },
-                WorkflowActivationJob {
-                    variant: Some(workflow_activation_job::Variant::CancelWorkflow(_)),
-                }
-            ]
-        );
-        let commands = wfm.get_server_commands().commands;
-        assert_eq!(commands.len(), 1);
-        assert_eq!(
-            commands[0].command_type,
-            CommandType::CancelWorkflowExecution as i32
-        );
+        let mut aai = ActivationAssertionsInterceptor::default();
+        aai.then(|a| {
+            assert_matches!(
+                a.jobs.as_slice(),
+                [WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::StartWorkflow(_)),
+                }]
+            )
+        });
+        aai.then(|a| {
+            assert_matches!(
+                a.jobs.as_slice(),
+                [
+                    WorkflowActivationJob {
+                        variant: Some(workflow_activation_job::Variant::FireTimer(_)),
+                    },
+                    WorkflowActivationJob {
+                        variant: Some(workflow_activation_job::Variant::CancelWorkflow(_)),
+                    }
+                ]
+            );
+        });
 
-        assert!(wfm.get_next_activation().await.unwrap().jobs.is_empty());
-        let commands = wfm.get_server_commands().commands;
-        assert_eq!(commands.len(), 0);
-        wfm.shutdown().await.unwrap();
+        let mut mock_cfg = MockPollCfg::from_hist_builder(t);
+        mock_cfg.completion_asserts_from_expectations(|mut asserts| {
+            asserts
+                .then(|wft| {
+                    assert_eq!(wft.commands.len(), 1);
+                    assert_matches!(wft.commands[0].command_type(), CommandType::StartTimer);
+                })
+                .then(move |wft| {
+                    assert_eq!(wft.commands.len(), 1);
+                    assert_matches!(
+                        wft.commands[0].command_type(),
+                        CommandType::CancelWorkflowExecution
+                    );
+                });
+        });
+
+        let mut worker = build_fake_sdk(mock_cfg);
+        worker.register_wf(DEFAULT_WORKFLOW_TYPE, wf_with_timer);
+        worker.set_worker_interceptor(aai);
+        worker.run().await.unwrap();
     }
 }

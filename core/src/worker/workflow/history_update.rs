@@ -164,6 +164,7 @@ impl HistoryPaginator {
             legacy_query: wft.legacy_query,
             query_requests: wft.query_requests,
             update,
+            messages: wft.messages,
         };
         Ok((paginator, prepared))
     }

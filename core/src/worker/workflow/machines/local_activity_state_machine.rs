@@ -13,6 +13,7 @@ use crate::{
         LocalActivityExecutionResult,
     },
 };
+use itertools::Itertools;
 use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
 use std::{
     convert::TryFrom,
@@ -30,7 +31,7 @@ use temporal_sdk_core_protos::{
         workflow_commands::ActivityCancellationType,
     },
     temporal::api::{
-        command::v1::{Command, RecordMarkerCommandAttributes},
+        command::v1::{command, RecordMarkerCommandAttributes},
         enums::v1::{CommandType, EventType, RetryState},
         failure::v1::{failure::FailureInfo, Failure},
         history::v1::HistoryEvent,
@@ -617,10 +618,8 @@ impl Cancellable for LocalActivityMachine {
         let mach_resps = cmds
             .into_iter()
             .map(|mc| self.adapt_response(mc, None))
-            .collect::<Result<Vec<_>, _>>()?
-            .into_iter()
-            .flatten()
-            .collect();
+            .flatten_ok()
+            .try_collect()?;
         Ok(mach_resps)
     }
 
@@ -781,10 +780,9 @@ impl WFMachinesAdapter for LocalActivityMachine {
                         header: None,
                         failure: maybe_failure,
                     };
-                    responses.push(MachineResponse::IssueNewCommand(Command {
-                        command_type: CommandType::RecordMarker as i32,
-                        attributes: Some(marker_data.into()),
-                    }));
+                    responses.push(MachineResponse::IssueNewCommand(
+                        command::Attributes::RecordMarkerCommandAttributes(marker_data).into(),
+                    ));
                 }
                 Ok(responses)
             }
@@ -879,27 +877,40 @@ fn verify_marker_data_matches(
 mod tests {
     use super::*;
     use crate::{
-        replay::TestHistoryBuilder, test_help::canned_histories, worker::workflow::ManagedWFFunc,
+        replay::TestHistoryBuilder,
+        test_help::{build_fake_sdk, canned_histories, MockPollCfg, ResponseType},
     };
+    use anyhow::anyhow;
     use rstest::rstest;
-    use std::time::Duration;
+    use std::{
+        sync::atomic::{AtomicI64, Ordering},
+        time::Duration,
+    };
     use temporal_sdk::{
-        CancellableFuture, LocalActivityOptions, WfContext, WorkflowFunction, WorkflowResult,
+        ActContext, ActivityCancelledError, CancellableFuture, LocalActivityOptions, WfContext,
+        WorkflowResult,
     };
     use temporal_sdk_core_protos::{
         coresdk::{
-            activity_result::ActivityExecutionResult,
             workflow_activation::{workflow_activation_job, WorkflowActivationJob},
+            AsJsonPayloadExt,
         },
         temporal::api::{
-            command::v1::command, enums::v1::WorkflowTaskFailedCause, failure::v1::Failure,
+            common::v1::RetryPolicy, enums::v1::WorkflowTaskFailedCause, failure::v1::Failure,
         },
-        DEFAULT_ACTIVITY_TYPE,
+        DEFAULT_ACTIVITY_TYPE, DEFAULT_WORKFLOW_TYPE,
     };
+    use temporal_sdk_core_test_utils::interceptors::ActivationAssertionsInterceptor;
+    use tokio_util::sync::CancellationToken;
 
     async fn la_wf(ctx: WfContext) -> WorkflowResult<()> {
         ctx.local_activity(LocalActivityOptions {
             activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
+            input: ().as_json_payload().unwrap(),
+            retry_policy: RetryPolicy {
+                maximum_attempts: 1,
+                ..Default::default()
+            },
             ..Default::default()
         })
         .await;
@@ -913,7 +924,6 @@ mod tests {
     #[case::replay_fail(true, false)]
     #[tokio::test]
     async fn one_la_success(#[case] replay: bool, #[case] completes_ok: bool) {
-        let func = WorkflowFunction::new(la_wf);
         let activity_id = "1";
         let mut t = TestHistoryBuilder::default();
         t.add_by_type(EventType::WorkflowExecutionStarted);
@@ -927,202 +937,95 @@ mod tests {
                 Failure::application_failure("I failed".to_string(), false),
             );
         }
-        t.add_workflow_execution_completed();
+        t.add_workflow_task_scheduled_and_started();
 
-        let histinfo = if replay {
-            t.get_full_history_info().unwrap().into()
+        let mut mock_cfg = if replay {
+            MockPollCfg::from_resps(t, [ResponseType::AllHistory])
         } else {
-            t.get_history_info(1).unwrap().into()
+            MockPollCfg::from_hist_builder(t)
         };
-        let mut wfm = ManagedWFFunc::new_from_update(histinfo, func, vec![]);
+        mock_cfg.completion_asserts_from_expectations(|mut asserts| {
+            asserts.then(move |wft| {
+                let commands = &wft.commands;
+                if !replay {
+                    assert_eq!(commands.len(), 2);
+                    assert_eq!(commands[0].command_type(), CommandType::RecordMarker);
+                    if completes_ok {
+                        assert_matches!(
+                            commands[0].attributes.as_ref().unwrap(),
+                            command::Attributes::RecordMarkerCommandAttributes(
+                                RecordMarkerCommandAttributes { failure: None, .. }
+                            )
+                        );
+                    } else {
+                        assert_matches!(
+                            commands[0].attributes.as_ref().unwrap(),
+                            command::Attributes::RecordMarkerCommandAttributes(
+                                RecordMarkerCommandAttributes {
+                                    failure: Some(_),
+                                    ..
+                                }
+                            )
+                        );
+                    }
+                    assert_eq!(
+                        commands[1].command_type(),
+                        CommandType::CompleteWorkflowExecution
+                    );
+                } else {
+                    assert_eq!(commands.len(), 1);
+                    assert_matches!(
+                        commands[0].command_type(),
+                        CommandType::CompleteWorkflowExecution
+                    );
+                }
+            });
+        });
 
-        // First activation will have no server commands. Activity will be put into the activity
-        // queue locally
-        wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().commands;
-        assert_eq!(commands.len(), 0);
-
-        let ready_to_execute_las = wfm.drain_queued_local_activities();
-        if !replay {
-            assert_eq!(ready_to_execute_las.len(), 1);
-        } else {
-            assert_eq!(ready_to_execute_las.len(), 0);
-        }
-
-        if !replay {
-            if completes_ok {
-                wfm.complete_local_activity(1, ActivityExecutionResult::ok(b"hi".into()))
-                    .unwrap();
-            } else {
-                wfm.complete_local_activity(
-                    1,
-                    ActivityExecutionResult::fail(Failure {
-                        message: "I failed".to_string(),
-                        ..Default::default()
-                    }),
-                )
-                .unwrap();
-            }
-        }
-
-        // Now the next activation will unblock the local activity
-        wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().commands;
-        if replay {
-            assert_eq!(commands.len(), 1);
-            assert_eq!(
-                commands[0].command_type,
-                CommandType::CompleteWorkflowExecution as i32
-            );
-        } else {
-            assert_eq!(commands.len(), 2);
-            assert_eq!(commands[0].command_type, CommandType::RecordMarker as i32);
-            if completes_ok {
-                assert_matches!(
-                    commands[0].attributes.as_ref().unwrap(),
-                    command::Attributes::RecordMarkerCommandAttributes(
-                        RecordMarkerCommandAttributes { failure: None, .. }
-                    )
-                );
-            } else {
-                assert_matches!(
-                    commands[0].attributes.as_ref().unwrap(),
-                    command::Attributes::RecordMarkerCommandAttributes(
-                        RecordMarkerCommandAttributes {
-                            failure: Some(_),
-                            ..
-                        }
-                    )
-                );
-            }
-            assert_eq!(
-                commands[1].command_type,
-                CommandType::CompleteWorkflowExecution as i32
-            );
-        }
-
-        if !replay {
-            wfm.new_history(t.get_full_history_info().unwrap().into())
-                .await
-                .unwrap();
-        }
-        assert_eq!(wfm.drain_queued_local_activities().len(), 0);
-        assert_eq!(wfm.get_next_activation().await.unwrap().jobs.len(), 0);
-        let commands = wfm.get_server_commands().commands;
-        assert_eq!(commands.len(), 0);
-
-        wfm.shutdown().await.unwrap();
+        let mut worker = build_fake_sdk(mock_cfg);
+        worker.register_wf(DEFAULT_WORKFLOW_TYPE, la_wf);
+        worker.register_activity(
+            DEFAULT_ACTIVITY_TYPE,
+            move |_ctx: ActContext, _: ()| async move {
+                if replay {
+                    panic!("Should not be invoked on replay");
+                }
+                if completes_ok {
+                    Ok("hi")
+                } else {
+                    Err(anyhow!("Oh no I failed!"))
+                }
+            },
+        );
+        worker.run().await.unwrap();
     }
 
     async fn two_la_wf(ctx: WfContext) -> WorkflowResult<()> {
         ctx.local_activity(LocalActivityOptions {
             activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
+            input: ().as_json_payload().unwrap(),
             ..Default::default()
         })
         .await;
         ctx.local_activity(LocalActivityOptions {
             activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
+            input: ().as_json_payload().unwrap(),
             ..Default::default()
         })
         .await;
         Ok(().into())
     }
 
-    #[rstest]
-    #[case::incremental(false)]
-    #[case::replay(true)]
-    #[tokio::test]
-    async fn two_sequential_las(#[case] replay: bool) {
-        let func = WorkflowFunction::new(two_la_wf);
-        let t = canned_histories::two_local_activities_one_wft(false);
-        let histinfo = if replay {
-            t.get_full_history_info().unwrap().into()
-        } else {
-            t.get_history_info(1).unwrap().into()
-        };
-        let mut wfm = ManagedWFFunc::new_from_update(histinfo, func, vec![]);
-
-        // First activation will have no server commands. Activity will be put into the activity
-        // queue locally
-        let act = wfm.get_next_activation().await.unwrap();
-        let first_act_ts = act.timestamp.unwrap();
-        let commands = wfm.get_server_commands().commands;
-        assert_eq!(commands.len(), 0);
-        let ready_to_execute_las = wfm.drain_queued_local_activities();
-        let num_queued = usize::from(!replay);
-        assert_eq!(ready_to_execute_las.len(), num_queued);
-
-        if !replay {
-            wfm.complete_local_activity(1, ActivityExecutionResult::ok(b"Resolved".into()))
-                .unwrap();
-        }
-
-        let act = wfm.get_next_activation().await.unwrap();
-        // Verify LAs advance time (they take 1s in this test)
-        assert_eq!(act.timestamp.unwrap().seconds, first_act_ts.seconds + 1);
-        assert_matches!(
-            act.jobs.as_slice(),
-            [WorkflowActivationJob {
-                variant: Some(workflow_activation_job::Variant::ResolveActivity(ra))
-            }] => assert_eq!(ra.seq, 1)
-        );
-        let ready_to_execute_las = wfm.drain_queued_local_activities();
-        if !replay {
-            assert_eq!(ready_to_execute_las.len(), 1);
-        } else {
-            assert_eq!(ready_to_execute_las.len(), 0);
-        }
-
-        if !replay {
-            wfm.complete_local_activity(2, ActivityExecutionResult::ok(b"Resolved".into()))
-                .unwrap();
-        }
-
-        let act = wfm.get_next_activation().await.unwrap();
-        assert_eq!(act.timestamp.unwrap().seconds, first_act_ts.seconds + 2);
-        assert_matches!(
-            act.jobs.as_slice(),
-            [WorkflowActivationJob {
-                variant: Some(workflow_activation_job::Variant::ResolveActivity(ra))
-            }] => assert_eq!(ra.seq, 2)
-        );
-        let commands = wfm.get_server_commands().commands;
-        if replay {
-            assert_eq!(commands.len(), 1);
-            assert_eq!(
-                commands[0].command_type,
-                CommandType::CompleteWorkflowExecution as i32
-            );
-        } else {
-            assert_eq!(commands.len(), 3);
-            assert_eq!(commands[0].command_type, CommandType::RecordMarker as i32);
-            assert_eq!(commands[1].command_type, CommandType::RecordMarker as i32);
-            assert_eq!(
-                commands[2].command_type,
-                CommandType::CompleteWorkflowExecution as i32
-            );
-        }
-
-        if !replay {
-            wfm.new_history(t.get_full_history_info().unwrap().into())
-                .await
-                .unwrap();
-        }
-        assert_eq!(wfm.get_next_activation().await.unwrap().jobs.len(), 0);
-        let commands = wfm.get_server_commands().commands;
-        assert_eq!(commands.len(), 0);
-
-        wfm.shutdown().await.unwrap();
-    }
-
     async fn two_la_wf_parallel(ctx: WfContext) -> WorkflowResult<()> {
         tokio::join!(
             ctx.local_activity(LocalActivityOptions {
                 activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
+                input: ().as_json_payload().unwrap(),
                 ..Default::default()
             }),
             ctx.local_activity(LocalActivityOptions {
                 activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
+                input: ().as_json_payload().unwrap(),
                 ..Default::default()
             })
         );
@@ -1130,91 +1033,112 @@ mod tests {
     }
 
     #[rstest]
-    #[case::incremental(false)]
-    #[case::replay(true)]
     #[tokio::test]
-    async fn two_parallel_las(#[case] replay: bool) {
-        let func = WorkflowFunction::new(two_la_wf_parallel);
-        let t = canned_histories::two_local_activities_one_wft(true);
-        let histinfo = if replay {
-            t.get_full_history_info().unwrap().into()
+    async fn two_sequential_las(
+        #[values(true, false)] replay: bool,
+        #[values(true, false)] parallel: bool,
+    ) {
+        let t = canned_histories::two_local_activities_one_wft(parallel);
+        let mut mock_cfg = if replay {
+            MockPollCfg::from_resps(t, [ResponseType::AllHistory])
         } else {
-            t.get_history_info(1).unwrap().into()
+            MockPollCfg::from_hist_builder(t)
         };
-        let mut wfm = ManagedWFFunc::new_from_update(histinfo, func, vec![]);
 
-        // First activation will have no server commands. Activity(ies) will be put into the queue
-        // for execution
-        let act = wfm.get_next_activation().await.unwrap();
-        let first_act_ts = act.timestamp.unwrap();
-        let commands = wfm.get_server_commands().commands;
-        assert_eq!(commands.len(), 0);
-        let ready_to_execute_las = wfm.drain_queued_local_activities();
-        let num_queued = if !replay { 2 } else { 0 };
-        assert_eq!(ready_to_execute_las.len(), num_queued);
-
-        if !replay {
-            wfm.complete_local_activity(1, ActivityExecutionResult::ok(b"Resolved".into()))
-                .unwrap();
-            wfm.complete_local_activity(2, ActivityExecutionResult::ok(b"Resolved".into()))
-                .unwrap();
+        let mut aai = ActivationAssertionsInterceptor::default();
+        let first_act_ts_seconds: &'static _ = Box::leak(Box::new(AtomicI64::new(-1)));
+        aai.then(|a| {
+            first_act_ts_seconds.store(a.timestamp.as_ref().unwrap().seconds, Ordering::Relaxed)
+        });
+        // Verify LAs advance time (they take 1s as defined in the canned history)
+        aai.then(move |a| {
+            if !parallel {
+                assert_matches!(
+                    a.jobs.as_slice(),
+                    [WorkflowActivationJob {
+                        variant: Some(workflow_activation_job::Variant::ResolveActivity(ra))
+                    }] => assert_eq!(ra.seq, 1)
+                );
+            } else {
+                assert_matches!(
+                    a.jobs.as_slice(),
+                    [WorkflowActivationJob {
+                        variant: Some(workflow_activation_job::Variant::ResolveActivity(ra))
+                     }, WorkflowActivationJob {
+                        variant: Some(workflow_activation_job::Variant::ResolveActivity(ra2))
+                    }] => {assert_eq!(ra.seq, 1); assert_eq!(ra2.seq, 2)}
+                );
+            }
+            if replay {
+                assert!(
+                    a.timestamp.as_ref().unwrap().seconds
+                        > first_act_ts_seconds.load(Ordering::Relaxed)
+                )
+            }
+        });
+        if !parallel {
+            aai.then(move |a| {
+                assert_matches!(
+                    a.jobs.as_slice(),
+                    [WorkflowActivationJob {
+                        variant: Some(workflow_activation_job::Variant::ResolveActivity(ra))
+                    }] => assert_eq!(ra.seq, 2)
+                );
+                if replay {
+                    assert!(
+                        a.timestamp.as_ref().unwrap().seconds
+                            >= first_act_ts_seconds.load(Ordering::Relaxed) + 2
+                    )
+                }
+            });
         }
 
-        let act = wfm.get_next_activation().await.unwrap();
-        assert_eq!(act.timestamp.unwrap().seconds, first_act_ts.seconds + 1);
-        assert_matches!(
-            act.jobs.as_slice(),
-            [WorkflowActivationJob {
-                variant: Some(workflow_activation_job::Variant::ResolveActivity(ra))
-            },
-            WorkflowActivationJob {
-                variant: Some(workflow_activation_job::Variant::ResolveActivity(ra2))
-            }] => {assert_eq!(ra.seq, 1); assert_eq!(ra2.seq, 2)}
-        );
-        let ready_to_execute_las = wfm.drain_queued_local_activities();
-        assert_eq!(ready_to_execute_las.len(), 0);
+        mock_cfg.completion_asserts_from_expectations(|mut asserts| {
+            asserts.then(move |wft| {
+                let commands = &wft.commands;
+                if !replay {
+                    assert_eq!(commands.len(), 3);
+                    assert_eq!(commands[0].command_type(), CommandType::RecordMarker);
+                    assert_eq!(commands[1].command_type(), CommandType::RecordMarker);
+                    assert_matches!(
+                        commands[2].command_type(),
+                        CommandType::CompleteWorkflowExecution
+                    );
+                } else {
+                    assert_eq!(commands.len(), 1);
+                    assert_matches!(
+                        commands[0].command_type(),
+                        CommandType::CompleteWorkflowExecution
+                    );
+                }
+            });
+        });
 
-        let commands = wfm.get_server_commands().commands;
-        if replay {
-            assert_eq!(commands.len(), 1);
-            assert_eq!(
-                commands[0].command_type,
-                CommandType::CompleteWorkflowExecution as i32
-            );
+        let mut worker = build_fake_sdk(mock_cfg);
+        worker.set_worker_interceptor(aai);
+        if parallel {
+            worker.register_wf(DEFAULT_WORKFLOW_TYPE, two_la_wf_parallel);
         } else {
-            assert_eq!(commands.len(), 3);
-            assert_eq!(commands[0].command_type, CommandType::RecordMarker as i32);
-            assert_eq!(commands[1].command_type, CommandType::RecordMarker as i32);
-            assert_eq!(
-                commands[2].command_type,
-                CommandType::CompleteWorkflowExecution as i32
-            );
+            worker.register_wf(DEFAULT_WORKFLOW_TYPE, two_la_wf);
         }
-
-        if !replay {
-            wfm.new_history(t.get_full_history_info().unwrap().into())
-                .await
-                .unwrap();
-        }
-        let act = wfm.get_next_activation().await.unwrap();
-        // Still only 1s ahead b/c parallel
-        assert_eq!(act.timestamp.unwrap().seconds, first_act_ts.seconds + 1);
-        assert_eq!(act.jobs.len(), 0);
-        let commands = wfm.get_server_commands().commands;
-        assert_eq!(commands.len(), 0);
-
-        wfm.shutdown().await.unwrap();
+        worker.register_activity(
+            DEFAULT_ACTIVITY_TYPE,
+            move |_ctx: ActContext, _: ()| async move { Ok("Resolved") },
+        );
+        worker.run().await.unwrap();
     }
 
     async fn la_timer_la(ctx: WfContext) -> WorkflowResult<()> {
         ctx.local_activity(LocalActivityOptions {
             activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
+            input: ().as_json_payload().unwrap(),
             ..Default::default()
         })
         .await;
         ctx.timer(Duration::from_secs(5)).await;
         ctx.local_activity(LocalActivityOptions {
             activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
+            input: ().as_json_payload().unwrap(),
             ..Default::default()
         })
         .await;
@@ -1226,98 +1150,81 @@ mod tests {
     #[case::replay(true)]
     #[tokio::test]
     async fn las_separated_by_timer(#[case] replay: bool) {
-        let func = WorkflowFunction::new(la_timer_la);
-        let t = canned_histories::two_local_activities_separated_by_timer();
-        let histinfo = if replay {
-            t.get_full_history_info().unwrap().into()
+        let mut t = TestHistoryBuilder::default();
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        t.add_full_wf_task();
+        t.add_local_activity_result_marker(1, "1", b"hi".into());
+        let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
+        t.add_timer_fired(timer_started_event_id, "1".to_string());
+        t.add_full_wf_task();
+        t.add_local_activity_result_marker(2, "2", b"hi2".into());
+        t.add_workflow_task_scheduled_and_started();
+        let mut mock_cfg = if replay {
+            MockPollCfg::from_resps(t, [ResponseType::AllHistory])
         } else {
-            t.get_history_info(1).unwrap().into()
+            MockPollCfg::from_hist_builder(t)
         };
-        let mut wfm = ManagedWFFunc::new_from_update(histinfo, func, vec![]);
 
-        wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().commands;
-        assert_eq!(commands.len(), 0);
-        let ready_to_execute_las = wfm.drain_queued_local_activities();
-        let num_queued = usize::from(!replay);
-        assert_eq!(ready_to_execute_las.len(), num_queued);
+        let mut aai = ActivationAssertionsInterceptor::default();
+        aai.skip_one()
+            .then(|a| {
+                assert_matches!(
+                    a.jobs.as_slice(),
+                    [WorkflowActivationJob {
+                        variant: Some(workflow_activation_job::Variant::ResolveActivity(ra))
+                    }] => assert_eq!(ra.seq, 1)
+                );
+            })
+            .then(|a| {
+                assert_matches!(
+                    a.jobs.as_slice(),
+                    [WorkflowActivationJob {
+                        variant: Some(workflow_activation_job::Variant::FireTimer(_))
+                    }]
+                );
+            });
 
-        if !replay {
-            wfm.complete_local_activity(1, ActivityExecutionResult::ok(b"Resolved".into()))
-                .unwrap();
-        }
+        mock_cfg.completion_asserts_from_expectations(|mut asserts| {
+            if replay {
+                asserts.then(|wft| {
+                    assert_eq!(wft.commands.len(), 1);
+                    assert_eq!(
+                        wft.commands[0].command_type,
+                        CommandType::CompleteWorkflowExecution as i32
+                    );
+                });
+            } else {
+                asserts
+                    .then(|wft| {
+                        let commands = &wft.commands;
+                        assert_eq!(commands.len(), 2);
+                        assert_eq!(commands[0].command_type, CommandType::RecordMarker as i32);
+                        assert_eq!(commands[1].command_type, CommandType::StartTimer as i32);
+                    })
+                    .then(|wft| {
+                        let commands = &wft.commands;
+                        assert_eq!(commands.len(), 2);
+                        assert_eq!(commands[0].command_type, CommandType::RecordMarker as i32);
+                        assert_eq!(
+                            commands[1].command_type,
+                            CommandType::CompleteWorkflowExecution as i32
+                        );
+                    });
+            }
+        });
 
-        let act = wfm.get_next_activation().await.unwrap();
-        assert_matches!(
-            act.jobs.as_slice(),
-            [WorkflowActivationJob {
-                variant: Some(workflow_activation_job::Variant::ResolveActivity(ra))
-            }] => assert_eq!(ra.seq, 1)
+        let mut worker = build_fake_sdk(mock_cfg);
+        worker.set_worker_interceptor(aai);
+        worker.register_wf(DEFAULT_WORKFLOW_TYPE, la_timer_la);
+        worker.register_activity(
+            DEFAULT_ACTIVITY_TYPE,
+            move |_ctx: ActContext, _: ()| async move { Ok("Resolved") },
         );
-        let ready_to_execute_las = wfm.drain_queued_local_activities();
-        assert_eq!(ready_to_execute_las.len(), 0);
-
-        let commands = wfm.get_server_commands().commands;
-        if replay {
-            assert_eq!(commands.len(), 1);
-            assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
-        } else {
-            assert_eq!(commands.len(), 2);
-            assert_eq!(commands[0].command_type, CommandType::RecordMarker as i32);
-            assert_eq!(commands[1].command_type, CommandType::StartTimer as i32);
-        }
-
-        let act = if !replay {
-            wfm.new_history(t.get_history_info(2).unwrap().into())
-                .await
-                .unwrap()
-        } else {
-            wfm.get_next_activation().await.unwrap()
-        };
-        assert_matches!(
-            act.jobs.as_slice(),
-            [WorkflowActivationJob {
-                variant: Some(workflow_activation_job::Variant::FireTimer(_))
-            }]
-        );
-        let ready_to_execute_las = wfm.drain_queued_local_activities();
-        let num_queued = usize::from(!replay);
-        assert_eq!(ready_to_execute_las.len(), num_queued);
-        if !replay {
-            wfm.complete_local_activity(2, ActivityExecutionResult::ok(b"Resolved".into()))
-                .unwrap();
-        }
-
-        let act = wfm.get_next_activation().await.unwrap();
-        assert_matches!(
-            act.jobs.as_slice(),
-            [WorkflowActivationJob {
-                variant: Some(workflow_activation_job::Variant::ResolveActivity(ra))
-            }] => assert_eq!(ra.seq, 2)
-        );
-
-        let commands = wfm.get_server_commands().commands;
-        if replay {
-            assert_eq!(commands.len(), 1);
-            assert_eq!(
-                commands[0].command_type,
-                CommandType::CompleteWorkflowExecution as i32
-            );
-        } else {
-            assert_eq!(commands.len(), 2);
-            assert_eq!(commands[0].command_type, CommandType::RecordMarker as i32);
-            assert_eq!(
-                commands[1].command_type,
-                CommandType::CompleteWorkflowExecution as i32
-            );
-        }
-
-        wfm.shutdown().await.unwrap();
+        worker.run().await.unwrap();
     }
 
     #[tokio::test]
     async fn one_la_heartbeating_wft_failure_still_executes() {
-        let func = WorkflowFunction::new(la_wf);
         let mut t = TestHistoryBuilder::default();
         t.add_by_type(EventType::WorkflowExecutionStarted);
         // Heartbeats
@@ -1330,21 +1237,26 @@ mod tests {
         );
         t.add_workflow_task_scheduled_and_started();
 
-        let histinfo = t.get_full_history_info().unwrap().into();
-        let mut wfm = ManagedWFFunc::new_from_update(histinfo, func, vec![]);
+        let mut mock_cfg = MockPollCfg::from_hist_builder(t);
+        mock_cfg.completion_asserts_from_expectations(|mut asserts| {
+            asserts.then(move |wft| {
+                assert_eq!(wft.commands.len(), 2);
+                assert_eq!(wft.commands[0].command_type(), CommandType::RecordMarker);
+                assert_matches!(
+                    wft.commands[1].command_type(),
+                    CommandType::CompleteWorkflowExecution
+                );
+            });
+        });
 
-        // First activation will request to run the LA since the heartbeat & wft failure are skipped
-        // over
-        wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().commands;
-        assert_eq!(commands.len(), 0);
-        let ready_to_execute_las = wfm.drain_queued_local_activities();
-        assert_eq!(ready_to_execute_las.len(), 1);
-        // We can happily complete it now
-        wfm.complete_local_activity(1, ActivityExecutionResult::ok(b"hi".into()))
-            .unwrap();
-
-        wfm.shutdown().await.unwrap();
+        let mut worker = build_fake_sdk(mock_cfg);
+        dbg!("Past thing");
+        worker.register_wf(DEFAULT_WORKFLOW_TYPE, la_wf);
+        worker.register_activity(
+            DEFAULT_ACTIVITY_TYPE,
+            move |_ctx: ActContext, _: ()| async move { Ok("Resolved") },
+        );
+        worker.run().await.unwrap();
     }
 
     /// This test verifies something that technically shouldn't really be possible but is worth
@@ -1352,7 +1264,6 @@ mod tests {
     /// chunk comes back with it failing? We should fail with a mismatch.
     #[tokio::test]
     async fn exec_passes_but_history_has_fail() {
-        let func = WorkflowFunction::new(la_wf);
         let mut t = TestHistoryBuilder::default();
         t.add_by_type(EventType::WorkflowExecutionStarted);
         t.add_full_wf_task();
@@ -1361,36 +1272,30 @@ mod tests {
             "1",
             Failure::application_failure("I failed".to_string(), false),
         );
-        t.add_workflow_execution_completed();
+        t.add_workflow_task_scheduled_and_started();
 
-        let histinfo = t.get_history_info(1).unwrap().into();
-        let mut wfm = ManagedWFFunc::new_from_update(histinfo, func, vec![]);
+        let mut mock_cfg = MockPollCfg::from_hist_builder(t);
+        // We expect to see a nondeterminism failure (after we respond with record marker, and then
+        // apply the failed marker from history).
+        mock_cfg.num_expected_fails = 1;
+        mock_cfg.completion_asserts_from_expectations(|mut asserts| {
+            asserts.then(|wft| {
+                assert_eq!(wft.commands.len(), 2);
+                assert_eq!(wft.commands[0].command_type(), CommandType::RecordMarker);
+                assert_matches!(
+                    wft.commands[1].command_type(),
+                    CommandType::CompleteWorkflowExecution
+                );
+            });
+        });
 
-        wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().commands;
-        assert_eq!(commands.len(), 0);
-        let ready_to_execute_las = wfm.drain_queued_local_activities();
-        assert_eq!(ready_to_execute_las.len(), 1);
-        // Completes OK
-        wfm.complete_local_activity(1, ActivityExecutionResult::ok(b"hi".into()))
-            .unwrap();
-
-        // next activation unblocks LA
-        wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().commands;
-        assert_eq!(commands.len(), 2);
-        assert_eq!(commands[0].command_type, CommandType::RecordMarker as i32);
-        assert_eq!(
-            commands[1].command_type,
-            CommandType::CompleteWorkflowExecution as i32
+        let mut worker = build_fake_sdk(mock_cfg);
+        worker.register_wf(DEFAULT_WORKFLOW_TYPE, la_wf);
+        worker.register_activity(
+            DEFAULT_ACTIVITY_TYPE,
+            move |_ctx: ActContext, _: ()| async move { Ok("Resolved") },
         );
-
-        let err = wfm
-            .new_history(t.get_full_history_info().unwrap().into())
-            .await
-            .unwrap_err();
-        assert!(err.to_string().contains("Nondeterminism"));
-        wfm.shutdown().await.unwrap();
+        worker.run().await.unwrap();
     }
 
     #[rstest]
@@ -1403,7 +1308,26 @@ mod tests {
         )]
         cancel_type: ActivityCancellationType,
     ) {
-        let func = WorkflowFunction::new(move |ctx| async move {
+        let mut t = TestHistoryBuilder::default();
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        t.add_full_wf_task();
+        t.add_workflow_execution_completed();
+
+        let mut mock_cfg = MockPollCfg::from_hist_builder(t);
+        mock_cfg.completion_asserts_from_expectations(|mut asserts| {
+            asserts.then(|wft| {
+                assert_eq!(wft.commands.len(), 2);
+                // We record the cancel marker
+                assert_eq!(wft.commands[0].command_type(), CommandType::RecordMarker);
+                assert_matches!(
+                    wft.commands[1].command_type(),
+                    CommandType::CompleteWorkflowExecution
+                );
+            });
+        });
+
+        let mut worker = build_fake_sdk(mock_cfg);
+        worker.register_wf(DEFAULT_WORKFLOW_TYPE, move |ctx: WfContext| async move {
             let la = ctx.local_activity(LocalActivityOptions {
                 cancel_type,
                 ..Default::default()
@@ -1412,34 +1336,8 @@ mod tests {
             la.await;
             Ok(().into())
         });
-        let mut t = TestHistoryBuilder::default();
-        t.add_by_type(EventType::WorkflowExecutionStarted);
-        t.add_full_wf_task();
-        t.add_workflow_execution_completed();
-
-        let histinfo = t.get_history_info(1).unwrap().into();
-        let mut wfm = ManagedWFFunc::new_from_update(histinfo, func, vec![]);
-
-        wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().commands;
-        assert_eq!(commands.len(), 1);
-        // We record the cancel marker
-        assert_eq!(commands[0].command_type, CommandType::RecordMarker as i32);
-        // Importantly, the activity shouldn't get executed since it was insta-cancelled
-        let ready_to_execute_las = wfm.drain_queued_local_activities();
-        assert_eq!(ready_to_execute_las.len(), 0);
-
-        // next activation unblocks LA, which is cancelled now.
-        wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().commands;
-        assert_eq!(commands.len(), 2);
-        assert_eq!(commands[0].command_type, CommandType::RecordMarker as i32);
-        assert_eq!(
-            commands[1].command_type,
-            CommandType::CompleteWorkflowExecution as i32
-        );
-
-        wfm.shutdown().await.unwrap();
+        // Explicitly don't register an activity, since we shouldn't need to run one.
+        worker.run().await.unwrap();
     }
 
     #[rstest]
@@ -1455,9 +1353,81 @@ mod tests {
         )]
         cancel_type: ActivityCancellationType,
     ) {
-        let func = WorkflowFunction::new(move |ctx| async move {
+        let mut t = TestHistoryBuilder::default();
+        t.add_wfe_started_with_wft_timeout(Duration::from_millis(100));
+        t.add_full_wf_task();
+        let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
+        t.add_timer_fired(timer_started_event_id, "1".to_string());
+        t.add_full_wf_task();
+        // This extra workflow task serves to prevent looking ahead and pre-resolving during
+        // wait-cancel.
+        // TODO: including this on non wait-cancel seems to cause double-send of
+        //   marker recorded cmd
+        if cancel_type == ActivityCancellationType::WaitCancellationCompleted {
+            t.add_full_wf_task();
+        }
+        if cancel_type != ActivityCancellationType::WaitCancellationCompleted {
+            // With non-wait cancels, the cancel is immediate
+            t.add_local_activity_cancel_marker(1, "1");
+        }
+        let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
+        if cancel_type == ActivityCancellationType::WaitCancellationCompleted {
+            // With wait cancels, the cancel marker is not recorded until activity reports.
+            t.add_local_activity_cancel_marker(1, "1");
+        }
+        t.add_timer_fired(timer_started_event_id, "2".to_string());
+        t.add_full_wf_task();
+        t.add_workflow_execution_completed();
+
+        let mut mock_cfg = if replay {
+            MockPollCfg::from_resps(t, [ResponseType::AllHistory])
+        } else {
+            MockPollCfg::from_hist_builder(t)
+        };
+        let allow_cancel_barr = CancellationToken::new();
+        let allow_cancel_barr_clone = allow_cancel_barr.clone();
+
+        if !replay {
+            mock_cfg.completion_asserts_from_expectations(|mut asserts| {
+                asserts
+                    .then(move |wft| {
+                        assert_eq!(wft.commands.len(), 1);
+                        assert_eq!(wft.commands[0].command_type, CommandType::StartTimer as i32);
+                    })
+                    .then(move |wft| {
+                        let commands = &wft.commands;
+                        if cancel_type == ActivityCancellationType::WaitCancellationCompleted {
+                            assert_eq!(commands.len(), 1);
+                            assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
+                        } else {
+                            // Try-cancel/abandon immediately recordsmarker (when not replaying)
+                            assert_eq!(commands.len(), 2);
+                            assert_eq!(commands[0].command_type, CommandType::RecordMarker as i32);
+                            assert_eq!(commands[1].command_type, CommandType::StartTimer as i32);
+                        }
+                        // Allow the wait-cancel to actually cancel
+                        allow_cancel_barr.cancel();
+                    })
+                    .then(move |wft| {
+                        let commands = &wft.commands;
+                        if cancel_type == ActivityCancellationType::WaitCancellationCompleted {
+                            assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
+                            assert_eq!(commands[1].command_type, CommandType::RecordMarker as i32);
+                        } else {
+                            assert_eq!(
+                                commands[0].command_type,
+                                CommandType::CompleteWorkflowExecution as i32
+                            );
+                        }
+                    });
+            });
+        }
+
+        let mut worker = build_fake_sdk(mock_cfg);
+        worker.register_wf(DEFAULT_WORKFLOW_TYPE, move |ctx: WfContext| async move {
             let la = ctx.local_activity(LocalActivityOptions {
                 cancel_type,
+                input: ().as_json_payload().unwrap(),
                 activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
                 ..Default::default()
             });
@@ -1479,99 +1449,16 @@ mod tests {
             );
             Ok(().into())
         });
-
-        let mut t = TestHistoryBuilder::default();
-        t.add_by_type(EventType::WorkflowExecutionStarted);
-        t.add_full_wf_task();
-        let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
-        t.add_timer_fired(timer_started_event_id, "1".to_string());
-        t.add_full_wf_task();
-        if cancel_type != ActivityCancellationType::WaitCancellationCompleted {
-            // With non-wait cancels, the cancel is immediate
-            t.add_local_activity_cancel_marker(1, "1");
-        }
-        let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
-        if cancel_type == ActivityCancellationType::WaitCancellationCompleted {
-            // With wait cancels, the cancel marker is not recorded until activity reports.
-            t.add_local_activity_cancel_marker(1, "1");
-        }
-        t.add_timer_fired(timer_started_event_id, "2".to_string());
-        t.add_full_wf_task();
-        t.add_workflow_execution_completed();
-
-        let histinfo = if replay {
-            t.get_full_history_info().unwrap().into()
-        } else {
-            t.get_history_info(1).unwrap().into()
-        };
-        let mut wfm = ManagedWFFunc::new_from_update(histinfo, func, vec![]);
-
-        wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().commands;
-        assert_eq!(commands.len(), 1);
-        assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
-        let ready_to_execute_las = wfm.drain_queued_local_activities();
-        let num_queued = usize::from(!replay);
-        assert_eq!(ready_to_execute_las.len(), num_queued);
-
-        // Next activation timer fires and activity cancel will be requested
-        if replay {
-            wfm.get_next_activation().await.unwrap()
-        } else {
-            wfm.new_history(t.get_history_info(2).unwrap().into())
-                .await
-                .unwrap()
-        };
-
-        let commands = wfm.get_server_commands().commands;
-        if cancel_type == ActivityCancellationType::WaitCancellationCompleted || replay {
-            assert_eq!(commands.len(), 1);
-            assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
-        } else {
-            // Try-cancel/abandon will immediately record marker (when not replaying)
-            assert_eq!(commands.len(), 2);
-            assert_eq!(commands[0].command_type, CommandType::RecordMarker as i32);
-            assert_eq!(commands[1].command_type, CommandType::StartTimer as i32);
-        }
-
-        let commands = if replay {
-            wfm.get_next_activation().await.unwrap();
-            wfm.get_server_commands().commands
-        } else {
-            // On non replay, there's an additional activation, because completing with the cancel
-            // wants to wake up the workflow to see if resolving the LA as cancelled did anything.
-            // In this case, it doesn't really, because we just hit the next timer which is also
-            // what would have happened if we woke up with new history -- but it does mean we
-            // generate the commands at this point. This matters b/c we want to make sure the record
-            // marker command is sent as soon as cancel happens.
-            if cancel_type == ActivityCancellationType::WaitCancellationCompleted {
-                wfm.complete_local_activity(1, ActivityExecutionResult::cancel_from_details(None))
-                    .unwrap();
+        worker.register_activity(DEFAULT_ACTIVITY_TYPE, move |ctx: ActContext, _: ()| {
+            let allow_cancel_barr_clone = allow_cancel_barr_clone.clone();
+            async move {
+                if cancel_type == ActivityCancellationType::WaitCancellationCompleted {
+                    ctx.cancelled().await;
+                }
+                allow_cancel_barr_clone.cancelled().await;
+                Result::<(), _>::Err(anyhow!(ActivityCancelledError::default()))
             }
-            wfm.get_next_activation().await.unwrap();
-            let commands = wfm.get_server_commands().commands;
-            assert_eq!(commands.len(), 2);
-            if cancel_type == ActivityCancellationType::WaitCancellationCompleted {
-                assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
-                assert_eq!(commands[1].command_type, CommandType::RecordMarker as i32);
-            } else {
-                assert_eq!(commands[0].command_type, CommandType::RecordMarker as i32);
-                assert_eq!(commands[1].command_type, CommandType::StartTimer as i32);
-            }
-
-            wfm.new_history(t.get_history_info(3).unwrap().into())
-                .await
-                .unwrap();
-            wfm.get_next_activation().await.unwrap();
-            wfm.get_server_commands().commands
-        };
-
-        assert_eq!(commands.len(), 1);
-        assert_eq!(
-            commands[0].command_type,
-            CommandType::CompleteWorkflowExecution as i32
-        );
-
-        wfm.shutdown().await.unwrap();
+        });
+        worker.run().await.unwrap();
     }
 }

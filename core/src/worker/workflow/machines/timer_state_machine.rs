@@ -196,7 +196,7 @@ impl StartCommandRecorded {
         if dat.attrs.seq.to_string() == attrs.timer_id {
             TransitionResult::ok(vec![TimerMachineCommand::Complete], Fired::default())
         } else {
-            TransitionResult::Err(WFMachinesError::Fatal(format!(
+            TransitionResult::Err(WFMachinesError::Nondeterminism(format!(
                 "Timer fired event did not have expected timer id {}, it was {}!",
                 dat.attrs.seq, attrs.timer_id
             )))
@@ -264,154 +264,123 @@ impl Cancellable for TimerMachine {
 mod test {
     use super::*;
     use crate::{
-        replay::TestHistoryBuilder, test_help::canned_histories, worker::workflow::ManagedWFFunc,
+        replay::TestHistoryBuilder,
+        test_help::{build_fake_sdk, canned_histories, MockPollCfg},
     };
-    use rstest::{fixture, rstest};
     use std::{mem::discriminant, time::Duration};
-    use temporal_sdk::{CancellableFuture, WfContext, WorkflowFunction};
+    use temporal_sdk::{CancellableFuture, WfContext, WorkflowResult};
+    use temporal_sdk_core_protos::{
+        temporal::api::{enums::v1::WorkflowTaskFailedCause, failure::v1::Failure},
+        DEFAULT_WORKFLOW_TYPE,
+    };
 
-    #[fixture]
-    fn happy_wfm() -> ManagedWFFunc {
-        /*
-            We have two versions of this test, one which processes the history in two calls, and one
-            which replays all of it in one go. Both versions must produce the same two activations.
-            However, The former will iterate the machines three times and the latter will iterate
-            them twice.
+    async fn happy_timer(ctx: WfContext) -> WorkflowResult<()> {
+        ctx.timer(Duration::from_secs(5)).await;
+        Ok(().into())
+    }
 
-            There are two workflow tasks, so it seems we should iterate two times, but the reason
-            for the extra iteration in the incremental version is that we need to "wait" for the
-            timer to fire. In the all-in-one-go test, the timer is created and resolved in the same
-            task, hence no extra loop.
-        */
-        let func = WorkflowFunction::new(|command_sink: WfContext| async move {
-            command_sink.timer(Duration::from_secs(5)).await;
-            Ok(().into())
+    #[tokio::test]
+    async fn test_fire_happy_path_inc() {
+        let t = canned_histories::single_timer("1");
+        let mut mock_cfg = MockPollCfg::from_hist_builder(t);
+        mock_cfg.completion_asserts_from_expectations(|mut asserts| {
+            asserts
+                .then(move |wft| {
+                    assert_eq!(wft.commands.len(), 1);
+                    assert_eq!(wft.commands[0].command_type(), CommandType::StartTimer);
+                })
+                .then(move |wft| {
+                    assert_eq!(wft.commands.len(), 1);
+                    assert_eq!(
+                        wft.commands[0].command_type(),
+                        CommandType::CompleteWorkflowExecution
+                    );
+                });
         });
 
-        let t = canned_histories::single_timer("1");
-        assert_eq!(2, t.get_full_history_info().unwrap().wf_task_count());
-        ManagedWFFunc::new(t, func, vec![])
-    }
-
-    #[rstest]
-    #[tokio::test]
-    async fn test_fire_happy_path_inc(mut happy_wfm: ManagedWFFunc) {
-        happy_wfm.get_next_activation().await.unwrap();
-        let commands = happy_wfm.get_server_commands().commands;
-        assert_eq!(commands.len(), 1);
-        assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
-
-        happy_wfm.get_next_activation().await.unwrap();
-        let commands = happy_wfm.get_server_commands().commands;
-        assert_eq!(commands.len(), 1);
-        assert_eq!(commands.len(), 1);
-        assert_eq!(
-            commands[0].command_type,
-            CommandType::CompleteWorkflowExecution as i32
-        );
-        happy_wfm.shutdown().await.unwrap();
-    }
-
-    #[rstest]
-    #[tokio::test]
-    async fn test_fire_happy_path_full(mut happy_wfm: ManagedWFFunc) {
-        happy_wfm.process_all_activations().await.unwrap();
-        let commands = happy_wfm.get_server_commands().commands;
-        assert_eq!(commands.len(), 1);
-        assert_eq!(
-            commands[0].command_type,
-            CommandType::CompleteWorkflowExecution as i32
-        );
-        happy_wfm.shutdown().await.unwrap();
+        let mut worker = build_fake_sdk(mock_cfg);
+        worker.register_wf(DEFAULT_WORKFLOW_TYPE, happy_timer);
+        worker.run().await.unwrap();
     }
 
     #[tokio::test]
     async fn mismatched_timer_ids_errors() {
-        let func = WorkflowFunction::new(|command_sink: WfContext| async move {
-            command_sink.timer(Duration::from_secs(5)).await;
-            Ok(().into())
-        });
-
         let t = canned_histories::single_timer("badid");
-        let mut wfm = ManagedWFFunc::new(t, func, vec![]);
-        let act = wfm.process_all_activations().await;
-        assert!(act
-            .unwrap_err()
-            .to_string()
-            .contains("Timer fired event did not have expected timer id 1"));
-        wfm.shutdown().await.unwrap();
-    }
-
-    #[fixture]
-    fn cancellation_setup() -> ManagedWFFunc {
-        let func = WorkflowFunction::new(|ctx: WfContext| async move {
-            let cancel_timer_fut = ctx.timer(Duration::from_secs(500));
+        let mut mock_cfg = MockPollCfg::from_hist_builder(t);
+        mock_cfg.num_expected_fails = 1;
+        mock_cfg.expect_fail_wft_matcher = Box::new(move |_, cause, f| {
+            matches!(cause, WorkflowTaskFailedCause::NonDeterministicError)
+                && matches!(f, Some(Failure { source, .. }) 
+            if source.contains("Timer fired event did not have expected timer id 1"))
+        });
+        let mut worker = build_fake_sdk(mock_cfg);
+        worker.register_wf(DEFAULT_WORKFLOW_TYPE, |ctx: WfContext| async move {
             ctx.timer(Duration::from_secs(5)).await;
-            // Cancel the first timer after having waited on the second
-            cancel_timer_fut.cancel(&ctx);
-            cancel_timer_fut.await;
             Ok(().into())
         });
+        worker.run().await.unwrap();
+    }
 
+    async fn cancel_timer(ctx: WfContext) -> WorkflowResult<()> {
+        let cancel_timer_fut = ctx.timer(Duration::from_secs(500));
+        ctx.timer(Duration::from_secs(5)).await;
+        // Cancel the first timer after having waited on the second
+        cancel_timer_fut.cancel(&ctx);
+        cancel_timer_fut.await;
+        Ok(().into())
+    }
+
+    #[tokio::test]
+    async fn incremental_cancellation() {
         let t = canned_histories::cancel_timer("2", "1");
-        ManagedWFFunc::new(t, func, vec![])
-    }
+        let mut mock_cfg = MockPollCfg::from_hist_builder(t);
+        mock_cfg.completion_asserts_from_expectations(|mut asserts| {
+            asserts
+                .then(move |wft| {
+                    assert_eq!(wft.commands.len(), 2);
+                    assert_eq!(wft.commands[0].command_type(), CommandType::StartTimer);
+                    assert_eq!(wft.commands[1].command_type(), CommandType::StartTimer);
+                })
+                .then(move |wft| {
+                    assert_eq!(wft.commands.len(), 2);
+                    assert_eq!(wft.commands[0].command_type(), CommandType::CancelTimer);
+                    assert_eq!(
+                        wft.commands[1].command_type(),
+                        CommandType::CompleteWorkflowExecution
+                    );
+                });
+        });
 
-    #[rstest]
-    #[tokio::test]
-    async fn incremental_cancellation(#[from(cancellation_setup)] mut wfm: ManagedWFFunc) {
-        wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().commands;
-        assert_eq!(commands.len(), 2);
-        assert_eq!(commands[0].command_type, CommandType::StartTimer as i32);
-        assert_eq!(commands[1].command_type, CommandType::StartTimer as i32);
-
-        wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().commands;
-        assert_eq!(commands.len(), 2);
-        assert_eq!(commands[0].command_type, CommandType::CancelTimer as i32);
-        assert_eq!(
-            commands[1].command_type,
-            CommandType::CompleteWorkflowExecution as i32
-        );
-
-        assert!(wfm.get_next_activation().await.unwrap().jobs.is_empty());
-        let commands = wfm.get_server_commands().commands;
-        // There should be no commands - the wf completed at the same time the timer was cancelled
-        assert_eq!(commands.len(), 0);
-        wfm.shutdown().await.unwrap();
-    }
-
-    #[rstest]
-    #[tokio::test]
-    async fn full_cancellation(#[from(cancellation_setup)] mut wfm: ManagedWFFunc) {
-        wfm.process_all_activations().await.unwrap();
-        let commands = wfm.get_server_commands().commands;
-        // There should be no commands - the wf completed at the same time the timer was cancelled
-        assert_eq!(commands.len(), 0);
-        wfm.shutdown().await.unwrap();
+        let mut worker = build_fake_sdk(mock_cfg);
+        worker.register_wf(DEFAULT_WORKFLOW_TYPE, cancel_timer);
+        worker.run().await.unwrap();
     }
 
     #[tokio::test]
     async fn cancel_before_sent_to_server() {
-        let func = WorkflowFunction::new(|ctx: WfContext| async move {
+        let mut t = TestHistoryBuilder::default();
+        t.add_by_type(EventType::WorkflowExecutionStarted);
+        t.add_full_wf_task();
+        t.add_workflow_execution_completed();
+        let mut mock_cfg = MockPollCfg::from_hist_builder(t);
+        mock_cfg.completion_asserts_from_expectations(|mut asserts| {
+            asserts.then(move |wft| {
+                assert_eq!(wft.commands.len(), 1);
+                assert_matches!(
+                    wft.commands[0].command_type(),
+                    CommandType::CompleteWorkflowExecution
+                );
+            });
+        });
+        let mut worker = build_fake_sdk(mock_cfg);
+        worker.register_wf(DEFAULT_WORKFLOW_TYPE, |ctx: WfContext| async move {
             let cancel_timer_fut = ctx.timer(Duration::from_secs(500));
             // Immediately cancel the timer
             cancel_timer_fut.cancel(&ctx);
             cancel_timer_fut.await;
             Ok(().into())
         });
-
-        let mut t = TestHistoryBuilder::default();
-        t.add_by_type(EventType::WorkflowExecutionStarted);
-        t.add_full_wf_task();
-        t.add_workflow_execution_completed();
-        let mut wfm = ManagedWFFunc::new(t, func, vec![]);
-
-        wfm.process_all_activations().await.unwrap();
-        let commands = wfm.get_server_commands().commands;
-        assert_eq!(commands.len(), 0);
-        wfm.shutdown().await.unwrap();
+        worker.run().await.unwrap();
     }
 
     #[test]

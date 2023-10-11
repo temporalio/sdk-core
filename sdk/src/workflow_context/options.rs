@@ -107,6 +107,7 @@ pub struct LocalActivityOptions {
     /// Type of activity to schedule
     pub activity_type: String,
     /// Input to the activity
+    // TODO: Make optional
     pub input: Payload,
     /// Retry policy
     pub retry_policy: RetryPolicy,

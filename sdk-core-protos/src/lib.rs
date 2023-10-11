@@ -603,6 +603,9 @@ pub mod coresdk {
                     workflow_activation_job::Variant::ResolveRequestCancelExternalWorkflow(_) => {
                         write!(f, "ResolveRequestCancelExternalWorkflow")
                     }
+                    workflow_activation_job::Variant::DoUpdate(_) => {
+                        write!(f, "DoUpdate")
+                    }
                 }
             }
         }
@@ -850,6 +853,16 @@ pub mod coresdk {
                     f,
                     "ModifyWorkflowProperties(upserted memo keys: {:?})",
                     self.upserted_memo.as_ref().map(|m| m.fields.keys())
+                )
+            }
+        }
+
+        impl Display for UpdateResponse {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(
+                    f,
+                    "UpdateResponse(protocol_instance_id: {}, response: {:?})",
+                    self.protocol_instance_id, self.response
                 )
             }
         }
@@ -1452,6 +1465,14 @@ pub mod temporal {
                                 command_type: CommandType::CancelWorkflowExecution as i32,
                                 attributes: Some(a),
                             },
+                            a @ Attributes::RecordMarkerCommandAttributes(_) => Self {
+                                command_type: CommandType::RecordMarker as i32,
+                                attributes: Some(a),
+                            },
+                            a @ Attributes::ProtocolMessageCommandAttributes(_) => Self {
+                                command_type: CommandType::ProtocolMessage as i32,
+                                attributes: Some(a),
+                            },
                             _ => unimplemented!(),
                         }
                     }
@@ -1732,6 +1753,14 @@ pub mod temporal {
                         at.name
                     }
                 }
+
+                impl From<&str> for WorkflowType {
+                    fn from(v: &str) -> Self {
+                        Self {
+                            name: v.to_string(),
+                        }
+                    }
+                }
             }
         }
         pub mod enums {
@@ -1801,7 +1830,10 @@ pub mod temporal {
                             | EventType::WorkflowExecutionCanceled
                             | EventType::WorkflowExecutionCompleted
                             | EventType::WorkflowExecutionContinuedAsNew
-                            | EventType::WorkflowExecutionFailed => true,
+                            | EventType::WorkflowExecutionFailed
+                            | EventType::WorkflowExecutionUpdateAccepted
+                            | EventType::WorkflowExecutionUpdateRejected
+                            | EventType::WorkflowExecutionUpdateCompleted => true,
                             _ => false,
                         })
                     }
@@ -1841,6 +1873,16 @@ pub mod temporal {
                                 Attributes::WorkflowTaskFailedEventAttributes(a) => Some(a.scheduled_event_id),
                                 _ => None
                             }
+                        })
+                    }
+
+                    /// Return the event's associated protocol instance, if one exists.
+                    pub fn get_protocol_instance_id(&self) -> Option<&str> {
+                        self.attributes.as_ref().and_then(|a| match a {
+                            Attributes::WorkflowExecutionUpdateAcceptedEventAttributes(a) => {
+                                Some(a.protocol_instance_id.as_str())
+                            }
+                            _ => None,
                         })
                     }
 
@@ -1945,7 +1987,14 @@ pub mod temporal {
         }
         pub mod protocol {
             pub mod v1 {
+                use std::fmt::{Display, Formatter};
                 tonic::include_proto!("temporal.api.protocol.v1");
+
+                impl Display for Message {
+                    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                        write!(f, "ProtocolMessage({})", self.id)
+                    }
+                }
             }
         }
         pub mod query {
@@ -1992,7 +2041,17 @@ pub mod temporal {
         }
         pub mod update {
             pub mod v1 {
+                use crate::temporal::api::update::v1::outcome::Value;
                 tonic::include_proto!("temporal.api.update.v1");
+
+                impl Outcome {
+                    pub fn is_success(&self) -> bool {
+                        match self.value {
+                            Some(Value::Success(_)) => true,
+                            _ => false,
+                        }
+                    }
+                }
             }
         }
         pub mod version {

@@ -56,6 +56,7 @@ use temporal_sdk_core_protos::{
         replication::v1::ClusterReplicationConfig,
         taskqueue::v1::TaskQueue,
         testservice::v1::test_service_client::TestServiceClient,
+        update,
         workflowservice::v1::{workflow_service_client::WorkflowServiceClient, *},
     },
     TaskToken,
@@ -935,6 +936,16 @@ pub trait WorkflowClientTrait {
     /// Get Cluster Search Attributes
     async fn get_search_attributes(&self) -> Result<GetSearchAttributesResponse>;
 
+    /// Send an Update to a workflow execution
+    async fn update_workflow_execution(
+        &self,
+        workflow_id: String,
+        run_id: String,
+        name: String,
+        wait_policy: update::v1::WaitPolicy,
+        args: Option<Payloads>,
+    ) -> Result<UpdateWorkflowExecutionResponse>;
+
     /// Returns options that were used to initialize the client
     fn get_options(&self) -> &ClientOptions;
 
@@ -1398,6 +1409,40 @@ impl WorkflowClientTrait for Client {
         Ok(self
             .wf_svc()
             .get_search_attributes(GetSearchAttributesRequest {})
+            .await?
+            .into_inner())
+    }
+
+    async fn update_workflow_execution(
+        &self,
+        workflow_id: String,
+        run_id: String,
+        name: String,
+        wait_policy: update::v1::WaitPolicy,
+        args: Option<Payloads>,
+    ) -> Result<UpdateWorkflowExecutionResponse> {
+        Ok(self
+            .wf_svc()
+            .update_workflow_execution(UpdateWorkflowExecutionRequest {
+                namespace: self.namespace.clone(),
+                workflow_execution: Some(WorkflowExecution {
+                    workflow_id,
+                    run_id,
+                }),
+                wait_policy: Some(wait_policy),
+                request: Some(update::v1::Request {
+                    meta: Some(update::v1::Meta {
+                        update_id: "".into(),
+                        identity: self.inner.options.identity.clone(),
+                    }),
+                    input: Some(update::v1::Input {
+                        header: None,
+                        name,
+                        args,
+                    }),
+                }),
+                ..Default::default()
+            })
             .await?
             .into_inner())
     }

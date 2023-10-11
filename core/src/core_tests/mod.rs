@@ -4,6 +4,7 @@ mod determinism;
 mod local_activities;
 mod queries;
 mod replay_flag;
+mod updates;
 mod workers;
 mod workflow_cancels;
 mod workflow_tasks;

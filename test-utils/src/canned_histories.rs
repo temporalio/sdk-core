@@ -6,7 +6,7 @@ use temporal_sdk_core_protos::{
     coresdk::common::NamespacedWorkflowExecution,
     temporal::api::{
         common::v1::{Payload, WorkflowExecution},
-        enums::v1::{EventType, StartChildWorkflowExecutionFailedCause, WorkflowTaskFailedCause},
+        enums::v1::{EventType, WorkflowTaskFailedCause},
         failure::v1::Failure,
         history::v1::*,
     },
@@ -1110,6 +1110,7 @@ fn start_child_wf_preamble(child_wf_id: &str) -> (TestHistoryBuilder, i64, i64) 
     t.add_full_wf_task();
     let initiated_event_id = t.add(StartChildWorkflowExecutionInitiatedEventAttributes {
         workflow_id: child_wf_id.to_owned(),
+        workflow_type: Some("child".into()),
         ..Default::default()
     });
     let started_event_id = t.add(ChildWorkflowExecutionStartedEventAttributes {
@@ -1145,7 +1146,6 @@ pub fn single_child_workflow(child_wf_id: &str) -> TestHistoryBuilder {
             ChildWorkflowExecutionCompletedEventAttributes {
                 initiated_event_id,
                 started_event_id,
-                // todo add the result payload
                 ..Default::default()
             },
         ),
@@ -1303,35 +1303,6 @@ pub fn single_child_workflow_try_cancelled(child_wf_id: &str) -> TestHistoryBuil
 ///  2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
 ///  3: EVENT_TYPE_WORKFLOW_TASK_STARTED
 ///  4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
-///  5: EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED
-///  5: EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_FAILED
-///  6: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
-///  7: EVENT_TYPE_WORKFLOW_TASK_STARTED
-///  8: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
-///  9: EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
-pub fn single_child_workflow_start_fail(child_wf_id: &str) -> TestHistoryBuilder {
-    let mut t = TestHistoryBuilder::default();
-    t.add_by_type(EventType::WorkflowExecutionStarted);
-    t.add_full_wf_task();
-    let initiated_event_id = t.add(StartChildWorkflowExecutionInitiatedEventAttributes {
-        workflow_id: child_wf_id.to_owned(),
-        ..Default::default()
-    });
-    t.add(StartChildWorkflowExecutionFailedEventAttributes {
-        workflow_id: child_wf_id.to_owned(),
-        initiated_event_id,
-        cause: StartChildWorkflowExecutionFailedCause::WorkflowAlreadyExists as i32,
-        ..Default::default()
-    });
-    t.add_full_wf_task();
-    t.add_workflow_execution_completed();
-    t
-}
-
-///  1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
-///  2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
-///  3: EVENT_TYPE_WORKFLOW_TASK_STARTED
-///  4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
 ///  5: EVENT_TYPE_MARKER_RECORDED (la result)
 ///  7: EVENT_TYPE_MARKER_RECORDED (la result)
 ///  8: EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
@@ -1346,32 +1317,7 @@ pub fn two_local_activities_one_wft(parallel: bool) -> TestHistoryBuilder {
         start_time.seconds += 1;
     }
     t.add_local_activity_result_marker_with_time(2, "2", b"hi2".into(), start_time);
-    t.add_workflow_execution_completed();
-    t
-}
-
-///  1: EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
-///  2: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
-///  3: EVENT_TYPE_WORKFLOW_TASK_STARTED
-///  4: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
-///  5: EVENT_TYPE_MARKER_RECORDED (la result)
-///  6: EVENT_TYPE_TIMER_STARTED
-///  7: EVENT_TYPE_TIMER_FIRED
-///  8: EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
-///  9: EVENT_TYPE_WORKFLOW_TASK_STARTED
-/// 10: EVENT_TYPE_WORKFLOW_TASK_COMPLETED
-/// 11: EVENT_TYPE_MARKER_RECORDED (la result)
-/// 12: EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
-pub fn two_local_activities_separated_by_timer() -> TestHistoryBuilder {
-    let mut t = TestHistoryBuilder::default();
-    t.add_by_type(EventType::WorkflowExecutionStarted);
-    t.add_full_wf_task();
-    t.add_local_activity_result_marker(1, "1", b"hi".into());
-    let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
-    t.add_timer_fired(timer_started_event_id, "1".to_string());
-    t.add_full_wf_task();
-    t.add_local_activity_result_marker(2, "2", b"hi2".into());
-    t.add_workflow_execution_completed();
+    t.add_workflow_task_scheduled_and_started();
     t
 }
 

@@ -117,10 +117,14 @@ impl From<Created> for CommandIssued {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{replay::TestHistoryBuilder, worker::workflow::ManagedWFFunc};
-    use temporal_sdk::{WfContext, WorkflowFunction};
-    use temporal_sdk_core_protos::temporal::api::{
-        command::v1::command::Attributes, common::v1::Payload,
+    use crate::{
+        replay::TestHistoryBuilder,
+        test_help::{build_fake_sdk, MockPollCfg},
+    };
+    use temporal_sdk::WfContext;
+    use temporal_sdk_core_protos::{
+        temporal::api::{command::v1::command, common::v1::Payload},
+        DEFAULT_WORKFLOW_TYPE,
     };
 
     #[tokio::test]
@@ -132,7 +136,30 @@ mod tests {
 
         let (k1, k2) = ("foo", "bar");
 
-        let wff = WorkflowFunction::new(move |ctx: WfContext| async move {
+        let mut mock_cfg = MockPollCfg::from_hist_builder(t);
+        mock_cfg.completion_asserts_from_expectations(|mut asserts| {
+            asserts.then(|wft| {
+                assert_matches!(
+                    wft.commands.as_slice(),
+                    [Command {
+                        attributes: Some(
+                            command::Attributes::ModifyWorkflowPropertiesCommandAttributes(msg)
+                        ),
+                        ..
+                    }, ..] => {
+                        let fields = &msg.upserted_memo.as_ref().unwrap().fields;
+                        let payload1 = fields.get(k1).unwrap();
+                        let payload2 = fields.get(k2).unwrap();
+                        assert_eq!(payload1.data[0], 0x01);
+                        assert_eq!(payload2.data[0], 0x02);
+                        assert_eq!(fields.len(), 2);
+                    }
+                );
+            });
+        });
+
+        let mut worker = build_fake_sdk(mock_cfg);
+        worker.register_wf(DEFAULT_WORKFLOW_TYPE, move |ctx: WfContext| async move {
             ctx.upsert_memo([
                 (
                     String::from(k1),
@@ -151,26 +178,6 @@ mod tests {
             ]);
             Ok(().into())
         });
-        let mut wfm = ManagedWFFunc::new(t, wff, vec![]);
-
-        wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().commands;
-        assert!(!commands.is_empty());
-        let cmd = commands[0].clone();
-        assert_eq!(
-            cmd.command_type,
-            CommandType::ModifyWorkflowProperties as i32
-        );
-        assert_matches!(
-        cmd.attributes.unwrap(),
-        Attributes::ModifyWorkflowPropertiesCommandAttributes(msg) => {
-            let fields = &msg.upserted_memo.unwrap().fields;
-            let payload1 = fields.get(k1).unwrap();
-            let payload2 = fields.get(k2).unwrap();
-            assert_eq!(payload1.data[0], 0x01);
-            assert_eq!(payload2.data[0], 0x02);
-            assert_eq!(fields.len(), 2);
-        });
-        wfm.shutdown().await.unwrap();
+        worker.run().await.unwrap();
     }
 }

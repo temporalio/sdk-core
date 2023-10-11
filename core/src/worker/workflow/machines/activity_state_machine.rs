@@ -804,87 +804,17 @@ fn convert_payloads(
 mod test {
     use super::*;
     use crate::{
-        internal_flags::InternalFlags, replay::TestHistoryBuilder, test_help::canned_histories,
-        worker::workflow::ManagedWFFunc,
+        internal_flags::InternalFlags,
+        replay::TestHistoryBuilder,
+        test_help::{build_fake_sdk, MockPollCfg, ResponseType},
     };
-    use rstest::{fixture, rstest};
     use std::{cell::RefCell, mem::discriminant, rc::Rc};
-    use temporal_sdk::{
-        ActivityOptions, CancellableFuture, WfContext, WorkflowFunction, WorkflowResult,
-    };
+    use temporal_sdk::{ActivityOptions, CancellableFuture, WfContext, WorkflowFunction};
     use temporal_sdk_core_protos::{
         coresdk::workflow_activation::{workflow_activation_job, WorkflowActivationJob},
-        DEFAULT_ACTIVITY_TYPE,
+        DEFAULT_WORKFLOW_TYPE,
     };
-
-    #[fixture]
-    fn activity_happy_hist() -> ManagedWFFunc {
-        let func = WorkflowFunction::new(activity_wf);
-        let t = canned_histories::single_activity("activity-id-1");
-        assert_eq!(2, t.get_full_history_info().unwrap().wf_task_count());
-        ManagedWFFunc::new(t, func, vec![])
-    }
-
-    #[fixture]
-    fn activity_failure_hist() -> ManagedWFFunc {
-        let func = WorkflowFunction::new(activity_wf);
-        let t = canned_histories::single_failed_activity("activity-id-1");
-        assert_eq!(2, t.get_full_history_info().unwrap().wf_task_count());
-        ManagedWFFunc::new(t, func, vec![])
-    }
-
-    async fn activity_wf(command_sink: WfContext) -> WorkflowResult<()> {
-        command_sink
-            .activity(ActivityOptions {
-                activity_id: Some("activity-id-1".to_string()),
-                activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
-                ..Default::default()
-            })
-            .await;
-        Ok(().into())
-    }
-
-    #[rstest(
-        wfm,
-        case::success(activity_happy_hist()),
-        case::failure(activity_failure_hist())
-    )]
-    #[tokio::test]
-    async fn single_activity_inc(mut wfm: ManagedWFFunc) {
-        wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().commands;
-        assert_eq!(commands.len(), 1);
-        assert_eq!(
-            commands[0].command_type,
-            CommandType::ScheduleActivityTask as i32
-        );
-
-        wfm.get_next_activation().await.unwrap();
-        let commands = wfm.get_server_commands().commands;
-        assert_eq!(commands.len(), 1);
-        assert_eq!(
-            commands[0].command_type,
-            CommandType::CompleteWorkflowExecution as i32
-        );
-        wfm.shutdown().await.unwrap();
-    }
-
-    #[rstest(
-        wfm,
-        case::success(activity_happy_hist()),
-        case::failure(activity_failure_hist())
-    )]
-    #[tokio::test]
-    async fn single_activity_full(mut wfm: ManagedWFFunc) {
-        wfm.process_all_activations().await.unwrap();
-        let commands = wfm.get_server_commands().commands;
-        assert_eq!(commands.len(), 1);
-        assert_eq!(
-            commands[0].command_type,
-            CommandType::CompleteWorkflowExecution as i32
-        );
-        wfm.shutdown().await.unwrap();
-    }
+    use temporal_sdk_core_test_utils::interceptors::ActivationAssertionsInterceptor;
 
     #[tokio::test]
     async fn immediate_activity_cancelation() {
@@ -900,24 +830,36 @@ mod test {
         t.add_by_type(EventType::WorkflowExecutionStarted);
         t.add_full_wf_task();
         t.add_workflow_execution_completed();
-        let mut wfm = ManagedWFFunc::new(t, func, vec![]);
+        let mut worker = build_fake_sdk(MockPollCfg::from_resps(t, [ResponseType::AllHistory]));
+        worker.register_wf(DEFAULT_WORKFLOW_TYPE, func);
 
-        let activation = wfm.process_all_activations().await.unwrap();
-        wfm.get_server_commands();
-        assert_matches!(
-            activation.jobs.as_slice(),
-            [WorkflowActivationJob {
-                variant: Some(workflow_activation_job::Variant::ResolveActivity(
-                    ResolveActivity {
-                        result: Some(ActivityResolution {
-                            status: Some(activity_resolution::Status::Cancelled(_))
-                        }),
-                        ..
-                    }
-                )),
-            },]
-        );
-        wfm.shutdown().await.unwrap();
+        let mut aai = ActivationAssertionsInterceptor::default();
+        aai.then(|a| {
+            assert_matches!(
+                a.jobs.as_slice(),
+                [WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::StartWorkflow(_)),
+                }]
+            )
+        });
+        aai.then(|a| {
+            assert_matches!(
+                a.jobs.as_slice(),
+                [WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::ResolveActivity(
+                        ResolveActivity {
+                            result: Some(ActivityResolution {
+                                status: Some(activity_resolution::Status::Cancelled(_))
+                            }),
+                            ..
+                        }
+                    )),
+                },]
+            )
+        });
+
+        worker.set_worker_interceptor(aai);
+        worker.run().await.unwrap();
     }
 
     #[test]

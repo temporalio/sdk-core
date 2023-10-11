@@ -7,8 +7,9 @@ pub use options::{
 
 use crate::{
     workflow_context::options::IntoWorkflowCommand, CancelExternalWfResult, CancellableID,
-    CommandCreateRequest, CommandSubscribeChildWorkflowCompletion, RustWfCmd,
-    SignalExternalWfResult, TimerResult, UnblockEvent, Unblockable,
+    CommandCreateRequest, CommandSubscribeChildWorkflowCompletion, IntoUpdateHandlerFunc,
+    IntoUpdateValidatorFunc, RustWfCmd, SignalExternalWfResult, TimerResult, UnblockEvent,
+    Unblockable, UpdateFunctions,
 };
 use crossbeam::channel::{Receiver, Sender};
 use futures::{task::Context, FutureExt, Stream, StreamExt};
@@ -45,16 +46,17 @@ use tokio::sync::{mpsc, oneshot, watch};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
 /// Used within workflows to issue commands, get info, etc.
+#[derive(Clone)]
 pub struct WfContext {
     namespace: String,
     task_queue: String,
-    args: Vec<Payload>,
+    args: Arc<Vec<Payload>>,
 
     chan: Sender<RustWfCmd>,
     am_cancelled: watch::Receiver<bool>,
-    shared: Arc<RwLock<WfContextSharedData>>,
+    pub(crate) shared: Arc<RwLock<WfContextSharedData>>,
 
-    seq_nums: RwLock<WfCtxProtectedDat>,
+    seq_nums: Arc<RwLock<WfCtxProtectedDat>>,
 }
 
 struct WfCtxProtectedDat {
@@ -119,17 +121,17 @@ impl WfContext {
             Self {
                 namespace,
                 task_queue,
-                args,
+                args: Arc::new(args),
                 chan,
                 am_cancelled,
                 shared: Arc::new(RwLock::new(Default::default())),
-                seq_nums: RwLock::new(WfCtxProtectedDat {
+                seq_nums: Arc::new(RwLock::new(WfCtxProtectedDat {
                     next_timer_sequence_number: 1,
                     next_activity_sequence_number: 1,
                     next_child_workflow_sequence_number: 1,
                     next_cancel_external_wf_sequence_number: 1,
                     next_signal_external_wf_sequence_number: 1,
-                }),
+                })),
             },
             rx,
         )
@@ -153,10 +155,6 @@ impl WfContext {
     /// Return the length of history so far at this point in the workflow
     pub fn history_length(&self) -> u32 {
         self.shared.read().history_length
-    }
-
-    pub(crate) fn get_shared_data(&self) -> Arc<RwLock<WfContextSharedData>> {
-        self.shared.clone()
     }
 
     /// A future that resolves if/when the workflow is cancelled
@@ -348,6 +346,24 @@ impl WfContext {
             .into(),
         );
         cmd
+    }
+
+    /// Register an update handler by providing the handler name, a validator function, and an
+    /// update handler. The validator must not mutate workflow state and is synchronous. The handler
+    /// may mutate workflow state (though, that's annoying right now in the prototype) and is async.
+    ///
+    /// Note that if you want a validator that always passes, you will likely need to provide type
+    /// annotations to make the compiler happy, like: `|_: &_, _: T| Ok(())`
+    pub fn update_handler<Arg, Res>(
+        &self,
+        name: impl Into<String>,
+        validator: impl IntoUpdateValidatorFunc<Arg>,
+        handler: impl IntoUpdateHandlerFunc<Arg, Res>,
+    ) {
+        self.send(RustWfCmd::RegisterUpdate(
+            name.into(),
+            UpdateFunctions::new(validator, handler),
+        ))
     }
 
     fn send_signal_wf(

@@ -43,7 +43,7 @@ pub use worker::replay_wf_state_inputs;
 pub use worker::{Worker, WorkerConfig, WorkerConfigBuilder};
 
 use crate::{
-    replay::{mock_client_from_histories, Historator, HistoryForReplay},
+    replay::{HistoryForReplay, ReplayWorkerInput},
     telemetry::{
         metrics::MetricsContext, remove_trace_subscriber_for_current_thread,
         set_trace_subscriber_for_current_thread, telemetry_init, TelemetryInstance,
@@ -108,34 +108,21 @@ where
     ))
 }
 
-/// Create a worker for replaying a specific history. It will auto-shutdown as soon as the history
-/// has finished being replayed.
+/// Create a worker for replaying one or more existing histories. It will auto-shutdown as soon as
+/// all histories have finished being replayed.
 ///
 /// You do not necessarily need a [CoreRuntime] for replay workers, but it's advisable to create
 /// one and use it to run the replay worker's async functions the same way you would for a normal
 /// worker.
-pub fn init_replay_worker<I>(
-    mut config: WorkerConfig,
-    histories: I,
-) -> Result<Worker, anyhow::Error>
+pub fn init_replay_worker<I>(rwi: ReplayWorkerInput<I>) -> Result<Worker, anyhow::Error>
 where
     I: Stream<Item = HistoryForReplay> + Send + 'static,
 {
     info!(
-        task_queue = config.task_queue.as_str(),
+        task_queue = rwi.config.task_queue.as_str(),
         "Registering replay worker"
     );
-    config.max_cached_workflows = 1;
-    config.max_concurrent_wft_polls = 1;
-    config.no_remote_activities = true;
-    let historator = Historator::new(histories);
-    let post_activate = historator.get_post_activate_hook();
-    let shutdown_tok = historator.get_shutdown_setter();
-    let client = mock_client_from_histories(historator);
-    let mut worker = Worker::new(config, None, Arc::new(client), None);
-    worker.set_post_activate_hook(post_activate);
-    shutdown_tok(worker.shutdown_token());
-    Ok(worker)
+    rwi.into_core_worker()
 }
 
 /// Creates a unique sticky queue name for a worker, iff the config allows for 1 or more cached

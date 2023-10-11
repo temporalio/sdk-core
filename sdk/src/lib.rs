@@ -342,8 +342,8 @@ impl Worker {
     }
 
     /// Set a [WorkerInterceptor]
-    pub fn set_worker_interceptor(&mut self, interceptor: Box<dyn WorkerInterceptor>) {
-        self.common.worker_interceptor = Some(interceptor);
+    pub fn set_worker_interceptor(&mut self, interceptor: impl WorkerInterceptor + 'static) {
+        self.common.worker_interceptor = Some(Box::new(interceptor));
     }
 
     /// Turns this rust worker into a new worker with all the same workflows and activities
@@ -685,6 +685,7 @@ enum RustWfCmd {
     NewNonblockingCmd(workflow_command::Variant),
     SubscribeChildWorkflowCompletion(CommandSubscribeChildWorkflowCompletion),
     SubscribeSignal(String, UnboundedSender<SignalData>),
+    RegisterUpdate(String, UpdateFunctions),
 }
 
 struct CommandCreateRequest {
@@ -858,6 +859,85 @@ where
             }
         };
         Arc::new(wrapper)
+    }
+}
+
+/// Extra information attached to workflow updates
+#[derive(Clone)]
+pub struct UpdateInfo {
+    /// The update's id, unique within the workflow
+    pub update_id: String,
+    /// Headers attached to the update
+    pub headers: HashMap<String, Payload>,
+}
+
+/// Context for a workflow update
+pub struct UpdateContext {
+    /// The workflow context, can be used to do normal workflow things inside the update handler
+    pub wf_ctx: WfContext,
+    /// Additional update info
+    pub info: UpdateInfo,
+}
+
+struct UpdateFunctions {
+    validator: BoxUpdateValidatorFn,
+    handler: BoxUpdateHandlerFn,
+}
+
+impl UpdateFunctions {
+    pub(crate) fn new<Arg, Res>(
+        v: impl IntoUpdateValidatorFunc<Arg> + Sized,
+        h: impl IntoUpdateHandlerFunc<Arg, Res> + Sized,
+    ) -> Self {
+        Self {
+            validator: v.into_update_validator_fn(),
+            handler: h.into_update_handler_fn(),
+        }
+    }
+}
+
+type BoxUpdateValidatorFn = Box<dyn Fn(&UpdateInfo, &Payload) -> Result<(), anyhow::Error> + Send>;
+/// Closures / functions which can be turned into update validation functions implement this trait
+pub trait IntoUpdateValidatorFunc<Arg> {
+    /// Consume the closure/fn pointer and turn it into an update validator
+    fn into_update_validator_fn(self) -> BoxUpdateValidatorFn;
+}
+impl<A, F> IntoUpdateValidatorFunc<A> for F
+where
+    A: FromJsonPayloadExt + Send,
+    F: (for<'a> Fn(&'a UpdateInfo, A) -> Result<(), anyhow::Error>) + Send + 'static,
+{
+    fn into_update_validator_fn(self) -> BoxUpdateValidatorFn {
+        let wrapper = move |ctx: &UpdateInfo, input: &Payload| match A::from_json_payload(input) {
+            Ok(deser) => (self)(ctx, deser),
+            Err(e) => Err(e.into()),
+        };
+        Box::new(wrapper)
+    }
+}
+type BoxUpdateHandlerFn = Box<
+    dyn FnMut(UpdateContext, &Payload) -> BoxFuture<'static, Result<Payload, anyhow::Error>> + Send,
+>;
+/// Closures / functions which can be turned into update handler functions implement this trait
+pub trait IntoUpdateHandlerFunc<Arg, Res> {
+    /// Consume the closure/fn pointer and turn it into an update handler
+    fn into_update_handler_fn(self) -> BoxUpdateHandlerFn;
+}
+impl<A, F, Rf, R> IntoUpdateHandlerFunc<A, R> for F
+where
+    A: FromJsonPayloadExt + Send,
+    F: (FnMut(UpdateContext, A) -> Rf) + Send + 'static,
+    Rf: Future<Output = Result<R, anyhow::Error>> + Send + 'static,
+    R: AsJsonPayloadExt,
+{
+    fn into_update_handler_fn(mut self) -> BoxUpdateHandlerFn {
+        let wrapper = move |ctx: UpdateContext, input: &Payload| match A::from_json_payload(input) {
+            Ok(deser) => (self)(ctx, deser)
+                .map(|r| r.and_then(|r| r.as_json_payload()))
+                .boxed(),
+            Err(e) => async move { Err(e.into()) }.boxed(),
+        };
+        Box::new(wrapper)
     }
 }
 

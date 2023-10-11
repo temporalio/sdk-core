@@ -5,7 +5,6 @@ use crate::{
     protosext::ValidPollWFTQResponse,
     replay::TestHistoryBuilder,
     sticky_q_name_for_worker,
-    telemetry::metrics::MetricsContext,
     worker::{
         client::{
             mocks::mock_workflow_client, MockWorkerClient, WorkerClient, WorkflowTaskCompletion,
@@ -30,6 +29,7 @@ use std::{
     task::{Context, Poll},
     time::Duration,
 };
+use temporal_sdk::interceptors::FailOnNondeterminismInterceptor;
 use temporal_sdk_core_api::{
     errors::{PollActivityError, PollWfError},
     Worker as WorkerTrait,
@@ -136,6 +136,15 @@ pub(crate) fn build_fake_worker(
     mock_worker(mock_holder)
 }
 
+pub(crate) fn build_fake_sdk(mock_cfg: MockPollCfg) -> temporal_sdk::Worker {
+    let mut mock = build_mock_pollers(mock_cfg);
+    mock.worker_cfg(|c| c.max_cached_workflows = 1);
+    let core = mock_worker(mock);
+    let mut worker = temporal_sdk::Worker::new_from_core(Arc::new(core), "replay_q".to_string());
+    worker.set_worker_interceptor(FailOnNondeterminismInterceptor {});
+    worker
+}
+
 pub(crate) fn mock_worker(mocks: MocksHolder) -> Worker {
     let sticky_q = sticky_q_name_for_worker("unit-test", &mocks.inputs.config);
     let act_poller = if mocks.inputs.config.no_remote_activities {
@@ -151,7 +160,6 @@ pub(crate) fn mock_worker(mocks: MocksHolder) -> Worker {
             wft_stream: mocks.inputs.wft_stream,
             act_poller,
         },
-        MetricsContext::no_op(),
         None,
     )
 }
@@ -371,7 +379,7 @@ pub(crate) struct MockPollCfg {
     /// All calls to fail WFTs must match this predicate
     pub expect_fail_wft_matcher:
         Box<dyn Fn(&TaskToken, &WorkflowTaskFailedCause, &Option<Failure>) -> bool + Send>,
-    pub completion_asserts: Option<Box<dyn Fn(&WorkflowTaskCompletion) + Send>>,
+    pub completion_asserts: Option<Box<dyn FnMut(&WorkflowTaskCompletion) + Send>>,
     pub num_expected_completions: Option<TimesRange>,
     /// If being used with the Rust SDK, this is set true. It ensures pollers will not error out
     /// early with no work, since we cannot know the exact number of times polling will happen.
@@ -399,6 +407,21 @@ impl MockPollCfg {
             make_poll_stream_interminable: false,
         }
     }
+
+    /// Builds a config which will hand out each WFT in the history builder one by one
+    pub fn from_hist_builder(t: TestHistoryBuilder) -> Self {
+        let full_hist_info = t.get_full_history_info().unwrap();
+        let tasks = 1..=full_hist_info.wf_task_count();
+        Self::from_resp_batches("fake_wf_id", t, tasks, mock_workflow_client())
+    }
+
+    pub fn from_resps(
+        t: TestHistoryBuilder,
+        resps: impl IntoIterator<Item = impl Into<ResponseType>>,
+    ) -> Self {
+        Self::from_resp_batches("fake_wf_id", t, resps, mock_workflow_client())
+    }
+
     pub fn from_resp_batches(
         wf_id: &str,
         t: TestHistoryBuilder,
@@ -421,6 +444,42 @@ impl MockPollCfg {
             using_rust_sdk: false,
             make_poll_stream_interminable: false,
         }
+    }
+
+    pub fn completion_asserts_from_expectations(
+        &mut self,
+        builder_fn: impl FnOnce(CompletionAssertsBuilder<'_>),
+    ) {
+        let builder = CompletionAssertsBuilder {
+            dest: &mut self.completion_asserts,
+            assertions: Default::default(),
+        };
+        builder_fn(builder);
+    }
+}
+
+#[allow(clippy::type_complexity)]
+pub(crate) struct CompletionAssertsBuilder<'a> {
+    dest: &'a mut Option<Box<dyn FnMut(&WorkflowTaskCompletion) + Send>>,
+    assertions: VecDeque<Box<dyn FnOnce(&WorkflowTaskCompletion) + Send>>,
+}
+impl CompletionAssertsBuilder<'_> {
+    pub fn then(
+        &mut self,
+        assert: impl FnOnce(&WorkflowTaskCompletion) + Send + 'static,
+    ) -> &mut Self {
+        self.assertions.push_back(Box::new(assert));
+        self
+    }
+}
+impl Drop for CompletionAssertsBuilder<'_> {
+    fn drop(&mut self) {
+        let mut asserts = std::mem::take(&mut self.assertions);
+        *self.dest = Some(Box::new(move |wtc| {
+            if let Some(fun) = asserts.pop_front() {
+                fun(wtc)
+            }
+        }));
     }
 }
 
@@ -594,7 +653,7 @@ pub(crate) fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder {
         expect_completes.times(1..);
     }
     expect_completes.returning(move |comp| {
-        if let Some(ass) = cfg.completion_asserts.as_ref() {
+        if let Some(ass) = cfg.completion_asserts.as_mut() {
             // tee hee
             ass(&comp)
         }

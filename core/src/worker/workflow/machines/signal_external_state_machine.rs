@@ -305,14 +305,17 @@ impl Cancellable for SignalExternalMachine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{replay::TestHistoryBuilder, worker::workflow::ManagedWFFunc};
+    use crate::{
+        replay::TestHistoryBuilder,
+        test_help::{build_fake_sdk, MockPollCfg},
+    };
     use std::mem::discriminant;
-    use temporal_sdk::{
-        CancellableFuture, SignalWorkflowOptions, WfContext, WorkflowFunction, WorkflowResult,
+    use temporal_sdk::{CancellableFuture, SignalWorkflowOptions, WfContext, WorkflowResult};
+    use temporal_sdk_core_protos::{
+        coresdk::workflow_activation::{workflow_activation_job, WorkflowActivationJob},
+        DEFAULT_WORKFLOW_TYPE,
     };
-    use temporal_sdk_core_protos::coresdk::workflow_activation::{
-        workflow_activation_job, WorkflowActivationJob,
-    };
+    use temporal_sdk_core_test_utils::interceptors::ActivationAssertionsInterceptor;
 
     const SIGNAME: &str = "signame";
 
@@ -344,37 +347,35 @@ mod tests {
         t.add_full_wf_task();
         t.add_workflow_execution_completed();
 
-        let wff = WorkflowFunction::new(signal_sender);
-        let mut wfm = ManagedWFFunc::new(t, wff, vec![]);
-        wfm.get_next_activation().await.unwrap();
-        let mut cmds = wfm.get_server_commands().commands;
-        assert_eq!(cmds.len(), 1);
-        assert_eq!(
-            cmds[0].command_type(),
-            CommandType::SignalExternalWorkflowExecution
-        );
-        assert_matches!(
-            cmds.remove(0).attributes.unwrap(),
-            command::Attributes::SignalExternalWorkflowExecutionCommandAttributes(attrs) => {
-                assert_eq!(attrs.signal_name, SIGNAME);
-                assert_eq!(attrs.input.unwrap().payloads[0],
-                           b"hi!".into());
-                assert_eq!(*attrs.header.unwrap().fields.get("tupac").unwrap(), b"shakur".into());
-            }
-        );
-        wfm.get_next_activation().await.unwrap();
-        let cmds = wfm.get_server_commands().commands;
-        assert_eq!(cmds.len(), 1);
-        if fails {
-            assert_eq!(cmds[0].command_type(), CommandType::FailWorkflowExecution);
-        } else {
-            assert_eq!(
-                cmds[0].command_type(),
-                CommandType::CompleteWorkflowExecution
-            );
-        }
+        let mut mock_cfg = MockPollCfg::from_hist_builder(t);
+        mock_cfg.completion_asserts_from_expectations(|mut asserts| {
+            asserts.then(move |wft| {
+                assert_matches!(wft.commands.as_slice(),
+                    [Command { attributes: Some(
+                        command::Attributes::SignalExternalWorkflowExecutionCommandAttributes(attrs)),..}] => {
+                        assert_eq!(attrs.signal_name, SIGNAME);
+                        assert_eq!(attrs.input.as_ref().unwrap().payloads[0], b"hi!".into());
+                        assert_eq!(*attrs.header.as_ref().unwrap().fields.get("tupac").unwrap(), 
+                                   b"shakur".into());
+                    }
+                );
+            }).then(move |wft| {
+                let cmds = &wft.commands;
+                assert_eq!(cmds.len(), 1);
+                if fails {
+                    assert_eq!(cmds[0].command_type(), CommandType::FailWorkflowExecution);
+                } else {
+                    assert_eq!(
+                        cmds[0].command_type(),
+                        CommandType::CompleteWorkflowExecution
+                    );
+                }
+            });
+        });
 
-        wfm.shutdown().await.unwrap();
+        let mut worker = build_fake_sdk(mock_cfg);
+        worker.register_wf(DEFAULT_WORKFLOW_TYPE, signal_sender);
+        worker.run().await.unwrap();
     }
 
     #[tokio::test]
@@ -384,7 +385,34 @@ mod tests {
         t.add_full_wf_task();
         t.add_workflow_execution_completed();
 
-        let wff = WorkflowFunction::new(|ctx: WfContext| async move {
+        let mut mock_cfg = MockPollCfg::from_hist_builder(t);
+        let mut aai = ActivationAssertionsInterceptor::default();
+        aai.skip_one().then(move |act| {
+            assert_matches!(
+                &act.jobs[0],
+                WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::ResolveSignalExternalWorkflow(
+                        ResolveSignalExternalWorkflow {
+                            failure: Some(c),
+                            ..
+                        }
+                    ))
+                } => c.message == SIG_CANCEL_MSG
+            );
+        });
+        mock_cfg.completion_asserts_from_expectations(|mut asserts| {
+            asserts.then(move |wft| {
+                assert_eq!(wft.commands.len(), 1);
+                assert_eq!(
+                    wft.commands[0].command_type(),
+                    CommandType::CompleteWorkflowExecution
+                );
+            });
+        });
+
+        let mut worker = build_fake_sdk(mock_cfg);
+        worker.set_worker_interceptor(aai);
+        worker.register_wf(DEFAULT_WORKFLOW_TYPE, |ctx: WfContext| async move {
             let sig = ctx.signal_workflow(SignalWorkflowOptions::new(
                 "fake_wid",
                 "fake_rid",
@@ -395,31 +423,7 @@ mod tests {
             let _res = sig.await;
             Ok(().into())
         });
-        let mut wfm = ManagedWFFunc::new(t, wff, vec![]);
-
-        wfm.get_next_activation().await.unwrap();
-        // No commands b/c we're waiting on the signal which is immediately going to be cancelled
-        let cmds = wfm.get_server_commands().commands;
-        assert_eq!(cmds.len(), 0);
-        let act = wfm.get_next_activation().await.unwrap();
-        assert_matches!(
-            &act.jobs[0],
-            WorkflowActivationJob {
-                variant: Some(workflow_activation_job::Variant::ResolveSignalExternalWorkflow(
-                    ResolveSignalExternalWorkflow {
-                        failure: Some(c),
-                        ..
-                    }
-                ))
-            } => c.message == SIG_CANCEL_MSG
-        );
-        let cmds = wfm.get_server_commands().commands;
-        assert_eq!(cmds.len(), 1);
-        assert_eq!(
-            cmds[0].command_type(),
-            CommandType::CompleteWorkflowExecution
-        );
-        wfm.shutdown().await.unwrap();
+        worker.run().await.unwrap();
     }
 
     #[test]

@@ -11,6 +11,7 @@ use temporal_sdk_core_protos::{
         common::v1::{Payload, Payloads},
         failure::v1::Failure,
         query::v1::WorkflowQuery,
+        update,
         workflowservice::v1::*,
     },
     TaskToken,
@@ -524,6 +525,25 @@ where
 
     async fn get_search_attributes(&self) -> Result<GetSearchAttributesResponse> {
         retry_call!(self, get_search_attributes)
+    }
+
+    async fn update_workflow_execution(
+        &self,
+        workflow_id: String,
+        run_id: String,
+        name: String,
+        wait_policy: update::v1::WaitPolicy,
+        args: Option<Payloads>,
+    ) -> Result<UpdateWorkflowExecutionResponse> {
+        retry_call!(
+            self,
+            update_workflow_execution,
+            workflow_id.clone(),
+            run_id.clone(),
+            name.clone(),
+            wait_policy.clone(),
+            args.clone()
+        )
     }
 
     fn get_options(&self) -> &ClientOptions {

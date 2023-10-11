@@ -17,6 +17,8 @@ use crate::{
         failure::v1::{failure, CanceledFailureInfo, Failure},
         history::v1::{history_event::Attributes, *},
         taskqueue::v1::TaskQueue,
+        update,
+        update::v1::outcome,
     },
     HistoryInfo,
 };
@@ -433,7 +435,55 @@ impl TestHistoryBuilder {
             workflow_task_completed_event_id: self.previous_task_completed_id,
             search_attributes: Some(SearchAttributes { indexed_fields }),
         };
-        self.build_and_push_event(EventType::UpsertWorkflowSearchAttributes, attrs.into())
+        self.build_and_push_event(EventType::UpsertWorkflowSearchAttributes, attrs.into());
+    }
+
+    pub fn add_update_accepted(
+        &mut self,
+        instance_id: impl Into<String>,
+        update_name: impl Into<String>,
+    ) -> i64 {
+        let protocol_instance_id = instance_id.into();
+        let last_wft_started_id = self
+            .events
+            .iter()
+            .rev()
+            .find_map(|e| {
+                if e.event_type() == EventType::WorkflowTaskScheduled {
+                    Some(e.event_id)
+                } else {
+                    None
+                }
+            })
+            .expect("Must have wft scheduled event");
+        let attrs = WorkflowExecutionUpdateAcceptedEventAttributes {
+            accepted_request_message_id: format!("{}/request", &protocol_instance_id),
+            accepted_request_sequencing_event_id: last_wft_started_id,
+            accepted_request: Some(update::v1::Request {
+                meta: Some(update::v1::Meta {
+                    update_id: protocol_instance_id.clone(),
+                    identity: "fake".to_string(),
+                }),
+                input: Some(update::v1::Input {
+                    header: None,
+                    name: update_name.into(),
+                    args: None,
+                }),
+            }),
+            protocol_instance_id,
+        };
+        self.build_and_push_event(EventType::WorkflowExecutionUpdateAccepted, attrs.into())
+    }
+
+    pub fn add_update_completed(&mut self, accepted_event_id: i64) {
+        let attrs = WorkflowExecutionUpdateCompletedEventAttributes {
+            meta: None,
+            accepted_event_id,
+            outcome: Some(update::v1::Outcome {
+                value: Some(outcome::Value::Success(Payloads::default())),
+            }),
+        };
+        self.build_and_push_event(EventType::WorkflowExecutionUpdateCompleted, attrs.into());
     }
 
     pub fn get_orig_run_id(&self) -> &str {
@@ -478,6 +528,15 @@ impl TestHistoryBuilder {
         }
     }
 
+    /// Alter the input to the workflow
+    pub fn set_wf_input(&mut self, input: impl Into<Payloads>) {
+        if let Some(Attributes::WorkflowExecutionStartedEventAttributes(wes)) =
+            self.events.get_mut(0).and_then(|e| e.attributes.as_mut())
+        {
+            wes.input = Some(input.into());
+        }
+    }
+
     /// Alter some specific event. You can easily craft nonsense histories this way, use carefully.
     pub fn modify_event(&mut self, event_id: i64, modifier: impl FnOnce(&mut HistoryEvent)) {
         let he = self
@@ -518,7 +577,7 @@ impl TestHistoryBuilder {
         }
     }
 
-    fn build_and_push_event(&mut self, event_type: EventType, attribs: Attributes) {
+    fn build_and_push_event(&mut self, event_type: EventType, attribs: Attributes) -> i64 {
         self.current_event_id += 1;
         let evt = HistoryEvent {
             event_type: event_type as i32,
@@ -537,6 +596,7 @@ impl TestHistoryBuilder {
             self.original_run_id = original_execution_run_id.clone();
         };
         self.events.push(evt);
+        self.current_event_id
     }
 }
 

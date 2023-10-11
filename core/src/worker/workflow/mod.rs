@@ -2,7 +2,6 @@
 //! lion's share of the complexity in Core). See the `ARCHITECTURE.md` file in the repo root for
 //! a diagram of the internals.
 
-mod bridge;
 mod driven_workflow;
 mod history_update;
 mod machines;
@@ -15,11 +14,8 @@ mod workflow_stream;
 #[cfg(feature = "save_wf_inputs")]
 pub use workflow_stream::replay_wf_state_inputs;
 
-pub(crate) use bridge::WorkflowBridge;
-pub(crate) use driven_workflow::{DrivenWorkflow, WorkflowFetcher};
+pub(crate) use driven_workflow::DrivenWorkflow;
 pub(crate) use history_update::HistoryUpdate;
-#[cfg(test)]
-pub(crate) use managed_run::ManagedWFFunc;
 
 use crate::{
     abstractions::{
@@ -27,7 +23,7 @@ use crate::{
         UsedMeteredSemPermit,
     },
     internal_flags::InternalFlags,
-    protosext::legacy_query_failure,
+    protosext::{legacy_query_failure, protocol_messages::IncomingProtocolMessage},
     telemetry::{set_trace_subscriber_for_current_thread, TelemetryInstance, VecDisplayer},
     worker::{
         activities::{ActivitiesFromWFTsHandle, LocalActivityManager, TrackedPermittedTqResp},
@@ -79,6 +75,7 @@ use temporal_sdk_core_protos::{
         command::v1::{command::Attributes, Command as ProtoCommand, Command},
         common::v1::{Memo, MeteringMetadata, RetryPolicy, SearchAttributes, WorkflowExecution},
         enums::v1::WorkflowTaskFailedCause,
+        protocol::v1::Message as ProtocolMessage,
         query::v1::WorkflowQuery,
         sdk::v1::WorkflowTaskCompletedMetadata,
         taskqueue::v1::StickyExecutionAttributes,
@@ -266,7 +263,6 @@ impl Workflows {
                 }
                 stream.next().await.unwrap_or(Err(PollWfError::ShutDown))?
             };
-            Span::current().record("run_id", al.run_id());
             match al {
                 ActivationOrAuto::LangActivation(mut act)
                 | ActivationOrAuto::ReadyForQueries(mut act) => {
@@ -356,6 +352,7 @@ impl Workflows {
                     action:
                         ActivationAction::WftComplete {
                             mut commands,
+                            messages,
                             query_responses,
                             force_new_wft,
                             sdk_metadata,
@@ -364,10 +361,12 @@ impl Workflows {
                     let reserved_act_permits =
                         self.reserve_activity_slots_for_outgoing_commands(commands.as_mut_slice());
                     debug!(commands=%commands.display(), query_responses=%query_responses.display(),
-                           force_new_wft, "Sending responses to server");
+                           messages=%messages.display(), force_new_wft,
+                           "Sending responses to server");
                     let mut completion = WorkflowTaskCompletion {
                         task_token,
                         commands,
+                        messages,
                         query_responses,
                         sticky_attributes: None,
                         return_new_workflow_task: true,
@@ -388,26 +387,31 @@ impl Workflows {
                     }
                     completion.sticky_attributes = sticky_attrs;
 
+                    let mut reset_last_started_to = None;
                     self.handle_wft_reporting_errs(&run_id, || async {
-                        let maybe_wft = self.client.complete_workflow_task(completion).await?;
-                        if let Some(wft) = maybe_wft.workflow_task {
+                        let response = self.client.complete_workflow_task(completion).await?;
+                        if response.reset_history_event_id > 0 {
+                            reset_last_started_to = Some(response.reset_history_event_id);
+                        }
+                        if let Some(wft) = response.workflow_task {
                             wft_from_complete = Some(validate_wft(wft)?);
                         }
-                        self.handle_eager_activities(
-                            reserved_act_permits,
-                            maybe_wft.activity_tasks,
-                        );
+                        self.handle_eager_activities(reserved_act_permits, response.activity_tasks);
                         Ok(())
                     })
                     .await;
-                    WFTReportStatus::Reported
+                    WFTReportStatus::Reported {
+                        reset_last_started_to,
+                    }
                 }
                 ServerCommandsWithWorkflowInfo {
                     task_token,
                     action: ActivationAction::RespondLegacyQuery { result },
                 } => {
                     self.respond_legacy_query(task_token, *result).await;
-                    WFTReportStatus::Reported
+                    WFTReportStatus::Reported {
+                        reset_last_started_to: None,
+                    }
                 }
             },
             ActivationCompleteOutcome::ReportWFTFail(outcome) => match outcome {
@@ -419,13 +423,17 @@ impl Workflows {
                             .await
                     })
                     .await;
-                    WFTReportStatus::Reported
+                    WFTReportStatus::Reported {
+                        reset_last_started_to: None,
+                    }
                 }
                 FailedActivationWFTReport::ReportLegacyQueryFailure(task_token, failure) => {
                     warn!(run_id=%run_id, failure=?failure, "Failing legacy query request");
                     self.respond_legacy_query(task_token, legacy_query_failure(failure))
                         .await;
-                    WFTReportStatus::Reported
+                    WFTReportStatus::Reported {
+                        reset_last_started_to: None,
+                    }
                 }
             },
             ActivationCompleteOutcome::WFTFailedDontReport => WFTReportStatus::DropWft,
@@ -740,16 +748,6 @@ enum ActivationOrAuto {
         machines_err: WFMachinesError,
     },
 }
-impl ActivationOrAuto {
-    pub fn run_id(&self) -> &str {
-        match self {
-            ActivationOrAuto::LangActivation(act) => &act.run_id,
-            ActivationOrAuto::Autocomplete { run_id, .. } => run_id,
-            ActivationOrAuto::ReadyForQueries(act) => &act.run_id,
-            ActivationOrAuto::AutoFail { run_id, .. } => run_id,
-        }
-    }
-}
 
 /// A processed WFT which has been validated and had a history update extracted from it
 #[derive(derive_more::DebugCustom)]
@@ -784,6 +782,7 @@ struct PreparedWFT {
     legacy_query: Option<WorkflowQuery>,
     query_requests: Vec<QueryWorkflow>,
     update: HistoryUpdate,
+    messages: Vec<IncomingProtocolMessage>,
 }
 impl PreparedWFT {
     /// Returns true if the contained history update is incremental (IE: expects to hit a cached
@@ -880,6 +879,7 @@ pub(crate) enum ActivationAction {
     /// We should respond that the workflow task is complete
     WftComplete {
         commands: Vec<ProtoCommand>,
+        messages: Vec<ProtocolMessage>,
         query_responses: Vec<QueryResult>,
         force_new_wft: bool,
         sdk_metadata: WorkflowTaskCompletedMetadata,
@@ -993,7 +993,9 @@ enum ActivationCompleteOutcome {
     derive(serde::Serialize, serde::Deserialize)
 )]
 enum WFTReportStatus {
-    Reported,
+    Reported {
+        reset_last_started_to: Option<i64>,
+    },
     /// The WFT completion was not reported when finishing the activation, because there's still
     /// work to be done. EX: Running LAs.
     NotReported,
@@ -1092,12 +1094,6 @@ impl ValidatedCompletion {
 }
 
 #[derive(Debug)]
-pub struct OutgoingServerCommands {
-    pub commands: Vec<ProtoCommand>,
-    pub replaying: bool,
-}
-
-#[derive(Debug)]
 #[cfg_attr(
     feature = "save_wf_inputs",
     derive(serde::Serialize, serde::Deserialize)
@@ -1149,6 +1145,7 @@ pub enum WFCommand {
     CancelSignalWorkflow(CancelSignalWorkflow),
     UpsertSearchAttributes(UpsertWorkflowSearchAttributes),
     ModifyWorkflowProperties(ModifyWorkflowProperties),
+    UpdateResponse(UpdateResponse),
 }
 
 impl TryFrom<WorkflowCommand> for WFCommand {
@@ -1193,6 +1190,7 @@ impl TryFrom<WorkflowCommand> for WFCommand {
             workflow_command::Variant::ModifyWorkflowProperties(s) => {
                 Ok(Self::ModifyWorkflowProperties(s))
             }
+            workflow_command::Variant::UpdateResponse(s) => Ok(Self::UpdateResponse(s)),
         }
     }
 }

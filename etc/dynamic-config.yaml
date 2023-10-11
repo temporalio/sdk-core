@@ -1,2 +1,10 @@
 system.enableActivityLocalDispatch:
   - value: true
+frontend.workerVersioningWorkflowAPIs:
+  - value: true
+frontend.workerVersioningDataAPIs:
+  - value: true
+frontend.enableUpdateWorkflowExecution:
+  - value: true
+frontend.enableUpdateWorkflowExecutionAsyncAccepted:
+  - value: true

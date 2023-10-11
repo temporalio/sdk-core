@@ -1,21 +1,16 @@
-#[cfg(test)]
-mod managed_wf_test;
-
-#[cfg(test)]
-pub(crate) use managed_wf_test::ManagedWFFunc;
-
 use crate::{
     abstractions::dbg_panic,
-    protosext::WorkflowActivationExt,
+    protosext::{protocol_messages::IncomingProtocolMessage, WorkflowActivationExt},
     worker::{
         workflow::{
-            history_update::HistoryPaginator, machines::WorkflowMachines, ActivationAction,
-            ActivationCompleteOutcome, ActivationCompleteResult, ActivationOrAuto,
-            EvictionRequestResult, FailedActivationWFTReport, HeartbeatTimeoutMsg, HistoryUpdate,
-            LocalActivityRequestSink, LocalResolution, NextPageReq, OutgoingServerCommands,
-            OutstandingActivation, OutstandingTask, PermittedWFT, RequestEvictMsg, RunBasics,
-            ServerCommandsWithWorkflowInfo, WFCommand, WFMachinesError, WFTReportStatus,
-            WorkflowBridge, WorkflowTaskInfo, WFT_HEARTBEAT_TIMEOUT_FRACTION,
+            history_update::HistoryPaginator,
+            machines::{MachinesWFTResponseContent, WorkflowMachines},
+            ActivationAction, ActivationCompleteOutcome, ActivationCompleteResult,
+            ActivationOrAuto, DrivenWorkflow, EvictionRequestResult, FailedActivationWFTReport,
+            HeartbeatTimeoutMsg, HistoryUpdate, LocalActivityRequestSink, LocalResolution,
+            NextPageReq, OutstandingActivation, OutstandingTask, PermittedWFT, RequestEvictMsg,
+            RunBasics, ServerCommandsWithWorkflowInfo, WFCommand, WFMachinesError, WFTReportStatus,
+            WorkflowTaskInfo, WFT_HEARTBEAT_TIMEOUT_FRACTION,
         },
         LocalActRequest, LEGACY_QUERY_ID,
     },
@@ -162,10 +157,10 @@ impl ManagedRun {
 
         let work = pwft.work;
         debug!(
-            run_id = %work.execution.run_id,
             task_token = %&work.task_token,
             update = ?work.update,
             has_legacy_query = %work.legacy_query.is_some(),
+            messages = ?work.messages,
             attempt = %work.attempt,
             "Applying new workflow task from server"
         );
@@ -207,7 +202,7 @@ impl ManagedRun {
         // The update field is only populated in the event we hit the cache
         let activation = if work.update.is_real() {
             self.metrics.sticky_cache_hit();
-            self.wfm.feed_history_from_server(work.update)?
+            self.wfm.new_work_from_server(work.update, work.messages)?
         } else {
             let r = self.wfm.get_next_activation()?;
             if r.jobs.is_empty() {
@@ -266,9 +261,15 @@ impl ManagedRun {
         let retme = self.wft.take();
 
         // Only record latency metrics if we genuinely reported to server
-        if matches!(report_status, WFTReportStatus::Reported) {
+        if let WFTReportStatus::Reported {
+            reset_last_started_to,
+        } = report_status
+        {
             if let Some(ot) = &retme {
                 self.metrics.wf_task_latency(ot.start_time.elapsed());
+            }
+            if let Some(id) = reset_last_started_to {
+                self.wfm.machines.reset_last_started_id(id);
             }
             // Tell the LA manager that we're done with the WFT
             self.local_activity_request_sink.sink_reqs(vec![
@@ -403,17 +404,18 @@ impl ManagedRun {
         } else {
             // First strip out query responses from other commands that actually affect machines
             // Would be prettier with `drain_filter`
-            let mut i = 0;
             let mut query_responses = vec![];
-            while i < commands.len() {
-                if matches!(commands[i], WFCommand::QueryResponse(_)) {
-                    if let WFCommand::QueryResponse(qr) = commands.remove(i) {
+            commands = std::mem::take(&mut commands)
+                .into_iter()
+                .filter_map(|x| {
+                    if let WFCommand::QueryResponse(qr) = x {
                         query_responses.push(qr);
+                        None
+                    } else {
+                        Some(x)
                     }
-                } else {
-                    i += 1;
-                }
-            }
+                })
+                .collect();
 
             if activation_was_only_eviction && !commands.is_empty() {
                 dbg_panic!("Reply to an eviction only containing an eviction included commands");
@@ -570,7 +572,7 @@ impl ManagedRun {
     fn _process_completion(
         &mut self,
         completion: RunActivationCompletion,
-        new_update: Option<HistoryUpdate>,
+        update_from_new_page: Option<HistoryUpdate>,
     ) -> Result<Option<FulfillableActivationComplete>, RunUpdateErr> {
         let data = CompletionDataForWFT {
             task_token: completion.task_token,
@@ -595,8 +597,7 @@ impl ManagedRun {
             // Send commands from lang into the machines then check if the workflow run needs
             // another activation and mark it if so
             self.wfm.push_commands_and_iterate(completion.commands)?;
-            // If there was a new update included as part of the completion, apply it.
-            if let Some(update) = new_update {
+            if let Some(update) = update_from_new_page {
                 self.wfm.feed_history_from_new_page(update)?;
             }
             // Don't bother applying the next task if we're evicting at the end of this activation
@@ -799,6 +800,7 @@ impl ManagedRun {
             }
             self.recorded_span_ids.insert(spid);
 
+            span.record("run_id", self.run_id());
             if let Some(wid) = self.wft().map(|wft| &wft.info.wf_id) {
                 span.record("workflow_id", wid.as_str());
             }
@@ -946,18 +948,18 @@ impl ManagedRun {
         data: CompletionDataForWFT,
         due_to_heartbeat_timeout: bool,
     ) -> FulfillableActivationComplete {
-        let mut outgoing_cmds = self.wfm.get_server_commands();
-        if data.activation_was_only_eviction && !outgoing_cmds.commands.is_empty() {
-            if self.am_broken {
-                // If we broke there could be commands in the pipe that we didn't get a chance to
-                // handle properly during replay, just wipe them all out.
-                outgoing_cmds.commands = vec![];
-            } else {
-                dbg_panic!(
-                "There should not be any outgoing commands when preparing a completion response \
-                 if the activation was only an eviction. This is an SDK bug."
-                );
-            }
+        let mut machines_wft_response = self.wfm.prepare_for_wft_response();
+        if data.activation_was_only_eviction
+            && (
+                !machines_wft_response.commands.is_empty()
+                // || machines_wft_response.messages.len() > 0)
+            )
+            && !self.am_broken
+        {
+            dbg_panic!(
+                "There should not be any outgoing commands or messages when preparing a completion \
+                 response if the activation was only an eviction. This is an SDK bug."
+            );
         }
 
         let query_responses = data.query_responses;
@@ -970,34 +972,50 @@ impl ManagedRun {
         // saw the final event in the workflow, or if we are playing back for the express purpose of
         // fulfilling a query. If the activation we sent was *only* an eviction, don't send that
         // either.
-        let should_respond = !(self.wfm.machines.has_pending_jobs()
-            || outgoing_cmds.replaying
+        let should_respond = !(machines_wft_response.has_pending_jobs
+            || machines_wft_response.replaying
             || is_query_playback
             || data.activation_was_only_eviction
-            || self.wfm.machines.have_seen_terminal_event);
+            || machines_wft_response.have_seen_terminal_event);
         // If there are pending LA resolutions, and we're responding to a query here,
         // we want to make sure to force a new task, as otherwise once we tell lang about
         // the LA resolution there wouldn't be any task to reply to with the result of iterating
         // the workflow.
-        if has_query_responses && self.wfm.machines.has_pending_la_resolutions() {
+        if has_query_responses && machines_wft_response.have_pending_la_resolutions {
             force_new_wft = true;
         }
 
         let outcome = if should_respond || has_query_responses {
+            // If we broke there could be commands or messages in the pipe that we didn't
+            // get a chance to handle properly during replay. Don't send them.
+            let (commands, messages) = if self.am_broken && data.activation_was_only_eviction {
+                (vec![], vec![])
+            } else {
+                (
+                    machines_wft_response.commands(),
+                    machines_wft_response.messages(),
+                )
+            };
+
             ActivationCompleteOutcome::ReportWFTSuccess(ServerCommandsWithWorkflowInfo {
                 task_token: data.task_token,
                 action: ActivationAction::WftComplete {
                     force_new_wft,
-                    commands: outgoing_cmds.commands,
+                    commands,
+                    messages,
                     query_responses,
-                    sdk_metadata: self.wfm.machines.get_metadata_for_wft_complete(),
+                    sdk_metadata: machines_wft_response.metadata_for_complete(),
                 },
             })
         } else {
             ActivationCompleteOutcome::DoNothing
         };
         FulfillableActivationComplete {
-            result: self.build_activation_complete_result(outcome),
+            result: ActivationCompleteResult {
+                outcome,
+                most_recently_processed_event: machines_wft_response.last_processed_event as usize,
+                replaying: machines_wft_response.replaying,
+            },
             resp_chan,
         }
     }
@@ -1023,7 +1041,12 @@ impl ManagedRun {
     ) {
         if let Some(chan) = chan {
             if chan
-                .send(self.build_activation_complete_result(outcome))
+                .send(ActivationCompleteResult {
+                    outcome,
+                    most_recently_processed_event: self.most_recently_processed_event_number()
+                        as usize,
+                    replaying: self.wfm.machines.replaying,
+                })
                 .is_err()
             {
                 let warnstr = "The workflow task completer went missing! This likely indicates an \
@@ -1037,17 +1060,6 @@ impl ManagedRun {
                     auto_reply_fail_tt: None,
                 });
             }
-        }
-    }
-
-    fn build_activation_complete_result(
-        &self,
-        outcome: ActivationCompleteOutcome,
-    ) -> ActivationCompleteResult {
-        ActivationCompleteResult {
-            outcome,
-            most_recently_processed_event: self.most_recently_processed_event_number() as usize,
-            replaying: self.wfm.machines.replaying,
         }
     }
 
@@ -1160,33 +1172,30 @@ impl WorkflowManager {
     /// Create a new workflow manager given workflow history and execution info as would be found
     /// in [PollWorkflowTaskQueueResponse]
     fn new(basics: RunBasics) -> Self {
-        let (wfb, cmd_sink) = WorkflowBridge::new();
-        let state_machines = WorkflowMachines::new(basics, Box::new(wfb).into());
+        let (wfb, cmd_sink) = DrivenWorkflow::new();
+        let state_machines = WorkflowMachines::new(basics, wfb);
         Self {
             machines: state_machines,
             command_sink: Some(cmd_sink),
         }
     }
 
-    #[cfg(test)]
-    const fn new_from_machines(workflow_machines: WorkflowMachines) -> Self {
-        Self {
-            machines: workflow_machines,
-            command_sink: None,
-        }
-    }
-
-    /// Given history that was just obtained from the server, pipe it into this workflow's machines.
+    /// Given info that was just obtained from a new WFT from server, pipe it into this workflow's
+    /// machines.
     ///
     /// Should only be called when a workflow has caught up on replay (or is just beginning). It
     /// will return a workflow activation if one is needed.
-    fn feed_history_from_server(&mut self, update: HistoryUpdate) -> Result<WorkflowActivation> {
-        self.machines.new_history_from_server(update)?;
+    fn new_work_from_server(
+        &mut self,
+        update: HistoryUpdate,
+        messages: Vec<IncomingProtocolMessage>,
+    ) -> Result<WorkflowActivation> {
+        self.machines.new_work_from_server(update, messages)?;
         self.get_next_activation()
     }
 
     /// Update the machines with some events from fetching another page of history. Does *not*
-    /// attempt to pull the next activation, unlike [Self::feed_history_from_server].
+    /// attempt to pull the next activation, unlike [Self::new_work_from_server].
     fn feed_history_from_new_page(&mut self, update: HistoryUpdate) -> Result<()> {
         self.machines.new_history_from_server(update)
     }
@@ -1243,14 +1252,10 @@ impl WorkflowManager {
         Ok(self.machines.has_pending_jobs())
     }
 
-    /// Typically called after [get_next_activation], use this to retrieve commands to be sent to
-    /// the server which have been generated by the machines. Does *not* drain those commands.
-    /// See [WorkflowMachines::get_commands].
-    fn get_server_commands(&self) -> OutgoingServerCommands {
-        OutgoingServerCommands {
-            commands: self.machines.get_commands(),
-            replaying: self.machines.replaying,
-        }
+    /// Must be called when we're ready to respond to a WFT after handling catching up on replay
+    /// and handling all activation completions from lang.
+    fn prepare_for_wft_response(&mut self) -> MachinesWFTResponseContent {
+        self.machines.prepare_for_wft_response()
     }
 
     /// Remove and return all queued local activities. Once this is called, they need to be
