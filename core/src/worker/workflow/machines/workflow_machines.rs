@@ -618,6 +618,10 @@ impl WorkflowMachines {
 
             // Process any messages that should be processed before the event we're about to handle
             let processable_msgs = get_processable_messages(self, eid - 1);
+            error!(
+                "Event {:?} processable {:?} all {:?}",
+                &event, &processable_msgs, self.protocol_msgs
+            );
             for msg in processable_msgs {
                 self.handle_protocol_message(msg)?;
             }

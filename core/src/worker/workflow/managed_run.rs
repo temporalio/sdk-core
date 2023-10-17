@@ -91,11 +91,12 @@ pub(super) struct ManagedRun {
 impl ManagedRun {
     pub(super) fn new(
         basics: RunBasics,
+        wft: PermittedWFT,
         local_activity_request_sink: Rc<dyn LocalActivityRequestSink>,
-    ) -> Self {
+    ) -> (Self, RunUpdateAct) {
         let metrics = basics.metrics.clone();
         let wfm = WorkflowManager::new(basics);
-        Self {
+        let mut me = Self {
             wfm,
             local_activity_request_sink,
             waiting_on_la: None,
@@ -108,7 +109,9 @@ impl ManagedRun {
             metrics,
             paginator: None,
             completion_waiting_on_page_fetch: None,
-        }
+        };
+        let rua = me.incoming_wft(wft);
+        (me, rua)
     }
 
     /// Returns true if there are pending jobs that need to be sent to lang.
