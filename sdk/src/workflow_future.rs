@@ -9,6 +9,7 @@ use futures::{future::BoxFuture, FutureExt};
 use std::{
     collections::{hash_map::Entry, HashMap},
     future::Future,
+    panic,
     panic::AssertUnwindSafe,
     pin::Pin,
     task::{Context, Poll},
@@ -234,7 +235,14 @@ impl WorkflowFuture {
                         };
                         let defp = Payload::default();
                         let val_res = if u.run_validator {
-                            (impls.validator)(&info, u.input.get(0).unwrap_or(&defp))
+                            match panic::catch_unwind(AssertUnwindSafe(|| {
+                                (impls.validator)(&info, u.input.get(0).unwrap_or(&defp))
+                            })) {
+                                Ok(r) => r,
+                                Err(e) => {
+                                    bail!("Panic in update validator {}", panic_formatter(e));
+                                }
+                            }
                         } else {
                             Ok(())
                         };

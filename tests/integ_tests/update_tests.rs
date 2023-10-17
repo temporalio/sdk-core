@@ -1,7 +1,10 @@
 use anyhow::anyhow;
 use assert_matches::assert_matches;
 use futures_util::{future, future::join_all, StreamExt};
-use std::time::Duration;
+use std::{
+    sync::atomic::{AtomicUsize, Ordering},
+    time::Duration,
+};
 use temporal_client::WorkflowClientTrait;
 use temporal_sdk::{ActContext, LocalActivityOptions, UpdateContext, WfContext};
 use temporal_sdk_core::replay::HistoryForReplay;
@@ -695,4 +698,70 @@ async fn update_timer_sequence() {
         .fetch_history_and_replay(wf_id, run_id, worker.inner_mut())
         .await
         .unwrap();
+}
+
+#[tokio::test]
+async fn task_failure_during_validation() {
+    let wf_name = "task_failure_during_validation";
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter.worker_config.no_remote_activities(true);
+    starter.workflow_options.task_timeout = Some(Duration::from_secs(1));
+    let mut worker = starter.worker().await;
+    let client = starter.get_client().await;
+    static FAILCT: AtomicUsize = AtomicUsize::new(0);
+    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+        ctx.update_handler(
+            "update",
+            |_: &_, _: ()| {
+                if FAILCT.fetch_add(1, Ordering::Relaxed) < 2 {
+                    panic!("ahhhhhh");
+                }
+                Ok(())
+            },
+            move |_: UpdateContext, _: ()| async move { Ok("done") },
+        );
+        ctx.timer(Duration::from_secs(1)).await;
+        Ok(().into())
+    });
+
+    let run_id = starter.start_with_worker(wf_name, &mut worker).await;
+    let wf_id = starter.get_task_queue().to_string();
+    let update = async {
+        let res = client
+            .update_workflow_execution(
+                wf_id.clone(),
+                "".to_string(),
+                "update".to_string(),
+                WaitPolicy {
+                    lifecycle_stage: UpdateWorkflowExecutionLifecycleStage::Completed as i32,
+                },
+                [().as_json_payload().unwrap()].into_payloads(),
+            )
+            .await
+            .unwrap();
+        assert!(res.outcome.unwrap().is_success());
+    };
+    let run = async {
+        worker.run_until_done().await.unwrap();
+    };
+    join!(update, run);
+    starter
+        .fetch_history_and_replay(wf_id.clone(), run_id, worker.inner_mut())
+        .await
+        .unwrap();
+    // Verify we did not spam task failures. There should only be one.
+    let history = client
+        .get_workflow_execution_history(wf_id, None, vec![])
+        .await
+        .unwrap()
+        .history
+        .unwrap();
+    assert_eq!(
+        history
+            .events
+            .iter()
+            .filter(|he| he.event_type() == EventType::WorkflowTaskFailed)
+            .count(),
+        1
+    );
 }
