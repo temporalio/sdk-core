@@ -615,10 +615,6 @@ impl WorkflowMachines {
 
             // Process any messages that should be processed before the event we're about to handle
             let processable_msgs = get_processable_messages(self, eid - 1);
-            error!(
-                "Event {:?} processable {:?} all {:?}",
-                &event, &processable_msgs, self.protocol_msgs
-            );
             for msg in processable_msgs {
                 self.handle_protocol_message(msg)?;
             }
@@ -699,8 +695,12 @@ impl WorkflowMachines {
                     body: IncomingProtocolMessageBody::UpdateRequest(
                         atts.accepted_request
                             .clone()
-                            // TODO: Not default, propagate error
-                            .unwrap_or_default()
+                            .ok_or_else(|| {
+                                WFMachinesError::Fatal(
+                                    "Update accepted event must contain accepted request"
+                                        .to_string(),
+                                )
+                            })?
                             .try_into()?,
                     ),
                 }));
@@ -800,18 +800,6 @@ impl WorkflowMachines {
                     WFMachinesError::Nondeterminism(format!(
                         "During event handling, this event had an initial command ID but we \
                          could not find a matching command for it: {event:?}"
-                    ))
-                })?;
-            self.submachine_handle_event(*mkey, event_dat)?;
-        } else if let Some(protocol_instance_id) = event.get_protocol_instance_id() {
-            // TODO: This branch may not be necessary
-            let mkey = self
-                .machines_by_protocol_instance_id
-                .get(protocol_instance_id)
-                .ok_or_else(|| {
-                    WFMachinesError::Nondeterminism(format!(
-                        "During event handling, this event had an protocol instance ID but we \
-                         could not find a matching machines for it: {event:?}"
                     ))
                 })?;
             self.submachine_handle_event(*mkey, event_dat)?;
@@ -989,7 +977,9 @@ impl WorkflowMachines {
     /// This function will attempt to apply the message to a corresponding state machine for the
     /// appropriate protocol type, creating it if it does not exist.
     ///
-    /// TODO: explain how replay works -- just not called? No messages then, events instead?
+    /// On replay, protocol messages may be made up by looking ahead in history to see if there is
+    /// already an event corresponding to the result of some protocol message which would have
+    /// existed to create that result.
     #[instrument(skip(self))]
     fn handle_protocol_message(&mut self, message: IncomingProtocolMessage) -> Result<()> {
         static SEQIDERR: &str = "Update request messages must contain an event sequencing id! \
