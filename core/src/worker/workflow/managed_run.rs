@@ -953,10 +953,8 @@ impl ManagedRun {
     ) -> FulfillableActivationComplete {
         let mut machines_wft_response = self.wfm.prepare_for_wft_response();
         if data.activation_was_only_eviction
-            && (
-                !machines_wft_response.commands.is_empty()
-                // || machines_wft_response.messages.len() > 0)
-            )
+            && (machines_wft_response.commands().peek().is_some()
+                || machines_wft_response.has_messages())
             && !self.am_broken
         {
             dbg_panic!(
@@ -995,7 +993,7 @@ impl ManagedRun {
                 (vec![], vec![])
             } else {
                 (
-                    machines_wft_response.commands(),
+                    machines_wft_response.commands().collect(),
                     machines_wft_response.messages(),
                 )
             };

@@ -45,6 +45,7 @@ use std::{
     collections::{HashMap, VecDeque},
     convert::TryInto,
     hash::{Hash, Hasher},
+    iter::Peekable,
     rc::Rc,
     time::{Duration, Instant, SystemTime},
 };
@@ -367,7 +368,6 @@ impl WorkflowMachines {
 
     pub(crate) fn prepare_for_wft_response(&mut self) -> MachinesWFTResponseContent {
         MachinesWFTResponseContent {
-            commands: self.get_commands(),
             replaying: self.replaying,
             has_pending_jobs: self.has_pending_jobs(),
             have_seen_terminal_event: self.have_seen_terminal_event,
@@ -380,25 +380,22 @@ impl WorkflowMachines {
     /// Fetches commands which are ready for processing from the state machines, generally to be
     /// sent off to the server. They are not removed from the internal queue, that happens when
     /// corresponding history events from the server are being handled.
-    pub(crate) fn get_commands(&self) -> Vec<ProtoCommand> {
+    pub(crate) fn get_commands(&self) -> impl Iterator<Item = ProtoCommand> + '_ {
         // Since we're about to write a WFT, record any internal flags we know about which aren't
         // already recorded.
         (*self.observed_internal_flags)
             .borrow_mut()
             .write_all_known();
-        self.commands
-            .iter()
-            .filter_map(|c| {
-                if !self.machine(c.machine).is_final_state() {
-                    match &c.command {
-                        MachineAssociatedCommand::Real(cmd) => Some((**cmd).clone()),
-                        MachineAssociatedCommand::FakeLocalActivityMarker(_) => None,
-                    }
-                } else {
-                    None
+        self.commands.iter().filter_map(|c| {
+            if !self.machine(c.machine).is_final_state() {
+                match &c.command {
+                    MachineAssociatedCommand::Real(cmd) => Some((**cmd).clone()),
+                    MachineAssociatedCommand::FakeLocalActivityMarker(_) => None,
                 }
-            })
-            .collect()
+            } else {
+                None
+            }
+        })
     }
 
     /// Returns the next activation that needs to be performed by the lang sdk. Things like unblock
@@ -1560,8 +1557,6 @@ impl WorkflowMachines {
 /// desired unless we are actually going to respond to the WFT, which may not always happen.
 pub struct MachinesWFTResponseContent<'a> {
     me: &'a mut WorkflowMachines,
-    // TODO: make slice after getting rid of stupid managed wffunc thing
-    pub commands: Vec<ProtoCommand>,
     pub replaying: bool,
     pub has_pending_jobs: bool,
     pub have_seen_terminal_event: bool,
@@ -1569,9 +1564,11 @@ pub struct MachinesWFTResponseContent<'a> {
     pub last_processed_event: i64,
 }
 impl<'a> MachinesWFTResponseContent<'a> {
-    pub fn commands(&self) -> Vec<ProtoCommand> {
-        // TODO: No clone after removing wffunc junk
-        self.commands.clone()
+    pub fn commands(&self) -> Peekable<impl Iterator<Item = ProtoCommand> + '_> {
+        self.me.get_commands().peekable()
+    }
+    pub fn has_messages(&self) -> bool {
+        !self.me.message_outbox.is_empty()
     }
     pub fn messages(&mut self) -> Vec<ProtocolMessage> {
         self.me.message_outbox.drain(..).collect()
