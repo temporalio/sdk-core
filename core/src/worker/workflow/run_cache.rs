@@ -7,7 +7,7 @@ use crate::{
     MetricsContext,
 };
 use lru::LruCache;
-use std::{mem, num::NonZeroUsize, rc::Rc};
+use std::{num::NonZeroUsize, rc::Rc};
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::get_system_info_response;
 
 pub(super) struct RunCache {
@@ -51,7 +51,7 @@ impl RunCache {
         }
     }
 
-    pub fn instantiate_or_update(&mut self, mut pwft: PermittedWFT) -> RunUpdateAct {
+    pub fn instantiate_or_update(&mut self, pwft: PermittedWFT) -> RunUpdateAct {
         let cur_num_cached_runs = self.runs.len();
         let run_id = pwft.work.execution.run_id.clone();
 
@@ -66,24 +66,20 @@ impl RunCache {
         let metrics = self
             .metrics
             .with_new_attrs([workflow_type(pwft.work.workflow_type.clone())]);
-        // Replace the update in the wft with a dummy one, since we must instantiate the machines
-        // with the update.
-        let history_update = mem::replace(&mut pwft.work.update, HistoryUpdate::dummy());
-        // TODO: Merge `incoming_wft` into new and avoid whole dummy update thing
-        let mut mrh = ManagedRun::new(
+        let (mrh, rur) = ManagedRun::new(
             RunBasics {
                 namespace: self.namespace.clone(),
                 workflow_id: pwft.work.execution.workflow_id.clone(),
                 workflow_type: pwft.work.workflow_type.clone(),
                 run_id: run_id.clone(),
                 task_queue: self.task_queue.clone(),
-                history: history_update,
+                history: HistoryUpdate::dummy(),
                 metrics,
                 capabilities: &self.server_capabilities,
             },
+            pwft,
             self.local_activity_request_sink.clone(),
         );
-        let rur = mrh.incoming_wft(pwft);
         if self.runs.push(run_id, mrh).is_some() {
             panic!("Overflowed run cache! Cache owner is expected to avoid this!");
         }

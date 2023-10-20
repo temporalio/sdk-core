@@ -91,11 +91,12 @@ pub(super) struct ManagedRun {
 impl ManagedRun {
     pub(super) fn new(
         basics: RunBasics,
+        wft: PermittedWFT,
         local_activity_request_sink: Rc<dyn LocalActivityRequestSink>,
-    ) -> Self {
+    ) -> (Self, RunUpdateAct) {
         let metrics = basics.metrics.clone();
         let wfm = WorkflowManager::new(basics);
-        Self {
+        let mut me = Self {
             wfm,
             local_activity_request_sink,
             waiting_on_la: None,
@@ -108,7 +109,9 @@ impl ManagedRun {
             metrics,
             paginator: None,
             completion_waiting_on_page_fetch: None,
-        }
+        };
+        let rua = me.incoming_wft(wft);
+        (me, rua)
     }
 
     /// Returns true if there are pending jobs that need to be sent to lang.
@@ -950,10 +953,8 @@ impl ManagedRun {
     ) -> FulfillableActivationComplete {
         let mut machines_wft_response = self.wfm.prepare_for_wft_response();
         if data.activation_was_only_eviction
-            && (
-                !machines_wft_response.commands.is_empty()
-                // || machines_wft_response.messages.len() > 0)
-            )
+            && (machines_wft_response.commands().peek().is_some()
+                || machines_wft_response.has_messages())
             && !self.am_broken
         {
             dbg_panic!(
@@ -992,7 +993,7 @@ impl ManagedRun {
                 (vec![], vec![])
             } else {
                 (
-                    machines_wft_response.commands(),
+                    machines_wft_response.commands().collect(),
                     machines_wft_response.messages(),
                 )
             };

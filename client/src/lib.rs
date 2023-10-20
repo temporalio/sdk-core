@@ -78,7 +78,11 @@ use uuid::Uuid;
 static CLIENT_NAME_HEADER_KEY: &str = "client-name";
 static CLIENT_VERSION_HEADER_KEY: &str = "client-version";
 /// These must match the gRPC method names, not the snake case versions that exist in the Rust code.
-static LONG_POLL_METHOD_NAMES: [&str; 2] = ["PollWorkflowTaskQueue", "PollActivityTaskQueue"];
+static LONG_POLL_METHOD_NAMES: [&str; 3] = [
+    "PollWorkflowTaskQueue",
+    "PollActivityTaskQueue",
+    "PollWorkflowExecutionUpdateRequest",
+];
 /// The server times out polls after 60 seconds. Set our timeout to be slightly beyond that.
 const LONG_POLL_TIMEOUT: Duration = Duration::from_secs(70);
 const OTHER_CALL_TIMEOUT: Duration = Duration::from_secs(30);
