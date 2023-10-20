@@ -1,5 +1,6 @@
 mod activities;
 pub(crate) mod client;
+mod slot_provider;
 mod workflow;
 
 pub use temporal_sdk_core_api::worker::{WorkerConfig, WorkerConfigBuilder};
@@ -32,6 +33,7 @@ use crate::{
     ActivityHeartbeat, CompleteActivityError, PollActivityError, PollWfError, WorkerTrait,
 };
 use activities::WorkerActivityTasks;
+use slot_provider::SlotProvider;
 use std::{
     convert::TryInto,
     future,
@@ -75,6 +77,8 @@ pub struct Worker {
     config: WorkerConfig,
     wf_client: Arc<dyn WorkerClient>,
 
+    /// A unique identifier for this worker
+    uuid: String,
     /// Manages all workflows and WFT processing
     workflows: Workflows,
     /// Manages activity tasks for this worker/task queue
@@ -161,7 +165,12 @@ impl WorkerTrait for Worker {
             );
         }
         self.shutdown_token.cancel();
-        // First, we want to stop polling of both activity and workflow tasks
+        // First, disable Eager Workflow Start
+        self.wf_client
+            .workers()
+            .write()
+            .unregister(self.uuid.clone());
+        // Second, we want to stop polling of both activity and workflow tasks
         if let Some(atm) = self.at_task_mgr.as_ref() {
             atm.initiate_shutdown();
         }
@@ -343,7 +352,18 @@ impl Worker {
             info!("Activity polling is disabled for this worker");
         };
         let la_sink = LAReqSink::new(local_act_mgr.clone(), config.wf_state_inputs.clone());
+        let uuid = uuid::Uuid::new_v4().simple().to_string();
+        let (external_wft_tx, external_wft_rx) = unbounded_channel();
+        let provider = SlotProvider::new(
+            uuid.clone(),
+            config.namespace.clone(),
+            config.task_queue.clone(),
+            wft_semaphore.clone(),
+            external_wft_tx,
+        );
+        client.workers().write().register(Box::new(provider));
         Self {
+            uuid,
             wf_client: client.clone(),
             workflows: Workflows::new(
                 build_wf_basics(
@@ -371,6 +391,7 @@ impl Worker {
                 la_sink,
                 local_act_mgr.clone(),
                 hb_rx,
+                external_wft_rx,
                 at_task_mgr
                     .as_ref()
                     .map(|mgr| mgr.get_handle_for_workflows()),

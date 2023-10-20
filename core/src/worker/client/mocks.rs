@@ -1,5 +1,14 @@
 use super::*;
 use futures::Future;
+use lazy_static::lazy_static;
+use parking_lot::RwLock;
+use std::sync::Arc;
+use temporal_client::SlotManager;
+
+lazy_static! {
+    pub(crate) static ref DEFAULT_WORKERS_REGISTRY: Arc<RwLock<SlotManager>> =
+        Arc::new(RwLock::new(SlotManager::new()));
+}
 
 pub(crate) static DEFAULT_TEST_CAPABILITIES: &Capabilities = &Capabilities {
     signal_and_query_header: true,
@@ -19,6 +28,8 @@ pub(crate) fn mock_workflow_client() -> MockWorkerClient {
     let mut r = MockWorkerClient::new();
     r.expect_capabilities()
         .returning(|| Some(DEFAULT_TEST_CAPABILITIES));
+    r.expect_workers()
+        .returning(|| DEFAULT_WORKERS_REGISTRY.clone());
     r
 }
 
@@ -27,6 +38,8 @@ pub(crate) fn mock_manual_workflow_client() -> MockManualWorkerClient {
     let mut r = MockManualWorkerClient::new();
     r.expect_capabilities()
         .returning(|| Some(DEFAULT_TEST_CAPABILITIES));
+    r.expect_workers()
+        .returning(|| DEFAULT_WORKERS_REGISTRY.clone());
     r
 }
 
@@ -103,5 +116,7 @@ mockall::mock! {
             where 'a: 'b, Self: 'b;
 
         fn capabilities(&self) -> Option<&'static get_system_info_response::Capabilities>;
+
+        fn workers(&self) -> Arc<RwLock<dyn WorkerRegistry>>;
     }
 }

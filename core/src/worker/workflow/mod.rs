@@ -161,6 +161,7 @@ impl Workflows {
         local_activity_request_sink: impl LocalActivityRequestSink,
         local_act_mgr: Arc<LocalActivityManager>,
         heartbeat_timeout_rx: UnboundedReceiver<HeartbeatTimeoutMsg>,
+        external_wft_rx: UnboundedReceiver<WFTStreamIn>,
         activity_tasks_handle: Option<ActivitiesFromWFTsHandle>,
         telem_instance: Option<&TelemetryInstance>,
     ) -> Self {
@@ -168,10 +169,12 @@ impl Workflows {
         let (fetch_tx, fetch_rx) = unbounded_channel();
         let shutdown_tok = basics.shutdown_token.clone();
         let task_queue = basics.task_queue.clone();
+        let ext_wft_stream =
+            stream::select(wft_stream, UnboundedReceiverStream::new(external_wft_rx));
         let extracted_wft_stream = WFTExtractor::build(
             client.clone(),
             basics.fetching_concurrency,
-            wft_stream,
+            ext_wft_stream,
             UnboundedReceiverStream::new(fetch_rx),
         );
         let locals_stream = stream::select(

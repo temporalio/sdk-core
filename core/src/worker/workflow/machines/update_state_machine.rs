@@ -172,7 +172,7 @@ impl UpdateMachine {
             WFMachinesError::Fatal(format!("Failed to serialize update response: {:?}", e))
         })?;
         Ok(ProtocolMessage {
-            id: outgoing_id.clone(),
+            id: outgoing_id,
             protocol_instance_id: self.shared_state.instance_id.clone(),
             body: Some(accept_body),
             ..Default::default()

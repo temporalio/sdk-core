@@ -6,10 +6,10 @@
 
 #[macro_use]
 extern crate tracing;
-
 mod metrics;
 mod raw;
 mod retry;
+mod worker_registry;
 mod workflow_handle;
 
 pub use crate::retry::{CallType, RetryClient, RETRYABLE_ERROR_CODES};
@@ -23,6 +23,7 @@ pub use temporal_sdk_core_protos::temporal::api::{
     },
 };
 pub use tonic;
+pub use worker_registry::{Slot, SlotManager, SlotProvider, WorkerRegistry};
 pub use workflow_handle::{WorkflowExecutionInfo, WorkflowExecutionResult};
 
 use crate::{
@@ -276,6 +277,7 @@ pub struct ConfiguredClient<C> {
     headers: Arc<RwLock<HashMap<String, String>>>,
     /// Capabilities as read from the `get_system_info` RPC call made on client connection
     capabilities: Option<get_system_info_response::Capabilities>,
+    workers: Arc<RwLock<SlotManager>>,
 }
 
 impl<C> ConfiguredClient<C> {
@@ -294,6 +296,11 @@ impl<C> ConfiguredClient<C> {
     /// connection
     pub fn capabilities(&self) -> Option<&get_system_info_response::Capabilities> {
         self.capabilities.as_ref()
+    }
+
+    /// Returns a cloned reference to a registry with workers using this client instance
+    pub fn workers(&self) -> Arc<RwLock<SlotManager>> {
+        self.workers.clone()
     }
 }
 
@@ -373,6 +380,7 @@ impl ClientOptions {
             client: TemporalServiceClient::new(svc),
             options: Arc::new(self.clone()),
             capabilities: None,
+            workers: Arc::new(RwLock::new(SlotManager::new())),
         };
         match client
             .get_system_info(GetSystemInfoRequest::default())
@@ -974,6 +982,10 @@ pub struct WorkflowOptions {
 
     /// Optionally associate extra search attributes with a workflow
     pub search_attributes: Option<HashMap<String, Payload>>,
+
+    /// Optionally enable Eager Workflow Start, a latency optimization using local workers
+    /// NOTE: Experimental and incompatible with versioning with BuildIDs
+    pub enable_eager_workflow_start: bool,
 }
 
 #[async_trait::async_trait]
@@ -1006,10 +1018,11 @@ impl WorkflowClientTrait for Client {
                 workflow_execution_timeout: options
                     .execution_timeout
                     .and_then(|d| d.try_into().ok()),
-                workflow_run_timeout: options.execution_timeout.and_then(|d| d.try_into().ok()),
+                workflow_run_timeout: options.run_timeout.and_then(|d| d.try_into().ok()),
                 workflow_task_timeout: options.task_timeout.and_then(|d| d.try_into().ok()),
                 search_attributes: options.search_attributes.and_then(|d| d.try_into().ok()),
                 cron_schedule: options.cron_schedule.unwrap_or_default(),
+                request_eager_execution: options.enable_eager_workflow_start,
                 ..Default::default()
             })
             .await?
@@ -1163,9 +1176,7 @@ impl WorkflowClientTrait for Client {
                 workflow_execution_timeout: workflow_options
                     .execution_timeout
                     .and_then(|d| d.try_into().ok()),
-                workflow_run_timeout: workflow_options
-                    .execution_timeout
-                    .and_then(|d| d.try_into().ok()),
+                workflow_run_timeout: workflow_options.run_timeout.and_then(|d| d.try_into().ok()),
                 workflow_task_timeout: workflow_options
                     .task_timeout
                     .and_then(|d| d.try_into().ok()),

@@ -5,10 +5,13 @@
 use crate::{
     metrics::{namespace_kv, task_queue_kv},
     raw::sealed::RawClientLike,
+    worker_registry::{Slot, SlotManager},
     Client, ConfiguredClient, InterceptedMetricsSvc, RetryClient, TemporalServiceClient,
     LONG_POLL_TIMEOUT,
 };
 use futures::{future::BoxFuture, FutureExt, TryFutureExt};
+use parking_lot::RwLock;
+use std::sync::Arc;
 use temporal_sdk_core_api::telemetry::metrics::MetricKeyValue;
 use temporal_sdk_core_protos::{
     grpc::health::v1::{health_client::HealthClient, *},
@@ -42,6 +45,9 @@ pub(super) mod sealed {
 
         /// Return the health service client instance
         fn health_client(&mut self) -> &mut HealthClient<Self::SvcType>;
+
+        /// Return a registry with workers using this client instance
+        fn get_workers_info(&self) -> Option<Arc<RwLock<SlotManager>>>;
 
         async fn call<F, Req, Resp>(
             &mut self,
@@ -82,6 +88,10 @@ where
 
     fn health_client(&mut self) -> &mut HealthClient<Self::SvcType> {
         self.get_client_mut().health_client()
+    }
+
+    fn get_workers_info(&self) -> Option<Arc<RwLock<SlotManager>>> {
+        self.get_client().get_workers_info()
     }
 
     async fn call<F, Req, Resp>(
@@ -130,6 +140,10 @@ where
     fn health_client(&mut self) -> &mut HealthClient<Self::SvcType> {
         self.health_svc_mut()
     }
+
+    fn get_workers_info(&self) -> Option<Arc<RwLock<SlotManager>>> {
+        None
+    }
 }
 
 impl<T> RawClientLike for ConfiguredClient<TemporalServiceClient<T>>
@@ -157,6 +171,10 @@ where
     fn health_client(&mut self) -> &mut HealthClient<Self::SvcType> {
         self.client.health_client()
     }
+
+    fn get_workers_info(&self) -> Option<Arc<RwLock<SlotManager>>> {
+        Some(self.workers())
+    }
 }
 
 impl RawClientLike for Client {
@@ -176,6 +194,10 @@ impl RawClientLike for Client {
 
     fn health_client(&mut self) -> &mut HealthClient<Self::SvcType> {
         self.inner.health_client()
+    }
+
+    fn get_workers_info(&self) -> Option<Arc<RwLock<SlotManager>>> {
+        self.inner.get_workers_info()
     }
 }
 
@@ -266,6 +288,50 @@ where
 
 /// Helps re-declare gRPC client methods
 macro_rules! proxy {
+    ($client_type:tt, $client_meth:ident, start_workflow_execution, $req:ty, $resp:ty  $(, $closure:expr)?) => {
+        #[doc = concat!("See [", stringify!($client_type), "::", stringify!(start_workflow_execution), "]")]
+        fn start_workflow_execution(
+            &mut self,
+            request: impl tonic::IntoRequest<$req>,
+        ) -> BoxFuture<Result<tonic::Response<$resp>, tonic::Status>> {
+            #[allow(unused_mut)]
+            let fact = |c: &mut Self, mut req: tonic::Request<$req>| {
+                let mut slot: Option<Box<dyn Slot>> = None;
+                $( type_closure_arg(&mut req, $closure); )*
+
+                let req_mut = req.get_mut();
+                if req_mut.request_eager_execution {
+                    let workers = c.get_workers_info().unwrap();
+                    let workers_rlock = workers.read();
+                    let namespace = req_mut.namespace.clone();
+                    let task_queue = req_mut.task_queue.clone().unwrap().name.clone();
+                    match workers_rlock.try_reserve_wft_slot(namespace, task_queue) {
+                        Some(s) => slot = Some(s),
+                        None => req_mut.request_eager_execution = false
+                    }
+                }
+
+                let mut c = c.$client_meth().clone();
+                async move {
+                    let response = c.start_workflow_execution(req).await;
+                    if let Some(mut s) = slot {
+                        if response.is_ok() {
+                            let response_inner = response.as_ref().unwrap().get_ref().clone();
+                            if let Some(task) = response_inner.eager_workflow_task {
+                                if let Err(e) = s.schedule_wft(task) {
+                                    // This is a latency issue, i.e., the client does not need to handle
+                                    //  this error, because the WFT will be retried after a timeout.
+                                    warn!(details = ?e, "Eager workflow task rejected by worker.");
+                                }
+                            }
+                        }
+                    }
+                    response
+                }.boxed()
+            };
+            self.call(stringify!(start_workflow_execution), fact, request.into_request())
+        }
+    };
     ($client_type:tt, $client_meth:ident, $method:ident, $req:ty, $resp:ty $(, $closure:expr)?) => {
         #[doc = concat!("See [", stringify!($client_type), "::", stringify!($method), "]")]
         fn $method(
