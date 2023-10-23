@@ -75,6 +75,7 @@ pub(super) struct SharedState {
     instance_id: String,
     event_seq_id: i64,
     request: UpdateRequest,
+    replaying_when_created: bool,
 }
 
 impl UpdateMachine {
@@ -92,6 +93,7 @@ impl UpdateMachine {
                 instance_id: instance_id.clone(),
                 event_seq_id,
                 request: request.clone(),
+                replaying_when_created: replaying,
             },
         );
         let do_update = DoUpdate {
@@ -149,34 +151,40 @@ impl UpdateMachine {
         outgoing_id: String,
         msg: UpdateMsg,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
-        let msg = self.build_msg(outgoing_id.clone(), msg)?;
-        Ok(vec![
-            MachineResponse::IssueNewMessage(msg),
-            MachineResponse::IssueNewCommand(
-                command::Attributes::ProtocolMessageCommandAttributes(
-                    ProtocolMessageCommandAttributes {
-                        message_id: outgoing_id,
-                    },
-                )
-                .into(),
-            ),
-        ])
+        let mut responses = vec![];
+        if let Some(r) = self.build_msg(outgoing_id.clone(), msg)? {
+            responses.push(r)
+        };
+        responses.push(MachineResponse::IssueNewCommand(
+            command::Attributes::ProtocolMessageCommandAttributes(
+                ProtocolMessageCommandAttributes {
+                    message_id: outgoing_id,
+                },
+            )
+            .into(),
+        ));
+        Ok(responses)
     }
 
+    /// Build an outgoing protocol message. Returns Ok(None) during replay, since we don't want
+    /// to re-send message replies in that case
     fn build_msg(
         &self,
         outgoing_id: String,
         msg: UpdateMsg,
-    ) -> Result<ProtocolMessage, WFMachinesError> {
+    ) -> Result<Option<MachineResponse>, WFMachinesError> {
+        if self.shared_state.replaying_when_created {
+            return Ok(None);
+        }
         let accept_body = msg.pack().map_err(|e| {
             WFMachinesError::Fatal(format!("Failed to serialize update response: {:?}", e))
         })?;
-        Ok(ProtocolMessage {
+        Ok(Some(MachineResponse::IssueNewMessage(ProtocolMessage {
             id: outgoing_id.clone(),
             protocol_instance_id: self.shared_state.instance_id.clone(),
             body: Some(accept_body),
             ..Default::default()
-        })
+        })))
     }
 }
 
@@ -241,7 +249,7 @@ impl WFMachinesAdapter for UpdateMachine {
                 }),
             )?,
             UpdateMachineCommand::Reject(fail) => {
-                vec![MachineResponse::IssueNewMessage(self.build_msg(
+                if let Some(r) = self.build_msg(
                     format!("{}/reject", self.shared_state.message_id),
                     UpdateMsg::Reject(Rejection {
                         rejected_request_message_id: self.shared_state.message_id.clone(),
@@ -249,7 +257,11 @@ impl WFMachinesAdapter for UpdateMachine {
                         failure: Some(fail),
                         ..Default::default()
                     }),
-                )?)]
+                )? {
+                    vec![r]
+                } else {
+                    vec![]
+                }
             }
             UpdateMachineCommand::Complete(p) => self.build_command_msg(
                 format!("{}/complete", self.shared_state.message_id),
