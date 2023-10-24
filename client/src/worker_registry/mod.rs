@@ -84,15 +84,21 @@ impl SlotManager {
 impl WorkerRegistry for SlotManager {
     fn register(&mut self, provider: Box<dyn SlotProvider>) {
         let uuid = provider.uuid();
+        debug!("register {}", uuid);
         if self.index.get(&uuid).is_none() {
             let key = to_key(&provider.namespace(), &provider.task_queue());
             self.index.insert(uuid, key.clone());
             let all = self.providers.entry(key).or_insert(vec![]);
             all.push(provider);
         }
+        debug!("#entries {}", self.index.len());
+        for (key, value) in &self.providers {
+            debug!("{}: {}", key, value.len());
+        }
     }
 
     fn unregister(&mut self, uuid: String) {
+        debug!("unregister {}", uuid);
         if self.index.contains_key(&uuid) {
             if let Some(key) = self.index.remove(&uuid) {
                 if let Some(all) = self.providers.get_mut(&key) {
@@ -102,6 +108,10 @@ impl WorkerRegistry for SlotManager {
                     }
                 }
             }
+        }
+        debug!("#entries {}", self.index.len());
+        for (key, value) in &self.providers {
+            debug!("{}: {}", key, value.len());
         }
     }
 }
