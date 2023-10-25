@@ -45,7 +45,7 @@ use temporal_sdk_core_protos::{
     default_act_sched, default_wes_attribs,
     temporal::api::{
         command::v1::command::Attributes,
-        common::v1::{Payload, RetryPolicy},
+        common::v1::{Payload, RetryPolicy, WorkerVersionStamp},
         enums::v1::{EventType, WorkflowTaskFailedCause},
         failure::v1::Failure,
         history::v1::{
@@ -2806,4 +2806,55 @@ async fn use_compatible_version_flag(
         .complete_workflow_activation(WorkflowActivationCompletion::from_cmd(r.run_id, cmd))
         .await
         .unwrap();
+}
+
+#[tokio::test]
+async fn sets_build_id_from_wft_complete() {
+    let wfid = "fake_wf_id";
+
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
+    t.add_timer_fired(timer_started_event_id, "1".to_string());
+    t.add_full_wf_task();
+    t.modify_event(t.current_event_id(), |he| {
+        if let history_event::Attributes::WorkflowTaskCompletedEventAttributes(a) =
+            he.attributes.as_mut().unwrap()
+        {
+            a.worker_version = Some(WorkerVersionStamp {
+                build_id: "enchi-cat".to_string(),
+                ..Default::default()
+            });
+        }
+    });
+    let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
+    t.add_timer_fired(timer_started_event_id, "2".to_string());
+    t.add_full_wf_task();
+
+    let mock = mock_workflow_client();
+    let mut worker = mock_sdk_cfg(
+        MockPollCfg::from_resp_batches(wfid, t, [ResponseType::AllHistory], mock),
+        |cfg| {
+            cfg.worker_build_id = "fierce-predator".to_string();
+            cfg.max_cached_workflows = 1;
+        },
+    );
+
+    worker.register_wf(DEFAULT_WORKFLOW_TYPE, |ctx: WfContext| async move {
+        // First task, it should be empty, since replaying and nothing in first WFT completed
+        ctx.timer(Duration::from_secs(1)).await;
+        assert_eq!(ctx.current_build_id(), None);
+        ctx.timer(Duration::from_secs(1)).await;
+        assert_eq!(ctx.current_build_id(), Some("enchi-cat".to_string()));
+        ctx.timer(Duration::from_secs(1)).await;
+        // Not replaying at this point, so we should see the worker's build id
+        assert_eq!(ctx.current_build_id(), Some("fierce-predator".to_string()));
+        Ok(().into())
+    });
+    worker
+        .submit_wf(wfid, DEFAULT_WORKFLOW_TYPE, vec![], Default::default())
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
 }

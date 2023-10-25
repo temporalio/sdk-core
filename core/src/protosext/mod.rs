@@ -139,6 +139,8 @@ impl TryFrom<PollWorkflowTaskQueueResponse> for ValidPollWFTQResponse {
 pub(crate) trait WorkflowActivationExt {
     /// Returns true if this activation has one and only one job to perform a legacy query
     fn is_legacy_query(&self) -> bool;
+    /// Augment the activation with the worker's Build ID if appropriate
+    fn attach_build_id_if_needed(&mut self, build_id: &str);
 }
 
 impl WorkflowActivationExt for WorkflowActivation {
@@ -146,6 +148,11 @@ impl WorkflowActivationExt for WorkflowActivation {
         matches!(&self.jobs.as_slice(), &[WorkflowActivationJob {
                     variant: Some(workflow_activation_job::Variant::QueryWorkflow(qr))
                 }] if qr.query_id == LEGACY_QUERY_ID)
+    }
+    fn attach_build_id_if_needed(&mut self, build_id: &str) {
+        if !self.is_replaying {
+            self.build_id_for_current_task = build_id.to_string();
+        }
     }
 }
 

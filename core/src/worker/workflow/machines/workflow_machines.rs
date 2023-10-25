@@ -123,6 +123,8 @@ pub(crate) struct WorkflowMachines {
     history_size_bytes: u64,
     /// Set on each WFT started event
     continue_as_new_suggested: bool,
+    /// Set if the current WFT is already complete and that completion event had a build id in it.
+    current_wft_build_id: Option<String>,
 
     all_machines: SlotMap<MachineKey, Machines>,
     /// If a machine key is in this map, that machine was created internally by core, not as a
@@ -263,6 +265,7 @@ impl WorkflowMachines {
             observed_internal_flags: Rc::new(RefCell::new(observed_internal_flags)),
             history_size_bytes: 0,
             continue_as_new_suggested: false,
+            current_wft_build_id: None,
             all_machines: Default::default(),
             machine_is_core_created: Default::default(),
             machines_by_event_id: Default::default(),
@@ -425,6 +428,7 @@ impl WorkflowMachines {
                 .collect(),
             history_size_bytes: self.history_size_bytes,
             continue_as_new_suggested: self.continue_as_new_suggested,
+            build_id_for_current_task: self.current_wft_build_id.clone().unwrap_or_default(),
         }
     }
 
@@ -508,18 +512,6 @@ impl WorkflowMachines {
             return Ok(0);
         }
 
-        fn update_internal_flags(me: &mut WorkflowMachines) {
-            // Update observed patches with any that were used in the task
-            if let Some(next_complete) = me
-                .last_history_from_server
-                .peek_next_wft_completed(me.last_processed_event)
-            {
-                (*me.observed_internal_flags)
-                    .borrow_mut()
-                    .add_from_complete(next_complete);
-            }
-        }
-
         fn get_processable_messages(
             me: &mut WorkflowMachines,
             for_event_id: i64,
@@ -542,10 +534,23 @@ impl WorkflowMachines {
             ret
         }
 
-        // We update the internal flags before applying the current task (peeking to the completion
-        // of this task), and also at the end (peeking to the completion of the task that lang is
-        // about to generate commands for, and for which we will want those flags active).
-        update_internal_flags(self);
+        // Peek to the next WFT complete and update ourselves with data we might need in it.
+        if let Some(next_complete) = self
+            .last_history_from_server
+            .peek_next_wft_completed(self.last_processed_event)
+        {
+            // We update the internal flags before applying the current task
+            (*self.observed_internal_flags)
+                .borrow_mut()
+                .add_from_complete(next_complete);
+            // Save this tasks' Build ID if it had one
+            if let Some(bid) = next_complete.worker_version.as_ref().map(|wv| &wv.build_id) {
+                self.current_wft_build_id = Some(bid.to_string());
+            } else {
+                // Otherwise we do not want to keep anything previously stored
+                self.current_wft_build_id = None;
+            }
+        }
 
         let last_handled_wft_started_id = self.current_started_event_id;
         let (events, has_final_event) = match self
@@ -723,9 +728,6 @@ impl WorkflowMachines {
                 }
             }
         }
-
-        // TODO: All tests pass with this removed.
-        update_internal_flags(self);
 
         if !self.replaying {
             self.metrics.wf_task_replay_latency(replay_start.elapsed());

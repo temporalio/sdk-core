@@ -40,6 +40,10 @@ message WorkflowActivation {
     uint64 history_size_bytes = 7;
     // Set true if the most recent WFT started event had this suggestion
     bool continue_as_new_suggested = 8;
+    // Set to the Build ID of the worker that processed this task, which may be empty. During replay
+    // this id may not equal the id of the replaying worker. If not replaying and this worker has
+    // a defined Build ID, it will equal that ID. It will also be empty for evict-only activations.
+    string build_id_for_current_task = 9;
 }
 
 message WorkflowActivationJob {

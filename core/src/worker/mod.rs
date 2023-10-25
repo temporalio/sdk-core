@@ -58,7 +58,7 @@ use temporal_sdk_core_protos::{
 use tokio::sync::mpsc::unbounded_channel;
 use tokio_util::sync::CancellationToken;
 
-use crate::{abstractions::dbg_panic, pollers::BoxedActPoller};
+use crate::{abstractions::dbg_panic, pollers::BoxedActPoller, protosext::WorkflowActivationExt};
 #[cfg(test)]
 use {
     crate::{
@@ -95,7 +95,10 @@ pub struct Worker {
 #[async_trait::async_trait]
 impl WorkerTrait for Worker {
     async fn poll_workflow_activation(&self) -> Result<WorkflowActivation, PollWfError> {
-        self.next_workflow_activation().await
+        self.next_workflow_activation().await.map(|mut a| {
+            a.attach_build_id_if_needed(&self.config.worker_build_id);
+            a
+        })
     }
 
     #[instrument(skip(self))]
