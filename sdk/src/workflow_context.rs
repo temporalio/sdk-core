@@ -96,12 +96,13 @@ impl WfCtxProtectedDat {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct WfContextSharedData {
+pub(crate) struct WfContextSharedData {
     /// Maps change ids -> resolved status
     pub changes: HashMap<String, bool>,
     pub is_replaying: bool,
     pub wf_time: Option<SystemTime>,
     pub history_length: u32,
+    pub current_build_id: Option<String>,
 }
 
 // TODO: Dataconverter type interface to replace Payloads here. Possibly just use serde
@@ -155,6 +156,12 @@ impl WfContext {
     /// Return the length of history so far at this point in the workflow
     pub fn history_length(&self) -> u32 {
         self.shared.read().history_length
+    }
+
+    /// Return the Build ID as it was when this point in the workflow was first reached. If this
+    /// code is being executed for the first time, return this Worker's Build ID if it has one.
+    pub fn current_build_id(&self) -> Option<String> {
+        self.shared.read().current_build_id.clone()
     }
 
     /// A future that resolves if/when the workflow is cancelled

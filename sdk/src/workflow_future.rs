@@ -320,6 +320,11 @@ impl Future for WorkflowFuture {
                 wlock.is_replaying = activation.is_replaying;
                 wlock.wf_time = activation.timestamp.try_into_or_none();
                 wlock.history_length = activation.history_length;
+                wlock.current_build_id = if activation.build_id_for_current_task.is_empty() {
+                    None
+                } else {
+                    Some(activation.build_id_for_current_task)
+                };
             }
 
             let mut die_of_eviction_when_done = false;
