@@ -453,7 +453,6 @@ async fn many_concurrent_heartbeat_cancels() {
 
 #[tokio::test]
 async fn activity_timeout_no_double_resolve() {
-    crate::telemetry::test_telem_console();
     let t = canned_histories::activity_double_resolve_repro();
     let core = build_fake_worker("fake_wf_id", t, [3]);
     let activity_id = 1;

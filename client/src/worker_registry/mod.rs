@@ -88,7 +88,7 @@ impl WorkerRegistry for SlotManager {
         if self.index.get(&uuid).is_none() {
             let key = to_key(&provider.namespace(), &provider.task_queue());
             self.index.insert(uuid, key.clone());
-            let all = self.providers.entry(key).or_insert(vec![]);
+            let all = self.providers.entry(key).or_default();
             all.push(provider);
         }
         debug!("#entries {}", self.index.len());

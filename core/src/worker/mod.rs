@@ -14,9 +14,11 @@ pub(crate) use activities::{
 pub(crate) use workflow::{wft_poller::new_wft_poller, LEGACY_QUERY_ID};
 
 use crate::{
-    abstractions::MeteredSemaphore,
+    abstractions::{dbg_panic, MeteredSemaphore},
     errors::CompleteWfError,
-    pollers::{new_activity_task_buffer, new_workflow_task_buffer, WorkflowTaskPoller},
+    pollers::{
+        new_activity_task_buffer, new_workflow_task_buffer, BoxedActPoller, WorkflowTaskPoller,
+    },
     protosext::validate_activity_completion,
     telemetry::{
         metrics::{
@@ -33,6 +35,7 @@ use crate::{
     ActivityHeartbeat, CompleteActivityError, PollActivityError, PollWfError, WorkerTrait,
 };
 use activities::WorkerActivityTasks;
+use futures_util::stream;
 use slot_provider::SlotProvider;
 use std::{
     convert::TryInto,
@@ -58,9 +61,8 @@ use temporal_sdk_core_protos::{
     TaskToken,
 };
 use tokio::sync::mpsc::unbounded_channel;
+use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
-
-use crate::{abstractions::dbg_panic, pollers::BoxedActPoller};
 #[cfg(test)]
 use {
     crate::{
@@ -240,7 +242,7 @@ impl Worker {
             metrics.with_new_attrs([activity_worker_type()]),
             MetricsContext::available_task_slots,
         ));
-
+        let (external_wft_tx, external_wft_rx) = unbounded_channel();
         let (wft_stream, act_poller) = match task_pollers {
             TaskPollers::Real => {
                 let max_nonsticky_polls = if sticky_queue_name.is_some() {
@@ -302,6 +304,8 @@ impl Worker {
                     sticky_queue_poller,
                 ));
                 let wft_stream = new_wft_poller(wf_task_poll_buffer, metrics.clone());
+                let wft_stream =
+                    stream::select(wft_stream, UnboundedReceiverStream::new(external_wft_rx));
                 #[cfg(test)]
                 let wft_stream = wft_stream.left_stream();
                 (wft_stream, act_poll_buffer)
@@ -353,7 +357,6 @@ impl Worker {
         };
         let la_sink = LAReqSink::new(local_act_mgr.clone(), config.wf_state_inputs.clone());
         let uuid = uuid::Uuid::new_v4().simple().to_string();
-        let (external_wft_tx, external_wft_rx) = unbounded_channel();
         let provider = SlotProvider::new(
             uuid.clone(),
             config.namespace.clone(),
@@ -391,7 +394,6 @@ impl Worker {
                 la_sink,
                 local_act_mgr.clone(),
                 hb_rx,
-                external_wft_rx,
                 at_task_mgr
                     .as_ref()
                     .map(|mgr| mgr.get_handle_for_workflows()),
