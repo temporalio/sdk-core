@@ -13,9 +13,11 @@ pub(crate) use activities::{
 pub(crate) use workflow::{wft_poller::new_wft_poller, LEGACY_QUERY_ID};
 
 use crate::{
-    abstractions::MeteredSemaphore,
+    abstractions::{dbg_panic, MeteredSemaphore},
     errors::CompleteWfError,
-    pollers::{new_activity_task_buffer, new_workflow_task_buffer, WorkflowTaskPoller},
+    pollers::{
+        new_activity_task_buffer, new_workflow_task_buffer, BoxedActPoller, WorkflowTaskPoller,
+    },
     protosext::validate_activity_completion,
     telemetry::{
         metrics::{
@@ -58,7 +60,6 @@ use temporal_sdk_core_protos::{
 use tokio::sync::mpsc::unbounded_channel;
 use tokio_util::sync::CancellationToken;
 
-use crate::{abstractions::dbg_panic, pollers::BoxedActPoller, protosext::WorkflowActivationExt};
 #[cfg(test)]
 use {
     crate::{
@@ -96,7 +97,12 @@ pub struct Worker {
 impl WorkerTrait for Worker {
     async fn poll_workflow_activation(&self) -> Result<WorkflowActivation, PollWfError> {
         self.next_workflow_activation().await.map(|mut a| {
-            a.attach_build_id_if_needed(&self.config.worker_build_id);
+            // Attach this worker's Build ID to the activation if appropriate. This is done here
+            // to avoid cloning the ID for every workflow instance. Can be lowered when
+            // https://github.com/temporalio/sdk-core/issues/567 is done
+            if !a.is_replaying {
+                a.build_id_for_current_task = self.config.worker_build_id.clone();
+            }
             a
         })
     }
