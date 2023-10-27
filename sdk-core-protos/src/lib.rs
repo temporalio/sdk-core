@@ -68,6 +68,15 @@ pub mod coresdk {
                     })),
                 }
             }
+
+            pub fn is_timeout(&self) -> bool {
+                match &self.variant {
+                    Some(activity_task::Variant::Cancel(Cancel { reason })) => {
+                        *reason == ActivityCancelReason::TimedOut as i32
+                    }
+                    _ => false,
+                }
+            }
         }
 
         impl Display for ActivityTaskCompletion {
