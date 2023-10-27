@@ -305,7 +305,6 @@ impl WorkerActivityTasks {
                 activity_type(act_info.base.activity_type),
                 workflow_type(act_info.base.workflow_type),
             ]);
-            // TODO: Make sure these get attached to span properly
             Span::current().record("workflow_id", act_info.base.workflow_id);
             Span::current().record("run_id", act_info.base.workflow_run_id);
             act_metrics.act_execution_latency(act_info.base.start_time.elapsed());
