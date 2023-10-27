@@ -56,6 +56,7 @@ use tokio::{
         mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
         Mutex, Notify,
     },
+    task::JoinHandle,
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
@@ -105,6 +106,8 @@ struct RemoteInFlightActInfo {
     /// we have learned from heartbeating and issued a cancel task, in which case we may simply
     /// discard the reply.
     pub known_not_found: bool,
+    /// Handle to the task containing local timeout tracking, if any.
+    pub local_timeouts_task: Option<JoinHandle<()>>,
     /// The permit from the max concurrent semaphore
     _permit: UsedMeteredSemPermit,
 }
@@ -122,6 +125,7 @@ impl RemoteInFlightActInfo {
             heartbeat_timeout: poll_resp.heartbeat_timeout.clone(),
             issued_cancel_to_lang: None,
             known_not_found: false,
+            local_timeouts_task: None,
             _permit: permit,
         }
     }
@@ -310,6 +314,9 @@ impl WorkerActivityTasks {
             act_metrics.act_execution_latency(act_info.base.start_time.elapsed());
             let known_not_found = act_info.known_not_found;
 
+            if let Some(jh) = act_info.local_timeouts_task {
+                jh.abort()
+            };
             self.heartbeat_manager.evict(task_token.clone()).await;
             self.complete_notify.notify_waiters();
 
@@ -432,7 +439,7 @@ impl WorkerActivityTasks {
 
 struct ActivityTaskStream<SrcStrm> {
     source_stream: SrcStrm,
-    outstanding_tasks: Arc<DashMap<TaskToken, RemoteInFlightActInfo>>,
+    outstanding_tasks: OutstandingActMap,
     start_tasks_stream_complete: CancellationToken,
     complete_notify: Arc<Notify>,
     grace_period: Option<Duration>,
@@ -513,8 +520,8 @@ where
                             };
 
                             let tt: TaskToken = task.resp.task_token.clone().into();
-                            self.outstanding_tasks.insert(
-                                tt.clone(),
+                            let outstanding_entry = self.outstanding_tasks.entry(tt.clone());
+                            let mut outstanding_info = outstanding_entry.insert(
                                 RemoteInFlightActInfo::new(&task.resp, task.permit.into_used()),
                             );
                             // If we have already waited the grace period and issued cancels,
@@ -564,14 +571,16 @@ where
                                     .min();
                                 if let Some(timeout_at) = timeout_at {
                                     let cancel_tx = cancels_tx.clone();
-                                    tokio::task::spawn(async move {
-                                        tokio::time::sleep(timeout_at + local_timeout_buffer).await;
-                                        let _ = cancel_tx.send(PendingActivityCancel {
-                                            task_token: tt,
-                                            reason: ActivityCancelReason::TimedOut,
-                                            consider_not_found: true,
-                                        });
-                                    });
+                                    outstanding_info.local_timeouts_task =
+                                        Some(tokio::task::spawn(async move {
+                                            tokio::time::sleep(timeout_at + local_timeout_buffer)
+                                                .await;
+                                            let _ = cancel_tx.send(PendingActivityCancel {
+                                                task_token: tt,
+                                                reason: ActivityCancelReason::TimedOut,
+                                                consider_not_found: true,
+                                            });
+                                        }));
                                 }
                             }
 
