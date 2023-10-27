@@ -537,6 +537,14 @@ where
                                     .resp
                                     .schedule_to_close_timeout
                                     .clone()
+                                    .and_then(|to| {
+                                        // Must filter out zero before any subtraction math here
+                                        if to.seconds == 0 && to.nanos == 0 {
+                                            None
+                                        } else {
+                                            Some(to)
+                                        }
+                                    })
                                     .zip(task.resp.scheduled_time.clone())
                                     .and_then(|(to, st)| {
                                         let now = SystemTime::now();
@@ -552,9 +560,9 @@ where
                                 .into_iter()
                                 .flatten()
                                 .map(Duration::try_from)
-                                .map(Result::ok)
-                                .flatten()
+                                .filter_map(Result::ok)
                                 .chain(sched)
+                                .filter(|d| !d.is_zero())
                                 .min();
                                 if let Some(timeout_at) = timeout_at {
                                     let cancel_tx = cancels_tx.clone();
@@ -762,6 +770,8 @@ mod tests {
                     task_token: vec![1],
                     activity_id: "act1".to_string(),
                     start_to_close_timeout: Some(prost_dur!(from_millis(100))),
+                    // Verify zero durations do not apply
+                    schedule_to_close_timeout: Some(prost_dur!(from_millis(0))),
                     ..Default::default()
                 })
             });
