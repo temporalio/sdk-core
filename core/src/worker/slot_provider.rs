@@ -99,3 +99,100 @@ impl SlotProviderTrait for SlotProvider {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use temporal_sdk_core_protos::temporal::api::{
+        common::v1::{WorkflowExecution, WorkflowType},
+        history::v1::History,
+        taskqueue::v1::TaskQueue,
+    };
+    use tokio::sync::mpsc::unbounded_channel;
+
+    // make validate_wft() happy
+    fn new_validatable_response() -> PollWorkflowTaskQueueResponse {
+        let mut task = PollWorkflowTaskQueueResponse::default();
+        task.workflow_execution_task_queue = Some(TaskQueue::default());
+        task.workflow_execution = Some(WorkflowExecution::default());
+        task.workflow_type = Some(WorkflowType::default());
+        task.history = Some(History::default());
+        task
+    }
+
+    #[tokio::test]
+    async fn slot_can_only_be_used_once() {
+        let wft_semaphore = Arc::new(MeteredSemaphore::new(
+            2,
+            crate::MetricsContext::no_op(),
+            |_, _| {},
+        ));
+        let (external_wft_tx, mut external_wft_rx) = unbounded_channel();
+
+        let provider = SlotProvider::new(
+            "my_id".to_string(),
+            "my_namespace".to_string(),
+            "my_queue".to_string(),
+            wft_semaphore,
+            external_wft_tx,
+        );
+
+        if let Some(mut slot) = provider.try_reserve_wft_slot() {
+            let p = slot.schedule_wft(new_validatable_response());
+            assert!(p.is_ok());
+
+            let p = slot.schedule_wft(new_validatable_response());
+            assert!(p.is_err());
+
+            assert!(external_wft_rx.recv().await.is_some());
+        }
+    }
+
+    #[tokio::test]
+    async fn channel_closes_when_provider_drops() {
+        let (external_wft_tx, mut external_wft_rx) = unbounded_channel();
+        {
+            let external_wft_tx = external_wft_tx;
+            let wft_semaphore = Arc::new(MeteredSemaphore::new(
+                2,
+                crate::MetricsContext::no_op(),
+                |_, _| {},
+            ));
+            let provider = SlotProvider::new(
+                "my_id".to_string(),
+                "my_namespace".to_string(),
+                "my_queue".to_string(),
+                wft_semaphore,
+                external_wft_tx,
+            );
+            assert!(provider.try_reserve_wft_slot().is_some());
+        }
+        assert!(external_wft_rx.recv().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn unused_slots_reclaimed() {
+        let wft_semaphore = Arc::new(MeteredSemaphore::new(
+            2,
+            crate::MetricsContext::no_op(),
+            |_, _| {},
+        ));
+        {
+            let wft_semaphore = wft_semaphore.clone();
+            let (external_wft_tx, _) = unbounded_channel();
+            let provider = SlotProvider::new(
+                "my_id".to_string(),
+                "my_namespace".to_string(),
+                "my_queue".to_string(),
+                wft_semaphore.clone(),
+                external_wft_tx,
+            );
+            let slot = provider.try_reserve_wft_slot();
+            assert!(slot.is_some());
+            assert_eq!(wft_semaphore.available_permits(), 1);
+            // drop slot without using it
+        }
+        assert_eq!(wft_semaphore.available_permits(), 2);
+    }
+}

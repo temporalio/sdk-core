@@ -765,3 +765,52 @@ async fn task_failure_during_validation() {
         1
     );
 }
+
+#[tokio::test]
+async fn task_failure_after_update() {
+    let wf_name = "task_failure_after_update";
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter.worker_config.no_remote_activities(true);
+    starter.workflow_options.task_timeout = Some(Duration::from_secs(1));
+    let mut worker = starter.worker().await;
+    let client = starter.get_client().await;
+    static FAILCT: AtomicUsize = AtomicUsize::new(0);
+    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+        ctx.update_handler(
+            "update",
+            |_: &_, _: ()| Ok(()),
+            move |_: UpdateContext, _: ()| async move { Ok("done") },
+        );
+        ctx.timer(Duration::from_millis(1)).await;
+        if FAILCT.fetch_add(1, Ordering::Relaxed) < 1 {
+            panic!("ahhhhhh");
+        }
+        Ok(().into())
+    });
+
+    let run_id = starter.start_with_worker(wf_name, &mut worker).await;
+    let wf_id = starter.get_task_queue().to_string();
+    let update = async {
+        let res = client
+            .update_workflow_execution(
+                wf_id.clone(),
+                "".to_string(),
+                "update".to_string(),
+                WaitPolicy {
+                    lifecycle_stage: UpdateWorkflowExecutionLifecycleStage::Completed as i32,
+                },
+                [().as_json_payload().unwrap()].into_payloads(),
+            )
+            .await
+            .unwrap();
+        assert!(res.outcome.unwrap().is_success());
+    };
+    let run = async {
+        worker.run_until_done().await.unwrap();
+    };
+    join!(update, run);
+    starter
+        .fetch_history_and_replay(wf_id.clone(), run_id, worker.inner_mut())
+        .await
+        .unwrap();
+}

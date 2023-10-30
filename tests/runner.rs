@@ -70,6 +70,11 @@ async fn main() -> Result<(), anyhow::Error> {
         ServerKind::TemporalCLI => {
             let config = TemporalDevServerConfigBuilder::default()
                 .exe(default_cached_download())
+                // TODO: Delete when temporalCLI enables it by default.
+                .extra_args(vec![
+                    "--dynamic-config-value".to_string(),
+                    "system.enableEagerWorkflowStart=true".to_string(),
+                ])
                 .build()?;
             println!("Using temporal CLI");
             (

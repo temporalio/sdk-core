@@ -288,50 +288,6 @@ where
 
 /// Helps re-declare gRPC client methods
 macro_rules! proxy {
-    ($client_type:tt, $client_meth:ident, start_workflow_execution, $req:ty, $resp:ty  $(, $closure:expr)?) => {
-        #[doc = concat!("See [", stringify!($client_type), "::", stringify!(start_workflow_execution), "]")]
-        fn start_workflow_execution(
-            &mut self,
-            request: impl tonic::IntoRequest<$req>,
-        ) -> BoxFuture<Result<tonic::Response<$resp>, tonic::Status>> {
-            #[allow(unused_mut)]
-            let fact = |c: &mut Self, mut req: tonic::Request<$req>| {
-                let mut slot: Option<Box<dyn Slot>> = None;
-                $( type_closure_arg(&mut req, $closure); )*
-
-                let req_mut = req.get_mut();
-                if req_mut.request_eager_execution {
-                    let workers = c.get_workers_info().unwrap();
-                    let workers_rlock = workers.read();
-                    let namespace = req_mut.namespace.clone();
-                    let task_queue = req_mut.task_queue.clone().unwrap().name.clone();
-                    match workers_rlock.try_reserve_wft_slot(namespace, task_queue) {
-                        Some(s) => slot = Some(s),
-                        None => req_mut.request_eager_execution = false
-                    }
-                }
-
-                let mut c = c.$client_meth().clone();
-                async move {
-                    let response = c.start_workflow_execution(req).await;
-                    if let Some(mut s) = slot {
-                        if response.is_ok() {
-                            let response_inner = response.as_ref().unwrap().get_ref().clone();
-                            if let Some(task) = response_inner.eager_workflow_task {
-                                if let Err(e) = s.schedule_wft(task) {
-                                    // This is a latency issue, i.e., the client does not need to handle
-                                    //  this error, because the WFT will be retried after a timeout.
-                                    warn!(details = ?e, "Eager workflow task rejected by worker.");
-                                }
-                            }
-                        }
-                    }
-                    response
-                }.boxed()
-            };
-            self.call(stringify!(start_workflow_execution), fact, request.into_request())
-        }
-    };
     ($client_type:tt, $client_meth:ident, $method:ident, $req:ty, $resp:ty $(, $closure:expr)?) => {
         #[doc = concat!("See [", stringify!($client_type), "::", stringify!($method), "]")]
         fn $method(
@@ -347,10 +303,27 @@ macro_rules! proxy {
             self.call(stringify!($method), fact, request.into_request())
         }
     };
+    ($client_type:tt, $client_meth:ident, $method:ident, $req:ty, $resp:ty, $closure_before:expr, $closure_after:expr) => {
+        #[doc = concat!("See [", stringify!($client_type), "::", stringify!($method), "]")]
+        fn $method(
+            &mut self,
+            request: impl tonic::IntoRequest<$req>,
+        ) -> BoxFuture<Result<tonic::Response<$resp>, tonic::Status>> {
+            #[allow(unused_mut)]
+            let fact = |c: &mut Self, mut req: tonic::Request<$req>| {
+                let data = type_closure_two_arg(&mut req, c.get_workers_info().unwrap(), $closure_before);
+                let mut c = c.$client_meth().clone();
+                async move {
+                    type_closure_two_arg(c.$method(req).await, data, $closure_after)
+                }.boxed()
+            };
+            self.call(stringify!($method), fact, request.into_request())
+        }
+    };
 }
 macro_rules! proxier {
     ( $trait_name:ident; $impl_list_name:ident; $client_type:tt; $client_meth:ident;
-      $(($method:ident, $req:ty, $resp:ty $(, $closure:expr)?  );)* ) => {
+      $(($method:ident, $req:ty, $resp:ty $(, $closure:expr)? $(, $_dummy:ident, $closure_after:expr)? );)* ) => {
         #[cfg(test)]
         const $impl_list_name: &'static [&'static str] = &[$(stringify!($method)),*];
         /// Trait version of the generated client with modifications to attach appropriate metric
@@ -368,7 +341,7 @@ macro_rules! proxier {
                 as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
         {
             $(
-               proxy!($client_type, $client_meth, $method, $req, $resp $(,$closure)*);
+               proxy!($client_type, $client_meth, $method, $req, $resp $(,$closure)* $(,$closure_after)*);
             )*
         }
     };
@@ -377,6 +350,10 @@ macro_rules! proxier {
 // Nice little trick to avoid the callsite asking to type the closure parameter
 fn type_closure_arg<T, R>(arg: T, f: impl FnOnce(T) -> R) -> R {
     f(arg)
+}
+
+fn type_closure_two_arg<T, R, S>(arg1: R, arg2: T, f: impl FnOnce(R, T) -> S) -> S {
+    f(arg1, arg2)
 }
 
 proxier! {
@@ -426,10 +403,37 @@ proxier! {
         start_workflow_execution,
         StartWorkflowExecutionRequest,
         StartWorkflowExecutionResponse,
-        |r| {
+        |r, workers| {
+            let mut slot: Option<Box<dyn Slot>> = None;
             let mut labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             labels.task_q(r.get_ref().task_queue.clone());
             r.extensions_mut().insert(labels);
+            let req_mut = r.get_mut();
+            if req_mut.request_eager_execution {
+                let namespace = req_mut.namespace.clone();
+                let task_queue = req_mut.task_queue.clone().unwrap().name.clone();
+                match workers.read().try_reserve_wft_slot(namespace, task_queue) {
+                    Some(s) => slot = Some(s),
+                    None => req_mut.request_eager_execution = false
+                }
+            }
+            slot
+        },
+        start_workflow_execution, // Disambiguate the macro
+        |resp, slot| {
+            if let Some(mut s) = slot {
+                if resp.is_ok() {
+                    let response_inner = resp.as_ref().unwrap().get_ref().clone();
+                    if let Some(task) = response_inner.eager_workflow_task {
+                        if let Err(e) = s.schedule_wft(task) {
+                            // This is a latency issue, i.e., the client does not need to handle
+                            //  this error, because the WFT will be retried after a timeout.
+                            warn!(details = ?e, "Eager workflow task rejected by worker.");
+                        }
+                    }
+                }
+            }
+            resp
         }
     );
     (
