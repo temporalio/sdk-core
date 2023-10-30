@@ -615,7 +615,7 @@ impl Client {
     }
 
     fn wf_svc(&self) -> WorkflowServiceClientWithMetrics {
-        self.inner.workflow_svc().clone()
+        self.inner.workflow_client().clone()
     }
 }
 
