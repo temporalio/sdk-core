@@ -100,7 +100,7 @@ where
             let server_res = self
                 .client
                 .clone()
-                .workflow_client()
+                .workflow_client_mut()
                 .get_workflow_execution_history(GetWorkflowExecutionHistoryRequest {
                     namespace: self.info.namespace.to_string(),
                     execution: Some(WorkflowExecution {
