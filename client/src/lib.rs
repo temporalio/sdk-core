@@ -621,10 +621,6 @@ impl Client {
     pub fn into_inner(self) -> ConfiguredClient<TemporalServiceClientWithMetrics> {
         self.inner
     }
-
-    fn wf_svc(&self) -> WorkflowServiceClientWithMetrics {
-        self.inner.workflow_svc().clone()
-    }
 }
 
 /// Enum to help reference a namespace by either the namespace name or the namespace id
@@ -1003,9 +999,9 @@ impl WorkflowClientTrait for Client {
         request_id: Option<String>,
         options: WorkflowOptions,
     ) -> Result<StartWorkflowExecutionResponse> {
-        Ok(self
-            .wf_svc()
-            .start_workflow_execution(StartWorkflowExecutionRequest {
+        Ok(WorkflowService::start_workflow_execution(
+            &mut self.inner.client.clone(),
+            StartWorkflowExecutionRequest {
                 namespace: self.namespace.clone(),
                 input: input.into_payloads(),
                 workflow_id,
@@ -1028,9 +1024,10 @@ impl WorkflowClientTrait for Client {
                 cron_schedule: options.cron_schedule.unwrap_or_default(),
                 request_eager_execution: options.enable_eager_workflow_start,
                 ..Default::default()
-            })
-            .await?
-            .into_inner())
+            },
+        )
+        .await?
+        .into_inner())
     }
 
     async fn reset_sticky_task_queue(
@@ -1045,11 +1042,11 @@ impl WorkflowClientTrait for Client {
                 run_id,
             }),
         };
-        Ok(self
-            .wf_svc()
-            .reset_sticky_task_queue(request)
-            .await?
-            .into_inner())
+        Ok(
+            WorkflowService::reset_sticky_task_queue(&mut self.inner.client.clone(), request)
+                .await?
+                .into_inner(),
+        )
     }
 
     async fn complete_activity_task(
@@ -1057,17 +1054,18 @@ impl WorkflowClientTrait for Client {
         task_token: TaskToken,
         result: Option<Payloads>,
     ) -> Result<RespondActivityTaskCompletedResponse> {
-        Ok(self
-            .wf_svc()
-            .respond_activity_task_completed(RespondActivityTaskCompletedRequest {
+        Ok(WorkflowService::respond_activity_task_completed(
+            &mut self.inner.client.clone(),
+            RespondActivityTaskCompletedRequest {
                 task_token: task_token.0,
                 result,
                 identity: self.inner.options.identity.clone(),
                 namespace: self.namespace.clone(),
                 worker_version: None,
-            })
-            .await?
-            .into_inner())
+            },
+        )
+        .await?
+        .into_inner())
     }
 
     async fn record_activity_heartbeat(
@@ -1075,16 +1073,17 @@ impl WorkflowClientTrait for Client {
         task_token: TaskToken,
         details: Option<Payloads>,
     ) -> Result<RecordActivityTaskHeartbeatResponse> {
-        Ok(self
-            .wf_svc()
-            .record_activity_task_heartbeat(RecordActivityTaskHeartbeatRequest {
+        Ok(WorkflowService::record_activity_task_heartbeat(
+            &mut self.inner.client.clone(),
+            RecordActivityTaskHeartbeatRequest {
                 task_token: task_token.0,
                 details,
                 identity: self.inner.options.identity.clone(),
                 namespace: self.namespace.clone(),
-            })
-            .await?
-            .into_inner())
+            },
+        )
+        .await?
+        .into_inner())
     }
 
     async fn cancel_activity_task(
@@ -1092,17 +1091,18 @@ impl WorkflowClientTrait for Client {
         task_token: TaskToken,
         details: Option<Payloads>,
     ) -> Result<RespondActivityTaskCanceledResponse> {
-        Ok(self
-            .wf_svc()
-            .respond_activity_task_canceled(RespondActivityTaskCanceledRequest {
+        Ok(WorkflowService::respond_activity_task_canceled(
+            &mut self.inner.client.clone(),
+            RespondActivityTaskCanceledRequest {
                 task_token: task_token.0,
                 details,
                 identity: self.inner.options.identity.clone(),
                 namespace: self.namespace.clone(),
                 worker_version: None,
-            })
-            .await?
-            .into_inner())
+            },
+        )
+        .await?
+        .into_inner())
     }
 
     async fn fail_activity_task(
@@ -1110,9 +1110,9 @@ impl WorkflowClientTrait for Client {
         task_token: TaskToken,
         failure: Option<Failure>,
     ) -> Result<RespondActivityTaskFailedResponse> {
-        Ok(self
-            .wf_svc()
-            .respond_activity_task_failed(RespondActivityTaskFailedRequest {
+        Ok(WorkflowService::respond_activity_task_failed(
+            &mut self.inner.client.clone(),
+            RespondActivityTaskFailedRequest {
                 task_token: task_token.0,
                 failure,
                 identity: self.inner.options.identity.clone(),
@@ -1120,9 +1120,10 @@ impl WorkflowClientTrait for Client {
                 // TODO: Implement - https://github.com/temporalio/sdk-core/issues/293
                 last_heartbeat_details: None,
                 worker_version: None,
-            })
-            .await?
-            .into_inner())
+            },
+        )
+        .await?
+        .into_inner())
     }
 
     async fn signal_workflow_execution(
@@ -1133,9 +1134,9 @@ impl WorkflowClientTrait for Client {
         payloads: Option<Payloads>,
         request_id: Option<String>,
     ) -> Result<SignalWorkflowExecutionResponse> {
-        Ok(self
-            .wf_svc()
-            .signal_workflow_execution(SignalWorkflowExecutionRequest {
+        Ok(WorkflowService::signal_workflow_execution(
+            &mut self.inner.client.clone(),
+            SignalWorkflowExecutionRequest {
                 namespace: self.namespace.clone(),
                 workflow_execution: Some(WorkflowExecution {
                     workflow_id,
@@ -1146,9 +1147,10 @@ impl WorkflowClientTrait for Client {
                 identity: self.inner.options.identity.clone(),
                 request_id: request_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
                 ..Default::default()
-            })
-            .await?
-            .into_inner())
+            },
+        )
+        .await?
+        .into_inner())
     }
 
     async fn signal_with_start_workflow_execution(
@@ -1156,9 +1158,9 @@ impl WorkflowClientTrait for Client {
         options: SignalWithStartOptions,
         workflow_options: WorkflowOptions,
     ) -> Result<SignalWithStartWorkflowExecutionResponse> {
-        Ok(self
-            .wf_svc()
-            .signal_with_start_workflow_execution(SignalWithStartWorkflowExecutionRequest {
+        Ok(WorkflowService::signal_with_start_workflow_execution(
+            &mut self.inner.client.clone(),
+            SignalWithStartWorkflowExecutionRequest {
                 namespace: self.namespace.clone(),
                 workflow_id: options.workflow_id,
                 workflow_type: Some(WorkflowType {
@@ -1190,9 +1192,10 @@ impl WorkflowClientTrait for Client {
                 cron_schedule: workflow_options.cron_schedule.unwrap_or_default(),
                 header: options.signal_header,
                 ..Default::default()
-            })
-            .await?
-            .into_inner())
+            },
+        )
+        .await?
+        .into_inner())
     }
 
     async fn query_workflow_execution(
@@ -1201,9 +1204,9 @@ impl WorkflowClientTrait for Client {
         run_id: String,
         query: WorkflowQuery,
     ) -> Result<QueryWorkflowResponse> {
-        Ok(self
-            .wf_svc()
-            .query_workflow(QueryWorkflowRequest {
+        Ok(WorkflowService::query_workflow(
+            &mut self.inner.client.clone(),
+            QueryWorkflowRequest {
                 namespace: self.namespace.clone(),
                 execution: Some(WorkflowExecution {
                     workflow_id,
@@ -1211,9 +1214,10 @@ impl WorkflowClientTrait for Client {
                 }),
                 query: Some(query),
                 query_reject_condition: 1,
-            })
-            .await?
-            .into_inner())
+            },
+        )
+        .await?
+        .into_inner())
     }
 
     async fn describe_workflow_execution(
@@ -1221,17 +1225,18 @@ impl WorkflowClientTrait for Client {
         workflow_id: String,
         run_id: Option<String>,
     ) -> Result<DescribeWorkflowExecutionResponse> {
-        Ok(self
-            .wf_svc()
-            .describe_workflow_execution(DescribeWorkflowExecutionRequest {
+        Ok(WorkflowService::describe_workflow_execution(
+            &mut self.inner.client.clone(),
+            DescribeWorkflowExecutionRequest {
                 namespace: self.namespace.clone(),
                 execution: Some(WorkflowExecution {
                     workflow_id,
                     run_id: run_id.unwrap_or_default(),
                 }),
-            })
-            .await?
-            .into_inner())
+            },
+        )
+        .await?
+        .into_inner())
     }
 
     async fn get_workflow_execution_history(
@@ -1240,9 +1245,9 @@ impl WorkflowClientTrait for Client {
         run_id: Option<String>,
         page_token: Vec<u8>,
     ) -> Result<GetWorkflowExecutionHistoryResponse> {
-        Ok(self
-            .wf_svc()
-            .get_workflow_execution_history(GetWorkflowExecutionHistoryRequest {
+        Ok(WorkflowService::get_workflow_execution_history(
+            &mut self.inner.client.clone(),
+            GetWorkflowExecutionHistoryRequest {
                 namespace: self.namespace.clone(),
                 execution: Some(WorkflowExecution {
                     workflow_id,
@@ -1250,9 +1255,10 @@ impl WorkflowClientTrait for Client {
                 }),
                 next_page_token: page_token,
                 ..Default::default()
-            })
-            .await?
-            .into_inner())
+            },
+        )
+        .await?
+        .into_inner())
     }
 
     async fn respond_legacy_query(
@@ -1261,17 +1267,18 @@ impl WorkflowClientTrait for Client {
         query_result: QueryResult,
     ) -> Result<RespondQueryTaskCompletedResponse> {
         let (_, completed_type, query_result, error_message) = query_result.into_components();
-        Ok(self
-            .wf_svc()
-            .respond_query_task_completed(RespondQueryTaskCompletedRequest {
+        Ok(WorkflowService::respond_query_task_completed(
+            &mut self.inner.client.clone(),
+            RespondQueryTaskCompletedRequest {
                 task_token: task_token.into(),
                 completed_type: completed_type as i32,
                 query_result,
                 error_message,
                 namespace: self.namespace.clone(),
-            })
-            .await?
-            .into_inner())
+            },
+        )
+        .await?
+        .into_inner())
     }
 
     async fn cancel_workflow_execution(
@@ -1281,9 +1288,9 @@ impl WorkflowClientTrait for Client {
         reason: String,
         request_id: Option<String>,
     ) -> Result<RequestCancelWorkflowExecutionResponse> {
-        Ok(self
-            .wf_svc()
-            .request_cancel_workflow_execution(RequestCancelWorkflowExecutionRequest {
+        Ok(WorkflowService::request_cancel_workflow_execution(
+            &mut self.inner.client.clone(),
+            RequestCancelWorkflowExecutionRequest {
                 namespace: self.namespace.clone(),
                 workflow_execution: Some(WorkflowExecution {
                     workflow_id,
@@ -1293,9 +1300,10 @@ impl WorkflowClientTrait for Client {
                 request_id: request_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
                 first_execution_run_id: "".to_string(),
                 reason,
-            })
-            .await?
-            .into_inner())
+            },
+        )
+        .await?
+        .into_inner())
     }
 
     async fn terminate_workflow_execution(
@@ -1303,9 +1311,9 @@ impl WorkflowClientTrait for Client {
         workflow_id: String,
         run_id: Option<String>,
     ) -> Result<TerminateWorkflowExecutionResponse> {
-        Ok(self
-            .wf_svc()
-            .terminate_workflow_execution(TerminateWorkflowExecutionRequest {
+        Ok(WorkflowService::terminate_workflow_execution(
+            &mut self.inner.client.clone(),
+            TerminateWorkflowExecutionRequest {
                 namespace: self.namespace.clone(),
                 workflow_execution: Some(WorkflowExecution {
                     workflow_id,
@@ -1315,9 +1323,10 @@ impl WorkflowClientTrait for Client {
                 details: None,
                 identity: self.inner.options.identity.clone(),
                 first_execution_run_id: "".to_string(),
-            })
-            .await?
-            .into_inner())
+            },
+        )
+        .await?
+        .into_inner())
     }
 
     async fn register_namespace(
@@ -1325,23 +1334,29 @@ impl WorkflowClientTrait for Client {
         options: RegisterNamespaceOptions,
     ) -> Result<RegisterNamespaceResponse> {
         let req = Into::<RegisterNamespaceRequest>::into(options);
-        Ok(self.wf_svc().register_namespace(req).await?.into_inner())
+        Ok(
+            WorkflowService::register_namespace(&mut self.inner.client.clone(), req)
+                .await?
+                .into_inner(),
+        )
     }
 
     async fn list_namespaces(&self) -> Result<ListNamespacesResponse> {
-        Ok(self
-            .wf_svc()
-            .list_namespaces(ListNamespacesRequest::default())
-            .await?
-            .into_inner())
+        Ok(WorkflowService::list_namespaces(
+            &mut self.inner.client.clone(),
+            ListNamespacesRequest::default(),
+        )
+        .await?
+        .into_inner())
     }
 
     async fn describe_namespace(&self, namespace: Namespace) -> Result<DescribeNamespaceResponse> {
-        Ok(self
-            .wf_svc()
-            .describe_namespace(namespace.into_describe_namespace_request())
-            .await?
-            .into_inner())
+        Ok(WorkflowService::describe_namespace(
+            &mut self.inner.client.clone(),
+            namespace.into_describe_namespace_request(),
+        )
+        .await?
+        .into_inner())
     }
 
     async fn list_open_workflow_executions(
@@ -1351,17 +1366,18 @@ impl WorkflowClientTrait for Client {
         start_time_filter: Option<StartTimeFilter>,
         filters: Option<ListOpenFilters>,
     ) -> Result<ListOpenWorkflowExecutionsResponse> {
-        Ok(self
-            .wf_svc()
-            .list_open_workflow_executions(ListOpenWorkflowExecutionsRequest {
+        Ok(WorkflowService::list_open_workflow_executions(
+            &mut self.inner.client.clone(),
+            ListOpenWorkflowExecutionsRequest {
                 namespace: self.namespace.clone(),
                 maximum_page_size,
                 next_page_token,
                 start_time_filter,
                 filters,
-            })
-            .await?
-            .into_inner())
+            },
+        )
+        .await?
+        .into_inner())
     }
 
     async fn list_closed_workflow_executions(
@@ -1371,17 +1387,18 @@ impl WorkflowClientTrait for Client {
         start_time_filter: Option<StartTimeFilter>,
         filters: Option<ListClosedFilters>,
     ) -> Result<ListClosedWorkflowExecutionsResponse> {
-        Ok(self
-            .wf_svc()
-            .list_closed_workflow_executions(ListClosedWorkflowExecutionsRequest {
+        Ok(WorkflowService::list_closed_workflow_executions(
+            &mut self.inner.client.clone(),
+            ListClosedWorkflowExecutionsRequest {
                 namespace: self.namespace.clone(),
                 maximum_page_size,
                 next_page_token,
                 start_time_filter,
                 filters,
-            })
-            .await?
-            .into_inner())
+            },
+        )
+        .await?
+        .into_inner())
     }
 
     async fn list_workflow_executions(
@@ -1390,16 +1407,17 @@ impl WorkflowClientTrait for Client {
         next_page_token: Vec<u8>,
         query: String,
     ) -> Result<ListWorkflowExecutionsResponse> {
-        Ok(self
-            .wf_svc()
-            .list_workflow_executions(ListWorkflowExecutionsRequest {
+        Ok(WorkflowService::list_workflow_executions(
+            &mut self.inner.client.clone(),
+            ListWorkflowExecutionsRequest {
                 namespace: self.namespace.clone(),
                 page_size,
                 next_page_token,
                 query,
-            })
-            .await?
-            .into_inner())
+            },
+        )
+        .await?
+        .into_inner())
     }
 
     async fn list_archived_workflow_executions(
@@ -1408,24 +1426,26 @@ impl WorkflowClientTrait for Client {
         next_page_token: Vec<u8>,
         query: String,
     ) -> Result<ListArchivedWorkflowExecutionsResponse> {
-        Ok(self
-            .wf_svc()
-            .list_archived_workflow_executions(ListArchivedWorkflowExecutionsRequest {
+        Ok(WorkflowService::list_archived_workflow_executions(
+            &mut self.inner.client.clone(),
+            ListArchivedWorkflowExecutionsRequest {
                 namespace: self.namespace.clone(),
                 page_size,
                 next_page_token,
                 query,
-            })
-            .await?
-            .into_inner())
+            },
+        )
+        .await?
+        .into_inner())
     }
 
     async fn get_search_attributes(&self) -> Result<GetSearchAttributesResponse> {
-        Ok(self
-            .wf_svc()
-            .get_search_attributes(GetSearchAttributesRequest {})
-            .await?
-            .into_inner())
+        Ok(WorkflowService::get_search_attributes(
+            &mut self.inner.client.clone(),
+            GetSearchAttributesRequest {},
+        )
+        .await?
+        .into_inner())
     }
 
     async fn update_workflow_execution(
@@ -1436,9 +1456,9 @@ impl WorkflowClientTrait for Client {
         wait_policy: update::v1::WaitPolicy,
         args: Option<Payloads>,
     ) -> Result<UpdateWorkflowExecutionResponse> {
-        Ok(self
-            .wf_svc()
-            .update_workflow_execution(UpdateWorkflowExecutionRequest {
+        Ok(WorkflowService::update_workflow_execution(
+            &mut self.inner.client.clone(),
+            UpdateWorkflowExecutionRequest {
                 namespace: self.namespace.clone(),
                 workflow_execution: Some(WorkflowExecution {
                     workflow_id,
@@ -1457,9 +1477,10 @@ impl WorkflowClientTrait for Client {
                     }),
                 }),
                 ..Default::default()
-            })
-            .await?
-            .into_inner())
+            },
+        )
+        .await?
+        .into_inner())
     }
 
     fn get_options(&self) -> &ClientOptions {

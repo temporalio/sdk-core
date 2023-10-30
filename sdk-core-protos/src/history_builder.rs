@@ -556,6 +556,11 @@ impl TestHistoryBuilder {
         Self::set_flags(self.events.iter_mut().rev(), core, lang)
     }
 
+    /// Get the event ID of the most recently added event
+    pub fn current_event_id(&self) -> i64 {
+        self.current_event_id
+    }
+
     fn set_flags<'a>(
         mut events: impl Iterator<Item = &'a mut HistoryEvent>,
         core: &[u32],

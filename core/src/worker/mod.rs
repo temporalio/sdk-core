@@ -63,6 +63,7 @@ use temporal_sdk_core_protos::{
 use tokio::sync::mpsc::unbounded_channel;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
+
 #[cfg(test)]
 use {
     crate::{
@@ -101,7 +102,15 @@ pub struct Worker {
 #[async_trait::async_trait]
 impl WorkerTrait for Worker {
     async fn poll_workflow_activation(&self) -> Result<WorkflowActivation, PollWfError> {
-        self.next_workflow_activation().await
+        self.next_workflow_activation().await.map(|mut a| {
+            // Attach this worker's Build ID to the activation if appropriate. This is done here
+            // to avoid cloning the ID for every workflow instance. Can be lowered when
+            // https://github.com/temporalio/sdk-core/issues/567 is done
+            if !a.is_replaying {
+                a.build_id_for_current_task = self.config.worker_build_id.clone();
+            }
+            a
+        })
     }
 
     #[instrument(skip(self))]

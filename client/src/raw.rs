@@ -29,22 +29,34 @@ use tonic::{
 pub(super) mod sealed {
     use super::*;
 
-    /// Something that has a workflow service client
+    /// Something that has access to the raw grpc services
     #[async_trait::async_trait]
     pub trait RawClientLike: Send {
         type SvcType: Send + Sync + Clone + 'static;
 
-        /// Return the workflow service client instance
-        fn workflow_client(&mut self) -> &mut WorkflowServiceClient<Self::SvcType>;
+        /// Return a ref to the workflow service client instance
+        fn workflow_client(&self) -> &WorkflowServiceClient<Self::SvcType>;
 
-        /// Return the operator service client instance
-        fn operator_client(&mut self) -> &mut OperatorServiceClient<Self::SvcType>;
+        /// Return a mutable ref to the workflow service client instance
+        fn workflow_client_mut(&mut self) -> &mut WorkflowServiceClient<Self::SvcType>;
 
-        /// Return the test service client instance
-        fn test_client(&mut self) -> &mut TestServiceClient<Self::SvcType>;
+        /// Return a ref to the operator service client instance
+        fn operator_client(&self) -> &OperatorServiceClient<Self::SvcType>;
 
-        /// Return the health service client instance
-        fn health_client(&mut self) -> &mut HealthClient<Self::SvcType>;
+        /// Return a mutable ref to the operator service client instance
+        fn operator_client_mut(&mut self) -> &mut OperatorServiceClient<Self::SvcType>;
+
+        /// Return a ref to the test service client instance
+        fn test_client(&self) -> &TestServiceClient<Self::SvcType>;
+
+        /// Return a mutable ref to the test service client instance
+        fn test_client_mut(&mut self) -> &mut TestServiceClient<Self::SvcType>;
+
+        /// Return a ref to the health service client instance
+        fn health_client(&self) -> &HealthClient<Self::SvcType>;
+
+        /// Return a mutable ref to the health service client instance
+        fn health_client_mut(&mut self) -> &mut HealthClient<Self::SvcType>;
 
         /// Return a registry with workers using this client instance
         fn get_workers_info(&self) -> Option<Arc<RwLock<SlotManager>>>;
@@ -65,7 +77,6 @@ pub(super) mod sealed {
     }
 }
 
-// Here we implement retry on anything that is already RawClientLike
 #[async_trait::async_trait]
 impl<RC, T> RawClientLike for RetryClient<RC>
 where
@@ -74,20 +85,36 @@ where
 {
     type SvcType = T;
 
-    fn workflow_client(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
-        self.get_client_mut().workflow_client()
+    fn workflow_client(&self) -> &WorkflowServiceClient<Self::SvcType> {
+        self.get_client().workflow_client()
     }
 
-    fn operator_client(&mut self) -> &mut OperatorServiceClient<Self::SvcType> {
-        self.get_client_mut().operator_client()
+    fn workflow_client_mut(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
+        self.get_client_mut().workflow_client_mut()
     }
 
-    fn test_client(&mut self) -> &mut TestServiceClient<Self::SvcType> {
-        self.get_client_mut().test_client()
+    fn operator_client(&self) -> &OperatorServiceClient<Self::SvcType> {
+        self.get_client().operator_client()
     }
 
-    fn health_client(&mut self) -> &mut HealthClient<Self::SvcType> {
-        self.get_client_mut().health_client()
+    fn operator_client_mut(&mut self) -> &mut OperatorServiceClient<Self::SvcType> {
+        self.get_client_mut().operator_client_mut()
+    }
+
+    fn test_client(&self) -> &TestServiceClient<Self::SvcType> {
+        self.get_client().test_client()
+    }
+
+    fn test_client_mut(&mut self) -> &mut TestServiceClient<Self::SvcType> {
+        self.get_client_mut().test_client_mut()
+    }
+
+    fn health_client(&self) -> &HealthClient<Self::SvcType> {
+        self.get_client().health_client()
+    }
+
+    fn health_client_mut(&mut self) -> &mut HealthClient<Self::SvcType> {
+        self.get_client_mut().health_client_mut()
     }
 
     fn get_workers_info(&self) -> Option<Arc<RwLock<SlotManager>>> {
@@ -125,19 +152,35 @@ where
 {
     type SvcType = T;
 
-    fn workflow_client(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
+    fn workflow_client(&self) -> &WorkflowServiceClient<Self::SvcType> {
+        self.workflow_svc()
+    }
+
+    fn workflow_client_mut(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
         self.workflow_svc_mut()
     }
 
-    fn operator_client(&mut self) -> &mut OperatorServiceClient<Self::SvcType> {
+    fn operator_client(&self) -> &OperatorServiceClient<Self::SvcType> {
+        self.operator_svc()
+    }
+
+    fn operator_client_mut(&mut self) -> &mut OperatorServiceClient<Self::SvcType> {
         self.operator_svc_mut()
     }
 
-    fn test_client(&mut self) -> &mut TestServiceClient<Self::SvcType> {
+    fn test_client(&self) -> &TestServiceClient<Self::SvcType> {
+        self.test_svc()
+    }
+
+    fn test_client_mut(&mut self) -> &mut TestServiceClient<Self::SvcType> {
         self.test_svc_mut()
     }
 
-    fn health_client(&mut self) -> &mut HealthClient<Self::SvcType> {
+    fn health_client(&self) -> &HealthClient<Self::SvcType> {
+        self.health_svc()
+    }
+
+    fn health_client_mut(&mut self) -> &mut HealthClient<Self::SvcType> {
         self.health_svc_mut()
     }
 
@@ -156,20 +199,36 @@ where
 {
     type SvcType = T;
 
-    fn workflow_client(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
+    fn workflow_client(&self) -> &WorkflowServiceClient<Self::SvcType> {
         self.client.workflow_client()
     }
 
-    fn operator_client(&mut self) -> &mut OperatorServiceClient<Self::SvcType> {
+    fn workflow_client_mut(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
+        self.client.workflow_client_mut()
+    }
+
+    fn operator_client(&self) -> &OperatorServiceClient<Self::SvcType> {
         self.client.operator_client()
     }
 
-    fn test_client(&mut self) -> &mut TestServiceClient<Self::SvcType> {
+    fn operator_client_mut(&mut self) -> &mut OperatorServiceClient<Self::SvcType> {
+        self.client.operator_client_mut()
+    }
+
+    fn test_client(&self) -> &TestServiceClient<Self::SvcType> {
         self.client.test_client()
     }
 
-    fn health_client(&mut self) -> &mut HealthClient<Self::SvcType> {
+    fn test_client_mut(&mut self) -> &mut TestServiceClient<Self::SvcType> {
+        self.client.test_client_mut()
+    }
+
+    fn health_client(&self) -> &HealthClient<Self::SvcType> {
         self.client.health_client()
+    }
+
+    fn health_client_mut(&mut self) -> &mut HealthClient<Self::SvcType> {
+        self.client.health_client_mut()
     }
 
     fn get_workers_info(&self) -> Option<Arc<RwLock<SlotManager>>> {
@@ -180,20 +239,36 @@ where
 impl RawClientLike for Client {
     type SvcType = InterceptedMetricsSvc;
 
-    fn workflow_client(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
+    fn workflow_client(&self) -> &WorkflowServiceClient<Self::SvcType> {
         self.inner.workflow_client()
     }
 
-    fn operator_client(&mut self) -> &mut OperatorServiceClient<Self::SvcType> {
+    fn workflow_client_mut(&mut self) -> &mut WorkflowServiceClient<Self::SvcType> {
+        self.inner.workflow_client_mut()
+    }
+
+    fn operator_client(&self) -> &OperatorServiceClient<Self::SvcType> {
         self.inner.operator_client()
     }
 
-    fn test_client(&mut self) -> &mut TestServiceClient<Self::SvcType> {
+    fn operator_client_mut(&mut self) -> &mut OperatorServiceClient<Self::SvcType> {
+        self.inner.operator_client_mut()
+    }
+
+    fn test_client(&self) -> &TestServiceClient<Self::SvcType> {
         self.inner.test_client()
     }
 
-    fn health_client(&mut self) -> &mut HealthClient<Self::SvcType> {
+    fn test_client_mut(&mut self) -> &mut TestServiceClient<Self::SvcType> {
+        self.inner.test_client_mut()
+    }
+
+    fn health_client(&self) -> &HealthClient<Self::SvcType> {
         self.inner.health_client()
+    }
+
+    fn health_client_mut(&mut self) -> &mut HealthClient<Self::SvcType> {
+        self.inner.health_client_mut()
     }
 
     fn get_workers_info(&self) -> Option<Arc<RwLock<SlotManager>>> {
@@ -357,7 +432,7 @@ fn type_closure_two_arg<T, R, S>(arg1: R, arg2: T, f: impl FnOnce(R, T) -> S) ->
 }
 
 proxier! {
-    WorkflowService; ALL_IMPLEMENTED_WORKFLOW_SERVICE_RPCS; WorkflowServiceClient; workflow_client;
+    WorkflowService; ALL_IMPLEMENTED_WORKFLOW_SERVICE_RPCS; WorkflowServiceClient; workflow_client_mut;
     (
         register_namespace,
         RegisterNamespaceRequest,
@@ -896,7 +971,7 @@ proxier! {
 }
 
 proxier! {
-    OperatorService; ALL_IMPLEMENTED_OPERATOR_SERVICE_RPCS; OperatorServiceClient; operator_client;
+    OperatorService; ALL_IMPLEMENTED_OPERATOR_SERVICE_RPCS; OperatorServiceClient; operator_client_mut;
     (add_search_attributes, AddSearchAttributesRequest, AddSearchAttributesResponse);
     (remove_search_attributes, RemoveSearchAttributesRequest, RemoveSearchAttributesResponse);
     (list_search_attributes, ListSearchAttributesRequest, ListSearchAttributesResponse);
@@ -912,7 +987,7 @@ proxier! {
 }
 
 proxier! {
-    TestService; ALL_IMPLEMENTED_TEST_SERVICE_RPCS; TestServiceClient; test_client;
+    TestService; ALL_IMPLEMENTED_TEST_SERVICE_RPCS; TestServiceClient; test_client_mut;
     (lock_time_skipping, LockTimeSkippingRequest, LockTimeSkippingResponse);
     (unlock_time_skipping, UnlockTimeSkippingRequest, UnlockTimeSkippingResponse);
     (sleep, SleepRequest, SleepResponse);
@@ -922,7 +997,7 @@ proxier! {
 }
 
 proxier! {
-    HealthService; ALL_IMPLEMENTED_HEALTH_SERVICE_RPCS; HealthClient; health_client;
+    HealthService; ALL_IMPLEMENTED_HEALTH_SERVICE_RPCS; HealthClient; health_client_mut;
     (check, HealthCheckRequest, HealthCheckResponse);
     (watch, HealthCheckRequest, tonic::codec::Streaming<HealthCheckResponse>);
 }
@@ -945,7 +1020,7 @@ mod tests {
 
         let list_ns_req = ListNamespacesRequest::default();
         let fact = |c: &mut RetryClient<_>, req| {
-            let mut c = c.workflow_client().clone();
+            let mut c = c.workflow_client_mut().clone();
             async move { c.list_namespaces(req).await }.boxed()
         };
         retry_client
@@ -956,7 +1031,7 @@ mod tests {
         // Operator svc method
         let del_ns_req = DeleteNamespaceRequest::default();
         let fact = |c: &mut RetryClient<_>, req| {
-            let mut c = c.operator_client().clone();
+            let mut c = c.operator_client_mut().clone();
             async move { c.delete_namespace(req).await }.boxed()
         };
         retry_client
