@@ -1000,7 +1000,7 @@ impl WorkflowClientTrait for Client {
         options: WorkflowOptions,
     ) -> Result<StartWorkflowExecutionResponse> {
         Ok(WorkflowService::start_workflow_execution(
-            &mut self.inner.client.clone(),
+            &mut self.inner.clone(),
             StartWorkflowExecutionRequest {
                 namespace: self.namespace.clone(),
                 input: input.into_payloads(),
