@@ -224,8 +224,11 @@ mod tests {
 
         let mut found = 0;
         for _ in 0..100 {
-            if let Some(_) = manager.try_reserve_wft_slot("foo".to_string(), "bar_q".to_string()) {
-                found = found + 1;
+            if manager
+                .try_reserve_wft_slot("foo".to_string(), "bar_q".to_string())
+                .is_some()
+            {
+                found += 1;
             }
         }
         assert_eq!(found, 100);
@@ -233,8 +236,11 @@ mod tests {
         manager.unregister("some_slots_id".to_string());
         let mut not_found = 0;
         for _ in 0..100 {
-            if let None = manager.try_reserve_wft_slot("foo".to_string(), "bar_q".to_string()) {
-                not_found = not_found + 1;
+            if manager
+                .try_reserve_wft_slot("foo".to_string(), "bar_q".to_string())
+                .is_none()
+            {
+                not_found += 1;
             }
         }
         assert_eq!(not_found, 100);

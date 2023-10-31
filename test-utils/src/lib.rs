@@ -470,7 +470,7 @@ impl TestWorker {
         }
     }
 
-    /// Similar to [submit_wf] but checking that the server returns the first
+    /// Similar to `submit_wf` but checking that the server returns the first
     /// workflow task in the client response.
     /// Note that this does not guarantee that the worker will execute this task eagerly.
     pub async fn eager_submit_wf(

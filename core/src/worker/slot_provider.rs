@@ -113,12 +113,13 @@ mod tests {
 
     // make validate_wft() happy
     fn new_validatable_response() -> PollWorkflowTaskQueueResponse {
-        let mut task = PollWorkflowTaskQueueResponse::default();
-        task.workflow_execution_task_queue = Some(TaskQueue::default());
-        task.workflow_execution = Some(WorkflowExecution::default());
-        task.workflow_type = Some(WorkflowType::default());
-        task.history = Some(History::default());
-        task
+        PollWorkflowTaskQueueResponse {
+            workflow_execution_task_queue: Some(TaskQueue::default()),
+            workflow_execution: Some(WorkflowExecution::default()),
+            workflow_type: Some(WorkflowType::default()),
+            history: Some(History::default()),
+            ..Default::default()
+        }
     }
 
     #[tokio::test]
