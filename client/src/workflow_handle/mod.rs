@@ -54,6 +54,7 @@ pub struct WorkflowHandle<ClientT, ResultT> {
 }
 
 /// Holds needed information to refer to a specific workflow run, or workflow execution chain
+#[derive(Debug)]
 pub struct WorkflowExecutionInfo {
     /// Namespace the workflow lives in
     pub namespace: String,

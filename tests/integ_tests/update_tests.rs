@@ -1,12 +1,13 @@
-use anyhow::anyhow;
+use anyhow::{anyhow, bail};
 use assert_matches::assert_matches;
 use futures_util::{future, future::join_all, StreamExt};
+use lazy_static::lazy_static;
 use std::{
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     time::Duration,
 };
 use temporal_client::WorkflowClientTrait;
-use temporal_sdk::{ActContext, LocalActivityOptions, UpdateContext, WfContext};
+use temporal_sdk::{ActContext, ActivityOptions, LocalActivityOptions, UpdateContext, WfContext};
 use temporal_sdk_core::replay::HistoryForReplay;
 use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::{
@@ -562,6 +563,7 @@ async fn update_with_local_acts() {
 async fn update_rejection_sdk() {
     let wf_name = "update_rejection_sdk";
     let mut starter = CoreWfStarter::new(wf_name);
+    starter.worker_config.no_remote_activities(true);
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
@@ -573,10 +575,6 @@ async fn update_rejection_sdk() {
         ctx.timer(Duration::from_secs(1)).await;
         Ok(().into())
     });
-    worker.register_activity(
-        "echo_activity",
-        |_ctx: ActContext, echo_me: String| async move { Ok(echo_me) },
-    );
 
     let run_id = starter.start_with_worker(wf_name, &mut worker).await;
     let wf_id = starter.get_task_queue().to_string();
@@ -609,6 +607,7 @@ async fn update_rejection_sdk() {
 async fn update_fail_sdk() {
     let wf_name = "update_fail_sdk";
     let mut starter = CoreWfStarter::new(wf_name);
+    starter.worker_config.no_remote_activities(true);
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
@@ -620,10 +619,6 @@ async fn update_fail_sdk() {
         ctx.timer(Duration::from_secs(1)).await;
         Ok(().into())
     });
-    worker.register_activity(
-        "echo_activity",
-        |_ctx: ActContext, echo_me: String| async move { Ok(echo_me) },
-    );
 
     let run_id = starter.start_with_worker(wf_name, &mut worker).await;
     let wf_id = starter.get_task_queue().to_string();
@@ -811,6 +806,103 @@ async fn task_failure_after_update() {
     join!(update, run);
     starter
         .fetch_history_and_replay(wf_id.clone(), run_id, worker.inner_mut())
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn worker_restarted_in_middle_of_update() {
+    let wf_name = "worker_restarted_in_middle_of_update";
+    let mut starter = CoreWfStarter::new(wf_name);
+    let mut worker = starter.worker().await;
+    let client = starter.get_client().await;
+
+    lazy_static! {
+        static ref BARR: Barrier = Barrier::new(2);
+    }
+    static ACT_RAN: AtomicBool = AtomicBool::new(false);
+    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+        ctx.update_handler(
+            "update",
+            |_: &_, _: ()| Ok(()),
+            move |ctx: UpdateContext, _: ()| async move {
+                ctx.wf_ctx
+                    .activity(ActivityOptions {
+                        activity_type: "blocks".to_string(),
+                        input: "hi!".as_json_payload().expect("serializes fine"),
+                        start_to_close_timeout: Some(Duration::from_secs(2)),
+                        ..Default::default()
+                    })
+                    .await;
+                Ok(())
+            },
+        );
+        let mut sig = ctx.make_signal_channel("done");
+        sig.next().await;
+        Ok(().into())
+    });
+    worker.register_activity("blocks", |_ctx: ActContext, echo_me: String| async move {
+        BARR.wait().await;
+        if !ACT_RAN.fetch_or(true, Ordering::Relaxed) {
+            // On first run fail the task so we'll get retried on the new worker
+            bail!("Fail first time");
+        }
+        Ok(echo_me)
+    });
+
+    let run_id = starter.start_with_worker(wf_name, &mut worker).await;
+    let wf_id = starter.get_task_queue().to_string();
+    let update = async {
+        let res = client
+            .update_workflow_execution(
+                wf_id.clone(),
+                "".to_string(),
+                "update".to_string(),
+                WaitPolicy {
+                    lifecycle_stage: UpdateWorkflowExecutionLifecycleStage::Completed as i32,
+                },
+                [().as_json_payload().unwrap()].into_payloads(),
+            )
+            .await
+            .unwrap();
+        assert!(res.outcome.unwrap().is_success());
+        client
+            .signal_workflow_execution(
+                wf_id.clone(),
+                "".to_string(),
+                "done".to_string(),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+    };
+    let core_worker = starter.get_worker().await;
+    let mut second_starter = starter.clone_no_worker();
+    let stopper = async {
+        // Wait for the activity to start
+        BARR.wait().await;
+        core_worker.initiate_shutdown();
+        // Allow it to start again, the second time
+        BARR.wait().await;
+        // Poke the workflow off the sticky queue to get it to complete faster than WFT timeout
+        client
+            .reset_sticky_task_queue(wf_id.clone(), run_id.clone())
+            .await
+            .unwrap();
+    };
+    let run = async {
+        // This run attempt will get shut down
+        worker.inner_mut().run().await.unwrap();
+        // Start up a new worker
+        let new_worker = second_starter.get_worker().await;
+        // Replace with new core and run again
+        worker.inner_mut().with_new_core_worker(new_worker);
+        worker.run_until_done().await.unwrap();
+    };
+    join!(update, run, stopper);
+    starter
+        .fetch_history_and_replay(wf_id, run_id, worker.inner_mut())
         .await
         .unwrap();
 }

@@ -73,7 +73,11 @@ async fn main() -> Result<(), anyhow::Error> {
                 .build()?;
             println!("Using temporal CLI");
             (
-                Some(config.start_server_with_output(Stdio::null()).await?),
+                Some(
+                    config
+                        .start_server_with_output(Stdio::null(), Stdio::null())
+                        .await?,
+                ),
                 vec![(INTEG_TEMPORAL_DEV_SERVER_USED_ENV_VAR, "true")],
             )
         }
@@ -83,7 +87,11 @@ async fn main() -> Result<(), anyhow::Error> {
                 .build()?;
             println!("Using java test server");
             (
-                Some(config.start_server_with_output(Stdio::null()).await?),
+                Some(
+                    config
+                        .start_server_with_output(Stdio::null(), Stdio::null())
+                        .await?,
+                ),
                 vec![(INTEG_TEST_SERVER_USED_ENV_VAR, "true")],
             )
         }
