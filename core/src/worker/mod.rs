@@ -177,10 +177,7 @@ impl WorkerTrait for Worker {
         }
         self.shutdown_token.cancel();
         // First, disable Eager Workflow Start
-        self.wf_client
-            .workers()
-            .write()
-            .unregister(self.uuid.clone());
+        self.wf_client.workers().write().unregister(&self.uuid);
         // Second, we want to stop polling of both activity and workflow tasks
         if let Some(atm) = self.at_task_mgr.as_ref() {
             atm.initiate_shutdown();

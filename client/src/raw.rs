@@ -479,7 +479,7 @@ proxier! {
         StartWorkflowExecutionRequest,
         StartWorkflowExecutionResponse,
         |r, workers| {
-            let mut slot: Option<Box<dyn Slot>> = None;
+            let mut slot: Option<Box<dyn Slot + Send>> = None;
             let mut labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             labels.task_q(r.get_ref().task_queue.clone());
             r.extensions_mut().insert(labels);
@@ -497,9 +497,8 @@ proxier! {
         start_workflow_execution, // Disambiguate the macro
         |resp, slot| {
             if let Some(mut s) = slot {
-                if resp.is_ok() {
-                    let response_inner = resp.as_ref().unwrap().get_ref().clone();
-                    if let Some(task) = response_inner.eager_workflow_task {
+                if let Ok(response) = resp.as_ref() {
+                    if let Some(task) = response.get_ref().clone().eager_workflow_task {
                         if let Err(e) = s.schedule_wft(task) {
                             // This is a latency issue, i.e., the client does not need to handle
                             //  this error, because the WFT will be retried after a timeout.

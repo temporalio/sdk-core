@@ -3,35 +3,50 @@
 //!  after reserving a slot, directly forwards a WFT to a local worker.
 
 use rand::{seq::SliceRandom, thread_rng};
-use std::{collections::HashMap, fmt::Debug};
+use std::collections::HashMap;
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse;
 
-/// This trait wraps a worker, which provides WFT processing slots.
+/// This trait is implemented by an object associated with a worker, which provides WFT processing slots.
 #[cfg_attr(test, mockall::automock)]
-pub trait SlotProvider: Send + Sync + Debug {
+pub trait SlotProvider: std::fmt::Debug {
     /// A unique identifier for the worker.
-    fn uuid(&self) -> String;
+    fn id(&self) -> &str;
     /// The namespace for the WFTs that it can process.
-    fn namespace(&self) -> String;
+    fn namespace(&self) -> &str;
     /// The task queue this provider listens to.
-    fn task_queue(&self) -> String;
-    /// Try to reserve a slot with matching namespace and task queue.
-    fn try_reserve_wft_slot(&self) -> Option<Box<dyn Slot>>;
+    fn task_queue(&self) -> &str;
+    /// Try to reserve a slot on this worker.
+    fn try_reserve_wft_slot(&self) -> Option<Box<dyn Slot + Send>>;
 }
 
 /// This trait represents a slot reserved for processing a WFT by a worker.
 #[cfg_attr(test, mockall::automock)]
-pub trait Slot: Send + Sync {
+pub trait Slot {
     /// Consumes this slot by dispatching a WFT to its worker. This can only be called once.
     fn schedule_wft(&mut self, task: PollWorkflowTaskQueueResponse) -> Result<(), anyhow::Error>;
 }
 
 /// This trait enables local workers to made themselves visible to a shared client instance.
-pub trait WorkerRegistry: Send + Sync {
+pub trait WorkerRegistry {
     /// Register a local worker that can provide WFT processing slots.
-    fn register(&mut self, provider: Box<dyn SlotProvider>);
+    fn register(&mut self, provider: Box<dyn SlotProvider + Send + Sync>);
     /// Unregister a provider, typically when its worker starts shutdown.
-    fn unregister(&mut self, uuid: String);
+    fn unregister(&mut self, id: &str);
+}
+
+#[derive(PartialEq, Eq, Hash, Debug, Clone)]
+struct SlotKey {
+    namespace: String,
+    task_queue: String,
+}
+
+impl SlotKey {
+    fn new(namespace: String, task_queue: String) -> SlotKey {
+        SlotKey {
+            namespace,
+            task_queue,
+        }
+    }
 }
 
 /// Implements a [WorkerRegistry] and provides a convenient method
@@ -39,13 +54,9 @@ pub trait WorkerRegistry: Send + Sync {
 #[derive(Default, Debug)]
 pub struct SlotManager {
     /// Maps keys, i.e., namespace#task_queue, to providers.
-    providers: HashMap<String, Vec<Box<dyn SlotProvider>>>,
-    /// Maps uuids to keys in `providers`.
-    index: HashMap<String, String>,
-}
-
-fn to_key(namespace: &str, task_queue: &str) -> String {
-    format!("{}#{}", namespace, task_queue)
+    providers: HashMap<SlotKey, Vec<Box<dyn SlotProvider + Send + Sync>>>,
+    /// Maps ids to keys in `providers`.
+    index: HashMap<String, SlotKey>,
 }
 
 fn random_permutation(num_entries: usize) -> Vec<usize> {
@@ -68,14 +79,14 @@ impl SlotManager {
         &self,
         namespace: String,
         task_queue: String,
-    ) -> Option<Box<dyn Slot>> {
-        let key = to_key(&namespace, &task_queue);
+    ) -> Option<Box<dyn Slot + Send>> {
+        let key = SlotKey::new(namespace, task_queue);
         if let Some(all) = self.providers.get(&key) {
             let index = random_permutation(all.len());
             for i in &index {
                 let slot = all[*i].try_reserve_wft_slot();
-                if let Some(s) = slot {
-                    return Some(s);
+                if slot.is_some() {
+                    return slot;
                 }
             }
         }
@@ -90,21 +101,24 @@ impl SlotManager {
 }
 
 impl WorkerRegistry for SlotManager {
-    fn register(&mut self, provider: Box<dyn SlotProvider>) {
-        let uuid = provider.uuid();
-        if self.index.get(&uuid).is_none() {
-            let key = to_key(&provider.namespace(), &provider.task_queue());
-            self.index.insert(uuid, key.clone());
+    fn register(&mut self, provider: Box<dyn SlotProvider + Send + Sync>) {
+        let id = provider.id().to_string();
+        if self.index.get(&id).is_none() {
+            let key = SlotKey::new(
+                provider.namespace().to_string(),
+                provider.task_queue().to_string(),
+            );
+            self.index.insert(id, key.clone());
             let all = self.providers.entry(key).or_default();
             all.push(provider);
         }
     }
 
-    fn unregister(&mut self, uuid: String) {
-        if self.index.contains_key(&uuid) {
-            if let Some(key) = self.index.remove(&uuid) {
+    fn unregister(&mut self, id: &str) {
+        if self.index.contains_key(id) {
+            if let Some(key) = self.index.remove(id) {
                 if let Some(all) = self.providers.get_mut(&key) {
-                    all.retain(|x| *x.uuid() != uuid);
+                    all.retain(|x| x.id() != id);
                     if all.is_empty() {
                         self.providers.remove(&key);
                     }
@@ -131,7 +145,7 @@ mod tests {
     }
 
     fn new_mock_provider(
-        uuid: String,
+        id: String,
         namespace: String,
         task_queue: String,
         with_error: bool,
@@ -147,7 +161,7 @@ mod tests {
                     Some(new_mock_slot(with_error))
                 }
             });
-        mock_provider.expect_uuid().return_const(uuid);
+        mock_provider.expect_id().return_const(id);
         mock_provider.expect_namespace().return_const(namespace);
         mock_provider.expect_task_queue().return_const(task_queue);
         mock_provider
@@ -192,11 +206,11 @@ mod tests {
         let (saw_ok, saw_err) = check_mock_providers(&manager);
         assert!(saw_ok && saw_err);
 
-        manager.unregister("with_error_id".to_string());
+        manager.unregister("with_error_id");
         let (saw_ok, saw_err) = check_mock_providers(&manager);
         assert!(saw_ok && !saw_err);
 
-        manager.unregister("no_error_id".to_string());
+        manager.unregister("no_error_id");
         let (saw_ok, saw_err) = check_mock_providers(&manager);
         assert!(!saw_ok && !saw_err);
     }
@@ -233,7 +247,7 @@ mod tests {
         }
         assert_eq!(found, 100);
 
-        manager.unregister("some_slots_id".to_string());
+        manager.unregister("some_slots_id");
         let mut not_found = 0;
         for _ in 0..100 {
             if manager
@@ -250,17 +264,16 @@ mod tests {
     fn registry_drops_providers() {
         let mut manager = SlotManager::new();
         for i in 0..100 {
-            let uuid = format!("myId{}", i);
+            let id = format!("myId{}", i);
             let namespace = format!("myId{}", i % 3);
-            let mock_provider =
-                new_mock_provider(uuid, namespace, "bar_q".to_string(), false, false);
+            let mock_provider = new_mock_provider(id, namespace, "bar_q".to_string(), false, false);
             manager.register(Box::new(mock_provider));
         }
         assert_eq!((100, 3), manager.num_providers());
 
         for i in 0..100 {
-            let uuid = format!("myId{}", i);
-            manager.unregister(uuid);
+            let id = format!("myId{}", i);
+            manager.unregister(&id);
         }
         assert_eq!((0, 0), manager.num_providers());
     }
@@ -281,7 +294,7 @@ mod tests {
         assert_eq!((1, 1), manager.num_providers());
 
         for _ in 0..100 {
-            manager.unregister("same_id".to_string());
+            manager.unregister("same_id");
         }
         assert_eq!((0, 0), manager.num_providers());
     }

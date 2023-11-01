@@ -3,7 +3,6 @@
 //! This enables latency optimizations such as Eager Workflow Start.
 
 use anyhow::Context;
-use std::fmt::{Debug, Formatter};
 
 use crate::{
     abstractions::{MeteredSemaphore, OwnedMeteredSemPermit},
@@ -46,34 +45,26 @@ impl SlotTrait for Slot {
     }
 }
 
+#[derive(derive_more::DebugCustom)]
+#[debug(fmt = "SlotProvider {{ id: {id}, namespace:{namespace}, task_queue: {task_queue} }}")]
 pub struct SlotProvider {
-    uuid: String,
+    id: String,
     namespace: String,
     task_queue: String,
     wft_semaphore: Arc<MeteredSemaphore>,
     external_wft_tx: WFTStreamSender,
 }
 
-impl Debug for SlotProvider {
-    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(
-            f,
-            "SlotProvider: uuid={} namespace={} task_queue={}",
-            self.uuid, self.namespace, self.task_queue,
-        )
-    }
-}
-
 impl SlotProvider {
     pub(crate) fn new(
-        uuid: String,
+        id: String,
         namespace: String,
         task_queue: String,
         wft_semaphore: Arc<MeteredSemaphore>,
         external_wft_tx: WFTStreamSender,
     ) -> Self {
         Self {
-            uuid,
+            id,
             namespace,
             task_queue,
             wft_semaphore,
@@ -83,16 +74,16 @@ impl SlotProvider {
 }
 
 impl SlotProviderTrait for SlotProvider {
-    fn uuid(&self) -> String {
-        self.uuid.clone()
+    fn id(&self) -> &str {
+        &self.id
     }
-    fn namespace(&self) -> String {
-        self.namespace.clone()
+    fn namespace(&self) -> &str {
+        &self.namespace
     }
-    fn task_queue(&self) -> String {
-        self.task_queue.clone()
+    fn task_queue(&self) -> &str {
+        &self.task_queue
     }
-    fn try_reserve_wft_slot(&self) -> Option<Box<dyn SlotTrait>> {
+    fn try_reserve_wft_slot(&self) -> Option<Box<dyn SlotTrait + Send>> {
         match self.wft_semaphore.try_acquire_owned().ok() {
             Some(permit) => Some(Box::new(Slot::new(permit, self.external_wft_tx.clone()))),
             None => None,
