@@ -1,3 +1,4 @@
+use futures::channel::mpsc::{channel, Receiver, Sender};
 use parking_lot::Mutex;
 use ringbuf::{Consumer, HeapRb, Producer};
 use std::{collections::HashMap, fmt, sync::Arc, time::SystemTime};
@@ -141,6 +142,32 @@ impl CoreLogBuffer {
     }
 }
 
+/// Core log consumer implementation backed by a mpsc channel.
+pub struct CoreLogStreamConsumer {
+    tx: Sender<CoreLog>,
+}
+
+impl CoreLogStreamConsumer {
+    /// Create a stream consumer and stream of logs.
+    pub fn new(buffer: usize) -> (Self, Receiver<CoreLog>) {
+        let (tx, rx) = channel(buffer);
+        (Self { tx }, rx)
+    }
+}
+
+impl CoreLogConsumer for CoreLogStreamConsumer {
+    fn on_log(&self, log: CoreLog) {
+        // We will drop messages if we can't send
+        let _ = self.tx.clone().try_send(log);
+    }
+}
+
+impl fmt::Debug for CoreLogStreamConsumer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("<stream consumer>")
+    }
+}
+
 struct JsonVisitor<'a>(&'a mut HashMap<String, serde_json::Value>);
 
 impl<'a> tracing::field::Visit for JsonVisitor<'a> {
@@ -190,7 +217,10 @@ impl<'a> tracing::field::Visit for JsonVisitor<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{telemetry::construct_filter_string, telemetry_init};
+    use crate::{
+        telemetry::construct_filter_string, telemetry::CoreLogStreamConsumer, telemetry_init,
+    };
+    use futures::stream::StreamExt;
     use std::fmt;
     use std::sync::{Arc, Mutex};
     use temporal_sdk_core_api::telemetry::{
@@ -271,5 +301,23 @@ mod tests {
 
         write_logs();
         assert_logs(consumer.0.lock().unwrap().drain(..).collect());
+    }
+
+    #[tokio::test]
+    async fn test_push_stream_output() {
+        let (consumer, stream) = CoreLogStreamConsumer::new(100);
+        let consumer = Arc::new(consumer);
+        let opts = TelemetryOptionsBuilder::default()
+            .logging(Logger::Push {
+                filter: construct_filter_string(Level::INFO, Level::WARN),
+                consumer: consumer.clone(),
+            })
+            .build()
+            .unwrap();
+        let instance = telemetry_init(opts).unwrap();
+        let _g = tracing::subscriber::set_default(instance.trace_subscriber().unwrap().clone());
+
+        write_logs();
+        assert_logs(stream.ready_chunks(100).next().await.unwrap());
     }
 }

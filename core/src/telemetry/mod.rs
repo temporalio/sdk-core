@@ -10,7 +10,7 @@ pub use metrics::{
     MetricsCallBuffer,
 };
 
-pub use log_export::{CoreLogBuffer, CoreLogBufferedConsumer};
+pub use log_export::{CoreLogBuffer, CoreLogBufferedConsumer, CoreLogStreamConsumer};
 
 use crate::telemetry::log_export::CoreLogConsumerLayer;
 use crate::telemetry::metrics::PrefixedMetricsMeter;
