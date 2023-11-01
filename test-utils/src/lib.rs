@@ -200,6 +200,18 @@ impl CoreWfStarter {
         }
     }
 
+    /// Create a new starter with no initialized worker or runtime override. Useful for starting a
+    /// new worker on the same queue.
+    pub fn clone_no_worker(&self) -> Self {
+        Self {
+            task_queue_name: self.task_queue_name.clone(),
+            worker_config: self.worker_config.clone(),
+            workflow_options: self.workflow_options.clone(),
+            runtime_override: None,
+            initted_worker: Default::default(),
+        }
+    }
+
     pub async fn worker(&mut self) -> TestWorker {
         let w = self.get_worker().await;
         let tq = w.get_config().task_queue.clone();
@@ -372,23 +384,17 @@ pub struct TestWorker {
     /// If set true (default), and a client is available, we will fetch workflow results to
     /// determine when they have all completed.
     pub fetch_results: bool,
-    iceptor: Option<TestWorkerCompletionIceptor>,
 }
 impl TestWorker {
     /// Create a new test worker
     pub fn new(core_worker: Arc<dyn CoreWorker>, task_queue: impl Into<String>) -> Self {
         let inner = Worker::new_from_core(core_worker.clone(), task_queue);
-        let iceptor = TestWorkerCompletionIceptor::new(
-            TestWorkerShutdownCond::NoAutoShutdown,
-            Arc::new(inner.shutdown_handle()),
-        );
         Self {
             inner,
             core_worker,
             client: None,
             started_workflows: Mutex::new(vec![]),
             fetch_results: true,
-            iceptor: Some(iceptor),
         }
     }
 
@@ -458,9 +464,12 @@ impl TestWorker {
     /// See [Self::run_until_done], but allows configuration of some low-level interception.
     pub async fn run_until_done_intercepted(
         &mut self,
-        interceptor: Option<impl WorkerInterceptor + 'static>,
+        next_interceptor: Option<impl WorkerInterceptor + 'static>,
     ) -> Result<(), anyhow::Error> {
-        let mut iceptor = self.iceptor.take().unwrap();
+        let mut iceptor = TestWorkerCompletionIceptor::new(
+            TestWorkerShutdownCond::NoAutoShutdown,
+            Arc::new(self.inner.shutdown_handle()),
+        );
         // Automatically use results-based complete detection if we have a client
         if self.fetch_results {
             if let Some(c) = self.client.clone() {
@@ -470,7 +479,7 @@ impl TestWorker {
                 );
             }
         }
-        iceptor.next = interceptor.map(|i| Box::new(i) as Box<dyn WorkerInterceptor>);
+        iceptor.next = next_interceptor.map(|i| Box::new(i) as Box<dyn WorkerInterceptor>);
         let get_results_waiter = iceptor.wait_all_wfs();
         self.inner.set_worker_interceptor(iceptor);
         tokio::try_join!(self.inner.run(), get_results_waiter)?;

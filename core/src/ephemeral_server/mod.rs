@@ -56,11 +56,16 @@ pub struct TemporaliteConfig {
 impl TemporaliteConfig {
     /// Start a Temporalite server.
     pub async fn start_server(&self) -> anyhow::Result<EphemeralServer> {
-        self.start_server_with_output(Stdio::inherit()).await
+        self.start_server_with_output(Stdio::inherit(), Stdio::inherit())
+            .await
     }
 
     /// Start a Temporalite server with configurable stdout destination.
-    pub async fn start_server_with_output(&self, output: Stdio) -> anyhow::Result<EphemeralServer> {
+    pub async fn start_server_with_output(
+        &self,
+        output: Stdio,
+        err_output: Stdio,
+    ) -> anyhow::Result<EphemeralServer> {
         // Get exe path
         let exe_path = self
             .exe
@@ -104,6 +109,7 @@ impl TemporaliteConfig {
             args,
             has_test_service: false,
             output,
+            err_output,
         })
         .await
     }
@@ -140,11 +146,16 @@ pub struct TemporalDevServerConfig {
 impl TemporalDevServerConfig {
     /// Start a Temporal CLI dev server.
     pub async fn start_server(&self) -> anyhow::Result<EphemeralServer> {
-        self.start_server_with_output(Stdio::inherit()).await
+        self.start_server_with_output(Stdio::inherit(), Stdio::inherit())
+            .await
     }
 
     /// Start a Temporal CLI dev server with configurable stdout destination.
-    pub async fn start_server_with_output(&self, output: Stdio) -> anyhow::Result<EphemeralServer> {
+    pub async fn start_server_with_output(
+        &self,
+        output: Stdio,
+        err_output: Stdio,
+    ) -> anyhow::Result<EphemeralServer> {
         // Get exe path
         let exe_path = self
             .exe
@@ -191,6 +202,7 @@ impl TemporalDevServerConfig {
             args,
             has_test_service: false,
             output,
+            err_output,
         })
         .await
     }
@@ -212,11 +224,16 @@ pub struct TestServerConfig {
 impl TestServerConfig {
     /// Start a test server.
     pub async fn start_server(&self) -> anyhow::Result<EphemeralServer> {
-        self.start_server_with_output(Stdio::inherit()).await
+        self.start_server_with_output(Stdio::inherit(), Stdio::inherit())
+            .await
     }
 
     /// Start a test server with configurable stdout.
-    pub async fn start_server_with_output(&self, output: Stdio) -> anyhow::Result<EphemeralServer> {
+    pub async fn start_server_with_output(
+        &self,
+        output: Stdio,
+        err_output: Stdio,
+    ) -> anyhow::Result<EphemeralServer> {
         // Get exe path
         let exe_path = self
             .exe
@@ -237,6 +254,7 @@ impl TestServerConfig {
             args,
             has_test_service: true,
             output,
+            err_output,
         })
         .await
     }
@@ -248,6 +266,7 @@ struct EphemeralServerConfig {
     args: Vec<String>,
     has_test_service: bool,
     output: Stdio,
+    err_output: Stdio,
 }
 
 /// Server that will be stopped when dropped.
@@ -263,11 +282,11 @@ pub struct EphemeralServer {
 impl EphemeralServer {
     async fn start(config: EphemeralServerConfig) -> anyhow::Result<EphemeralServer> {
         // Start process
-        // TODO(cretz): Offer stdio suppression?
         let child = tokio::process::Command::new(config.exe_path)
             .args(config.args)
             .stdin(Stdio::null())
             .stdout(config.output)
+            .stderr(config.err_output)
             .spawn()?;
         let target = format!("127.0.0.1:{}", config.port);
         let target_url = format!("http://{target}");
