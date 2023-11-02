@@ -108,6 +108,8 @@ struct RemoteInFlightActInfo {
     pub known_not_found: bool,
     /// Handle to the task containing local timeout tracking, if any.
     pub local_timeouts_task: Option<JoinHandle<()>>,
+    /// Used to reset the local heartbeat timeout every time we record a heartbeat
+    timeout_resetter: Option<Arc<Notify>>,
     /// The permit from the max concurrent semaphore
     _permit: UsedMeteredSemPermit,
 }
@@ -126,6 +128,7 @@ impl RemoteInFlightActInfo {
             issued_cancel_to_lang: None,
             known_not_found: false,
             local_timeouts_task: None,
+            timeout_resetter: None,
             _permit: permit,
         }
     }
@@ -397,10 +400,11 @@ impl WorkerActivityTasks {
         details: ActivityHeartbeat,
     ) -> Result<(), ActivityHeartbeatError> {
         // TODO: Propagate these back as cancels. Silent fails is too nonobvious
-        let heartbeat_timeout: Duration = self
+        let at_info = self
             .outstanding_activity_tasks
             .get(&TaskToken(details.task_token.clone()))
-            .ok_or(ActivityHeartbeatError::UnknownActivity)?
+            .ok_or(ActivityHeartbeatError::UnknownActivity)?;
+        let heartbeat_timeout: Duration = at_info
             .heartbeat_timeout
             .clone()
             // We treat None as 0 (even though heartbeat_timeout is never set to None by the server)
@@ -420,7 +424,8 @@ impl WorkerActivityTasks {
         };
         let throttle_interval =
             std::cmp::min(throttle_interval, self.max_heartbeat_throttle_interval);
-        self.heartbeat_manager.record(details, throttle_interval)
+        self.heartbeat_manager
+            .record(details, throttle_interval, at_info.timeout_resetter.clone())
     }
 
     /// Returns a handle that the workflows management side can use to interact with this manager
@@ -564,24 +569,41 @@ where
                                     task.resp.start_to_close_timeout.clone(),
                                 ]
                                 .into_iter()
-                                .flatten()
-                                .map(Duration::try_from)
-                                .filter_map(Result::ok)
-                                .chain(sched)
-                                .filter(|d| !d.is_zero())
-                                .min();
-                                if let Some(timeout_at) = timeout_at {
+                                .enumerate()
+                                .filter_map(|(i, d)| {
+                                    d.and_then(|d| Duration::try_from(d).ok().map(|d| (i, d)))
+                                })
+                                .chain(sched.map(|s| (2, s)))
+                                .filter(|(_, d)| !d.is_zero())
+                                .min_by(|(_, d1), (_, d2)| d1.cmp(d2));
+                                if let Some((timeout_type, timeout_at)) = timeout_at {
+                                    let sleep_time = timeout_at + local_timeout_buffer;
                                     let cancel_tx = cancels_tx.clone();
+                                    let resetter = if timeout_type == 0 {
+                                        Some(Arc::new(Notify::new()))
+                                    } else {
+                                        None
+                                    };
+                                    let resetter_clone = resetter.clone();
                                     outstanding_info.local_timeouts_task =
                                         Some(tokio::task::spawn(async move {
-                                            tokio::time::sleep(timeout_at + local_timeout_buffer)
-                                                .await;
+                                            if let Some(rs) = resetter_clone {
+                                                loop {
+                                                    tokio::select! {
+                                                        _ = rs.notified() => continue,
+                                                        _ = tokio::time::sleep(sleep_time) => break,
+                                                    }
+                                                }
+                                            } else {
+                                                tokio::time::sleep(sleep_time).await;
+                                            }
                                             let _ = cancel_tx.send(PendingActivityCancel {
                                                 task_token: tt,
                                                 reason: ActivityCancelReason::TimedOut,
                                                 consider_not_found: true,
                                             });
                                         }));
+                                    outstanding_info.timeout_resetter = resetter;
                                 }
                             }
 
@@ -872,6 +894,92 @@ mod tests {
         }
 
         atm.initiate_shutdown();
+        assert_matches!(atm.poll().await.unwrap_err(), PollActivityError::ShutDown);
+        atm.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn local_timeout_heartbeating() {
+        let mut mock_client = mock_workflow_client();
+        mock_client
+            .expect_poll_activity_task()
+            .times(1)
+            .returning(move |_, _| {
+                Ok(PollActivityTaskQueueResponse {
+                    task_token: vec![1],
+                    activity_id: "act1".to_string(),
+                    start_to_close_timeout: Some(prost_dur!(from_secs(100))),
+                    schedule_to_close_timeout: Some(prost_dur!(from_secs(100))),
+                    heartbeat_timeout: Some(prost_dur!(from_millis(100))),
+                    ..Default::default()
+                })
+            });
+        mock_client
+            .expect_record_activity_heartbeat()
+            .times(2)
+            .returning(|_, _| Ok(Default::default()));
+        let mock_client = Arc::new(mock_client);
+        let sem = Arc::new(MeteredSemaphore::new(
+            1, // Just one task at a time
+            MetricsContext::no_op(),
+            MetricsContext::available_task_slots,
+        ));
+        let shutdown_token = CancellationToken::new();
+        let ap = new_activity_task_buffer(
+            mock_client.clone(),
+            "tq".to_string(),
+            1,
+            sem.clone(),
+            None,
+            shutdown_token.clone(),
+            None::<fn(usize)>,
+            None,
+        );
+        let atm = WorkerActivityTasks::new(
+            sem.clone(),
+            Box::new(ap),
+            mock_client.clone(),
+            MetricsContext::no_op(),
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+            None,
+            Duration::from_millis(0), // No buffer in this test
+        );
+
+        let t = atm.poll().await.unwrap();
+
+        let heartbeater = async {
+            for _ in 1..=2 {
+                // Heartbeat twice within the timeout, but for a total time which would exceed it
+                tokio::time::sleep(Duration::from_millis(60)).await;
+                atm.record_heartbeat(ActivityHeartbeat {
+                    task_token: t.task_token.clone(),
+                    details: vec![],
+                })
+                .unwrap();
+            }
+        };
+        let poller = async {
+            let start = Instant::now();
+            // We should now time out since we're failing to heartbeat again
+            let should_timeout = atm.poll().await.unwrap();
+            assert!(should_timeout.is_timeout());
+            // Verify at least the two heartbeats elapsed before we got timed out
+            assert!(start.elapsed() > Duration::from_millis(120));
+        };
+
+        join!(heartbeater, poller);
+
+        atm.initiate_shutdown(); // avoid polling again and making mock complain
+        atm.complete(
+            TaskToken(t.task_token),
+            ActivityExecutionResult::fail("unimportant".into())
+                .status
+                .unwrap(),
+            mock_client.as_ref(),
+        )
+        .await;
+
         assert_matches!(atm.poll().await.unwrap_err(), PollActivityError::ShutDown);
         atm.shutdown().await;
     }
