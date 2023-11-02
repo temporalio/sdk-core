@@ -539,7 +539,7 @@ where
                                 // activities can still get cleaned up even if the user isn't
                                 // heartbeating.
                                 let local_timeout_buffer = self.local_timeout_buffer;
-                                let sched_to_close = task
+                                let sched = task
                                     .resp
                                     .schedule_to_close_timeout
                                     .clone()
@@ -559,16 +559,17 @@ where
                                             now.duration_since(sched_time).unwrap_or_default();
                                         Duration::try_from(to).map(|to| to - already_elapsed).ok()
                                     });
-                                let start_to_close = task
-                                    .resp
-                                    .start_to_close_timeout
-                                    .clone()
-                                    .and_then(|t| Duration::try_from(t).ok());
-                                let timeout_at = [sched_to_close, start_to_close]
-                                    .into_iter()
-                                    .flatten()
-                                    .filter(|d| !d.is_zero())
-                                    .min();
+                                let timeout_at = [
+                                    task.resp.heartbeat_timeout.clone(),
+                                    task.resp.start_to_close_timeout.clone(),
+                                ]
+                                .into_iter()
+                                .flatten()
+                                .map(Duration::try_from)
+                                .filter_map(Result::ok)
+                                .chain(sched)
+                                .filter(|d| !d.is_zero())
+                                .min();
                                 if let Some(timeout_at) = timeout_at {
                                     let cancel_tx = cancels_tx.clone();
                                     outstanding_info.local_timeouts_task =
@@ -787,11 +788,22 @@ mod tests {
             .times(1)
             .returning(move |_, _| {
                 Ok(PollActivityTaskQueueResponse {
+                    task_token: vec![2],
+                    activity_id: "act2".to_string(),
+                    heartbeat_timeout: Some(prost_dur!(from_millis(100))),
+                    ..Default::default()
+                })
+            });
+        mock_client
+            .expect_poll_activity_task()
+            .times(1)
+            .returning(move |_, _| {
+                Ok(PollActivityTaskQueueResponse {
                     task_token: vec![3],
                     activity_id: "act3".to_string(),
                     // Verify smaller of the timeouts is chosen
-                    schedule_to_close_timeout: Some(prost_dur!(from_secs(100))),
-                    start_to_close_timeout: Some(prost_dur!(from_millis(100))),
+                    heartbeat_timeout: Some(prost_dur!(from_millis(100))),
+                    start_to_close_timeout: Some(prost_dur!(from_secs(100))),
                     ..Default::default()
                 })
             });
@@ -840,7 +852,7 @@ mod tests {
             Duration::from_millis(100), // Short buffer for unit test
         );
 
-        for _ in 1..=3 {
+        for _ in 1..=4 {
             let start = Instant::now();
             let t = atm.poll().await.unwrap();
             // Just don't do anything when we get the task, wait for the timeout to come.
