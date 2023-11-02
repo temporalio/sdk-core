@@ -378,7 +378,8 @@ macro_rules! proxy {
             self.call(stringify!($method), fact, request.into_request())
         }
     };
-    ($client_type:tt, $client_meth:ident, $method:ident, $req:ty, $resp:ty, $closure_before:expr, $closure_after:expr) => {
+    ($client_type:tt, $client_meth:ident, $method:ident, $req:ty, $resp:ty,
+     $closure_before:expr, $closure_after:expr) => {
         #[doc = concat!("See [", stringify!($client_type), "::", stringify!($method), "]")]
         fn $method(
             &mut self,
@@ -386,7 +387,8 @@ macro_rules! proxy {
         ) -> BoxFuture<Result<tonic::Response<$resp>, tonic::Status>> {
             #[allow(unused_mut)]
             let fact = |c: &mut Self, mut req: tonic::Request<$req>| {
-                let data = type_closure_two_arg(&mut req, c.get_workers_info().unwrap(), $closure_before);
+                let data = type_closure_two_arg(&mut req, c.get_workers_info().unwrap(),
+                                                $closure_before);
                 let mut c = c.$client_meth().clone();
                 async move {
                     type_closure_two_arg(c.$method(req).await, data, $closure_after)
@@ -398,7 +400,7 @@ macro_rules! proxy {
 }
 macro_rules! proxier {
     ( $trait_name:ident; $impl_list_name:ident; $client_type:tt; $client_meth:ident;
-      $(($method:ident, $req:ty, $resp:ty $(, $closure:expr)? $(, $_dummy:ident, $closure_after:expr)? );)* ) => {
+      $(($method:ident, $req:ty, $resp:ty $(, $closure:expr $(, $closure_after:expr)?)? );)* ) => {
         #[cfg(test)]
         const $impl_list_name: &'static [&'static str] = &[$(stringify!($method)),*];
         /// Trait version of the generated client with modifications to attach appropriate metric
@@ -416,7 +418,8 @@ macro_rules! proxier {
                 as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
         {
             $(
-               proxy!($client_type, $client_meth, $method, $req, $resp $(,$closure)* $(,$closure_after)*);
+               proxy!($client_type, $client_meth, $method, $req, $resp
+                      $(,$closure $(,$closure_after)*)*);
             )*
         }
     };
@@ -494,7 +497,6 @@ proxier! {
             }
             slot
         },
-        start_workflow_execution, // Disambiguate the macro
         |resp, slot| {
             if let Some(mut s) = slot {
                 if let Ok(response) = resp.as_ref() {
