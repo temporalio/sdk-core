@@ -5,7 +5,8 @@ use std::sync::Arc;
 use temporal_client::SlotManager;
 
 lazy_static! {
-    pub(crate) static ref DEFAULT_WORKERS_REGISTRY: Arc<SlotManager> = Arc::new(SlotManager::new());
+    pub(crate) static ref DEFAULT_WORKERS_REGISTRY: Arc<SlotManager> =
+        Arc::new(SlotManager::new_quiet());
 }
 
 pub(crate) static DEFAULT_TEST_CAPABILITIES: &Capabilities = &Capabilities {

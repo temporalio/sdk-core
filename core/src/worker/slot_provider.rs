@@ -111,7 +111,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn slot_can_only_be_used_once() {
+    async fn slot_propagates_through_channel() {
         let wft_semaphore = Arc::new(MeteredSemaphore::new(
             2,
             crate::MetricsContext::no_op(),
@@ -130,12 +130,9 @@ mod tests {
         if let Some(slot) = provider.try_reserve_wft_slot() {
             let p = slot.schedule_wft(new_validatable_response());
             assert!(p.is_ok());
-
-            // This is a compiler error, schedule_wft consumes the slot...
-            // let p = slot.schedule_wft(new_validatable_response());
-            // assert!(p.is_err());
-
             assert!(external_wft_rx.recv().await.is_some());
+        } else {
+            panic!("failed to reserve slot");
         }
     }
 

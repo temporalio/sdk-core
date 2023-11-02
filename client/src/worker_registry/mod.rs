@@ -3,8 +3,8 @@
 //!  after reserving a slot, directly forwards a WFT to a local worker.
 
 use parking_lot::RwLock;
-use rand::{seq::SliceRandom, thread_rng};
-use std::collections::HashMap;
+use std::collections::{hash_map::Entry::Vacant, HashMap};
+
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse;
 
 /// This trait is implemented by an object associated with a worker, which provides WFT processing slots.
@@ -31,6 +31,8 @@ pub trait Slot {
 }
 
 /// This trait enables local workers to made themselves visible to a shared client instance.
+/// There can only be one worker registered per namespace+queue_name+client, others will get ignored.
+#[cfg_attr(test, mockall::automock)]
 pub trait WorkerRegistry {
     /// Register a local worker that can provide WFT processing slots.
     fn register(&self, provider: Box<dyn SlotProvider + Send + Sync>);
@@ -58,24 +60,21 @@ impl SlotKey {
 /// This is an inner class to hide the mutex.
 #[derive(Default, Debug)]
 struct SlotManagerImpl {
-    /// Maps keys, i.e., namespace#task_queue, to providers.
-    providers: HashMap<SlotKey, Vec<Box<dyn SlotProvider + Send + Sync>>>,
+    /// Maps keys, i.e., namespace#task_queue, to provider.
+    providers: HashMap<SlotKey, Box<dyn SlotProvider + Send + Sync>>,
     /// Maps ids to keys in `providers`.
     index: HashMap<String, SlotKey>,
-}
-
-fn random_permutation(num_entries: usize) -> Vec<usize> {
-    let mut vec: Vec<usize> = (0..num_entries).collect();
-    vec.shuffle(&mut thread_rng());
-    vec
+    /// Do not warn when ignoring worker registrations.
+    quiet: bool,
 }
 
 impl SlotManagerImpl {
     /// Factory method.
-    fn new() -> Self {
+    fn new(quiet: bool) -> Self {
         Self {
             index: HashMap::new(),
             providers: HashMap::new(),
+            quiet,
         }
     }
 
@@ -85,41 +84,33 @@ impl SlotManagerImpl {
         task_queue: String,
     ) -> Option<Box<dyn Slot + Send>> {
         let key = SlotKey::new(namespace, task_queue);
-        if let Some(all) = self.providers.get(&key) {
-            let index = random_permutation(all.len());
-            for i in &index {
-                let slot = all[*i].try_reserve_wft_slot();
-                if slot.is_some() {
-                    return slot;
-                }
+        if let Some(p) = self.providers.get(&key) {
+            if let Some(slot) = p.try_reserve_wft_slot() {
+                return Some(slot);
             }
         }
         None
     }
 
     fn register(&mut self, provider: Box<dyn SlotProvider + Send + Sync>) {
-        let id = provider.id().to_string();
-        if self.index.get(&id).is_none() {
+        let id = provider.id();
+        if let Vacant(e) = self.index.entry(id.to_string()) {
             let key = SlotKey::new(
                 provider.namespace().to_string(),
                 provider.task_queue().to_string(),
             );
-            self.index.insert(id, key.clone());
-            let all = self.providers.entry(key).or_default();
-            all.push(provider);
+            if let Vacant(p) = self.providers.entry(key.clone()) {
+                p.insert(provider);
+                e.insert(key);
+            } else if !self.quiet {
+                warn!("Ignoring registration for worker {id} in bucket {key:?}.");
+            }
         }
     }
 
     fn unregister(&mut self, id: &str) {
-        if self.index.contains_key(id) {
-            if let Some(key) = self.index.remove(id) {
-                if let Some(all) = self.providers.get_mut(&key) {
-                    all.retain(|x| x.id() != id);
-                    if all.is_empty() {
-                        self.providers.remove(&key);
-                    }
-                }
-            }
+        if let Some(key) = self.index.remove(id) {
+            self.providers.remove(&key);
         }
     }
 
@@ -140,7 +131,14 @@ impl SlotManager {
     /// Factory method.
     pub fn new() -> Self {
         Self {
-            manager: RwLock::new(SlotManagerImpl::new()),
+            manager: RwLock::new(SlotManagerImpl::new(false)),
+        }
+    }
+
+    /// Factory method. Do not warn when ignoring worker registrations.
+    pub fn new_quiet() -> Self {
+        Self {
+            manager: RwLock::new(SlotManagerImpl::new(true)),
         }
     }
 
@@ -157,6 +155,7 @@ impl SlotManager {
 
     #[cfg(test)]
     /// Returns (num_providers, num_buckets), where a bucket key is namespace+task_queue.
+    /// There is only one provider per bucket so `num_providers` should be equal to `num_buckets`.
     pub fn num_providers(&self) -> (usize, usize) {
         self.manager.read().num_providers()
     }
@@ -211,55 +210,8 @@ mod tests {
         mock_provider
     }
 
-    fn check_mock_providers(manager: &SlotManager) -> (bool, bool) {
-        let mut saw_ok = false;
-        let mut saw_err = false;
-        for _ in 0..100 {
-            if let Some(slot) = manager.try_reserve_wft_slot("foo".to_string(), "bar_q".to_string())
-            {
-                match slot.schedule_wft(PollWorkflowTaskQueueResponse::default()) {
-                    Ok(_) => saw_ok = true,
-                    Err(_) => saw_err = true,
-                }
-            }
-        }
-        (saw_ok, saw_err)
-    }
-
     #[test]
-    fn registry_randomizes_providers_order() {
-        let mock_provider1 = new_mock_provider(
-            "no_error_id".to_string(),
-            "foo".to_string(),
-            "bar_q".to_string(),
-            false,
-            false,
-        );
-        let mock_provider2 = new_mock_provider(
-            "with_error_id".to_string(),
-            "foo".to_string(),
-            "bar_q".to_string(),
-            true,
-            false,
-        );
-
-        let manager = SlotManager::new();
-        manager.register(Box::new(mock_provider1));
-        manager.register(Box::new(mock_provider2));
-        let (saw_ok, saw_err) = check_mock_providers(&manager);
-        assert!(saw_ok && saw_err);
-
-        manager.unregister("with_error_id");
-        let (saw_ok, saw_err) = check_mock_providers(&manager);
-        assert!(saw_ok && !saw_err);
-
-        manager.unregister("no_error_id");
-        let (saw_ok, saw_err) = check_mock_providers(&manager);
-        assert!(!saw_ok && !saw_err);
-    }
-
-    #[test]
-    fn registry_eventually_finds_provider() {
+    fn registry_respects_registration_order() {
         let mock_provider1 = new_mock_provider(
             "some_slots_id".to_string(),
             "foo".to_string(),
@@ -280,7 +232,7 @@ mod tests {
         manager.register(Box::new(mock_provider2));
 
         let mut found = 0;
-        for _ in 0..100 {
+        for _ in 0..10 {
             if manager
                 .try_reserve_wft_slot("foo".to_string(), "bar_q".to_string())
                 .is_some()
@@ -288,11 +240,32 @@ mod tests {
                 found += 1;
             }
         }
-        assert_eq!(found, 100);
+        assert_eq!(found, 10);
+        assert_eq!((1, 1), manager.num_providers());
 
         manager.unregister("some_slots_id");
+        assert_eq!((0, 0), manager.num_providers());
+
+        let mock_provider1 = new_mock_provider(
+            "some_slots_id".to_string(),
+            "foo".to_string(),
+            "bar_q".to_string(),
+            false,
+            false,
+        );
+        let mock_provider2 = new_mock_provider(
+            "no_slots_id".to_string(),
+            "foo".to_string(),
+            "bar_q".to_string(),
+            false,
+            true,
+        );
+
+        manager.register(Box::new(mock_provider2));
+        manager.register(Box::new(mock_provider1));
+
         let mut not_found = 0;
-        for _ in 0..100 {
+        for _ in 0..10 {
             if manager
                 .try_reserve_wft_slot("foo".to_string(), "bar_q".to_string())
                 .is_none()
@@ -300,21 +273,22 @@ mod tests {
                 not_found += 1;
             }
         }
-        assert_eq!(not_found, 100);
+        assert_eq!(not_found, 10);
+        assert_eq!((1, 1), manager.num_providers());
     }
 
     #[test]
-    fn registry_drops_providers() {
+    fn registry_keeps_one_provider_per_namespace() {
         let manager = SlotManager::new();
-        for i in 0..100 {
+        for i in 0..10 {
             let id = format!("myId{}", i);
             let namespace = format!("myId{}", i % 3);
             let mock_provider = new_mock_provider(id, namespace, "bar_q".to_string(), false, false);
             manager.register(Box::new(mock_provider));
         }
-        assert_eq!((100, 3), manager.num_providers());
+        assert_eq!((3, 3), manager.num_providers());
 
-        for i in 0..100 {
+        for i in 0..10 {
             let id = format!("myId{}", i);
             manager.unregister(&id);
         }
@@ -324,7 +298,7 @@ mod tests {
     #[test]
     fn registry_is_idempotent() {
         let manager = SlotManager::new();
-        for _ in 0..100 {
+        for _ in 0..10 {
             let mock_provider = new_mock_provider(
                 "same_id".to_string(),
                 "ns".to_string(),
@@ -336,7 +310,7 @@ mod tests {
         }
         assert_eq!((1, 1), manager.num_providers());
 
-        for _ in 0..100 {
+        for _ in 0..10 {
             manager.unregister("same_id");
         }
         assert_eq!((0, 0), manager.num_providers());
