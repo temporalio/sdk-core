@@ -10,7 +10,6 @@ use crate::{
     LONG_POLL_TIMEOUT,
 };
 use futures::{future::BoxFuture, FutureExt, TryFutureExt};
-use parking_lot::RwLock;
 use std::sync::Arc;
 use temporal_sdk_core_api::telemetry::metrics::MetricKeyValue;
 use temporal_sdk_core_protos::{
@@ -59,7 +58,7 @@ pub(super) mod sealed {
         fn health_client_mut(&mut self) -> &mut HealthClient<Self::SvcType>;
 
         /// Return a registry with workers using this client instance
-        fn get_workers_info(&self) -> Option<Arc<RwLock<SlotManager>>>;
+        fn get_workers_info(&self) -> Option<Arc<SlotManager>>;
 
         async fn call<F, Req, Resp>(
             &mut self,
@@ -117,7 +116,7 @@ where
         self.get_client_mut().health_client_mut()
     }
 
-    fn get_workers_info(&self) -> Option<Arc<RwLock<SlotManager>>> {
+    fn get_workers_info(&self) -> Option<Arc<SlotManager>> {
         self.get_client().get_workers_info()
     }
 
@@ -184,7 +183,7 @@ where
         self.health_svc_mut()
     }
 
-    fn get_workers_info(&self) -> Option<Arc<RwLock<SlotManager>>> {
+    fn get_workers_info(&self) -> Option<Arc<SlotManager>> {
         None
     }
 }
@@ -231,7 +230,7 @@ where
         self.client.health_client_mut()
     }
 
-    fn get_workers_info(&self) -> Option<Arc<RwLock<SlotManager>>> {
+    fn get_workers_info(&self) -> Option<Arc<SlotManager>> {
         Some(self.workers())
     }
 }
@@ -271,7 +270,7 @@ impl RawClientLike for Client {
         self.inner.health_client_mut()
     }
 
-    fn get_workers_info(&self) -> Option<Arc<RwLock<SlotManager>>> {
+    fn get_workers_info(&self) -> Option<Arc<SlotManager>> {
         self.inner.get_workers_info()
     }
 }
@@ -490,7 +489,7 @@ proxier! {
             if req_mut.request_eager_execution {
                 let namespace = req_mut.namespace.clone();
                 let task_queue = req_mut.task_queue.clone().unwrap().name.clone();
-                match workers.read().try_reserve_wft_slot(namespace, task_queue) {
+                match workers.try_reserve_wft_slot(namespace, task_queue) {
                     Some(s) => slot = Some(s),
                     None => req_mut.request_eager_execution = false
                 }

@@ -2,6 +2,7 @@
 //! This is needed to implement Eager Workflow Start, a latency optimization in which the client,
 //!  after reserving a slot, directly forwards a WFT to a local worker.
 
+use parking_lot::RwLock;
 use rand::{seq::SliceRandom, thread_rng};
 use std::collections::HashMap;
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse;
@@ -32,9 +33,9 @@ pub trait Slot {
 /// This trait enables local workers to made themselves visible to a shared client instance.
 pub trait WorkerRegistry {
     /// Register a local worker that can provide WFT processing slots.
-    fn register(&mut self, provider: Box<dyn SlotProvider + Send + Sync>);
+    fn register(&self, provider: Box<dyn SlotProvider + Send + Sync>);
     /// Unregister a provider, typically when its worker starts shutdown.
-    fn unregister(&mut self, id: &str);
+    fn unregister(&self, id: &str);
 }
 
 #[derive(PartialEq, Eq, Hash, Debug, Clone)]
@@ -54,8 +55,9 @@ impl SlotKey {
 
 /// Implements a [WorkerRegistry] and provides a convenient method
 /// to find compatible slots within the collection.
+/// This is an inner class to hide the mutex.
 #[derive(Default, Debug)]
-pub struct SlotManager {
+struct SlotManagerImpl {
     /// Maps keys, i.e., namespace#task_queue, to providers.
     providers: HashMap<SlotKey, Vec<Box<dyn SlotProvider + Send + Sync>>>,
     /// Maps ids to keys in `providers`.
@@ -68,17 +70,16 @@ fn random_permutation(num_entries: usize) -> Vec<usize> {
     vec
 }
 
-impl SlotManager {
+impl SlotManagerImpl {
     /// Factory method.
-    pub fn new() -> Self {
+    fn new() -> Self {
         Self {
             index: HashMap::new(),
             providers: HashMap::new(),
         }
     }
 
-    /// Try to reserve a compatible processing slot in any of the registered workers.
-    pub fn try_reserve_wft_slot(
+    fn try_reserve_wft_slot(
         &self,
         namespace: String,
         task_queue: String,
@@ -96,14 +97,6 @@ impl SlotManager {
         None
     }
 
-    #[cfg(test)]
-    /// Returns (num_providers, num_buckets), where a bucket key is namespace+task_queue.
-    pub fn num_providers(&self) -> (usize, usize) {
-        (self.index.len(), self.providers.len())
-    }
-}
-
-impl WorkerRegistry for SlotManager {
     fn register(&mut self, provider: Box<dyn SlotProvider + Send + Sync>) {
         let id = provider.id().to_string();
         if self.index.get(&id).is_none() {
@@ -128,6 +121,54 @@ impl WorkerRegistry for SlotManager {
                 }
             }
         }
+    }
+
+    #[cfg(test)]
+    fn num_providers(&self) -> (usize, usize) {
+        (self.index.len(), self.providers.len())
+    }
+}
+
+/// Implements a [WorkerRegistry] and provides a convenient method
+/// to find compatible slots within the collection.
+#[derive(Default, Debug)]
+pub struct SlotManager {
+    manager: RwLock<SlotManagerImpl>,
+}
+
+impl SlotManager {
+    /// Factory method.
+    pub fn new() -> Self {
+        Self {
+            manager: RwLock::new(SlotManagerImpl::new()),
+        }
+    }
+
+    /// Try to reserve a compatible processing slot in any of the registered workers.
+    pub fn try_reserve_wft_slot(
+        &self,
+        namespace: String,
+        task_queue: String,
+    ) -> Option<Box<dyn Slot + Send>> {
+        self.manager
+            .read()
+            .try_reserve_wft_slot(namespace, task_queue)
+    }
+
+    #[cfg(test)]
+    /// Returns (num_providers, num_buckets), where a bucket key is namespace+task_queue.
+    pub fn num_providers(&self) -> (usize, usize) {
+        self.manager.read().num_providers()
+    }
+}
+
+impl WorkerRegistry for SlotManager {
+    fn register(&self, provider: Box<dyn SlotProvider + Send + Sync>) {
+        self.manager.write().register(provider)
+    }
+
+    fn unregister(&self, id: &str) {
+        self.manager.write().unregister(id)
     }
 }
 
@@ -202,7 +243,7 @@ mod tests {
             false,
         );
 
-        let mut manager = SlotManager::new();
+        let manager = SlotManager::new();
         manager.register(Box::new(mock_provider1));
         manager.register(Box::new(mock_provider2));
         let (saw_ok, saw_err) = check_mock_providers(&manager);
@@ -234,7 +275,7 @@ mod tests {
             true,
         );
 
-        let mut manager = SlotManager::new();
+        let manager = SlotManager::new();
         manager.register(Box::new(mock_provider1));
         manager.register(Box::new(mock_provider2));
 
@@ -264,7 +305,7 @@ mod tests {
 
     #[test]
     fn registry_drops_providers() {
-        let mut manager = SlotManager::new();
+        let manager = SlotManager::new();
         for i in 0..100 {
             let id = format!("myId{}", i);
             let namespace = format!("myId{}", i % 3);
@@ -282,7 +323,7 @@ mod tests {
 
     #[test]
     fn registry_is_idempotent() {
-        let mut manager = SlotManager::new();
+        let manager = SlotManager::new();
         for _ in 0..100 {
             let mock_provider = new_mock_provider(
                 "same_id".to_string(),

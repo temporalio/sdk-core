@@ -281,7 +281,7 @@ pub struct ConfiguredClient<C> {
     headers: Arc<RwLock<HashMap<String, String>>>,
     /// Capabilities as read from the `get_system_info` RPC call made on client connection
     capabilities: Option<get_system_info_response::Capabilities>,
-    workers: Arc<RwLock<SlotManager>>,
+    workers: Arc<SlotManager>,
 }
 
 impl<C> ConfiguredClient<C> {
@@ -303,7 +303,7 @@ impl<C> ConfiguredClient<C> {
     }
 
     /// Returns a cloned reference to a registry with workers using this client instance
-    pub fn workers(&self) -> Arc<RwLock<SlotManager>> {
+    pub fn workers(&self) -> Arc<SlotManager> {
         self.workers.clone()
     }
 }
@@ -384,7 +384,7 @@ impl ClientOptions {
             client: TemporalServiceClient::new(svc),
             options: Arc::new(self.clone()),
             capabilities: None,
-            workers: Arc::new(RwLock::new(SlotManager::new())),
+            workers: Arc::new(SlotManager::new()),
         };
         match client
             .get_system_info(GetSystemInfoRequest::default())

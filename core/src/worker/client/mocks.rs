@@ -1,13 +1,11 @@
 use super::*;
 use futures::Future;
 use lazy_static::lazy_static;
-use parking_lot::RwLock;
 use std::sync::Arc;
 use temporal_client::SlotManager;
 
 lazy_static! {
-    pub(crate) static ref DEFAULT_WORKERS_REGISTRY: Arc<RwLock<SlotManager>> =
-        Arc::new(RwLock::new(SlotManager::new()));
+    pub(crate) static ref DEFAULT_WORKERS_REGISTRY: Arc<SlotManager> = Arc::new(SlotManager::new());
 }
 
 pub(crate) static DEFAULT_TEST_CAPABILITIES: &Capabilities = &Capabilities {
@@ -117,6 +115,6 @@ mockall::mock! {
 
         fn capabilities(&self) -> Option<&'static get_system_info_response::Capabilities>;
 
-        fn workers(&self) -> Arc<RwLock<dyn WorkerRegistry>>;
+        fn workers(&self) -> Arc<dyn WorkerRegistry>;
     }
 }
