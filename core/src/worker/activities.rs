@@ -914,6 +914,9 @@ mod tests {
                     ..Default::default()
                 })
             });
+        mock_client // We can end up polling again - just return nothing.
+            .expect_poll_activity_task()
+            .returning(|_, _| Ok(Default::default()));
         mock_client
             .expect_record_activity_heartbeat()
             .times(2)
@@ -970,7 +973,6 @@ mod tests {
 
         join!(heartbeater, poller);
 
-        atm.initiate_shutdown(); // avoid polling again and making mock complain
         atm.complete(
             TaskToken(t.task_token),
             ActivityExecutionResult::fail("unimportant".into())
@@ -980,6 +982,7 @@ mod tests {
         )
         .await;
 
+        atm.initiate_shutdown();
         assert_matches!(atm.poll().await.unwrap_err(), PollActivityError::ShutDown);
         atm.shutdown().await;
     }
