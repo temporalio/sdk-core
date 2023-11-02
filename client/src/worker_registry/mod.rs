@@ -23,7 +23,10 @@ pub trait SlotProvider: std::fmt::Debug {
 #[cfg_attr(test, mockall::automock)]
 pub trait Slot {
     /// Consumes this slot by dispatching a WFT to its worker. This can only be called once.
-    fn schedule_wft(&mut self, task: PollWorkflowTaskQueueResponse) -> Result<(), anyhow::Error>;
+    fn schedule_wft(
+        self: Box<Self>,
+        task: PollWorkflowTaskQueueResponse,
+    ) -> Result<(), anyhow::Error>;
 }
 
 /// This trait enables local workers to made themselves visible to a shared client instance.
@@ -171,8 +174,7 @@ mod tests {
         let mut saw_ok = false;
         let mut saw_err = false;
         for _ in 0..100 {
-            if let Some(mut slot) =
-                manager.try_reserve_wft_slot("foo".to_string(), "bar_q".to_string())
+            if let Some(slot) = manager.try_reserve_wft_slot("foo".to_string(), "bar_q".to_string())
             {
                 match slot.schedule_wft(PollWorkflowTaskQueueResponse::default()) {
                     Ok(_) => saw_ok = true,

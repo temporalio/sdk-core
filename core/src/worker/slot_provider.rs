@@ -2,8 +2,6 @@
 //! WFT to a worker bypassing the server.
 //! This enables latency optimizations such as Eager Workflow Start.
 
-use anyhow::Context;
-
 use crate::{
     abstractions::{MeteredSemaphore, OwnedMeteredSemPermit},
     protosext::ValidPollWFTQResponse,
@@ -20,27 +18,26 @@ type WFTStreamSender =
     UnboundedSender<Result<(ValidPollWFTQResponse, OwnedMeteredSemPermit), Status>>;
 
 pub struct Slot {
-    permit: Option<OwnedMeteredSemPermit>,
+    permit: OwnedMeteredSemPermit,
     external_wft_tx: WFTStreamSender,
 }
 
 impl Slot {
     fn new(permit: OwnedMeteredSemPermit, external_wft_tx: WFTStreamSender) -> Self {
         Self {
-            permit: Some(permit),
+            permit,
             external_wft_tx,
         }
     }
 }
 
 impl SlotTrait for Slot {
-    fn schedule_wft(&mut self, task: PollWorkflowTaskQueueResponse) -> Result<(), anyhow::Error> {
+    fn schedule_wft(
+        self: Box<Self>,
+        task: PollWorkflowTaskQueueResponse,
+    ) -> Result<(), anyhow::Error> {
         let wft = validate_wft(task)?;
-        let permit = self
-            .permit
-            .take()
-            .context("Calling 'schedule_wft()' multiple times")?;
-        self.external_wft_tx.send(Ok((wft, permit)))?;
+        self.external_wft_tx.send(Ok((wft, self.permit)))?;
         Ok(())
     }
 }
@@ -130,12 +127,13 @@ mod tests {
             external_wft_tx,
         );
 
-        if let Some(mut slot) = provider.try_reserve_wft_slot() {
+        if let Some(slot) = provider.try_reserve_wft_slot() {
             let p = slot.schedule_wft(new_validatable_response());
             assert!(p.is_ok());
 
-            let p = slot.schedule_wft(new_validatable_response());
-            assert!(p.is_err());
+            // This is a compiler error, schedule_wft consumes the slot...
+            // let p = slot.schedule_wft(new_validatable_response());
+            // assert!(p.is_err());
 
             assert!(external_wft_rx.recv().await.is_some());
         }
