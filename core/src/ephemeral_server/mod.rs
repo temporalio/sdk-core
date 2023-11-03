@@ -463,15 +463,15 @@ impl EphemeralExe {
                     EphemeralExeVersion::Fixed(version) => version,
                 };
                 let client = reqwest::Client::new();
-                let info: DownloadInfo = client
+                let resp = client
                     .get(format!(
                         "https://temporal.download/{artifact_name}/{version_name}"
                     ))
                     .query(&get_info_params)
                     .send()
                     .await?
-                    .json()
-                    .await?;
+                    .error_for_status()?;
+                let info: DownloadInfo = resp.json().await?;
 
                 // Attempt download, looping because it could have waited for
                 // concurrent one to finish
@@ -590,7 +590,7 @@ async fn download_and_extract(
 ) -> anyhow::Result<()> {
     // Start download. We are using streaming here to extract the file from the
     // tarball or zip instead of loading into memory for Cursor/Seek.
-    let resp = client.get(uri).send().await?;
+    let resp = client.get(uri).send().await?.error_for_status()?;
     // We have to map the error type to an io error
     let stream = resp
         .bytes_stream()
