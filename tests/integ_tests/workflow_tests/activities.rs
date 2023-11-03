@@ -2,7 +2,10 @@ use crate::integ_tests::activity_functions::echo;
 use anyhow::anyhow;
 use assert_matches::assert_matches;
 use futures_util::future::join_all;
-use std::time::Duration;
+use std::{
+    sync::atomic::{AtomicBool, Ordering},
+    time::Duration,
+};
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowExecutionResult, WorkflowOptions};
 use temporal_sdk::{
     ActContext, ActExitValue, ActivityCancelledError, ActivityOptions, CancellableFuture,
@@ -973,4 +976,44 @@ async fn graceful_shutdown() {
         worker.run_until_done().await.unwrap();
     };
     join!(shutdowner, runner);
+}
+
+#[tokio::test]
+async fn activity_can_be_cancelled_by_local_timeout() {
+    let wf_name = "activity_can_be_cancelled_by_local_timeout";
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter
+        .worker_config
+        .local_timeout_buffer_for_activities(Duration::from_secs(0));
+    let mut worker = starter.worker().await;
+    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+        let res = ctx
+            .activity(ActivityOptions {
+                activity_type: "echo_activity".to_string(),
+                start_to_close_timeout: Some(Duration::from_secs(1)),
+                input: "hi!".as_json_payload().expect("serializes fine"),
+                retry_policy: Some(RetryPolicy {
+                    maximum_attempts: 1,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
+            .await;
+        assert!(res.timed_out().is_some());
+        Ok(().into())
+    });
+    static WAS_CANCELLED: AtomicBool = AtomicBool::new(false);
+    worker.register_activity(
+        "echo_activity",
+        |ctx: ActContext, echo_me: String| async move {
+            // Doesn't heartbeat
+            ctx.cancelled().await;
+            WAS_CANCELLED.store(true, Ordering::Relaxed);
+            Ok(echo_me)
+        },
+    );
+
+    starter.start_with_worker(wf_name, &mut worker).await;
+    worker.run_until_done().await.unwrap();
+    assert!(WAS_CANCELLED.load(Ordering::Relaxed));
 }

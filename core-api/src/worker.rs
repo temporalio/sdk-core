@@ -127,6 +127,12 @@ pub struct WorkerConfig {
     /// initiated and this amount of time has elapsed.
     #[builder(default)]
     pub graceful_shutdown_period: Option<Duration>,
+
+    /// The amount of time core will wait before timing out activities using its own local timers
+    /// after one of them elapses. This is to avoid racing with server's own tracking of the
+    /// timeout.
+    #[builder(default = "Duration::from_secs(5)")]
+    pub local_timeout_buffer_for_activities: Duration,
 }
 
 impl WorkerConfig {

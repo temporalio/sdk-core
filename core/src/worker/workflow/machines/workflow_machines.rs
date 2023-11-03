@@ -1095,7 +1095,11 @@ impl WorkflowMachines {
                     })
                 }
                 MachineResponse::IssueNewMessage(pm) => {
-                    self.message_outbox.push_back(pm);
+                    // Messages shouldn't be sent back when replaying. This is true for update,
+                    // currently the only user of protocol messages. May eventually change.
+                    if !self.replaying {
+                        self.message_outbox.push_back(pm);
+                    }
                 }
                 MachineResponse::NewCoreOriginatedCommand(attrs) => match attrs {
                     ProtoCmdAttrs::RequestCancelExternalWorkflowExecutionCommandAttributes(
