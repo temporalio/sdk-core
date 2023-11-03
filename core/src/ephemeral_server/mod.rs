@@ -463,15 +463,19 @@ impl EphemeralExe {
                     EphemeralExeVersion::Fixed(version) => version,
                 };
                 let client = reqwest::Client::new();
-                let info: DownloadInfo = client
+                let resp = client
                     .get(format!(
                         "https://temporal.download/{artifact_name}/{version_name}"
                     ))
                     .query(&get_info_params)
                     .send()
-                    .await?
-                    .json()
                     .await?;
+                let info: DownloadInfo = match resp.error_for_status() {
+                    Ok(r) => r.json().await?,
+                    Err(e) => {
+                        return Err(anyhow::Error::from(e));
+                    }
+                };
 
                 // Attempt download, looping because it could have waited for
                 // concurrent one to finish
@@ -591,10 +595,16 @@ async fn download_and_extract(
     // Start download. We are using streaming here to extract the file from the
     // tarball or zip instead of loading into memory for Cursor/Seek.
     let resp = client.get(uri).send().await?;
-    // We have to map the error type to an io error
-    let stream = resp
-        .bytes_stream()
-        .map(|item| item.map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err)));
+    // Only stream on successful responses.
+    let stream = match resp.error_for_status() {
+        // We have to map the error type to an io error
+        Ok(resp) => resp
+            .bytes_stream()
+            .map(|item| item.map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))),
+        Err(e) => {
+            return Err(anyhow::Error::from(e));
+        }
+    };
 
     // Since our tar/zip impls use sync IO, we have to create a bridge and run
     // in a blocking closure.
