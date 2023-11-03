@@ -124,7 +124,7 @@ impl SlotManager {
     }
 
     /// Try to reserve a compatible processing slot in any of the registered workers.
-    pub fn try_reserve_wft_slot(
+    pub(crate) fn try_reserve_wft_slot(
         &self,
         namespace: String,
         task_queue: String,
