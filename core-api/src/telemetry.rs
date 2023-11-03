@@ -3,6 +3,7 @@ pub mod metrics;
 use crate::telemetry::metrics::CoreMeter;
 use std::{
     collections::HashMap,
+    fmt::Debug,
     net::SocketAddr,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -94,6 +95,13 @@ pub enum Logger {
         /// An [EnvFilter](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/struct.EnvFilter.html) filter string.
         filter: String,
     },
+    // Push logs to Lang. Can used with temporal_sdk_core::telemetry::CoreLogBufferedConsumer to buffer.
+    Push {
+        /// An [EnvFilter](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/struct.EnvFilter.html) filter string.
+        filter: String,
+        /// Trait invoked on each log.
+        consumer: Arc<dyn CoreLogConsumer>,
+    },
 }
 
 /// Types of aggregation temporality for metric export.
@@ -139,4 +147,10 @@ impl CoreLog {
             .unwrap_or(Duration::ZERO)
             .as_millis()
     }
+}
+
+/// Consumer trait for use with push logger.
+pub trait CoreLogConsumer: Send + Sync + Debug {
+    /// Invoked synchronously for every single log.
+    fn on_log(&self, log: CoreLog);
 }

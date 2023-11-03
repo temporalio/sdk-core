@@ -1,33 +1,36 @@
+use futures::channel::mpsc::{channel, Receiver, Sender};
 use parking_lot::Mutex;
 use ringbuf::{Consumer, HeapRb, Producer};
-use std::{collections::HashMap, sync::Arc, time::SystemTime};
-use temporal_sdk_core_api::telemetry::CoreLog;
+use std::{collections::HashMap, fmt, sync::Arc, time::SystemTime};
+use temporal_sdk_core_api::telemetry::{CoreLog, CoreLogConsumer};
 use tracing_subscriber::Layer;
 
-const RB_SIZE: usize = 2048;
-
-pub(super) type CoreLogsOut = Consumer<CoreLog, Arc<HeapRb<CoreLog>>>;
-
-pub(super) struct CoreLogExportLayer {
-    logs_in: Mutex<Producer<CoreLog, Arc<HeapRb<CoreLog>>>>,
-}
+type CoreLogsOut = Consumer<CoreLog, Arc<HeapRb<CoreLog>>>;
 
 #[derive(Debug)]
 struct CoreLogFieldStorage(HashMap<String, serde_json::Value>);
 
-impl CoreLogExportLayer {
-    pub(super) fn new() -> (Self, CoreLogsOut) {
-        let (lin, lout) = HeapRb::new(RB_SIZE).split();
+pub(super) struct CoreLogConsumerLayer {
+    consumer: Arc<dyn CoreLogConsumer>,
+}
+
+impl CoreLogConsumerLayer {
+    pub(super) fn new(consumer: Arc<dyn CoreLogConsumer>) -> Self {
+        Self { consumer }
+    }
+
+    pub(super) fn new_buffered(ringbuf_capacity: usize) -> (Self, CoreLogBuffer) {
+        let (consumer, buffer) = CoreLogBufferedConsumer::new(ringbuf_capacity);
         (
             Self {
-                logs_in: Mutex::new(lin),
+                consumer: Arc::new(consumer),
             },
-            lout,
+            buffer,
         )
     }
 }
 
-impl<S> Layer<S> for CoreLogExportLayer
+impl<S> Layer<S> for CoreLogConsumerLayer
 where
     S: tracing::Subscriber,
     S: for<'lookup> tracing_subscriber::registry::LookupSpan<'lookup>,
@@ -93,7 +96,75 @@ where
             fields,
             span_contexts: spans,
         };
+        self.consumer.on_log(log);
+    }
+}
+
+/// Core log consumer implementation backed by a ring buffer.
+pub struct CoreLogBufferedConsumer {
+    logs_in: Mutex<Producer<CoreLog, Arc<HeapRb<CoreLog>>>>,
+}
+
+impl CoreLogBufferedConsumer {
+    /// Create a log consumer and drainable buffer for the given capacity.
+    pub fn new(ringbuf_capacity: usize) -> (Self, CoreLogBuffer) {
+        let (logs_in, logs_out) = HeapRb::new(ringbuf_capacity).split();
+        (
+            Self {
+                logs_in: Mutex::new(logs_in),
+            },
+            CoreLogBuffer { logs_out },
+        )
+    }
+}
+
+impl CoreLogConsumer for CoreLogBufferedConsumer {
+    fn on_log(&self, log: CoreLog) {
         let _ = self.logs_in.lock().push(log);
+    }
+}
+
+impl fmt::Debug for CoreLogBufferedConsumer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("<buffered consumer>")
+    }
+}
+
+/// Buffer of core logs that can be drained.
+pub struct CoreLogBuffer {
+    logs_out: CoreLogsOut,
+}
+
+impl CoreLogBuffer {
+    /// Drain the buffer of its logs.
+    pub fn drain(&mut self) -> Vec<CoreLog> {
+        self.logs_out.pop_iter().collect()
+    }
+}
+
+/// Core log consumer implementation backed by a mpsc channel.
+pub struct CoreLogStreamConsumer {
+    tx: Sender<CoreLog>,
+}
+
+impl CoreLogStreamConsumer {
+    /// Create a stream consumer and stream of logs.
+    pub fn new(buffer: usize) -> (Self, Receiver<CoreLog>) {
+        let (tx, rx) = channel(buffer);
+        (Self { tx }, rx)
+    }
+}
+
+impl CoreLogConsumer for CoreLogStreamConsumer {
+    fn on_log(&self, log: CoreLog) {
+        // We will drop messages if we can't send
+        let _ = self.tx.clone().try_send(log);
+    }
+}
+
+impl fmt::Debug for CoreLogStreamConsumer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("<stream consumer>")
     }
 }
 
@@ -146,8 +217,15 @@ impl<'a> tracing::field::Visit for JsonVisitor<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{telemetry::construct_filter_string, telemetry_init};
-    use temporal_sdk_core_api::telemetry::{CoreTelemetry, Logger, TelemetryOptionsBuilder};
+    use crate::{
+        telemetry::construct_filter_string, telemetry::CoreLogStreamConsumer, telemetry_init,
+    };
+    use futures::stream::StreamExt;
+    use std::fmt;
+    use std::sync::{Arc, Mutex};
+    use temporal_sdk_core_api::telemetry::{
+        CoreLog, CoreLogConsumer, CoreTelemetry, Logger, TelemetryOptionsBuilder,
+    };
     use tracing::Level;
 
     #[instrument(fields(bros = "brohemian"))]
@@ -155,6 +233,28 @@ mod tests {
         warn!("warn");
         info!(foo = "bar", "info");
         debug!("debug");
+    }
+
+    fn write_logs() {
+        let top_span = span!(Level::INFO, "yayspan", huh = "wat");
+        let _guard = top_span.enter();
+        info!("Whata?");
+        instrumented("hi");
+        info!("Donezo");
+    }
+
+    fn assert_logs(logs: Vec<CoreLog>) {
+        // Verify debug log was not forwarded
+        assert!(!logs.iter().any(|l| l.message == "debug"));
+        assert_eq!(logs.len(), 4);
+        // Ensure fields are attached to events properly
+        let info_msg = &logs[2];
+        assert_eq!(info_msg.message, "info");
+        assert_eq!(info_msg.fields.len(), 4);
+        assert_eq!(info_msg.fields.get("huh"), Some(&"wat".into()));
+        assert_eq!(info_msg.fields.get("foo"), Some(&"bar".into()));
+        assert_eq!(info_msg.fields.get("bros"), Some(&"brohemian".into()));
+        assert_eq!(info_msg.fields.get("thing"), Some(&"hi".into()));
     }
 
     #[tokio::test]
@@ -168,23 +268,56 @@ mod tests {
         let instance = telemetry_init(opts).unwrap();
         let _g = tracing::subscriber::set_default(instance.trace_subscriber().unwrap().clone());
 
-        let top_span = span!(Level::INFO, "yayspan", huh = "wat");
-        let _guard = top_span.enter();
-        info!("Whata?");
-        instrumented("hi");
-        info!("Donezo");
+        write_logs();
+        assert_logs(instance.fetch_buffered_logs());
+    }
 
-        let logs = instance.fetch_buffered_logs();
-        // Verify debug log was not forwarded
-        assert!(!logs.iter().any(|l| l.message == "debug"));
-        assert_eq!(logs.len(), 4);
-        // Ensure fields are attached to events properly
-        let info_msg = &logs[2];
-        assert_eq!(info_msg.message, "info");
-        assert_eq!(info_msg.fields.len(), 4);
-        assert_eq!(info_msg.fields.get("huh"), Some(&"wat".into()));
-        assert_eq!(info_msg.fields.get("foo"), Some(&"bar".into()));
-        assert_eq!(info_msg.fields.get("bros"), Some(&"brohemian".into()));
-        assert_eq!(info_msg.fields.get("thing"), Some(&"hi".into()));
+    struct CaptureConsumer(Mutex<Vec<CoreLog>>);
+
+    impl CoreLogConsumer for CaptureConsumer {
+        fn on_log(&self, log: CoreLog) {
+            self.0.lock().unwrap().push(log);
+        }
+    }
+
+    impl fmt::Debug for CaptureConsumer {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("<capture consumer>")
+        }
+    }
+
+    #[tokio::test]
+    async fn test_push_output() {
+        let consumer = Arc::new(CaptureConsumer(Mutex::new(Vec::new())));
+        let opts = TelemetryOptionsBuilder::default()
+            .logging(Logger::Push {
+                filter: construct_filter_string(Level::INFO, Level::WARN),
+                consumer: consumer.clone(),
+            })
+            .build()
+            .unwrap();
+        let instance = telemetry_init(opts).unwrap();
+        let _g = tracing::subscriber::set_default(instance.trace_subscriber().unwrap().clone());
+
+        write_logs();
+        assert_logs(consumer.0.lock().unwrap().drain(..).collect());
+    }
+
+    #[tokio::test]
+    async fn test_push_stream_output() {
+        let (consumer, stream) = CoreLogStreamConsumer::new(100);
+        let consumer = Arc::new(consumer);
+        let opts = TelemetryOptionsBuilder::default()
+            .logging(Logger::Push {
+                filter: construct_filter_string(Level::INFO, Level::WARN),
+                consumer: consumer.clone(),
+            })
+            .build()
+            .unwrap();
+        let instance = telemetry_init(opts).unwrap();
+        let _g = tracing::subscriber::set_default(instance.trace_subscriber().unwrap().clone());
+
+        write_logs();
+        assert_logs(stream.ready_chunks(100).next().await.unwrap());
     }
 }
