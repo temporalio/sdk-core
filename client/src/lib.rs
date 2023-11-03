@@ -23,7 +23,7 @@ pub use temporal_sdk_core_protos::temporal::api::{
     },
 };
 pub use tonic;
-pub use worker_registry::{Slot, SlotManager, SlotProvider, WorkerRegistry};
+pub use worker_registry::{Slot, SlotManager, SlotProvider, WorkerKey, WorkerRegistry};
 pub use workflow_handle::{WorkflowExecutionInfo, WorkflowExecutionResult};
 
 use crate::{

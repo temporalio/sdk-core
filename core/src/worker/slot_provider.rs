@@ -43,9 +43,8 @@ impl SlotTrait for Slot {
 }
 
 #[derive(derive_more::DebugCustom)]
-#[debug(fmt = "SlotProvider {{ id: {id}, namespace:{namespace}, task_queue: {task_queue} }}")]
+#[debug(fmt = "SlotProvider {{ namespace:{namespace}, task_queue: {task_queue} }}")]
 pub struct SlotProvider {
-    id: String,
     namespace: String,
     task_queue: String,
     wft_semaphore: Arc<MeteredSemaphore>,
@@ -54,14 +53,12 @@ pub struct SlotProvider {
 
 impl SlotProvider {
     pub(crate) fn new(
-        id: String,
         namespace: String,
         task_queue: String,
         wft_semaphore: Arc<MeteredSemaphore>,
         external_wft_tx: WFTStreamSender,
     ) -> Self {
         Self {
-            id,
             namespace,
             task_queue,
             wft_semaphore,
@@ -71,9 +68,6 @@ impl SlotProvider {
 }
 
 impl SlotProviderTrait for SlotProvider {
-    fn id(&self) -> &str {
-        &self.id
-    }
     fn namespace(&self) -> &str {
         &self.namespace
     }
@@ -120,7 +114,6 @@ mod tests {
         let (external_wft_tx, mut external_wft_rx) = unbounded_channel();
 
         let provider = SlotProvider::new(
-            "my_id".to_string(),
             "my_namespace".to_string(),
             "my_queue".to_string(),
             wft_semaphore,
@@ -146,7 +139,6 @@ mod tests {
                 |_, _| {},
             ));
             let provider = SlotProvider::new(
-                "my_id".to_string(),
                 "my_namespace".to_string(),
                 "my_queue".to_string(),
                 wft_semaphore,
@@ -168,7 +160,6 @@ mod tests {
             let wft_semaphore = wft_semaphore.clone();
             let (external_wft_tx, _) = unbounded_channel();
             let provider = SlotProvider::new(
-                "my_id".to_string(),
                 "my_namespace".to_string(),
                 "my_queue".to_string(),
                 wft_semaphore.clone(),

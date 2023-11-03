@@ -13,6 +13,8 @@ pub(crate) use activities::{
 };
 pub(crate) use workflow::{wft_poller::new_wft_poller, LEGACY_QUERY_ID};
 
+use temporal_client::WorkerKey;
+
 use crate::{
     abstractions::{dbg_panic, MeteredSemaphore},
     errors::CompleteWfError,
@@ -79,9 +81,8 @@ use {
 pub struct Worker {
     config: WorkerConfig,
     wf_client: Arc<dyn WorkerClient>,
-
-    /// A unique identifier for this worker
-    uuid: String,
+    /// Registration key for this worker
+    worker_key: Option<WorkerKey>,
     /// Manages all workflows and WFT processing
     workflows: Workflows,
     /// Manages activity tasks for this worker/task queue
@@ -177,7 +178,9 @@ impl WorkerTrait for Worker {
         }
         self.shutdown_token.cancel();
         // First, disable Eager Workflow Start
-        self.wf_client.workers().unregister(&self.uuid);
+        if let Some(key) = self.worker_key {
+            self.wf_client.workers().unregister(key);
+        }
         // Second, we want to stop polling of both activity and workflow tasks
         if let Some(atm) = self.at_task_mgr.as_ref() {
             atm.initiate_shutdown();
@@ -362,17 +365,15 @@ impl Worker {
             info!("Activity polling is disabled for this worker");
         };
         let la_sink = LAReqSink::new(local_act_mgr.clone(), config.wf_state_inputs.clone());
-        let uuid = uuid::Uuid::new_v4().simple().to_string();
         let provider = SlotProvider::new(
-            uuid.clone(),
             config.namespace.clone(),
             config.task_queue.clone(),
             wft_semaphore.clone(),
             external_wft_tx,
         );
-        client.workers().register(Box::new(provider));
+        let worker_key = client.workers().register(Box::new(provider));
         Self {
-            uuid,
+            worker_key,
             wf_client: client.clone(),
             workflows: Workflows::new(
                 build_wf_basics(
