@@ -115,6 +115,6 @@ mockall::mock! {
 
         fn capabilities(&self) -> Option<&'static get_system_info_response::Capabilities>;
 
-        fn workers(&self) -> Arc<dyn WorkerRegistry>;
+        fn workers(&self) -> Arc<SlotManager>;
     }
 }

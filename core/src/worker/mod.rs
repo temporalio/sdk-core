@@ -81,7 +81,7 @@ use {
 pub struct Worker {
     config: WorkerConfig,
     wf_client: Arc<dyn WorkerClient>,
-    /// Registration key for this worker
+    /// Registration key to enable eager workflow start for this worker
     worker_key: Option<WorkerKey>,
     /// Manages all workflows and WFT processing
     workflows: Workflows,

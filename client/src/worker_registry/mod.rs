@@ -34,16 +34,6 @@ pub trait Slot {
     ) -> Result<(), anyhow::Error>;
 }
 
-/// This trait enables local workers to made themselves visible to a shared client instance.
-/// There can only be one worker registered per namespace+queue_name+client, others will get ignored.
-#[cfg_attr(test, mockall::automock)]
-pub trait WorkerRegistry {
-    /// Register a local worker that can provide WFT processing slots.
-    fn register(&self, provider: Box<dyn SlotProvider + Send + Sync>) -> Option<WorkerKey>;
-    /// Unregister a provider, typically when its worker starts shutdown.
-    fn unregister(&self, id: WorkerKey);
-}
-
 #[derive(PartialEq, Eq, Hash, Debug, Clone)]
 struct SlotKey {
     namespace: String,
@@ -59,9 +49,7 @@ impl SlotKey {
     }
 }
 
-/// Implements a [WorkerRegistry] and provides a convenient method
-/// to find compatible slots within the collection.
-/// This is an inner class to hide the mutex.
+/// This is an inner class for [SlotManager] needed to hide the mutex.
 #[derive(Default, Debug)]
 struct SlotManagerImpl {
     /// Maps keys, i.e., namespace#task_queue, to provider.
@@ -102,7 +90,7 @@ impl SlotManagerImpl {
             p.insert(provider);
             Some(self.index.insert(key))
         } else {
-            warn!("Ignoring registration for worker in bucket {key:?}.");
+            warn!("Ignoring registration for worker: {key:?}.");
             None
         }
     }
@@ -119,8 +107,9 @@ impl SlotManagerImpl {
     }
 }
 
-/// Implements a [WorkerRegistry] and provides a convenient method
-/// to find compatible slots within the collection.
+/// Enables local workers to made themselves visible to a shared client instance.
+/// There can only be one worker registered per namespace+queue_name+client, others will get ignored.
+/// It also provides a convenient method to find compatible slots within the collection.
 #[derive(Default, Debug)]
 pub struct SlotManager {
     manager: RwLock<SlotManagerImpl>,
@@ -145,21 +134,21 @@ impl SlotManager {
             .try_reserve_wft_slot(namespace, task_queue)
     }
 
+    /// Register a local worker that can provide WFT processing slots.
+    pub fn register(&self, provider: Box<dyn SlotProvider + Send + Sync>) -> Option<WorkerKey> {
+        self.manager.write().register(provider)
+    }
+
+    /// Unregister a provider, typically when its worker starts shutdown.
+    pub fn unregister(&self, id: WorkerKey) {
+        self.manager.write().unregister(id)
+    }
+
     #[cfg(test)]
     /// Returns (num_providers, num_buckets), where a bucket key is namespace+task_queue.
     /// There is only one provider per bucket so `num_providers` should be equal to `num_buckets`.
     pub fn num_providers(&self) -> (usize, usize) {
         self.manager.read().num_providers()
-    }
-}
-
-impl WorkerRegistry for SlotManager {
-    fn register(&self, provider: Box<dyn SlotProvider + Send + Sync>) -> Option<WorkerKey> {
-        self.manager.write().register(provider)
-    }
-
-    fn unregister(&self, id: WorkerKey) {
-        self.manager.write().unregister(id)
     }
 }
 
