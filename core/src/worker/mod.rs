@@ -345,6 +345,7 @@ impl Worker {
                 config.max_heartbeat_throttle_interval,
                 config.default_heartbeat_throttle_interval,
                 config.graceful_shutdown_period,
+                config.local_timeout_buffer_for_activities,
             )
         });
         let poll_on_non_local_activities = at_task_mgr.is_some();

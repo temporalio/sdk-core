@@ -7,7 +7,7 @@ use futures::StreamExt;
 use std::{
     collections::{hash_map::Entry, HashMap},
     sync::Arc,
-    time::{self, Duration, Instant},
+    time::{Duration, Instant},
 };
 use temporal_sdk_core_protos::{
     coresdk::{activity_task::ActivityCancelReason, ActivityHeartbeat, IntoPayloadsExt},
@@ -48,7 +48,8 @@ enum HeartbeatAction {
 pub struct ValidActivityHeartbeat {
     pub task_token: TaskToken,
     pub details: Vec<Payload>,
-    pub throttle_interval: time::Duration,
+    pub throttle_interval: Duration,
+    pub timeout_resetter: Option<Arc<Notify>>,
 }
 
 #[derive(Debug)]
@@ -192,12 +193,14 @@ impl ActivityHeartbeatManager {
         &self,
         hb: ActivityHeartbeat,
         throttle_interval: Duration,
+        timeout_resetter: Option<Arc<Notify>>,
     ) -> Result<(), ActivityHeartbeatError> {
         self.heartbeat_tx
             .send(HeartbeatAction::SendHeartbeat(ValidActivityHeartbeat {
                 task_token: TaskToken(hb.task_token),
                 details: hb.details,
                 throttle_interval,
+                timeout_resetter,
             }))
             .expect("Receive half of the heartbeats event channel must not be dropped");
 
@@ -243,6 +246,7 @@ struct ActivityHeartbeatState {
     last_send_requested: Instant,
     throttle_interval: Duration,
     throttled_cancellation_token: Option<CancellationToken>,
+    timeout_resetter: Option<Arc<Notify>>,
 }
 
 impl ActivityHeartbeatState {
@@ -298,6 +302,7 @@ impl HeartbeatStreamState {
                     last_recorded_details: None,
                     is_record_in_flight: true,
                     throttled_cancellation_token: None,
+                    timeout_resetter: hb.timeout_resetter,
                 };
                 e.insert(state);
                 Some(HeartbeatExecutorAction::Report {
@@ -308,6 +313,7 @@ impl HeartbeatStreamState {
             Entry::Occupied(mut o) => {
                 let state = o.get_mut();
                 state.last_recorded_details = Some(hb.details);
+                state.timeout_resetter = hb.timeout_resetter;
                 None
             }
         }
@@ -322,6 +328,9 @@ impl HeartbeatStreamState {
             st.is_record_in_flight = false;
             let cancellation_token = self.cancellation_token.child_token();
             st.throttled_cancellation_token = Some(cancellation_token.clone());
+            if let Some(ref r) = st.timeout_resetter {
+                r.notify_one();
+            }
             // Always sleep for simplicity even if the duration is 0
             Some(HeartbeatExecutorAction::Sleep(
                 tt.clone(),
@@ -533,6 +542,7 @@ mod test {
             },
             // Mimic the same delay we would apply in activity task manager
             throttle_interval,
+            None,
         )
         .expect("hearbeat recording should not fail");
     }

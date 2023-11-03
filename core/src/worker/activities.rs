@@ -56,6 +56,7 @@ use tokio::{
         mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
         Mutex, Notify,
     },
+    task::JoinHandle,
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
@@ -63,10 +64,22 @@ use tracing::Span;
 
 type OutstandingActMap = Arc<DashMap<TaskToken, RemoteInFlightActInfo>>;
 
-#[derive(Debug, derive_more::Constructor)]
+#[derive(Debug)]
 struct PendingActivityCancel {
     task_token: TaskToken,
     reason: ActivityCancelReason,
+    /// Set true if we should assume the server has already forgotten about this activity
+    consider_not_found: bool,
+}
+
+impl PendingActivityCancel {
+    pub fn new(task_token: TaskToken, reason: ActivityCancelReason) -> Self {
+        Self {
+            task_token,
+            reason,
+            consider_not_found: false,
+        }
+    }
 }
 
 /// Contains details that core wants to store while an activity is running.
@@ -93,6 +106,10 @@ struct RemoteInFlightActInfo {
     /// we have learned from heartbeating and issued a cancel task, in which case we may simply
     /// discard the reply.
     pub known_not_found: bool,
+    /// Handle to the task containing local timeout tracking, if any.
+    pub local_timeouts_task: Option<JoinHandle<()>>,
+    /// Used to reset the local heartbeat timeout every time we record a heartbeat
+    timeout_resetter: Option<Arc<Notify>>,
     /// The permit from the max concurrent semaphore
     _permit: UsedMeteredSemPermit,
 }
@@ -110,6 +127,8 @@ impl RemoteInFlightActInfo {
             heartbeat_timeout: poll_resp.heartbeat_timeout.clone(),
             issued_cancel_to_lang: None,
             known_not_found: false,
+            local_timeouts_task: None,
+            timeout_resetter: None,
             _permit: permit,
         }
     }
@@ -161,6 +180,7 @@ impl WorkerActivityTasks {
         max_heartbeat_throttle_interval: Duration,
         default_heartbeat_throttle_interval: Duration,
         graceful_shutdown: Option<Duration>,
+        local_timeout_buffer: Duration,
     ) -> Self {
         let shutdown_initiated_token = CancellationToken::new();
         let outstanding_activity_tasks = Arc::new(DashMap::new());
@@ -192,6 +212,7 @@ impl WorkerActivityTasks {
             complete_notify: complete_notify.clone(),
             grace_period: graceful_shutdown,
             cancels_tx,
+            local_timeout_buffer,
             shutdown_initiated_token: shutdown_initiated_token.clone(),
             metrics: metrics.clone(),
         }
@@ -296,6 +317,9 @@ impl WorkerActivityTasks {
             act_metrics.act_execution_latency(act_info.base.start_time.elapsed());
             let known_not_found = act_info.known_not_found;
 
+            if let Some(jh) = act_info.local_timeouts_task {
+                jh.abort()
+            };
             self.heartbeat_manager.evict(task_token.clone()).await;
             self.complete_notify.notify_waiters();
 
@@ -319,7 +343,7 @@ impl WorkerActivityTasks {
                             act_info.issued_cancel_to_lang,
                             Some(ActivityCancelReason::WorkerShutdown),
                         ) {
-                            // We don't report cancels for graceful shutdown as failures, so we
+                            // We report cancels for graceful shutdown as failures, so we
                             // don't wait for the whole timeout to elapse, which is what would
                             // happen anyway.
                             client
@@ -376,10 +400,11 @@ impl WorkerActivityTasks {
         details: ActivityHeartbeat,
     ) -> Result<(), ActivityHeartbeatError> {
         // TODO: Propagate these back as cancels. Silent fails is too nonobvious
-        let heartbeat_timeout: Duration = self
+        let at_info = self
             .outstanding_activity_tasks
             .get(&TaskToken(details.task_token.clone()))
-            .ok_or(ActivityHeartbeatError::UnknownActivity)?
+            .ok_or(ActivityHeartbeatError::UnknownActivity)?;
+        let heartbeat_timeout: Duration = at_info
             .heartbeat_timeout
             .clone()
             // We treat None as 0 (even though heartbeat_timeout is never set to None by the server)
@@ -399,7 +424,8 @@ impl WorkerActivityTasks {
         };
         let throttle_interval =
             std::cmp::min(throttle_interval, self.max_heartbeat_throttle_interval);
-        self.heartbeat_manager.record(details, throttle_interval)
+        self.heartbeat_manager
+            .record(details, throttle_interval, at_info.timeout_resetter.clone())
     }
 
     /// Returns a handle that the workflows management side can use to interact with this manager
@@ -418,11 +444,13 @@ impl WorkerActivityTasks {
 
 struct ActivityTaskStream<SrcStrm> {
     source_stream: SrcStrm,
-    outstanding_tasks: Arc<DashMap<TaskToken, RemoteInFlightActInfo>>,
+    outstanding_tasks: OutstandingActMap,
     start_tasks_stream_complete: CancellationToken,
     complete_notify: Arc<Notify>,
     grace_period: Option<Duration>,
     cancels_tx: UnboundedSender<PendingActivityCancel>,
+    /// The extra time we'll wait for local timeouts before firing them, to avoid racing with server
+    local_timeout_buffer: Duration,
     /// Token which is cancelled once shutdown is beginning
     shutdown_initiated_token: CancellationToken,
     metrics: MetricsContext,
@@ -457,7 +485,9 @@ where
                                 None
                             } else {
                                 details.issued_cancel_to_lang = Some(next_pc.reason);
-                                if next_pc.reason == ActivityCancelReason::NotFound {
+                                if next_pc.reason == ActivityCancelReason::NotFound
+                                    || next_pc.consider_not_found
+                                {
                                     details.known_not_found = true;
                                 }
                                 Some(Ok(ActivityTask::cancel_from_ids(
@@ -495,8 +525,8 @@ where
                             };
 
                             let tt: TaskToken = task.resp.task_token.clone().into();
-                            self.outstanding_tasks.insert(
-                                tt.clone(),
+                            let outstanding_entry = self.outstanding_tasks.entry(tt.clone());
+                            let mut outstanding_info = outstanding_entry.insert(
                                 RemoteInFlightActInfo::new(&task.resp, task.permit.into_used()),
                             );
                             // If we have already waited the grace period and issued cancels,
@@ -509,6 +539,58 @@ where
                                     tt,
                                     ActivityCancelReason::WorkerShutdown,
                                 ));
+                            } else {
+                                // Fire off task to keep track of local timeouts. We do this so that
+                                // activities can still get cleaned up even if the user isn't
+                                // heartbeating. Schedule to closed is not tracked due to the
+                                // possibility of clock skew messing things up, and it's relative
+                                // unlikeliness compared to the other timeouts.
+                                let local_timeout_buffer = self.local_timeout_buffer;
+                                static HEARTBEAT_TYPE: &str = "heartbeat";
+                                let timeout_at = [
+                                    (HEARTBEAT_TYPE, task.resp.heartbeat_timeout.clone()),
+                                    ("start_to_close", task.resp.start_to_close_timeout.clone()),
+                                ]
+                                .into_iter()
+                                .filter_map(|(k, d)| {
+                                    d.and_then(|d| Duration::try_from(d).ok().map(|d| (k, d)))
+                                })
+                                .filter(|(_, d)| !d.is_zero())
+                                .min_by(|(_, d1), (_, d2)| d1.cmp(d2));
+                                if let Some((timeout_type, timeout_at)) = timeout_at {
+                                    let sleep_time = timeout_at + local_timeout_buffer;
+                                    let cancel_tx = cancels_tx.clone();
+                                    let resetter = if timeout_type == HEARTBEAT_TYPE {
+                                        Some(Arc::new(Notify::new()))
+                                    } else {
+                                        None
+                                    };
+                                    let resetter_clone = resetter.clone();
+                                    outstanding_info.local_timeouts_task =
+                                        Some(tokio::task::spawn(async move {
+                                            if let Some(rs) = resetter_clone {
+                                                loop {
+                                                    tokio::select! {
+                                                        _ = rs.notified() => continue,
+                                                        _ = tokio::time::sleep(sleep_time) => break,
+                                                    }
+                                                }
+                                            } else {
+                                                tokio::time::sleep(sleep_time).await;
+                                            }
+                                            debug!(
+                                                task_token=%tt,
+                                                "Timing out activity due to elapsed local \
+                                                 {timeout_type} timer"
+                                            );
+                                            let _ = cancel_tx.send(PendingActivityCancel {
+                                                task_token: tt,
+                                                reason: ActivityCancelReason::TimedOut,
+                                                consider_not_found: true,
+                                            });
+                                        }));
+                                    outstanding_info.timeout_resetter = resetter;
+                                }
                             }
 
                             ActivityTask::start_from_poll_resp(task.resp)
@@ -607,7 +689,9 @@ fn worker_shutdown_failure() -> Failure {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{pollers::new_activity_task_buffer, worker::client::mocks::mock_workflow_client};
+    use crate::{
+        pollers::new_activity_task_buffer, prost_dur, worker::client::mocks::mock_workflow_client,
+    };
     use temporal_sdk_core_protos::coresdk::activity_result::ActivityExecutionResult;
 
     #[tokio::test]
@@ -662,6 +746,7 @@ mod tests {
             Duration::from_secs(1),
             Duration::from_secs(1),
             None,
+            Duration::from_secs(5),
         );
         let start = Instant::now();
         let t1 = atm.poll().await.unwrap();
@@ -684,6 +769,187 @@ mod tests {
             mock_client.as_ref(),
         )
         .await;
+        atm.initiate_shutdown();
+        assert_matches!(atm.poll().await.unwrap_err(), PollActivityError::ShutDown);
+        atm.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn local_timeouts() {
+        let mut mock_client = mock_workflow_client();
+        mock_client
+            .expect_poll_activity_task()
+            .times(1)
+            .returning(move |_, _| {
+                Ok(PollActivityTaskQueueResponse {
+                    task_token: vec![1],
+                    activity_id: "act1".to_string(),
+                    start_to_close_timeout: Some(prost_dur!(from_millis(100))),
+                    // Verify zero durations do not apply
+                    heartbeat_timeout: Some(prost_dur!(from_millis(0))),
+                    ..Default::default()
+                })
+            });
+        mock_client
+            .expect_poll_activity_task()
+            .times(1)
+            .returning(move |_, _| {
+                Ok(PollActivityTaskQueueResponse {
+                    task_token: vec![2],
+                    activity_id: "act2".to_string(),
+                    heartbeat_timeout: Some(prost_dur!(from_millis(100))),
+                    ..Default::default()
+                })
+            });
+        mock_client
+            .expect_poll_activity_task()
+            .times(1)
+            .returning(move |_, _| {
+                Ok(PollActivityTaskQueueResponse {
+                    task_token: vec![3],
+                    activity_id: "act3".to_string(),
+                    // Verify smaller of the timeouts is chosen
+                    heartbeat_timeout: Some(prost_dur!(from_millis(100))),
+                    start_to_close_timeout: Some(prost_dur!(from_secs(100))),
+                    ..Default::default()
+                })
+            });
+        let mock_client = Arc::new(mock_client);
+        let sem = Arc::new(MeteredSemaphore::new(
+            1, // Just one task at a time
+            MetricsContext::no_op(),
+            MetricsContext::available_task_slots,
+        ));
+        let shutdown_token = CancellationToken::new();
+        let ap = new_activity_task_buffer(
+            mock_client.clone(),
+            "tq".to_string(),
+            1,
+            sem.clone(),
+            None,
+            shutdown_token.clone(),
+            None::<fn(usize)>,
+            None,
+        );
+        let atm = WorkerActivityTasks::new(
+            sem.clone(),
+            Box::new(ap),
+            mock_client.clone(),
+            MetricsContext::no_op(),
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+            None,
+            Duration::from_millis(100), // Short buffer for unit test
+        );
+
+        for _ in 1..=3 {
+            let start = Instant::now();
+            let t = atm.poll().await.unwrap();
+            // Just don't do anything when we get the task, wait for the timeout to come.
+            let should_timeout = atm.poll().await.unwrap();
+            assert!(should_timeout.is_timeout());
+            assert!(start.elapsed() > Duration::from_millis(200));
+            // Make sure it didn't take wayyy too long. Our long timeouts specified above are huge
+            assert!(start.elapsed() < Duration::from_secs(5));
+            atm.complete(
+                TaskToken(t.task_token),
+                ActivityExecutionResult::fail("unimportant".into())
+                    .status
+                    .unwrap(),
+                mock_client.as_ref(),
+            )
+            .await;
+        }
+
+        atm.initiate_shutdown();
+        assert_matches!(atm.poll().await.unwrap_err(), PollActivityError::ShutDown);
+        atm.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn local_timeout_heartbeating() {
+        let mut mock_client = mock_workflow_client();
+        mock_client
+            .expect_poll_activity_task()
+            .times(1)
+            .returning(move |_, _| {
+                Ok(PollActivityTaskQueueResponse {
+                    task_token: vec![1],
+                    activity_id: "act1".to_string(),
+                    start_to_close_timeout: Some(prost_dur!(from_secs(100))),
+                    schedule_to_close_timeout: Some(prost_dur!(from_secs(100))),
+                    heartbeat_timeout: Some(prost_dur!(from_millis(100))),
+                    ..Default::default()
+                })
+            });
+        mock_client // We can end up polling again - just return nothing.
+            .expect_poll_activity_task()
+            .returning(|_, _| Ok(Default::default()));
+        mock_client
+            .expect_record_activity_heartbeat()
+            .times(2)
+            .returning(|_, _| Ok(Default::default()));
+        let mock_client = Arc::new(mock_client);
+        let sem = Arc::new(MeteredSemaphore::new(
+            1, // Just one task at a time
+            MetricsContext::no_op(),
+            MetricsContext::available_task_slots,
+        ));
+        let shutdown_token = CancellationToken::new();
+        let ap = new_activity_task_buffer(
+            mock_client.clone(),
+            "tq".to_string(),
+            1,
+            sem.clone(),
+            None,
+            shutdown_token.clone(),
+            None::<fn(usize)>,
+            None,
+        );
+        let atm = WorkerActivityTasks::new(
+            sem.clone(),
+            Box::new(ap),
+            mock_client.clone(),
+            MetricsContext::no_op(),
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+            None,
+            Duration::from_millis(0), // No buffer in this test
+        );
+
+        let t = atm.poll().await.unwrap();
+
+        let heartbeater = async {
+            for _ in 1..=2 {
+                // Heartbeat twice within the timeout, but for a total time which would exceed it
+                tokio::time::sleep(Duration::from_millis(60)).await;
+                atm.record_heartbeat(ActivityHeartbeat {
+                    task_token: t.task_token.clone(),
+                    details: vec![],
+                })
+                .unwrap();
+            }
+        };
+        let poller = async {
+            let start = Instant::now();
+            // We should now time out since we're failing to heartbeat again
+            let should_timeout = atm.poll().await.unwrap();
+            assert!(should_timeout.is_timeout());
+            // Verify at least the two heartbeats elapsed before we got timed out
+            assert!(start.elapsed() > Duration::from_millis(120));
+        };
+
+        join!(heartbeater, poller);
+
+        atm.complete(
+            TaskToken(t.task_token),
+            ActivityExecutionResult::fail("unimportant".into())
+                .status
+                .unwrap(),
+            mock_client.as_ref(),
+        )
+        .await;
+
         atm.initiate_shutdown();
         assert_matches!(atm.poll().await.unwrap_err(), PollActivityError::ShutDown);
         atm.shutdown().await;
