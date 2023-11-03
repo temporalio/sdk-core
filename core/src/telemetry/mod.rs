@@ -10,10 +10,10 @@ pub use metrics::{
     MetricsCallBuffer,
 };
 
-use crate::telemetry::{
-    log_export::{CoreLogExportLayer, CoreLogsOut},
-    metrics::PrefixedMetricsMeter,
-};
+pub use log_export::{CoreLogBuffer, CoreLogBufferedConsumer, CoreLogStreamConsumer};
+
+use crate::telemetry::log_export::CoreLogConsumerLayer;
+use crate::telemetry::metrics::PrefixedMetricsMeter;
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
 use opentelemetry::{sdk::Resource, KeyValue};
@@ -37,6 +37,8 @@ use tracing_subscriber::{layer::SubscriberExt, EnvFilter, Layer};
 
 const TELEM_SERVICE_NAME: &str = "temporal-core-sdk";
 
+const FORWARD_LOG_BUFFER_SIZE: usize = 2048;
+
 /// Help you construct an [EnvFilter] compatible filter string which will forward all core module
 /// traces at `core_level` and all others (from 3rd party modules, etc) at `other_level`.
 pub fn construct_filter_string(core_level: Level, other_level: Level) -> String {
@@ -48,7 +50,7 @@ pub fn construct_filter_string(core_level: Level, other_level: Level) -> String 
 /// Holds initialized tracing/metrics exporters, etc
 pub struct TelemetryInstance {
     metric_prefix: String,
-    logs_out: Option<Mutex<CoreLogsOut>>,
+    logs_out: Option<Mutex<CoreLogBuffer>>,
     metrics: Option<Arc<dyn CoreMeter + 'static>>,
     /// The tracing subscriber which is associated with this telemetry instance. May be `None` if
     /// the user has not opted into any tracing configuration.
@@ -59,7 +61,7 @@ pub struct TelemetryInstance {
 impl TelemetryInstance {
     fn new(
         trace_subscriber: Option<Arc<dyn Subscriber + Send + Sync>>,
-        logs_out: Option<Mutex<CoreLogsOut>>,
+        logs_out: Option<Mutex<CoreLogBuffer>>,
         metric_prefix: String,
         metrics: Option<Arc<dyn CoreMeter + 'static>>,
         attach_service_name: bool,
@@ -144,7 +146,7 @@ pub fn remove_trace_subscriber_for_current_thread() {
 impl CoreTelemetry for TelemetryInstance {
     fn fetch_buffered_logs(&self) -> Vec<CoreLog> {
         if let Some(logs_out) = self.logs_out.as_ref() {
-            logs_out.lock().pop_iter().collect()
+            logs_out.lock().drain()
         } else {
             vec![]
         }
@@ -203,9 +205,14 @@ pub fn telemetry_init(opts: TelemetryOptions) -> Result<TelemetryInstance, anyho
                 }
             }
             Logger::Forward { filter } => {
-                let (export_layer, lo) = CoreLogExportLayer::new();
+                let (export_layer, lo) =
+                    CoreLogConsumerLayer::new_buffered(FORWARD_LOG_BUFFER_SIZE);
                 logs_out = Some(Mutex::new(lo));
                 forward_layer = Some(export_layer.with_filter(EnvFilter::new(filter)));
+            }
+            Logger::Push { filter, consumer } => {
+                forward_layer =
+                    Some(CoreLogConsumerLayer::new(consumer).with_filter(EnvFilter::new(filter)));
             }
         };
         let reg = tracing_subscriber::registry()
