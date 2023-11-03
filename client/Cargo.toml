@@ -23,6 +23,7 @@ once_cell = "1.13"
 opentelemetry = { workspace = true, features = ["metrics"] }
 parking_lot = "0.12"
 prost-types = "0.11"
+slotmap = "1.0"
 thiserror = "1.0"
 tokio = "1.1"
 tonic = { workspace = true, features = ["tls", "tls-roots"] }

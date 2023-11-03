@@ -1,8 +1,8 @@
 //! Worker-specific client needs
 
 pub(crate) mod mocks;
-
-use temporal_client::{Client, RetryClient, WorkflowService};
+use std::sync::Arc;
+use temporal_client::{Client, RetryClient, SlotManager, WorkflowService};
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::QueryResult,
     temporal::api::{
@@ -144,6 +144,7 @@ pub(crate) trait WorkerClient: Sync + Send {
 
     #[allow(clippy::needless_lifetimes)] // Clippy is wrong here
     fn capabilities<'a>(&'a self) -> Option<&'a get_system_info_response::Capabilities>;
+    fn workers(&self) -> Arc<SlotManager>;
 }
 
 #[async_trait::async_trait]
@@ -381,6 +382,10 @@ impl WorkerClient for WorkerClientBag {
 
     fn capabilities(&self) -> Option<&Capabilities> {
         self.client.get_client().inner().capabilities()
+    }
+
+    fn workers(&self) -> Arc<SlotManager> {
+        self.client.get_client().inner().workers()
     }
 }
 

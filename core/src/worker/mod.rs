@@ -1,5 +1,6 @@
 mod activities;
 pub(crate) mod client;
+mod slot_provider;
 mod workflow;
 
 pub use temporal_sdk_core_api::worker::{WorkerConfig, WorkerConfigBuilder};
@@ -11,6 +12,8 @@ pub(crate) use activities::{
     NewLocalAct,
 };
 pub(crate) use workflow::{wft_poller::new_wft_poller, LEGACY_QUERY_ID};
+
+use temporal_client::WorkerKey;
 
 use crate::{
     abstractions::{dbg_panic, MeteredSemaphore},
@@ -34,6 +37,8 @@ use crate::{
     ActivityHeartbeat, CompleteActivityError, PollActivityError, PollWfError, WorkerTrait,
 };
 use activities::WorkerActivityTasks;
+use futures_util::stream;
+use slot_provider::SlotProvider;
 use std::{
     convert::TryInto,
     future,
@@ -58,6 +63,7 @@ use temporal_sdk_core_protos::{
     TaskToken,
 };
 use tokio::sync::mpsc::unbounded_channel;
+use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
 
 #[cfg(test)]
@@ -75,7 +81,8 @@ use {
 pub struct Worker {
     config: WorkerConfig,
     wf_client: Arc<dyn WorkerClient>,
-
+    /// Registration key to enable eager workflow start for this worker
+    worker_key: Option<WorkerKey>,
     /// Manages all workflows and WFT processing
     workflows: Workflows,
     /// Manages activity tasks for this worker/task queue
@@ -170,7 +177,11 @@ impl WorkerTrait for Worker {
             );
         }
         self.shutdown_token.cancel();
-        // First, we want to stop polling of both activity and workflow tasks
+        // First, disable Eager Workflow Start
+        if let Some(key) = self.worker_key {
+            self.wf_client.workers().unregister(key);
+        }
+        // Second, we want to stop polling of both activity and workflow tasks
         if let Some(atm) = self.at_task_mgr.as_ref() {
             atm.initiate_shutdown();
         }
@@ -240,7 +251,7 @@ impl Worker {
             metrics.with_new_attrs([activity_worker_type()]),
             MetricsContext::available_task_slots,
         ));
-
+        let (external_wft_tx, external_wft_rx) = unbounded_channel();
         let (wft_stream, act_poller) = match task_pollers {
             TaskPollers::Real => {
                 let max_nonsticky_polls = if sticky_queue_name.is_some() {
@@ -302,6 +313,8 @@ impl Worker {
                     sticky_queue_poller,
                 ));
                 let wft_stream = new_wft_poller(wf_task_poll_buffer, metrics.clone());
+                let wft_stream =
+                    stream::select(wft_stream, UnboundedReceiverStream::new(external_wft_rx));
                 #[cfg(test)]
                 let wft_stream = wft_stream.left_stream();
                 (wft_stream, act_poll_buffer)
@@ -353,7 +366,15 @@ impl Worker {
             info!("Activity polling is disabled for this worker");
         };
         let la_sink = LAReqSink::new(local_act_mgr.clone(), config.wf_state_inputs.clone());
+        let provider = SlotProvider::new(
+            config.namespace.clone(),
+            config.task_queue.clone(),
+            wft_semaphore.clone(),
+            external_wft_tx,
+        );
+        let worker_key = client.workers().register(Box::new(provider));
         Self {
+            worker_key,
             wf_client: client.clone(),
             workflows: Workflows::new(
                 build_wf_basics(

@@ -9,6 +9,7 @@ pub mod interceptors;
 pub mod wf_input_saver;
 pub mod workflows;
 
+use anyhow::Context;
 pub use temporal_sdk_core::replay::HistoryForReplay;
 
 use crate::{
@@ -55,7 +56,10 @@ use temporal_sdk_core_protos::{
         },
         workflow_completion::WorkflowActivationCompletion,
     },
-    temporal::api::{common::v1::Payload, history::v1::History},
+    temporal::api::{
+        common::v1::Payload, history::v1::History,
+        workflowservice::v1::StartWorkflowExecutionResponse,
+    },
     DEFAULT_ACTIVITY_TYPE,
 };
 use tokio::sync::{mpsc::unbounded_channel, OnceCell};
@@ -245,6 +249,23 @@ impl CoreWfStarter {
     ) -> String {
         worker
             .submit_wf(
+                self.task_queue_name.clone(),
+                wf_name.into(),
+                vec![],
+                self.workflow_options.clone(),
+            )
+            .await
+            .unwrap()
+    }
+
+    pub async fn eager_start_with_worker(
+        &self,
+        wf_name: impl Into<String>,
+        worker: &mut TestWorker,
+    ) -> StartWorkflowExecutionResponse {
+        assert!(self.workflow_options.enable_eager_workflow_start);
+        worker
+            .eager_submit_wf(
                 self.task_queue_name.clone(),
                 wf_name.into(),
                 vec![],
@@ -453,6 +474,39 @@ impl TestWorker {
         } else {
             Ok("fake_run_id".to_string())
         }
+    }
+
+    /// Similar to `submit_wf` but checking that the server returns the first
+    /// workflow task in the client response.
+    /// Note that this does not guarantee that the worker will execute this task eagerly.
+    pub async fn eager_submit_wf(
+        &self,
+        workflow_id: impl Into<String>,
+        workflow_type: impl Into<String>,
+        input: Vec<Payload>,
+        options: WorkflowOptions,
+    ) -> Result<StartWorkflowExecutionResponse, anyhow::Error> {
+        let c = self.client.as_ref().context("client needed for eager wf")?;
+        let wfid = workflow_id.into();
+        let res = c
+            .start_workflow(
+                input,
+                self.inner.task_queue().to_string(),
+                wfid.clone(),
+                workflow_type.into(),
+                None,
+                options,
+            )
+            .await?;
+        res.eager_workflow_task
+            .as_ref()
+            .context("no eager workflow task")?;
+        self.started_workflows.lock().push(WorkflowExecutionInfo {
+            namespace: c.namespace().to_string(),
+            workflow_id: wfid,
+            run_id: Some(res.run_id.clone()),
+        });
+        Ok(res)
     }
 
     /// Runs until all expected workflows have completed

@@ -1,5 +1,7 @@
 system.enableActivityLocalDispatch:
   - value: true
+system.enableEagerWorkflowStart:
+  - value: true
 frontend.workerVersioningWorkflowAPIs:
   - value: true
 frontend.workerVersioningDataAPIs:

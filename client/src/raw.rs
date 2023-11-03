@@ -5,10 +5,12 @@
 use crate::{
     metrics::{namespace_kv, task_queue_kv},
     raw::sealed::RawClientLike,
+    worker_registry::{Slot, SlotManager},
     Client, ConfiguredClient, InterceptedMetricsSvc, RetryClient, TemporalServiceClient,
     LONG_POLL_TIMEOUT,
 };
 use futures::{future::BoxFuture, FutureExt, TryFutureExt};
+use std::sync::Arc;
 use temporal_sdk_core_api::telemetry::metrics::MetricKeyValue;
 use temporal_sdk_core_protos::{
     grpc::health::v1::{health_client::HealthClient, *},
@@ -54,6 +56,9 @@ pub(super) mod sealed {
 
         /// Return a mutable ref to the health service client instance
         fn health_client_mut(&mut self) -> &mut HealthClient<Self::SvcType>;
+
+        /// Return a registry with workers using this client instance
+        fn get_workers_info(&self) -> Option<Arc<SlotManager>>;
 
         async fn call<F, Req, Resp>(
             &mut self,
@@ -109,6 +114,10 @@ where
 
     fn health_client_mut(&mut self) -> &mut HealthClient<Self::SvcType> {
         self.get_client_mut().health_client_mut()
+    }
+
+    fn get_workers_info(&self) -> Option<Arc<SlotManager>> {
+        self.get_client().get_workers_info()
     }
 
     async fn call<F, Req, Resp>(
@@ -173,6 +182,10 @@ where
     fn health_client_mut(&mut self) -> &mut HealthClient<Self::SvcType> {
         self.health_svc_mut()
     }
+
+    fn get_workers_info(&self) -> Option<Arc<SlotManager>> {
+        None
+    }
 }
 
 impl<T> RawClientLike for ConfiguredClient<TemporalServiceClient<T>>
@@ -216,6 +229,10 @@ where
     fn health_client_mut(&mut self) -> &mut HealthClient<Self::SvcType> {
         self.client.health_client_mut()
     }
+
+    fn get_workers_info(&self) -> Option<Arc<SlotManager>> {
+        Some(self.workers())
+    }
 }
 
 impl RawClientLike for Client {
@@ -251,6 +268,10 @@ impl RawClientLike for Client {
 
     fn health_client_mut(&mut self) -> &mut HealthClient<Self::SvcType> {
         self.inner.health_client_mut()
+    }
+
+    fn get_workers_info(&self) -> Option<Arc<SlotManager>> {
+        self.inner.get_workers_info()
     }
 }
 
@@ -356,10 +377,29 @@ macro_rules! proxy {
             self.call(stringify!($method), fact, request.into_request())
         }
     };
+    ($client_type:tt, $client_meth:ident, $method:ident, $req:ty, $resp:ty,
+     $closure_before:expr, $closure_after:expr) => {
+        #[doc = concat!("See [", stringify!($client_type), "::", stringify!($method), "]")]
+        fn $method(
+            &mut self,
+            request: impl tonic::IntoRequest<$req>,
+        ) -> BoxFuture<Result<tonic::Response<$resp>, tonic::Status>> {
+            #[allow(unused_mut)]
+            let fact = |c: &mut Self, mut req: tonic::Request<$req>| {
+                let data = type_closure_two_arg(&mut req, c.get_workers_info().unwrap(),
+                                                $closure_before);
+                let mut c = c.$client_meth().clone();
+                async move {
+                    type_closure_two_arg(c.$method(req).await, data, $closure_after)
+                }.boxed()
+            };
+            self.call(stringify!($method), fact, request.into_request())
+        }
+    };
 }
 macro_rules! proxier {
     ( $trait_name:ident; $impl_list_name:ident; $client_type:tt; $client_meth:ident;
-      $(($method:ident, $req:ty, $resp:ty $(, $closure:expr)?  );)* ) => {
+      $(($method:ident, $req:ty, $resp:ty $(, $closure:expr $(, $closure_after:expr)?)? );)* ) => {
         #[cfg(test)]
         const $impl_list_name: &'static [&'static str] = &[$(stringify!($method)),*];
         /// Trait version of the generated client with modifications to attach appropriate metric
@@ -377,7 +417,8 @@ macro_rules! proxier {
                 as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
         {
             $(
-               proxy!($client_type, $client_meth, $method, $req, $resp $(,$closure)*);
+               proxy!($client_type, $client_meth, $method, $req, $resp
+                      $(,$closure $(,$closure_after)*)*);
             )*
         }
     };
@@ -386,6 +427,10 @@ macro_rules! proxier {
 // Nice little trick to avoid the callsite asking to type the closure parameter
 fn type_closure_arg<T, R>(arg: T, f: impl FnOnce(T) -> R) -> R {
     f(arg)
+}
+
+fn type_closure_two_arg<T, R, S>(arg1: R, arg2: T, f: impl FnOnce(R, T) -> S) -> S {
+    f(arg1, arg2)
 }
 
 proxier! {
@@ -435,10 +480,35 @@ proxier! {
         start_workflow_execution,
         StartWorkflowExecutionRequest,
         StartWorkflowExecutionResponse,
-        |r| {
+        |r, workers| {
+            let mut slot: Option<Box<dyn Slot + Send>> = None;
             let mut labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             labels.task_q(r.get_ref().task_queue.clone());
             r.extensions_mut().insert(labels);
+            let req_mut = r.get_mut();
+            if req_mut.request_eager_execution {
+                let namespace = req_mut.namespace.clone();
+                let task_queue = req_mut.task_queue.clone().unwrap().name.clone();
+                match workers.try_reserve_wft_slot(namespace, task_queue) {
+                    Some(s) => slot = Some(s),
+                    None => req_mut.request_eager_execution = false
+                }
+            }
+            slot
+        },
+        |resp, slot| {
+            if let Some(mut s) = slot {
+                if let Ok(response) = resp.as_ref() {
+                    if let Some(task) = response.get_ref().clone().eager_workflow_task {
+                        if let Err(e) = s.schedule_wft(task) {
+                            // This is a latency issue, i.e., the client does not need to handle
+                            //  this error, because the WFT will be retried after a timeout.
+                            warn!(details = ?e, "Eager workflow task rejected by worker.");
+                        }
+                    }
+                }
+            }
+            resp
         }
     );
     (
