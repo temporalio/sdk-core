@@ -127,13 +127,12 @@ mod tests {
             external_wft_tx,
         );
 
-        if let Some(slot) = provider.try_reserve_wft_slot() {
-            let p = slot.schedule_wft(new_validatable_response());
-            assert!(p.is_ok());
-            assert!(external_wft_rx.recv().await.is_some());
-        } else {
-            panic!("failed to reserve slot");
-        }
+        let slot = provider
+            .try_reserve_wft_slot()
+            .expect("failed to reserver slot");
+        let p = slot.schedule_wft(new_validatable_response());
+        assert!(p.is_ok());
+        assert!(external_wft_rx.recv().await.is_some());
     }
 
     #[tokio::test]

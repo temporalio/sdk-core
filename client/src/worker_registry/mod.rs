@@ -64,17 +64,14 @@ struct SlotManagerImpl {
     providers: HashMap<SlotKey, Box<dyn SlotProvider + Send + Sync>>,
     /// Maps ids to keys in `providers`.
     index: HashMap<String, SlotKey>,
-    /// Do not warn when ignoring worker registrations.
-    quiet: bool,
 }
 
 impl SlotManagerImpl {
     /// Factory method.
-    fn new(quiet: bool) -> Self {
+    fn new() -> Self {
         Self {
             index: HashMap::new(),
             providers: HashMap::new(),
-            quiet,
         }
     }
 
@@ -102,7 +99,7 @@ impl SlotManagerImpl {
             if let Vacant(p) = self.providers.entry(key.clone()) {
                 p.insert(provider);
                 e.insert(key);
-            } else if !self.quiet {
+            } else {
                 warn!("Ignoring registration for worker {id} in bucket {key:?}.");
             }
         }
@@ -131,14 +128,7 @@ impl SlotManager {
     /// Factory method.
     pub fn new() -> Self {
         Self {
-            manager: RwLock::new(SlotManagerImpl::new(false)),
-        }
-    }
-
-    /// Factory method. Do not warn when ignoring worker registrations.
-    pub fn new_quiet() -> Self {
-        Self {
-            manager: RwLock::new(SlotManagerImpl::new(true)),
+            manager: RwLock::new(SlotManagerImpl::new()),
         }
     }
 
