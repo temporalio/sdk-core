@@ -469,13 +469,9 @@ impl EphemeralExe {
                     ))
                     .query(&get_info_params)
                     .send()
-                    .await?;
-                let info: DownloadInfo = match resp.error_for_status() {
-                    Ok(r) => r.json().await?,
-                    Err(e) => {
-                        return Err(anyhow::Error::from(e));
-                    }
-                };
+                    .await?
+                    .error_for_status()?;
+                let info: DownloadInfo = resp.json().await?;
 
                 // Attempt download, looping because it could have waited for
                 // concurrent one to finish
@@ -594,17 +590,11 @@ async fn download_and_extract(
 ) -> anyhow::Result<()> {
     // Start download. We are using streaming here to extract the file from the
     // tarball or zip instead of loading into memory for Cursor/Seek.
-    let resp = client.get(uri).send().await?;
-    // Only stream on successful responses.
-    let stream = match resp.error_for_status() {
-        // We have to map the error type to an io error
-        Ok(resp) => resp
-            .bytes_stream()
-            .map(|item| item.map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))),
-        Err(e) => {
-            return Err(anyhow::Error::from(e));
-        }
-    };
+    let resp = client.get(uri).send().await?.error_for_status()?;
+    // We have to map the error type to an io error
+    let stream = resp
+        .bytes_stream()
+        .map(|item| item.map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err)));
 
     // Since our tar/zip impls use sync IO, we have to create a bridge and run
     // in a blocking closure.
