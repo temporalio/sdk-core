@@ -45,10 +45,10 @@ lru = "0.11"
 mockall = "0.11"
 nix = { version = "0.27", optional = true, features = ["process", "signal"] }
 once_cell = "1.5"
-opentelemetry = { workspace = true, features = ["rt-tokio", "metrics"] }
-opentelemetry_sdk = { version = "0.20", features = ["metrics"] }
-opentelemetry-otlp = { version = "0.13", features = ["tokio", "metrics"] }
-opentelemetry-prometheus = "0.13"
+opentelemetry = { workspace = true, features = ["metrics"] }
+opentelemetry_sdk = { version = "0.21", features = ["rt-tokio", "metrics"] }
+opentelemetry-otlp = { version = "0.14", features = ["tokio", "metrics"] }
+opentelemetry-prometheus = "0.14"
 parking_lot = { version = "0.12", features = ["send_guard"] }
 pin-project = "1.0"
 prometheus = "0.13"

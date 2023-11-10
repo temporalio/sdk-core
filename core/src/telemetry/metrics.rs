@@ -582,13 +582,13 @@ impl MemoryGaugeU64 {
 pub fn build_otlp_metric_exporter(
     opts: OtelCollectorOptions,
 ) -> Result<CoreOtelMeter, anyhow::Error> {
-    let exporter = opentelemetry_otlp::MetricsExporter::new(
-        opentelemetry_otlp::TonicExporterBuilder::default()
-            .with_endpoint(opts.url.to_string())
-            .with_metadata(MetadataMap::from_headers((&opts.headers).try_into()?)),
-        Box::new(metric_temporality_to_selector(opts.metric_temporality)),
-        Box::<SDKAggSelector>::default(),
-    )?;
+    let exporter = opentelemetry_otlp::TonicExporterBuilder::default()
+        .with_endpoint(opts.url.to_string())
+        .with_metadata(MetadataMap::from_headers((&opts.headers).try_into()?))
+        .build_metrics_exporter(
+            Box::<SDKAggSelector>::default(),
+            Box::new(metric_temporality_to_selector(opts.metric_temporality)),
+        )?;
     let reader = PeriodicReader::builder(exporter, runtime::Tokio)
         .with_interval(opts.metric_periodicity)
         .build();
