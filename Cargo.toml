@@ -5,4 +5,4 @@ resolver = "2"
 [workspace.dependencies]
 tonic = "0.9"
 tonic-build = "0.9"
-opentelemetry = "0.20"
+opentelemetry = "0.21"

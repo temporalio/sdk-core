@@ -12,12 +12,14 @@ pub use metrics::{
 
 pub use log_export::{CoreLogBuffer, CoreLogBufferedConsumer, CoreLogStreamConsumer};
 
-use crate::telemetry::log_export::CoreLogConsumerLayer;
-use crate::telemetry::metrics::PrefixedMetricsMeter;
+use crate::telemetry::{log_export::CoreLogConsumerLayer, metrics::PrefixedMetricsMeter};
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
-use opentelemetry::{sdk::Resource, KeyValue};
-use opentelemetry_sdk::metrics::{data::Temporality, reader::TemporalitySelector, InstrumentKind};
+use opentelemetry::KeyValue;
+use opentelemetry_sdk::{
+    metrics::{data::Temporality, reader::TemporalitySelector, InstrumentKind},
+    Resource,
+};
 use parking_lot::Mutex;
 use std::{
     cell::RefCell,
