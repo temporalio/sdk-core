@@ -251,7 +251,7 @@ impl Worker {
             metrics.with_new_attrs([activity_worker_type()]),
             MetricsContext::available_task_slots,
         ));
-        let (external_wft_tx, external_wft_rx) = unbounded_channel();
+        let (external_wft_tx, mut external_wft_rx) = unbounded_channel();
         let (wft_stream, act_poller) = match task_pollers {
             TaskPollers::Real => {
                 let max_nonsticky_polls = if sticky_queue_name.is_some() {
@@ -313,6 +313,12 @@ impl Worker {
                     sticky_queue_poller,
                 ));
                 let wft_stream = new_wft_poller(wf_task_poll_buffer, metrics.clone());
+                if client.workers().is_mock() {
+                    // Some replay tests combine a mock client with real pollers,
+                    // and they need to close the merged stream for clean worker termination.
+                    external_wft_rx.close();
+                }
+
                 let wft_stream =
                     stream::select(wft_stream, UnboundedReceiverStream::new(external_wft_rx));
                 #[cfg(test)]
