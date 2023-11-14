@@ -37,7 +37,7 @@ use crate::{
     ActivityHeartbeat, CompleteActivityError, PollActivityError, PollWfError, WorkerTrait,
 };
 use activities::WorkerActivityTasks;
-use futures_util::stream;
+use futures_util::{stream, StreamExt};
 use slot_provider::SlotProvider;
 use std::{
     convert::TryInto,
@@ -73,7 +73,6 @@ use {
         protosext::ValidPollWFTQResponse,
     },
     futures::stream::BoxStream,
-    futures_util::StreamExt,
     temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse,
 };
 
@@ -251,7 +250,7 @@ impl Worker {
             metrics.with_new_attrs([activity_worker_type()]),
             MetricsContext::available_task_slots,
         ));
-        let (external_wft_tx, mut external_wft_rx) = unbounded_channel();
+        let (external_wft_tx, external_wft_rx) = unbounded_channel();
         let (wft_stream, act_poller) = match task_pollers {
             TaskPollers::Real => {
                 let max_nonsticky_polls = if sticky_queue_name.is_some() {
@@ -313,14 +312,15 @@ impl Worker {
                     sticky_queue_poller,
                 ));
                 let wft_stream = new_wft_poller(wf_task_poll_buffer, metrics.clone());
-                if client.is_mock() {
+                let wft_stream = if !client.is_mock() {
                     // Some replay tests combine a mock client with real pollers,
-                    // and they need to close the merged stream for clean worker termination.
-                    external_wft_rx.close();
-                }
+                    // and they don't need to use the external stream
+                    stream::select(wft_stream, UnboundedReceiverStream::new(external_wft_rx))
+                        .left_stream()
+                } else {
+                    wft_stream.right_stream()
+                };
 
-                let wft_stream =
-                    stream::select(wft_stream, UnboundedReceiverStream::new(external_wft_rx));
                 #[cfg(test)]
                 let wft_stream = wft_stream.left_stream();
                 (wft_stream, act_poll_buffer)
