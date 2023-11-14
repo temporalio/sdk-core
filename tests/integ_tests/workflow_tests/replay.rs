@@ -2,7 +2,7 @@ use crate::integ_tests::workflow_tests::patches::changes_wf;
 use assert_matches::assert_matches;
 use parking_lot::Mutex;
 use std::{collections::HashSet, sync::Arc, time::Duration};
-use temporal_sdk::{interceptors::WorkerInterceptor, WfContext, WorkflowFunction};
+use temporal_sdk::{interceptors::WorkerInterceptor, WfContext, Worker, WorkflowFunction};
 use temporal_sdk_core::replay::{HistoryFeeder, HistoryForReplay};
 use temporal_sdk_core_api::errors::{PollActivityError, PollWfError};
 use temporal_sdk_core_protos::{
@@ -167,6 +167,19 @@ async fn replay_ok_ending_with_timed_out() {
     replay_abrupt_ending(t2).await;
 }
 
+#[tokio::test]
+async fn replay_shutdown_worker() {
+    let t = canned_histories::single_timer("1");
+    let func = timers_wf(1);
+    let mut worker = replay_sdk_worker([test_hist_to_replay(t)]);
+    worker.register_wf(DEFAULT_WORKFLOW_TYPE, func);
+    let shutdown_ctr_i = UniqueShutdownWorker::default();
+    let shutdown_ctr = shutdown_ctr_i.runs.clone();
+    worker.set_worker_interceptor(shutdown_ctr_i);
+    worker.run().await.unwrap();
+    assert_eq!(shutdown_ctr.lock().len(), 1);
+}
+
 #[rstest::rstest]
 #[tokio::test]
 async fn multiple_histories_replay(#[values(false, true)] use_feeder: bool) {
@@ -286,5 +299,19 @@ struct UniqueRunsCounter {
 impl WorkerInterceptor for UniqueRunsCounter {
     async fn on_workflow_activation_completion(&self, completion: &WorkflowActivationCompletion) {
         self.runs.lock().insert(completion.run_id.clone());
+    }
+}
+
+#[derive(Default)]
+struct UniqueShutdownWorker {
+    runs: Arc<Mutex<HashSet<String>>>,
+}
+#[async_trait::async_trait(?Send)]
+impl WorkerInterceptor for UniqueShutdownWorker {
+    fn on_shutdown(&self, _sdk_worker: &Worker) {
+        // Assumed one worker per task queue.
+        self.runs
+            .lock()
+            .insert(_sdk_worker.task_queue().to_string());
     }
 }

@@ -28,6 +28,7 @@ pub(crate) fn mock_workflow_client() -> MockWorkerClient {
         .returning(|| Some(DEFAULT_TEST_CAPABILITIES));
     r.expect_workers()
         .returning(|| DEFAULT_WORKERS_REGISTRY.clone());
+    r.expect_is_mock().returning(|| true);
     r
 }
 
@@ -38,6 +39,7 @@ pub(crate) fn mock_manual_workflow_client() -> MockManualWorkerClient {
         .returning(|| Some(DEFAULT_TEST_CAPABILITIES));
     r.expect_workers()
         .returning(|| DEFAULT_WORKERS_REGISTRY.clone());
+    r.expect_is_mock().returning(|| true);
     r
 }
 
@@ -116,5 +118,7 @@ mockall::mock! {
         fn capabilities(&self) -> Option<&'static get_system_info_response::Capabilities>;
 
         fn workers(&self) -> Arc<SlotManager>;
+
+        fn is_mock(&self) -> bool;
     }
 }

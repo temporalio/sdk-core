@@ -37,7 +37,7 @@ use crate::{
     ActivityHeartbeat, CompleteActivityError, PollActivityError, PollWfError, WorkerTrait,
 };
 use activities::WorkerActivityTasks;
-use futures_util::stream;
+use futures_util::{stream, StreamExt};
 use slot_provider::SlotProvider;
 use std::{
     convert::TryInto,
@@ -73,7 +73,6 @@ use {
         protosext::ValidPollWFTQResponse,
     },
     futures::stream::BoxStream,
-    futures_util::StreamExt,
     temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse,
 };
 
@@ -313,8 +312,15 @@ impl Worker {
                     sticky_queue_poller,
                 ));
                 let wft_stream = new_wft_poller(wf_task_poll_buffer, metrics.clone());
-                let wft_stream =
-                    stream::select(wft_stream, UnboundedReceiverStream::new(external_wft_rx));
+                let wft_stream = if !client.is_mock() {
+                    // Some replay tests combine a mock client with real pollers,
+                    // and they don't need to use the external stream
+                    stream::select(wft_stream, UnboundedReceiverStream::new(external_wft_rx))
+                        .left_stream()
+                } else {
+                    wft_stream.right_stream()
+                };
+
                 #[cfg(test)]
                 let wft_stream = wft_stream.left_stream();
                 (wft_stream, act_poll_buffer)
