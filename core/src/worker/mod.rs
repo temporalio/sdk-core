@@ -313,7 +313,7 @@ impl Worker {
                     sticky_queue_poller,
                 ));
                 let wft_stream = new_wft_poller(wf_task_poll_buffer, metrics.clone());
-                if client.workers().is_mock() {
+                if client.is_mock() {
                     // Some replay tests combine a mock client with real pollers,
                     // and they need to close the merged stream for clean worker termination.
                     external_wft_rx.close();

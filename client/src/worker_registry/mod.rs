@@ -113,8 +113,6 @@ impl SlotManagerImpl {
 #[derive(Default, Debug)]
 pub struct SlotManager {
     manager: RwLock<SlotManagerImpl>,
-    /// True if this manager is associated with a mock client.
-    mock: bool,
 }
 
 impl SlotManager {
@@ -122,21 +120,7 @@ impl SlotManager {
     pub fn new() -> Self {
         Self {
             manager: RwLock::new(SlotManagerImpl::new()),
-            mock: false,
         }
-    }
-
-    /// Factory method.
-    pub fn new_mock() -> Self {
-        Self {
-            manager: RwLock::new(SlotManagerImpl::new()),
-            mock: true,
-        }
-    }
-
-    /// Return true if this manager is associated with a mock client.
-    pub fn is_mock(&self) -> bool {
-        self.mock
     }
 
     /// Try to reserve a compatible processing slot in any of the registered workers.

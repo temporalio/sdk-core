@@ -145,6 +145,7 @@ pub(crate) trait WorkerClient: Sync + Send {
     #[allow(clippy::needless_lifetimes)] // Clippy is wrong here
     fn capabilities<'a>(&'a self) -> Option<&'a get_system_info_response::Capabilities>;
     fn workers(&self) -> Arc<SlotManager>;
+    fn is_mock(&self) -> bool;
 }
 
 #[async_trait::async_trait]
@@ -386,6 +387,10 @@ impl WorkerClient for WorkerClientBag {
 
     fn workers(&self) -> Arc<SlotManager> {
         self.client.get_client().inner().workers()
+    }
+
+    fn is_mock(&self) -> bool {
+        false
     }
 }
 
