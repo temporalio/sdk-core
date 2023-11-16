@@ -6,10 +6,11 @@ use crate::{
             history_update::HistoryPaginator,
             machines::{MachinesWFTResponseContent, WorkflowMachines},
             ActivationAction, ActivationCompleteOutcome, ActivationCompleteResult,
-            ActivationOrAuto, DrivenWorkflow, EvictionRequestResult, FailedActivationWFTReport,
-            HeartbeatTimeoutMsg, HistoryUpdate, LocalActivityRequestSink, LocalResolution,
-            NextPageReq, OutstandingActivation, OutstandingTask, PermittedWFT, RequestEvictMsg,
-            RunBasics, ServerCommandsWithWorkflowInfo, WFCommand, WFMachinesError, WFTReportStatus,
+            ActivationOrAuto, BufferedTasks, DrivenWorkflow, EvictionRequestResult,
+            FailedActivationWFTReport, HeartbeatTimeoutMsg, HistoryUpdate,
+            LocalActivityRequestSink, LocalResolution, NextPageReq, OutstandingActivation,
+            OutstandingTask, PermittedWFT, RequestEvictMsg, RunBasics,
+            ServerCommandsWithWorkflowInfo, WFCommand, WFMachinesError, WFTReportStatus,
             WorkflowTaskInfo, WFT_HEARTBEAT_TIMEOUT_FRACTION,
         },
         LocalActRequest, LEGACY_QUERY_ID,
@@ -19,6 +20,7 @@ use crate::{
 use futures_util::future::AbortHandle;
 use std::{
     collections::HashSet,
+    mem,
     ops::Add,
     rc::Rc,
     sync::mpsc::Sender,
@@ -46,11 +48,11 @@ pub(super) type RunUpdateAct = Option<ActivationOrAuto>;
 /// remain that way.
 #[derive(derive_more::DebugCustom)]
 #[debug(
-    fmt = "ManagedRun {{ wft: {:?}, activation: {:?}, buffered_resp: {:?} \
+    fmt = "ManagedRun {{ wft: {:?}, activation: {:?}, task_buffer: {:?} \
            trying_to_evict: {} }}",
     wft,
     activation,
-    buffered_resp,
+    task_buffer,
     "trying_to_evict.is_some()"
 )]
 pub(super) struct ManagedRun {
@@ -71,11 +73,13 @@ pub(super) struct ManagedRun {
     wft: Option<OutstandingTask>,
     /// An outstanding activation to lang
     activation: Option<OutstandingActivation>,
-    /// If set, it indicates there is a buffered poll response from the server that applies to this
-    /// run. This can happen when lang takes too long to complete a task and the task times out, for
-    /// example. Upon next completion, the buffered response will be removed and can be made ready
-    /// to be returned from polling
-    buffered_resp: Option<PermittedWFT>,
+    /// Contains buffered poll responses from the server that apply to this run. This can happen
+    /// when:
+    ///   * Lang takes too long to complete a task and the task times out
+    ///   * Many queries are submitted concurrently and reach this worker (in this case, multiple
+    ///     tasks can be outstanding)
+    ///   * Multiple speculative tasks (ex: for updates) may also exist at once
+    task_buffer: BufferedTasks,
     /// Is set if an eviction has been requested for this run
     trying_to_evict: Option<RequestEvictMsg>,
 
@@ -103,7 +107,7 @@ impl ManagedRun {
             am_broken: false,
             wft: None,
             activation: None,
-            buffered_resp: None,
+            task_buffer: Default::default(),
             trying_to_evict: None,
             recorded_span_ids: Default::default(),
             metrics,
@@ -548,17 +552,34 @@ impl ManagedRun {
         rur
     }
 
-    /// Delete the currently tracked workflow activation and return it, if any. Should be called
-    /// after the processing of the activation completion, and WFT reporting.
-    pub(super) fn delete_activation(
+    /// Must be called after the processing of the activation completion and WFT reporting.
+    ///
+    /// It will delete the currently tracked workflow activation (if there is one) and `pred`
+    /// evaluates to true. In the event the activation was an eviction, the bool part of the return
+    /// tuple is true. The [BufferedTasks] part will contain any buffered tasks that may still exist
+    /// and need to be instantiated into a new instance of the run, if a `wft_from_complete` was
+    /// provided, it will supersede any real WFTs in the buffer as by definition those are now
+    /// out-of-date.
+    pub(super) fn finish_activation(
         &mut self,
         pred: impl FnOnce(&OutstandingActivation) -> bool,
-    ) -> Option<OutstandingActivation> {
-        if self.activation().map(pred).unwrap_or_default() {
-            self.activation.take()
+        wft_from_complete: Option<PermittedWFT>,
+    ) -> (bool, BufferedTasks) {
+        let evict = if self.activation().map(pred).unwrap_or_default() {
+            let act = self.activation.take();
+            act.map(|a| a.has_eviction()).unwrap_or_default()
         } else {
-            None
+            false
+        };
+        let mut buffered = if evict {
+            mem::take(&mut self.task_buffer)
+        } else {
+            Default::default()
+        };
+        if let Some(wft) = wft_from_complete {
+            buffered.buffer(wft);
         }
+        (evict, buffered)
     }
 
     /// Called when local activities resolve
@@ -730,7 +751,7 @@ impl ManagedRun {
         let buffered = if ignore_buffered {
             false
         } else {
-            self.buffered_resp.is_some()
+            self.task_buffer.has_tasks()
         };
         trace!(wft=self.wft.is_some(), buffered=?buffered, more_work=?self.more_pending_work(),
                act_work, evict_work, "Does run have pending work?");
@@ -749,7 +770,7 @@ impl ManagedRun {
         if has_wft || has_activation || about_to_issue_evict || self.more_pending_work() {
             debug!(run_id = %self.run_id(),
                    "Got new WFT for a run with outstanding work, buffering it");
-            self.buffered_resp = Some(work);
+            self.task_buffer.buffer(work);
             None
         } else {
             Some(work)
@@ -758,12 +779,7 @@ impl ManagedRun {
 
     /// Returns true if there is a buffered workflow task for this run.
     pub(super) fn has_buffered_wft(&self) -> bool {
-        self.buffered_resp.is_some()
-    }
-
-    /// Removes and returns the buffered workflow task, if any.
-    pub(super) fn take_buffered_wft(&mut self) -> Option<PermittedWFT> {
-        self.buffered_resp.take()
+        self.task_buffer.has_tasks()
     }
 
     pub(super) fn request_eviction(&mut self, info: RequestEvictMsg) -> EvictionRequestResult {
@@ -873,11 +889,11 @@ impl ManagedRun {
                 }
 
                 match r {
-                    // After each run update, check if it's ready to handle any buffered poll
+                    // After each run update, check if it's ready to handle any buffered task
                     None | Some(ActivationOrAuto::Autocomplete { .. })
                         if !self.has_any_pending_work(false, true) =>
                     {
-                        if let Some(bufft) = self.buffered_resp.take() {
+                        if let Some(bufft) = self.task_buffer.get_next_wft() {
                             self.incoming_wft(bufft)
                         } else {
                             None

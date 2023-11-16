@@ -1221,6 +1221,7 @@ async fn new_server_work_while_eviction_outstanding_doesnt_overwrite_activation(
 
 #[tokio::test]
 async fn buffered_work_drained_on_shutdown() {
+    crate::telemetry::test_telem_console();
     let wfid = "fake_wf_id";
     // Build a one-timer history where first task times out
     let mut t = TestHistoryBuilder::default();
