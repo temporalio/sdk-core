@@ -1,5 +1,7 @@
 [![Build status](https://badge.buildkite.com/c23f47f4a827f04daece909963bd3a248496f0cdbabfbecee4.svg?branch=master)](https://buildkite.com/temporal/core-sdk?branch=master)
 
+# Temporal Core SDK
+
 Core SDK that can be used as a base for other Temporal SDKs. It is currently used as the base of:
 
 - [TypeScript SDK](https://github.com/temporalio/sdk-typescript/)
@@ -7,24 +9,31 @@ Core SDK that can be used as a base for other Temporal SDKs. It is currently use
 - [.NET SDK](https://github.com/temporalio/sdk-dotnet/)
 - [Ruby SDK](https://github.com/temporalio/sdk-ruby/)
 
-For the reasoning behind the Core SDK, see: 
+# Documentation
+
+Core SDK documentation can be generated with `cargo doc`, output will be placed in the
+`target/doc` directory.
+
+[Architecture](ARCHITECTURE.md) doc provides some high-level information about how Core SDK works
+and how language layers interact with it.
+
+For the reasoning behind the Core SDK, see blog post:
 
 - [Why Rust powers Temporal’s new Core SDK](https://temporal.io/blog/why-rust-powers-core-sdk).
 
-See the [Architecture](ARCHITECTURE.md) doc for some high-level information about how Core works
-and how language layers interact with it.
-
 # Development
 
-You will need the `protoc` protobuf compiler installed to build Core.
+You will need the `protoc` [protobuf compiler](https://grpc.io/docs/protoc-installation)
+installed to build Core.
 
 This repo is composed of multiple crates:
-* temporal-sdk-core-protos `./sdk-core-protos` - Holds the generated proto code and extensions
-* temporal-client `./client` - Defines client(s) for interacting with the Temporal gRPC service
-* temporal-sdk-core-api `./core-api` - Defines the API surface exposed by Core
-* temporal-sdk-core `./core` - The Core implementation
-* temporal-sdk `./sdk` - A (currently prototype) Rust SDK built on top of Core. Used for testing.
-* rustfsm `./fsm` - Implements a procedural macro used by core for defining state machines
+
+- temporal-sdk-core-protos `./sdk-core-protos` - Holds the generated proto code and extensions
+- temporal-client `./client` - Defines client(s) for interacting with the Temporal gRPC service
+- temporal-sdk-core-api `./core-api` - Defines the API surface exposed by Core
+- temporal-sdk-core `./core` - The Core implementation
+- temporal-sdk `./sdk` - A (currently prototype) Rust SDK built on top of Core. Used for testing.
+- rustfsm `./fsm` - Implements a procedural macro used by core for defining state machines
     (contains subcrates). It is temporal agnostic.
 
 Visualized (dev dependencies are in blue):
@@ -35,7 +44,7 @@ All the following commands are enforced for each pull request:
 
 ## Building and testing
 
-You can buld and test the project using cargo:
+You can build and test the project using cargo:
 `cargo build`
 `cargo test`
 
@@ -45,15 +54,18 @@ Run integ tests with `cargo integ-test`. You will need to already be running the
 Run load tests with `cargo test --features=save_wf_inputs --test heavy_tests`.
 
 ## Formatting
+
 To format all code run:
 `cargo fmt --all`
 
 ## Linting
+
 We are using [clippy](https://github.com/rust-lang/rust-clippy) for linting.
 You can run it using:
 `cargo clippy --all -- -D warnings`
 
 ## Debugging
+
 The crate uses [tracing](https://github.com/tokio-rs/tracing) to help with debugging. To enable
 it for a test, insert the below snippet at the start of the test. By default, tracing data is output
 to stdout in a (reasonably) pretty manner.
@@ -83,6 +95,7 @@ Do not question why this git command is the way it is. It is not our place to in
 
 The java testserver protos are also pulled from the sdk-java repo, but since we only need a
 subdirectory of that repo, we just copy the files with read-tree:
+
 ```bash
 # add sdk-java as a remote if you have not already
 git remote add -f -t master --no-tags testsrv-protos git@github.com:temporalio/sdk-java.git
@@ -94,6 +107,7 @@ git commit
 ```
 
 ## Fetching Histories
+
 Tests which would like to replay stored histories rely on that history being made available in
 binary format. You can fetch histories in that format like so (from a local docker server):
 
@@ -104,16 +118,18 @@ You can change the `TEMPORAL_SERVICE_ADDRESS` env var to fetch from a different 
 ## Style Guidelines
 
 ### Error handling
-Any error which is returned from a public interface should be well-typed, and we use 
+
+Any error which is returned from a public interface should be well-typed, and we use
 [thiserror](https://github.com/dtolnay/thiserror) for that purpose.
 
-Errors returned from things only used in testing are free to use 
+Errors returned from things only used in testing are free to use
 [anyhow](https://github.com/dtolnay/anyhow) for less verbosity.
 
-
 # The Rust "SDK"
+
 This repo contains a *prototype* Rust sdk in the `sdk/` directory. This SDK should be considered
 pre-alpha in terms of its API surface. Since it's still using Core underneath, it is generally
 functional. We do not currently have any firm plans to productionize this SDK. If you want to write
 workflows and activities in Rust, feel free to use it - but be aware that the API may change at any
 time without warning and we do not provide any support guarantees.
+
