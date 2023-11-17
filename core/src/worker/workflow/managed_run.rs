@@ -536,32 +536,39 @@ impl ManagedRun {
 
         self.metrics.wf_task_failed();
         let message = format!("Workflow activation completion failed: {:?}", &failure);
-        // Blow up any cached data associated with the workflow
-        let evict_req_outcome = self.request_eviction(RequestEvictMsg {
-            run_id: self.run_id().to_string(),
-            message,
-            reason,
-            auto_reply_fail_tt: None,
-        });
-        let should_report = match &evict_req_outcome {
-            EvictionRequestResult::EvictionRequested(Some(attempt), _)
-            | EvictionRequestResult::EvictionAlreadyRequested(Some(attempt)) => *attempt <= 1,
-            _ => false,
-        };
-        let rur = evict_req_outcome.into_run_update_resp();
-        // If the outstanding WFT is a legacy query task, report that we need to fail it
-        let outcome = if self.pending_work_is_legacy_query() {
-            // We don't want to fail queries that could otherwise be retried
-            let failtype = if is_auto_fail
-                && matches!(
-                    reason,
-                    EvictionReason::Unspecified | EvictionReason::PaginationOrHistoryFetch
-                ) {
-                FailedActivationWFTReport::Report(tt, cause, failure)
-            } else {
-                FailedActivationWFTReport::ReportLegacyQueryFailure(tt, failure)
+        // We don't want to fail queries that could otherwise be retried
+        let is_no_report_query_fail = self.pending_work_is_legacy_query()
+            && is_auto_fail
+            && matches!(
+                reason,
+                EvictionReason::Unspecified | EvictionReason::PaginationOrHistoryFetch
+            );
+        let (should_report, rur) = if is_no_report_query_fail {
+            (false, None)
+        } else {
+            // Blow up any cached data associated with the workflow
+            let evict_req_outcome = self.request_eviction(RequestEvictMsg {
+                run_id: self.run_id().to_string(),
+                message,
+                reason,
+                auto_reply_fail_tt: None,
+            });
+            let should_report = match &evict_req_outcome {
+                EvictionRequestResult::EvictionRequested(Some(attempt), _)
+                | EvictionRequestResult::EvictionAlreadyRequested(Some(attempt)) => *attempt <= 1,
+                _ => false,
             };
-            ActivationCompleteOutcome::ReportWFTFail(failtype)
+            let rur = evict_req_outcome.into_run_update_resp();
+            (should_report, rur)
+        };
+        let outcome = if self.pending_work_is_legacy_query() {
+            if is_no_report_query_fail {
+                ActivationCompleteOutcome::WFTFailedDontReport
+            } else {
+                ActivationCompleteOutcome::ReportWFTFail(
+                    FailedActivationWFTReport::ReportLegacyQueryFailure(tt, failure),
+                )
+            }
         } else if should_report {
             ActivationCompleteOutcome::ReportWFTFail(FailedActivationWFTReport::Report(
                 tt, cause, failure,

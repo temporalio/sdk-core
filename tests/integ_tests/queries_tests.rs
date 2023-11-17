@@ -431,7 +431,7 @@ async fn query_superseded_by_newer_wft_is_discarded() {
             )
             .await
             .unwrap();
-        tokio::time::sleep(Duration::from_secs(1)).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
         core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
             task.run_id,
             QueryResult {
