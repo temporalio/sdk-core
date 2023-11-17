@@ -1046,7 +1046,8 @@ impl BufferedTasks {
         self.wft.is_some() || !self.query_only_tasks.is_empty()
     }
 
-    /// Remove and return the next WFT from the buffer that should be applied
+    /// Remove and return the next WFT from the buffer that should be applied. WFTs which would
+    /// advance workflow state are returned before query-only tasks.
     fn get_next_wft(&mut self) -> Option<PermittedWFT> {
         self.wft
             .take()
