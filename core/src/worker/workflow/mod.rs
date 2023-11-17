@@ -807,7 +807,7 @@ impl PreparedWFT {
     }
 
     fn is_query_only(&self) -> bool {
-        let no_new_history = self.update.previous_wft_started_id == self.update.wft_started_id;
+        let no_new_history = self.update.wft_started_id == 0;
         no_new_history && self.legacy_query.is_some()
     }
 }

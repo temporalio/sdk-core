@@ -362,15 +362,15 @@ impl WFStream {
                 self.runs.remove(run_id);
             }
 
-            if let Some(wft) = maybe_buffered.get_next_wft() {
-                res = self.instantiate_or_update(wft);
-                // TODO: Insert buffered into newly instantiated run
-            } else {
+            let maybe_buffered_wft = maybe_buffered
+                .get_next_wft()
                 // Attempt to apply a buffered poll for some *other* run, if we didn't have a wft
                 // from complete or a buffered poll for *this* run.
-                if let Some(buff) = self.buffered_polls_need_cache_slot.pop_front() {
-                    res = self.instantiate_or_update(buff);
-                }
+                .or_else(|| self.buffered_polls_need_cache_slot.pop_front());
+            if let Some(wft) = maybe_buffered_wft {
+                res = self.instantiate_or_update(wft);
+                // We accept that there might be tasks remaining in the buffer if we evicted and
+                // re-instantiated here. It's likely those tasks are now invalidated anyway.
             }
         }
 

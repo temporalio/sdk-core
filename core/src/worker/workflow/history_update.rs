@@ -55,8 +55,10 @@ impl Debug for HistoryUpdate {
         if self.is_real() {
             write!(
                 f,
-                "HistoryUpdate(previous_started_event_id: {}, length: {}, first_event_id: {:?})",
+                "HistoryUpdate(previous_started_event_id: {}, started_id: {}, \
+                 length: {}, first_event_id: {:?})",
                 self.previous_wft_started_id,
+                self.wft_started_id,
                 self.events.len(),
                 self.events.first().map(|e| e.event_id)
             )
