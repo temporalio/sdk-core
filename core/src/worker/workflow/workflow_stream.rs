@@ -360,25 +360,34 @@ impl WFStream {
         // Delete the activation, but only if the report came from lang, or we know the outstanding
         // activation is expected to be completed internally.
         if let Some((should_evict, mut maybe_buffered)) = self.runs.get_mut(run_id).map(|rh| {
-            rh.finish_activation(
-                |act| !report.is_autocomplete || matches!(act, OutstandingActivation::Autocomplete),
-                wft_from_complete,
-            )
+            rh.finish_activation(|act| {
+                !report.is_autocomplete || matches!(act, OutstandingActivation::Autocomplete)
+            })
         }) {
             if should_evict {
                 debug!(run_id=%run_id, "Evicting run");
                 self.runs.remove(run_id);
             }
-
-            let maybe_buffered_wft = maybe_buffered
-                .get_next_wft()
-                // Attempt to apply a buffered poll for some *other* run, if we didn't have a wft
-                // from complete or a buffered poll for *this* run.
-                .or_else(|| self.buffered_polls_need_cache_slot.pop_front());
-            if let Some(wft) = maybe_buffered_wft {
+            let maybe_ready_wft =
+                maybe_buffered
+                    .get_next_wft()
+                    .or(wft_from_complete)
+                    .or_else(|| {
+                        // Attempt to apply a buffered poll for some *other* run, if we didn't have a
+                        // wft from complete or a buffered poll for *this* run and we evicted
+                        if should_evict {
+                            self.buffered_polls_need_cache_slot.pop_front()
+                        } else {
+                            None
+                        }
+                    });
+            if let Some(wft) = maybe_ready_wft {
                 res = self.instantiate_or_update(wft);
-                // We accept that there might be tasks remaining in the buffer if we evicted and
-                // re-instantiated here. It's likely those tasks are now invalidated anyway.
+                // We accept that there might be query tasks remaining in the buffer if we evicted
+                // and re-instantiated here. It's likely those tasks are now invalidated anyway.
+                if maybe_buffered.has_tasks() && should_evict {
+                    panic!("There were leftover buffered tasks");
+                }
             }
         }
 

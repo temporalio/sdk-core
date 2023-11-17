@@ -591,7 +591,6 @@ impl ManagedRun {
     pub(super) fn finish_activation(
         &mut self,
         pred: impl FnOnce(&OutstandingActivation) -> bool,
-        wft_from_complete: Option<PermittedWFT>,
     ) -> (bool, BufferedTasks) {
         let evict = if self.activation().map(pred).unwrap_or_default() {
             let act = self.activation.take();
@@ -599,14 +598,11 @@ impl ManagedRun {
         } else {
             false
         };
-        let mut buffered = if evict {
+        let buffered = if evict {
             mem::take(&mut self.task_buffer)
         } else {
             Default::default()
         };
-        if let Some(wft) = wft_from_complete {
-            buffered.buffer(wft);
-        }
         (evict, buffered)
     }
 
@@ -793,11 +789,10 @@ impl ManagedRun {
         work: PermittedWFT,
     ) -> Option<PermittedWFT> {
         let about_to_issue_evict = self.trying_to_evict.is_some();
-        let has_wft = self.wft().is_some();
         let has_activation = self.activation().is_some();
-        if has_wft || has_activation || about_to_issue_evict || self.more_pending_work() {
+        if has_activation || about_to_issue_evict || self.more_pending_work() {
             debug!(run_id = %self.run_id(),
-                   "Got new WFT for a run with outstanding work, buffering it");
+                   "Got new WFT for a run with outstanding work, buffering it act: {:?} wft: {:?} about to evict: {:?}", &self.activation(), &self.wft, about_to_issue_evict);
             self.task_buffer.buffer(work);
             None
         } else {
