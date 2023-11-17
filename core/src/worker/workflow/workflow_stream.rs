@@ -31,7 +31,6 @@ use tracing::{Level, Span};
 pub(super) struct WFStream {
     runs: RunCache,
     /// Buffered polls for new runs which need a cache slot to open up before we can handle them
-    /// TODO: Does this even need to exist any more?
     buffered_polls_need_cache_slot: VecDeque<PermittedWFT>,
     /// Is filled with runs that we decided need to have their history fetched during state
     /// manipulation. Must be drained after handling each input.
