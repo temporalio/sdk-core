@@ -314,7 +314,7 @@ impl Workflows {
         post_activate_hook: Option<impl Fn(PostActivateHookData)>,
     ) -> Result<(), CompleteWfError> {
         let is_empty_completion = completion.is_empty();
-        let completion = validate_completion(completion)?;
+        let completion = validate_completion(completion, is_autocomplete)?;
         let run_id = completion.run_id().to_string();
         let (tx, rx) = oneshot::channel();
         let was_sent = self.send_local(WFActCompleteMsg {
@@ -442,7 +442,7 @@ impl Workflows {
 
         let maybe_pwft = if let Some(wft) = wft_from_complete {
             match HistoryPaginator::from_poll(wft, self.client.clone()).await {
-                Ok((paginator, pwft)) => Some((pwft, paginator)),
+                Ok((paginator, wft)) => Some(WFTWithPaginator { wft, paginator }),
                 Err(e) => {
                     self.request_eviction(
                         &run_id,
@@ -749,7 +749,8 @@ enum ActivationOrAuto {
     },
 }
 
-/// A processed WFT which has been validated and had a history update extracted from it
+/// A WFT which is considered to be using a slot for metrics purposes and being or about to be
+/// applied to workflow state.
 #[derive(derive_more::DebugCustom)]
 #[cfg_attr(
     feature = "save_wf_inputs",
@@ -769,6 +770,18 @@ pub(crate) struct PermittedWFT {
     )]
     paginator: HistoryPaginator,
 }
+/// A WFT without a permit
+#[derive(Debug)]
+#[cfg_attr(
+    feature = "save_wf_inputs",
+    derive(serde::Serialize, serde::Deserialize)
+)]
+struct WFTWithPaginator {
+    wft: PreparedWFT,
+    paginator: HistoryPaginator,
+}
+
+/// A WFT which has been validated and had a history update extracted from it.
 #[derive(Debug)]
 #[cfg_attr(
     feature = "save_wf_inputs",
@@ -791,6 +804,11 @@ impl PreparedWFT {
         let start_event_id = self.update.first_event_id();
         let poll_resp_is_incremental = start_event_id.map(|eid| eid > 1).unwrap_or_default();
         poll_resp_is_incremental || start_event_id.is_none()
+    }
+
+    fn is_query_only(&self) -> bool {
+        let no_new_history = self.update.wft_started_id == 0;
+        no_new_history && self.legacy_query.is_some()
     }
 }
 
@@ -938,7 +956,7 @@ struct LocalResolutionMsg {
 struct PostActivationMsg {
     run_id: String,
     wft_report_status: WFTReportStatus,
-    wft_from_complete: Option<(PreparedWFT, HistoryPaginator)>,
+    wft_from_complete: Option<WFTWithPaginator>,
     is_autocomplete: bool,
 }
 #[derive(Debug, Clone)]
@@ -1003,9 +1021,43 @@ enum WFTReportStatus {
     /// [ActivationCompleteOutcome::WFTFailedDontReport]
     DropWft,
 }
+#[derive(Debug, Default)]
+struct BufferedTasks {
+    /// There should only be one buffered actual WFT at a time, since any new one will immediately
+    /// supersede any old one.
+    wft: Option<PermittedWFT>,
+    /// For query only tasks, multiple may be received concurrently and it's OK to buffer more
+    /// than one - however they should be dropped if, by the time we try to process them, we
+    /// have already processed a newer real WFT than the one the query was targeting (otherwise
+    /// we'd return data from the "future").
+    query_only_tasks: VecDeque<PermittedWFT>,
+}
+
+impl BufferedTasks {
+    fn buffer(&mut self, task: PermittedWFT) {
+        if task.work.is_query_only() {
+            self.query_only_tasks.push_back(task);
+        } else {
+            let _ = self.wft.insert(task);
+        }
+    }
+
+    fn has_tasks(&self) -> bool {
+        self.wft.is_some() || !self.query_only_tasks.is_empty()
+    }
+
+    /// Remove and return the next WFT from the buffer that should be applied. WFTs which would
+    /// advance workflow state are returned before query-only tasks.
+    fn get_next_wft(&mut self) -> Option<PermittedWFT> {
+        self.wft
+            .take()
+            .or_else(|| self.query_only_tasks.pop_front())
+    }
+}
 
 fn validate_completion(
     completion: WorkflowActivationCompletion,
+    is_autocomplete: bool,
 ) -> Result<ValidatedCompletion, CompleteWfError> {
     match completion.status {
         Some(workflow_activation_completion::Status::Successful(success)) => {
@@ -1017,7 +1069,7 @@ fn validate_completion(
                 .collect::<Result<Vec<_>, EmptyWorkflowCommandErr>>()
                 .map_err(|_| CompleteWfError::MalformedWorkflowCompletion {
                     reason: "At least one workflow command in the completion contained \
-                                 an empty variant"
+                             an empty variant"
                         .to_owned(),
                     run_id: completion.run_id.clone(),
                 })?;
@@ -1057,6 +1109,7 @@ fn validate_completion(
             Ok(ValidatedCompletion::Fail {
                 run_id: completion.run_id,
                 failure,
+                is_autocomplete,
             })
         }
         None => Err(CompleteWfError::MalformedWorkflowCompletion {
@@ -1081,6 +1134,7 @@ enum ValidatedCompletion {
     Fail {
         run_id: String,
         failure: Failure,
+        is_autocomplete: bool,
     },
 }
 

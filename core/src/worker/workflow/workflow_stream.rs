@@ -301,10 +301,19 @@ impl WFStream {
                         None
                     }
                 },
-                ValidatedCompletion::Fail { failure, .. } => rh.failed_completion(
-                    failure.force_cause(),
-                    EvictionReason::LangFail,
+                ValidatedCompletion::Fail {
                     failure,
+                    is_autocomplete,
+                    ..
+                } => rh.failed_completion(
+                    failure.force_cause(),
+                    if is_autocomplete {
+                        EvictionReason::Unspecified
+                    } else {
+                        EvictionReason::LangFail
+                    },
+                    failure,
+                    is_autocomplete,
                     complete.response_tx,
                 ),
             },
@@ -324,7 +333,8 @@ impl WFStream {
     fn process_post_activation(&mut self, report: PostActivationMsg) -> RunUpdateAct {
         let run_id = &report.run_id;
         let wft_from_complete = report.wft_from_complete;
-        if let Some((wft, _)) = &wft_from_complete {
+        if let Some(WFTWithPaginator { wft, .. }) = &wft_from_complete {
+            debug!(run_id=%wft.execution.run_id, "New WFT from completion");
             if &wft.execution.run_id != run_id {
                 dbg_panic!(
                     "Server returned a WFT on completion for a different run ({}) than the \
@@ -339,48 +349,45 @@ impl WFStream {
 
         // If we reported to server, we always want to mark it complete.
         let maybe_t = self.complete_wft(run_id, report.wft_report_status);
+        // Augment the WFT from complete with the permit if both exist
+        let wft_from_complete = wft_from_complete.and_then(|wft| {
+            maybe_t.map(|t| PermittedWFT {
+                work: wft.wft,
+                paginator: wft.paginator,
+                permit: t.permit,
+            })
+        });
         // Delete the activation, but only if the report came from lang, or we know the outstanding
         // activation is expected to be completed internally.
-        if let Some(activation) = self.runs.get_mut(run_id).and_then(|rh| {
-            rh.delete_activation(|act| {
+        if let Some((should_evict, mut maybe_buffered)) = self.runs.get_mut(run_id).map(|rh| {
+            rh.finish_activation(|act| {
                 !report.is_autocomplete || matches!(act, OutstandingActivation::Autocomplete)
             })
         }) {
-            // Evict the run if the activation contained an eviction
-            let mut applied_buffered_poll_for_this_run = false;
-            if activation.has_eviction() {
+            if should_evict {
                 debug!(run_id=%run_id, "Evicting run");
-
-                if let Some(mut rh) = self.runs.remove(run_id) {
-                    if let Some(buff) = rh.take_buffered_wft() {
-                        // Don't try to apply a buffered poll for this run if we just got a new WFT
-                        // from completing, because by definition that buffered poll is now an
-                        // out-of-date WFT.
-                        if wft_from_complete.is_none() {
-                            res = self.instantiate_or_update(buff);
-                            applied_buffered_poll_for_this_run = true;
+                self.runs.remove(run_id);
+            }
+            let maybe_ready_wft =
+                maybe_buffered
+                    .get_next_wft()
+                    .or(wft_from_complete)
+                    .or_else(|| {
+                        // Attempt to apply a buffered poll for some *other* run, if we didn't have a
+                        // wft from complete or a buffered poll for *this* run and we evicted
+                        if should_evict {
+                            self.buffered_polls_need_cache_slot.pop_front()
+                        } else {
+                            None
                         }
-                    }
+                    });
+            if let Some(wft) = maybe_ready_wft {
+                res = self.instantiate_or_update(wft);
+                // We accept that there might be query tasks remaining in the buffer if we evicted
+                // and re-instantiated here. It's likely those tasks are now invalidated anyway.
+                if maybe_buffered.has_tasks() && should_evict {
+                    panic!("There were leftover buffered tasks");
                 }
-
-                // Attempt to apply a buffered poll for some *other* run, if we didn't have a wft
-                // from complete or a buffered poll for *this* run.
-                if wft_from_complete.is_none() && !applied_buffered_poll_for_this_run {
-                    if let Some(buff) = self.buffered_polls_need_cache_slot.pop_front() {
-                        res = self.instantiate_or_update(buff);
-                    }
-                }
-            };
-        }
-
-        if let Some((wft, pag)) = wft_from_complete {
-            debug!(run_id=%wft.execution.run_id, "New WFT from completion");
-            if let Some(t) = maybe_t {
-                res = self.instantiate_or_update(PermittedWFT {
-                    work: wft,
-                    permit: t.permit,
-                    paginator: pag,
-                });
             }
         }
 

@@ -6,10 +6,11 @@ use crate::{
             history_update::HistoryPaginator,
             machines::{MachinesWFTResponseContent, WorkflowMachines},
             ActivationAction, ActivationCompleteOutcome, ActivationCompleteResult,
-            ActivationOrAuto, DrivenWorkflow, EvictionRequestResult, FailedActivationWFTReport,
-            HeartbeatTimeoutMsg, HistoryUpdate, LocalActivityRequestSink, LocalResolution,
-            NextPageReq, OutstandingActivation, OutstandingTask, PermittedWFT, RequestEvictMsg,
-            RunBasics, ServerCommandsWithWorkflowInfo, WFCommand, WFMachinesError, WFTReportStatus,
+            ActivationOrAuto, BufferedTasks, DrivenWorkflow, EvictionRequestResult,
+            FailedActivationWFTReport, HeartbeatTimeoutMsg, HistoryUpdate,
+            LocalActivityRequestSink, LocalResolution, NextPageReq, OutstandingActivation,
+            OutstandingTask, PermittedWFT, RequestEvictMsg, RunBasics,
+            ServerCommandsWithWorkflowInfo, WFCommand, WFMachinesError, WFTReportStatus,
             WorkflowTaskInfo, WFT_HEARTBEAT_TIMEOUT_FRACTION,
         },
         LocalActRequest, LEGACY_QUERY_ID,
@@ -19,6 +20,7 @@ use crate::{
 use futures_util::future::AbortHandle;
 use std::{
     collections::HashSet,
+    mem,
     ops::Add,
     rc::Rc,
     sync::mpsc::Sender,
@@ -46,11 +48,11 @@ pub(super) type RunUpdateAct = Option<ActivationOrAuto>;
 /// remain that way.
 #[derive(derive_more::DebugCustom)]
 #[debug(
-    fmt = "ManagedRun {{ wft: {:?}, activation: {:?}, buffered_resp: {:?} \
+    fmt = "ManagedRun {{ wft: {:?}, activation: {:?}, task_buffer: {:?} \
            trying_to_evict: {} }}",
     wft,
     activation,
-    buffered_resp,
+    task_buffer,
     "trying_to_evict.is_some()"
 )]
 pub(super) struct ManagedRun {
@@ -71,11 +73,14 @@ pub(super) struct ManagedRun {
     wft: Option<OutstandingTask>,
     /// An outstanding activation to lang
     activation: Option<OutstandingActivation>,
-    /// If set, it indicates there is a buffered poll response from the server that applies to this
-    /// run. This can happen when lang takes too long to complete a task and the task times out, for
-    /// example. Upon next completion, the buffered response will be removed and can be made ready
-    /// to be returned from polling
-    buffered_resp: Option<PermittedWFT>,
+    /// Contains buffered poll responses from the server that apply to this run. This can happen
+    /// when:
+    ///   * Lang takes too long to complete a task and the task times out
+    ///   * Many queries are submitted concurrently and reach this worker (in this case, multiple
+    ///     tasks can be outstanding)
+    ///   * Multiple speculative tasks (ex: for updates) may also exist at once (but only the
+    ///     latest one will matter).
+    task_buffer: BufferedTasks,
     /// Is set if an eviction has been requested for this run
     trying_to_evict: Option<RequestEvictMsg>,
 
@@ -103,7 +108,7 @@ impl ManagedRun {
             am_broken: false,
             wft: None,
             activation: None,
-            buffered_resp: None,
+            task_buffer: Default::default(),
             trying_to_evict: None,
             recorded_span_ids: Default::default(),
             metrics,
@@ -190,6 +195,7 @@ impl ManagedRun {
                 complete_resp_chan: None,
             });
         }
+        let was_legacy_query = legacy_query_from_poll.is_some();
         if let Some(lq) = legacy_query_from_poll {
             pending_queries.push(lq);
         }
@@ -201,6 +207,16 @@ impl ManagedRun {
             start_time,
             permit: pwft.permit,
         });
+
+        if was_legacy_query
+            && work.update.wft_started_id == 0
+            && work.update.previous_wft_started_id < self.wfm.machines.get_last_wft_started_id()
+        {
+            return Ok(Some(ActivationOrAuto::AutoFail {
+                run_id: self.run_id().to_string(),
+                machines_err: WFMachinesError::Fatal("Query expired".to_string()),
+            }));
+        }
 
         // The update field is only populated in the event we hit the cache
         let activation = if work.update.is_real() {
@@ -496,14 +512,15 @@ impl ManagedRun {
     }
 
     /// Called whenever either core lang cannot complete a workflow activation. EX: Nondeterminism
-    /// or user code threw/panicked, respectively. The `cause` and `reason` fields are determined
-    /// inside core always. The `failure` field may come from lang. `resp_chan` will be used to
-    /// unblock the completion call when everything we need to do to fulfill it has happened.
+    /// or user code threw/panicked. The `cause` and `reason` fields are determined inside core
+    /// always. The `failure` field may come from lang. `resp_chan` will be used to unblock the
+    /// completion call when everything we need to do to fulfill it has happened.
     pub(super) fn failed_completion(
         &mut self,
         cause: WorkflowTaskFailedCause,
         reason: EvictionReason,
         failure: workflow_completion::Failure,
+        is_auto_fail: bool,
         resp_chan: Option<oneshot::Sender<ActivationCompleteResult>>,
     ) -> RunUpdateAct {
         let tt = if let Some(tt) = self.wft.as_ref().map(|t| t.info.task_token.clone()) {
@@ -519,24 +536,39 @@ impl ManagedRun {
 
         self.metrics.wf_task_failed();
         let message = format!("Workflow activation completion failed: {:?}", &failure);
-        // Blow up any cached data associated with the workflow
-        let evict_req_outcome = self.request_eviction(RequestEvictMsg {
-            run_id: self.run_id().to_string(),
-            message,
-            reason,
-            auto_reply_fail_tt: None,
-        });
-        let should_report = match &evict_req_outcome {
-            EvictionRequestResult::EvictionRequested(Some(attempt), _)
-            | EvictionRequestResult::EvictionAlreadyRequested(Some(attempt)) => *attempt <= 1,
-            _ => false,
+        // We don't want to fail queries that could otherwise be retried
+        let is_no_report_query_fail = self.pending_work_is_legacy_query()
+            && is_auto_fail
+            && matches!(
+                reason,
+                EvictionReason::Unspecified | EvictionReason::PaginationOrHistoryFetch
+            );
+        let (should_report, rur) = if is_no_report_query_fail {
+            (false, None)
+        } else {
+            // Blow up any cached data associated with the workflow
+            let evict_req_outcome = self.request_eviction(RequestEvictMsg {
+                run_id: self.run_id().to_string(),
+                message,
+                reason,
+                auto_reply_fail_tt: None,
+            });
+            let should_report = match &evict_req_outcome {
+                EvictionRequestResult::EvictionRequested(Some(attempt), _)
+                | EvictionRequestResult::EvictionAlreadyRequested(Some(attempt)) => *attempt <= 1,
+                _ => false,
+            };
+            let rur = evict_req_outcome.into_run_update_resp();
+            (should_report, rur)
         };
-        let rur = evict_req_outcome.into_run_update_resp();
-        // If the outstanding WFT is a legacy query task, report that we need to fail it
         let outcome = if self.pending_work_is_legacy_query() {
-            ActivationCompleteOutcome::ReportWFTFail(
-                FailedActivationWFTReport::ReportLegacyQueryFailure(tt, failure),
-            )
+            if is_no_report_query_fail {
+                ActivationCompleteOutcome::WFTFailedDontReport
+            } else {
+                ActivationCompleteOutcome::ReportWFTFail(
+                    FailedActivationWFTReport::ReportLegacyQueryFailure(tt, failure),
+                )
+            }
         } else if should_report {
             ActivationCompleteOutcome::ReportWFTFail(FailedActivationWFTReport::Report(
                 tt, cause, failure,
@@ -548,17 +580,30 @@ impl ManagedRun {
         rur
     }
 
-    /// Delete the currently tracked workflow activation and return it, if any. Should be called
-    /// after the processing of the activation completion, and WFT reporting.
-    pub(super) fn delete_activation(
+    /// Must be called after the processing of the activation completion and WFT reporting.
+    ///
+    /// It will delete the currently tracked workflow activation (if there is one) and `pred`
+    /// evaluates to true. In the event the activation was an eviction, the bool part of the return
+    /// tuple is true. The [BufferedTasks] part will contain any buffered tasks that may still exist
+    /// and need to be instantiated into a new instance of the run, if a `wft_from_complete` was
+    /// provided, it will supersede any real WFTs in the buffer as by definition those are now
+    /// out-of-date.
+    pub(super) fn finish_activation(
         &mut self,
         pred: impl FnOnce(&OutstandingActivation) -> bool,
-    ) -> Option<OutstandingActivation> {
-        if self.activation().map(pred).unwrap_or_default() {
-            self.activation.take()
+    ) -> (bool, BufferedTasks) {
+        let evict = if self.activation().map(pred).unwrap_or_default() {
+            let act = self.activation.take();
+            act.map(|a| a.has_eviction()).unwrap_or_default()
         } else {
-            None
-        }
+            false
+        };
+        let buffered = if evict {
+            mem::take(&mut self.task_buffer)
+        } else {
+            Default::default()
+        };
+        (evict, buffered)
     }
 
     /// Called when local activities resolve
@@ -730,7 +775,7 @@ impl ManagedRun {
         let buffered = if ignore_buffered {
             false
         } else {
-            self.buffered_resp.is_some()
+            self.task_buffer.has_tasks()
         };
         trace!(wft=self.wft.is_some(), buffered=?buffered, more_work=?self.more_pending_work(),
                act_work, evict_work, "Does run have pending work?");
@@ -744,12 +789,11 @@ impl ManagedRun {
         work: PermittedWFT,
     ) -> Option<PermittedWFT> {
         let about_to_issue_evict = self.trying_to_evict.is_some();
-        let has_wft = self.wft().is_some();
         let has_activation = self.activation().is_some();
-        if has_wft || has_activation || about_to_issue_evict || self.more_pending_work() {
+        if has_activation || about_to_issue_evict || self.more_pending_work() {
             debug!(run_id = %self.run_id(),
-                   "Got new WFT for a run with outstanding work, buffering it");
-            self.buffered_resp = Some(work);
+                   "Got new WFT for a run with outstanding work, buffering it act: {:?} wft: {:?} about to evict: {:?}", &self.activation(), &self.wft, about_to_issue_evict);
+            self.task_buffer.buffer(work);
             None
         } else {
             Some(work)
@@ -758,12 +802,7 @@ impl ManagedRun {
 
     /// Returns true if there is a buffered workflow task for this run.
     pub(super) fn has_buffered_wft(&self) -> bool {
-        self.buffered_resp.is_some()
-    }
-
-    /// Removes and returns the buffered workflow task, if any.
-    pub(super) fn take_buffered_wft(&mut self) -> Option<PermittedWFT> {
-        self.buffered_resp.take()
+        self.task_buffer.has_tasks()
     }
 
     pub(super) fn request_eviction(&mut self, info: RequestEvictMsg) -> EvictionRequestResult {
@@ -780,6 +819,7 @@ impl ManagedRun {
                 WorkflowTaskFailedCause::Unspecified,
                 info.reason,
                 Failure::application_failure(info.message, false).into(),
+                true,
                 c.resp_chan,
             );
             return EvictionRequestResult::EvictionRequested(attempts, run_upd);
@@ -873,11 +913,11 @@ impl ManagedRun {
                 }
 
                 match r {
-                    // After each run update, check if it's ready to handle any buffered poll
+                    // After each run update, check if it's ready to handle any buffered task
                     None | Some(ActivationOrAuto::Autocomplete { .. })
                         if !self.has_any_pending_work(false, true) =>
                     {
-                        if let Some(bufft) = self.buffered_resp.take() {
+                        if let Some(bufft) = self.task_buffer.get_next_wft() {
                             self.incoming_wft(bufft)
                         } else {
                             None
@@ -904,6 +944,7 @@ impl ManagedRun {
                         fail_cause,
                         fail.source.evict_reason(),
                         Failure::application_failure(wft_fail_str, false).into(),
+                        true,
                         Some(resp_chan),
                     )
                 } else {

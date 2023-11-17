@@ -1,6 +1,7 @@
 use assert_matches::assert_matches;
 use futures::{prelude::stream::FuturesUnordered, FutureExt, StreamExt};
-use std::time::Duration;
+use futures_util::future::join_all;
+use std::time::{Duration, Instant};
 use temporal_client::WorkflowClientTrait;
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -13,6 +14,7 @@ use temporal_sdk_core_protos::{
 use temporal_sdk_core_test_utils::{
     drain_pollers_and_shutdown, init_core_and_create_wf, WorkerTestHelpers,
 };
+use tokio::join;
 
 #[tokio::test]
 async fn simple_query_legacy() {
@@ -102,7 +104,7 @@ async fn simple_query_legacy() {
         let task = core.poll_workflow_activation().await.unwrap();
         core.complete_execution(&task.run_id).await;
     };
-    let (q_resp, _) = tokio::join!(query_fut, workflow_completions_future);
+    let (q_resp, _) = join!(query_fut, workflow_completions_future);
     // Ensure query response is as expected
     assert_eq!(&q_resp.unwrap()[0].data, query_resp);
 }
@@ -308,7 +310,176 @@ async fn fail_legacy_query() {
         let task = core.poll_workflow_activation().await.unwrap();
         core.complete_execution(&task.run_id).await;
     };
-    let (q_resp, _) = tokio::join!(query_fut, workflow_completions_future);
+    let (q_resp, _) = join!(query_fut, workflow_completions_future);
     // Ensure query response is a failure and has the right message
     assert_eq!(q_resp.message(), query_err);
+}
+
+#[tokio::test]
+async fn multiple_concurrent_queries_no_new_history() {
+    let mut starter = init_core_and_create_wf("multiple_concurrent_queries_no_new_history").await;
+    let core = starter.get_worker().await;
+    let workflow_id = starter.get_task_queue().to_string();
+    let started = Instant::now();
+    let task = core.poll_workflow_activation().await.unwrap();
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
+        task.run_id.clone(),
+        vec![], // complete with no commands so that there will be no new history
+    ))
+    .await
+    .unwrap();
+    let client = starter.get_client().await;
+    let num_queries = 10;
+    let query_futs = (1..=num_queries).map(|_| async {
+        client
+            .query_workflow_execution(
+                workflow_id.to_string(),
+                task.run_id.to_string(),
+                WorkflowQuery {
+                    query_type: "myquery".to_string(),
+                    query_args: Some(b"hi".into()),
+                    header: None,
+                },
+            )
+            .await
+            .unwrap();
+    });
+    let complete_fut = async {
+        for _ in 1..=num_queries {
+            let task = core.poll_workflow_activation().await.unwrap();
+            let query = assert_matches!(
+                task.jobs.as_slice(),
+                [WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::QueryWorkflow(q)),
+                }] => q
+            );
+            core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+                task.run_id,
+                QueryResult {
+                    query_id: query.query_id.clone(),
+                    variant: Some(
+                        QuerySuccess {
+                            response: Some("done".into()),
+                        }
+                        .into(),
+                    ),
+                }
+                .into(),
+            ))
+            .await
+            .unwrap();
+        }
+    };
+    join!(join_all(query_futs), complete_fut);
+    // No need to properly finish
+    client
+        .terminate_workflow_execution(workflow_id, None)
+        .await
+        .unwrap();
+    // This test should not take a long time. Things can still work, but if it takes a long time
+    // that means we aren't buffering properly, and tasks are getting redelivered after timeout.
+    if started.elapsed() > Duration::from_secs(9) {
+        panic!("Should not have taken this long");
+    }
+}
+
+#[tokio::test]
+async fn query_superseded_by_newer_wft_is_discarded() {
+    let mut starter = init_core_and_create_wf("query_superseded_by_newer_wft_is_discarded").await;
+    let core = starter.get_worker().await;
+    let workflow_id = starter.get_task_queue().to_string();
+    let task = core.poll_workflow_activation().await.unwrap();
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
+        task.run_id.clone(),
+        vec![], // complete with no commands so that there will be no new history
+    ))
+    .await
+    .unwrap();
+    let client = starter.get_client().await;
+    // Send two queries so that one of them is buffered
+    let query_futs = (1..=2).map(|_| async {
+        client
+            .query_workflow_execution(
+                workflow_id.to_string(),
+                task.run_id.to_string(),
+                WorkflowQuery {
+                    query_type: "myquery".to_string(),
+                    query_args: Some(b"hi".into()),
+                    header: None,
+                },
+            )
+            .await
+            .unwrap();
+    });
+    let complete_fut = async {
+        let task = core.poll_workflow_activation().await.unwrap();
+        let query = assert_matches!(
+            task.jobs.as_slice(),
+            [WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::QueryWorkflow(q)),
+            }] => q
+        );
+        // While handling the first query, signal the workflow so a new WFT is generated and the
+        // second query is still in the buffer
+        client
+            .signal_workflow_execution(
+                workflow_id.to_string(),
+                task.run_id.to_string(),
+                "blah".to_string(),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+            task.run_id,
+            QueryResult {
+                query_id: query.query_id.clone(),
+                variant: Some(
+                    QuerySuccess {
+                        response: Some("done".into()),
+                    }
+                    .into(),
+                ),
+            }
+            .into(),
+        ))
+        .await
+        .unwrap();
+        // We should get the signal activation since the in-buffer query should've been failed
+        let task = core.poll_workflow_activation().await.unwrap();
+        assert_matches!(
+            task.jobs.as_slice(),
+            [WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::SignalWorkflow(_)),
+            }]
+        );
+        core.complete_execution(&task.run_id).await;
+        // Query will get retried by server since we fail the task w/ the stale query
+        let task = core.poll_workflow_activation().await.unwrap();
+        let query = assert_matches!(
+            task.jobs.as_slice(),
+            [WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::QueryWorkflow(q)),
+            }] => q
+        );
+        core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+            task.run_id,
+            QueryResult {
+                query_id: query.query_id.clone(),
+                variant: Some(
+                    QuerySuccess {
+                        response: Some("done".into()),
+                    }
+                    .into(),
+                ),
+            }
+            .into(),
+        ))
+        .await
+        .unwrap();
+    };
+    join!(join_all(query_futs), complete_fut);
+    drain_pollers_and_shutdown(&core).await;
 }
