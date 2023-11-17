@@ -368,6 +368,10 @@ impl WorkflowMachines {
         self.drive_me.get_started_info()
     }
 
+    pub(crate) fn get_last_wft_started_id(&self) -> i64 {
+        self.current_started_event_id
+    }
+
     pub(crate) fn prepare_for_wft_response(&mut self) -> MachinesWFTResponseContent {
         MachinesWFTResponseContent {
             replaying: self.replaying,

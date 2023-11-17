@@ -314,7 +314,7 @@ impl Workflows {
         post_activate_hook: Option<impl Fn(PostActivateHookData)>,
     ) -> Result<(), CompleteWfError> {
         let is_empty_completion = completion.is_empty();
-        let completion = validate_completion(completion)?;
+        let completion = validate_completion(completion, is_autocomplete)?;
         let run_id = completion.run_id().to_string();
         let (tx, rx) = oneshot::channel();
         let was_sent = self.send_local(WFActCompleteMsg {
@@ -1056,6 +1056,7 @@ impl BufferedTasks {
 
 fn validate_completion(
     completion: WorkflowActivationCompletion,
+    is_autocomplete: bool,
 ) -> Result<ValidatedCompletion, CompleteWfError> {
     match completion.status {
         Some(workflow_activation_completion::Status::Successful(success)) => {
@@ -1067,7 +1068,7 @@ fn validate_completion(
                 .collect::<Result<Vec<_>, EmptyWorkflowCommandErr>>()
                 .map_err(|_| CompleteWfError::MalformedWorkflowCompletion {
                     reason: "At least one workflow command in the completion contained \
-                                 an empty variant"
+                             an empty variant"
                         .to_owned(),
                     run_id: completion.run_id.clone(),
                 })?;
@@ -1107,6 +1108,7 @@ fn validate_completion(
             Ok(ValidatedCompletion::Fail {
                 run_id: completion.run_id,
                 failure,
+                is_autocomplete,
             })
         }
         None => Err(CompleteWfError::MalformedWorkflowCompletion {
@@ -1131,6 +1133,7 @@ enum ValidatedCompletion {
     Fail {
         run_id: String,
         failure: Failure,
+        is_autocomplete: bool,
     },
 }
 

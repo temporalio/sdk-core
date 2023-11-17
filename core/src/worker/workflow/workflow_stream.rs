@@ -301,10 +301,19 @@ impl WFStream {
                         None
                     }
                 },
-                ValidatedCompletion::Fail { failure, .. } => rh.failed_completion(
-                    failure.force_cause(),
-                    EvictionReason::LangFail,
+                ValidatedCompletion::Fail {
                     failure,
+                    is_autocomplete,
+                    ..
+                } => rh.failed_completion(
+                    failure.force_cause(),
+                    if is_autocomplete {
+                        EvictionReason::Unspecified
+                    } else {
+                        EvictionReason::LangFail
+                    },
+                    failure,
+                    is_autocomplete,
                     complete.response_tx,
                 ),
             },

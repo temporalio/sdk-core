@@ -78,7 +78,8 @@ pub(super) struct ManagedRun {
     ///   * Lang takes too long to complete a task and the task times out
     ///   * Many queries are submitted concurrently and reach this worker (in this case, multiple
     ///     tasks can be outstanding)
-    ///   * Multiple speculative tasks (ex: for updates) may also exist at once
+    ///   * Multiple speculative tasks (ex: for updates) may also exist at once (but only the
+    ///     latest one will matter).
     task_buffer: BufferedTasks,
     /// Is set if an eviction has been requested for this run
     trying_to_evict: Option<RequestEvictMsg>,
@@ -194,6 +195,7 @@ impl ManagedRun {
                 complete_resp_chan: None,
             });
         }
+        let was_legacy_query = legacy_query_from_poll.is_some();
         if let Some(lq) = legacy_query_from_poll {
             pending_queries.push(lq);
         }
@@ -205,6 +207,16 @@ impl ManagedRun {
             start_time,
             permit: pwft.permit,
         });
+
+        if was_legacy_query
+            && work.update.wft_started_id == 0
+            && work.update.previous_wft_started_id < self.wfm.machines.get_last_wft_started_id()
+        {
+            return Ok(Some(ActivationOrAuto::AutoFail {
+                run_id: self.run_id().to_string(),
+                machines_err: WFMachinesError::Fatal("Query expired".to_string()),
+            }));
+        }
 
         // The update field is only populated in the event we hit the cache
         let activation = if work.update.is_real() {
@@ -500,14 +512,15 @@ impl ManagedRun {
     }
 
     /// Called whenever either core lang cannot complete a workflow activation. EX: Nondeterminism
-    /// or user code threw/panicked, respectively. The `cause` and `reason` fields are determined
-    /// inside core always. The `failure` field may come from lang. `resp_chan` will be used to
-    /// unblock the completion call when everything we need to do to fulfill it has happened.
+    /// or user code threw/panicked. The `cause` and `reason` fields are determined inside core
+    /// always. The `failure` field may come from lang. `resp_chan` will be used to unblock the
+    /// completion call when everything we need to do to fulfill it has happened.
     pub(super) fn failed_completion(
         &mut self,
         cause: WorkflowTaskFailedCause,
         reason: EvictionReason,
         failure: workflow_completion::Failure,
+        is_auto_fail: bool,
         resp_chan: Option<oneshot::Sender<ActivationCompleteResult>>,
     ) -> RunUpdateAct {
         let tt = if let Some(tt) = self.wft.as_ref().map(|t| t.info.task_token.clone()) {
@@ -538,9 +551,17 @@ impl ManagedRun {
         let rur = evict_req_outcome.into_run_update_resp();
         // If the outstanding WFT is a legacy query task, report that we need to fail it
         let outcome = if self.pending_work_is_legacy_query() {
-            ActivationCompleteOutcome::ReportWFTFail(
-                FailedActivationWFTReport::ReportLegacyQueryFailure(tt, failure),
-            )
+            // We don't want to fail queries that could otherwise be retried
+            let failtype = if is_auto_fail
+                && matches!(
+                    reason,
+                    EvictionReason::Unspecified | EvictionReason::PaginationOrHistoryFetch
+                ) {
+                FailedActivationWFTReport::Report(tt, cause, failure)
+            } else {
+                FailedActivationWFTReport::ReportLegacyQueryFailure(tt, failure)
+            };
+            ActivationCompleteOutcome::ReportWFTFail(failtype)
         } else if should_report {
             ActivationCompleteOutcome::ReportWFTFail(FailedActivationWFTReport::Report(
                 tt, cause, failure,
@@ -796,6 +817,7 @@ impl ManagedRun {
                 WorkflowTaskFailedCause::Unspecified,
                 info.reason,
                 Failure::application_failure(info.message, false).into(),
+                true,
                 c.resp_chan,
             );
             return EvictionRequestResult::EvictionRequested(attempts, run_upd);
@@ -920,6 +942,7 @@ impl ManagedRun {
                         fail_cause,
                         fail.source.evict_reason(),
                         Failure::application_failure(wft_fail_str, false).into(),
+                        true,
                         Some(resp_chan),
                     )
                 } else {
