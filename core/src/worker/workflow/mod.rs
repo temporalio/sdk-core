@@ -1392,7 +1392,7 @@ impl LocalActivityRequestSink for LAReqSink {
 /// activations must uphold.
 ///
 /// ## Ordering
-/// `patches -> signals/updates -> other -X-> queries`
+/// `patches -> signals/updates -> other -> queries -> evictions`
 ///
 /// ## Invariants:
 /// * Queries always go in their own activation
@@ -1431,6 +1431,9 @@ fn prepare_to_ship_activation(wfa: &mut WorkflowActivation) {
                 // queries always get their own activation, but, maintaining the semantic is
                 // reasonable.
                 workflow_activation_job::Variant::QueryWorkflow(_) => 4,
+                // Also shouldn't ever end up anywhere but the end by construction, but no harm in
+                // double-checking.
+                workflow_activation_job::Variant::RemoveFromCache(_) => 5,
                 _ => 3,
             }
         }
