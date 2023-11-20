@@ -32,11 +32,11 @@ async fn replay_with_empty_first_task() {
         task.jobs.as_slice(),
         [
             WorkflowActivationJob {
-                variant: Some(workflow_activation_job::Variant::StartWorkflow(_)),
+                variant: Some(workflow_activation_job::Variant::DoUpdate(_)),
             },
             WorkflowActivationJob {
-                variant: Some(workflow_activation_job::Variant::DoUpdate(_)),
-            }
+                variant: Some(workflow_activation_job::Variant::StartWorkflow(_)),
+            },
         ]
     );
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
