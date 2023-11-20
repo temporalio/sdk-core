@@ -4,7 +4,7 @@ static ALWAYS_SERDE: &str = "#[cfg_attr(not(feature = \"serde_serialize\"), \
                                derive(::serde::Serialize, ::serde::Deserialize))]";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("cargo:rerun-if-changed=../protos");
+    println!("cargo:rerun-if-changed=./protos");
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let descriptor_file = out.join("descriptors.bin");
     tonic_build::configure()
@@ -115,17 +115,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .file_descriptor_set_path(#[allow(clippy::needless_borrow)] &descriptor_file)
         .compile(
             &[
-                "../protos/local/temporal/sdk/core/core_interface.proto",
-                "../protos/api_upstream/temporal/api/workflowservice/v1/service.proto",
-                "../protos/api_upstream/temporal/api/operatorservice/v1/service.proto",
-                "../protos/testsrv_upstream/temporal/api/testservice/v1/service.proto",
-                "../protos/grpc/health/v1/health.proto",
+                "./protos/local/temporal/sdk/core/core_interface.proto",
+                "./protos/api_upstream/temporal/api/workflowservice/v1/service.proto",
+                "./protos/api_upstream/temporal/api/operatorservice/v1/service.proto",
+                "./protos/testsrv_upstream/temporal/api/testservice/v1/service.proto",
+                "./protos/grpc/health/v1/health.proto",
             ],
             &[
-                "../protos/api_upstream",
-                "../protos/local",
-                "../protos/testsrv_upstream",
-                "../protos/grpc",
+                "./protos/api_upstream",
+                "./protos/local",
+                "./protos/testsrv_upstream",
+                "./protos/grpc",
             ],
         )?;
 

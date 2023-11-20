@@ -86,7 +86,7 @@ equivalent.
 
 ## Proto files
 
-This repo uses a subtree for upstream protobuf files. The path `protos/api_upstream` is a
+This repo uses a subtree for upstream protobuf files. The path `sdk-core-protos/protos/api_upstream` is a
 subtree. To update it, use:
 
 `git pull --squash -s subtree ssh://git@github.com/temporalio/api.git master --allow-unrelated-histories`
@@ -100,9 +100,9 @@ subdirectory of that repo, we just copy the files with read-tree:
 # add sdk-java as a remote if you have not already
 git remote add -f -t master --no-tags testsrv-protos git@github.com:temporalio/sdk-java.git
 # delete existing protos
-git rm -rf protos/testsrv_upstream
+git rm -rf sdk-core-protos/protos/testsrv_upstream
 # pull from upstream & commit
-git read-tree --prefix protos/testsrv_upstream -u testsrv-protos/master:temporal-test-server/src/main/proto
+git read-tree --prefix sdk-core-protos/protos/testsrv_upstream -u testsrv-protos/master:temporal-test-server/src/main/proto
 git commit
 ```
 
