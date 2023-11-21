@@ -334,8 +334,7 @@ impl Future for WorkflowFuture {
             if activation
                 .jobs
                 .iter()
-                .find(|j| matches!(j.variant, Some(Variant::StartWorkflow(_))))
-                .is_some()
+                .any(|j| matches!(j.variant, Some(Variant::StartWorkflow(_))))
                 && activation.jobs.iter().all(|j| {
                     matches!(
                         j.variant,
