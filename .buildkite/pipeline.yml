@@ -6,7 +6,7 @@ steps:
     command: "cargo fmt --all -- --check && cargo doc --workspace --all-features --no-deps"
     timeout_in_minutes: 15
     plugins:
-      - docker-compose#v3.0.0:
+      - docker-compose#v4.15.0:
           run: unit-test
           config:
             - .buildkite/docker/docker-compose.yaml
@@ -20,7 +20,7 @@ steps:
     command: "cargo lint && cargo test-lint"
     timeout_in_minutes: 15
     plugins:
-      - docker-compose#v3.0.0:
+      - docker-compose#v4.15.0:
           run: unit-test
           config:
             - .buildkite/docker/docker-compose.yaml
@@ -35,7 +35,7 @@ steps:
       - "machine_coverage/*"
     timeout_in_minutes: 15
     plugins:
-      - docker-compose#v3.0.0:
+      - docker-compose#v4.15.0:
           run: unit-test
           config:
             - .buildkite/docker/docker-compose.yaml
@@ -49,7 +49,7 @@ steps:
     command: "cargo test --test integ_tests"
     timeout_in_minutes: 15
     plugins:
-      - docker-compose#v3.0.0:
+      - docker-compose#v4.15.0:
           run: integ-test
           config:
             - .buildkite/docker/docker-compose.yaml
