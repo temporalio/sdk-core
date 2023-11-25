@@ -8,6 +8,10 @@ edition = "2021"
 name = "histfetch"
 path = "src/histfetch.rs"
 
+[features]
+default = ["ephemeral-server"]
+ephemeral-server = ["temporal-sdk-core/ephemeral-server"]
+
 [dependencies]
 anyhow = "1.0"
 async-trait = "0.1"
@@ -24,7 +28,7 @@ rmp-serde = "1.1"
 serde_json = "1.0"
 temporal-client = { path = "../client" }
 temporal-sdk = { path = "../sdk" }
-temporal-sdk-core = { path = "../core", features = ["ephemeral-server"] }
+temporal-sdk-core = { path = "../core" }
 temporal-sdk-core-api = { path = "../core-api" }
 thiserror = "1.0"
 tokio = "1.1"

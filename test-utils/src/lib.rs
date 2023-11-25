@@ -33,8 +33,9 @@ use temporal_sdk::{
     interceptors::{FailOnNondeterminismInterceptor, WorkerInterceptor},
     IntoActivityFunc, Worker, WorkflowFunction,
 };
+#[cfg(feature = "ephemeral-server")]
+use temporal_sdk_core::ephemeral_server::{EphemeralExe, EphemeralExeVersion};
 use temporal_sdk_core::{
-    ephemeral_server::{EphemeralExe, EphemeralExeVersion},
     init_replay_worker, init_worker,
     replay::ReplayWorkerInput,
     telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter},
@@ -675,6 +676,7 @@ pub fn get_integ_telem_options() -> TelemetryOptions {
     .unwrap()
 }
 
+#[cfg(feature = "ephemeral-server")]
 pub fn default_cached_download() -> EphemeralExe {
     EphemeralExe::CachedDownload {
         version: EphemeralExeVersion::SDKDefault {
