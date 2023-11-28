@@ -89,10 +89,10 @@ async fn update_workflow(#[values(true, false)] will_fail: bool) {
 
 async fn _do_update_workflow(will_fail: bool, core: &dyn Worker) {
     let res = core.poll_workflow_activation().await.unwrap();
-    // On replay, the first activation has start workflow & update, but on first execution, it does
+    // On replay, the first activation has update & start workflow, but on first execution, it does
     // not - can happen if update is waiting on some condition.
     let pid = assert_matches!(
-        res.jobs.last().unwrap(),
+        &res.jobs[0],
         WorkflowActivationJob {
             variant: Some(workflow_activation_job::Variant::DoUpdate(d)),
         } => &d.protocol_instance_id

@@ -48,8 +48,8 @@ You can build and test the project using cargo:
 `cargo build`
 `cargo test`
 
-Run integ tests with `cargo integ-test`. You will need to already be running the server:
-`docker-compose -f .buildkite/docker/docker-compose.yaml up`
+Run integ tests with `cargo integ-test`. By default it will start an ephemeral server. You can also
+use an already-running server by passing `-s external`.
 
 Run load tests with `cargo test --features=save_wf_inputs --test heavy_tests`.
 
@@ -79,7 +79,7 @@ The passed in options to initialization can be customized to export to an OTel c
 To run integ tests with OTel collection on, you can use `integ-with-otel.sh`. You will want to make
 sure you are running the collector via docker, which can be done like so:
 
-`docker-compose -f .buildkite/docker/docker-compose.yaml -f .buildkite/docker/docker-compose-telem.yaml up`
+`docker-compose -f docker/docker-compose.yaml -f docker/docker-compose-telem.yaml up`
 
 If you are working on a language SDK, you are expected to initialize tracing early in your `main`
 equivalent.
