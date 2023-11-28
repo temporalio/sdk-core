@@ -635,9 +635,11 @@ pub struct ChildWfCommon {
     result_future: CancellableWFCommandFut<ChildWorkflowResult, ()>,
 }
 
+/// Child workflow in pending state
 pub struct PendingChildWorkflow {
+    /// The status of the child workflow start
     pub status: ChildWorkflowStartStatus,
-    pub common: ChildWfCommon,
+    pub(crate) common: ChildWfCommon,
 }
 
 impl PendingChildWorkflow {
@@ -654,7 +656,9 @@ impl PendingChildWorkflow {
     }
 }
 
+/// Child workflow in started state
 pub struct StartedChildWorkflow {
+    /// Run ID of the child workflow
     pub run_id: String,
     common: ChildWfCommon,
 }

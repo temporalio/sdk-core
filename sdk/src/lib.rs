@@ -55,13 +55,11 @@ pub use activity_context::ActContext;
 pub use temporal_client::Namespace;
 pub use workflow_context::{
     ActivityOptions, CancellableFuture, ChildWorkflow, ChildWorkflowOptions, LocalActivityOptions,
-    Signal, SignalData, SignalWorkflowOptions, WfContext,
+    PendingChildWorkflow, Signal, SignalData, SignalWorkflowOptions, StartedChildWorkflow,
+    WfContext,
 };
 
-use crate::{
-    interceptors::WorkerInterceptor,
-    workflow_context::{ChildWfCommon, PendingChildWorkflow},
-};
+use crate::{interceptors::WorkerInterceptor, workflow_context::ChildWfCommon};
 use anyhow::{anyhow, bail, Context};
 use app_data::AppData;
 use futures::{future::BoxFuture, FutureExt, StreamExt, TryFutureExt, TryStreamExt};
