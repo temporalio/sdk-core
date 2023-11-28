@@ -24,7 +24,11 @@ pub static ENCODING_PAYLOAD_KEY: &str = "encoding";
 pub static JSON_ENCODING_VAL: &str = "json/plain";
 pub static PATCHED_MARKER_DETAILS_KEY: &str = "patch-data";
 
-#[allow(clippy::large_enum_variant, clippy::derive_partial_eq_without_eq)]
+#[allow(
+    clippy::large_enum_variant,
+    clippy::derive_partial_eq_without_eq,
+    clippy::reserve_after_initialization
+)]
 // I'd prefer not to do this, but there are some generated things that just don't need it.
 #[allow(missing_docs)]
 pub mod coresdk {

@@ -24,25 +24,17 @@ pub trait Worker: Send + Sync {
     /// be one outstanding activation for a particular run of a workflow at any time. If an
     /// activation is not responded to, it will cause that workflow to become stuck forever.
     ///
-    /// Activations that contain only a `remove_from_cache` job should not cause the workflow code
-    /// to be invoked and may be responded to with an empty command list. Eviction jobs may also
-    /// appear with other jobs, but will always appear last in the job list. In this case it is
-    /// expected that the workflow code will be invoked, and the response produced as normal, but
-    /// the caller should evict the run after doing so.
+    /// See [WorkflowActivation] for more details on the expected behavior of lang w.r.t activation
+    /// & job processing.
     ///
-    /// It is rarely a good idea to call poll concurrently. It handles polling the server
-    /// concurrently internally.
+    /// Do not call poll concurrently. It handles polling the server concurrently internally.
     async fn poll_workflow_activation(&self) -> Result<WorkflowActivation, PollWfError>;
 
     /// Ask the worker for some work, returning an [ActivityTask]. It is then the language SDK's
     /// responsibility to call the appropriate activity code with the provided inputs. Blocks
     /// indefinitely until such work is available or [Worker::shutdown] is called.
     ///
-    /// The returned activation is guaranteed to be for the same task queue / worker which was
-    /// provided as the `task_queue` argument.
-    ///
-    /// It is rarely a good idea to call poll concurrently. It handles polling the server
-    /// concurrently internally.
+    /// Do not call poll concurrently. It handles polling the server concurrently internally.
     async fn poll_activity_task(&self) -> Result<ActivityTask, PollActivityError>;
 
     /// Tell the worker that a workflow activation has completed. May (and should) be freely called

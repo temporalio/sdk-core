@@ -732,7 +732,7 @@ impl ManagedRun {
         } else {
             None
         };
-        self.update_to_acts(Ok(maybe_act).map(Into::into))
+        self.update_to_acts(Ok(maybe_act.into()))
     }
     /// Returns `true` if autocompletion should be issued, which will actually cause us to end up
     /// in [completion] again, at which point we'll start a new heartbeat timeout, which will
