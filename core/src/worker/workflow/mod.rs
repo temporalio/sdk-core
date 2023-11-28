@@ -1392,7 +1392,7 @@ impl LocalActivityRequestSink for LAReqSink {
 /// activations must uphold.
 ///
 /// ## Ordering
-/// `patches -> signals -> other -X-> queries`
+/// `patches -> signals/updates -> other -> queries -> evictions`
 ///
 /// ## Invariants:
 /// * Queries always go in their own activation
@@ -1426,10 +1426,14 @@ fn prepare_to_ship_activation(wfa: &mut WorkflowActivation) {
             match v {
                 workflow_activation_job::Variant::NotifyHasPatch(_) => 1,
                 workflow_activation_job::Variant::SignalWorkflow(_) => 2,
+                workflow_activation_job::Variant::DoUpdate(_) => 2,
                 // In principle we should never actually need to sort these with the others, since
                 // queries always get their own activation, but, maintaining the semantic is
                 // reasonable.
                 workflow_activation_job::Variant::QueryWorkflow(_) => 4,
+                // Also shouldn't ever end up anywhere but the end by construction, but no harm in
+                // double-checking.
+                workflow_activation_job::Variant::RemoveFromCache(_) => 5,
                 _ => 3,
             }
         }
@@ -1441,6 +1445,7 @@ fn prepare_to_ship_activation(wfa: &mut WorkflowActivation) {
 mod tests {
     use super::*;
     use itertools::Itertools;
+    use temporal_sdk_core_protos::coresdk::workflow_activation::SignalWorkflow;
 
     #[test]
     fn jobs_sort() {
@@ -1448,7 +1453,10 @@ mod tests {
             jobs: vec![
                 WorkflowActivationJob {
                     variant: Some(workflow_activation_job::Variant::SignalWorkflow(
-                        Default::default(),
+                        SignalWorkflow {
+                            signal_name: "1".to_string(),
+                            ..Default::default()
+                        },
                     )),
                 },
                 WorkflowActivationJob {
@@ -1466,6 +1474,19 @@ mod tests {
                         Default::default(),
                     )),
                 },
+                WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::DoUpdate(
+                        Default::default(),
+                    )),
+                },
+                WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::SignalWorkflow(
+                        SignalWorkflow {
+                            signal_name: "2".to_string(),
+                            ..Default::default()
+                        },
+                    )),
+                },
             ],
             ..Default::default()
         };
@@ -1479,10 +1500,12 @@ mod tests {
             variants.as_slice(),
             &[
                 workflow_activation_job::Variant::NotifyHasPatch(_),
-                workflow_activation_job::Variant::SignalWorkflow(_),
+                workflow_activation_job::Variant::SignalWorkflow(ref s1),
+                workflow_activation_job::Variant::DoUpdate(_),
+                workflow_activation_job::Variant::SignalWorkflow(ref s2),
                 workflow_activation_job::Variant::FireTimer(_),
                 workflow_activation_job::Variant::ResolveActivity(_),
-            ]
+            ] if s1.signal_name == "1" && s2.signal_name == "2"
         )
     }
 
