@@ -178,6 +178,8 @@ pub struct ChildWorkflowOptions {
     pub workflow_id: String,
     /// Type of workflow to schedule
     pub workflow_type: String,
+    /// Task queue to schedule the workflow in
+    pub task_queue: String,
     /// Input to send the child Workflow
     pub input: Vec<Payload>,
     /// Cancellation strategy for the child workflow
@@ -195,6 +197,7 @@ impl IntoWorkflowCommand for ChildWorkflowOptions {
             seq,
             workflow_id: self.workflow_id,
             workflow_type: self.workflow_type,
+            task_queue: self.task_queue,
             input: self.input,
             cancellation_type: self.cancel_type as i32,
             workflow_id_reuse_policy: self.options.id_reuse_policy as i32,
