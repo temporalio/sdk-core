@@ -333,11 +333,11 @@ impl Future for WorkflowFuture {
             // the history has no commands until an update is accepted. Will go away w/ SDK redesign
             if activation
                 .jobs
-                .get(0)
-                .is_some_and(|j| matches!(j.variant, Some(Variant::StartWorkflow(_))))
-                && activation.jobs.iter().all(|a| {
+                .iter()
+                .any(|j| matches!(j.variant, Some(Variant::StartWorkflow(_))))
+                && activation.jobs.iter().all(|j| {
                     matches!(
-                        a.variant,
+                        j.variant,
                         Some(Variant::StartWorkflow(_) | Variant::DoUpdate(_))
                     )
                 })
