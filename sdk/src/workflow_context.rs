@@ -165,11 +165,12 @@ impl WfContext {
     }
 
     /// A future that resolves if/when the workflow is cancelled
-    pub async fn cancelled(&mut self) {
+    pub async fn cancelled(&self) {
         if *self.am_cancelled.borrow() {
             return;
         }
         self.am_cancelled
+            .clone()
             .changed()
             .await
             .expect("Cancelled send half not dropped");
