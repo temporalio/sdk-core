@@ -28,7 +28,7 @@ async-trait = "0.1"
 base64 = "0.21"
 console-subscriber = { version = "0.1", optional = true }
 crossbeam = "0.8"
-dashmap = "5.0"
+dashmap = "5.5"
 derive_builder = "0.12"
 derive_more = "0.99"
 enum_dispatch = "0.3"
