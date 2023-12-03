@@ -25,7 +25,7 @@ async fn cancel_sender(ctx: WfContext) -> WorkflowResult<()> {
     Ok(().into())
 }
 
-async fn cancel_receiver(mut ctx: WfContext) -> WorkflowResult<()> {
+async fn cancel_receiver(ctx: WfContext) -> WorkflowResult<()> {
     ctx.cancelled().await;
     Ok(().into())
 }
