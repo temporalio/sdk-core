@@ -73,6 +73,7 @@ pub(super) enum UpdateMachineCommand {
 pub(super) struct SharedState {
     message_id: String,
     instance_id: String,
+    #[allow(dead_code)]
     event_seq_id: i64,
     request: UpdateRequest,
 }
@@ -236,7 +237,6 @@ impl WFMachinesAdapter for UpdateMachine {
                 format!("{}/accept", self.shared_state.message_id),
                 UpdateMsg::Accept(Acceptance {
                     accepted_request_message_id: self.shared_state.message_id.clone(),
-                    accepted_request_sequencing_event_id: self.shared_state.event_seq_id,
                     ..Default::default()
                 }),
             )?,
@@ -245,7 +245,6 @@ impl WFMachinesAdapter for UpdateMachine {
                     format!("{}/reject", self.shared_state.message_id),
                     UpdateMsg::Reject(Rejection {
                         rejected_request_message_id: self.shared_state.message_id.clone(),
-                        rejected_request_sequencing_event_id: self.shared_state.event_seq_id,
                         failure: Some(fail),
                         ..Default::default()
                     }),

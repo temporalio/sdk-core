@@ -475,10 +475,10 @@ impl TestHistoryBuilder {
         self.build_and_push_event(EventType::WorkflowExecutionUpdateAccepted, attrs.into())
     }
 
-    pub fn add_update_completed(&mut self, accepted_event_id: i64) {
+    pub fn add_update_completed(&mut self, _accepted_event_id: i64) {
         let attrs = WorkflowExecutionUpdateCompletedEventAttributes {
             meta: None,
-            accepted_event_id,
+            accepted_event_id: 0,
             outcome: Some(update::v1::Outcome {
                 value: Some(outcome::Value::Success(Payloads::default())),
             }),
