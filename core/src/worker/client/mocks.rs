@@ -18,6 +18,7 @@ pub(crate) static DEFAULT_TEST_CAPABILITIES: &Capabilities = &Capabilities {
     upsert_memo: true,
     eager_workflow_start: true,
     sdk_metadata: true,
+    count_group_by_execution_status: false,
 };
 
 #[cfg(test)]

@@ -140,6 +140,8 @@ impl InternalFlags {
                 WorkflowTaskCompletedMetadata {
                     core_used_flags: core_newly_used,
                     lang_used_flags: lang_newly_used,
+                    sdk_name: "".to_string(),
+                    sdk_version: "".to_string(),
                 }
             }
             Self::Disabled => WorkflowTaskCompletedMetadata::default(),
@@ -182,6 +184,8 @@ mod tests {
             sdk_metadata: Some(WorkflowTaskCompletedMetadata {
                 core_used_flags: vec![1],
                 lang_used_flags: vec![],
+                sdk_name: "".to_string(),
+                sdk_version: "".to_string(),
             }),
             ..Default::default()
         });
@@ -215,6 +219,8 @@ mod tests {
             sdk_metadata: Some(WorkflowTaskCompletedMetadata {
                 core_used_flags: vec![2],
                 lang_used_flags: vec![2],
+                sdk_name: "".to_string(),
+                sdk_version: "".to_string(),
             }),
             ..Default::default()
         });
