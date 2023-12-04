@@ -39,8 +39,6 @@ option csharp_namespace = "Temporalio.Api.Schedule.V1";
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 
-import "dependencies/gogoproto/gogo.proto";
-
 import "temporal/api/common/v1/message.proto";
 import "temporal/api/enums/v1/schedule.proto";
 import "temporal/api/workflow/v1/message.proto";
@@ -139,8 +137,8 @@ message StructuredCalendarSpec {
 // 2022-02-17T00:00:00Z (among other times). The same interval with a phase of 3
 // days, 5 hours, and 23 minutes would match 2022-02-20T05:23:00Z instead.
 message IntervalSpec {
-    google.protobuf.Duration interval = 1 [(gogoproto.stdduration) = true];
-    google.protobuf.Duration phase = 2 [(gogoproto.stdduration) = true];
+    google.protobuf.Duration interval = 1;
+    google.protobuf.Duration phase = 2;
 }
 
 // ScheduleSpec is a complete description of a set of absolute timestamps
@@ -158,6 +156,9 @@ message IntervalSpec {
 // On input, calendar and cron_string fields will be compiled into
 // structured_calendar (and maybe interval and timezone_name), so if you
 // Describe a schedule, you'll see only structured_calendar, interval, etc.
+//
+// If a spec has no matching times after the current time, then the schedule
+// will be subject to automatic deletion (after several days).
 message ScheduleSpec {
     // Calendar-based specifications of times.
     repeated StructuredCalendarSpec structured_calendar = 7;
@@ -191,12 +192,12 @@ message ScheduleSpec {
     repeated StructuredCalendarSpec exclude_structured_calendar = 9;
     // If start_time is set, any timestamps before start_time will be skipped.
     // (Together, start_time and end_time make an inclusive interval.)
-    google.protobuf.Timestamp start_time = 4 [(gogoproto.stdtime) = true];
+    google.protobuf.Timestamp start_time = 4;
     // If end_time is set, any timestamps after end_time will be skipped.
-    google.protobuf.Timestamp end_time = 5 [(gogoproto.stdtime) = true];
+    google.protobuf.Timestamp end_time = 5;
     // All timestamps will be incremented by a random value from 0 to this
     // amount of jitter. Default: 0
-    google.protobuf.Duration jitter = 6 [(gogoproto.stdduration) = true];
+    google.protobuf.Duration jitter = 6;
 
     // Time zone to interpret all calendar-based specs in.
     //
@@ -235,8 +236,8 @@ message SchedulePolicies {
     // If the Temporal server misses an action due to one or more components
     // being down, and comes back up, the action will be run if the scheduled
     // time is within this window from the current time.
-    // This value defaults to 60 seconds, and can't be less than 10 seconds.
-    google.protobuf.Duration catchup_window = 2 [(gogoproto.stdduration) = true];
+    // This value defaults to one year, and can't be less than 10 seconds.
+    google.protobuf.Duration catchup_window = 2;
 
     // If true, and a workflow run fails or times out, turn on "paused".
     // This applies after retry policies: the full chain of retries must fail to
@@ -257,10 +258,10 @@ message ScheduleAction {
 
 message ScheduleActionResult {
     // Time that the action was taken (according to the schedule, including jitter).
-    google.protobuf.Timestamp schedule_time = 1 [(gogoproto.stdtime) = true];
+    google.protobuf.Timestamp schedule_time = 1;
 
     // Time that the action was taken (real time).
-    google.protobuf.Timestamp actual_time = 2 [(gogoproto.stdtime) = true];
+    google.protobuf.Timestamp actual_time = 2;
 
     // If action was start_workflow:
     temporal.api.common.v1.WorkflowExecution start_workflow_result = 11;
@@ -280,20 +281,27 @@ message ScheduleState {
     // is zero. Actions may still be taken by explicit request (i.e. trigger
     // immediately or backfill). Skipped actions (due to overlap policy) do not
     // count against remaining actions.
+    // If a schedule has no more remaining actions, then the schedule will be
+    // subject to automatic deletion (after several days).
     bool limited_actions = 3;
     int64 remaining_actions = 4;
 }
 
 message TriggerImmediatelyRequest {
-    // Override overlap policy for this one request.
+    // If set, override overlap policy for this one request.
     temporal.api.enums.v1.ScheduleOverlapPolicy overlap_policy = 1;
 }
 
 message BackfillRequest {
-    // Time range to evaluate schedule in.
-    google.protobuf.Timestamp start_time = 1 [(gogoproto.stdtime) = true];
-    google.protobuf.Timestamp end_time = 2 [(gogoproto.stdtime) = true];
-    // Override overlap policy for this request.
+    // Time range to evaluate schedule in. Currently, this time range is
+    // exclusive on start_time and inclusive on end_time. (This is admittedly
+    // counterintuitive and it may change in the future, so to be safe, use a
+    // start time strictly before a scheduled time.) Also note that an action
+    // nominally scheduled in the interval but with jitter that pushes it after
+    // end_time will not be included.
+    google.protobuf.Timestamp start_time = 1;
+    google.protobuf.Timestamp end_time = 2;
+    // If set, override overlap policy for this request.
     temporal.api.enums.v1.ScheduleOverlapPolicy overlap_policy = 3;
 }
 
@@ -322,6 +330,14 @@ message ScheduleInfo {
     // Number of skipped actions due to overlap.
     int64 overlap_skipped = 3;
 
+    // Number of dropped actions due to buffer limit.
+    int64 buffer_dropped = 10;
+
+    // Number of actions in the buffer. The buffer holds the actions that cannot
+    // be immediately triggered (due to the overlap policy). These actions can be a result of
+    // the normal schedule or a backfill.
+    int64 buffer_size = 11;
+
     // Currently-running workflows started by this schedule. (There might be
     // more than one if the overlap policy allows overlaps.)
     // Note that the run_ids in here are the original execution run ids as
@@ -333,11 +349,11 @@ message ScheduleInfo {
     repeated ScheduleActionResult recent_actions = 4;
 
     // Next ten scheduled action times.
-    repeated google.protobuf.Timestamp future_action_times = 5 [(gogoproto.stdtime) = true];
+    repeated google.protobuf.Timestamp future_action_times = 5;
 
     // Timestamps of schedule creation and last update.
-    google.protobuf.Timestamp create_time = 6 [(gogoproto.stdtime) = true];
-    google.protobuf.Timestamp update_time = 7 [(gogoproto.stdtime) = true];
+    google.protobuf.Timestamp create_time = 6;
+    google.protobuf.Timestamp update_time = 7;
 
     string invalid_schedule_error = 8 [deprecated = true];
 }
@@ -367,7 +383,7 @@ message ScheduleListInfo {
 
     // From info (maybe fewer entries):
     repeated ScheduleActionResult recent_actions = 5;
-    repeated google.protobuf.Timestamp future_action_times = 6 [(gogoproto.stdtime) = true];
+    repeated google.protobuf.Timestamp future_action_times = 6;
 }
 
 // ScheduleListEntry is returned by ListSchedules.

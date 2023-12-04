@@ -33,8 +33,6 @@ option csharp_namespace = "Temporalio.Api.Command.V1";
 
 import "google/protobuf/duration.proto";
 
-import "dependencies/gogoproto/gogo.proto";
-
 import "temporal/api/enums/v1/workflow.proto";
 import "temporal/api/enums/v1/command_type.proto";
 import "temporal/api/common/v1/message.proto";
@@ -56,7 +54,7 @@ message ScheduleActivityTaskCommandAttributes {
     //
     // (-- api-linter: core::0140::prepositions=disabled
     //     aip.dev/not-precedent: "to" is used to indicate interval. --)
-    google.protobuf.Duration schedule_to_close_timeout = 7 [(gogoproto.stdduration) = true];
+    google.protobuf.Duration schedule_to_close_timeout = 7;
     // Limits the time an activity task can stay in a task queue before a worker picks it up. The
     // "schedule" time is when the most recent retry is scheduled. This timeout should usually not
     // be set: it's useful in specific scenarios like worker-specific task queues. This timeout is
@@ -67,15 +65,15 @@ message ScheduleActivityTaskCommandAttributes {
     //
     // (-- api-linter: core::0140::prepositions=disabled
     //     aip.dev/not-precedent: "to" is used to indicate interval. --)
-    google.protobuf.Duration schedule_to_start_timeout = 8 [(gogoproto.stdduration) = true];
+    google.protobuf.Duration schedule_to_start_timeout = 8;
     // Maximum time an activity is allowed to execute after being picked up by a worker. This
     // timeout is always retryable. Either this or `schedule_to_close_timeout` must be specified.
     //
     // (-- api-linter: core::0140::prepositions=disabled
     //     aip.dev/not-precedent: "to" is used to indicate interval. --)
-    google.protobuf.Duration start_to_close_timeout = 9 [(gogoproto.stdduration) = true];
+    google.protobuf.Duration start_to_close_timeout = 9;
     // Maximum permitted time between successful worker heartbeats.
-    google.protobuf.Duration heartbeat_timeout = 10 [(gogoproto.stdduration) = true];
+    google.protobuf.Duration heartbeat_timeout = 10;
     // Activities are provided by a default retry policy which is controlled through the service's
     // dynamic configuration. Retries will be attempted until `schedule_to_close_timeout` has
     // elapsed. To disable retries set retry_policy.maximum_attempts to 1.
@@ -102,7 +100,7 @@ message StartTimerCommandAttributes {
     //
     // (-- api-linter: core::0140::prepositions=disabled
     //     aip.dev/not-precedent: "to" is used to indicate interval. --)
-    google.protobuf.Duration start_to_fire_timeout = 2 [(gogoproto.stdduration) = true];
+    google.protobuf.Duration start_to_fire_timeout = 2;
 }
 
 message CompleteWorkflowExecutionCommandAttributes {
@@ -178,11 +176,11 @@ message ContinueAsNewWorkflowExecutionCommandAttributes {
     temporal.api.common.v1.Payloads input = 3;
 
     // Timeout of a single workflow run.
-    google.protobuf.Duration workflow_run_timeout = 4 [(gogoproto.stdduration) = true];
+    google.protobuf.Duration workflow_run_timeout = 4;
     // Timeout of a single workflow task.
-    google.protobuf.Duration workflow_task_timeout = 5 [(gogoproto.stdduration) = true];
+    google.protobuf.Duration workflow_task_timeout = 5;
     // How long the workflow start will be delayed - not really a "backoff" in the traditional sense.
-    google.protobuf.Duration backoff_start_interval = 6 [(gogoproto.stdduration) = true];
+    google.protobuf.Duration backoff_start_interval = 6;
     temporal.api.common.v1.RetryPolicy retry_policy = 7;
     // Should be removed
     temporal.api.enums.v1.ContinueAsNewInitiator initiator = 8;
@@ -209,11 +207,11 @@ message StartChildWorkflowExecutionCommandAttributes {
     temporal.api.taskqueue.v1.TaskQueue task_queue = 4;
     temporal.api.common.v1.Payloads input = 5;
     // Total workflow execution timeout including retries and continue as new.
-    google.protobuf.Duration workflow_execution_timeout = 6 [(gogoproto.stdduration) = true];
+    google.protobuf.Duration workflow_execution_timeout = 6;
     // Timeout of a single workflow run.
-    google.protobuf.Duration workflow_run_timeout = 7 [(gogoproto.stdduration) = true];
+    google.protobuf.Duration workflow_run_timeout = 7;
     // Timeout of a single workflow task.
-    google.protobuf.Duration workflow_task_timeout = 8 [(gogoproto.stdduration) = true];
+    google.protobuf.Duration workflow_task_timeout = 8;
     // Default: PARENT_CLOSE_POLICY_TERMINATE.
     temporal.api.enums.v1.ParentClosePolicy parent_close_policy = 9;
     string control = 10;

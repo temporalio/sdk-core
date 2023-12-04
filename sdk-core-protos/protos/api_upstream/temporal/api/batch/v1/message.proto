@@ -31,9 +31,7 @@ option java_outer_classname = "MessageProto";
 option ruby_package = "Temporalio::Api::Batch::V1";
 option csharp_namespace = "Temporalio.Api.Batch.V1";
 
-import "dependencies/gogoproto/gogo.proto";
 import "google/protobuf/timestamp.proto";
-
 
 import "temporal/api/common/v1/message.proto";
 import "temporal/api/enums/v1/batch_operation.proto";
@@ -45,9 +43,9 @@ message BatchOperationInfo {
   // Batch operation state
   temporal.api.enums.v1.BatchOperationState state = 2;
   // Batch operation start time
-  google.protobuf.Timestamp start_time = 3 [(gogoproto.stdtime) = true];
+  google.protobuf.Timestamp start_time = 3;
   // Batch operation close time
-  google.protobuf.Timestamp close_time = 4 [(gogoproto.stdtime) = true];
+  google.protobuf.Timestamp close_time = 4;
 }
 
 // BatchOperationTermination sends terminate requests to batch workflows.

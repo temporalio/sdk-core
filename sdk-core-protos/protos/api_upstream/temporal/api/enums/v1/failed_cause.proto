@@ -124,4 +124,6 @@ enum ResourceExhaustedCause {
     RESOURCE_EXHAUSTED_CAUSE_PERSISTENCE_LIMIT = 4;
     // Workflow is busy
     RESOURCE_EXHAUSTED_CAUSE_BUSY_WORKFLOW = 5;
+    // Caller exceeds action per second limit.
+    RESOURCE_EXHAUSTED_CAUSE_APS_LIMIT = 6;
 }

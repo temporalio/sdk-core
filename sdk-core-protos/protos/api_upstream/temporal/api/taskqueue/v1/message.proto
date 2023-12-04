@@ -35,8 +35,6 @@ import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/wrappers.proto";
 
-import "dependencies/gogoproto/gogo.proto";
-
 import "temporal/api/enums/v1/task_queue.proto";
 import "temporal/api/common/v1/message.proto";
 
@@ -75,7 +73,7 @@ message TaskQueuePartitionMetadata {
 }
 
 message PollerInfo {
-    google.protobuf.Timestamp last_access_time = 1 [(gogoproto.stdtime) = true];
+    google.protobuf.Timestamp last_access_time = 1;
     string identity = 2;
     double rate_per_second = 3;
     // If a worker has opted into the worker versioning feature while polling, its capabilities will
@@ -87,7 +85,7 @@ message StickyExecutionAttributes {
     TaskQueue worker_task_queue = 1;
     // (-- api-linter: core::0140::prepositions=disabled
     //     aip.dev/not-precedent: "to" is used to indicate interval. --)
-    google.protobuf.Duration schedule_to_start_timeout = 2 [(gogoproto.stdduration) = true];
+    google.protobuf.Duration schedule_to_start_timeout = 2;
 }
 
 // Used by the worker versioning APIs, represents an unordered set of one or more versions which are

@@ -33,6 +33,7 @@ option csharp_namespace = "Temporalio.Api.OperatorService.V1";
 
 
 import "temporal/api/operatorservice/v1/request_response.proto";
+import "google/api/annotations.proto";
 
 // OperatorService API defines how Temporal SDKs and other clients interact with the Temporal server
 // to perform administrative functions like registering a search attribute or a namespace.
@@ -56,6 +57,9 @@ service OperatorService {
 
     // ListSearchAttributes returns comprehensive information about search attributes.
     rpc ListSearchAttributes (ListSearchAttributesRequest) returns (ListSearchAttributesResponse) {
+        option (google.api.http) = {
+            get: "/api/v1/namespaces/{namespace}/search-attributes",
+        };
     }
 
     // DeleteNamespace synchronously deletes a namespace and asynchronously reclaims all namespace resources.

@@ -34,8 +34,6 @@ option csharp_namespace = "Temporalio.Api.Namespace.V1";
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 
-import "dependencies/gogoproto/gogo.proto";
-
 import "temporal/api/enums/v1/namespace.proto";
 
 
@@ -54,7 +52,7 @@ message NamespaceInfo {
 }
 
 message NamespaceConfig {
-    google.protobuf.Duration workflow_execution_retention_ttl = 1 [(gogoproto.stdduration) = true];
+    google.protobuf.Duration workflow_execution_retention_ttl = 1;
     BadBinaries bad_binaries = 2;
     // If unspecified (ARCHIVAL_STATE_UNSPECIFIED) then default server configuration is used.
     temporal.api.enums.v1.ArchivalState history_archival_state = 3;
@@ -73,7 +71,7 @@ message BadBinaries {
 message BadBinaryInfo {
     string reason = 1;
     string operator = 2;
-    google.protobuf.Timestamp create_time = 3 [(gogoproto.stdtime) = true];
+    google.protobuf.Timestamp create_time = 3;
 }
 
 message UpdateNamespaceInfo {

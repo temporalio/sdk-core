@@ -1,40 +1,56 @@
 - included_paths:
-    - '**/*.proto'
+    - "**/*.proto"
   disabled_rules:
-    - 'core::0192::has-comments'
+    - "core::0192::has-comments"
 
 - included_paths:
-    - '**/message.proto'
+    - "**/message.proto"
   disabled_rules:
-    - 'core::0122::name-suffix'
-    - 'core::0123::resource-annotation'
+    - "core::0122::name-suffix"
+    - "core::0123::resource-annotation"
 
 - included_paths:
-    - '**/workflowservice/v1/request_response.proto'
-    - '**/operatorservice/v1/request_response.proto'
+    - "**/workflowservice/v1/request_response.proto"
+    - "**/operatorservice/v1/request_response.proto"
   disabled_rules:
-    - 'core::0122::name-suffix'
-    - 'core::0131::request-name-required'
-    - 'core::0131::request-unknown-fields'
-    - 'core::0132::request-parent-required'
-    - 'core::0132::request-unknown-fields'
-    - 'core::0132::response-unknown-fields'
-    - 'core::0134::request-unknown-fields'
-    - 'core::0158::request-page-size-field'
-    - 'core::0158::request-page-token-field'
-    - 'core::0158::response-next-page-token-field'
-    - 'core::0158::response-plural-first-field'
-    - 'core::0158::response-repeated-first-field'
+    - "core::0122::name-suffix"
+    - "core::0131::request-name-required"
+    - "core::0131::request-unknown-fields"
+    - "core::0132::request-parent-required"
+    - "core::0132::request-unknown-fields"
+    - "core::0132::response-unknown-fields"
+    - "core::0134::request-unknown-fields"
+    - "core::0158::request-page-size-field"
+    - "core::0158::request-page-token-field"
+    - "core::0158::response-next-page-token-field"
+    - "core::0158::response-plural-first-field"
+    - "core::0158::response-repeated-first-field"
 
 - included_paths:
-    - '**/workflowservice/v1/service.proto'
-    - '**/operatorservice/v1/service.proto'
+    - "**/workflowservice/v1/service.proto"
+    - "**/operatorservice/v1/service.proto"
   disabled_rules:
-    - 'core::0127::http-annotation'
-    - 'core::0131::method-signature'
-    - 'core::0131::response-message-name'
+    # We extract specific fields in URL since the gRPC API predates the HTTP API
+    - "core::0127::resource-name-extraction"
+
+    # We do not require specific "Get", "Create", "Update", or "Delete" RPC
+    # rules just because we happen to use a known RPC name prefix
+    - "core::0131"
+    - "core::0133"
+    - "core::0134"
+    - "core::0135"
+
+    # We don't require HTTP calls to be suffixed with the same name as the gRPC
+    # name
+    - "core::0136::http-uri-suffix"
 
 - included_paths:
-    - 'dependencies/gogoproto/gogo.proto'
+    - "**/operatorservice/v1/service.proto"
   disabled_rules:
-    - 'all'
+    # Do not require HTTP annotations on OperatorService calls at this time
+    - "core::0127::http-annotation"
+
+- included_paths:
+    - "google/**/*.proto"
+  disabled_rules:
+    - "all"

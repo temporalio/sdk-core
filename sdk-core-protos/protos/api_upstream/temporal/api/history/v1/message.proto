@@ -34,8 +34,6 @@ option csharp_namespace = "Temporalio.Api.History.V1";
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 
-import "dependencies/gogoproto/gogo.proto";
-
 import "temporal/api/enums/v1/event_type.proto";
 import "temporal/api/enums/v1/failed_cause.proto";
 import "temporal/api/enums/v1/workflow.proto";
@@ -62,11 +60,11 @@ message WorkflowExecutionStartedEventAttributes {
     // SDK will deserialize this and provide it as arguments to the workflow function
     temporal.api.common.v1.Payloads input = 6;
     // Total workflow execution timeout including retries and continue as new.
-    google.protobuf.Duration workflow_execution_timeout = 7 [(gogoproto.stdduration) = true];
+    google.protobuf.Duration workflow_execution_timeout = 7;
     // Timeout of a single workflow run.
-    google.protobuf.Duration workflow_run_timeout = 8 [(gogoproto.stdduration) = true];
+    google.protobuf.Duration workflow_run_timeout = 8;
     // Timeout of a single workflow task.
-    google.protobuf.Duration workflow_task_timeout = 9 [(gogoproto.stdduration) = true];
+    google.protobuf.Duration workflow_task_timeout = 9;
     // Run id of the previous workflow which continued-as-new or retired or cron executed into this
     // workflow.
     string continued_execution_run_id = 10;
@@ -86,12 +84,12 @@ message WorkflowExecutionStartedEventAttributes {
     int32 attempt = 18;
     // The absolute time at which the workflow will be timed out.
     // This is passed without change to the next run/retry of a workflow.
-    google.protobuf.Timestamp workflow_execution_expiration_time = 19 [(gogoproto.stdtime) = true];
+    google.protobuf.Timestamp workflow_execution_expiration_time = 19;
     // If this workflow runs on a cron schedule, it will appear here
     string cron_schedule = 20;
     // For a cron workflow, this contains the amount of time between when this iteration of
     // the cron workflow was scheduled and when it should run next per its cron_schedule.
-    google.protobuf.Duration first_workflow_task_backoff = 21 [(gogoproto.stdduration) = true];
+    google.protobuf.Duration first_workflow_task_backoff = 21;
     temporal.api.common.v1.Memo memo = 22;
     temporal.api.common.v1.SearchAttributes search_attributes = 23;
     temporal.api.workflow.v1.ResetPoints prev_auto_reset_points = 24;
@@ -139,13 +137,13 @@ message WorkflowExecutionContinuedAsNewEventAttributes {
     temporal.api.taskqueue.v1.TaskQueue task_queue = 3;
     temporal.api.common.v1.Payloads input = 4;
     // Timeout of a single workflow run.
-    google.protobuf.Duration workflow_run_timeout = 5 [(gogoproto.stdduration) = true];
+    google.protobuf.Duration workflow_run_timeout = 5;
     // Timeout of a single workflow task.
-    google.protobuf.Duration workflow_task_timeout = 6 [(gogoproto.stdduration) = true];
+    google.protobuf.Duration workflow_task_timeout = 6;
     // The `WORKFLOW_TASK_COMPLETED` event which this command was reported with
     int64 workflow_task_completed_event_id = 7;
     // TODO: How and is this used?
-    google.protobuf.Duration backoff_start_interval = 8 [(gogoproto.stdduration) = true];
+    google.protobuf.Duration backoff_start_interval = 8;
     temporal.api.enums.v1.ContinueAsNewInitiator initiator = 9;
     // TODO: David are these right?
     // Deprecated. If a workflow's retry policy would cause a new run to start when the current one
@@ -171,7 +169,7 @@ message WorkflowTaskScheduledEventAttributes {
     //
     // (-- api-linter: core::0140::prepositions=disabled
     //     aip.dev/not-precedent: "to" is used to indicate interval. --)
-    google.protobuf.Duration start_to_close_timeout = 2 [(gogoproto.stdduration) = true];
+    google.protobuf.Duration start_to_close_timeout = 2;
     // Starting at 1, how many attempts there have been to complete this task
     int32 attempt = 3;
 }
@@ -260,7 +258,7 @@ message ActivityTaskScheduledEventAttributes {
     //
     // (-- api-linter: core::0140::prepositions=disabled
     //     aip.dev/not-precedent: "to" is used to indicate interval. --)
-    google.protobuf.Duration schedule_to_close_timeout = 7 [(gogoproto.stdduration) = true];
+    google.protobuf.Duration schedule_to_close_timeout = 7;
     // Limits time an activity task can stay in a task queue before a worker picks it up. This
     // timeout is always non retryable, as all a retry would achieve is to put it back into the same
     // queue. Defaults to `schedule_to_close_timeout` or workflow execution timeout if not
@@ -268,16 +266,16 @@ message ActivityTaskScheduledEventAttributes {
     //
     // (-- api-linter: core::0140::prepositions=disabled
     //     aip.dev/not-precedent: "to" is used to indicate interval. --)
-    google.protobuf.Duration schedule_to_start_timeout = 8 [(gogoproto.stdduration) = true];
+    google.protobuf.Duration schedule_to_start_timeout = 8;
     // Maximum time an activity is allowed to execute after being picked up by a worker. This
     // timeout is always retryable. Either this or `schedule_to_close_timeout` must be
     // specified.
     //
     // (-- api-linter: core::0140::prepositions=disabled
     //     aip.dev/not-precedent: "to" is used to indicate interval. --)
-    google.protobuf.Duration start_to_close_timeout = 9 [(gogoproto.stdduration) = true];
+    google.protobuf.Duration start_to_close_timeout = 9;
     // Maximum permitted time between successful worker heartbeats.
-    google.protobuf.Duration heartbeat_timeout = 10 [(gogoproto.stdduration) = true];
+    google.protobuf.Duration heartbeat_timeout = 10;
     // The `WORKFLOW_TASK_COMPLETED` event which this command was reported with
     int64 workflow_task_completed_event_id = 11;
     // Activities are assigned a default retry policy controlled by the service's dynamic
@@ -372,7 +370,7 @@ message TimerStartedEventAttributes {
     //
     // (-- api-linter: core::0140::prepositions=disabled
     //     aip.dev/not-precedent: "to" is used to indicate interval. --)
-    google.protobuf.Duration start_to_fire_timeout = 2 [(gogoproto.stdduration) = true];
+    google.protobuf.Duration start_to_fire_timeout = 2;
     // The `WORKFLOW_TASK_COMPLETED` event which this command was reported with
     int64 workflow_task_completed_event_id = 3;
 }
@@ -561,11 +559,11 @@ message StartChildWorkflowExecutionInitiatedEventAttributes {
     temporal.api.taskqueue.v1.TaskQueue task_queue = 4;
     temporal.api.common.v1.Payloads input = 5;
     // Total workflow execution timeout including retries and continue as new.
-    google.protobuf.Duration workflow_execution_timeout = 6 [(gogoproto.stdduration) = true];
+    google.protobuf.Duration workflow_execution_timeout = 6;
     // Timeout of a single workflow run.
-    google.protobuf.Duration workflow_run_timeout = 7 [(gogoproto.stdduration) = true];
+    google.protobuf.Duration workflow_run_timeout = 7;
     // Timeout of a single workflow task.
-    google.protobuf.Duration workflow_task_timeout = 8 [(gogoproto.stdduration) = true];
+    google.protobuf.Duration workflow_task_timeout = 8;
     // Default: PARENT_CLOSE_POLICY_TERMINATE.
     temporal.api.enums.v1.ParentClosePolicy parent_close_policy = 9;
     // Deprecated
@@ -689,11 +687,11 @@ message WorkflowPropertiesModifiedExternallyEventAttributes {
     // the provided queue.
     string new_task_queue = 1;
     // If set, update the workflow task timeout to this value.
-    google.protobuf.Duration new_workflow_task_timeout = 2 [(gogoproto.stdduration) = true];
+    google.protobuf.Duration new_workflow_task_timeout = 2;
     // If set, update the workflow run timeout to this value. May be set to 0 for no timeout.
-    google.protobuf.Duration new_workflow_run_timeout = 3 [(gogoproto.stdduration) = true];
+    google.protobuf.Duration new_workflow_run_timeout = 3;
     // If set, update the workflow execution timeout to this value. May be set to 0 for no timeout.
-    google.protobuf.Duration new_workflow_execution_timeout = 4 [(gogoproto.stdduration) = true];
+    google.protobuf.Duration new_workflow_execution_timeout = 4;
     // If set, update the workflow memo with the provided values. The values will be merged with
     // the existing memo. If the user wants to delete values, a default/empty Payload should be
     // used as the value for the key being deleted.
@@ -755,7 +753,7 @@ message WorkflowExecutionUpdateRejectedEventAttributes {
 message HistoryEvent {
     // Monotonically increasing event number, starts at 1.
     int64 event_id = 1;
-    google.protobuf.Timestamp event_time = 2 [(gogoproto.stdtime) = true];
+    google.protobuf.Timestamp event_time = 2;
     temporal.api.enums.v1.EventType event_type = 3;
     // TODO: What is this? Appears unused by SDKs
     int64 version = 4;

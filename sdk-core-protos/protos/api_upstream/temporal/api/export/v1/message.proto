@@ -2,8 +2,6 @@
 //
 // Copyright (c) 2020 Temporal Technologies Inc.  All rights reserved.
 //
-// Copyright (c) 2020 Uber Technologies, Inc.
-//
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
 // in the Software without restriction, including without limitation the rights
@@ -22,8 +20,26 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-package build
+syntax = "proto3";
 
-import (
-	_ "github.com/temporalio/gogo-protobuf/gogoproto" // gogoproto is just a random package name for module.
-)
+package temporal.api.export.v1;
+
+option go_package = "go.temporal.io/api/export/v1;workflow";
+option java_package = "io.temporal.api.export.v1";
+option java_multiple_files = true;
+option java_outer_classname = "MessageProto";
+option ruby_package = "Temporalio::Api::Export::V1";
+option csharp_namespace = "Temporalio.Api.Export.V1";
+
+import "temporal/api/history/v1/message.proto";
+
+message WorkflowExecution {
+    temporal.api.history.v1.History history = 1;
+}
+
+// WorkflowExecutions is used by the Cloud Export feature to deserialize 
+// the exported file. It encapsulates a collection of workflow execution information.
+message WorkflowExecutions {
+    repeated WorkflowExecution items = 1;
+}
+

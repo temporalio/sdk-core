@@ -60,4 +60,17 @@ message WorkflowTaskCompletedMetadata {
   // (-- api-linter: core::0141::forbidden-types=disabled
   //     aip.dev/not-precedent: These really shouldn't have negative values. --)
   repeated uint32 lang_used_flags = 2;
+
+  // Name of the SDK that processed the task. This is usually something like "temporal-go" and is
+  // usually the same as client-name gRPC header. This should only be set if its value changed
+  // since the last time recorded on the workflow (or be set on the first task).
+  //
+  // (-- api-linter: core::0122::name-suffix=disabled
+  //     aip.dev/not-precedent: We're ok with a name suffix here. --)
+  string sdk_name = 3;
+
+  // Version of the SDK that processed the task. This is usually something like "1.20.0" and is
+  // usually the same as client-version gRPC header. This should only be set if its value changed
+  // since the last time recorded on the workflow (or be set on the first task).
+  string sdk_version = 4;
 }
