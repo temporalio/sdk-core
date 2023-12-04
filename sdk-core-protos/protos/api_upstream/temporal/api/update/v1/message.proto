@@ -44,7 +44,7 @@ message WaitPolicy {
     temporal.api.enums.v1.UpdateWorkflowExecutionLifecycleStage lifecycle_stage = 1;
 }
 
-// The data needed by a client to refer to an previously invoked workflow
+// The data needed by a client to refer to a previously invoked workflow
 // execution update process.
 message UpdateRef {
     temporal.api.common.v1.WorkflowExecution workflow_execution = 1;

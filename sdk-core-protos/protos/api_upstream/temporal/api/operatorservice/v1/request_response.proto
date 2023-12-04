@@ -71,7 +71,9 @@ message ListSearchAttributesResponse {
 // (-- api-linter: core::0135::request-name-required=disabled
 //     aip.dev/not-precedent: DeleteNamespace RPC doesn't follow Google API format. --)
 message DeleteNamespaceRequest {
+    // Only one of namespace or namespace_id must be specified to identify namespace.
     string namespace = 1;
+    string namespace_id = 2;
 }
 
 message DeleteNamespaceResponse {

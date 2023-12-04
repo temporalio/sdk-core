@@ -33,8 +33,6 @@ option csharp_namespace = "Temporalio.Api.Common.V1";
 
 import "google/protobuf/duration.proto";
 
-import "dependencies/gogoproto/gogo.proto";
-
 import "temporal/api/enums/v1/common.proto";
 
 message DataBlob {
@@ -95,14 +93,14 @@ message ActivityType {
 // How retries ought to be handled, usable by both workflows and activities
 message RetryPolicy {
     // Interval of the first retry. If retryBackoffCoefficient is 1.0 then it is used for all retries.
-    google.protobuf.Duration initial_interval = 1 [(gogoproto.stdduration) = true];
+    google.protobuf.Duration initial_interval = 1;
     // Coefficient used to calculate the next retry interval.
     // The next retry interval is previous interval multiplied by the coefficient.
     // Must be 1 or larger.
     double backoff_coefficient = 2;
     // Maximum interval between retries. Exponential backoff leads to interval increase.
     // This value is the cap of the increase. Default is 100x of the initial interval.
-    google.protobuf.Duration maximum_interval = 3 [(gogoproto.stdduration) = true];
+    google.protobuf.Duration maximum_interval = 3;
     // Maximum number of attempts. When exceeded the retries stop even if not expired yet.
     // 1 disables retries. 0 means unlimited (up to the timeouts)
     int32 maximum_attempts = 4;

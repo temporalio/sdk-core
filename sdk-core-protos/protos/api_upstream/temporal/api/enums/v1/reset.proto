@@ -31,7 +31,7 @@ option java_outer_classname = "ResetProto";
 option ruby_package = "Temporalio::Api::Enums::V1";
 option csharp_namespace = "Temporalio.Api.Enums.V1";
 
-// Reset reapplay(replay) options
+// Reset reapply (replay) options
 // * RESET_REAPPLY_TYPE_SIGNAL (default) - Signals are reapplied when workflow is reset
 // * RESET_REAPPLY_TYPE_NONE - nothing is reapplied
 enum ResetReapplyType {
