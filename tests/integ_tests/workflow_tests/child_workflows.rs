@@ -64,7 +64,7 @@ async fn abandoned_child_bug_repro() {
 
     worker.register_wf(
         PARENT_WF_TYPE.to_string(),
-        move |mut ctx: WfContext| async move {
+        move |ctx: WfContext| async move {
             let child = ctx.child_workflow(ChildWorkflowOptions {
                 workflow_id: "abandoned-child".to_owned(),
                 workflow_type: CHILD_WF_TYPE.to_owned(),
@@ -89,7 +89,7 @@ async fn abandoned_child_bug_repro() {
             Ok(().into())
         },
     );
-    worker.register_wf(CHILD_WF_TYPE.to_string(), |mut ctx: WfContext| async move {
+    worker.register_wf(CHILD_WF_TYPE.to_string(), |ctx: WfContext| async move {
         ctx.cancelled().await;
         Ok(WfExitValue::<()>::Cancelled)
     });
@@ -135,7 +135,7 @@ async fn abandoned_child_resolves_post_cancel() {
 
     worker.register_wf(
         PARENT_WF_TYPE.to_string(),
-        move |mut ctx: WfContext| async move {
+        move |ctx: WfContext| async move {
             let child = ctx.child_workflow(ChildWorkflowOptions {
                 workflow_id: "abandoned-child-resolve-post-cancel".to_owned(),
                 workflow_type: CHILD_WF_TYPE.to_owned(),
