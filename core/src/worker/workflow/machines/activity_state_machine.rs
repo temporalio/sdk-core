@@ -5,6 +5,7 @@ use super::{
     OnEventWrapper, WFMachinesAdapter, WFMachinesError,
 };
 use crate::{
+    abstractions::dbg_panic,
     internal_flags::CoreInternalFlags,
     worker::workflow::{machines::HistEventData, InternalFlagsRef},
 };
@@ -44,6 +45,7 @@ fsm! {
     ScheduleCommandCreated --(ActivityTaskScheduled(ActTaskScheduledData),
         shared on_activity_task_scheduled) --> ScheduledEventRecorded;
     ScheduleCommandCreated --(Cancel, shared on_canceled) --> Canceled;
+    ScheduleCommandCreated --(Abandon, shared on_abandoned) --> Canceled;
 
     ScheduledEventRecorded --(ActivityTaskStarted(i64), shared on_task_started) --> Started;
     ScheduledEventRecorded --(ActivityTaskTimedOut(ActivityTaskTimedOutEventAttributes),
@@ -407,9 +409,17 @@ impl ScheduleCommandCreated {
     pub(super) fn on_canceled(self, dat: &mut SharedState) -> ActivityMachineTransition<Canceled> {
         dat.cancelled_before_sent = true;
         match dat.cancellation_type {
-            ActivityCancellationType::Abandon => ActivityMachineTransition::default(),
+            ActivityCancellationType::Abandon => {
+                dbg_panic!("Can't get on_canceled transition with Abandon cancelation type");
+                ActivityMachineTransition::default()
+            }
             _ => notify_lang_activity_cancelled(None),
         }
+    }
+
+    pub(super) fn on_abandoned(self, dat: &mut SharedState) -> ActivityMachineTransition<Canceled> {
+        dat.cancelled_before_sent = true;
+        ActivityMachineTransition::default()
     }
 }
 
@@ -807,6 +817,7 @@ mod test {
         internal_flags::InternalFlags,
         replay::TestHistoryBuilder,
         test_help::{build_fake_sdk, MockPollCfg, ResponseType},
+        worker::workflow::machines::Machines,
     };
     use std::{cell::RefCell, mem::discriminant, rc::Rc};
     use temporal_sdk::{ActivityOptions, CancellableFuture, WfContext, WorkflowFunction};
@@ -885,5 +896,28 @@ mod test {
             assert_eq!(cmds.len(), 0);
             assert_eq!(discriminant(&state), discriminant(s.state()));
         }
+    }
+
+    #[test]
+    fn cancel_in_schedule_command_created_for_abandon() {
+        let s = ActivityMachine::new_scheduled(
+            ScheduleActivity {
+                activity_id: "1".to_string(),
+                activity_type: "foo".to_string(),
+                cancellation_type: ActivityCancellationType::Abandon.into(),
+                ..Default::default()
+            },
+            Rc::new(RefCell::new(InternalFlags::new(&Default::default()))),
+            true,
+        );
+        let mut s = if let Machines::ActivityMachine(am) = s.machine {
+            am
+        } else {
+            panic!("Wrong machine type");
+        };
+        let cmds = s.cancel().unwrap();
+        assert_eq!(cmds.len(), 0);
+        let curstate = s.state();
+        assert!(matches!(curstate, &ActivityMachineState::Canceled(_)));
     }
 }
