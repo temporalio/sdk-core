@@ -106,9 +106,13 @@ message ResetPoints {
     repeated ResetPointInfo points = 1;
 }
 
+// ResetPointInfo records the workflow event id that is the first one processed by a given
+// build id or binary checksum. A new reset point will be created if either build id or binary
+// checksum changes (although in general only one or the other will be used at a time).
 message ResetPointInfo {
-    // A worker binary version identifier, will be deprecated and superseded by a newer concept of
-    // build_id.
+    // Worker build id.
+    string build_id = 7;
+    // A worker binary version identifier (deprecated).
     string binary_checksum = 1;
     // The first run ID in the execution chain that was touched by this worker build.
     string run_id = 2;

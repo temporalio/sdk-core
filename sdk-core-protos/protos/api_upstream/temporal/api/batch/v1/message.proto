@@ -90,10 +90,15 @@ message BatchOperationDeletion {
 // BatchOperationReset sends reset requests to batch workflows.
 // Keep the parameter in sync with temporal.api.workflowservice.v1.ResetWorkflowExecutionRequest.
 message BatchOperationReset {
-  // Reset type.
-  temporal.api.enums.v1.ResetType reset_type = 1; 
-  // History event reapply options.
-  temporal.api.enums.v1.ResetReapplyType reset_reapply_type = 2; 
   // The identity of the worker/client.
   string identity = 3;
+
+  // Describes what to reset to and how. If set, `reset_type` and `reset_reapply_type` are ignored.
+  temporal.api.common.v1.ResetOptions options = 4;
+
+  // Reset type (deprecated, use `options`).
+  temporal.api.enums.v1.ResetType reset_type = 1;
+  // History event reapply options (deprecated, use `options`).
+  temporal.api.enums.v1.ResetReapplyType reset_reapply_type = 2;
+
 }

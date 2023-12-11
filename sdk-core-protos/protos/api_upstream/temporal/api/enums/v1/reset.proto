@@ -40,8 +40,8 @@ enum ResetReapplyType {
     RESET_REAPPLY_TYPE_NONE = 2;
 }
 
-// Reset type options
-enum ResetType { 
+// Reset type options. Deprecated, see temporal.api.common.v1.ResetOptions.
+enum ResetType {
     RESET_TYPE_UNSPECIFIED = 0;
     // Resets to event of the first workflow task completed, or if it does not exist, the event after task scheduled.
     RESET_TYPE_FIRST_WORKFLOW_TASK = 1;
