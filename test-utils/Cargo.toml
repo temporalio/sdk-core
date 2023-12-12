@@ -3,6 +3,7 @@ name = "temporal-sdk-core-test-utils"
 version = "0.1.0"
 authors = ["Spencer Judge <spencer@temporal.io>"]
 edition = "2021"
+license-file = { workspace = true }
 
 [[bin]]
 name = "histfetch"
