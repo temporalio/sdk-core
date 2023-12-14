@@ -386,7 +386,7 @@ impl WFStream {
                 // We accept that there might be query tasks remaining in the buffer if we evicted
                 // and re-instantiated here. It's likely those tasks are now invalidated anyway.
                 if maybe_buffered.has_tasks() && should_evict {
-                    panic!("There were leftover buffered tasks");
+                    warn!("There were leftover buffered tasks when evicting run");
                 }
             }
         }
