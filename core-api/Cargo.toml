@@ -3,7 +3,7 @@ name = "temporal-sdk-core-api"
 version = "0.1.0"
 edition = "2021"
 authors = ["Spencer Judge <spencer@temporal.io>"]
-license-file = "LICENSE.txt"
+license-file = { workspace = true }
 description = "Interface definitions for the Temporal Core SDK"
 homepage = "https://temporal.io/"
 repository = "https://github.com/temporalio/sdk-core"

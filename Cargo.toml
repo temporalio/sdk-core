@@ -2,6 +2,10 @@
 members = ["core", "client", "core-api", "fsm", "test-utils", "sdk-core-protos", "sdk"]
 resolver = "2"
 
+[workspace.package]
+license = "MIT"
+license-file = "LICENSE.txt"
+
 [workspace.dependencies]
 tonic = "0.9"
 tonic-build = "0.9"

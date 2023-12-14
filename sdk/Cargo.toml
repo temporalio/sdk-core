@@ -3,7 +3,7 @@ name = "temporal-sdk"
 version = "0.1.0-alpha.1"
 edition = "2021"
 authors = ["Spencer Judge <spencer@temporal.io>"]
-license-file = "LICENSE.txt"
+license-file = { workspace = true }
 description = "Temporal Rust SDK"
 homepage = "https://temporal.io/"
 repository = "https://github.com/temporalio/sdk-core"
