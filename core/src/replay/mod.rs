@@ -107,7 +107,6 @@ where
         });
 
         client.expect_complete_workflow_task().returning(move |a| {
-            dbg!(a);
             async move { Ok(RespondWorkflowTaskCompletedResponse::default()) }.boxed()
         });
         client
