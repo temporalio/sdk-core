@@ -106,7 +106,7 @@ where
             .boxed()
         });
 
-        client.expect_complete_workflow_task().returning(move |a| {
+        client.expect_complete_workflow_task().returning(move |_a| {
             async move { Ok(RespondWorkflowTaskCompletedResponse::default()) }.boxed()
         });
         client
