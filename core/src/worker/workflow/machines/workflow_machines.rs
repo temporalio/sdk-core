@@ -46,8 +46,10 @@ use std::{
     hash::{Hash, Hasher},
     iter::Peekable,
     rc::Rc,
+    sync::Arc,
     time::{Duration, Instant, SystemTime},
 };
+use temporal_sdk_core_api::worker::WorkerConfig;
 use temporal_sdk_core_protos::{
     coresdk::{
         common::{NamespacedWorkflowExecution, VersioningIntent},
@@ -93,16 +95,12 @@ pub(crate) struct WorkflowMachines {
     pub last_processed_event: i64,
     /// True if the workflow is replaying from history
     pub replaying: bool,
-    /// Namespace this workflow exists in
-    namespace: String,
     /// Workflow identifier
     pub workflow_id: String,
     /// Workflow type identifier. (Function name, class, etc)
     pub workflow_type: String,
     /// Identifies the current run
     pub run_id: String,
-    /// The task queue this workflow is operating within
-    task_queue: String,
     /// Is set to true once we've seen the final event in workflow history, to avoid accidentally
     /// re-applying the final workflow task.
     pub have_seen_terminal_event: bool,
@@ -160,6 +158,7 @@ pub(crate) struct WorkflowMachines {
 
     /// Metrics context
     pub metrics: MetricsContext,
+    worker_config: Arc<WorkerConfig>,
 }
 
 #[derive(Debug, derive_more::Display)]
@@ -246,11 +245,9 @@ impl WorkflowMachines {
         Self {
             last_history_from_server: basics.history,
             protocol_msgs: vec![],
-            namespace: basics.namespace,
             workflow_id: basics.workflow_id,
             workflow_type: basics.workflow_type,
             run_id: basics.run_id,
-            task_queue: basics.task_queue,
             drive_me: driven_wf,
             replaying,
             metrics: basics.metrics,
@@ -277,6 +274,7 @@ impl WorkflowMachines {
             encountered_patch_markers: Default::default(),
             local_activity_data: LocalActivityData::default(),
             have_seen_terminal_event: false,
+            worker_config: basics.worker_config,
         }
     }
 
@@ -420,9 +418,15 @@ impl WorkflowMachines {
                 Some(workflow_activation_job::Variant::QueryWorkflow(_))
             )
         });
+        let is_replaying = self.replaying || all_query;
+        let build_id_for_current_task = if is_replaying {
+            self.current_wft_build_id.clone().unwrap_or_default()
+        } else {
+            self.worker_config.worker_build_id.clone()
+        };
         WorkflowActivation {
             timestamp: self.current_wf_time.map(Into::into),
-            is_replaying: self.replaying || all_query,
+            is_replaying,
             run_id: self.run_id.clone(),
             history_length: self.last_processed_event as u32,
             jobs,
@@ -432,7 +436,7 @@ impl WorkflowMachines {
                 .collect(),
             history_size_bytes: self.history_size_bytes,
             continue_as_new_suggested: self.continue_as_new_suggested,
-            build_id_for_current_task: self.current_wft_build_id.clone().unwrap_or_default(),
+            build_id_for_current_task,
         }
     }
 
@@ -447,7 +451,13 @@ impl WorkflowMachines {
             .any(|v| v.is_la_resolution)
     }
 
-    pub(crate) fn get_metadata_for_wft_complete(&self) -> WorkflowTaskCompletedMetadata {
+    pub(crate) fn get_metadata_for_wft_complete(&mut self) -> WorkflowTaskCompletedMetadata {
+        // If this worker has a build ID and we're completing the task, we want to say our ID is the
+        // current build ID, so that if we get a query before any new history, we properly can
+        // report that our ID was the one used for the completion.
+        if !self.worker_config.worker_build_id.is_empty() {
+            self.current_wft_build_id = Some(self.worker_config.worker_build_id.clone());
+        }
         (*self.observed_internal_flags)
             .borrow_mut()
             .gather_for_wft_complete()
@@ -1371,7 +1381,7 @@ impl WorkflowMachines {
                         }
                         Some(cancel_we::Target::ChildWorkflowId(wfid)) => (
                             NamespacedWorkflowExecution {
-                                namespace: self.namespace.clone(),
+                                namespace: self.worker_config.namespace.clone(),
                                 workflow_id: wfid,
                                 run_id: "".to_string(),
                             },
@@ -1392,7 +1402,7 @@ impl WorkflowMachines {
                 WFCommand::SignalExternalWorkflow(attrs) => {
                     let seq = attrs.seq;
                     self.add_cmd_to_wf_task(
-                        new_external_signal(attrs, &self.namespace)?,
+                        new_external_signal(attrs, &self.worker_config.namespace)?,
                         CommandID::SignalExternal(seq).into(),
                     );
                 }
@@ -1539,7 +1549,7 @@ impl WorkflowMachines {
             VersioningIntent::Unspecified => {
                 // If the target TQ is empty, that means use same TQ.
                 // When TQs match, use compat by default
-                target_tq.is_empty() || target_tq == self.task_queue
+                target_tq.is_empty() || target_tq == self.worker_config.task_queue
             }
         }
     }

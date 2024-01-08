@@ -7,13 +7,12 @@ use crate::{
     MetricsContext,
 };
 use lru::LruCache;
-use std::{num::NonZeroUsize, rc::Rc};
+use std::{num::NonZeroUsize, rc::Rc, sync::Arc};
+use temporal_sdk_core_api::worker::WorkerConfig;
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::get_system_info_response;
 
 pub(super) struct RunCache {
-    max: usize,
-    namespace: String,
-    task_queue: String,
+    worker_config: Arc<WorkerConfig>,
     server_capabilities: get_system_info_response::Capabilities,
     /// Run id -> Data
     runs: LruCache<String, ManagedRun>,
@@ -24,24 +23,20 @@ pub(super) struct RunCache {
 
 impl RunCache {
     pub fn new(
-        max_cache_size: usize,
-        namespace: String,
-        task_queue: String,
+        worker_config: Arc<WorkerConfig>,
         server_capabilities: get_system_info_response::Capabilities,
         local_activity_request_sink: impl LocalActivityRequestSink,
         metrics: MetricsContext,
     ) -> Self {
         // The cache needs room for at least one run, otherwise we couldn't do anything. In
         // "0" size mode, the run is evicted once the workflow task is complete.
-        let lru_size = if max_cache_size > 0 {
-            max_cache_size
+        let lru_size = if worker_config.max_cached_workflows > 0 {
+            worker_config.max_cached_workflows
         } else {
             1
         };
         Self {
-            max: max_cache_size,
-            namespace,
-            task_queue,
+            worker_config,
             server_capabilities,
             runs: LruCache::new(
                 NonZeroUsize::new(lru_size).expect("LRU size is guaranteed positive"),
@@ -68,11 +63,10 @@ impl RunCache {
             .with_new_attrs([workflow_type(pwft.work.workflow_type.clone())]);
         let (mrh, rur) = ManagedRun::new(
             RunBasics {
-                namespace: self.namespace.clone(),
+                worker_config: self.worker_config.clone(),
                 workflow_id: pwft.work.execution.workflow_id.clone(),
                 workflow_type: pwft.work.workflow_type.clone(),
                 run_id: run_id.clone(),
-                task_queue: self.task_queue.clone(),
                 history: HistoryUpdate::dummy(),
                 metrics,
                 capabilities: &self.server_capabilities,
@@ -124,6 +118,6 @@ impl RunCache {
         self.runs.len()
     }
     pub fn cache_capacity(&self) -> usize {
-        self.max
+        self.worker_config.max_cached_workflows
     }
 }

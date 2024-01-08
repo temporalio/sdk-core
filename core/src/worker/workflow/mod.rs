@@ -58,7 +58,10 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use temporal_sdk_core_api::errors::{CompleteWfError, PollWfError};
+use temporal_sdk_core_api::{
+    errors::{CompleteWfError, PollWfError},
+    worker::WorkerConfig,
+};
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::{
@@ -127,24 +130,17 @@ pub(crate) struct Workflows {
 }
 
 pub(crate) struct WorkflowBasics {
-    pub max_cached_workflows: usize,
+    pub worker_config: Arc<WorkerConfig>,
     pub shutdown_token: CancellationToken,
     pub metrics: MetricsContext,
-    pub namespace: String,
-    pub task_queue: String,
-    pub ignore_evicts_on_shutdown: bool,
-    pub fetching_concurrency: usize,
     pub server_capabilities: get_system_info_response::Capabilities,
-    #[cfg(feature = "save_wf_inputs")]
-    pub wf_state_inputs: Option<UnboundedSender<Vec<u8>>>,
 }
 
 pub(crate) struct RunBasics<'a> {
-    pub namespace: String,
+    pub worker_config: Arc<WorkerConfig>,
     pub workflow_id: String,
     pub workflow_type: String,
     pub run_id: String,
-    pub task_queue: String,
     pub history: HistoryUpdate,
     pub metrics: MetricsContext,
     pub capabilities: &'a get_system_info_response::Capabilities,
@@ -167,10 +163,10 @@ impl Workflows {
         let (local_tx, local_rx) = unbounded_channel();
         let (fetch_tx, fetch_rx) = unbounded_channel();
         let shutdown_tok = basics.shutdown_token.clone();
-        let task_queue = basics.task_queue.clone();
+        let task_queue = basics.worker_config.task_queue.clone();
         let extracted_wft_stream = WFTExtractor::build(
             client.clone(),
-            basics.fetching_concurrency,
+            basics.worker_config.fetching_concurrency,
             wft_stream,
             UnboundedReceiverStream::new(fetch_rx),
         );
