@@ -23,7 +23,7 @@ use tokio_util::sync::CancellationToken;
 ///
 /// Use `CoreWfStarter::enable_wf_state_input_recording` from the integration test utilities to
 /// activate saving the data to disk, and use the `wf_input_replay` example binary to replay.
-pub async fn replay_wf_state_inputs(mut config: WorkerConfig, inputs: impl Stream<Item = Vec<u8>>) {
+pub async fn replay_wf_state_inputs(config: WorkerConfig, inputs: impl Stream<Item = Vec<u8>>) {
     use crate::worker::build_wf_basics;
 
     let la_resp_q = Arc::new(SegQueue::new());
@@ -43,7 +43,7 @@ pub async fn replay_wf_state_inputs(mut config: WorkerConfig, inputs: impl Strea
             })
         });
     let basics = build_wf_basics(
-        &mut config,
+        config,
         MetricsContext::no_op(),
         CancellationToken::new(),
         DEFAULT_TEST_CAPABILITIES.clone(),

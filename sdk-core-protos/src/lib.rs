@@ -336,7 +336,7 @@ pub mod coresdk {
         ) -> Option<LocalActivityMarkerData> {
             details
                 .get("data")
-                .and_then(|p| p.payloads.get(0))
+                .and_then(|p| p.payloads.first())
                 .and_then(|p| std::str::from_utf8(&p.data).ok())
                 .and_then(|s| serde_json::from_str(s).ok())
         }

@@ -1020,7 +1020,7 @@ impl WorkflowClientTrait for Client {
                     .and_then(|d| d.try_into().ok()),
                 workflow_run_timeout: options.run_timeout.and_then(|d| d.try_into().ok()),
                 workflow_task_timeout: options.task_timeout.and_then(|d| d.try_into().ok()),
-                search_attributes: options.search_attributes.and_then(|d| d.try_into().ok()),
+                search_attributes: options.search_attributes.map(|d| d.into()),
                 cron_schedule: options.cron_schedule.unwrap_or_default(),
                 request_eager_execution: options.enable_eager_workflow_start,
                 ..Default::default()
@@ -1186,9 +1186,7 @@ impl WorkflowClientTrait for Client {
                 workflow_task_timeout: workflow_options
                     .task_timeout
                     .and_then(|d| d.try_into().ok()),
-                search_attributes: workflow_options
-                    .search_attributes
-                    .and_then(|d| d.try_into().ok()),
+                search_attributes: workflow_options.search_attributes.map(|d| d.into()),
                 cron_schedule: workflow_options.cron_schedule.unwrap_or_default(),
                 header: options.signal_header,
                 ..Default::default()

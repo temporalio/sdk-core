@@ -344,7 +344,7 @@ mod tests {
         // Ensure the upsert command has an empty map when not using the patched command
         if !with_patched_cmd {
             mp.completion_asserts = Some(Box::new(|wftc| {
-                assert_matches!(wftc.commands.get(0).and_then(|c| c.attributes.as_ref()).unwrap(),
+                assert_matches!(wftc.commands.first().and_then(|c| c.attributes.as_ref()).unwrap(),
             Attributes::UpsertWorkflowSearchAttributesCommandAttributes(attrs)
             if attrs.search_attributes.as_ref().unwrap().indexed_fields.is_empty())
             }));

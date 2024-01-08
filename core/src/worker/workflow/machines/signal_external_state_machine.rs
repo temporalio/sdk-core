@@ -275,7 +275,7 @@ impl Cancellable for SignalExternalMachine {
     fn cancel(&mut self) -> Result<Vec<MachineResponse>, MachineError<Self::Error>> {
         let res = OnEventWrapper::on_event_mut(self, SignalExternalMachineEvents::Cancel)?;
         let mut ret = vec![];
-        match res.get(0) {
+        match res.first() {
             Some(SignalExternalCommand::Cancelled) => {
                 ret = vec![ResolveSignalExternalWorkflow {
                     seq: self.shared_state.seq,

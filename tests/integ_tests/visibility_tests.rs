@@ -35,8 +35,8 @@ async fn client_list_open_closed_workflow_executions() {
 
     // List above OPEN workflow
     let start_time_filter = StartTimeFilter {
-        earliest_time: Some(earliest).and_then(|t| t.try_into().ok()),
-        latest_time: Some(latest).and_then(|t| t.try_into().ok()),
+        earliest_time: Some(earliest).map(|t| t.into()),
+        latest_time: Some(latest).map(|t| t.into()),
     };
     let filter = ListOpenFilters::ExecutionFilter(WorkflowExecutionFilter {
         workflow_id: wf_name.clone(),
@@ -63,8 +63,8 @@ async fn client_list_open_closed_workflow_executions() {
                 1,
                 Default::default(),
                 Some(StartTimeFilter {
-                    earliest_time: Some(earliest).and_then(|t| t.try_into().ok()),
-                    latest_time: Some(latest).and_then(|t| t.try_into().ok()),
+                    earliest_time: Some(earliest).map(|t| t.into()),
+                    latest_time: Some(latest).map(|t| t.into()),
                 }),
                 Some(ListClosedFilters::ExecutionFilter(
                     WorkflowExecutionFilter {

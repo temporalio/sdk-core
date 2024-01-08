@@ -906,8 +906,10 @@ async fn activity_tasks_from_completion_reserve_slots() {
     mh.completion_asserts = Some(Box::new(|wftc| {
         // Make sure when we see the completion with the schedule act command that it does
         // not have the eager execution flag set the first time, and does the second.
-        if let Some(Attributes::ScheduleActivityTaskCommandAttributes(attrs)) =
-            wftc.commands.get(0).and_then(|cmd| cmd.attributes.as_ref())
+        if let Some(Attributes::ScheduleActivityTaskCommandAttributes(attrs)) = wftc
+            .commands
+            .first()
+            .and_then(|cmd| cmd.attributes.as_ref())
         {
             if attrs.activity_id == "1" {
                 assert!(!attrs.request_eager_execution);
