@@ -422,6 +422,7 @@ impl WorkflowMachines {
         let build_id_for_current_task = if is_replaying {
             self.current_wft_build_id.clone().unwrap_or_default()
         } else {
+            self.current_wft_build_id = Some(self.worker_config.worker_build_id.clone());
             self.worker_config.worker_build_id.clone()
         };
         WorkflowActivation {
@@ -560,9 +561,6 @@ impl WorkflowMachines {
             // Save this tasks' Build ID if it had one
             if let Some(bid) = next_complete.worker_version.as_ref().map(|wv| &wv.build_id) {
                 self.current_wft_build_id = Some(bid.to_string());
-            } else {
-                // Otherwise we do not want to keep anything previously stored
-                self.current_wft_build_id = None;
             }
         }
 
