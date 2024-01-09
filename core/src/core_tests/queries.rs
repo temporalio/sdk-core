@@ -1,7 +1,7 @@
 use crate::{
     test_help::{
         build_mock_pollers, canned_histories, hist_to_poll_resp, mock_worker, single_hist_mock_sg,
-        MockPollCfg, ResponseType,
+        MockPollCfg, ResponseType, WorkerExt,
     },
     worker::{client::mocks::mock_workflow_client, LEGACY_QUERY_ID},
 };
@@ -849,4 +849,45 @@ async fn legacy_query_combined_with_timer_fire_repro() {
     .await
     .unwrap();
     core.shutdown().await;
+}
+
+#[tokio::test]
+async fn build_id_set_properly_on_query_on_first_task() {
+    let wfid = "fake_wf_id";
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_workflow_task_scheduled_and_started();
+    let tasks = VecDeque::from(vec![{
+        let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), ResponseType::AllHistory);
+        pr.queries.insert(
+            "q".to_string(),
+            WorkflowQuery {
+                query_type: "query-type".to_string(),
+                query_args: Some(b"hi".into()),
+                header: None,
+            },
+        );
+        pr
+    }]);
+    let mut mock_client = mock_workflow_client();
+    mock_client.expect_respond_legacy_query().times(0);
+    let mh = MockPollCfg::from_resp_batches(wfid, t, tasks, mock_workflow_client());
+    let mut mock = build_mock_pollers(mh);
+    mock.worker_cfg(|wc| {
+        wc.max_cached_workflows = 10;
+        wc.worker_build_id = "1.0".to_string();
+    });
+    let core = mock_worker(mock);
+
+    let task = core.poll_workflow_activation().await.unwrap();
+    assert_eq!(task.build_id_for_current_task, "1.0");
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(task.run_id))
+        .await
+        .unwrap();
+    let task = core.poll_workflow_activation().await.unwrap();
+    assert_eq!(task.build_id_for_current_task, "1.0");
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(task.run_id))
+        .await
+        .unwrap();
+    core.drain_pollers_and_shutdown().await;
 }
