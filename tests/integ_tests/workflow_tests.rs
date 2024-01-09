@@ -35,17 +35,19 @@ use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::ActivityExecutionResult,
         workflow_activation::{workflow_activation_job, WorkflowActivation, WorkflowActivationJob},
-        workflow_commands::{ActivityCancellationType, FailWorkflowExecution, StartTimer},
+        workflow_commands::{
+            ActivityCancellationType, FailWorkflowExecution, QueryResult, QuerySuccess, StartTimer,
+        },
         workflow_completion::WorkflowActivationCompletion,
         ActivityTaskCompletion, AsJsonPayloadExt, IntoCompletion,
     },
-    temporal::api::{failure::v1::Failure, history::v1::history_event},
+    temporal::api::{failure::v1::Failure, history::v1::history_event, query::v1::WorkflowQuery},
 };
 use temporal_sdk_core_test_utils::{
     drain_pollers_and_shutdown, history_from_proto_binary, init_core_and_create_wf,
     init_core_replay_preloaded, schedule_activity_cmd, CoreWfStarter, WorkerTestHelpers,
 };
-use tokio::time::sleep;
+use tokio::{join, time::sleep};
 use uuid::Uuid;
 
 // TODO: We should get expected histories for these tests and confirm that the history at the end
@@ -591,4 +593,140 @@ async fn slow_completes_with_small_cache() {
         .run_until_done_intercepted(Some(SlowCompleter {}))
         .await
         .unwrap();
+}
+
+#[tokio::test]
+async fn build_id_correct_in_wf_info() {
+    let wf_type = "build_id_correct_in_wf_info";
+    let mut starter = CoreWfStarter::new(wf_type);
+    starter
+        .worker_config
+        .worker_build_id("1.0")
+        .no_remote_activities(true);
+    let core = starter.get_worker().await;
+    starter.start_wf().await;
+    let client = starter.get_client().await;
+    let workflow_id = starter.get_task_queue().to_string();
+
+    let res = core.poll_workflow_activation().await.unwrap();
+    assert_eq!(res.build_id_for_current_task, "1.0");
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
+        res.run_id.clone(),
+        vec![],
+    ))
+    .await
+    .unwrap();
+
+    // Ensure a query on first wft also sees the correct id
+    let query_fut = async {
+        client
+            .query_workflow_execution(
+                workflow_id.clone(),
+                res.run_id.to_string(),
+                WorkflowQuery {
+                    query_type: "q1".to_string(),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap()
+    };
+    let complete_fut = async {
+        let task = core.poll_workflow_activation().await.unwrap();
+        let query = assert_matches!(
+            task.jobs.as_slice(),
+            [WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::QueryWorkflow(q)),
+            }] => q
+        );
+        assert_eq!(task.build_id_for_current_task, "1.0");
+        core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+            task.run_id,
+            QueryResult {
+                query_id: query.query_id.clone(),
+                variant: Some(
+                    QuerySuccess {
+                        response: Some("done".into()),
+                    }
+                    .into(),
+                ),
+            }
+            .into(),
+        ))
+        .await
+        .unwrap();
+    };
+    join!(query_fut, complete_fut);
+    starter.shutdown().await;
+    client
+        .reset_sticky_task_queue(workflow_id.clone(), "".to_string())
+        .await
+        .unwrap();
+
+    let mut starter = starter.clone_no_worker();
+    starter.worker_config.worker_build_id("2.0");
+    let core = starter.get_worker().await;
+
+    let query_fut = async {
+        client
+            .query_workflow_execution(
+                workflow_id.clone(),
+                res.run_id.to_string(),
+                WorkflowQuery {
+                    query_type: "q2".to_string(),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap()
+    };
+    let complete_fut = async {
+        let res = core.poll_workflow_activation().await.unwrap();
+        assert_eq!(res.build_id_for_current_task, "1.0");
+        core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
+            res.run_id.clone(),
+            vec![],
+        ))
+        .await
+        .unwrap();
+        let task = core.poll_workflow_activation().await.unwrap();
+        let query = assert_matches!(
+            task.jobs.as_slice(),
+            [WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::QueryWorkflow(q)),
+            }] => q
+        );
+        assert_eq!(task.build_id_for_current_task, "1.0");
+        core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+            task.run_id,
+            QueryResult {
+                query_id: query.query_id.clone(),
+                variant: Some(
+                    QuerySuccess {
+                        response: Some("done".into()),
+                    }
+                    .into(),
+                ),
+            }
+            .into(),
+        ))
+        .await
+        .unwrap();
+    };
+    join!(query_fut, complete_fut);
+
+    client
+        .signal_workflow_execution(
+            workflow_id.clone(),
+            "".to_string(),
+            "whatever".to_string(),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+
+    let res = core.poll_workflow_activation().await.unwrap();
+    assert_eq!(res.build_id_for_current_task, "2.0");
+    core.complete_execution(&res.run_id).await;
 }

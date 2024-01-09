@@ -95,21 +95,19 @@ impl WFStream {
         let mut state = WFStream {
             buffered_polls_need_cache_slot: Default::default(),
             runs: RunCache::new(
-                basics.max_cached_workflows,
-                basics.namespace.clone(),
-                basics.task_queue.clone(),
+                basics.worker_config.clone(),
                 basics.server_capabilities.clone(),
                 local_activity_request_sink,
                 basics.metrics.clone(),
             ),
             shutdown_token: basics.shutdown_token,
-            ignore_evicts_on_shutdown: basics.ignore_evicts_on_shutdown,
+            ignore_evicts_on_shutdown: basics.worker_config.ignore_evicts_on_shutdown,
             metrics: basics.metrics,
             runs_needing_fetching: Default::default(),
             history_fetch_refcounter: Arc::new(HistfetchRC {}),
 
             #[cfg(feature = "save_wf_inputs")]
-            wf_state_inputs: basics.wf_state_inputs,
+            wf_state_inputs: basics.worker_config.wf_state_inputs.clone(),
         };
         all_inputs
             .map(move |action: WFStreamInput| {

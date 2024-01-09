@@ -37,7 +37,7 @@ impl HistoryInfo {
         let mut workflow_task_started_event_id = 0;
         let mut wf_task_count = 0;
         let mut history = events.iter().peekable();
-        let started_attrs = match &events.get(0).unwrap().attributes {
+        let started_attrs = match &events.first().unwrap().attributes {
             Some(history_event::Attributes::WorkflowExecutionStartedEventAttributes(attrs)) => {
                 attrs.clone()
             }

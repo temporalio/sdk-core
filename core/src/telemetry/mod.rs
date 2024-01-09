@@ -279,25 +279,6 @@ fn metric_temporality_to_selector(
         MetricTemporality::Delta => ConstantTemporality(Temporality::Delta),
     }
 }
-
-#[cfg(test)]
-pub mod test_initters {
-    use super::*;
-    use temporal_sdk_core_api::telemetry::TelemetryOptionsBuilder;
-
-    #[allow(dead_code)] // Not always used, called to enable for debugging when needed
-    pub fn test_telem_console() {
-        telemetry_init_global(
-            TelemetryOptionsBuilder::default()
-                .logging(Logger::Console {
-                    filter: construct_filter_string(Level::DEBUG, Level::WARN),
-                })
-                .build()
-                .unwrap(),
-        )
-        .unwrap();
-    }
-}
 #[cfg(test)]
 pub use test_initters::*;
 
@@ -324,5 +305,24 @@ where
 {
     fn display(&self) -> String {
         format!("[{}]", self.iter().format(","))
+    }
+}
+
+#[cfg(test)]
+pub mod test_initters {
+    use super::*;
+    use temporal_sdk_core_api::telemetry::TelemetryOptionsBuilder;
+
+    #[allow(dead_code)] // Not always used, called to enable for debugging when needed
+    pub fn test_telem_console() {
+        telemetry_init_global(
+            TelemetryOptionsBuilder::default()
+                .logging(Logger::Console {
+                    filter: construct_filter_string(Level::DEBUG, Level::WARN),
+                })
+                .build()
+                .unwrap(),
+        )
+        .unwrap();
     }
 }

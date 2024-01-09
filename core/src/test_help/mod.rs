@@ -591,7 +591,7 @@ pub(crate) fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder {
             for (_, tasks) in &mut resp_iter {
                 // Must extract run id from a workflow task associated with this workflow
                 // TODO: Case where run id changes for same workflow id is not handled here
-                if let Some(t) = tasks.get(0) {
+                if let Some(t) = tasks.front() {
                     let rid = t.workflow_execution.as_ref().unwrap().run_id.clone();
                     if !outstanding.has_run(&rid) {
                         let t = tasks.pop_front().unwrap();

@@ -464,7 +464,7 @@ impl HistoryUpdate {
         self.previous_wft_started_id >= 0
     }
     pub fn first_event_id(&self) -> Option<i64> {
-        self.events.get(0).map(|e| e.event_id)
+        self.events.first().map(|e| e.event_id)
     }
 
     #[cfg(debug_assertions)]

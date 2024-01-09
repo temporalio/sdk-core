@@ -102,15 +102,7 @@ pub struct Worker {
 #[async_trait::async_trait]
 impl WorkerTrait for Worker {
     async fn poll_workflow_activation(&self) -> Result<WorkflowActivation, PollWfError> {
-        self.next_workflow_activation().await.map(|mut a| {
-            // Attach this worker's Build ID to the activation if appropriate. This is done here
-            // to avoid cloning the ID for every workflow instance. Can be lowered when
-            // https://github.com/temporalio/sdk-core/issues/567 is done
-            if !a.is_replaying {
-                a.build_id_for_current_task = self.config.worker_build_id.clone();
-            }
-            a
-        })
+        self.next_workflow_activation().await
     }
 
     #[instrument(skip(self))]
@@ -227,7 +219,7 @@ impl Worker {
 
     #[allow(clippy::too_many_arguments)] // Not much worth combining here
     pub(crate) fn new_with_pollers(
-        mut config: WorkerConfig,
+        config: WorkerConfig,
         sticky_queue_name: Option<String>,
         client: Arc<dyn WorkerClient>,
         task_pollers: TaskPollers,
@@ -384,7 +376,7 @@ impl Worker {
             wf_client: client.clone(),
             workflows: Workflows::new(
                 build_wf_basics(
-                    &mut config,
+                    config.clone(),
                     metrics,
                     shutdown_token.child_token(),
                     client.capabilities().cloned().unwrap_or_default(),
@@ -669,22 +661,16 @@ pub struct PostActivateHookData<'a> {
 }
 
 fn build_wf_basics(
-    config: &mut WorkerConfig,
+    config: WorkerConfig,
     metrics: MetricsContext,
     shutdown_token: CancellationToken,
     server_capabilities: get_system_info_response::Capabilities,
 ) -> WorkflowBasics {
     WorkflowBasics {
-        max_cached_workflows: config.max_cached_workflows,
+        worker_config: Arc::new(config),
         shutdown_token,
         metrics,
-        namespace: config.namespace.clone(),
-        task_queue: config.task_queue.clone(),
-        ignore_evicts_on_shutdown: config.ignore_evicts_on_shutdown,
-        fetching_concurrency: config.fetching_concurrency,
         server_capabilities,
-        #[cfg(feature = "save_wf_inputs")]
-        wf_state_inputs: config.wf_state_inputs.take(),
     }
 }
 

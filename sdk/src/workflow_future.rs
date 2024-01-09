@@ -236,7 +236,7 @@ impl WorkflowFuture {
                         let defp = Payload::default();
                         let val_res = if u.run_validator {
                             match panic::catch_unwind(AssertUnwindSafe(|| {
-                                (impls.validator)(&info, u.input.get(0).unwrap_or(&defp))
+                                (impls.validator)(&info, u.input.first().unwrap_or(&defp))
                             })) {
                                 Ok(r) => r,
                                 Err(e) => {
@@ -257,7 +257,7 @@ impl WorkflowFuture {
                                         wf_ctx: self.wf_ctx.clone(),
                                         info,
                                     },
-                                    u.input.get(0).unwrap_or(&defp),
+                                    u.input.first().unwrap_or(&defp),
                                 );
                                 self.update_futures
                                     .push((u.protocol_instance_id, handler_fut));

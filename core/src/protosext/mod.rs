@@ -82,7 +82,7 @@ impl Debug for ValidPollWFTQResponse {
             self.previous_started_event_id,
             self.started_event_id,
             self.history.events.len(),
-            self.history.events.get(0).map(|e| e.event_id),
+            self.history.events.first().map(|e| e.event_id),
             self.legacy_query,
             self.query_requests
         )
