@@ -33,7 +33,6 @@ option csharp_namespace = "Temporalio.Api.TestService.V1";
 
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
-import "dependencies/gogoproto/gogo.proto";
 
 message LockTimeSkippingRequest {
 }
@@ -48,16 +47,16 @@ message UnlockTimeSkippingResponse {
 }
 
 message SleepUntilRequest {
-    google.protobuf.Timestamp timestamp = 1 [(gogoproto.stdtime) = true];
+    google.protobuf.Timestamp timestamp = 1;
 }
 
 message SleepRequest {
-    google.protobuf.Duration duration = 1 [(gogoproto.stdduration) = true];
+    google.protobuf.Duration duration = 1;
 }
 
 message SleepResponse {
 }
 
 message GetCurrentTimeResponse {
-    google.protobuf.Timestamp time = 1 [(gogoproto.stdtime) = true];
+    google.protobuf.Timestamp time = 1;
 }
