@@ -166,8 +166,7 @@ async fn deprecated_patch_removal() {
     let did_die = Arc::new(AtomicBool::new(false));
     let send_sig = Arc::new(Notify::new());
     let send_sig_c = send_sig.clone();
-    worker.fetch_results = false;
-    worker.register_wf(wf_id.clone(), move |ctx: WfContext| {
+    worker.register_wf(wf_name, move |ctx: WfContext| {
         let did_die = did_die.clone();
         let send_sig_c = send_sig_c.clone();
         async move {
@@ -187,7 +186,7 @@ async fn deprecated_patch_removal() {
         }
     });
 
-    starter.start_wf().await;
+    starter.start_with_worker(wf_name, &mut worker).await;
     let sig_fut = async {
         send_sig.notified().await;
         client

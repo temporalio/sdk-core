@@ -91,6 +91,10 @@ where
         }
     }
 
+    pub fn info(&self) -> &WorkflowExecutionInfo {
+        &self.info
+    }
+
     pub async fn get_workflow_result(
         &self,
         opts: GetWorkflowResultOpts,

@@ -240,9 +240,7 @@ impl CoreWfStarter {
 
     /// Start the workflow defined by the builder and return run id
     pub async fn start_wf(&mut self) -> String {
-        let mut worker = self.worker().await;
-        self.start_with_worker(self.task_queue_name.clone(), &mut worker)
-            .await
+        self.start_wf_with_id(self.task_queue_name.clone()).await
     }
 
     pub async fn start_with_worker(
