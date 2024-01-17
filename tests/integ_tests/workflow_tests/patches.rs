@@ -5,6 +5,9 @@ use std::{
     },
     time::Duration,
 };
+use temporal_client::WorkflowClientTrait;
+use tokio::{join, sync::Notify};
+use tokio_stream::StreamExt;
 
 use temporal_sdk::{WfContext, WorkflowResult};
 use temporal_sdk_core_test_utils::CoreWfStarter;
@@ -150,4 +153,49 @@ async fn can_remove_deprecated_patch_near_other_patch() {
 
     starter.start_with_worker(wf_name, &mut worker).await;
     worker.run_until_done().await.unwrap();
+}
+
+#[tokio::test]
+async fn deprecated_patch_removal() {
+    let wf_name = "deprecated_patch_removal";
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter.no_remote_activities();
+    let mut worker = starter.worker().await;
+    let client = starter.get_client().await;
+    let wf_id = starter.get_task_queue().to_string();
+    let did_die = Arc::new(AtomicBool::new(false));
+    let send_sig = Arc::new(Notify::new());
+    let send_sig_c = send_sig.clone();
+    worker.register_wf(wf_name, move |ctx: WfContext| {
+        let did_die = did_die.clone();
+        let send_sig_c = send_sig_c.clone();
+        async move {
+            if !did_die.load(Ordering::Acquire) {
+                assert!(ctx.deprecate_patch("getting-deprecated"));
+            }
+            send_sig_c.notify_one();
+            ctx.make_signal_channel("sig").next().await;
+
+            ctx.timer(Duration::from_millis(1)).await;
+
+            if !did_die.load(Ordering::Acquire) {
+                did_die.store(true, Ordering::Release);
+                ctx.force_task_fail(anyhow::anyhow!("i'm ded"));
+            }
+            Ok(().into())
+        }
+    });
+
+    starter.start_with_worker(wf_name, &mut worker).await;
+    let sig_fut = async {
+        send_sig.notified().await;
+        client
+            .signal_workflow_execution(wf_id, "".to_string(), "sig".to_string(), None, None)
+            .await
+            .unwrap()
+    };
+    let run_fut = async {
+        worker.run_until_done().await.unwrap();
+    };
+    join!(sig_fut, run_fut);
 }

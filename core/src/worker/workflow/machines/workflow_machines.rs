@@ -861,16 +861,14 @@ impl WorkflowMachines {
         let event_id = event.event_id;
 
         let consumed_cmd = loop {
-            if let Some(peek_machine) = self.commands.front() {
-                let mach = self.machine(peek_machine.machine);
-                match patch_marker_handling(event, mach, next_event)? {
-                    EventHandlingOutcome::SkipCommand => {
-                        self.commands.pop_front();
-                        continue;
-                    }
-                    eho @ EventHandlingOutcome::SkipEvent { .. } => return Ok(eho),
-                    EventHandlingOutcome::Normal => {}
+            let maybe_machine = self.commands.front().map(|mk| self.machine(mk.machine));
+            match patch_marker_handling(event, maybe_machine, next_event)? {
+                EventHandlingOutcome::SkipCommand => {
+                    self.commands.pop_front();
+                    continue;
                 }
+                eho @ EventHandlingOutcome::SkipEvent { .. } => return Ok(eho),
+                EventHandlingOutcome::Normal => {}
             }
 
             let maybe_command = self.commands.pop_front();
@@ -1598,11 +1596,11 @@ enum EventHandlingOutcome {
 /// [WorkflowMachines::handle_command_event]
 fn patch_marker_handling(
     event: &HistoryEvent,
-    mach: &Machines,
+    mach: Option<&Machines>,
     next_event: Option<&HistoryEvent>,
 ) -> Result<EventHandlingOutcome> {
     let patch_machine = match mach {
-        Machines::PatchMachine(pm) => Some(pm),
+        Some(Machines::PatchMachine(pm)) => Some(pm),
         _ => None,
     };
     let patch_details = event.get_patch_marker_details();
@@ -1633,9 +1631,9 @@ fn patch_marker_handling(
                 Ok(EventHandlingOutcome::Normal)
             }
         } else {
-            // Version markers can be skipped in the event they are deprecated
-            // Is deprecated. We can simply ignore this event, as deprecated change
-            // markers are allowed without matching changed calls.
+            // Version markers can be skipped in the event they are deprecated. We can simply
+            // ignore this event, as deprecated change markers are allowed without matching changed
+            // calls.
             if deprecated {
                 debug!("Deprecated patch marker tried against non-patch machine, skipping.");
                 skip_one_or_two_events(next_event)
