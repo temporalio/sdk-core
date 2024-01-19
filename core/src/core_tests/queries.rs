@@ -895,7 +895,6 @@ async fn build_id_set_properly_on_query_on_first_task() {
 
 #[tokio::test]
 async fn queries_arent_lost_in_buffer_void() {
-    crate::telemetry::test_telem_console();
     let wfid = "fake_wf_id";
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);

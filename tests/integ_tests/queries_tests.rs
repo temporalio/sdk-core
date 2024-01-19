@@ -384,8 +384,8 @@ async fn multiple_concurrent_queries_no_new_history() {
 }
 
 #[tokio::test]
-async fn query_superseded_by_newer_wft_is_discarded() {
-    let mut starter = init_core_and_create_wf("query_superseded_by_newer_wft_is_discarded").await;
+async fn queries_handled_before_next_wft() {
+    let mut starter = init_core_and_create_wf("queries_handled_before_next_wft").await;
     let core = starter.get_worker().await;
     let workflow_id = starter.get_task_queue().to_string();
     let task = core.poll_workflow_activation().await.unwrap();
@@ -447,16 +447,7 @@ async fn query_superseded_by_newer_wft_is_discarded() {
         ))
         .await
         .unwrap();
-        // We should get the signal activation since the in-buffer query should've been failed
-        let task = core.poll_workflow_activation().await.unwrap();
-        assert_matches!(
-            task.jobs.as_slice(),
-            [WorkflowActivationJob {
-                variant: Some(workflow_activation_job::Variant::SignalWorkflow(_)),
-            }]
-        );
-        core.complete_execution(&task.run_id).await;
-        // Query will get retried by server since we fail the task w/ the stale query
+        // We now get the second query
         let task = core.poll_workflow_activation().await.unwrap();
         let query = assert_matches!(
             task.jobs.as_slice(),
@@ -479,6 +470,15 @@ async fn query_superseded_by_newer_wft_is_discarded() {
         ))
         .await
         .unwrap();
+        // Then the signal afterward
+        let task = core.poll_workflow_activation().await.unwrap();
+        assert_matches!(
+            task.jobs.as_slice(),
+            [WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::SignalWorkflow(_)),
+            }]
+        );
+        core.complete_execution(&task.run_id).await;
     };
     join!(join_all(query_futs), complete_fut);
     drain_pollers_and_shutdown(&core).await;
