@@ -50,6 +50,7 @@ use std::{
     collections::VecDeque,
     fmt::Debug,
     future::Future,
+    mem,
     mem::discriminant,
     ops::DerefMut,
     rc::Rc,
@@ -1023,17 +1024,31 @@ struct BufferedTasks {
     /// supersede any old one.
     wft: Option<PermittedWFT>,
     /// For query only tasks, multiple may be received concurrently and it's OK to buffer more
-    /// than one - however they should be dropped if, by the time we try to process them, we
-    /// have already processed a newer real WFT than the one the query was targeting (otherwise
-    /// we'd return data from the "future").
+    /// than one - however they must all be handled before applying the next "real" wft (after the
+    /// current one has been processed).
     query_only_tasks: VecDeque<PermittedWFT>,
+    /// These are query-only tasks for the *buffered* wft, if any. They will all be discarded if
+    /// a buffered wft is replaced before being handled. They move to `query_only_tasks` once the
+    /// buffered task is taken.
+    query_only_tasks_for_buffered: VecDeque<PermittedWFT>,
 }
 
 impl BufferedTasks {
+    /// Buffers a new task. If it is a query-only task, multiple such tasks may be buffered which
+    /// all will be handled at the end of the current WFT. If a new WFT which would advance history
+    /// is provided, it will be buffered - but if another such task comes in while there is already
+    /// one buffered, the old one will be overriden, and all queries will be invalidated.
     fn buffer(&mut self, task: PermittedWFT) {
         if task.work.is_query_only() {
-            self.query_only_tasks.push_back(task);
+            if self.wft.is_none() {
+                self.query_only_tasks.push_back(task);
+            } else {
+                self.query_only_tasks_for_buffered.push_back(task);
+            }
         } else {
+            if self.wft.is_some() {
+                self.query_only_tasks_for_buffered.clear();
+            }
             let _ = self.wft.insert(task);
         }
     }
@@ -1042,12 +1057,18 @@ impl BufferedTasks {
         self.wft.is_some() || !self.query_only_tasks.is_empty()
     }
 
-    /// Remove and return the next WFT from the buffer that should be applied. WFTs which would
-    /// advance workflow state are returned before query-only tasks.
+    /// Remove and return the next WFT from the buffer that should be applied. Queries are returned
+    /// first for the current workflow task, if there are any. If not, the next WFT that would
+    /// advance history is returned.
     fn get_next_wft(&mut self) -> Option<PermittedWFT> {
-        self.wft
-            .take()
-            .or_else(|| self.query_only_tasks.pop_front())
+        if let Some(q) = self.query_only_tasks.pop_front() {
+            return Some(q);
+        }
+        if let Some(t) = self.wft.take() {
+            self.query_only_tasks = mem::take(&mut self.query_only_tasks_for_buffered);
+            return Some(t);
+        }
+        None
     }
 }
 
