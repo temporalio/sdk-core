@@ -1,10 +1,11 @@
 use crate::{
     test_help::{
         build_mock_pollers, canned_histories, hist_to_poll_resp, mock_worker, single_hist_mock_sg,
-        MockPollCfg, ResponseType, WorkerExt,
+        MockPollCfg, MocksHolder, ResponseType, WorkerExt,
     },
     worker::{client::mocks::mock_workflow_client, LEGACY_QUERY_ID},
 };
+use futures_util::stream;
 use std::{
     collections::{HashMap, VecDeque},
     time::Duration,
@@ -890,4 +891,93 @@ async fn build_id_set_properly_on_query_on_first_task() {
         .await
         .unwrap();
     core.drain_pollers_and_shutdown().await;
+}
+
+#[tokio::test]
+async fn queries_arent_lost_in_buffer_void() {
+    crate::telemetry::test_telem_console();
+    let wfid = "fake_wf_id";
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    t.add_we_signaled("sig", vec![]);
+    t.add_full_wf_task();
+    t.add_workflow_execution_completed();
+    let tasks = [
+        hist_to_poll_resp(&t, wfid.to_owned(), 1.into()),
+        {
+            let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), 1.into());
+            pr.query = Some(WorkflowQuery {
+                query_type: "1".to_string(),
+                ..Default::default()
+            });
+            pr.started_event_id = 0;
+            pr
+        },
+        {
+            let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), 1.into());
+            pr.query = Some(WorkflowQuery {
+                query_type: "2".to_string(),
+                ..Default::default()
+            });
+            pr.started_event_id = 0;
+            pr
+        },
+        hist_to_poll_resp(&t, wfid.to_owned(), 2.into()),
+    ]
+    .map(|r| r.resp);
+
+    let mut mock = mock_workflow_client();
+    mock.expect_complete_workflow_task()
+        .returning(|_| Ok(Default::default()));
+    mock.expect_respond_legacy_query()
+        .times(2)
+        .returning(|_, _| Ok(Default::default()));
+    let mut mock = MocksHolder::from_wft_stream(mock, stream::iter(tasks));
+    mock.worker_cfg(|wc| wc.max_cached_workflows = 1);
+    let core = mock_worker(mock);
+
+    let task = core.poll_workflow_activation().await.unwrap();
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(task.run_id))
+        .await
+        .unwrap();
+
+    let task = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        task.jobs.as_slice(),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::QueryWorkflow(q)),
+        }] => q.query_type == "1"
+    );
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+        task.run_id,
+        query_ok(LEGACY_QUERY_ID.to_string(), "hi"),
+    ))
+    .await
+    .unwrap();
+
+    let task = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        task.jobs.as_slice(),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::QueryWorkflow(q)),
+        }] => q.query_type == "2"
+    );
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+        task.run_id,
+        query_ok(LEGACY_QUERY_ID.to_string(), "hi"),
+    ))
+    .await
+    .unwrap();
+
+    let task = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        task.jobs.as_slice(),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::SignalWorkflow(_)),
+        }]
+    );
+    core.complete_execution(&task.run_id).await;
+
+    core.shutdown().await;
 }
