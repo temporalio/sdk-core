@@ -2612,6 +2612,7 @@ async fn history_length_with_fail_and_timeout(
         assert_eq!(ctx.history_length(), 14);
         ctx.timer(Duration::from_secs(1)).await;
         assert_eq!(ctx.history_length(), 19);
+        dbg!("Workflow ending");
         Ok(().into())
     });
     worker
