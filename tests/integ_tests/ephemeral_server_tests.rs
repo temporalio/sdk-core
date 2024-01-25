@@ -1,5 +1,8 @@
 use std::time::{SystemTime, UNIX_EPOCH};
-use temporal_client::{ClientOptionsBuilder, TestService, WorkflowService};
+use temporal_client::{
+    ClientOptionsBuilder, ClientOptionsUpdateBuilder, ConfiguredClient, RetryClient,
+    TemporalServiceClientWithMetrics, TestService, WorkflowService,
+};
 use temporal_sdk_core::ephemeral_server::{
     EphemeralExe, EphemeralExeVersion, EphemeralServer, TemporalDevServerConfigBuilder,
     TemporaliteConfigBuilder, TestServerConfigBuilder,
@@ -28,6 +31,103 @@ async fn temporal_cli_fixed() {
     let mut server = config.start_server().await.unwrap();
     assert_ephemeral_server(&server).await;
     server.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn temporal_cli_update_client_options() {
+    // Start two servers in different ports, create a client for the first one.
+    // Shutdown the server, update the ClientConfig with the other port, and
+    // show the updated client connects to the second one.
+    // Revert the client changes, and try with a fresh server using the first port.
+    let config1 = TemporalDevServerConfigBuilder::default()
+        .exe(default_cached_download())
+        .port(Some(10124))
+        .build()
+        .unwrap();
+    let mut server1 = config1.start_server().await.unwrap();
+    let config2 = TemporalDevServerConfigBuilder::default()
+        .exe(default_cached_download())
+        .port(Some(10125))
+        .build()
+        .unwrap();
+    let mut server2 = config2.start_server().await.unwrap();
+    let client_options = ClientOptionsBuilder::default()
+        .identity("integ_tester".to_string())
+        .target_url(Url::try_from(&*format!("http://{}", server1.target)).unwrap())
+        .client_name("temporal-core".to_string())
+        .client_version("0.1.0".to_string())
+        .build()
+        .unwrap();
+    let mut client = client_options
+        .connect_no_namespace(None, None)
+        .await
+        .unwrap();
+    assert_ephemeral_server_with_client(&server1, &mut client).await;
+    server1.shutdown().await.unwrap();
+
+    let update = ClientOptionsUpdateBuilder::default()
+        .target_url(Url::try_from(&*format!("http://{}", server2.target)).unwrap())
+        .build()
+        .unwrap();
+    assert!(client.get_client().update_options(update).await.is_ok());
+    assert_ephemeral_server_with_client(&server2, &mut client).await;
+    server2.shutdown().await.unwrap();
+
+    // Revert the port change
+    let mut server1 = config1.start_server().await.unwrap();
+    let update = ClientOptionsUpdateBuilder::default()
+        .target_url(Url::try_from(&*format!("http://{}", server1.target)).unwrap())
+        .build()
+        .unwrap();
+    assert!(client.get_client().update_options(update).await.is_ok());
+    assert_ephemeral_server_with_client(&server1, &mut client).await;
+    server1.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn temporal_cli_update_client_options_mut() {
+    let config1 = TemporalDevServerConfigBuilder::default()
+        .exe(default_cached_download())
+        .port(Some(10125))
+        .build()
+        .unwrap();
+    let mut server1 = config1.start_server().await.unwrap();
+    let client_options = ClientOptionsBuilder::default()
+        .identity("integ_tester".to_string())
+        .target_url(Url::try_from(&*format!("http://{}", server1.target)).unwrap())
+        .client_name("temporal-core".to_string())
+        .client_version("0.1.0".to_string())
+        .build()
+        .unwrap();
+    let mut client = client_options
+        .connect_no_namespace(None, None)
+        .await
+        .unwrap();
+    server1.shutdown().await.unwrap();
+
+    let config2 = TemporalDevServerConfigBuilder::default()
+        .exe(default_cached_download())
+        .port(Some(10126))
+        .build()
+        .unwrap();
+    let mut server2 = config2.start_server().await.unwrap();
+    let update = ClientOptionsUpdateBuilder::default()
+        .target_url(Url::try_from(&*format!("http://{}", server2.target)).unwrap())
+        .build()
+        .unwrap();
+    assert!(client
+        .get_client_mut()
+        .update_options_mut(update)
+        .await
+        .is_ok());
+    assert_ephemeral_server_with_client(&server2, &mut client).await;
+
+    // Check that the options field was modified
+    assert_eq!(
+        client.get_client().options().target_url,
+        Url::try_from("http://127.0.0.1:10126").unwrap(),
+    );
+    server2.shutdown().await.unwrap();
 }
 
 #[tokio::test]
@@ -127,6 +227,13 @@ async fn assert_ephemeral_server(server: &EphemeralServer) {
         .connect_no_namespace(None, None)
         .await
         .unwrap();
+    assert_ephemeral_server_with_client(server, &mut client).await;
+}
+
+async fn assert_ephemeral_server_with_client(
+    server: &EphemeralServer,
+    client: &mut RetryClient<ConfiguredClient<TemporalServiceClientWithMetrics>>,
+) {
     let resp = client
         .describe_namespace(DescribeNamespaceRequest {
             namespace: NAMESPACE.to_string(),
