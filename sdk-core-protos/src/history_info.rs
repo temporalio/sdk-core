@@ -6,7 +6,7 @@ use crate::temporal::api::{
     workflowservice::v1::{GetWorkflowExecutionHistoryResponse, PollWorkflowTaskQueueResponse},
 };
 use anyhow::{anyhow, bail};
-use rand::{thread_rng, Rng};
+use rand::random;
 
 /// Contains information about a validated history. Used for replay and other testing.
 #[derive(Clone, Debug, PartialEq)]
@@ -154,7 +154,7 @@ impl HistoryInfo {
     /// randomly generated task token. Caller should attach a meaningful `workflow_execution` if
     /// needed.
     pub fn as_poll_wft_response(&self) -> PollWorkflowTaskQueueResponse {
-        let task_token: [u8; 16] = thread_rng().gen();
+        let task_token: [u8; 16] = random();
         PollWorkflowTaskQueueResponse {
             history: Some(History {
                 events: self.events.clone(),

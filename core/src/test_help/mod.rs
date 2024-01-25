@@ -20,6 +20,7 @@ use mockall::TimesRange;
 use parking_lot::RwLock;
 use std::{
     collections::{BTreeMap, HashMap, HashSet, VecDeque},
+    fmt::Debug,
     ops::{Deref, DerefMut},
     pin::Pin,
     sync::{
@@ -720,6 +721,14 @@ impl<T> Deref for QueueResponse<T> {
 impl<T> DerefMut for QueueResponse<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.resp
+    }
+}
+impl<T> Debug for QueueResponse<T>
+where
+    T: Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.resp.fmt(f)
     }
 }
 
