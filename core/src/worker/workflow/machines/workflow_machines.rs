@@ -781,7 +781,10 @@ impl WorkflowMachines {
                 Ok(EventHandlingOutcome::Normal)
             };
         }
-        if event.event_type() == EventType::Unspecified || event.attributes.is_none() {
+        if event.event_type() == EventType::Unspecified
+            || event.event_type() == EventType::WorkflowExecutionUpdateRequested
+            || event.attributes.is_none()
+        {
             return if !event.worker_may_ignore {
                 Err(WFMachinesError::Fatal(format!(
                     "Event type is unspecified! This history is invalid. Event detail: {event:?}"
