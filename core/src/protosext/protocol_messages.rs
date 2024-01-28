@@ -2,6 +2,7 @@ use anyhow::{anyhow, bail};
 use std::collections::HashMap;
 use temporal_sdk_core_protos::temporal::api::{
     common::v1::Payload,
+    history::v1::{history_event, HistoryEvent},
     protocol::v1::{message::SequencingId, Message},
     update,
 };
@@ -36,6 +37,62 @@ impl TryFrom<Message> for IncomingProtocolMessage {
             sequencing_id: m.sequencing_id,
             body,
         })
+    }
+}
+
+impl TryFrom<&HistoryEvent> for IncomingProtocolMessage {
+    type Error = anyhow::Error;
+
+    fn try_from(event: &HistoryEvent) -> Result<Self, Self::Error> {
+        match event.attributes {
+            Some(history_event::Attributes::WorkflowExecutionUpdateAdmittedEventAttributes(
+                ref atts,
+            )) => {
+                let request = atts.request.as_ref().ok_or_else(|| {
+                    anyhow!("Update admitted event must contain request".to_string())
+                })?;
+                let protocol_instance_id = request
+                    .meta
+                    .as_ref()
+                    .ok_or_else(|| {
+                        anyhow!("Update request's `meta` field must be populated".to_string())
+                    })?
+                    .update_id
+                    .clone();
+                Ok(IncomingProtocolMessage {
+                    id: format!("{protocol_instance_id}/request"),
+                    protocol_instance_id,
+                    // For an UpdateAdmitted history event (i.e. a "durable update request"), the sequencing event ID is
+                    // the event ID itself.
+                    sequencing_id: Some(SequencingId::EventId(event.event_id)),
+                    body: IncomingProtocolMessageBody::UpdateRequest(request.clone().try_into()?),
+                })
+            }
+            Some(history_event::Attributes::WorkflowExecutionUpdateAcceptedEventAttributes(
+                ref atts,
+            )) => Ok(IncomingProtocolMessage {
+                id: atts.accepted_request_message_id.clone(),
+                protocol_instance_id: atts.protocol_instance_id.clone(),
+                // For an UpdateAccepted history event, the sequencing event ID is the sequencing event ID of the
+                // accepted request. This is available as a field on the UpdateAccepted event (it is sent by the worker
+                // in the accepted message).
+                sequencing_id: Some(SequencingId::EventId(
+                    atts.accepted_request_sequencing_event_id,
+                )),
+                body: IncomingProtocolMessageBody::UpdateRequest(
+                    atts.accepted_request
+                        .clone()
+                        .ok_or_else(|| {
+                            anyhow!("Update accepted event must contain accepted request")
+                        })?
+                        .try_into()?,
+                ),
+            }),
+            _ => Err(anyhow!(
+                "Cannot convert event of type {} into protocol message. This is an sdk-core bug.",
+                event.event_type().as_str_name()
+            )),
+        }
     }
 }
 
