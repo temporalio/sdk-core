@@ -37,6 +37,7 @@ use crate::{
         ExecutingLAId, LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
     },
 };
+use anyhow::Context;
 use siphasher::sip::SipHasher13;
 use slotmap::{SlotMap, SparseSecondaryMap};
 use std::{
@@ -591,6 +592,7 @@ impl WorkflowMachines {
             }
         }
 
+        let mut update_admitted_event_messages = HashMap::<String, IncomingProtocolMessage>::new();
         let mut do_handle_event = true;
         let mut history = events.into_iter().peekable();
         while let Some(event) = history.next() {
@@ -621,6 +623,24 @@ impl WorkflowMachines {
             {
                 // Replay is finished
                 self.replaying = false;
+            }
+
+            if matches!(
+                event.attributes,
+                Some(history_event::Attributes::WorkflowExecutionUpdateAdmittedEventAttributes(_)),
+            ) {
+                // The server has sent a durable update admitted event: create the message that would have been sent
+                // for a non-durable update request message.
+                let msg = IncomingProtocolMessage::try_from(&event).context(
+                    "Failed to create protocol message from WorkflowExecutionUpdateAdmittedEvent",
+                )?;
+                if self.replaying {
+                    // Stash the message for use if the update request is accepted.
+                    update_admitted_event_messages.insert(msg.protocol_instance_id.clone(), msg);
+                } else {
+                    // Use the message now.
+                    self.protocol_msgs.push(msg);
+                }
             }
 
             // Process any messages that should be processed before the event we're about to handle
@@ -709,26 +729,16 @@ impl WorkflowMachines {
                 history_event::Attributes::WorkflowExecutionUpdateAcceptedEventAttributes(ref atts),
             ) = e.attributes
             {
-                // If we see a workflow update accepted event, initialize the machine for it by
-                // pretending we received the message we would've under not-replay.
-                delayed_actions.push(DelayedAction::ProtocolMessage(IncomingProtocolMessage {
-                    id: atts.accepted_request_message_id.clone(),
-                    protocol_instance_id: atts.protocol_instance_id.clone(),
-                    sequencing_id: Some(SequencingId::EventId(
-                        atts.accepted_request_sequencing_event_id,
-                    )),
-                    body: IncomingProtocolMessageBody::UpdateRequest(
-                        atts.accepted_request
-                            .clone()
-                            .ok_or_else(|| {
-                                WFMachinesError::Fatal(
-                                    "Update accepted event must contain accepted request"
-                                        .to_string(),
-                                )
-                            })?
-                            .try_into()?,
-                    ),
-                }));
+                // We've encountered an UpdateAccepted event during replay: pretend that we received the message we
+                // would have when receiving an update request under not-replay. If this event was preceded by an
+                // UpdateAdmitted event, then use the message that we created when we encountered that.
+                delayed_actions.push(DelayedAction::ProtocolMessage(
+                    update_admitted_event_messages
+                        .remove(&atts.protocol_instance_id)
+                        .map_or_else(|| e.try_into().context(
+                            "Failed to create protocol message from WorkflowExecutionUpdateAcceptedEvent",
+                        ), Ok)?,
+                ));
             }
         }
         for action in delayed_actions {
