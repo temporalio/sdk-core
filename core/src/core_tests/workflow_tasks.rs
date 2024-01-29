@@ -2624,7 +2624,9 @@ async fn history_length_with_fail_and_timeout(
         )
         .await
         .unwrap();
+    dbg!("Running");
     worker.run_until_done().await.unwrap();
+    dbg!("Done");
 }
 
 #[tokio::test]
