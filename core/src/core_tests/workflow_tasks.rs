@@ -2735,15 +2735,12 @@ async fn use_compatible_version_flag(
 ) {
     let wfid = "fake_wf_id";
     let mut mock_client = mock_workflow_client();
-    let hist = {
+    let t = {
         let mut t = TestHistoryBuilder::default();
         t.add_by_type(EventType::WorkflowExecutionStarted);
         t.add_full_wf_task();
         t
     };
-    mock_client.expect_poll_workflow_task().returning(move |_| {
-        Ok(hist_to_poll_resp(&hist, wfid.to_owned(), ResponseType::AllHistory).resp)
-    });
     let compat_flag_expected = match intent {
         VersioningIntent::Unspecified => !different_tq,
         VersioningIntent::Compatible => true,
@@ -2768,7 +2765,8 @@ async fn use_compatible_version_flag(
             Ok(Default::default())
         });
 
-    let worker = Worker::new_test(test_worker_cfg().build().unwrap(), mock_client);
+    let mock = single_hist_mock_sg(wfid, t, vec![ResponseType::AllHistory], mock_client, true);
+    let worker = mock_worker(mock);
     let r = worker.poll_workflow_activation().await.unwrap();
     let task_queue = if different_tq {
         "enchi cat!".to_string()
@@ -2804,6 +2802,7 @@ async fn use_compatible_version_flag(
         .complete_workflow_activation(WorkflowActivationCompletion::from_cmd(r.run_id, cmd))
         .await
         .unwrap();
+    worker.shutdown().await;
 }
 
 #[tokio::test]
