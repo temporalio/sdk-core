@@ -67,7 +67,7 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: test
-          args: -- --include-ignored --nocapture
+          args: use_cache_2_false::history_responses_case_3_3 -- --include-ignored --nocapture
       - uses: actions/upload-artifact@v3
         with:
           name: coverage-report
