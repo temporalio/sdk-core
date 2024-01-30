@@ -1250,7 +1250,6 @@ mod tests {
         });
 
         let mut worker = build_fake_sdk(mock_cfg);
-        dbg!("Past thing");
         worker.register_wf(DEFAULT_WORKFLOW_TYPE, la_wf);
         worker.register_activity(
             DEFAULT_ACTIVITY_TYPE,
