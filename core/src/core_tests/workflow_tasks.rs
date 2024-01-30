@@ -2112,15 +2112,12 @@ async fn continue_as_new_preserves_some_values() {
     wes_attrs.search_attributes = Some(search);
     wes_attrs.retry_policy = Some(retry_policy);
     let mut mock_client = mock_workflow_client();
-    let hist = {
+    let t = {
         let mut t = TestHistoryBuilder::default();
         t.add(wes_attrs.clone());
         t.add_full_wf_task();
         t
     };
-    mock_client.expect_poll_workflow_task().returning(move |_| {
-        Ok(hist_to_poll_resp(&hist, wfid.to_owned(), ResponseType::AllHistory).resp)
-    });
     mock_client
         .expect_complete_workflow_task()
         .returning(move |mut c| {
@@ -2135,8 +2132,8 @@ async fn continue_as_new_preserves_some_values() {
             }
             Ok(Default::default())
         });
-
-    let worker = Worker::new_test(test_worker_cfg().build().unwrap(), mock_client);
+    let mock = single_hist_mock_sg(wfid, t, vec![ResponseType::AllHistory], mock_client, true);
+    let worker = mock_worker(mock);
     let r = worker.poll_workflow_activation().await.unwrap();
     worker
         .complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
@@ -2149,6 +2146,7 @@ async fn continue_as_new_preserves_some_values() {
         ))
         .await
         .unwrap();
+    worker.shutdown().await;
 }
 
 #[rstest]
