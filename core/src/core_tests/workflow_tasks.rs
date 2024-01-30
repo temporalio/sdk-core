@@ -2607,6 +2607,7 @@ async fn history_length_with_fail_and_timeout(
         }
     });
     worker.register_wf(DEFAULT_WORKFLOW_TYPE, |ctx: WfContext| async move {
+        dbg!("Workflow starting");
         assert_eq!(ctx.history_length(), 3);
         ctx.timer(Duration::from_secs(1)).await;
         assert_eq!(ctx.history_length(), 14);
