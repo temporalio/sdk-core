@@ -208,7 +208,9 @@ mod tests {
     use temporal_sdk_core_api::Worker;
     use temporal_sdk_core_protos::{
         coresdk::{
-            workflow_commands::SetPatchMarker, workflow_completion::WorkflowActivationCompletion,
+            workflow_activation::{workflow_activation_job, WorkflowActivationJob},
+            workflow_commands::SetPatchMarker,
+            workflow_completion::WorkflowActivationCompletion,
             AsJsonPayloadExt,
         },
         temporal::api::{
@@ -332,24 +334,38 @@ mod tests {
             t.add_has_change_marker(&patch_id, false);
         }
         t.add_upsert_search_attrs_for_patch(&[patch_id.clone()]);
+        t.add_we_signaled("hi", vec![]);
         t.add_full_wf_task();
         t.add_workflow_execution_completed();
 
         let mut mp = MockPollCfg::from_resp_batches(
             "fakeid",
             t,
-            [ResponseType::ToTaskNum(1), ResponseType::AllHistory],
+            [ResponseType::ToTaskNum(1), ResponseType::ToTaskNum(2)],
             mock_workflow_client(),
         );
         // Ensure the upsert command has an empty map when not using the patched command
         if !with_patched_cmd {
             mp.completion_asserts = Some(Box::new(|wftc| {
-                assert_matches!(wftc.commands.first().and_then(|c| c.attributes.as_ref()).unwrap(),
-            Attributes::UpsertWorkflowSearchAttributesCommandAttributes(attrs)
-            if attrs.search_attributes.as_ref().unwrap().indexed_fields.is_empty())
+                let cmd_attrs = wftc
+                    .commands
+                    .first()
+                    .and_then(|c| c.attributes.as_ref())
+                    .unwrap();
+                if matches!(
+                    cmd_attrs,
+                    Attributes::CompleteWorkflowExecutionCommandAttributes(_)
+                ) {
+                    return;
+                }
+                assert_matches!(cmd_attrs,
+                    Attributes::UpsertWorkflowSearchAttributesCommandAttributes(attrs)
+                    if attrs.search_attributes.clone().unwrap_or_default().indexed_fields.is_empty());
             }));
         }
-        let core = mock_worker(build_mock_pollers(mp));
+        let mut mock = build_mock_pollers(mp);
+        mock.worker_cfg(|w| w.max_cached_workflows = 1);
+        let core = mock_worker(mock);
 
         let mut ver_upsert = HashMap::new();
         ver_upsert.insert(
@@ -379,6 +395,12 @@ mod tests {
         .unwrap();
         // Now ensure that encountering the upsert in history works fine
         let act = core.poll_workflow_activation().await.unwrap();
+        assert_matches!(
+            act.jobs.as_slice(),
+            [WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::SignalWorkflow(_)),
+            }]
+        );
         core.complete_execution(&act.run_id).await;
     }
 }

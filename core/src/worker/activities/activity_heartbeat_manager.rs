@@ -450,8 +450,7 @@ mod test {
         hm.shutdown().await;
     }
 
-    /// Ensure that heartbeat can be called from a tight loop without any throttle_interval, resulting in two
-    /// interactions with the server - one immediately and one after 500ms after the throttle_interval.
+    /// Ensure that heartbeat can be called from a tight loop and correctly throttle
     #[tokio::test]
     async fn process_tight_loop_and_shutdown() {
         let mut mock_client = mock_workflow_client();
