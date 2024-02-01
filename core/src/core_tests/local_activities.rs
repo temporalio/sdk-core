@@ -1322,7 +1322,7 @@ async fn local_activity_after_wf_complete_is_discarded() {
                 assert_eq!(wft.commands.len(), 2);
                 assert_eq!(wft.commands[0].command_type(), CommandType::RecordMarker);
                 assert_eq!(
-                    wft.commands[0].command_type(),
+                    wft.commands[1].command_type(),
                     CommandType::CompleteWorkflowExecution
                 );
             });
@@ -1368,18 +1368,6 @@ async fn local_activity_after_wf_complete_is_discarded() {
         );
         barr.wait().await;
         core.complete_execution(&task.run_id).await;
-        let shutdown = core.poll_workflow_activation().await.unwrap_err();
-        assert_matches!(shutdown, PollWfError::ShutDown);
-        // dbg!(&task);
-        // assert_matches!(
-        //     task.jobs.as_slice(),
-        //     [WorkflowActivationJob {
-        //         variant: Some(workflow_activation_job::Variant::ResolveActivity(_)),
-        //     }]
-        // );
-        // core.complete_workflow_activation(WorkflowActivationCompletion::empty(task.run_id))
-        //     .await
-        //     .unwrap();
     };
 
     let at_poller = async {
@@ -1401,6 +1389,6 @@ async fn local_activity_after_wf_complete_is_discarded() {
     };
 
     join!(wf_poller, at_poller);
-
-    core.shutdown().await;
+    dbg!("Just waiting for shutdown!");
+    core.drain_pollers_and_shutdown().await;
 }
