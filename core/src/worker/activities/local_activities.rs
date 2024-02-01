@@ -1246,7 +1246,7 @@ mod tests {
         // Wait more than the timeout before grabbing the task
         sleep(timeout + Duration::from_millis(10)).await;
 
-        assert!(dbg!(lam.next_pending().await.unwrap()).is_timeout(false));
+        assert!(lam.next_pending().await.unwrap().is_timeout(false));
         assert_eq!(lam.num_in_backoff(), 0);
         assert_eq!(lam.num_outstanding(), 0);
     }
