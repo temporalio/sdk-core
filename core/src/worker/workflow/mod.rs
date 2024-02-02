@@ -1340,7 +1340,7 @@ impl From<OutgoingJob> for WorkflowActivationJob {
 /// Errors thrown inside of workflow machines
 #[derive(thiserror::Error, Debug)]
 pub(crate) enum WFMachinesError {
-    #[error("Nondeterminism error: {0}")]
+    #[error("[TMPRL1100] Nondeterminism error: {0}")]
     Nondeterminism(String),
     #[error("Fatal error in workflow machines: {0}")]
     Fatal(String),
