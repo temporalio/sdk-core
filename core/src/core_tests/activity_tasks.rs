@@ -1144,8 +1144,8 @@ async fn activities_must_be_flushed_to_server_on_shutdown() {
         .times(1)
         .returning(|_, _| {
             async {
+                // We need some artificial delay here and there's nothing meaningful to sync with
                 tokio::time::sleep(Duration::from_millis(200)).await;
-                dbg!("complete done");
                 if shutdown_finished.load(Ordering::Acquire) {
                     panic!("Shutdown must complete *after* server sees the activity completion");
                 }
@@ -1170,10 +1170,8 @@ async fn activities_must_be_flushed_to_server_on_shutdown() {
     let shutdown_task = async {
         worker.drain_activity_poller_and_shutdown().await;
         shutdown_finished.store(true, Ordering::Release);
-        dbg!("Shutdown done");
     };
     let complete_task = async {
-        // tokio::time::sleep(Duration::from_millis(200)).await;
         worker
             .complete_activity_task(ActivityTaskCompletion {
                 task_token: task.task_token,
