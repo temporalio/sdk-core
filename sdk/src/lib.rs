@@ -25,6 +25,7 @@
 //!     let worker_config = WorkerConfigBuilder::default()
 //!         .namespace("default")
 //!         .task_queue("task_queue")
+//!         .worker_build_id("rust-sdk")
 //!         .build()?;
 //!
 //!     let core_worker = init_worker(&runtime, worker_config, client)?;
