@@ -20,6 +20,8 @@ pub(super) struct LocalActivityData {
     /// Maps local activity sequence numbers to their resolutions as found when looking ahead at
     /// next WFT
     preresolutions: HashMap<u32, ResolveDat>,
+    /// Set true if the workflow is terminating
+    am_terminating: bool,
 }
 
 impl LocalActivityData {
@@ -45,6 +47,10 @@ impl LocalActivityData {
         wf_id: &str,
         run_id: &str,
     ) -> Vec<LocalActRequest> {
+        if self.am_terminating {
+            return vec![LocalActRequest::CancelAllInRun(run_id.to_string())];
+        }
+
         self.cancel_requests
             .drain(..)
             .map(LocalActRequest::Cancel)
@@ -65,6 +71,9 @@ impl LocalActivityData {
 
     /// Returns all outstanding local activities, whether executing or requested and in the queue
     pub(super) fn outstanding_la_count(&self) -> usize {
+        if self.am_terminating {
+            return 0;
+        }
         self.executing.len() + self.new_requests.len()
     }
 
@@ -81,5 +90,11 @@ impl LocalActivityData {
             .iter()
             .position(|req| req.seq == seq)
             .map(|i| self.new_requests.remove(i))
+    }
+
+    /// Store that this workflow is terminating, and thus no new LA requests need be processed,
+    /// and any executing LAs should not prevent us from shutting down.
+    pub(super) fn indicate_terminating(&mut self) {
+        self.am_terminating = true;
     }
 }

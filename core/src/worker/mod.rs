@@ -179,8 +179,14 @@ impl WorkerTrait for Worker {
         // Let the manager know that shutdown has been initiated to try to unblock the local
         // activity poll in case this worker is an activity-only worker.
         self.local_act_mgr.shutdown_initiated();
+
         if !self.workflows.ever_polled() {
             self.local_act_mgr.workflows_have_shutdown();
+        } else {
+            // Bump the workflow stream with a pointless input, since if a client initiates shutdown
+            // and then immediately blocks waiting on a workflow activation poll, it's possible that
+            // there may not be any more inputs ever, and that poll will never resolve.
+            self.workflows.send_get_state_info_msg();
         }
     }
 
@@ -189,7 +195,6 @@ impl WorkerTrait for Worker {
     }
 
     async fn finalize_shutdown(self) {
-        self.shutdown().await;
         self.finalize_shutdown().await
     }
 }

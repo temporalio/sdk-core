@@ -368,7 +368,6 @@ impl ManagedRun {
         used_flags: Vec<u32>,
         resp_chan: Option<oneshot::Sender<ActivationCompleteResult>>,
     ) -> Result<RunUpdateAct, NextPageReq> {
-        dbg!(&commands);
         let activation_was_only_eviction = self.activation_has_only_eviction();
         let (task_token, has_pending_query, start_time) = if let Some(entry) = self.wft.as_ref() {
             (
@@ -643,7 +642,6 @@ impl ManagedRun {
         }
 
         let outcome = (|| {
-            let has_terminal_command = completion.commands.iter().any(|c| c.is_terminal());
             // Send commands from lang into the machines then check if the workflow run needs
             // another activation and mark it if so
             self.wfm.push_commands_and_iterate(completion.commands)?;
@@ -654,29 +652,24 @@ impl ManagedRun {
             if !completion.activation_was_eviction {
                 self.wfm.apply_next_task_if_ready()?;
             }
-            // If this completion is about to terminate the workflow, we can immediately stop
-            // considering any remaining outstanding local activities.
-            if has_terminal_command {
+            let new_local_acts = self.wfm.drain_queued_local_activities();
+            self.sink_la_requests(new_local_acts)?;
+
+            if self.wfm.machines.outstanding_local_activity_count() == 0 {
                 Ok(None)
             } else {
-                let new_local_acts = self.wfm.drain_queued_local_activities();
-                self.sink_la_requests(new_local_acts)?;
-                if self.wfm.machines.outstanding_local_activity_count() == 0 {
-                    Ok(None)
-                } else {
-                    let wft_timeout: Duration = self
-                        .wfm
-                        .machines
-                        .get_started_info()
-                        .and_then(|attrs| attrs.workflow_task_timeout)
-                        .ok_or_else(|| {
-                            WFMachinesError::Fatal(
-                                "Workflow's start attribs were missing a well formed task timeout"
-                                    .to_string(),
-                            )
-                        })?;
-                    Ok(Some((completion.start_time, wft_timeout)))
-                }
+                let wft_timeout: Duration = self
+                    .wfm
+                    .machines
+                    .get_started_info()
+                    .and_then(|attrs| attrs.workflow_task_timeout)
+                    .ok_or_else(|| {
+                        WFMachinesError::Fatal(
+                            "Workflow's start attribs were missing a well formed task timeout"
+                                .to_string(),
+                        )
+                    })?;
+                Ok(Some((completion.start_time, wft_timeout)))
             }
         })();
 

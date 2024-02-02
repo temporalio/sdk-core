@@ -1298,10 +1298,9 @@ async fn queries_can_be_received_while_heartbeating() {
 
 #[tokio::test]
 async fn local_activity_after_wf_complete_is_discarded() {
-    crate::telemetry::test_telem_console();
     let wfid = "fake_wf_id";
     let mut t = TestHistoryBuilder::default();
-    t.add_wfe_started_with_wft_timeout(Duration::from_millis(500));
+    t.add_wfe_started_with_wft_timeout(Duration::from_millis(200));
     t.add_full_wf_task();
     t.add_workflow_task_scheduled_and_started();
 
@@ -1389,6 +1388,5 @@ async fn local_activity_after_wf_complete_is_discarded() {
     };
 
     join!(wf_poller, at_poller);
-    dbg!("Just waiting for shutdown!");
     core.drain_pollers_and_shutdown().await;
 }
