@@ -180,58 +180,60 @@ impl Workflows {
         // We must spawn a task to constantly poll the activation stream, because otherwise
         // activation completions would not cause anything to happen until the next poll.
         let tracing_sub = telem_instance.and_then(|ti| ti.trace_subscriber());
-        let processing_task = thread::spawn(move || {
-            if let Some(ts) = tracing_sub {
-                set_trace_subscriber_for_current_thread(ts);
-            }
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .thread_name("workflow-processing")
-                .build()
-                .unwrap();
-            let local = LocalSet::new();
-            local.block_on(&rt, async move {
-                let mut stream = WFStream::build(
-                    basics,
-                    extracted_wft_stream,
-                    locals_stream,
-                    local_activity_request_sink,
-                );
+        let processing_task = thread::Builder::new()
+            .name("workflow-processing".to_string())
+            .spawn(move || {
+                if let Some(ts) = tracing_sub {
+                    set_trace_subscriber_for_current_thread(ts);
+                }
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap();
+                let local = LocalSet::new();
+                local.block_on(&rt, async move {
+                    let mut stream = WFStream::build(
+                        basics,
+                        extracted_wft_stream,
+                        locals_stream,
+                        local_activity_request_sink,
+                    );
 
-                // However, we want to avoid plowing ahead until we've been asked to poll at least
-                // once. This supports activity-only workers.
-                let do_poll = tokio::select! {
-                    sp = start_polling_rx => {
-                        sp.is_ok()
-                    }
-                    _ = shutdown_tok.cancelled() => {
-                        false
-                    }
-                };
-                if !do_poll {
-                    return;
-                }
-                while let Some(output) = stream.next().await {
-                    match output {
-                        Ok(o) => {
-                            for fetchreq in o.fetch_histories {
-                                fetch_tx
-                                    .send(fetchreq)
-                                    .expect("Fetch channel must not be dropped");
-                            }
-                            for act in o.activations {
-                                activation_tx
-                                    .send(Ok(act))
-                                    .expect("Activation processor channel not dropped");
-                            }
+                    // However, we want to avoid plowing ahead until we've been asked to poll at least
+                    // once. This supports activity-only workers.
+                    let do_poll = tokio::select! {
+                        sp = start_polling_rx => {
+                            sp.is_ok()
                         }
-                        Err(e) => activation_tx
-                            .send(Err(e))
-                            .expect("Activation processor channel not dropped"),
+                        _ = shutdown_tok.cancelled() => {
+                            false
+                        }
+                    };
+                    if !do_poll {
+                        return;
                     }
-                }
-            });
-        });
+                    while let Some(output) = stream.next().await {
+                        match output {
+                            Ok(o) => {
+                                for fetchreq in o.fetch_histories {
+                                    fetch_tx
+                                        .send(fetchreq)
+                                        .expect("Fetch channel must not be dropped");
+                                }
+                                for act in o.activations {
+                                    activation_tx
+                                        .send(Ok(act))
+                                        .expect("Activation processor channel not dropped");
+                                }
+                            }
+                            Err(e) => activation_tx
+                                .send(Err(e))
+                                .expect("Activation processor channel not dropped"),
+                        }
+                    }
+                });
+            })
+            .expect("Must be able to spawn workflow processing thread");
         Self {
             task_queue,
             local_tx,
@@ -498,10 +500,17 @@ impl Workflows {
         });
     }
 
-    /// Query the state of workflow management. Can return `None` if workflow state is shut down.
-    pub(super) fn get_state_info(&self) -> impl Future<Output = Option<WorkflowStateInfo>> {
+    /// Send a `GetStateInfoMsg` to the workflow stream. Can be used to bump the stream if there
+    /// would otherwise be no new inputs.
+    pub(super) fn send_get_state_info_msg(&self) -> oneshot::Receiver<WorkflowStateInfo> {
         let (tx, rx) = oneshot::channel();
         self.send_local(GetStateInfoMsg { response_tx: tx });
+        rx
+    }
+
+    /// Query the state of workflow management. Can return `None` if workflow state is shut down.
+    pub(super) fn get_state_info(&self) -> impl Future<Output = Option<WorkflowStateInfo>> {
+        let rx = self.send_get_state_info_msg();
         async move { rx.await.ok() }
     }
 

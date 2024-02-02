@@ -2,8 +2,8 @@ use crate::{
     prost_dur,
     replay::{default_wes_attribs, TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE},
     test_help::{
-        hist_to_poll_resp, mock_sdk, mock_sdk_cfg, mock_worker, single_hist_mock_sg, MockPollCfg,
-        ResponseType, WorkerExt,
+        build_mock_pollers, hist_to_poll_resp, mock_sdk, mock_sdk_cfg, mock_worker,
+        single_hist_mock_sg, MockPollCfg, ResponseType, WorkerExt,
     },
     worker::{client::mocks::mock_workflow_client, LEGACY_QUERY_ID},
 };
@@ -38,7 +38,7 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::{
         common::v1::RetryPolicy,
-        enums::v1::{EventType, TimeoutType, WorkflowTaskFailedCause},
+        enums::v1::{CommandType, EventType, TimeoutType, WorkflowTaskFailedCause},
         failure::v1::{failure::FailureInfo, Failure},
         query::v1::WorkflowQuery,
     },
@@ -1293,5 +1293,100 @@ async fn queries_can_be_received_while_heartbeating() {
     .await
     .unwrap();
 
+    core.drain_pollers_and_shutdown().await;
+}
+
+#[tokio::test]
+async fn local_activity_after_wf_complete_is_discarded() {
+    let wfid = "fake_wf_id";
+    let mut t = TestHistoryBuilder::default();
+    t.add_wfe_started_with_wft_timeout(Duration::from_millis(200));
+    t.add_full_wf_task();
+    t.add_workflow_task_scheduled_and_started();
+
+    let mock = mock_workflow_client();
+    let mut mock_cfg = MockPollCfg::from_resp_batches(
+        wfid,
+        t,
+        [ResponseType::ToTaskNum(1), ResponseType::ToTaskNum(2)],
+        mock,
+    );
+    mock_cfg.make_poll_stream_interminable = true;
+    mock_cfg.completion_asserts_from_expectations(|mut asserts| {
+        asserts
+            .then(move |wft| {
+                assert_eq!(wft.commands.len(), 0);
+            })
+            .then(move |wft| {
+                assert_eq!(wft.commands.len(), 2);
+                assert_eq!(wft.commands[0].command_type(), CommandType::RecordMarker);
+                assert_eq!(
+                    wft.commands[1].command_type(),
+                    CommandType::CompleteWorkflowExecution
+                );
+            });
+    });
+    let mut mock = build_mock_pollers(mock_cfg);
+    mock.worker_cfg(|wc| wc.max_cached_workflows = 1);
+    let core = mock_worker(mock);
+
+    let barr = Barrier::new(2);
+
+    let task = core.poll_workflow_activation().await.unwrap();
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
+        task.run_id,
+        vec![
+            ScheduleLocalActivity {
+                seq: 1,
+                activity_id: "1".to_string(),
+                activity_type: "test_act".to_string(),
+                start_to_close_timeout: Some(prost_dur!(from_secs(30))),
+                ..Default::default()
+            }
+            .into(),
+            ScheduleLocalActivity {
+                seq: 2,
+                activity_id: "2".to_string(),
+                activity_type: "test_act".to_string(),
+                start_to_close_timeout: Some(prost_dur!(from_secs(30))),
+                ..Default::default()
+            }
+            .into(),
+        ],
+    ))
+    .await
+    .unwrap();
+
+    let wf_poller = async {
+        let task = core.poll_workflow_activation().await.unwrap();
+        assert_matches!(
+            task.jobs.as_slice(),
+            [WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::ResolveActivity(_)),
+            }]
+        );
+        barr.wait().await;
+        core.complete_execution(&task.run_id).await;
+    };
+
+    let at_poller = async {
+        let act_task = core.poll_activity_task().await.unwrap();
+        core.complete_activity_task(ActivityTaskCompletion {
+            task_token: act_task.task_token,
+            result: Some(ActivityExecutionResult::ok(vec![1].into())),
+        })
+        .await
+        .unwrap();
+        let act_task = core.poll_activity_task().await.unwrap();
+        barr.wait().await;
+        core.complete_activity_task(ActivityTaskCompletion {
+            task_token: act_task.task_token,
+            result: Some(ActivityExecutionResult::ok(vec![2].into())),
+        })
+        .await
+        .unwrap();
+    };
+
+    join!(wf_poller, at_poller);
     core.drain_pollers_and_shutdown().await;
 }

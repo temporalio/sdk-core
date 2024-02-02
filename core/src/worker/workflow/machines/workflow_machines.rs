@@ -1467,6 +1467,9 @@ impl WorkflowMachines {
         let cwfm = self.add_new_command_machine(machine);
         self.workflow_end_time = Some(SystemTime::now());
         self.current_wf_task_commands.push_back(cwfm);
+        // Wipe out any pending / executing local activity data since we're about to terminate
+        // and there's nothing to be done with them.
+        self.local_activity_data.indicate_terminating();
     }
 
     /// Add a new command/machines for that command to the current workflow task
