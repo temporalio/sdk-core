@@ -1122,11 +1122,20 @@ async fn graceful_shutdown(#[values(true, false)] at_max_outstanding: bool) {
     worker.drain_pollers_and_shutdown().await;
 }
 
+#[rstest::rstest]
 #[tokio::test]
-async fn activities_must_be_flushed_to_server_on_shutdown() {
+async fn activities_must_be_flushed_to_server_on_shutdown(#[values(true, false)] use_grace: bool) {
     crate::telemetry::test_telem_console();
-    // TODO: Test with grace too
-    // let grace_period = Duration::from_millis(200);
+
+    let grace_period = if use_grace {
+        // Even though the grace period is shorter than the client call, the client call will still
+        // go through. This is reasonable since the client has a timeout anyway, and it's unlikely
+        // that a user *needs* an extremely short grace period (it'd be kind of pointless in that
+        // case). They can always force-kill their worker in this situation.
+        Duration::from_millis(50)
+    } else {
+        Duration::from_secs(10)
+    };
     let shutdown_finished: &'static AtomicBool = Box::leak(Box::new(AtomicBool::new(false)));
     let mut tasks = three_tasks();
     let mut mock_act_poller = mock_poller();
@@ -1145,7 +1154,7 @@ async fn activities_must_be_flushed_to_server_on_shutdown() {
         .returning(|_, _| {
             async {
                 // We need some artificial delay here and there's nothing meaningful to sync with
-                tokio::time::sleep(Duration::from_millis(200)).await;
+                tokio::time::sleep(Duration::from_millis(100)).await;
                 if shutdown_finished.load(Ordering::Acquire) {
                     panic!("Shutdown must complete *after* server sees the activity completion");
                 }
@@ -1157,7 +1166,7 @@ async fn activities_must_be_flushed_to_server_on_shutdown() {
     let mw = MockWorkerInputs {
         act_poller: Some(Box::from(mock_act_poller)),
         config: test_worker_cfg()
-            // .graceful_shutdown_period(grace_period)
+            .graceful_shutdown_period(grace_period)
             .max_concurrent_at_polls(1_usize) // Makes test logic simple
             .build()
             .unwrap(),
