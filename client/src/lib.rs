@@ -49,7 +49,7 @@ use temporal_sdk_core_protos::{
     coresdk::{workflow_commands::QueryResult, IntoPayloadsExt},
     grpc::health::v1::health_client::HealthClient,
     temporal::api::{
-        common::v1::{Header, Payload, Payloads, WorkflowExecution, WorkflowType},
+        common::v1::{Header, Payload, Payloads, WorkflowExecution, WorkflowType, RetryPolicy},
         enums::v1::{TaskQueueKind, WorkflowIdReusePolicy},
         failure::v1::Failure,
         operatorservice::v1::operator_service_client::OperatorServiceClient,
@@ -986,6 +986,9 @@ pub struct WorkflowOptions {
     /// Optionally enable Eager Workflow Start, a latency optimization using local workers
     /// NOTE: Experimental and incompatible with versioning with BuildIDs
     pub enable_eager_workflow_start: bool,
+
+    /// Optionally set a retry policy for the workflow
+    pub retry_policy: Option<RetryPolicy>
 }
 
 #[async_trait::async_trait]
@@ -1023,6 +1026,7 @@ impl WorkflowClientTrait for Client {
                 search_attributes: options.search_attributes.map(|d| d.into()),
                 cron_schedule: options.cron_schedule.unwrap_or_default(),
                 request_eager_execution: options.enable_eager_workflow_start,
+                retry_policy: options.retry_policy,
                 ..Default::default()
             },
         )
