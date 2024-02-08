@@ -151,9 +151,9 @@ pub struct TlsConfig {
 /// If using mTLS, both the client cert and private key must be specified, this contains them.
 #[derive(Clone)]
 pub struct ClientTlsConfig {
-    /// The certificate for this client
+    /// The certificate for this client, encoded as PEM
     pub client_cert: Vec<u8>,
-    /// The private key for this client
+    /// The private key for this client, encoded as PEM
     pub client_private_key: Vec<u8>,
 }
 
