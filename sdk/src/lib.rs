@@ -772,13 +772,17 @@ impl<T> WfExitValue<T> {
 }
 
 /// Activity functions may return these values when exiting
-#[derive(derive_more::From)]
-pub enum ActExitValue<T: Debug> {
+pub enum ActExitValue<T> {
     /// Completion requires an asynchronous callback
-    #[from(ignore)]
     WillCompleteAsync,
     /// Finish with a result
     Normal(T),
+}
+
+impl<T: AsJsonPayloadExt> From<T> for ActExitValue<T> {
+    fn from(t: T) -> Self {
+        Self::Normal(t)
+    }
 }
 
 type BoxActFn = Arc<
