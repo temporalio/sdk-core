@@ -17,7 +17,7 @@ use std::{
     future,
     rc::Rc,
     sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     },
     time::Duration,
@@ -1057,7 +1057,6 @@ async fn cant_complete_activity_with_unset_result_payload() {
 #[rstest::rstest]
 #[tokio::test]
 async fn graceful_shutdown(#[values(true, false)] at_max_outstanding: bool) {
-    let _task_q = "q";
     let grace_period = Duration::from_millis(200);
     let mut tasks = three_tasks();
     let mut mock_act_poller = mock_poller();
@@ -1121,4 +1120,74 @@ async fn graceful_shutdown(#[values(true, false)] at_max_outstanding: bool) {
             .unwrap();
     }
     worker.drain_pollers_and_shutdown().await;
+}
+
+#[rstest::rstest]
+#[tokio::test]
+async fn activities_must_be_flushed_to_server_on_shutdown(#[values(true, false)] use_grace: bool) {
+    crate::telemetry::test_telem_console();
+
+    let grace_period = if use_grace {
+        // Even though the grace period is shorter than the client call, the client call will still
+        // go through. This is reasonable since the client has a timeout anyway, and it's unlikely
+        // that a user *needs* an extremely short grace period (it'd be kind of pointless in that
+        // case). They can always force-kill their worker in this situation.
+        Duration::from_millis(50)
+    } else {
+        Duration::from_secs(10)
+    };
+    let shutdown_finished: &'static AtomicBool = Box::leak(Box::new(AtomicBool::new(false)));
+    let mut tasks = three_tasks();
+    let mut mock_act_poller = mock_poller();
+    mock_act_poller
+        .expect_poll()
+        .times(1)
+        .returning(move || Some(Ok(tasks.pop_front().unwrap())));
+    mock_act_poller
+        .expect_poll()
+        .times(1)
+        .returning(move || None);
+    let mut mock_client = mock_manual_workflow_client();
+    mock_client
+        .expect_complete_activity_task()
+        .times(1)
+        .returning(|_, _| {
+            async {
+                // We need some artificial delay here and there's nothing meaningful to sync with
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                if shutdown_finished.load(Ordering::Acquire) {
+                    panic!("Shutdown must complete *after* server sees the activity completion");
+                }
+                Ok(Default::default())
+            }
+            .boxed()
+        });
+
+    let mw = MockWorkerInputs {
+        act_poller: Some(Box::from(mock_act_poller)),
+        config: test_worker_cfg()
+            .graceful_shutdown_period(grace_period)
+            .max_concurrent_at_polls(1_usize) // Makes test logic simple
+            .build()
+            .unwrap(),
+        ..Default::default()
+    };
+    let worker = mock_worker(MocksHolder::from_mock_worker(mock_client, mw));
+
+    let task = worker.poll_activity_task().await.unwrap();
+
+    let shutdown_task = async {
+        worker.drain_activity_poller_and_shutdown().await;
+        shutdown_finished.store(true, Ordering::Release);
+    };
+    let complete_task = async {
+        worker
+            .complete_activity_task(ActivityTaskCompletion {
+                task_token: task.task_token,
+                result: Some(ActivityExecutionResult::ok("hi".into())),
+            })
+            .await
+            .unwrap();
+    };
+    join!(shutdown_task, complete_task);
 }
