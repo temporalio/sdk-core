@@ -152,6 +152,9 @@ pub(crate) struct WorkerActivityTasks {
     /// eager activities). Tasks received in this stream hold a "tracked" permit that is issued by
     /// the `eager_activities_semaphore`.
     eager_activities_tx: UnboundedSender<TrackedPermittedTqResp>,
+    /// Ensures that no activities are in the middle of flushing their results to server while we
+    /// try to shut down.
+    completers_lock: tokio::sync::RwLock<()>,
 
     metrics: MetricsContext,
 
@@ -230,6 +233,7 @@ impl WorkerActivityTasks {
             default_heartbeat_throttle_interval,
             poll_returned_shutdown_token: CancellationToken::new(),
             outstanding_activity_tasks,
+            completers_lock: Default::default(),
         }
     }
 
@@ -283,6 +287,7 @@ impl WorkerActivityTasks {
 
     pub(crate) async fn shutdown(&self) {
         self.initiate_shutdown();
+        let _ = self.completers_lock.write().await;
         self.poll_returned_shutdown_token.cancelled().await;
         self.heartbeat_manager.shutdown().await;
     }
@@ -321,10 +326,10 @@ impl WorkerActivityTasks {
                 jh.abort()
             };
             self.heartbeat_manager.evict(task_token.clone()).await;
-            self.complete_notify.notify_waiters();
 
             // No need to report activities which we already know the server doesn't care about
             if !known_not_found {
+                let _flushing_guard = self.completers_lock.read().await;
                 let maybe_net_err = match status {
                     aer::Status::WillCompleteAsync(_) => None,
                     aer::Status::Completed(ar::Success { result }) => client
@@ -364,8 +369,8 @@ impl WorkerActivityTasks {
                             {
                                 details
                             } else {
-                                warn!(task_token = ? task_token,
-                                "Expected activity cancelled status with CanceledFailureInfo");
+                                warn!(task_token=?task_token,
+                                    "Expected activity cancelled status with CanceledFailureInfo");
                                 None
                             };
                             client
@@ -376,9 +381,11 @@ impl WorkerActivityTasks {
                     }
                 };
 
+                self.complete_notify.notify_waiters();
+
                 if let Some(e) = maybe_net_err {
                     if e.code() == tonic::Code::NotFound {
-                        warn!(task_token = ?task_token, details = ?e, "Activity not found on \
+                        warn!(task_token=?task_token, details=?e, "Activity not found on \
                         completion. This may happen if the activity has already been cancelled but \
                         completed anyway.");
                     } else {
