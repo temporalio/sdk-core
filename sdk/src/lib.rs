@@ -711,7 +711,7 @@ impl<F, Fut, O> From<F> for WorkflowFunction
 where
     F: Fn(WfContext) -> Fut + Send + Sync + 'static,
     Fut: Future<Output = Result<WfExitValue<O>, anyhow::Error>> + Send + 'static,
-    O: Serialize + Debug,
+    O: Serialize,
 {
     fn from(wf_func: F) -> Self {
         Self::new(wf_func)
@@ -724,7 +724,7 @@ impl WorkflowFunction {
     where
         F: Fn(WfContext) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<WfExitValue<O>, anyhow::Error>> + Send + 'static,
-        O: Serialize + Debug,
+        O: Serialize,
     {
         Self {
             wf_func: Box::new(move |ctx: WfContext| {
@@ -750,7 +750,7 @@ pub type WorkflowResult<T> = Result<WfExitValue<T>, anyhow::Error>;
 
 /// Workflow functions may return these values when exiting
 #[derive(Debug, derive_more::From)]
-pub enum WfExitValue<T: Debug> {
+pub enum WfExitValue<T> {
     /// Continue the workflow as a new execution
     #[from(ignore)]
     ContinueAsNew(Box<ContinueAsNewWorkflowExecution>),
@@ -764,7 +764,7 @@ pub enum WfExitValue<T: Debug> {
     Normal(T),
 }
 
-impl<T: Debug> WfExitValue<T> {
+impl<T> WfExitValue<T> {
     /// Construct a [WfExitValue::ContinueAsNew] variant (handles boxing)
     pub fn continue_as_new(can: ContinueAsNewWorkflowExecution) -> Self {
         Self::ContinueAsNew(Box::new(can))
@@ -835,7 +835,7 @@ where
     A: FromJsonPayloadExt + Send,
     Rf: Future<Output = Result<R, anyhow::Error>> + Send + 'static,
     R: Into<ActExitValue<O>>,
-    O: AsJsonPayloadExt + Debug,
+    O: AsJsonPayloadExt,
 {
     fn into_activity_fn(self) -> BoxActFn {
         let wrapper = move |ctx: ActContext, input: Payload| {
