@@ -13,11 +13,12 @@ categories = ["development-tools"]
 [lib]
 
 [features]
-default = []
+default = ["otel"]
 # Do not enable this feature when building production SDKs. If we ever want a user in the field to
 # record WF input data, we can build them a custom SDK or they can build - it adds significant extra
 # code size in the form of [de]serializers.
 save_wf_inputs = ["rmp-serde", "temporal-sdk-core-protos/serde_serialize"]
+otel = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:opentelemetry-prometheus"]
 tokio-console = ["console-subscriber"]
 ephemeral-server = ["dep:flate2", "dep:nix", "dep:reqwest", "dep:tar", "dep:zip"]
 
@@ -45,10 +46,10 @@ lru = "0.11"
 mockall = "0.11"
 nix = { version = "0.28", optional = true, features = ["process", "signal"] }
 once_cell = { workspace = true }
-opentelemetry = { workspace = true, features = ["metrics"] }
-opentelemetry_sdk = { version = "0.21", features = ["rt-tokio", "metrics"] }
-opentelemetry-otlp = { version = "0.14", features = ["tokio", "metrics"] }
-opentelemetry-prometheus = "0.14"
+opentelemetry = { workspace = true, features = ["metrics"], optional = true }
+opentelemetry_sdk = { version = "0.21", features = ["rt-tokio", "metrics"], optional = true }
+opentelemetry-otlp = { version = "0.14", features = ["tokio", "metrics"], optional = true }
+opentelemetry-prometheus = { version = "0.14", optional = true }
 parking_lot = { version = "0.12", features = ["send_guard"] }
 pin-project = "1.0"
 prometheus = "0.13"
