@@ -271,9 +271,7 @@ impl TemporalitySelector for ConstantTemporality {
         self.0
     }
 }
-fn metric_temporality_to_selector(
-    t: MetricTemporality,
-) -> impl TemporalitySelector + Send + Sync + Clone {
+fn metric_temporality_to_selector(t: MetricTemporality) -> impl TemporalitySelector + Clone {
     match t {
         MetricTemporality::Cumulative => ConstantTemporality(Temporality::Cumulative),
         MetricTemporality::Delta => ConstantTemporality(Temporality::Delta),
