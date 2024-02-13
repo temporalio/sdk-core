@@ -3,27 +3,25 @@
 
 mod log_export;
 pub(crate) mod metrics;
+#[cfg(feature = "otel")]
+mod otel;
+#[cfg(feature = "otel")]
 mod prometheus_server;
 
-pub use metrics::{
-    build_otlp_metric_exporter, default_buckets_for, start_prometheus_metric_exporter,
-    MetricsCallBuffer,
-};
+#[cfg(feature = "otel")]
+pub use metrics::{default_buckets_for, MetricsCallBuffer};
+
+#[cfg(feature = "otel")]
+pub use otel::{build_otlp_metric_exporter, start_prometheus_metric_exporter};
 
 pub use log_export::{CoreLogBuffer, CoreLogBufferedConsumer, CoreLogStreamConsumer};
 
 use crate::telemetry::{log_export::CoreLogConsumerLayer, metrics::PrefixedMetricsMeter};
 use itertools::Itertools;
-use once_cell::sync::OnceCell;
-use opentelemetry::KeyValue;
-use opentelemetry_sdk::{
-    metrics::{data::Temporality, reader::TemporalitySelector, InstrumentKind},
-    Resource,
-};
 use parking_lot::Mutex;
 use std::{
     cell::RefCell,
-    collections::{HashMap, VecDeque},
+    collections::VecDeque,
     env,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -32,7 +30,7 @@ use std::{
 };
 use temporal_sdk_core_api::telemetry::{
     metrics::{CoreMeter, MetricKeyValue, NewAttributes, TemporalMeter},
-    CoreLog, CoreTelemetry, Logger, MetricTemporality, TelemetryOptions,
+    CoreLog, CoreTelemetry, Logger, TelemetryOptions,
 };
 use tracing::{Level, Subscriber};
 use tracing_subscriber::{layer::SubscriberExt, EnvFilter, Layer};
@@ -252,31 +250,6 @@ pub fn telemetry_init_global(opts: TelemetryOptions) -> Result<(), anyhow::Error
     Ok(())
 }
 
-fn default_resource_kvs() -> &'static [KeyValue] {
-    static INSTANCE: OnceCell<[KeyValue; 1]> = OnceCell::new();
-    INSTANCE.get_or_init(|| [KeyValue::new("service.name", TELEM_SERVICE_NAME)])
-}
-
-fn default_resource(override_values: &HashMap<String, String>) -> Resource {
-    let override_kvs = override_values
-        .iter()
-        .map(|(k, v)| KeyValue::new(k.clone(), v.clone()));
-    Resource::new(default_resource_kvs().iter().cloned()).merge(&Resource::new(override_kvs))
-}
-
-#[derive(Clone)]
-struct ConstantTemporality(Temporality);
-impl TemporalitySelector for ConstantTemporality {
-    fn temporality(&self, _: InstrumentKind) -> Temporality {
-        self.0
-    }
-}
-fn metric_temporality_to_selector(t: MetricTemporality) -> impl TemporalitySelector + Clone {
-    match t {
-        MetricTemporality::Cumulative => ConstantTemporality(Temporality::Cumulative),
-        MetricTemporality::Delta => ConstantTemporality(Temporality::Delta),
-    }
-}
 #[cfg(test)]
 pub use test_initters::*;
 

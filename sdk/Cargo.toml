@@ -10,8 +10,6 @@ repository = "https://github.com/temporalio/sdk-core"
 keywords = ["temporal", "workflow"]
 categories = ["development-tools"]
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 async-trait = "0.1"
 thiserror = "1.0"
@@ -34,6 +32,7 @@ tracing = "0.1"
 [dependencies.temporal-sdk-core]
 path = "../core"
 version = "0.1"
+default-features = false
 
 [dependencies.temporal-sdk-core-protos]
 path = "../sdk-core-protos"
