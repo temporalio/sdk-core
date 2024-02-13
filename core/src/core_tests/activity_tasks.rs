@@ -1125,8 +1125,6 @@ async fn graceful_shutdown(#[values(true, false)] at_max_outstanding: bool) {
 #[rstest::rstest]
 #[tokio::test]
 async fn activities_must_be_flushed_to_server_on_shutdown(#[values(true, false)] use_grace: bool) {
-    crate::telemetry::test_telem_console();
-
     let grace_period = if use_grace {
         // Even though the grace period is shorter than the client call, the client call will still
         // go through. This is reasonable since the client has a timeout anyway, and it's unlikely
