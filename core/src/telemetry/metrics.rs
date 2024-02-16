@@ -632,14 +632,14 @@ pub struct MetricsCallBuffer<I>
 where
     I: BufferInstrumentRef,
 {
-    calls_rx: crossbeam::channel::Receiver<MetricEvent<I>>,
+    calls_rx: crossbeam_channel::Receiver<MetricEvent<I>>,
     calls_tx: LogErrOnFullSender<MetricEvent<I>>,
 }
 #[derive(Clone, Debug)]
-struct LogErrOnFullSender<I>(crossbeam::channel::Sender<I>);
+struct LogErrOnFullSender<I>(crossbeam_channel::Sender<I>);
 impl<I> LogErrOnFullSender<I> {
     fn send(&self, v: I) {
-        if let Err(crossbeam::channel::TrySendError::Full(_)) = self.0.try_send(v) {
+        if let Err(crossbeam_channel::TrySendError::Full(_)) = self.0.try_send(v) {
             error!(
                 "Core's metrics buffer is full! Dropping call to record metrics. \
                  Make sure you drain the metric buffer often!"
@@ -654,7 +654,7 @@ where
 {
     /// Create a new buffer with the given capacity
     pub fn new(buffer_size: usize) -> Self {
-        let (calls_tx, calls_rx) = crossbeam::channel::bounded(buffer_size);
+        let (calls_tx, calls_rx) = crossbeam_channel::bounded(buffer_size);
         MetricsCallBuffer {
             calls_rx,
             calls_tx: LogErrOnFullSender(calls_tx),

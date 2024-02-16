@@ -11,7 +11,7 @@ use crate::{
     IntoUpdateValidatorFunc, RustWfCmd, SignalExternalWfResult, TimerResult, UnblockEvent,
     Unblockable, UpdateFunctions,
 };
-use crossbeam::channel::{Receiver, Sender};
+use crossbeam_channel::{Receiver, Sender};
 use futures::{task::Context, FutureExt, Stream, StreamExt};
 use parking_lot::RwLock;
 use std::{
@@ -117,7 +117,7 @@ impl WfContext {
         am_cancelled: watch::Receiver<bool>,
     ) -> (Self, Receiver<RustWfCmd>) {
         // We need to use a normal std channel since our receiving side is non-async
-        let (chan, rx) = crossbeam::channel::unbounded();
+        let (chan, rx) = crossbeam_channel::unbounded();
         (
             Self {
                 namespace,

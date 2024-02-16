@@ -8,7 +8,7 @@ use crate::{
     worker::{client::mocks::mock_workflow_client, LEGACY_QUERY_ID},
 };
 use anyhow::anyhow;
-use crossbeam::queue::SegQueue;
+use crossbeam_queue::SegQueue;
 use futures::{future::join_all, FutureExt};
 use std::{
     collections::HashMap,
