@@ -89,7 +89,7 @@ equivalent.
 This repo uses a subtree for upstream protobuf files. The path `sdk-core-protos/protos/api_upstream` is a
 subtree. To update it, use:
 
-`git pull --squash -s subtree ssh://git@github.com/temporalio/api.git master --allow-unrelated-histories`
+`git pull --squash --rebase=false -s subtree ssh://git@github.com/temporalio/api.git master --allow-unrelated-histories`
 
 Do not question why this git command is the way it is. It is not our place to interpret git's ways.
 
