@@ -17,7 +17,7 @@ serde_serialize = []
 [dependencies]
 anyhow = "1.0"
 base64 = "0.21"
-derive_more = "0.99"
+derive_more = { workspace = true }
 prost = "0.11"
 prost-wkt = "0.4"
 prost-wkt-types = "0.4"
