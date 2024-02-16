@@ -9,7 +9,7 @@ use crate::{
         LocalActRequest, LocalActivityResolution,
     },
 };
-use crossbeam::queue::SegQueue;
+use crossbeam_queue::SegQueue;
 use futures::Stream;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
