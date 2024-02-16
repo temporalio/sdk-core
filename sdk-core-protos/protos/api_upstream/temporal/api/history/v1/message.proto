@@ -36,6 +36,7 @@ import "google/protobuf/timestamp.proto";
 
 import "temporal/api/enums/v1/event_type.proto";
 import "temporal/api/enums/v1/failed_cause.proto";
+import "temporal/api/enums/v1/update.proto";
 import "temporal/api/enums/v1/workflow.proto";
 import "temporal/api/common/v1/message.proto";
 import "temporal/api/failure/v1/message.proto";
@@ -434,6 +435,8 @@ message WorkflowExecutionSignaledEventAttributes {
     temporal.api.common.v1.Header header = 4;
     // Indicates the signal did not generate a new workflow task when received.
     bool skip_generate_workflow_task = 5;
+    // When signal origin is a workflow execution, this field is set.
+    temporal.api.common.v1.WorkflowExecution external_workflow_execution = 6;
 }
 
 message WorkflowExecutionTerminatedEventAttributes {
@@ -747,6 +750,12 @@ message WorkflowExecutionUpdateRejectedEventAttributes {
     temporal.api.failure.v1.Failure failure = 5;
 }
 
+message WorkflowExecutionUpdateRequestedEventAttributes {
+    // The update request associated with this event.
+    temporal.api.update.v1.Request request = 1;
+    // A record of why this event was written to history.
+    temporal.api.enums.v1.UpdateRequestedEventOrigin origin = 2;
+}
 
 // History events are the method by which Temporal SDKs advance (or recreate) workflow state.
 // See the `EventType` enum for more info about what each event is for.
@@ -812,6 +821,7 @@ message HistoryEvent {
         WorkflowPropertiesModifiedExternallyEventAttributes workflow_properties_modified_externally_event_attributes = 49;
         ActivityPropertiesModifiedExternallyEventAttributes activity_properties_modified_externally_event_attributes = 50;
         WorkflowPropertiesModifiedEventAttributes workflow_properties_modified_event_attributes = 51;
+        WorkflowExecutionUpdateRequestedEventAttributes workflow_execution_update_requested_event_attributes = 52;
     }
 }
 

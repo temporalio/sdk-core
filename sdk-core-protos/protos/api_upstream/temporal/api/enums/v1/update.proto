@@ -54,3 +54,14 @@ enum UpdateWorkflowExecutionLifecycleStage {
     // on a worker and has either been rejected or returned a value or an error.
     UPDATE_WORKFLOW_EXECUTION_LIFECYCLE_STAGE_COMPLETED = 3;
 }
+
+// UpdateRequestedEventOrigin records why an
+// WorkflowExecutionUpdateRequestedEvent was written to history. Note that not
+// all update requests result in a WorkflowExecutionUpdateRequestedEvent.
+enum UpdateRequestedEventOrigin {
+    UPDATE_REQUESTED_EVENT_ORIGIN_UNSPECIFIED = 0;
+    // The UpdateRequested event was created when reapplying events during reset
+    // or replication. I.e. an accepted update on one branch of workflow history
+    // was converted into a requested update on a different branch.
+    UPDATE_REQUESTED_EVENT_ORIGIN_REAPPLY = 1;
+}

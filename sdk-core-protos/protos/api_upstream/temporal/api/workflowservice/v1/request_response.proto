@@ -669,8 +669,11 @@ message ResetWorkflowExecutionRequest {
     int64 workflow_task_finish_event_id = 4;
     // Used to de-dupe reset requests
     string request_id = 5;
-    // Reset reapply (replay) options.
+    // Event types to be reapplied (deprecated)
+    // Default: RESET_REAPPLY_TYPE_ALL_ELIGIBLE
     temporal.api.enums.v1.ResetReapplyType reset_reapply_type = 6;
+    // Event types not to be reapplied
+    repeated temporal.api.enums.v1.ResetReapplyExcludeType reset_reapply_exclude_types = 7;
 }
 
 message ResetWorkflowExecutionResponse {

@@ -31,13 +31,26 @@ option java_outer_classname = "ResetProto";
 option ruby_package = "Temporalio::Api::Enums::V1";
 option csharp_namespace = "Temporalio.Api.Enums.V1";
 
-// Reset reapply (replay) options
-// * RESET_REAPPLY_TYPE_SIGNAL (default) - Signals are reapplied when workflow is reset
-// * RESET_REAPPLY_TYPE_NONE - nothing is reapplied
+// Event types to exclude when reapplying events.
+enum ResetReapplyExcludeType {
+    RESET_REAPPLY_EXCLUDE_TYPE_UNSPECIFIED = 0;
+    // Exclude signals when reapplying events.
+    RESET_REAPPLY_EXCLUDE_TYPE_SIGNAL = 1;
+    // Exclude updates when reapplying events.
+    RESET_REAPPLY_EXCLUDE_TYPE_UPDATE = 2;
+}
+
+// Event types to include when reapplying events. Deprecated: applications
+// should use ResetReapplyExcludeType to specify exclusions from this set, and
+// new event types should be added to ResetReapplyExcludeType instead of here.
 enum ResetReapplyType {
     RESET_REAPPLY_TYPE_UNSPECIFIED = 0;
+    // Signals are reapplied when workflow is reset.
     RESET_REAPPLY_TYPE_SIGNAL = 1;
+    // No events are reapplied when workflow is reset.
     RESET_REAPPLY_TYPE_NONE = 2;
+    // All eligible events are reapplied when workflow is reset.
+    RESET_REAPPLY_TYPE_ALL_ELIGIBLE = 3;
 }
 
 // Reset type options. Deprecated, see temporal.api.common.v1.ResetOptions.
