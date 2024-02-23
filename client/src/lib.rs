@@ -6,6 +6,7 @@
 
 #[macro_use]
 extern crate tracing;
+
 mod metrics;
 mod raw;
 mod retry;
@@ -316,6 +317,7 @@ impl<C> Deref for ConfiguredClient<C> {
         &self.client
     }
 }
+
 impl<C> DerefMut for ConfiguredClient<C> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.client
@@ -493,6 +495,16 @@ pub struct TemporalServiceClient<T> {
     test_svc_client: OnceCell<TestServiceClient<T>>,
     health_svc_client: OnceCell<HealthClient<T>>,
 }
+
+lazy_static::lazy_static! {
+    /// We up the limit on incoming messages from server from the 4Mb default to 128Mb. If for
+    /// whatever reason this needs to be changed by the user, we support overriding it via env var.
+    static ref DECODE_MAX_SIZE: usize = std::env::var("TEMPORAL_MAX_INCOMING_GRPC_BYTES")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(128 * 1024 * 1024);
+}
+
 impl<T> TemporalServiceClient<T>
 where
     T: Clone,
@@ -512,23 +524,27 @@ where
     }
     /// Get the underlying workflow service client
     pub fn workflow_svc(&self) -> &WorkflowServiceClient<T> {
-        self.workflow_svc_client
-            .get_or_init(|| WorkflowServiceClient::new(self.svc.clone()))
+        self.workflow_svc_client.get_or_init(|| {
+            WorkflowServiceClient::new(self.svc.clone()).max_decoding_message_size(*DECODE_MAX_SIZE)
+        })
     }
     /// Get the underlying operator service client
     pub fn operator_svc(&self) -> &OperatorServiceClient<T> {
-        self.operator_svc_client
-            .get_or_init(|| OperatorServiceClient::new(self.svc.clone()))
+        self.operator_svc_client.get_or_init(|| {
+            OperatorServiceClient::new(self.svc.clone()).max_decoding_message_size(*DECODE_MAX_SIZE)
+        })
     }
     /// Get the underlying test service client
     pub fn test_svc(&self) -> &TestServiceClient<T> {
-        self.test_svc_client
-            .get_or_init(|| TestServiceClient::new(self.svc.clone()))
+        self.test_svc_client.get_or_init(|| {
+            TestServiceClient::new(self.svc.clone()).max_decoding_message_size(*DECODE_MAX_SIZE)
+        })
     }
     /// Get the underlying health service client
     pub fn health_svc(&self) -> &HealthClient<T> {
-        self.health_svc_client
-            .get_or_init(|| HealthClient::new(self.svc.clone()))
+        self.health_svc_client.get_or_init(|| {
+            HealthClient::new(self.svc.clone()).max_decoding_message_size(*DECODE_MAX_SIZE)
+        })
     }
     /// Get the underlying workflow service client mutably
     pub fn workflow_svc_mut(&mut self) -> &mut WorkflowServiceClient<T> {
@@ -551,6 +567,7 @@ where
         self.health_svc_client.get_mut().unwrap()
     }
 }
+
 /// A [WorkflowServiceClient] with the default interceptors attached.
 pub type WorkflowServiceClientWithMetrics = WorkflowServiceClient<InterceptedMetricsSvc>;
 /// An [OperatorServiceClient] with the default interceptors attached.
@@ -1501,6 +1518,7 @@ mod sealed {
         WorkflowClientTrait + RawClientLike<SvcType = InterceptedMetricsSvc>
     {
     }
+
     impl<T> WfHandleClient for T where
         T: WorkflowClientTrait + RawClientLike<SvcType = InterceptedMetricsSvc>
     {
@@ -1527,6 +1545,7 @@ pub trait WfClientExt: WfHandleClient + Sized + Clone {
         )
     }
 }
+
 impl<T> WfClientExt for T where T: WfHandleClient + Clone + Sized {}
 
 #[cfg(test)]
