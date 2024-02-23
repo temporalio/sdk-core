@@ -496,13 +496,16 @@ pub struct TemporalServiceClient<T> {
     health_svc_client: OnceCell<HealthClient<T>>,
 }
 
-lazy_static::lazy_static! {
-    /// We up the limit on incoming messages from server from the 4Mb default to 128Mb. If for
-    /// whatever reason this needs to be changed by the user, we support overriding it via env var.
-    static ref DECODE_MAX_SIZE: usize = std::env::var("TEMPORAL_MAX_INCOMING_GRPC_BYTES")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(128 * 1024 * 1024);
+/// We up the limit on incoming messages from server from the 4Mb default to 128Mb. If for
+/// whatever reason this needs to be changed by the user, we support overriding it via env var.
+fn get_decode_max_size() -> usize {
+    static _DECODE_MAX_SIZE: OnceCell<usize> = OnceCell::new();
+    *_DECODE_MAX_SIZE.get_or_init(|| {
+        std::env::var("TEMPORAL_MAX_INCOMING_GRPC_BYTES")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(128 * 1024 * 1024)
+    })
 }
 
 impl<T> TemporalServiceClient<T>
@@ -525,25 +528,28 @@ where
     /// Get the underlying workflow service client
     pub fn workflow_svc(&self) -> &WorkflowServiceClient<T> {
         self.workflow_svc_client.get_or_init(|| {
-            WorkflowServiceClient::new(self.svc.clone()).max_decoding_message_size(*DECODE_MAX_SIZE)
+            WorkflowServiceClient::new(self.svc.clone())
+                .max_decoding_message_size(get_decode_max_size())
         })
     }
     /// Get the underlying operator service client
     pub fn operator_svc(&self) -> &OperatorServiceClient<T> {
         self.operator_svc_client.get_or_init(|| {
-            OperatorServiceClient::new(self.svc.clone()).max_decoding_message_size(*DECODE_MAX_SIZE)
+            OperatorServiceClient::new(self.svc.clone())
+                .max_decoding_message_size(get_decode_max_size())
         })
     }
     /// Get the underlying test service client
     pub fn test_svc(&self) -> &TestServiceClient<T> {
         self.test_svc_client.get_or_init(|| {
-            TestServiceClient::new(self.svc.clone()).max_decoding_message_size(*DECODE_MAX_SIZE)
+            TestServiceClient::new(self.svc.clone())
+                .max_decoding_message_size(get_decode_max_size())
         })
     }
     /// Get the underlying health service client
     pub fn health_svc(&self) -> &HealthClient<T> {
         self.health_svc_client.get_or_init(|| {
-            HealthClient::new(self.svc.clone()).max_decoding_message_size(*DECODE_MAX_SIZE)
+            HealthClient::new(self.svc.clone()).max_decoding_message_size(get_decode_max_size())
         })
     }
     /// Get the underlying workflow service client mutably
