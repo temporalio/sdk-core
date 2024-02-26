@@ -1,7 +1,7 @@
 use anyhow::{anyhow, bail};
 use assert_matches::assert_matches;
 use futures_util::{future, future::join_all, StreamExt};
-use lazy_static::lazy_static;
+use once_cell::sync::Lazy;
 use std::{
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     time::Duration,
@@ -817,9 +817,7 @@ async fn worker_restarted_in_middle_of_update() {
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
 
-    lazy_static! {
-        static ref BARR: Barrier = Barrier::new(2);
-    }
+    static BARR: Lazy<Barrier> = Lazy::new(|| Barrier::new(2));
     static ACT_RAN: AtomicBool = AtomicBool::new(false);
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         ctx.update_handler(

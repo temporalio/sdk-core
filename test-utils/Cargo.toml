@@ -20,7 +20,7 @@ base64 = "0.21"
 bytes = "1.3"
 futures = "0.3"
 log = "0.4"
-once_cell = "1.16"
+once_cell = { workspace = true }
 parking_lot = "0.12"
 prost = "0.11"
 prost-types = "0.11"

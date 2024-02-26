@@ -4,6 +4,7 @@
 //! never ever be removed from behind `#[cfg(test)]` compilation.
 
 use dashmap::{mapref::entry::Entry, DashMap, DashSet};
+use once_cell::sync::Lazy;
 use std::{
     path::PathBuf,
     sync::{
@@ -15,13 +16,11 @@ use std::{
 };
 
 // During test we want to know about which transitions we've covered in state machines
-lazy_static::lazy_static! {
-    static ref COVERED_TRANSITIONS: DashMap<String, DashSet<CoveredTransition>>
-        = DashMap::new();
-    static ref COVERAGE_SENDER: SyncSender<(String, CoveredTransition)> =
-        spawn_save_coverage_at_end();
-    static ref THREAD_HANDLE: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
-}
+static COVERED_TRANSITIONS: Lazy<DashMap<String, DashSet<CoveredTransition>>> =
+    Lazy::new(DashMap::new);
+static COVERAGE_SENDER: Lazy<SyncSender<(String, CoveredTransition)>> =
+    Lazy::new(spawn_save_coverage_at_end);
+static THREAD_HANDLE: Lazy<Mutex<Option<JoinHandle<()>>>> = Lazy::new(|| Mutex::new(None));
 
 #[derive(Eq, PartialEq, Hash, Debug)]
 struct CoveredTransition {
