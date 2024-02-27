@@ -7,6 +7,7 @@ use crate::{
 };
 use futures::{future::BoxFuture, FutureExt, Stream};
 use itertools::Itertools;
+use once_cell::sync::Lazy;
 use std::{
     collections::VecDeque,
     fmt::Debug,
@@ -23,12 +24,11 @@ use temporal_sdk_core_protos::temporal::api::{
 };
 use tracing::Instrument;
 
-lazy_static::lazy_static! {
-    static ref EMPTY_FETCH_ERR: tonic::Status
-        = tonic::Status::unknown("Fetched empty history page");
-    static ref EMPTY_TASK_ERR: tonic::Status
-        = tonic::Status::unknown("Received an empty workflow task with no queries or history");
-}
+static EMPTY_FETCH_ERR: Lazy<tonic::Status> =
+    Lazy::new(|| tonic::Status::unknown("Fetched empty history page"));
+static EMPTY_TASK_ERR: Lazy<tonic::Status> = Lazy::new(|| {
+    tonic::Status::unknown("Received an empty workflow task with no queries or history")
+});
 
 /// Represents one or more complete WFT sequences. History events are expected to be consumed from
 /// it and applied to the state machines via [HistoryUpdate::take_next_wft_sequence]

@@ -1,12 +1,11 @@
 use super::*;
 use futures::Future;
-use lazy_static::lazy_static;
+use once_cell::sync::Lazy;
 use std::sync::Arc;
 use temporal_client::SlotManager;
 
-lazy_static! {
-    pub(crate) static ref DEFAULT_WORKERS_REGISTRY: Arc<SlotManager> = Arc::new(SlotManager::new());
-}
+static DEFAULT_WORKERS_REGISTRY: Lazy<Arc<SlotManager>> =
+    Lazy::new(|| Arc::new(SlotManager::new()));
 
 pub(crate) static DEFAULT_TEST_CAPABILITIES: &Capabilities = &Capabilities {
     signal_and_query_header: true,
