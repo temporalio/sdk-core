@@ -136,9 +136,9 @@ impl TryFrom<HistEventData> for WorkflowTaskMachineEvents {
                     Self::WorkflowTaskFailed(WFTFailedDat {
                         new_run_id: match attributes {
                             WorkflowTaskFailedEventAttributes(a) => {
-                                let cause = WorkflowTaskFailedCause::from_i32(a.cause);
+                                let cause = WorkflowTaskFailedCause::try_from(a.cause);
                                 match cause {
-                                    Some(WorkflowTaskFailedCause::ResetWorkflow) => {
+                                    Ok(WorkflowTaskFailedCause::ResetWorkflow) => {
                                         Some(a.new_run_id)
                                     }
                                     _ => None,

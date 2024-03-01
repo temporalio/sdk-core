@@ -75,8 +75,8 @@ impl TryFrom<HistEventData> for CancelWorkflowMachineEvents {
 
     fn try_from(e: HistEventData) -> Result<Self, Self::Error> {
         let e = e.event;
-        Ok(match EventType::from_i32(e.event_type) {
-            Some(EventType::WorkflowExecutionCanceled) => Self::WorkflowExecutionCanceled,
+        Ok(match EventType::try_from(e.event_type) {
+            Ok(EventType::WorkflowExecutionCanceled) => Self::WorkflowExecutionCanceled,
             _ => {
                 return Err(WFMachinesError::Nondeterminism(format!(
                     "Cancel workflow machine does not handle this event: {e}"

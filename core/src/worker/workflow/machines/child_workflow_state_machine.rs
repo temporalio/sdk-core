@@ -498,8 +498,8 @@ impl TryFrom<HistEventData> for ChildWorkflowMachineEvents {
     fn try_from(e: HistEventData) -> Result<Self, Self::Error> {
         let last_task_in_history = e.current_task_is_last_in_history;
         let e = e.event;
-        Ok(match EventType::from_i32(e.event_type) {
-            Some(EventType::StartChildWorkflowExecutionInitiated) => {
+        Ok(match EventType::try_from(e.event_type) {
+            Ok(EventType::StartChildWorkflowExecutionInitiated) => {
                 if let Some(
                     history_event::Attributes::StartChildWorkflowExecutionInitiatedEventAttributes(
                         attrs,
@@ -518,7 +518,7 @@ impl TryFrom<HistEventData> for ChildWorkflowMachineEvents {
                     ));
                 }
             }
-            Some(EventType::StartChildWorkflowExecutionFailed) => {
+            Ok(EventType::StartChildWorkflowExecutionFailed) => {
                 if let Some(
                     history_event::Attributes::StartChildWorkflowExecutionFailedEventAttributes(
                         StartChildWorkflowExecutionFailedEventAttributes { cause, .. },
@@ -526,13 +526,11 @@ impl TryFrom<HistEventData> for ChildWorkflowMachineEvents {
                 ) = e.attributes
                 {
                     Self::StartChildWorkflowExecutionFailed(
-                        StartChildWorkflowExecutionFailedCause::from_i32(cause).ok_or_else(
-                            || {
-                                WFMachinesError::Fatal(
-                                    "Invalid StartChildWorkflowExecutionFailedCause".to_string(),
-                                )
-                            },
-                        )?,
+                        StartChildWorkflowExecutionFailedCause::try_from(cause).map_err(|_| {
+                            WFMachinesError::Fatal(
+                                "Invalid StartChildWorkflowExecutionFailedCause".to_string(),
+                            )
+                        })?,
                     )
                 } else {
                     return Err(WFMachinesError::Fatal(
@@ -540,7 +538,7 @@ impl TryFrom<HistEventData> for ChildWorkflowMachineEvents {
                     ));
                 }
             }
-            Some(EventType::ChildWorkflowExecutionStarted) => {
+            Ok(EventType::ChildWorkflowExecutionStarted) => {
                 if let Some(
                     history_event::Attributes::ChildWorkflowExecutionStartedEventAttributes(
                         ChildWorkflowExecutionStartedEventAttributes {
@@ -561,7 +559,7 @@ impl TryFrom<HistEventData> for ChildWorkflowMachineEvents {
                     ));
                 }
             }
-            Some(EventType::ChildWorkflowExecutionCompleted) => {
+            Ok(EventType::ChildWorkflowExecutionCompleted) => {
                 if let Some(
                     history_event::Attributes::ChildWorkflowExecutionCompletedEventAttributes(
                         ChildWorkflowExecutionCompletedEventAttributes { result, .. },
@@ -576,7 +574,7 @@ impl TryFrom<HistEventData> for ChildWorkflowMachineEvents {
                     ));
                 }
             }
-            Some(EventType::ChildWorkflowExecutionFailed) => {
+            Ok(EventType::ChildWorkflowExecutionFailed) => {
                 if let Some(
                     history_event::Attributes::ChildWorkflowExecutionFailedEventAttributes(attrs),
                 ) = e.attributes
@@ -588,7 +586,7 @@ impl TryFrom<HistEventData> for ChildWorkflowMachineEvents {
                     ));
                 }
             }
-            Some(EventType::ChildWorkflowExecutionTimedOut) => {
+            Ok(EventType::ChildWorkflowExecutionTimedOut) => {
                 if let Some(
                     history_event::Attributes::ChildWorkflowExecutionTimedOutEventAttributes(atts),
                 ) = e.attributes
@@ -601,12 +599,10 @@ impl TryFrom<HistEventData> for ChildWorkflowMachineEvents {
                     ));
                 }
             }
-            Some(EventType::ChildWorkflowExecutionTerminated) => {
+            Ok(EventType::ChildWorkflowExecutionTerminated) => {
                 Self::ChildWorkflowExecutionTerminated
             }
-            Some(EventType::ChildWorkflowExecutionCanceled) => {
-                Self::ChildWorkflowExecutionCancelled
-            }
+            Ok(EventType::ChildWorkflowExecutionCanceled) => Self::ChildWorkflowExecutionCancelled,
             _ => {
                 return Err(WFMachinesError::Nondeterminism(format!(
                     "Child workflow machine does not handle this event: {e:?}"

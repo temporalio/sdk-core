@@ -21,8 +21,7 @@ use opentelemetry_sdk::{
         data::Temporality,
         new_view,
         reader::{AggregationSelector, DefaultAggregationSelector, TemporalitySelector},
-        Aggregation, Instrument, InstrumentKind, MeterProvider, MeterProviderBuilder,
-        PeriodicReader, View,
+        Aggregation, Instrument, InstrumentKind, MeterProviderBuilder, PeriodicReader, View,
     },
     runtime, AttributeSet, Resource,
 };
@@ -152,7 +151,7 @@ pub fn build_otlp_metric_exporter(
         .with_interval(opts.metric_periodicity)
         .build();
     let mp = augment_meter_provider_with_defaults(
-        MeterProvider::builder().with_reader(reader),
+        MeterProviderBuilder::default().with_reader(reader),
         &opts.global_tags,
     )?
     .build();
@@ -167,16 +166,18 @@ pub struct StartedPromServer {
 
 /// Builds and runs a prometheus endpoint which can be scraped by prom instances for metrics export.
 /// Returns the meter that can be used as a [CoreMeter].
+///
+/// Requires a Tokio runtime to exist, and will block briefly while binding the server endpoint.
 pub fn start_prometheus_metric_exporter(
     opts: PrometheusExporterOptions,
 ) -> Result<StartedPromServer, anyhow::Error> {
     let (srv, exporter) = PromServer::new(&opts, SDKAggSelector::default())?;
     let meter_provider = augment_meter_provider_with_defaults(
-        MeterProvider::builder().with_reader(exporter),
+        MeterProviderBuilder::default().with_reader(exporter),
         &opts.global_tags,
     )?
     .build();
-    let bound_addr = srv.bound_addr();
+    let bound_addr = srv.bound_addr()?;
     let handle = tokio::spawn(async move { srv.run().await });
     Ok(StartedPromServer {
         meter: Arc::new(CoreOtelMeter(meter_provider.meter(TELEM_SERVICE_NAME))),

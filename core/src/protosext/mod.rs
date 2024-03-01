@@ -406,7 +406,7 @@ impl ValidScheduleLA {
             .clone()
             .try_into_or_none()
             .unwrap_or_else(|| Duration::from_secs(60));
-        let cancellation_type = ActivityCancellationType::from_i32(v.cancellation_type)
+        let cancellation_type = ActivityCancellationType::try_from(v.cancellation_type)
             .unwrap_or(ActivityCancellationType::WaitCancellationCompleted);
         Ok(ValidScheduleLA {
             seq: v.seq,

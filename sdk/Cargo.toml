@@ -20,7 +20,7 @@ derive_more = { workspace = true }
 futures = "0.3"
 once_cell = { workspace = true }
 parking_lot = { version = "0.12", features = ["send_guard"] }
-prost-types = { version = "0.4", package = "prost-wkt-types" }
+prost-types = { version = "0.5", package = "prost-wkt-types" }
 sha2 = "0.10"
 serde = "1.0"
 tokio = { version = "1.26", features = ["rt", "rt-multi-thread", "parking_lot", "time", "fs"] }

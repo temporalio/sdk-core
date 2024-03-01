@@ -10,7 +10,6 @@ mod prometheus_server;
 
 #[cfg(feature = "otel")]
 pub use metrics::{default_buckets_for, MetricsCallBuffer};
-
 #[cfg(feature = "otel")]
 pub use otel::{build_otlp_metric_exporter, start_prometheus_metric_exporter};
 
