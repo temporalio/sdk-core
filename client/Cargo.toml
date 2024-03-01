@@ -25,7 +25,7 @@ http = "0.2"
 once_cell = { workspace = true }
 opentelemetry = { workspace = true, features = ["metrics"], optional = true  }
 parking_lot = "0.12"
-prost-types = "0.11"
+prost-types = { workspace = true }
 slotmap = "1.0"
 thiserror = "1.0"
 tokio = "1.1"
@@ -43,4 +43,4 @@ path = "../core-api"
 
 [dev-dependencies]
 assert_matches = "1"
-mockall = "0.11"
+mockall = "0.12"
