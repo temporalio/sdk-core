@@ -905,8 +905,8 @@ impl WorkflowMachines {
     fn handle_non_stateful_event(&mut self, event_dat: HistEventData) -> Result<()> {
         trace!(event = %event_dat.event, "handling non-stateful event");
         let event_id = event_dat.event.event_id;
-        match EventType::from_i32(event_dat.event.event_type) {
-            Some(EventType::WorkflowExecutionStarted) => {
+        match EventType::try_from(event_dat.event.event_type) {
+            Ok(EventType::WorkflowExecutionStarted) => {
                 if let Some(history_event::Attributes::WorkflowExecutionStartedEventAttributes(
                     attrs,
                 )) = event_dat.event.attributes
@@ -932,13 +932,13 @@ impl WorkflowMachines {
                     )));
                 }
             }
-            Some(EventType::WorkflowTaskScheduled) => {
+            Ok(EventType::WorkflowTaskScheduled) => {
                 let wf_task_sm = WorkflowTaskMachine::new(self.next_started_event_id);
                 let key = self.all_machines.insert(wf_task_sm.into());
                 self.submachine_handle_event(key, event_dat)?;
                 self.machines_by_event_id.insert(event_id, key);
             }
-            Some(EventType::WorkflowExecutionSignaled) => {
+            Ok(EventType::WorkflowExecutionSignaled) => {
                 if let Some(history_event::Attributes::WorkflowExecutionSignaledEventAttributes(
                     attrs,
                 )) = event_dat.event.attributes
@@ -949,7 +949,7 @@ impl WorkflowMachines {
                     // err
                 }
             }
-            Some(EventType::WorkflowExecutionCancelRequested) => {
+            Ok(EventType::WorkflowExecutionCancelRequested) => {
                 if let Some(
                     history_event::Attributes::WorkflowExecutionCancelRequestedEventAttributes(
                         attrs,

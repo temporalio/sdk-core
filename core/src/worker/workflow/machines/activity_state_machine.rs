@@ -117,8 +117,8 @@ impl ActivityMachine {
         let mut s = Self::from_parts(
             Created {}.into(),
             SharedState {
-                cancellation_type: ActivityCancellationType::from_i32(attrs.cancellation_type)
-                    .unwrap(),
+                cancellation_type: ActivityCancellationType::try_from(attrs.cancellation_type)
+                    .unwrap_or(ActivityCancellationType::TryCancel),
                 attrs,
                 internal_flags,
                 scheduled_event_id: 0,

@@ -7,13 +7,13 @@ use hyper_util::{
 use opentelemetry_prometheus::PrometheusExporter;
 use opentelemetry_sdk::metrics::reader::AggregationSelector;
 use prometheus::{Encoder, Registry, TextEncoder};
-use std::net::SocketAddr;
+use std::net::{SocketAddr, TcpListener};
 use temporal_sdk_core_api::telemetry::PrometheusExporterOptions;
-use tokio::net::TcpListener;
+use tokio::io;
 
 /// Exposes prometheus metrics for scraping
 pub(super) struct PromServer {
-    socket_addr: SocketAddr,
+    listener: TcpListener,
     registry: Registry,
 }
 
@@ -39,7 +39,7 @@ impl PromServer {
         };
         Ok((
             Self {
-                socket_addr: opts.socket_addr,
+                listener: TcpListener::bind(opts.socket_addr)?,
                 registry,
             },
             exporter.build()?,
@@ -49,8 +49,9 @@ impl PromServer {
     pub async fn run(self) -> Result<(), anyhow::Error> {
         // Spin up hyper server to serve metrics for scraping. We use hyper since we already depend
         // on it via Tonic.
+        self.listener.set_nonblocking(true)?;
+        let listener = tokio::net::TcpListener::from_std(self.listener)?;
         loop {
-            let listener = TcpListener::bind(self.socket_addr).await?;
             let (stream, _) = listener.accept().await?;
             let io = TokioIo::new(stream);
             let regclone = self.registry.clone();
@@ -69,8 +70,8 @@ impl PromServer {
         }
     }
 
-    pub fn bound_addr(&self) -> SocketAddr {
-        self.socket_addr
+    pub fn bound_addr(&self) -> io::Result<SocketAddr> {
+        self.listener.local_addr()
     }
 }
 

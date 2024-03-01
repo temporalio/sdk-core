@@ -97,7 +97,7 @@ impl LocalActivityExecutionResult {
                         ..
                     }),
                 ..
-            }) => TimeoutType::from_i32(*timeout_type),
+            }) => TimeoutType::try_from(*timeout_type).ok(),
             _ => None,
         }
     }

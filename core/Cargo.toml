@@ -42,7 +42,7 @@ governor = "0.6"
 http = "1.0"
 http-body-util = "0.1"
 hyper = { version = "1.2", features = ["server", "http2"] }
-hyper-util = { version = "0.1", features = ["server", "http2", "tokio"] }
+hyper-util = { version = "0.1", features = ["server", "http1", "http2", "tokio"] }
 itertools = "0.12"
 lazy_static = "1.4"
 lru = "0.12"

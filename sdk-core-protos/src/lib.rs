@@ -507,7 +507,7 @@ pub mod coresdk {
                     if let Some(workflow_activation_job::Variant::RemoveFromCache(ref rj)) =
                         j.variant
                     {
-                        EvictionReason::from_i32(rj.reason)
+                        EvictionReason::try_from(rj.reason).ok()
                     } else {
                         None
                     }
@@ -1494,7 +1494,7 @@ pub mod temporal {
 
                 impl Display for Command {
                     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-                        let ct = CommandType::from_i32(self.command_type)
+                        let ct = CommandType::try_from(self.command_type)
                             .unwrap_or(CommandType::Unspecified);
                         write!(f, "{:?}", ct)
                     }
@@ -1830,7 +1830,7 @@ pub mod temporal {
                 impl HistoryEvent {
                     /// Returns true if this is an event created to mirror a command
                     pub fn is_command_event(&self) -> bool {
-                        EventType::from_i32(self.event_type).map_or(false, |et| match et {
+                        EventType::try_from(self.event_type).map_or(false, |et| match et {
                             EventType::ActivityTaskScheduled
                             | EventType::ActivityTaskCancelRequested
                             | EventType::MarkerRecorded
@@ -1929,7 +1929,7 @@ pub mod temporal {
                             f,
                             "HistoryEvent(id: {}, {:?})",
                             self.event_id,
-                            EventType::from_i32(self.event_type)
+                            EventType::try_from(self.event_type)
                         )
                     }
                 }
