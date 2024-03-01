@@ -1,37 +1,11 @@
-use crate::{
-    abstractions::dbg_panic,
-    telemetry::{
-        default_resource, metric_temporality_to_selector, prometheus_server::PromServer,
-        TelemetryInstance, TELEM_SERVICE_NAME,
-    },
+use crate::{abstractions::dbg_panic, telemetry::TelemetryInstance};
+
+use std::{fmt::Debug, sync::Arc, time::Duration};
+use temporal_sdk_core_api::telemetry::metrics::{
+    BufferAttributes, BufferInstrumentRef, CoreMeter, Counter, Gauge, Histogram,
+    LazyBufferInstrument, MetricAttributes, MetricCallBufferer, MetricEvent, MetricKeyValue,
+    MetricKind, MetricParameters, MetricUpdateVal, NewAttributes, NoOpCoreMeter,
 };
-use opentelemetry::{
-    self,
-    metrics::{Meter, MeterProvider as MeterProviderT, Unit},
-    KeyValue,
-};
-use opentelemetry_otlp::WithExportConfig;
-use opentelemetry_sdk::{
-    metrics::{
-        new_view,
-        reader::{AggregationSelector, DefaultAggregationSelector},
-        Aggregation, Instrument, InstrumentKind, MeterProvider, MeterProviderBuilder,
-        PeriodicReader, View,
-    },
-    runtime, AttributeSet,
-};
-use parking_lot::RwLock;
-use std::{collections::HashMap, fmt::Debug, net::SocketAddr, sync::Arc, time::Duration};
-use temporal_sdk_core_api::telemetry::{
-    metrics::{
-        BufferAttributes, BufferInstrumentRef, CoreMeter, Counter, Gauge, Histogram,
-        LazyBufferInstrument, MetricAttributes, MetricCallBufferer, MetricEvent, MetricKeyValue,
-        MetricKind, MetricParameters, MetricUpdateVal, NewAttributes, NoOpCoreMeter,
-    },
-    OtelCollectorOptions, PrometheusExporterOptions,
-};
-use tokio::task::AbortHandle;
-use tonic::metadata::MetadataMap;
 
 /// Used to track context associated with metrics, and record/update them
 ///
@@ -415,20 +389,21 @@ pub(crate) fn eager(is_eager: bool) -> MetricKeyValue {
     MetricKeyValue::new(KEY_EAGER, is_eager)
 }
 
-const WF_E2E_LATENCY_NAME: &str = "workflow_endtoend_latency";
-const WF_TASK_SCHED_TO_START_LATENCY_NAME: &str = "workflow_task_schedule_to_start_latency";
-const WF_TASK_REPLAY_LATENCY_NAME: &str = "workflow_task_replay_latency";
-const WF_TASK_EXECUTION_LATENCY_NAME: &str = "workflow_task_execution_latency";
-const ACT_SCHED_TO_START_LATENCY_NAME: &str = "activity_schedule_to_start_latency";
-const ACT_EXEC_LATENCY_NAME: &str = "activity_execution_latency";
-const NUM_POLLERS_NAME: &str = "num_pollers";
-const TASK_SLOTS_AVAILABLE_NAME: &str = "worker_task_slots_available";
-const STICKY_CACHE_SIZE_NAME: &str = "sticky_cache_size";
+pub(super) const WF_E2E_LATENCY_NAME: &str = "workflow_endtoend_latency";
+pub(super) const WF_TASK_SCHED_TO_START_LATENCY_NAME: &str =
+    "workflow_task_schedule_to_start_latency";
+pub(super) const WF_TASK_REPLAY_LATENCY_NAME: &str = "workflow_task_replay_latency";
+pub(super) const WF_TASK_EXECUTION_LATENCY_NAME: &str = "workflow_task_execution_latency";
+pub(super) const ACT_SCHED_TO_START_LATENCY_NAME: &str = "activity_schedule_to_start_latency";
+pub(super) const ACT_EXEC_LATENCY_NAME: &str = "activity_execution_latency";
+pub(super) const NUM_POLLERS_NAME: &str = "num_pollers";
+pub(super) const TASK_SLOTS_AVAILABLE_NAME: &str = "worker_task_slots_available";
+pub(super) const STICKY_CACHE_SIZE_NAME: &str = "sticky_cache_size";
 
 /// Artisanal, handcrafted latency buckets for workflow e2e latency which should expose a useful
 /// set of buckets for < 1 day runtime workflows. Beyond that, this metric probably isn't very
 /// helpful
-static WF_LATENCY_MS_BUCKETS: &[f64] = &[
+pub(super) static WF_LATENCY_MS_BUCKETS: &[f64] = &[
     100.,
     500.,
     1000.,
@@ -449,14 +424,14 @@ static WF_LATENCY_MS_BUCKETS: &[f64] = &[
 
 /// Task latencies are expected to be fast, no longer than a second which was generally the deadlock
 /// timeout in old SDKs. Here it's a bit different since a WFT may represent multiple activations.
-static WF_TASK_MS_BUCKETS: &[f64] = &[1., 10., 20., 50., 100., 200., 500., 1000.];
+pub(super) static WF_TASK_MS_BUCKETS: &[f64] = &[1., 10., 20., 50., 100., 200., 500., 1000.];
 
 /// Activity are generally expected to take at least a little time, and sometimes quite a while,
 /// since they're doing side-effecty things, etc.
-static ACT_EXE_MS_BUCKETS: &[f64] = &[50., 100., 500., 1000., 5000., 10_000., 60_000.];
+pub(super) static ACT_EXE_MS_BUCKETS: &[f64] = &[50., 100., 500., 1000., 5000., 10_000., 60_000.];
 
 /// Schedule-to-start latency buckets for both WFT and AT
-static TASK_SCHED_TO_START_MS_BUCKETS: &[f64] =
+pub(super) static TASK_SCHED_TO_START_MS_BUCKETS: &[f64] =
     &[100., 500., 1000., 5000., 10_000., 100_000., 1_000_000.];
 
 /// Default buckets. Should never really be used as they will be meaningless for many things, but
@@ -477,153 +452,6 @@ pub fn default_buckets_for(histo_name: &str) -> &'static [f64] {
         ACT_EXEC_LATENCY_NAME => ACT_EXE_MS_BUCKETS,
         _ => DEFAULT_MS_BUCKETS,
     }
-}
-
-/// Chooses appropriate aggregators for our metrics
-#[derive(Debug, Clone, Default)]
-pub struct SDKAggSelector {
-    default: DefaultAggregationSelector,
-}
-impl AggregationSelector for SDKAggSelector {
-    fn aggregation(&self, kind: InstrumentKind) -> Aggregation {
-        match kind {
-            InstrumentKind::Histogram => Aggregation::ExplicitBucketHistogram {
-                boundaries: DEFAULT_MS_BUCKETS.to_vec(),
-                record_min_max: true,
-            },
-            _ => self.default.aggregation(kind),
-        }
-    }
-}
-
-fn histo_view(
-    metric_name: &'static str,
-    buckets: &[f64],
-) -> opentelemetry::metrics::Result<Box<dyn View>> {
-    new_view(
-        Instrument::new().name(format!("*{metric_name}")),
-        opentelemetry_sdk::metrics::Stream::new().aggregation(
-            Aggregation::ExplicitBucketHistogram {
-                boundaries: buckets.to_vec(),
-                record_min_max: true,
-            },
-        ),
-    )
-}
-
-pub(super) fn augment_meter_provider_with_defaults(
-    mpb: MeterProviderBuilder,
-    global_tags: &HashMap<String, String>,
-) -> opentelemetry::metrics::Result<MeterProviderBuilder> {
-    // Some histograms are actually gauges, but we have to use histograms otherwise they forget
-    // their value between collections since we don't use callbacks.
-    Ok(mpb
-        .with_view(histo_view(WF_E2E_LATENCY_NAME, WF_LATENCY_MS_BUCKETS)?)
-        .with_view(histo_view(
-            WF_TASK_EXECUTION_LATENCY_NAME,
-            WF_TASK_MS_BUCKETS,
-        )?)
-        .with_view(histo_view(WF_TASK_REPLAY_LATENCY_NAME, WF_TASK_MS_BUCKETS)?)
-        .with_view(histo_view(
-            WF_TASK_SCHED_TO_START_LATENCY_NAME,
-            TASK_SCHED_TO_START_MS_BUCKETS,
-        )?)
-        .with_view(histo_view(
-            ACT_SCHED_TO_START_LATENCY_NAME,
-            TASK_SCHED_TO_START_MS_BUCKETS,
-        )?)
-        .with_view(histo_view(ACT_EXEC_LATENCY_NAME, ACT_EXE_MS_BUCKETS)?)
-        .with_resource(default_resource(global_tags)))
-}
-
-/// OTel has no built-in synchronous Gauge. Histograms used to be able to serve that purpose, but
-/// they broke that. Lovely. So, we need to implement one by hand.
-pub(crate) struct MemoryGaugeU64 {
-    labels_to_values: Arc<RwLock<HashMap<AttributeSet, u64>>>,
-}
-
-impl MemoryGaugeU64 {
-    fn new(params: MetricParameters, meter: &Meter) -> Self {
-        let gauge = meter
-            .u64_observable_gauge(params.name)
-            .with_unit(Unit::new(params.unit))
-            .with_description(params.description)
-            .init();
-        let map = Arc::new(RwLock::new(HashMap::<AttributeSet, u64>::new()));
-        let map_c = map.clone();
-        meter
-            .register_callback(&[gauge.as_any()], move |o| {
-                // This whole thing is... extra stupid.
-                // See https://github.com/open-telemetry/opentelemetry-rust/issues/1181
-                // The performance is likely bad here, but, given this is only called when metrics
-                // are exported it should be livable for now.
-                let map_rlock = map_c.read();
-                for (kvs, val) in map_rlock.iter() {
-                    let kvs: Vec<_> = kvs
-                        .iter()
-                        .map(|(k, v)| KeyValue::new(k.clone(), v.clone()))
-                        .collect();
-                    o.observe_u64(&gauge, *val, kvs.as_slice())
-                }
-            })
-            .expect("instrument must exist we just created it");
-        MemoryGaugeU64 {
-            labels_to_values: map,
-        }
-    }
-    fn record(&self, val: u64, kvs: &[KeyValue]) {
-        self.labels_to_values
-            .write()
-            .insert(AttributeSet::from(kvs), val);
-    }
-}
-
-/// Create an OTel meter that can be used as a [CoreMeter] to export metrics over OTLP.
-pub fn build_otlp_metric_exporter(
-    opts: OtelCollectorOptions,
-) -> Result<CoreOtelMeter, anyhow::Error> {
-    let exporter = opentelemetry_otlp::TonicExporterBuilder::default()
-        .with_endpoint(opts.url.to_string())
-        .with_metadata(MetadataMap::from_headers((&opts.headers).try_into()?))
-        .build_metrics_exporter(
-            Box::<SDKAggSelector>::default(),
-            Box::new(metric_temporality_to_selector(opts.metric_temporality)),
-        )?;
-    let reader = PeriodicReader::builder(exporter, runtime::Tokio)
-        .with_interval(opts.metric_periodicity)
-        .build();
-    let mp = augment_meter_provider_with_defaults(
-        MeterProvider::builder().with_reader(reader),
-        &opts.global_tags,
-    )?
-    .build();
-    Ok::<_, anyhow::Error>(CoreOtelMeter(mp.meter(TELEM_SERVICE_NAME)))
-}
-
-pub struct StartedPromServer {
-    pub meter: Arc<CoreOtelMeter>,
-    pub bound_addr: SocketAddr,
-    pub abort_handle: AbortHandle,
-}
-
-/// Builds and runs a prometheus endpoint which can be scraped by prom instances for metrics export.
-/// Returns the meter that can be used as a [CoreMeter].
-pub fn start_prometheus_metric_exporter(
-    opts: PrometheusExporterOptions,
-) -> Result<StartedPromServer, anyhow::Error> {
-    let (srv, exporter) = PromServer::new(&opts, SDKAggSelector::default())?;
-    let meter_provider = augment_meter_provider_with_defaults(
-        MeterProvider::builder().with_reader(exporter),
-        &opts.global_tags,
-    )?
-    .build();
-    let bound_addr = srv.bound_addr();
-    let handle = tokio::spawn(async move { srv.run().await });
-    Ok(StartedPromServer {
-        meter: Arc::new(CoreOtelMeter(meter_provider.meter(TELEM_SERVICE_NAME))),
-        bound_addr,
-        abort_handle: handle.abort_handle(),
-    })
 }
 
 /// Buffers [MetricEvent]s for periodic consumption by lang
@@ -775,64 +603,6 @@ where
 {
     fn record(&self, value: u64, attributes: &MetricAttributes) {
         self.send(value, attributes)
-    }
-}
-
-#[derive(Debug)]
-pub struct CoreOtelMeter(Meter);
-impl CoreMeter for CoreOtelMeter {
-    fn new_attributes(&self, attribs: NewAttributes) -> MetricAttributes {
-        MetricAttributes::OTel {
-            kvs: Arc::new(attribs.attributes.into_iter().map(KeyValue::from).collect()),
-        }
-    }
-
-    fn extend_attributes(
-        &self,
-        existing: MetricAttributes,
-        attribs: NewAttributes,
-    ) -> MetricAttributes {
-        if let MetricAttributes::OTel { mut kvs } = existing {
-            Arc::make_mut(&mut kvs).extend(attribs.attributes.into_iter().map(Into::into));
-            MetricAttributes::OTel { kvs }
-        } else {
-            dbg_panic!("Must use OTel attributes with an OTel metric implementation");
-            existing
-        }
-    }
-
-    fn counter(&self, params: MetricParameters) -> Arc<dyn Counter> {
-        Arc::new(
-            self.0
-                .u64_counter(params.name)
-                .with_unit(Unit::new(params.unit))
-                .with_description(params.description)
-                .init(),
-        )
-    }
-
-    fn histogram(&self, params: MetricParameters) -> Arc<dyn Histogram> {
-        Arc::new(
-            self.0
-                .u64_histogram(params.name)
-                .with_unit(Unit::new(params.unit))
-                .with_description(params.description)
-                .init(),
-        )
-    }
-
-    fn gauge(&self, params: MetricParameters) -> Arc<dyn Gauge> {
-        Arc::new(MemoryGaugeU64::new(params, &self.0))
-    }
-}
-
-impl Gauge for MemoryGaugeU64 {
-    fn record(&self, value: u64, attributes: &MetricAttributes) {
-        if let MetricAttributes::OTel { kvs } = attributes {
-            self.record(value, kvs);
-        } else {
-            dbg_panic!("Must use OTel attributes with an OTel metric implementation");
-        }
     }
 }
 
