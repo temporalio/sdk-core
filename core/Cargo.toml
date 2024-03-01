@@ -30,20 +30,20 @@ console-subscriber = { version = "0.1", optional = true }
 crossbeam-channel = "0.5"
 crossbeam-queue = "0.3"
 dashmap = "5.5"
-derive_builder = "0.12"
+derive_builder = { workspace = true }
 derive_more = { workspace = true }
 enum_dispatch = "0.3"
-enum-iterator = "1.4"
+enum-iterator = "2"
 flate2 = { version = "1.0", optional = true }
 futures = "0.3"
 futures-util = "0.3"
 governor = "0.6"
 http = "0.2"
 hyper = "0.14"
-itertools = "0.11"
+itertools = "0.12"
 lru = "0.11"
 mockall = "0.11"
-nix = { version = "0.27", optional = true, features = ["process", "signal"] }
+nix = { version = "0.28", optional = true, features = ["process", "signal"] }
 once_cell = { workspace = true }
 opentelemetry = { workspace = true, features = ["metrics"] }
 opentelemetry_sdk = { version = "0.21", features = ["rt-tokio", "metrics"] }
