@@ -17,7 +17,7 @@ otel_impls = ["opentelemetry"]
 
 [dependencies]
 async-trait = "0.1"
-derive_builder = "0.12"
+derive_builder = { workspace = true }
 derive_more = { workspace = true }
 opentelemetry = { workspace = true, optional = true }
 prost-types = "0.11"
