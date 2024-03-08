@@ -67,7 +67,7 @@ use tonic::{
     body::BoxBody,
     client::GrpcService,
     codegen::InterceptedService,
-    metadata::{MetadataKey, MetadataValue},
+    metadata::{MetadataKey, MetadataMap, MetadataValue},
     service::Interceptor,
     transport::{Certificate, Channel, Endpoint, Identity},
     Code, Status,
@@ -133,6 +133,15 @@ pub struct ClientOptions {
     /// If set (which it is by default), HTTP2 gRPC keep alive will be enabled.
     #[builder(default = "Some(ClientKeepAliveConfig::default())")]
     pub keep_alive: Option<ClientKeepAliveConfig>,
+
+    /// HTTP headers to include on every RPC call.
+    #[builder(default)]
+    pub headers: Option<HashMap<String, String>>,
+
+    /// API key which is set as the "Authorization" header with "Bearer " prepended. This will only
+    /// be applied if the headers don't already have an "Authorization" header.
+    #[builder(default)]
+    pub api_key: Option<String>,
 }
 
 /// Configuration options for TLS
@@ -279,7 +288,7 @@ pub enum ClientInitError {
 pub struct ConfiguredClient<C> {
     client: C,
     options: Arc<ClientOptions>,
-    headers: Arc<RwLock<HashMap<String, String>>>,
+    headers: Arc<RwLock<ClientHeaders>>,
     /// Capabilities as read from the `get_system_info` RPC call made on client connection
     capabilities: Option<get_system_info_response::Capabilities>,
     workers: Arc<SlotManager>,
@@ -288,8 +297,12 @@ pub struct ConfiguredClient<C> {
 impl<C> ConfiguredClient<C> {
     /// Set HTTP request headers overwriting previous headers
     pub fn set_headers(&self, headers: HashMap<String, String>) {
-        let mut guard = self.headers.write();
-        *guard = headers;
+        self.headers.write().user_headers = headers;
+    }
+
+    /// Set API key, overwriting previous
+    pub fn set_api_key(&self, api_key: Option<String>) {
+        self.headers.write().api_key = api_key;
     }
 
     /// Returns the options the client is configured with
@@ -306,6 +319,34 @@ impl<C> ConfiguredClient<C> {
     /// Returns a cloned reference to a registry with workers using this client instance
     pub fn workers(&self) -> Arc<SlotManager> {
         self.workers.clone()
+    }
+}
+
+#[derive(Debug)]
+struct ClientHeaders {
+    user_headers: HashMap<String, String>,
+    api_key: Option<String>,
+}
+
+impl ClientHeaders {
+    fn apply_to_metadata(&self, metadata: &mut MetadataMap) {
+        for (key, val) in self.user_headers.iter() {
+            // Only if not already present
+            if !metadata.contains_key(key) {
+                // Ignore invalid keys/values
+                if let (Ok(key), Ok(val)) = (MetadataKey::from_str(key), val.parse()) {
+                    metadata.insert(key, val);
+                }
+            }
+        }
+        if let Some(api_key) = &self.api_key {
+            // Only if not already present
+            if !metadata.contains_key("authorization") {
+                if let Ok(val) = format!("Bearer {}", api_key).parse() {
+                    metadata.insert("authorization", val);
+                }
+            }
+        }
     }
 }
 
@@ -331,12 +372,8 @@ impl ClientOptions {
         &self,
         namespace: impl Into<String>,
         metrics_meter: Option<TemporalMeter>,
-        headers: Option<Arc<RwLock<HashMap<String, String>>>>,
     ) -> Result<RetryClient<Client>, ClientInitError> {
-        let client = self
-            .connect_no_namespace(metrics_meter, headers)
-            .await?
-            .into_inner();
+        let client = self.connect_no_namespace(metrics_meter).await?.into_inner();
         let client = Client::new(client, namespace.into());
         let retry_client = RetryClient::new(client, self.retry_config.clone());
         Ok(retry_client)
@@ -349,7 +386,6 @@ impl ClientOptions {
     pub async fn connect_no_namespace(
         &self,
         metrics_meter: Option<TemporalMeter>,
-        headers: Option<Arc<RwLock<HashMap<String, String>>>>,
     ) -> Result<RetryClient<ConfiguredClient<TemporalServiceClientWithMetrics>>, ClientInitError>
     {
         let channel = Channel::from_shared(self.target_url.to_string())?;
@@ -374,7 +410,10 @@ impl ClientOptions {
                 metrics: metrics_meter.clone().map(MetricsContext::new),
             })
             .service(channel);
-        let headers = headers.unwrap_or_default();
+        let headers = Arc::new(RwLock::new(ClientHeaders {
+            user_headers: self.headers.clone().unwrap_or_default(),
+            api_key: self.api_key.clone(),
+        }));
         let interceptor = ServiceCallInterceptor {
             opts: self.clone(),
             headers: headers.clone(),
@@ -442,7 +481,7 @@ impl ClientOptions {
 pub struct ServiceCallInterceptor {
     opts: ClientOptions,
     /// Only accessed as a reader
-    headers: Arc<RwLock<HashMap<String, String>>>,
+    headers: Arc<RwLock<ClientHeaders>>,
 }
 
 impl Interceptor for ServiceCallInterceptor {
@@ -468,16 +507,7 @@ impl Interceptor for ServiceCallInterceptor {
                     .unwrap_or_else(|_| MetadataValue::from_static("")),
             );
         }
-        let headers = &*self.headers.read();
-        for (k, v) in headers {
-            if metadata.contains_key(k) {
-                // Don't overwrite per-request specified headers
-                continue;
-            }
-            if let (Ok(k), Ok(v)) = (MetadataKey::from_str(k), v.parse()) {
-                metadata.insert(k, v);
-            }
-        }
+        self.headers.read().apply_to_metadata(metadata);
         if !metadata.contains_key("grpc-timeout") {
             request.set_timeout(OTHER_CALL_TIMEOUT);
         }
@@ -1559,7 +1589,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn respects_per_call_headers() {
+    fn applies_headers() {
         let opts = ClientOptionsBuilder::default()
             .identity("enchicat".to_string())
             .target_url(Url::parse("https://smolkitty").unwrap())
@@ -1568,16 +1598,55 @@ mod tests {
             .build()
             .unwrap();
 
-        let mut static_headers = HashMap::new();
-        static_headers.insert("enchi".to_string(), "kitty".to_string());
-        let mut iceptor = ServiceCallInterceptor {
+        // Initial header set
+        let headers = Arc::new(RwLock::new(ClientHeaders {
+            user_headers: HashMap::new(),
+            api_key: Some("my-api-key".to_owned()),
+        }));
+        headers
+            .clone()
+            .write()
+            .user_headers
+            .insert("my-meta-key".to_owned(), "my-meta-val".to_owned());
+        let mut interceptor = ServiceCallInterceptor {
             opts,
-            headers: Arc::new(RwLock::new(static_headers)),
+            headers: headers.clone(),
         };
+
+        // Confirm on metadata
+        let req = interceptor.call(tonic::Request::new(())).unwrap();
+        assert_eq!(req.metadata().get("my-meta-key").unwrap(), "my-meta-val");
+        assert_eq!(
+            req.metadata().get("authorization").unwrap(),
+            "Bearer my-api-key"
+        );
+
+        // Overwrite at request time
         let mut req = tonic::Request::new(());
-        req.metadata_mut().insert("enchi", "cat".parse().unwrap());
-        let next_req = iceptor.call(req).unwrap();
-        assert_eq!(next_req.metadata().get("enchi").unwrap(), "cat");
+        req.metadata_mut()
+            .insert("my-meta-key", "my-meta-val2".parse().unwrap());
+        req.metadata_mut()
+            .insert("authorization", "my-api-key2".parse().unwrap());
+        let req = interceptor.call(req).unwrap();
+        assert_eq!(req.metadata().get("my-meta-key").unwrap(), "my-meta-val2");
+        assert_eq!(req.metadata().get("authorization").unwrap(), "my-api-key2");
+
+        // Overwrite auth on header
+        headers
+            .clone()
+            .write()
+            .user_headers
+            .insert("authorization".to_owned(), "my-api-key3".to_owned());
+        let req = interceptor.call(tonic::Request::new(())).unwrap();
+        assert_eq!(req.metadata().get("my-meta-key").unwrap(), "my-meta-val");
+        assert_eq!(req.metadata().get("authorization").unwrap(), "my-api-key3");
+
+        // Remove headers and auth and confirm gone
+        headers.clone().write().user_headers.clear();
+        headers.clone().write().api_key.take();
+        let req = interceptor.call(tonic::Request::new(())).unwrap();
+        assert!(!req.metadata().contains_key("my-meta-key"));
+        assert!(!req.metadata().contains_key("authorization"));
     }
 
     #[test]

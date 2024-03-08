@@ -378,7 +378,7 @@ impl CoreWfStarter {
                     .expect("Worker config must be valid");
                 let client = Arc::new(
                     get_integ_server_options()
-                        .connect(cfg.namespace.clone(), None, None)
+                        .connect(cfg.namespace.clone(), None)
                         .await
                         .expect("Must connect"),
                 );

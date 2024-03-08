@@ -307,11 +307,7 @@ impl EphemeralServer {
             .build()?;
         for _ in 0..50 {
             sleep(Duration::from_millis(100)).await;
-            if client_options
-                .connect_no_namespace(None, None)
-                .await
-                .is_ok()
-            {
+            if client_options.connect_no_namespace(None).await.is_ok() {
                 return success;
             }
         }
