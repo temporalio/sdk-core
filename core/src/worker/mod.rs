@@ -1,6 +1,7 @@
 mod activities;
 pub(crate) mod client;
 mod slot_provider;
+mod slot_supplier;
 mod workflow;
 
 pub use temporal_sdk_core_api::worker::{WorkerConfig, WorkerConfigBuilder};
@@ -233,7 +234,6 @@ impl Worker {
         Self::new(config, None, Arc::new(client), None)
     }
 
-    #[allow(clippy::too_many_arguments)] // Not much worth combining here
     pub(crate) fn new_with_pollers(
         config: WorkerConfig,
         sticky_queue_name: Option<String>,
