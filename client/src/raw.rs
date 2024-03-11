@@ -1015,7 +1015,7 @@ mod tests {
     #[allow(dead_code)]
     async fn raw_client_retry_compiles() {
         let opts = ClientOptionsBuilder::default().build().unwrap();
-        let raw_client = opts.connect_no_namespace(None, None).await.unwrap();
+        let raw_client = opts.connect_no_namespace(None).await.unwrap();
         let mut retry_client = RetryClient::new(raw_client, opts.retry_config);
 
         let list_ns_req = ListNamespacesRequest::default();

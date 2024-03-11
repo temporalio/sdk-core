@@ -17,7 +17,7 @@
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     let server_options = sdk_client_options(Url::from_str("http://localhost:7233")?).build()?;
 //!
-//!     let client = server_options.connect("default", None, None).await?;
+//!     let client = server_options.connect("default", None).await?;
 //!
 //!     let telemetry_options = TelemetryOptionsBuilder::default().build()?;
 //!     let runtime = CoreRuntime::new_assume_tokio(telemetry_options)?;

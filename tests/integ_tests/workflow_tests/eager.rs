@@ -33,7 +33,7 @@ async fn eager_wf_start_different_clients() {
     worker.register_wf(wf_name.to_owned(), eager_wf);
 
     let client = get_integ_server_options()
-        .connect(NAMESPACE.to_string(), None, None)
+        .connect(NAMESPACE.to_string(), None)
         .await
         .expect("Should connect");
     let w = starter.get_worker().await;

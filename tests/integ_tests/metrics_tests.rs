@@ -72,7 +72,7 @@ async fn prometheus_metrics_exported() {
     let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
     let opts = get_integ_server_options();
     let mut raw_client = opts
-        .connect_no_namespace(rt.telemetry().get_temporal_metric_meter(), None)
+        .connect_no_namespace(rt.telemetry().get_temporal_metric_meter())
         .await
         .unwrap();
     assert!(raw_client.get_client().capabilities().is_some());
@@ -125,7 +125,7 @@ async fn one_slot_worker_reports_available_slot() {
 
     let client = Arc::new(
         get_integ_server_options()
-            .connect(worker_cfg.namespace.clone(), None, None)
+            .connect(worker_cfg.namespace.clone(), None)
             .await
             .expect("Must connect"),
     );
@@ -453,7 +453,7 @@ fn runtime_new() {
     let opts = get_integ_server_options();
     handle.block_on(async {
         let mut raw_client = opts
-            .connect_no_namespace(rt.telemetry().get_temporal_metric_meter(), None)
+            .connect_no_namespace(rt.telemetry().get_temporal_metric_meter())
             .await
             .unwrap();
         assert!(raw_client.get_client().capabilities().is_some());

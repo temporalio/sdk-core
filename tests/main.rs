@@ -38,7 +38,7 @@ mod integ_tests {
         let opts = get_integ_server_options();
         let runtime = CoreRuntime::new_assume_tokio(get_integ_telem_options()).unwrap();
         let mut retrying_client = opts
-            .connect_no_namespace(runtime.telemetry().get_temporal_metric_meter(), None)
+            .connect_no_namespace(runtime.telemetry().get_temporal_metric_meter())
             .await
             .unwrap();
 
@@ -85,7 +85,7 @@ mod integ_tests {
             .build()
             .unwrap();
         let con = sgo
-            .connect("spencer.temporal-dev".to_string(), None, None)
+            .connect("spencer.temporal-dev".to_string(), None)
             .await
             .unwrap();
         dbg!(con

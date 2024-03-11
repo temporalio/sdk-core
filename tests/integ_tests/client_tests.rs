@@ -17,7 +17,7 @@ async fn can_use_retry_client() {
 #[tokio::test]
 async fn can_use_retry_raw_client() {
     let opts = get_integ_server_options();
-    let raw_client = opts.connect_no_namespace(None, None).await.unwrap();
+    let raw_client = opts.connect_no_namespace(None).await.unwrap();
     let mut retry_client = RetryClient::new(raw_client, opts.retry_config);
     retry_client
         .describe_namespace(DescribeNamespaceRequest {
@@ -31,6 +31,6 @@ async fn can_use_retry_raw_client() {
 #[tokio::test]
 async fn calls_get_system_info() {
     let opts = get_integ_server_options();
-    let raw_client = opts.connect_no_namespace(None, None).await.unwrap();
+    let raw_client = opts.connect_no_namespace(None).await.unwrap();
     assert!(raw_client.get_client().capabilities().is_some());
 }

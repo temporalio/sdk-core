@@ -124,7 +124,7 @@ async fn assert_ephemeral_server(server: &EphemeralServer) {
         .client_version("0.1.0".to_string())
         .build()
         .unwrap()
-        .connect_no_namespace(None, None)
+        .connect_no_namespace(None)
         .await
         .unwrap();
     let resp = client
