@@ -1,14 +1,17 @@
+use tokio::sync::OwnedSemaphorePermit;
+
 mod resource_based;
 
-trait SlotSupplier {
+#[async_trait::async_trait]
+pub trait SlotSupplier {
     type SlotKind: SlotKind;
     /// Blocks until a slot is available. In languages with explicit cancel mechanisms, this should
     /// be cancellable and return a boolean indicating whether a slot was actually obtained or not.
     /// In Rust, the future can simply be dropped if the reservation is no longer desired.
-    async fn reserve_slot(&self);
+    async fn reserve_slot(&self) -> SlotSupplierPermit;
 
-    /// Tries to immediately reserve a slot, returning true if a slot is available.
-    fn try_reserve_slot(&self) -> bool;
+    /// Tries to immediately reserve a slot, returning None if one is not available
+    fn try_reserve_slot(&self) -> Option<SlotSupplierPermit>;
 
     /// Marks a slot as actually now being used. This is separate from reserving one because the
     /// pollers need to reserve a slot before they have actually obtained work from server. Once
@@ -24,20 +27,27 @@ trait SlotSupplier {
     ///     TODO: Error type should maybe also be generic and bound to slot type
     fn mark_slot_used(
         &self,
+        // TODO: Should be enum of either or
         info: Option<&<Self::SlotKind as SlotKind>::Info>,
         error: Option<&anyhow::Error>,
     );
 
     /// Frees a slot.
-    fn release_slot(&self, info: &SlotReleaseReason<<Self::SlotKind as SlotKind>::Info>);
+    fn release_slot(&self, info: SlotReleaseReason);
 
     /// If this implementation knows how many slots are available at any moment, it should return
     /// that here.
     fn available_slots(&self) -> Option<usize>;
 }
 
-enum SlotReleaseReason<Info> {
-    TaskComplete(Info),
+pub(crate) enum SlotSupplierPermit {
+    Semaphore(OwnedSemaphorePermit),
+    OtherImpl,
+}
+
+enum SlotReleaseReason {
+    TaskComplete,
+    NeverUsed,
     Error, // TODO: Details
 }
 
@@ -55,10 +65,10 @@ struct LocalActivitySlotInfo {
     // etc...
 }
 
-struct WorkflowSlotKind {}
-struct ActivitySlotKind {}
-struct LocalActivitySlotKind {}
-trait SlotKind {
+pub struct WorkflowSlotKind {}
+pub struct ActivitySlotKind {}
+pub struct LocalActivitySlotKind {}
+pub trait SlotKind {
     type Info;
 }
 impl SlotKind for WorkflowSlotKind {
@@ -70,9 +80,6 @@ impl SlotKind for ActivitySlotKind {
 impl SlotKind for LocalActivitySlotKind {
     type Info = LocalActivitySlotInfo;
 }
-trait WorkflowTaskSlotSupplier: SlotSupplier<SlotKind = WorkflowSlotKind> {}
-trait ActivityTaskSlotSupplier: SlotSupplier<SlotKind = ActivitySlotKind> {}
-trait LocalActivityTaskSlotSupplier: SlotSupplier<SlotKind = LocalActivitySlotKind> {}
 
 struct WorkflowSlotsInfo {
     used_slots: Vec<WorkflowSlotInfo>,
@@ -97,42 +104,3 @@ trait WorkflowCacheSizer {
         new_task: &WorkflowSlotInfo,
     ) -> bool;
 }
-
-// struct PermitSlotSupplier<SS> {
-//     slot_supplier: SS,
-// }
-// impl<SS> PermitSlotSupplier<SS>
-// where
-//     SS: SlotSupplier,
-// {
-//     pub async fn acquire(&self) -> Result<OwnedMeteredSemPermit, ()> {
-//         self.slot_supplier.reserve_slot().await;
-//     }
-// }
-
-// impl<K> SlotSupplier for MeteredSemaphore
-// where
-//     K: SlotKind,
-// {
-//     type SlotKind = K;
-//
-//     async fn reserve_slot(&self) {
-//         self.acquire_owned()
-//     }
-//
-//     fn try_reserve_slot(&self) -> bool {
-//         todo!()
-//     }
-//
-//     fn mark_slot_used(&self, info: Option<&K::Info>, error: Option<&Error>) {
-//         todo!()
-//     }
-//
-//     fn release_slot(&self, info: &SlotReleaseReason<K::Info>) {
-//         todo!()
-//     }
-//
-//     fn available_slots(&self) -> Option<usize> {
-//         todo!()
-//     }
-// }

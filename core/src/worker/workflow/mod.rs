@@ -16,7 +16,7 @@ pub(crate) use history_update::HistoryUpdate;
 
 use crate::{
     abstractions::{
-        dbg_panic, take_cell::TakeCell, MeteredSemaphore, TrackedOwnedMeteredSemPermit,
+        dbg_panic, take_cell::TakeCell, MeteredPermitDealer, TrackedOwnedMeteredSemPermit,
         UsedMeteredSemPermit,
     },
     internal_flags::InternalFlags,
@@ -25,6 +25,7 @@ use crate::{
     worker::{
         activities::{ActivitiesFromWFTsHandle, LocalActivityManager, TrackedPermittedTqResp},
         client::{WorkerClient, WorkflowTaskCompletion},
+        slot_supplier::WorkflowSlotKind,
         workflow::{
             history_update::HistoryPaginator,
             managed_run::RunUpdateAct,
@@ -122,7 +123,7 @@ pub(crate) struct Workflows {
     /// If set, can be used to reserve activity task slots for eager-return of new activity tasks.
     activity_tasks_handle: Option<ActivitiesFromWFTsHandle>,
     /// Ensures we stay at or below this worker's maximum concurrent workflow task limit
-    wft_semaphore: Arc<MeteredSemaphore>,
+    wft_semaphore: Arc<MeteredPermitDealer<WorkflowSlotKind>>,
     local_act_mgr: Arc<LocalActivityManager>,
     ever_polled: AtomicBool,
 }
@@ -150,7 +151,7 @@ impl Workflows {
         basics: WorkflowBasics,
         sticky_attrs: Option<StickyExecutionAttributes>,
         client: Arc<dyn WorkerClient>,
-        wft_semaphore: Arc<MeteredSemaphore>,
+        wft_semaphore: Arc<MeteredPermitDealer<WorkflowSlotKind>>,
         wft_stream: impl Stream<Item = WFTStreamIn> + Send + 'static,
         local_activity_request_sink: impl LocalActivityRequestSink,
         local_act_mgr: Arc<LocalActivityManager>,
@@ -510,11 +511,11 @@ impl Workflows {
         async move { rx.await.ok() }
     }
 
-    pub(super) fn available_wft_permits(&self) -> usize {
+    pub(super) fn available_wft_permits(&self) -> Option<usize> {
         self.wft_semaphore.available_permits()
     }
     #[cfg(test)]
-    pub(super) fn unused_wft_permits(&self) -> usize {
+    pub(super) fn unused_wft_permits(&self) -> Option<usize> {
         self.wft_semaphore.unused_permits()
     }
 

@@ -1,7 +1,7 @@
 mod activities;
 pub(crate) mod client;
 mod slot_provider;
-mod slot_supplier;
+pub(crate) mod slot_supplier;
 mod workflow;
 
 pub use temporal_sdk_core_api::worker::{WorkerConfig, WorkerConfigBuilder};
@@ -15,7 +15,7 @@ pub(crate) use workflow::{wft_poller::new_wft_poller, LEGACY_QUERY_ID};
 use temporal_client::{ConfiguredClient, TemporalServiceClientWithMetrics, WorkerKey};
 
 use crate::{
-    abstractions::{dbg_panic, MeteredSemaphore},
+    abstractions::{dbg_panic, MeteredPermitDealer},
     errors::CompleteWfError,
     pollers::{
         new_activity_task_buffer, new_workflow_task_buffer, BoxedActPoller, WorkflowTaskPoller,
@@ -248,12 +248,12 @@ impl Worker {
         };
         metrics.worker_registered();
         let shutdown_token = CancellationToken::new();
-        let wft_semaphore = Arc::new(MeteredSemaphore::new(
+        let wft_semaphore = Arc::new(MeteredPermitDealer::new(
             config.max_outstanding_workflow_tasks,
             metrics.with_new_attrs([workflow_worker_type()]),
             MetricsContext::available_task_slots,
         ));
-        let act_semaphore = Arc::new(MeteredSemaphore::new(
+        let act_semaphore = Arc::new(MeteredPermitDealer::new(
             config.max_outstanding_activities,
             metrics.with_new_attrs([activity_worker_type()]),
             MetricsContext::available_task_slots,
@@ -484,11 +484,11 @@ impl Worker {
     }
 
     #[allow(unused)]
-    pub(crate) fn available_wft_permits(&self) -> usize {
+    pub(crate) fn available_wft_permits(&self) -> Option<usize> {
         self.workflows.available_wft_permits()
     }
     #[cfg(test)]
-    pub(crate) fn unused_wft_permits(&self) -> usize {
+    pub(crate) fn unused_wft_permits(&self) -> Option<usize> {
         self.workflows.unused_wft_permits()
     }
 

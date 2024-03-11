@@ -3,11 +3,12 @@
 //! This enables latency optimizations such as Eager Workflow Start.
 
 use crate::{
-    abstractions::{MeteredSemaphore, OwnedMeteredSemPermit},
+    abstractions::{MeteredPermitDealer, OwnedMeteredSemPermit},
     protosext::ValidPollWFTQResponse,
     worker::workflow::wft_poller::validate_wft,
 };
 
+use crate::worker::slot_supplier::WorkflowSlotKind;
 use std::sync::Arc;
 use temporal_client::{Slot as SlotTrait, SlotProvider as SlotProviderTrait};
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse;
@@ -47,7 +48,7 @@ impl SlotTrait for Slot {
 pub(super) struct SlotProvider {
     namespace: String,
     task_queue: String,
-    wft_semaphore: Arc<MeteredSemaphore>,
+    wft_semaphore: Arc<MeteredPermitDealer<WorkflowSlotKind>>,
     external_wft_tx: WFTStreamSender,
 }
 
@@ -55,7 +56,7 @@ impl SlotProvider {
     pub(super) fn new(
         namespace: String,
         task_queue: String,
-        wft_semaphore: Arc<MeteredSemaphore>,
+        wft_semaphore: Arc<MeteredPermitDealer<WorkflowSlotKind>>,
         external_wft_tx: WFTStreamSender,
     ) -> Self {
         Self {
@@ -106,7 +107,7 @@ mod tests {
 
     #[tokio::test]
     async fn slot_propagates_through_channel() {
-        let wft_semaphore = Arc::new(MeteredSemaphore::new(
+        let wft_semaphore = Arc::new(MeteredPermitDealer::new(
             2,
             crate::MetricsContext::no_op(),
             |_, _| {},
@@ -133,7 +134,7 @@ mod tests {
         let (external_wft_tx, mut external_wft_rx) = unbounded_channel();
         {
             let external_wft_tx = external_wft_tx;
-            let wft_semaphore = Arc::new(MeteredSemaphore::new(
+            let wft_semaphore = Arc::new(MeteredPermitDealer::new(
                 2,
                 crate::MetricsContext::no_op(),
                 |_, _| {},
@@ -151,7 +152,7 @@ mod tests {
 
     #[tokio::test]
     async fn unused_slots_reclaimed() {
-        let wft_semaphore = Arc::new(MeteredSemaphore::new(
+        let wft_semaphore = Arc::new(MeteredPermitDealer::new(
             2,
             crate::MetricsContext::no_op(),
             |_, _| {},

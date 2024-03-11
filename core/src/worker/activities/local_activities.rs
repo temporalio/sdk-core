@@ -1,8 +1,11 @@
 use crate::{
-    abstractions::{dbg_panic, MeteredSemaphore, OwnedMeteredSemPermit, UsedMeteredSemPermit},
+    abstractions::{dbg_panic, MeteredPermitDealer, OwnedMeteredSemPermit, UsedMeteredSemPermit},
     protosext::ValidScheduleLA,
     retry_logic::RetryPolicyExt,
-    worker::workflow::HeartbeatTimeoutMsg,
+    worker::{
+        slot_supplier::{LocalActivitySlotKind, SlotSupplier},
+        workflow::HeartbeatTimeoutMsg,
+    },
     MetricsContext, TaskToken,
 };
 use futures::{stream::BoxStream, Stream};
@@ -12,6 +15,7 @@ use std::{
     collections::{hash_map::Entry, HashMap},
     fmt::{Debug, Formatter},
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
     time::{Duration, Instant, SystemTime},
 };
@@ -203,7 +207,7 @@ impl LAMData {
 
 impl LocalActivityManager {
     pub(crate) fn new(
-        max_concurrent: usize,
+        slot_supplier: Arc<dyn SlotSupplier<SlotKind = LocalActivitySlotKind> + Send + Sync>,
         namespace: String,
         heartbeat_timeout_tx: UnboundedSender<HeartbeatTimeoutMsg>,
         metrics_context: MetricsContext,
@@ -211,8 +215,8 @@ impl LocalActivityManager {
         let (act_req_tx, act_req_rx) = unbounded_channel();
         let (cancels_req_tx, cancels_req_rx) = unbounded_channel();
         let shutdown_complete_tok = CancellationToken::new();
-        let semaphore = MeteredSemaphore::new(
-            max_concurrent,
+        let semaphore = MeteredPermitDealer::new(
+            slot_supplier,
             metrics_context,
             MetricsContext::available_task_slots,
         );
@@ -239,10 +243,12 @@ impl LocalActivityManager {
     }
 
     #[cfg(test)]
-    fn test(max_concurrent: usize) -> Self {
+    fn test(
+        slot_supplier: Arc<dyn SlotSupplier<SlotKind = LocalActivitySlotKind> + Send + Sync>,
+    ) -> Self {
         let (hb_tx, _hb_rx) = unbounded_channel();
         Self::new(
-            max_concurrent,
+            slot_supplier,
             "fake_ns".to_string(),
             hb_tx,
             MetricsContext::no_op(),
@@ -805,7 +811,7 @@ struct RcvChans {
 impl RcvChans {
     fn new(
         new_reqs: UnboundedReceiver<NewOrRetry>,
-        new_sem: MeteredSemaphore,
+        new_sem: MeteredPermitDealer<LocalActivitySlotKind>,
         cancels: UnboundedReceiver<CancelOrTimeout>,
         shutdown_completed: CancellationToken,
     ) -> Self {

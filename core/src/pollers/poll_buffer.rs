@@ -1,7 +1,10 @@
 use crate::{
-    abstractions::{dbg_panic, MeteredSemaphore, OwnedMeteredSemPermit},
+    abstractions::{dbg_panic, MeteredPermitDealer, OwnedMeteredSemPermit},
     pollers::{self, Poller},
-    worker::client::WorkerClient,
+    worker::{
+        client::WorkerClient,
+        slot_supplier::{ActivitySlotKind, SlotKind, WorkflowSlotKind},
+    },
 };
 use futures::{prelude::stream::FuturesUnordered, StreamExt};
 use futures_util::{future::BoxFuture, FutureExt};
@@ -67,9 +70,9 @@ impl<T> LongPollBuffer<T>
 where
     T: Send + Debug + 'static,
 {
-    pub(crate) fn new<FT, DelayFut>(
+    pub(crate) fn new<FT, DelayFut, SK: SlotKind>(
         poll_fn: impl Fn() -> FT + Send + Sync + 'static,
-        poll_semaphore: Arc<MeteredSemaphore>,
+        poll_semaphore: Arc<MeteredPermitDealer<SK>>,
         max_pollers: usize,
         shutdown: CancellationToken,
         num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
@@ -229,7 +232,7 @@ pub(crate) fn new_workflow_task_buffer(
     client: Arc<dyn WorkerClient>,
     task_queue: TaskQueue,
     concurrent_pollers: usize,
-    semaphore: Arc<MeteredSemaphore>,
+    semaphore: Arc<MeteredPermitDealer<WorkflowSlotKind>>,
     shutdown: CancellationToken,
     num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
 ) -> PollWorkflowTaskBuffer {
@@ -254,7 +257,7 @@ pub(crate) fn new_activity_task_buffer(
     client: Arc<dyn WorkerClient>,
     task_queue: String,
     concurrent_pollers: usize,
-    semaphore: Arc<MeteredSemaphore>,
+    semaphore: Arc<MeteredPermitDealer<ActivitySlotKind>>,
     max_tps: Option<f64>,
     shutdown: CancellationToken,
     num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
@@ -286,7 +289,7 @@ pub(crate) fn new_activity_task_buffer(
 #[cfg(test)]
 #[derive(derive_more::Constructor)]
 pub(crate) struct MockPermittedPollBuffer<PT> {
-    sem: Arc<MeteredSemaphore>,
+    sem: Arc<MeteredPermitDealer>,
     inner: PT,
 }
 
@@ -352,7 +355,7 @@ mod tests {
                 normal_name: "".to_string(),
             },
             1,
-            Arc::new(MeteredSemaphore::new(
+            Arc::new(MeteredPermitDealer::new(
                 10,
                 MetricsContext::no_op(),
                 |_, _| {},

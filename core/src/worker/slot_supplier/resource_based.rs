@@ -1,6 +1,6 @@
 use crate::worker::slot_supplier::{
-    SlotKind, SlotReleaseReason, SlotSupplier, WorkflowCacheSizer, WorkflowSlotInfo,
-    WorkflowSlotKind, WorkflowSlotsInfo,
+    SlotKind, SlotReleaseReason, SlotSupplier, SlotSupplierPermit, WorkflowCacheSizer,
+    WorkflowSlotInfo, WorkflowSlotKind, WorkflowSlotsInfo,
 };
 use anyhow::Error;
 use std::time::Duration;
@@ -22,21 +22,28 @@ trait MemoryInfo {
     }
 }
 
+#[async_trait::async_trait]
 impl<MI> SlotSupplier for ResourceBasedWorkflowSlots<MI>
 where
-    MI: MemoryInfo,
+    MI: MemoryInfo + Sync,
 {
     type SlotKind = WorkflowSlotKind;
 
-    async fn reserve_slot(&self) {
-        while !self.try_reserve_slot() {
+    async fn reserve_slot(&self) -> SlotSupplierPermit {
+        loop {
+            if let Some(p) = self.try_reserve_slot() {
+                return p;
+            }
             tokio::time::sleep(Duration::from_millis(5)).await
         }
     }
 
-    fn try_reserve_slot(&self) -> bool {
-        self.mem_info_supplier.process_used_percent() + self.assumed_maximum_marginal_contribution
-            <= self.target_mem_usage
+    fn try_reserve_slot(&self) -> Option<SlotSupplierPermit> {
+        if self.can_reserve() {
+            Some(SlotSupplierPermit::OtherImpl)
+        } else {
+            None
+        }
     }
 
     fn mark_slot_used(
@@ -46,7 +53,7 @@ where
     ) {
     }
 
-    fn release_slot(&self, info: &SlotReleaseReason<<Self::SlotKind as SlotKind>::Info>) {}
+    fn release_slot(&self, _info: SlotReleaseReason) {}
 
     fn available_slots(&self) -> Option<usize> {
         None
@@ -55,14 +62,21 @@ where
 
 impl<MI> WorkflowCacheSizer for ResourceBasedWorkflowSlots<MI>
 where
-    MI: MemoryInfo,
+    MI: MemoryInfo + Sync,
 {
     fn can_allow_workflow(
         &self,
         _slots_info: &WorkflowSlotsInfo,
         _new_task: &WorkflowSlotInfo,
     ) -> bool {
-        self.try_reserve_slot()
+        self.can_reserve()
+    }
+}
+
+impl<MI: MemoryInfo + Sync> ResourceBasedWorkflowSlots<MI> {
+    fn can_reserve(&self) -> bool {
+        self.mem_info_supplier.process_used_percent() + self.assumed_maximum_marginal_contribution
+            <= self.target_mem_usage
     }
 }
 

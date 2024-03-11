@@ -9,7 +9,7 @@ pub(crate) use local_activities::{
 
 use crate::{
     abstractions::{
-        ClosableMeteredSemaphore, MeteredSemaphore, OwnedMeteredSemPermit,
+        ClosableMeteredPermitDealer, MeteredPermitDealer, OwnedMeteredSemPermit,
         TrackedOwnedMeteredSemPermit, UsedMeteredSemPermit,
     },
     pollers::BoxedActPoller,
@@ -20,6 +20,7 @@ use crate::{
             activity_task_poller_stream::new_activity_task_poller,
         },
         client::WorkerClient,
+        slot_supplier::ActivitySlotKind,
     },
     PollActivityError, TaskToken,
 };
@@ -146,8 +147,8 @@ pub(crate) struct WorkerActivityTasks {
     outstanding_activity_tasks: OutstandingActMap,
     /// Ensures we don't exceed this worker's maximum concurrent activity limit for activities. This
     /// semaphore is used to limit eager activities but shares the same underlying
-    /// [MeteredSemaphore] that is used to limit the concurrency for non-eager activities.
-    eager_activities_semaphore: Arc<ClosableMeteredSemaphore>,
+    /// [MeteredPermitDealer] that is used to limit the concurrency for non-eager activities.
+    eager_activities_semaphore: Arc<ClosableMeteredPermitDealer<ActivitySlotKind>>,
     /// Holds activity tasks we have received in direct response to workflow task completion (a.k.a
     /// eager activities). Tasks received in this stream hold a "tracked" permit that is issued by
     /// the `eager_activities_semaphore`.
@@ -176,7 +177,7 @@ enum ActivityTaskSource {
 impl WorkerActivityTasks {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
-        semaphore: Arc<MeteredSemaphore>,
+        semaphore: Arc<MeteredPermitDealer<ActivitySlotKind>>,
         poller: BoxedActPoller,
         client: Arc<dyn WorkerClient>,
         metrics: MetricsContext,
@@ -190,7 +191,7 @@ impl WorkerActivityTasks {
         let server_poller_stream =
             new_activity_task_poller(poller, metrics.clone(), shutdown_initiated_token.clone());
         let (eager_activities_tx, eager_activities_rx) = unbounded_channel();
-        let eager_activities_semaphore = ClosableMeteredSemaphore::new_arc(semaphore);
+        let eager_activities_semaphore = ClosableMeteredPermitDealer::new_arc(semaphore);
 
         let start_tasks_stream_complete = CancellationToken::new();
         let starts_stream = Self::merge_start_task_sources(
@@ -241,7 +242,7 @@ impl WorkerActivityTasks {
     fn merge_start_task_sources(
         non_poll_tasks_rx: UnboundedReceiver<TrackedPermittedTqResp>,
         poller_stream: impl Stream<Item = Result<PermittedTqResp, tonic::Status>>,
-        eager_activities_semaphore: Arc<ClosableMeteredSemaphore>,
+        eager_activities_semaphore: Arc<ClosableMeteredPermitDealer<ActivitySlotKind>>,
         on_complete_token: CancellationToken,
     ) -> impl Stream<Item = Result<(PermittedTqResp, bool), PollActivityError>> {
         let non_poll_stream = stream::unfold(
@@ -641,7 +642,7 @@ where
 /// Provides facilities for the workflow side of things to interact with the activity manager.
 /// Allows for the handling of activities returned by WFT completions.
 pub(crate) struct ActivitiesFromWFTsHandle {
-    sem: Arc<ClosableMeteredSemaphore>,
+    sem: Arc<ClosableMeteredPermitDealer<ActivitySlotKind>>,
     tx: UnboundedSender<TrackedPermittedTqResp>,
 }
 
@@ -729,7 +730,7 @@ mod tests {
             .times(2)
             .returning(|_, _| Ok(Default::default()));
         let mock_client = Arc::new(mock_client);
-        let sem = Arc::new(MeteredSemaphore::new(
+        let sem = Arc::new(MeteredPermitDealer::new(
             10,
             MetricsContext::no_op(),
             MetricsContext::available_task_slots,
@@ -822,7 +823,7 @@ mod tests {
                 })
             });
         let mock_client = Arc::new(mock_client);
-        let sem = Arc::new(MeteredSemaphore::new(
+        let sem = Arc::new(MeteredPermitDealer::new(
             1, // Just one task at a time
             MetricsContext::no_op(),
             MetricsContext::available_task_slots,
@@ -897,7 +898,7 @@ mod tests {
             .times(2)
             .returning(|_, _| Ok(Default::default()));
         let mock_client = Arc::new(mock_client);
-        let sem = Arc::new(MeteredSemaphore::new(
+        let sem = Arc::new(MeteredPermitDealer::new(
             1, // Just one task at a time
             MetricsContext::no_op(),
             MetricsContext::available_task_slots,
