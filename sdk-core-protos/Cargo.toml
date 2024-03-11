@@ -12,7 +12,6 @@ categories = ["development-tools"]
 
 [features]
 history_builders = ["uuid", "rand"]
-serde_serialize = []
 
 [dependencies]
 anyhow = "1.0"

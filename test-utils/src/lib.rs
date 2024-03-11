@@ -6,16 +6,12 @@ extern crate tracing;
 
 pub mod canned_histories;
 pub mod interceptors;
-pub mod wf_input_saver;
 pub mod workflows;
 
-use anyhow::Context;
 pub use temporal_sdk_core::replay::HistoryForReplay;
 
-use crate::{
-    stream::{Stream, TryStreamExt},
-    wf_input_saver::stream_to_file,
-};
+use crate::stream::{Stream, TryStreamExt};
+use anyhow::Context;
 use base64::{prelude::BASE64_STANDARD, Engine};
 use futures::{future, stream, stream::FuturesUnordered, StreamExt};
 use parking_lot::Mutex;
@@ -63,7 +59,7 @@ use temporal_sdk_core_protos::{
     },
     DEFAULT_ACTIVITY_TYPE,
 };
-use tokio::sync::{mpsc::unbounded_channel, OnceCell};
+use tokio::sync::OnceCell;
 use url::Url;
 
 pub const NAMESPACE: &str = "default";
@@ -356,16 +352,6 @@ impl CoreWfStarter {
 
     pub fn no_remote_activities(&mut self) -> &mut Self {
         self.worker_config.no_remote_activities(true);
-        self
-    }
-
-    pub fn enable_wf_state_input_recording(&mut self) -> &mut Self {
-        let (ser_tx, ser_rx) = unbounded_channel();
-        let worker_cfg_clone = self.worker_config.build().unwrap();
-        tokio::spawn(async move {
-            stream_to_file(&worker_cfg_clone, ser_rx).await.unwrap();
-        });
-        self.worker_config.wf_state_inputs(Some(ser_tx));
         self
     }
 

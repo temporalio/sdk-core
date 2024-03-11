@@ -1,11 +1,3 @@
-#[cfg(feature = "save_wf_inputs")]
-mod saved_wf_inputs;
-#[cfg(feature = "save_wf_inputs")]
-mod tonic_status_serde;
-
-#[cfg(feature = "save_wf_inputs")]
-pub use saved_wf_inputs::replay_wf_state_inputs;
-
 use crate::{
     abstractions::dbg_panic,
     worker::workflow::{
@@ -41,9 +33,6 @@ pub(super) struct WFStream {
     ignore_evicts_on_shutdown: bool,
 
     metrics: MetricsContext,
-
-    #[cfg(feature = "save_wf_inputs")]
-    wf_state_inputs: Option<UnboundedSender<Vec<u8>>>,
 }
 impl WFStream {
     /// Constructs workflow state management and returns a stream which outputs activations.
@@ -105,17 +94,11 @@ impl WFStream {
             metrics: basics.metrics,
             runs_needing_fetching: Default::default(),
             history_fetch_refcounter: Arc::new(HistfetchRC {}),
-
-            #[cfg(feature = "save_wf_inputs")]
-            wf_state_inputs: basics.worker_config.wf_state_inputs.clone(),
         };
         all_inputs
             .map(move |action: WFStreamInput| {
                 let span = span!(Level::DEBUG, "new_stream_input", action=?action);
                 let _span_g = span.enter();
-
-                #[cfg(feature = "save_wf_inputs")]
-                let maybe_write = state.prep_input(&action);
 
                 let mut activations = vec![];
                 let maybe_act = match action {
@@ -187,14 +170,6 @@ impl WFStream {
 
                 activations.extend(maybe_act);
                 activations.extend(state.reconcile_buffered());
-
-                // Always flush *after* actually handling the input, as this allows LA sink
-                // responses to be recorded before the input, so they can be read and buffered to be
-                // replayed during the handling of the input itself.
-                #[cfg(feature = "save_wf_inputs")]
-                if let Some(write) = maybe_write {
-                    state.flush_write(write);
-                }
 
                 if state.shutdown_done() {
                     info!("Workflow shutdown is done");
@@ -571,10 +546,6 @@ impl WFStream {
 
 /// All possible inputs to the [WFStream]
 #[derive(derive_more::From, Debug)]
-#[cfg_attr(
-    feature = "save_wf_inputs",
-    derive(serde::Serialize, serde::Deserialize)
-)]
 enum WFStreamInput {
     NewWft(PermittedWFT),
     Local(LocalInput),
@@ -582,19 +553,9 @@ enum WFStreamInput {
     PollerDead,
     /// The stream given to us which represents the poller (or a mock) encountered a non-retryable
     /// error while polling
-    PollerError(
-        #[cfg_attr(
-            feature = "save_wf_inputs",
-            serde(with = "tonic_status_serde::SerdeStatus")
-        )]
-        tonic::Status,
-    ),
+    PollerError(tonic::Status),
     FailedFetch {
         run_id: String,
-        #[cfg_attr(
-            feature = "save_wf_inputs",
-            serde(with = "tonic_status_serde::SerdeStatus")
-        )]
         err: tonic::Status,
         auto_reply_fail_tt: Option<TaskToken>,
     },
@@ -602,14 +563,9 @@ enum WFStreamInput {
 
 /// A non-poller-received input to the [WFStream]
 #[derive(derive_more::DebugCustom)]
-#[cfg_attr(
-    feature = "save_wf_inputs",
-    derive(serde::Serialize, serde::Deserialize)
-)]
 #[debug(fmt = "LocalInput {{ {input:?} }}")]
 pub(super) struct LocalInput {
     pub input: LocalInputs,
-    #[cfg_attr(feature = "save_wf_inputs", serde(skip, default = "Span::current"))]
     pub span: Span,
 }
 impl From<HeartbeatTimeoutMsg> for LocalInput {
@@ -623,10 +579,6 @@ impl From<HeartbeatTimeoutMsg> for LocalInput {
 /// Everything that _isn't_ a poll which may affect workflow state. Always higher priority than
 /// new polls.
 #[derive(Debug, derive_more::From)]
-#[cfg_attr(
-    feature = "save_wf_inputs",
-    derive(serde::Serialize, serde::Deserialize)
-)]
 pub(super) enum LocalInputs {
     Completion(WFActCompleteMsg),
     FetchedPageCompletion {
@@ -637,7 +589,6 @@ pub(super) enum LocalInputs {
     PostActivation(PostActivationMsg),
     RequestEviction(RequestEvictMsg),
     HeartbeatTimeout(String),
-    #[cfg_attr(feature = "save_wf_inputs", serde(skip))]
     GetStateInfo(GetStateInfoMsg),
 }
 impl LocalInputs {

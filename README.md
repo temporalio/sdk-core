@@ -34,7 +34,7 @@ This repo is composed of multiple crates:
 - temporal-sdk-core `./core` - The Core implementation
 - temporal-sdk `./sdk` - A (currently prototype) Rust SDK built on top of Core. Used for testing.
 - rustfsm `./fsm` - Implements a procedural macro used by core for defining state machines
-    (contains subcrates). It is temporal agnostic.
+  (contains subcrates). It is temporal agnostic.
 
 Visualized (dev dependencies are in blue):
 
@@ -51,7 +51,7 @@ You can build and test the project using cargo:
 Run integ tests with `cargo integ-test`. By default it will start an ephemeral server. You can also
 use an already-running server by passing `-s external`.
 
-Run load tests with `cargo test --features=save_wf_inputs --test heavy_tests`.
+Run load tests with `cargo test --test heavy_tests`.
 
 ## Formatting
 
@@ -86,8 +86,8 @@ equivalent.
 
 ## Proto files
 
-This repo uses a subtree for upstream protobuf files. The path `sdk-core-protos/protos/api_upstream` is a
-subtree. To update it, use:
+This repo uses a subtree for upstream protobuf files. The path `sdk-core-protos/protos/api_upstream`
+is a subtree. To update it, use:
 
 `git pull --squash --rebase=false -s subtree ssh://git@github.com/temporalio/api.git master --allow-unrelated-histories`
 
