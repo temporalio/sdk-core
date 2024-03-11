@@ -14,10 +14,6 @@ categories = ["development-tools"]
 
 [features]
 default = ["otel"]
-# Do not enable this feature when building production SDKs. If we ever want a user in the field to
-# record WF input data, we can build them a custom SDK or they can build - it adds significant extra
-# code size in the form of [de]serializers.
-save_wf_inputs = ["rmp-serde", "temporal-sdk-core-protos/serde_serialize"]
 otel = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp",
     "dep:opentelemetry-prometheus", "dep:hyper", "dep:hyper-util", "dep:http-body-util"]
 tokio-console = ["console-subscriber"]
@@ -59,7 +55,6 @@ prost-types = { version = "0.5", package = "prost-wkt-types" }
 rand = "0.8.3"
 reqwest = { version = "0.11", features = ["json", "stream", "rustls-tls", "tokio-rustls"], default-features = false, optional = true }
 ringbuf = "0.3"
-rmp-serde = { version = "1.1", optional = true }
 serde = "1.0"
 serde_json = "1.0"
 siphasher = "1.0"
@@ -115,7 +110,6 @@ test = false
 name = "heavy_tests"
 path = "../tests/heavy_tests.rs"
 test = false
-required-features = ["save_wf_inputs"]
 
 [[bench]]
 name = "workflow_replay"
@@ -126,8 +120,3 @@ harness = false
 [[example]]
 name = "integ_runner"
 path = "../tests/runner.rs"
-
-[[example]]
-name = "wf_input_replay"
-path = "../tests/wf_input_replay.rs"
-required-features = ["save_wf_inputs"]

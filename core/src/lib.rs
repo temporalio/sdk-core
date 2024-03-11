@@ -38,8 +38,6 @@ pub use temporal_sdk_core_api as api;
 pub use temporal_sdk_core_protos as protos;
 pub use temporal_sdk_core_protos::TaskToken;
 pub use url::Url;
-#[cfg(feature = "save_wf_inputs")]
-pub use worker::replay_wf_state_inputs;
 pub use worker::{Worker, WorkerConfig, WorkerConfigBuilder};
 
 use crate::{

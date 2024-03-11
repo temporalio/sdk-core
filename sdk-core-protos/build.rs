@@ -112,7 +112,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ".google.protobuf.Value",
             "::prost_wkt_types::Value"
         )
-        .file_descriptor_set_path(#[allow(clippy::needless_borrow)] &descriptor_file)
+        .file_descriptor_set_path(descriptor_file)
         .compile(
             &[
                 "./protos/local/temporal/sdk/core/core_interface.proto",
@@ -128,15 +128,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "./protos/grpc",
             ],
         )?;
-
-    #[cfg(feature = "serde_serialize")]
-    {
-        use prost_wkt_build::{FileDescriptorSet, Message};
-
-        let descriptor_bytes = std::fs::read(descriptor_file)?;
-        let descriptor = FileDescriptorSet::decode(&descriptor_bytes[..])?;
-        prost_wkt_build::add_serde(out, descriptor);
-    }
 
     Ok(())
 }

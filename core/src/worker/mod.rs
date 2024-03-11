@@ -4,8 +4,6 @@ mod slot_provider;
 mod workflow;
 
 pub use temporal_sdk_core_api::worker::{WorkerConfig, WorkerConfigBuilder};
-#[cfg(feature = "save_wf_inputs")]
-pub use workflow::replay_wf_state_inputs;
 
 pub(crate) use activities::{
     ExecutingLAId, LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
@@ -368,7 +366,7 @@ impl Worker {
         if !poll_on_non_local_activities {
             info!("Activity polling is disabled for this worker");
         };
-        let la_sink = LAReqSink::new(local_act_mgr.clone(), config.wf_state_inputs.clone());
+        let la_sink = LAReqSink::new(local_act_mgr.clone());
         let provider = SlotProvider::new(
             config.namespace.clone(),
             config.task_queue.clone(),

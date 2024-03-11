@@ -32,10 +32,6 @@ static EMPTY_TASK_ERR: Lazy<tonic::Status> = Lazy::new(|| {
 
 /// Represents one or more complete WFT sequences. History events are expected to be consumed from
 /// it and applied to the state machines via [HistoryUpdate::take_next_wft_sequence]
-#[cfg_attr(
-    feature = "save_wf_inputs",
-    derive(serde::Serialize, serde::Deserialize)
-)]
 pub struct HistoryUpdate {
     events: Vec<HistoryEvent>,
     /// The event ID of the last started WFT, as according to the WFT which this update was
@@ -77,11 +73,6 @@ pub enum NextWFT {
 
 #[derive(derive_more::DebugCustom)]
 #[debug(fmt = "HistoryPaginator(run_id: {run_id})")]
-#[cfg_attr(
-    feature = "save_wf_inputs",
-    derive(serde::Serialize, serde::Deserialize),
-    serde(default = "HistoryPaginator::fake_deserialized")
-)]
 pub struct HistoryPaginator {
     pub(crate) wf_id: String,
     pub(crate) run_id: String,
@@ -89,15 +80,11 @@ pub struct HistoryPaginator {
     pub(crate) wft_started_event_id: i64,
     id_of_last_event_in_last_extracted_update: Option<i64>,
 
-    #[cfg_attr(feature = "save_wf_inputs", serde(skip))]
     client: Arc<dyn WorkerClient>,
-    #[cfg_attr(feature = "save_wf_inputs", serde(skip))]
     event_queue: VecDeque<HistoryEvent>,
-    #[cfg_attr(feature = "save_wf_inputs", serde(skip))]
     next_page_token: NextPageToken,
     /// These are events that should be returned once pagination has finished. This only happens
     /// during cache misses, where we got a partial task but need to fetch history from the start.
-    #[cfg_attr(feature = "save_wf_inputs", serde(skip))]
     final_events: Vec<HistoryEvent>,
 }
 
@@ -220,22 +207,6 @@ impl HistoryPaginator {
             final_events,
             previous_wft_started_id,
             wft_started_event_id,
-            id_of_last_event_in_last_extracted_update: None,
-        }
-    }
-
-    #[cfg(feature = "save_wf_inputs")]
-    pub(super) fn fake_deserialized() -> HistoryPaginator {
-        use crate::worker::client::mocks::mock_manual_workflow_client;
-        HistoryPaginator {
-            client: Arc::new(mock_manual_workflow_client()),
-            event_queue: Default::default(),
-            wf_id: "".to_string(),
-            run_id: "".to_string(),
-            next_page_token: NextPageToken::FetchFromStart,
-            final_events: vec![],
-            previous_wft_started_id: -2,
-            wft_started_event_id: -2,
             id_of_last_event_in_last_extracted_update: None,
         }
     }

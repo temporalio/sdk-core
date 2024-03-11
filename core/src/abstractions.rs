@@ -222,18 +222,6 @@ impl OwnedMeteredSemPermit {
 
 #[derive(Debug)]
 pub(crate) struct UsedMeteredSemPermit(OwnedMeteredSemPermit);
-impl UsedMeteredSemPermit {
-    #[cfg(feature = "save_wf_inputs")]
-    pub(crate) fn fake_deserialized() -> Self {
-        let sem = Arc::new(Semaphore::new(1));
-        let inner = sem.try_acquire_owned().unwrap();
-        Self(OwnedMeteredSemPermit {
-            inner,
-            unused_claimants: None,
-            record_fn: Box::new(|_| {}),
-        })
-    }
-}
 
 macro_rules! dbg_panic {
   ($($arg:tt)*) => {

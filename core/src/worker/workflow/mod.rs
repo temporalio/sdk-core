@@ -11,9 +11,6 @@ mod wft_extraction;
 pub(crate) mod wft_poller;
 mod workflow_stream;
 
-#[cfg(feature = "save_wf_inputs")]
-pub use workflow_stream::replay_wf_state_inputs;
-
 pub(crate) use driven_workflow::DrivenWorkflow;
 pub(crate) use history_update::HistoryUpdate;
 
@@ -758,30 +755,14 @@ enum ActivationOrAuto {
 /// A WFT which is considered to be using a slot for metrics purposes and being or about to be
 /// applied to workflow state.
 #[derive(derive_more::DebugCustom)]
-#[cfg_attr(
-    feature = "save_wf_inputs",
-    derive(serde::Serialize, serde::Deserialize)
-)]
 #[debug(fmt = "PermittedWft({work:?})")]
 pub(crate) struct PermittedWFT {
     work: PreparedWFT,
-    #[cfg_attr(
-        feature = "save_wf_inputs",
-        serde(skip, default = "UsedMeteredSemPermit::fake_deserialized")
-    )]
     permit: UsedMeteredSemPermit,
-    #[cfg_attr(
-        feature = "save_wf_inputs",
-        serde(skip, default = "HistoryPaginator::fake_deserialized")
-    )]
     paginator: HistoryPaginator,
 }
 /// A WFT without a permit
 #[derive(Debug)]
-#[cfg_attr(
-    feature = "save_wf_inputs",
-    derive(serde::Serialize, serde::Deserialize)
-)]
 struct WFTWithPaginator {
     wft: PreparedWFT,
     paginator: HistoryPaginator,
@@ -789,10 +770,6 @@ struct WFTWithPaginator {
 
 /// A WFT which has been validated and had a history update extracted from it.
 #[derive(Debug)]
-#[cfg_attr(
-    feature = "save_wf_inputs",
-    derive(serde::Serialize, serde::Deserialize)
-)]
 struct PreparedWFT {
     task_token: TaskToken,
     attempt: u32,
@@ -936,29 +913,16 @@ pub(crate) struct WorkflowStateInfo {
 }
 
 #[derive(Debug)]
-#[cfg_attr(
-    feature = "save_wf_inputs",
-    derive(serde::Serialize, serde::Deserialize)
-)]
 struct WFActCompleteMsg {
     completion: ValidatedCompletion,
-    #[cfg_attr(feature = "save_wf_inputs", serde(skip))]
     response_tx: Option<oneshot::Sender<ActivationCompleteResult>>,
 }
 #[derive(Debug)]
-#[cfg_attr(
-    feature = "save_wf_inputs",
-    derive(serde::Serialize, serde::Deserialize)
-)]
 struct LocalResolutionMsg {
     run_id: String,
     res: LocalResolution,
 }
 #[derive(Debug)]
-#[cfg_attr(
-    feature = "save_wf_inputs",
-    derive(serde::Serialize, serde::Deserialize)
-)]
 struct PostActivationMsg {
     run_id: String,
     wft_report_status: WFTReportStatus,
@@ -966,10 +930,6 @@ struct PostActivationMsg {
     is_autocomplete: bool,
 }
 #[derive(Debug, Clone)]
-#[cfg_attr(
-    feature = "save_wf_inputs",
-    derive(serde::Serialize, serde::Deserialize)
-)]
 struct RequestEvictMsg {
     run_id: String,
     message: String,
@@ -1012,10 +972,6 @@ enum ActivationCompleteOutcome {
 }
 /// Did we report, or not, completion of a WFT to server?
 #[derive(Debug, Copy, Clone)]
-#[cfg_attr(
-    feature = "save_wf_inputs",
-    derive(serde::Serialize, serde::Deserialize)
-)]
 enum WFTReportStatus {
     Reported {
         reset_last_started_to: Option<i64>,
@@ -1146,10 +1102,6 @@ fn validate_completion(
 }
 
 #[derive(Debug)]
-#[cfg_attr(
-    feature = "save_wf_inputs",
-    derive(serde::Serialize, serde::Deserialize)
-)]
 #[allow(clippy::large_enum_variant)]
 enum ValidatedCompletion {
     Success {
@@ -1174,10 +1126,6 @@ impl ValidatedCompletion {
 }
 
 #[derive(Debug)]
-#[cfg_attr(
-    feature = "save_wf_inputs",
-    derive(serde::Serialize, serde::Deserialize)
-)]
 pub(crate) enum LocalResolution {
     LocalActivity(LocalActivityResolution),
 }
@@ -1198,10 +1146,6 @@ pub struct EmptyWorkflowCommandErr;
 /// [DrivenWorkflow]s respond with these when called, to indicate what they want to do next.
 /// EX: Create a new timer, complete the workflow, etc.
 #[derive(Debug, derive_more::From, derive_more::Display)]
-#[cfg_attr(
-    feature = "save_wf_inputs",
-    derive(serde::Serialize, serde::Deserialize)
-)]
 #[allow(clippy::large_enum_variant)]
 pub enum WFCommand {
     /// Returned when we need to wait for the lang sdk to send us something
@@ -1390,10 +1334,6 @@ pub(crate) trait LocalActivityRequestSink: Send + Sync + 'static {
 #[derive(derive_more::Constructor)]
 pub(super) struct LAReqSink {
     lam: Arc<LocalActivityManager>,
-    /// If we're recording WF inputs, we also need to store immediate resolutions so they're
-    /// available on replay.
-    #[allow(dead_code)] // sometimes appears unused due to feature flagging
-    recorder: Option<UnboundedSender<Vec<u8>>>,
 }
 
 impl LocalActivityRequestSink for LAReqSink {
@@ -1401,16 +1341,7 @@ impl LocalActivityRequestSink for LAReqSink {
         if reqs.is_empty() {
             return vec![];
         }
-
-        #[allow(clippy::let_and_return)] // When feature is off clippy doesn't like this
-        let res = self.lam.enqueue(reqs);
-
-        // We always save when there are any reqs, even if the response might be empty, so that
-        // calls/responses are 1:1
-        #[cfg(feature = "save_wf_inputs")]
-        self.write_req(&res);
-
-        res
+        self.lam.enqueue(reqs)
     }
 }
 
