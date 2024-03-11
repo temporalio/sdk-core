@@ -91,7 +91,7 @@ async fn client_list_open_closed_workflow_executions() {
 async fn client_create_namespace() {
     let client = Arc::new(
         get_integ_server_options()
-            .connect(NAMESPACE.to_owned(), None, None)
+            .connect(NAMESPACE.to_owned(), None)
             .await
             .expect("Must connect"),
     );
@@ -138,7 +138,7 @@ async fn client_create_namespace() {
 async fn client_describe_namespace() {
     let client = Arc::new(
         get_integ_server_options()
-            .connect(NAMESPACE.to_owned(), None, None)
+            .connect(NAMESPACE.to_owned(), None)
             .await
             .expect("Must connect"),
     );
