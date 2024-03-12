@@ -20,7 +20,6 @@ use crate::{
             activity_task_poller_stream::new_activity_task_poller,
         },
         client::WorkerClient,
-        slot_supplier::ActivitySlotKind,
     },
     PollActivityError, TaskToken,
 };
@@ -40,6 +39,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
+use temporal_sdk_core_api::worker::ActivitySlotKind;
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{self as ar, activity_execution_result as aer},

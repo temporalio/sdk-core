@@ -1,9 +1,8 @@
-use crate::worker::slot_supplier::{
+use std::time::Duration;
+use temporal_sdk_core_api::worker::{
     SlotKind, SlotReleaseReason, SlotSupplier, SlotSupplierPermit, WorkflowCacheSizer,
     WorkflowSlotInfo, WorkflowSlotKind, WorkflowSlotsInfo,
 };
-use anyhow::Error;
-use std::time::Duration;
 
 struct ResourceBasedWorkflowSlots<MI> {
     target_mem_usage: f64,
@@ -49,7 +48,7 @@ where
     fn mark_slot_used(
         &self,
         _info: Option<&<Self::SlotKind as SlotKind>::Info>,
-        _error: Option<&Error>,
+        _error: Option<&()>,
     ) {
     }
 

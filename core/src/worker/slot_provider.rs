@@ -8,9 +8,9 @@ use crate::{
     worker::workflow::wft_poller::validate_wft,
 };
 
-use crate::worker::slot_supplier::WorkflowSlotKind;
 use std::sync::Arc;
 use temporal_client::{Slot as SlotTrait, SlotProvider as SlotProviderTrait};
+use temporal_sdk_core_api::worker::WorkflowSlotKind;
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse;
 use tokio::sync::mpsc::UnboundedSender;
 use tonic::Status;

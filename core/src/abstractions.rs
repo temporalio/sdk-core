@@ -2,10 +2,7 @@
 
 pub(crate) mod take_cell;
 
-use crate::{
-    worker::slot_supplier::{SlotKind, SlotSupplier, SlotSupplierPermit},
-    MetricsContext,
-};
+use crate::MetricsContext;
 use derive_more::DebugCustom;
 use std::{
     fmt::{Debug, Formatter},
@@ -14,6 +11,7 @@ use std::{
         Arc,
     },
 };
+use temporal_sdk_core_api::worker::{SlotKind, SlotSupplier, SlotSupplierPermit};
 use tokio_util::sync::CancellationToken;
 
 /// Wraps a [SlotSupplier] and turns successful slot reservations into permit structs, as well
@@ -132,7 +130,7 @@ where
 
 impl<SK> ClosableMeteredPermitDealer<SK>
 where
-    SK: SlotKind,
+    SK: SlotKind + 'static,
 {
     #[cfg(test)]
     pub(crate) fn unused_permits(&self) -> Option<usize> {
@@ -163,7 +161,7 @@ where
             self.outstanding_permits.fetch_sub(1, Ordering::Release);
         }
         res.map(|permit| TrackedOwnedMeteredSemPermit {
-            inner: permit,
+            inner: Some(permit),
             on_drop: self.on_permit_dropped(),
         })
     }
@@ -185,12 +183,15 @@ where
 #[derive(DebugCustom)]
 #[debug(fmt = "Tracked({inner:?})")]
 pub(crate) struct TrackedOwnedMeteredSemPermit {
-    inner: OwnedMeteredSemPermit,
+    inner: Option<OwnedMeteredSemPermit>,
     on_drop: Box<dyn Fn() + Send + Sync>,
 }
 impl From<TrackedOwnedMeteredSemPermit> for OwnedMeteredSemPermit {
     fn from(mut value: TrackedOwnedMeteredSemPermit) -> Self {
-        value.inner
+        value
+            .inner
+            .take()
+            .expect("Inner permit should be available")
     }
 }
 impl Drop for TrackedOwnedMeteredSemPermit {
@@ -287,6 +288,6 @@ mod tests {
         let sem = ClosableMeteredPermitDealer::new_arc(Arc::new(inner));
         sem.close();
         let perm = sem.try_acquire_owned().unwrap_err();
-        assert_matches!(perm, TryAcquireError::Closed);
+        assert_matches!(perm, ());
     }
 }

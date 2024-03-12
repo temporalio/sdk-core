@@ -2,10 +2,7 @@ use crate::{
     abstractions::{dbg_panic, MeteredPermitDealer, OwnedMeteredSemPermit, UsedMeteredSemPermit},
     protosext::ValidScheduleLA,
     retry_logic::RetryPolicyExt,
-    worker::{
-        slot_supplier::{LocalActivitySlotKind, SlotSupplier},
-        workflow::HeartbeatTimeoutMsg,
-    },
+    worker::workflow::HeartbeatTimeoutMsg,
     MetricsContext, TaskToken,
 };
 use futures::{stream::BoxStream, Stream};
@@ -19,6 +16,7 @@ use std::{
     task::{Context, Poll},
     time::{Duration, Instant, SystemTime},
 };
+use temporal_sdk_core_api::worker::{LocalActivitySlotKind, SlotSupplier};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{Cancellation, Failure as ActFail, Success},

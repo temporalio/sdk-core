@@ -249,12 +249,12 @@ impl Worker {
         metrics.worker_registered();
         let shutdown_token = CancellationToken::new();
         let wft_semaphore = Arc::new(MeteredPermitDealer::new(
-            config.max_outstanding_workflow_tasks,
+            config.workflow_task_slot_supplier.clone(),
             metrics.with_new_attrs([workflow_worker_type()]),
             MetricsContext::available_task_slots,
         ));
         let act_semaphore = Arc::new(MeteredPermitDealer::new(
-            config.max_outstanding_activities,
+            config.activity_task_slot_supplier.clone(),
             metrics.with_new_attrs([activity_worker_type()]),
             MetricsContext::available_task_slots,
         ));
@@ -358,7 +358,7 @@ impl Worker {
 
         let (hb_tx, hb_rx) = unbounded_channel();
         let local_act_mgr = Arc::new(LocalActivityManager::new(
-            config.max_outstanding_local_activities,
+            config.local_activity_task_slot_supplier.clone(),
             config.namespace.clone(),
             hb_tx,
             metrics.with_new_attrs([local_activity_worker_type()]),

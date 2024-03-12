@@ -1,10 +1,7 @@
 use crate::{
     abstractions::{dbg_panic, MeteredPermitDealer, OwnedMeteredSemPermit},
     pollers::{self, Poller},
-    worker::{
-        client::WorkerClient,
-        slot_supplier::{ActivitySlotKind, SlotKind, WorkflowSlotKind},
-    },
+    worker::client::WorkerClient,
 };
 use futures::{prelude::stream::FuturesUnordered, StreamExt};
 use futures_util::{future::BoxFuture, FutureExt};
@@ -18,6 +15,7 @@ use std::{
     },
     time::Duration,
 };
+use temporal_sdk_core_api::worker::{ActivitySlotKind, SlotKind, WorkflowSlotKind};
 use temporal_sdk_core_protos::temporal::api::{
     taskqueue::v1::TaskQueue,
     workflowservice::v1::{PollActivityTaskQueueResponse, PollWorkflowTaskQueueResponse},
@@ -70,7 +68,7 @@ impl<T> LongPollBuffer<T>
 where
     T: Send + Debug + 'static,
 {
-    pub(crate) fn new<FT, DelayFut, SK: SlotKind>(
+    pub(crate) fn new<FT, DelayFut, SK: SlotKind + 'static>(
         poll_fn: impl Fn() -> FT + Send + Sync + 'static,
         poll_semaphore: Arc<MeteredPermitDealer<SK>>,
         max_pollers: usize,
@@ -288,17 +286,18 @@ pub(crate) fn new_activity_task_buffer(
 
 #[cfg(test)]
 #[derive(derive_more::Constructor)]
-pub(crate) struct MockPermittedPollBuffer<PT> {
-    sem: Arc<MeteredPermitDealer>,
+pub(crate) struct MockPermittedPollBuffer<PT, SK: SlotKind> {
+    sem: Arc<MeteredPermitDealer<SK>>,
     inner: PT,
 }
 
 #[cfg(test)]
 #[async_trait::async_trait]
-impl<T, PT> Poller<(T, OwnedMeteredSemPermit)> for MockPermittedPollBuffer<PT>
+impl<T, PT, SK> Poller<(T, OwnedMeteredSemPermit)> for MockPermittedPollBuffer<PT, SK>
 where
     T: Send + Sync + 'static,
     PT: Poller<T> + Send + Sync + 'static,
+    SK: SlotKind + 'static,
 {
     async fn poll(&self) -> Option<pollers::Result<(T, OwnedMeteredSemPermit)>> {
         let p = self

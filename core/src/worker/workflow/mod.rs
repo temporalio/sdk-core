@@ -25,7 +25,6 @@ use crate::{
     worker::{
         activities::{ActivitiesFromWFTsHandle, LocalActivityManager, TrackedPermittedTqResp},
         client::{WorkerClient, WorkflowTaskCompletion},
-        slot_supplier::WorkflowSlotKind,
         workflow::{
             history_update::HistoryPaginator,
             managed_run::RunUpdateAct,
@@ -59,7 +58,7 @@ use std::{
 };
 use temporal_sdk_core_api::{
     errors::{CompleteWfError, PollWfError},
-    worker::WorkerConfig,
+    worker::{WorkerConfig, WorkflowSlotKind},
 };
 use temporal_sdk_core_protos::{
     coresdk::{

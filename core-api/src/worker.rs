@@ -8,7 +8,7 @@ const MAX_OUTSTANDING_WFT_DEFAULT: usize = 100;
 const MAX_CONCURRENT_WFT_POLLS_DEFAULT: usize = 5;
 
 /// Defines per-worker configuration options
-#[derive(Debug, Clone, derive_builder::Builder)]
+#[derive(Clone, derive_builder::Builder)]
 #[builder(setter(into), build_fn(validate = "Self::validate"))]
 #[non_exhaustive]
 pub struct WorkerConfig {
@@ -32,20 +32,15 @@ pub struct WorkerConfig {
     /// or failures.
     #[builder(default = "0")]
     pub max_cached_workflows: usize,
-    /// The maximum allowed number of workflow tasks that will ever be given to this worker at one
-    /// time. Note that one workflow task may require multiple activations - so the WFT counts as
-    /// "outstanding" until all activations it requires have been completed.
-    ///
-    /// Cannot be larger than `max_cached_workflows`.
-    #[builder(default = "MAX_OUTSTANDING_WFT_DEFAULT")]
-    pub max_outstanding_workflow_tasks: usize,
-    /// The maximum number of activity tasks that will ever be given to this worker concurrently
-    #[builder(default = "100")]
-    pub max_outstanding_activities: usize,
-    /// The maximum number of local activity tasks that will ever be given to this worker
-    /// concurrently
-    #[builder(default = "100")]
-    pub max_outstanding_local_activities: usize,
+    // TODO: DOC
+    pub workflow_task_slot_supplier:
+        Arc<dyn SlotSupplier<SlotKind = WorkflowSlotKind> + Send + Sync>,
+    // TODO: DOC
+    pub activity_task_slot_supplier:
+        Arc<dyn SlotSupplier<SlotKind = ActivitySlotKind> + Send + Sync>,
+    // TODO: DOC
+    pub local_activity_task_slot_supplier:
+        Arc<dyn SlotSupplier<SlotKind = LocalActivitySlotKind> + Send + Sync>,
     /// Maximum number of concurrent poll workflow task requests we will perform at a time on this
     /// worker's task queue. See also [WorkerConfig::nonsticky_to_sticky_poll_ratio]. Must be at
     /// least 1.
@@ -174,15 +169,16 @@ impl WorkerConfigBuilder {
         if self.max_concurrent_at_polls == Some(0) {
             return Err("`max_concurrent_at_polls` must be at least 1".to_owned());
         }
-        if self.max_cached_workflows > Some(0)
-            && self.max_outstanding_workflow_tasks > self.max_cached_workflows
-        {
-            return Err(
-                "Maximum concurrent workflow tasks cannot exceed the maximum number of cached \
-                 workflows"
-                    .to_owned(),
-            );
-        }
+        // TODO: Move these checks into config-for-default implementation
+        // if self.max_cached_workflows > Some(0)
+        //     && self.max_outstanding_workflow_tasks > self.max_cached_workflows
+        // {
+        //     return Err(
+        //         "Maximum concurrent workflow tasks cannot exceed the maximum number of cached \
+        //          workflows"
+        //             .to_owned(),
+        //     );
+        // }
         if let Some(Some(ref x)) = self.max_worker_activities_per_second {
             if !x.is_normal() || x.is_sign_negative() {
                 return Err(
@@ -190,31 +186,31 @@ impl WorkerConfigBuilder {
                 );
             }
         }
-        if matches!(self.max_concurrent_wft_polls, Some(1))
-            && self.max_cached_workflows > Some(0)
-            && self
-                .max_outstanding_workflow_tasks
-                .unwrap_or(MAX_OUTSTANDING_WFT_DEFAULT)
-                <= 1
-        {
-            return Err(
-                "`max_outstanding_workflow_tasks` must be at at least 2 when \
-                 `max_cached_workflows` is nonzero"
-                    .to_owned(),
-            );
-        }
-        if self
-            .max_concurrent_wft_polls
-            .unwrap_or(MAX_CONCURRENT_WFT_POLLS_DEFAULT)
-            > self
-                .max_outstanding_workflow_tasks
-                .unwrap_or(MAX_OUTSTANDING_WFT_DEFAULT)
-        {
-            return Err(
-                "`max_concurrent_wft_polls` cannot exceed `max_outstanding_workflow_tasks`"
-                    .to_owned(),
-            );
-        }
+        // if matches!(self.max_concurrent_wft_polls, Some(1))
+        //     && self.max_cached_workflows > Some(0)
+        //     && self
+        //         .max_outstanding_workflow_tasks
+        //         .unwrap_or(MAX_OUTSTANDING_WFT_DEFAULT)
+        //         <= 1
+        // {
+        //     return Err(
+        //         "`max_outstanding_workflow_tasks` must be at at least 2 when \
+        //          `max_cached_workflows` is nonzero"
+        //             .to_owned(),
+        //     );
+        // }
+        // if self
+        //     .max_concurrent_wft_polls
+        //     .unwrap_or(MAX_CONCURRENT_WFT_POLLS_DEFAULT)
+        //     > self
+        //         .max_outstanding_workflow_tasks
+        //         .unwrap_or(MAX_OUTSTANDING_WFT_DEFAULT)
+        // {
+        //     return Err(
+        //         "`max_concurrent_wft_polls` cannot exceed `max_outstanding_workflow_tasks`"
+        //             .to_owned(),
+        //     );
+        // }
 
         if self.use_worker_versioning.unwrap_or_default()
             && self
@@ -230,4 +226,107 @@ impl WorkerConfigBuilder {
         }
         Ok(())
     }
+}
+
+#[async_trait::async_trait]
+pub trait SlotSupplier {
+    type SlotKind: SlotKind;
+    /// Blocks until a slot is available. In languages with explicit cancel mechanisms, this should
+    /// be cancellable and return a boolean indicating whether a slot was actually obtained or not.
+    /// In Rust, the future can simply be dropped if the reservation is no longer desired.
+    async fn reserve_slot(&self) -> SlotSupplierPermit;
+
+    /// Tries to immediately reserve a slot, returning None if one is not available
+    fn try_reserve_slot(&self) -> Option<SlotSupplierPermit>;
+
+    /// Marks a slot as actually now being used. This is separate from reserving one because the
+    /// pollers need to reserve a slot before they have actually obtained work from server. Once
+    /// that task is obtained (and validated) then the slot can actually be used to work on the
+    /// task.
+    ///
+    /// Users' implementation of this can choose to emit metrics, or otherwise leverage the
+    /// information provided by the `info` parameter to be better able to make future decisions
+    /// about whether a slot should be handed out.
+    ///
+    /// `info` may not be provided if the slot was never used
+    /// `error` may be provided if an error was encountered at any point during processing
+    ///     TODO: Error type should maybe also be generic and bound to slot type
+    fn mark_slot_used(
+        &self,
+        // TODO: Should be enum of either or
+        info: Option<&<Self::SlotKind as SlotKind>::Info>,
+        error: Option<&()>,
+    );
+
+    /// Frees a slot.
+    fn release_slot(&self, info: SlotReleaseReason);
+
+    /// If this implementation knows how many slots are available at any moment, it should return
+    /// that here.
+    fn available_slots(&self) -> Option<usize>;
+}
+
+pub enum SlotSupplierPermit {
+    // Semaphore(OwnedSemaphorePermit),
+    OtherImpl,
+}
+
+pub enum SlotReleaseReason {
+    TaskComplete,
+    NeverUsed,
+    Error, // TODO: Details
+}
+
+pub struct WorkflowSlotInfo {
+    workflow_type: String,
+    // etc...
+}
+
+pub struct ActivitySlotInfo {
+    activity_type: String,
+    // etc...
+}
+pub struct LocalActivitySlotInfo {
+    activity_type: String,
+    // etc...
+}
+
+pub struct WorkflowSlotKind {}
+pub struct ActivitySlotKind {}
+pub struct LocalActivitySlotKind {}
+pub trait SlotKind {
+    type Info;
+}
+impl SlotKind for WorkflowSlotKind {
+    type Info = WorkflowSlotInfo;
+}
+impl SlotKind for ActivitySlotKind {
+    type Info = ActivitySlotInfo;
+}
+impl SlotKind for LocalActivitySlotKind {
+    type Info = LocalActivitySlotInfo;
+}
+
+pub struct WorkflowSlotsInfo {
+    used_slots: Vec<WorkflowSlotInfo>,
+    /// Current size of the workflow cache.
+    num_cached_workflows: usize,
+    /// The limit on the size of the cache, if any. This is important for users to know as discussed below in the section
+    /// on workflow cache management.
+    max_cache_size: Option<usize>,
+    // ... Possibly also metric information
+}
+
+pub trait WorkflowCacheSizer {
+    /// Return true if it is acceptable to cache a new workflow. Information about already-in-use slots, and just-received
+    /// task is provided. Will not be called for an already-cached workflow who is receiving a new task.
+    ///
+    /// Because the number of available slots must be <= the number of workflows cached, if this returns false
+    /// when there are no idle workflows in the cache (IE: All other outstanding slots are in use), we will buffer the
+    /// task and wait for another to complete so we can evict it and make room for the new one.
+    fn can_allow_workflow(
+        &self,
+        slots_info: &WorkflowSlotsInfo,
+        new_task: &WorkflowSlotInfo,
+    ) -> bool;
 }
