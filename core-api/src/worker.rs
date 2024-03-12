@@ -1,4 +1,8 @@
-use std::time::Duration;
+use crate::errors::WorkflowErrorType;
+use std::{
+    collections::{HashMap, HashSet},
+    time::Duration,
+};
 
 const MAX_OUTSTANDING_WFT_DEFAULT: usize = 100;
 const MAX_CONCURRENT_WFT_POLLS_DEFAULT: usize = 5;
@@ -124,6 +128,16 @@ pub struct WorkerConfig {
     /// timeout.
     #[builder(default = "Duration::from_secs(5)")]
     pub local_timeout_buffer_for_activities: Duration,
+
+    /// Any error types listed here will cause any workflow being processed by this worker to fail,
+    /// rather than simply failing the workflow task.
+    #[builder(default)]
+    pub workflow_failure_errors: HashSet<WorkflowErrorType>,
+
+    /// Like [WorkerConfig::workflow_failure_errors], but specific to certain workflow types (the
+    /// map key).
+    #[builder(default)]
+    pub workflow_types_to_failure_errors: HashMap<String, HashSet<WorkflowErrorType>>,
 }
 
 impl WorkerConfig {

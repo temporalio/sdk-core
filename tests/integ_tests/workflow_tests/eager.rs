@@ -1,5 +1,5 @@
 use std::time::Duration;
-use temporal_client::{WorkflowClientTrait, WorkflowExecutionInfo};
+use temporal_client::WorkflowClientTrait;
 use temporal_sdk::{WfContext, WorkflowResult};
 use temporal_sdk_core_test_utils::{get_integ_server_options, CoreWfStarter, NAMESPACE};
 
@@ -52,10 +52,6 @@ async fn eager_wf_start_different_clients() {
     assert!(res.eager_workflow_task.is_none());
 
     //wf task delivered through default path
-    worker.started_workflows.lock().push(WorkflowExecutionInfo {
-        namespace: NAMESPACE.to_string(),
-        workflow_id: wf_name.to_string(),
-        run_id: Some(res.run_id.clone()),
-    });
+    worker.expect_workflow_completion(wf_name, Some(res.run_id));
     worker.run_until_done().await.unwrap();
 }

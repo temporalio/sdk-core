@@ -60,3 +60,11 @@ pub enum CompleteActivityError {
         completion: Option<ActivityExecutionResult>,
     },
 }
+
+/// Errors we can encounter during workflow processing which we may treat as either WFT failures
+/// or whole-workflow failures depending on user preference.
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub enum WorkflowErrorType {
+    /// A nondeterminism error
+    Nondeterminism,
+}

@@ -1,9 +1,7 @@
 use std::collections::HashMap;
 
 use futures::StreamExt;
-use temporal_client::{
-    SignalWithStartOptions, WorkflowClientTrait, WorkflowExecutionInfo, WorkflowOptions,
-};
+use temporal_client::{SignalWithStartOptions, WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{
     ChildWorkflowOptions, Signal, SignalWorkflowOptions, WfContext, WorkflowResult,
 };
@@ -123,12 +121,7 @@ async fn sends_signal_with_create_wf() {
         .await
         .expect("request succeeds.qed");
 
-    worker.started_workflows.lock().push(WorkflowExecutionInfo {
-        namespace: client.namespace().to_string(),
-        workflow_id: "sends_signal_with_create_wf".to_owned(),
-        run_id: Some(res.run_id.clone()),
-    });
-
+    worker.expect_workflow_completion("sends_signal_with_create_wf", Some(res.run_id));
     worker.run_until_done().await.unwrap();
 }
 

@@ -239,6 +239,7 @@ impl CoreWfStarter {
         self.start_wf_with_id(self.task_queue_name.clone()).await
     }
 
+    /// Starts the workflow using the worker, returns run id.
     pub async fn start_with_worker(
         &self,
         wf_name: impl Into<String>,
@@ -494,6 +495,19 @@ impl TestWorker {
             run_id: Some(res.run_id.clone()),
         });
         Ok(res)
+    }
+
+    pub fn expect_workflow_completion(&self, wf_id: impl Into<String>, run_id: Option<String>) {
+        self.started_workflows.lock().push(WorkflowExecutionInfo {
+            namespace: self
+                .client
+                .as_ref()
+                .map(|c| c.namespace())
+                .unwrap_or(NAMESPACE)
+                .to_owned(),
+            workflow_id: wf_id.into(),
+            run_id: run_id.map(|r| r.into()),
+        });
     }
 
     /// Runs until all expected workflows have completed
