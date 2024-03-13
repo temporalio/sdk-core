@@ -16,11 +16,11 @@ mod stickyness;
 mod timers;
 mod upsert_search_attrs;
 
-use crate::integ_tests::activity_functions::echo;
+use crate::integ_tests::{activity_functions::echo, metrics_tests};
 use assert_matches::assert_matches;
 use futures::{channel::mpsc::UnboundedReceiver, future, SinkExt, StreamExt};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -29,8 +29,11 @@ use std::{
 };
 use temporal_client::{WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{interceptors::WorkerInterceptor, ActivityOptions, WfContext, WorkflowResult};
-use temporal_sdk_core::replay::HistoryForReplay;
-use temporal_sdk_core_api::{errors::PollWfError, Worker};
+use temporal_sdk_core::{replay::HistoryForReplay, CoreRuntime};
+use temporal_sdk_core_api::{
+    errors::{PollWfError, WorkflowErrorType},
+    Worker,
+};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::ActivityExecutionResult,
@@ -41,7 +44,10 @@ use temporal_sdk_core_protos::{
         workflow_completion::WorkflowActivationCompletion,
         ActivityTaskCompletion, AsJsonPayloadExt, IntoCompletion,
     },
-    temporal::api::{failure::v1::Failure, history::v1::history_event, query::v1::WorkflowQuery},
+    temporal::api::{
+        enums::v1::EventType, failure::v1::Failure, history::v1::history_event,
+        query::v1::WorkflowQuery,
+    },
 };
 use temporal_sdk_core_test_utils::{
     drain_pollers_and_shutdown, history_from_proto_binary, init_core_and_create_wf,
@@ -729,4 +735,93 @@ async fn build_id_correct_in_wf_info() {
     let res = core.poll_workflow_activation().await.unwrap();
     assert_eq!(res.build_id_for_current_task, "2.0");
     core.complete_execution(&res.run_id).await;
+}
+
+#[rstest::rstest]
+#[tokio::test]
+async fn nondeterminism_errors_fail_workflow_when_configured_to(
+    #[values(true, false)] whole_worker: bool,
+) {
+    let (telemopts, addr, _aborter) = metrics_tests::prom_metrics();
+    let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
+    let wf_name = "nondeterminism_errors_fail_workflow_when_configured_to";
+    let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
+    starter.no_remote_activities();
+    let typeset = HashSet::from([WorkflowErrorType::Nondeterminism]);
+    if whole_worker {
+        starter.worker_config.workflow_failure_errors(typeset);
+    } else {
+        starter
+            .worker_config
+            .workflow_types_to_failure_errors(HashMap::from([(wf_name.to_owned(), typeset)]));
+    }
+    let wf_id = starter.get_task_queue().to_owned();
+    let mut worker = starter.worker().await;
+    worker.fetch_results = false;
+
+    worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| async move {
+        ctx.timer(Duration::from_secs(1000)).await;
+        Ok(().into())
+    });
+    let client = starter.get_client().await;
+    let core_worker = worker.core_worker.clone();
+    starter.start_with_worker(wf_name, &mut worker).await;
+
+    let stopper = async {
+        // Wait for the timer to show up in history and then stop the worker
+        loop {
+            let hist = client
+                .get_workflow_execution_history(wf_id.clone(), None, vec![])
+                .await
+                .unwrap()
+                .history
+                .unwrap();
+            let has_timer_event = hist
+                .events
+                .iter()
+                .any(|e| matches!(e.event_type(), EventType::TimerStarted));
+            if has_timer_event {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        core_worker.initiate_shutdown();
+    };
+    let runner = async {
+        worker.run_until_done().await.unwrap();
+    };
+    join!(stopper, runner);
+
+    // Restart the worker with a new, incompatible wf definition which will cause nondeterminism
+    let mut starter = starter.clone_no_worker();
+    let mut worker = starter.worker().await;
+    worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| async move {
+        ctx.activity(ActivityOptions {
+            activity_type: "echo_activity".to_string(),
+            start_to_close_timeout: Some(Duration::from_secs(5)),
+            ..Default::default()
+        })
+        .await;
+        Ok(().into())
+    });
+    // We need to generate a task so that we'll encounter the error (first avoid WFT timeout)
+    client
+        .reset_sticky_task_queue(wf_id.clone(), "".to_string())
+        .await
+        .unwrap();
+    client
+        .signal_workflow_execution(wf_id.clone(), "".to_string(), "hi".to_string(), None, None)
+        .await
+        .unwrap();
+    worker.expect_workflow_completion(&wf_id, None);
+    // If we don't fail the workflow on nondeterminism, we'll get stuck here retrying the WFT
+    worker.run_until_done().await.unwrap();
+
+    let body = metrics_tests::get_text(format!("http://{addr}/metrics")).await;
+    let match_this = format!(
+        "temporal_workflow_failed{{namespace=\"default\",\
+         service_name=\"temporal-core-sdk\",\
+         task_queue=\"{wf_id}\",workflow_type=\"{wf_name}\"}} 1"
+    );
+    assert!(body.contains(&match_this));
 }

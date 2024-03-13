@@ -165,7 +165,7 @@ pub struct CoreWfStarter {
     /// Options to use when starting workflow(s)
     pub workflow_options: WorkflowOptions,
     initted_worker: OnceCell<InitializedWorker>,
-    runtime_override: Option<CoreRuntime>,
+    runtime_override: Option<Arc<CoreRuntime>>,
 }
 struct InitializedWorker {
     worker: Arc<dyn CoreWorker>,
@@ -197,7 +197,7 @@ impl CoreWfStarter {
             worker_config,
             initted_worker: OnceCell::new(),
             workflow_options: Default::default(),
-            runtime_override,
+            runtime_override: runtime_override.map(Arc::new),
         }
     }
 
@@ -208,7 +208,7 @@ impl CoreWfStarter {
             task_queue_name: self.task_queue_name.clone(),
             worker_config: self.worker_config.clone(),
             workflow_options: self.workflow_options.clone(),
-            runtime_override: None,
+            runtime_override: self.runtime_override.clone(),
             initted_worker: Default::default(),
         }
     }
@@ -239,6 +239,7 @@ impl CoreWfStarter {
         self.start_wf_with_id(self.task_queue_name.clone()).await
     }
 
+    /// Starts the workflow using the worker, returns run id.
     pub async fn start_with_worker(
         &self,
         wf_name: impl Into<String>,
@@ -494,6 +495,19 @@ impl TestWorker {
             run_id: Some(res.run_id.clone()),
         });
         Ok(res)
+    }
+
+    pub fn expect_workflow_completion(&self, wf_id: impl Into<String>, run_id: Option<String>) {
+        self.started_workflows.lock().push(WorkflowExecutionInfo {
+            namespace: self
+                .client
+                .as_ref()
+                .map(|c| c.namespace())
+                .unwrap_or(NAMESPACE)
+                .to_owned(),
+            workflow_id: wf_id.into(),
+            run_id,
+        });
     }
 
     /// Runs until all expected workflows have completed

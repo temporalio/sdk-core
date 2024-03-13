@@ -23,19 +23,23 @@ use std::{
     mem,
     ops::Add,
     rc::Rc,
-    sync::mpsc::Sender,
+    sync::{mpsc::Sender, Arc},
     time::{Duration, Instant},
 };
+use temporal_sdk_core_api::{errors::WorkflowErrorType, worker::WorkerConfig};
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::{
             create_evict_activation, query_to_job, remove_from_cache::EvictionReason,
             workflow_activation_job, RemoveFromCache, WorkflowActivation,
         },
-        workflow_commands::QueryResult,
+        workflow_commands::{FailWorkflowExecution, QueryResult},
         workflow_completion,
     },
-    temporal::api::{enums::v1::WorkflowTaskFailedCause, failure::v1::Failure},
+    temporal::api::{
+        command::v1::command::Attributes as CmdAttribs, enums::v1::WorkflowTaskFailedCause,
+        failure::v1::Failure,
+    },
     TaskToken,
 };
 use tokio::sync::oneshot;
@@ -92,6 +96,7 @@ pub(super) struct ManagedRun {
     /// We store the paginator used for our own run's history fetching
     paginator: Option<HistoryPaginator>,
     completion_waiting_on_page_fetch: Option<RunActivationCompletion>,
+    config: Arc<WorkerConfig>,
 }
 impl ManagedRun {
     pub(super) fn new(
@@ -100,6 +105,7 @@ impl ManagedRun {
         local_activity_request_sink: Rc<dyn LocalActivityRequestSink>,
     ) -> (Self, RunUpdateAct) {
         let metrics = basics.metrics.clone();
+        let config = basics.worker_config.clone();
         let wfm = WorkflowManager::new(basics);
         let mut me = Self {
             wfm,
@@ -114,6 +120,7 @@ impl ManagedRun {
             metrics,
             paginator: None,
             completion_waiting_on_page_fetch: None,
+            config,
         };
         let rua = me.incoming_wft(wft);
         (me, rua)
@@ -534,7 +541,6 @@ impl ManagedRun {
             return None;
         };
 
-        self.metrics.wf_task_failed();
         let message = format!("Workflow activation completion failed: {:?}", &failure);
         // We don't want to fail queries that could otherwise be retried
         let is_no_report_query_fail = self.pending_work_is_legacy_query()
@@ -570,12 +576,35 @@ impl ManagedRun {
                 )
             }
         } else if should_report {
-            ActivationCompleteOutcome::ReportWFTFail(FailedActivationWFTReport::Report(
-                tt, cause, failure,
-            ))
+            // Check if we should fail the workflow instead of the WFT because of user's preferences
+            if matches!(cause, WorkflowTaskFailedCause::NonDeterministicError)
+                && self.config.should_fail_workflow(
+                    &self.wfm.machines.workflow_type,
+                    &WorkflowErrorType::Nondeterminism,
+                )
+            {
+                warn!(failure=?failure, "Failing workflow due to nondeterminism error");
+                return self
+                    .successful_completion(
+                        vec![WFCommand::FailWorkflow(FailWorkflowExecution {
+                            failure: failure.failure,
+                        })],
+                        vec![],
+                        resp_chan,
+                    )
+                    .unwrap_or_else(|e| {
+                        dbg_panic!("Got next page request when auto-failing workflow: {e:?}");
+                        None
+                    });
+            } else {
+                ActivationCompleteOutcome::ReportWFTFail(FailedActivationWFTReport::Report(
+                    tt, cause, failure,
+                ))
+            }
         } else {
             ActivationCompleteOutcome::WFTFailedDontReport
         };
+        self.metrics.wf_task_failed();
         self.reply_to_complete(outcome, resp_chan);
         rur
     }
@@ -1038,6 +1067,25 @@ impl ManagedRun {
                     machines_wft_response.messages(),
                 )
             };
+
+            // Record metrics for any outgoing terminal commands
+            for cmd in commands.iter() {
+                match cmd.attributes.as_ref() {
+                    Some(CmdAttribs::CompleteWorkflowExecutionCommandAttributes(_)) => {
+                        self.metrics.wf_completed();
+                    }
+                    Some(CmdAttribs::FailWorkflowExecutionCommandAttributes(_)) => {
+                        self.metrics.wf_failed();
+                    }
+                    Some(CmdAttribs::ContinueAsNewWorkflowExecutionCommandAttributes(_)) => {
+                        self.metrics.wf_continued_as_new();
+                    }
+                    Some(CmdAttribs::CancelWorkflowExecutionCommandAttributes(_)) => {
+                        self.metrics.wf_canceled();
+                    }
+                    _ => (),
+                }
+            }
 
             ActivationCompleteOutcome::ReportWFTSuccess(ServerCommandsWithWorkflowInfo {
                 task_token: data.task_token,

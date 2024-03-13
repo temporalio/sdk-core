@@ -34,11 +34,11 @@ use tokio::{join, sync::Barrier, task::AbortHandle};
 
 static ANY_PORT: &str = "127.0.0.1:0";
 
-async fn get_text(endpoint: String) -> String {
+pub async fn get_text(endpoint: String) -> String {
     reqwest::get(endpoint).await.unwrap().text().await.unwrap()
 }
 
-struct AbortOnDrop {
+pub struct AbortOnDrop {
     ah: AbortHandle,
 }
 impl Drop for AbortOnDrop {
@@ -47,7 +47,7 @@ impl Drop for AbortOnDrop {
     }
 }
 
-fn prom_metrics() -> (TelemetryOptions, SocketAddr, AbortOnDrop) {
+pub fn prom_metrics() -> (TelemetryOptions, SocketAddr, AbortOnDrop) {
     let mut telemopts = get_integ_telem_options();
     let prom_info = start_prometheus_metric_exporter(
         PrometheusExporterOptionsBuilder::default()
