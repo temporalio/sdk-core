@@ -23,9 +23,10 @@ use std::{
     mem,
     ops::Add,
     rc::Rc,
-    sync::mpsc::Sender,
+    sync::{mpsc::Sender, Arc},
     time::{Duration, Instant},
 };
+use temporal_sdk_core_api::{errors::WorkflowErrorType, worker::WorkerConfig};
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::{
@@ -35,7 +36,11 @@ use temporal_sdk_core_protos::{
         workflow_commands::QueryResult,
         workflow_completion,
     },
-    temporal::api::{enums::v1::WorkflowTaskFailedCause, failure::v1::Failure},
+    temporal::api::{
+        command::v1::{command as proto_command, FailWorkflowExecutionCommandAttributes},
+        enums::v1::WorkflowTaskFailedCause,
+        failure::v1::Failure,
+    },
     TaskToken,
 };
 use tokio::sync::oneshot;
@@ -92,6 +97,7 @@ pub(super) struct ManagedRun {
     /// We store the paginator used for our own run's history fetching
     paginator: Option<HistoryPaginator>,
     completion_waiting_on_page_fetch: Option<RunActivationCompletion>,
+    config: Arc<WorkerConfig>,
 }
 impl ManagedRun {
     pub(super) fn new(
@@ -100,6 +106,7 @@ impl ManagedRun {
         local_activity_request_sink: Rc<dyn LocalActivityRequestSink>,
     ) -> (Self, RunUpdateAct) {
         let metrics = basics.metrics.clone();
+        let config = basics.worker_config.clone();
         let wfm = WorkflowManager::new(basics);
         let mut me = Self {
             wfm,
@@ -114,6 +121,7 @@ impl ManagedRun {
             metrics,
             paginator: None,
             completion_waiting_on_page_fetch: None,
+            config,
         };
         let rua = me.incoming_wft(wft);
         (me, rua)
@@ -570,9 +578,36 @@ impl ManagedRun {
                 )
             }
         } else if should_report {
-            ActivationCompleteOutcome::ReportWFTFail(FailedActivationWFTReport::Report(
-                tt, cause, failure,
-            ))
+            // Check if we should fail the workflow instead of the WFT because of user's preferences
+            if matches!(cause, WorkflowTaskFailedCause::NonDeterministicError)
+                && self.config.should_fail_workflow(
+                    &self.wfm.machines.workflow_type,
+                    &WorkflowErrorType::Nondeterminism,
+                )
+            {
+                warn!(failure=?failure, "Failing workflow due to nondeterminism error");
+                ActivationCompleteOutcome::ReportWFTSuccess(ServerCommandsWithWorkflowInfo {
+                    task_token: tt,
+                    action: ActivationAction::WftComplete {
+                        commands: vec![
+                            proto_command::Attributes::FailWorkflowExecutionCommandAttributes(
+                                FailWorkflowExecutionCommandAttributes {
+                                    failure: failure.failure,
+                                },
+                            )
+                            .into(),
+                        ],
+                        messages: vec![],
+                        query_responses: vec![],
+                        force_new_wft: false,
+                        sdk_metadata: Default::default(),
+                    },
+                })
+            } else {
+                ActivationCompleteOutcome::ReportWFTFail(FailedActivationWFTReport::Report(
+                    tt, cause, failure,
+                ))
+            }
         } else {
             ActivationCompleteOutcome::WFTFailedDontReport
         };

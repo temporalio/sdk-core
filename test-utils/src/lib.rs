@@ -506,7 +506,7 @@ impl TestWorker {
                 .unwrap_or(NAMESPACE)
                 .to_owned(),
             workflow_id: wf_id.into(),
-            run_id: run_id.map(|r| r.into()),
+            run_id,
         });
     }
 

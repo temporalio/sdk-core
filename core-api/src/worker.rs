@@ -150,6 +150,20 @@ impl WorkerConfig {
             .saturating_sub(self.max_nonsticky_polls())
             .max(1)
     }
+    /// Returns true if the configuration specifies we should fail a workflow on a certain error
+    /// type rather than failing the workflow task.
+    pub fn should_fail_workflow(
+        &self,
+        workflow_type: &str,
+        error_type: &WorkflowErrorType,
+    ) -> bool {
+        self.workflow_failure_errors.contains(error_type)
+            || self
+                .workflow_types_to_failure_errors
+                .get(workflow_type)
+                .map(|s| s.contains(error_type))
+                .unwrap_or_default()
+    }
 }
 
 impl WorkerConfigBuilder {

@@ -737,14 +737,22 @@ async fn build_id_correct_in_wf_info() {
     core.complete_execution(&res.run_id).await;
 }
 
+#[rstest::rstest]
 #[tokio::test]
-async fn nondeterminism_errors_fail_workflow_when_configured_to() {
+async fn nondeterminism_errors_fail_workflow_when_configured_to(
+    #[values(true, false)] whole_worker: bool,
+) {
     let wf_name = "nondeterminism_errors_fail_workflow_when_configured_to";
     let mut starter = CoreWfStarter::new(wf_name);
     starter.no_remote_activities();
-    starter
-        .worker_config
-        .workflow_failure_errors(HashSet::from([WorkflowErrorType::Nondeterminism]));
+    let typeset = HashSet::from([WorkflowErrorType::Nondeterminism]);
+    if whole_worker {
+        starter.worker_config.workflow_failure_errors(typeset);
+    } else {
+        starter
+            .worker_config
+            .workflow_types_to_failure_errors(HashMap::from([(wf_name.to_owned(), typeset)]));
+    }
     let wf_id = starter.get_task_queue().to_owned();
     let mut worker = starter.worker().await;
     worker.fetch_results = false;
