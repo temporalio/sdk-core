@@ -541,7 +541,6 @@ impl ManagedRun {
             return None;
         };
 
-        self.metrics.wf_task_failed();
         let message = format!("Workflow activation completion failed: {:?}", &failure);
         // We don't want to fail queries that could otherwise be retried
         let is_no_report_query_fail = self.pending_work_is_legacy_query()
@@ -605,6 +604,7 @@ impl ManagedRun {
         } else {
             ActivationCompleteOutcome::WFTFailedDontReport
         };
+        self.metrics.wf_task_failed();
         self.reply_to_complete(outcome, resp_chan);
         rur
     }
