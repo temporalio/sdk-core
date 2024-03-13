@@ -510,7 +510,7 @@ impl TestWorker {
         });
     }
 
-    /// Runs until all expected workflows have completed
+    /// Runs until all expected workflows have completed and then shuts down the worker
     pub async fn run_until_done(&mut self) -> Result<(), anyhow::Error> {
         self.run_until_done_intercepted(Option::<TestWorkerCompletionIceptor>::None)
             .await
@@ -538,6 +538,7 @@ impl TestWorker {
         let get_results_waiter = iceptor.wait_all_wfs();
         self.inner.set_worker_interceptor(iceptor);
         tokio::try_join!(self.inner.run(), get_results_waiter)?;
+        self.core_worker.shutdown().await;
         Ok(())
     }
 }
