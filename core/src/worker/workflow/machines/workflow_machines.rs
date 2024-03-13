@@ -37,6 +37,7 @@ use crate::{
         ExecutingLAId, LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
     },
 };
+use anyhow::Context;
 use siphasher::sip::SipHasher13;
 use slotmap::{SlotMap, SparseSecondaryMap};
 use std::{
@@ -636,7 +637,9 @@ impl WorkflowMachines {
             ) {
                 // The server has sent a durable update requested event: create the message that would have been sent
                 // for a non-durable update request.
-                let msg = IncomingProtocolMessage::try_from(&event)?;
+                let msg = IncomingProtocolMessage::try_from(&event).context(
+                    "Failed to create protocol message from WorkflowExecutionUpdateRequestedEvent",
+                )?;
                 if self.replaying {
                     // Stash the message for use if the update request is accepted.
                     update_requested_messages.insert(msg.protocol_instance_id.clone(), msg);
@@ -723,7 +726,9 @@ impl WorkflowMachines {
                 delayed_actions.push(DelayedAction::ProtocolMessage(
                     update_requested_messages
                         .remove(&atts.protocol_instance_id)
-                        .map_or_else(|| e.try_into(), Ok)?,
+                        .map_or_else(|| e.try_into().context(
+                            "Failed to create protocol message from WorkflowExecutionUpdateAcceptedEvent",
+                        ), Ok)?,
                 ));
             }
         }
