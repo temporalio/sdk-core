@@ -165,7 +165,7 @@ pub struct CoreWfStarter {
     /// Options to use when starting workflow(s)
     pub workflow_options: WorkflowOptions,
     initted_worker: OnceCell<InitializedWorker>,
-    runtime_override: Option<CoreRuntime>,
+    runtime_override: Option<Arc<CoreRuntime>>,
 }
 struct InitializedWorker {
     worker: Arc<dyn CoreWorker>,
@@ -197,7 +197,7 @@ impl CoreWfStarter {
             worker_config,
             initted_worker: OnceCell::new(),
             workflow_options: Default::default(),
-            runtime_override,
+            runtime_override: runtime_override.map(Arc::new),
         }
     }
 
@@ -208,7 +208,7 @@ impl CoreWfStarter {
             task_queue_name: self.task_queue_name.clone(),
             worker_config: self.worker_config.clone(),
             workflow_options: self.workflow_options.clone(),
-            runtime_override: None,
+            runtime_override: self.runtime_override.clone(),
             initted_worker: Default::default(),
         }
     }

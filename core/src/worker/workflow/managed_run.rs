@@ -33,12 +33,11 @@ use temporal_sdk_core_protos::{
             create_evict_activation, query_to_job, remove_from_cache::EvictionReason,
             workflow_activation_job, RemoveFromCache, WorkflowActivation,
         },
-        workflow_commands::QueryResult,
+        workflow_commands::{FailWorkflowExecution, QueryResult},
         workflow_completion,
     },
     temporal::api::{
-        command::v1::{command as proto_command, FailWorkflowExecutionCommandAttributes},
-        enums::v1::WorkflowTaskFailedCause,
+        command::v1::command::Attributes as CmdAttribs, enums::v1::WorkflowTaskFailedCause,
         failure::v1::Failure,
     },
     TaskToken,
@@ -586,23 +585,18 @@ impl ManagedRun {
                 )
             {
                 warn!(failure=?failure, "Failing workflow due to nondeterminism error");
-                ActivationCompleteOutcome::ReportWFTSuccess(ServerCommandsWithWorkflowInfo {
-                    task_token: tt,
-                    action: ActivationAction::WftComplete {
-                        commands: vec![
-                            proto_command::Attributes::FailWorkflowExecutionCommandAttributes(
-                                FailWorkflowExecutionCommandAttributes {
-                                    failure: failure.failure,
-                                },
-                            )
-                            .into(),
-                        ],
-                        messages: vec![],
-                        query_responses: vec![],
-                        force_new_wft: false,
-                        sdk_metadata: Default::default(),
-                    },
-                })
+                return self
+                    .successful_completion(
+                        vec![WFCommand::FailWorkflow(FailWorkflowExecution {
+                            failure: failure.failure,
+                        })],
+                        vec![],
+                        resp_chan,
+                    )
+                    .unwrap_or_else(|e| {
+                        dbg_panic!("Got next page request when auto-failing workflow: {e:?}");
+                        None
+                    });
             } else {
                 ActivationCompleteOutcome::ReportWFTFail(FailedActivationWFTReport::Report(
                     tt, cause, failure,
@@ -1073,6 +1067,25 @@ impl ManagedRun {
                     machines_wft_response.messages(),
                 )
             };
+
+            // Record metrics for any outgoing terminal commands
+            for cmd in commands.iter() {
+                match cmd.attributes.as_ref() {
+                    Some(CmdAttribs::CompleteWorkflowExecutionCommandAttributes(_)) => {
+                        self.metrics.wf_completed();
+                    }
+                    Some(CmdAttribs::FailWorkflowExecutionCommandAttributes(_)) => {
+                        self.metrics.wf_failed();
+                    }
+                    Some(CmdAttribs::ContinueAsNewWorkflowExecutionCommandAttributes(_)) => {
+                        self.metrics.wf_continued_as_new();
+                    }
+                    Some(CmdAttribs::CancelWorkflowExecutionCommandAttributes(_)) => {
+                        self.metrics.wf_canceled();
+                    }
+                    _ => (),
+                }
+            }
 
             ActivationCompleteOutcome::ReportWFTSuccess(ServerCommandsWithWorkflowInfo {
                 task_token: data.task_token,

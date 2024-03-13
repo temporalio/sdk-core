@@ -162,7 +162,7 @@ impl WorkerConfig {
                 .workflow_types_to_failure_errors
                 .get(workflow_type)
                 .map(|s| s.contains(error_type))
-                .unwrap_or_default()
+                .unwrap_or(false)
     }
 }
 

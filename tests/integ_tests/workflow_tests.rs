@@ -16,7 +16,7 @@ mod stickyness;
 mod timers;
 mod upsert_search_attrs;
 
-use crate::integ_tests::activity_functions::echo;
+use crate::integ_tests::{activity_functions::echo, metrics_tests};
 use assert_matches::assert_matches;
 use futures::{channel::mpsc::UnboundedReceiver, future, SinkExt, StreamExt};
 use std::{
@@ -29,7 +29,7 @@ use std::{
 };
 use temporal_client::{WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{interceptors::WorkerInterceptor, ActivityOptions, WfContext, WorkflowResult};
-use temporal_sdk_core::replay::HistoryForReplay;
+use temporal_sdk_core::{replay::HistoryForReplay, CoreRuntime};
 use temporal_sdk_core_api::{
     errors::{PollWfError, WorkflowErrorType},
     Worker,
@@ -742,8 +742,10 @@ async fn build_id_correct_in_wf_info() {
 async fn nondeterminism_errors_fail_workflow_when_configured_to(
     #[values(true, false)] whole_worker: bool,
 ) {
+    let (telemopts, addr, _aborter) = metrics_tests::prom_metrics();
+    let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
     let wf_name = "nondeterminism_errors_fail_workflow_when_configured_to";
-    let mut starter = CoreWfStarter::new(wf_name);
+    let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
     starter.no_remote_activities();
     let typeset = HashSet::from([WorkflowErrorType::Nondeterminism]);
     if whole_worker {
@@ -811,7 +813,15 @@ async fn nondeterminism_errors_fail_workflow_when_configured_to(
         .signal_workflow_execution(wf_id.clone(), "".to_string(), "hi".to_string(), None, None)
         .await
         .unwrap();
-    worker.expect_workflow_completion(wf_id, None);
+    worker.expect_workflow_completion(&wf_id, None);
     // If we don't fail the workflow on nondeterminism, we'll get stuck here retrying the WFT
     worker.run_until_done().await.unwrap();
+
+    let body = metrics_tests::get_text(format!("http://{addr}/metrics")).await;
+    let match_this = format!(
+        "temporal_workflow_failed{{namespace=\"default\",\
+         service_name=\"temporal-core-sdk\",\
+         task_queue=\"{wf_id}\",workflow_type=\"{wf_name}\"}} 1"
+    );
+    assert!(body.contains(&match_this));
 }
