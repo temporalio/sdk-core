@@ -13,7 +13,7 @@ concurrency:
 jobs:
   build-and-test:
     name: "Format, docs, and lint"
-    timeout-minutes: 20
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
@@ -48,6 +48,7 @@ jobs:
 
   test:
     name: Unit Tests
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
@@ -77,6 +78,7 @@ jobs:
 
   fmt:
     name: Integ tests
+    timeout-minutes: 20
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
