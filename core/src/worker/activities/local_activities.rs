@@ -378,7 +378,19 @@ impl LocalActivityManager {
         let (new_or_retry, permit) = match self.rcvs.lock().await.next().await? {
             NewOrCancel::Cancel(c) => {
                 return match c {
-                    CancelOrTimeout::Cancel(c) => Some(NextPendingLAAction::Dispatch(c)),
+                    CancelOrTimeout::Cancel(c) => {
+                        if self
+                            .dat
+                            .lock()
+                            .outstanding_activity_tasks
+                            .contains_key(c.task_token.as_slice())
+                        {
+                            Some(NextPendingLAAction::Dispatch(c))
+                        } else {
+                            // Don't dispatch cancels for things we've already stopped tracking
+                            None
+                        }
+                    }
                     CancelOrTimeout::Timeout { run_id, resolution } => {
                         let tt = self
                             .dat

@@ -521,7 +521,10 @@ impl ActivityHalf {
                 });
             }
             Some(activity_task::Variant::Cancel(_)) => {
-                if let Some(ct) = self.task_tokens_to_cancels.get(&activity.task_token.into()) {
+                if let Some(ct) = self
+                    .task_tokens_to_cancels
+                    .get(activity.task_token.as_slice())
+                {
                     ct.cancel();
                 }
             }

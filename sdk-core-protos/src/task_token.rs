@@ -1,5 +1,8 @@
 use base64::{prelude::BASE64_STANDARD, Engine};
-use std::fmt::{Debug, Display, Formatter};
+use std::{
+    borrow::Borrow,
+    fmt::{Debug, Display, Formatter},
+};
 
 static LOCAL_ACT_TASK_TOKEN_PREFIX: &[u8] = b"local_act_";
 
@@ -40,6 +43,12 @@ impl Display for TaskToken {
 impl Debug for TaskToken {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.write_str(&format!("TaskToken({})", fmt_tt(&self.0)))
+    }
+}
+
+impl Borrow<[u8]> for TaskToken {
+    fn borrow(&self) -> &[u8] {
+        self.0.as_slice()
     }
 }
 
