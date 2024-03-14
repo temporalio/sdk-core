@@ -310,8 +310,8 @@ mod test {
         mock_cfg.num_expected_fails = 1;
         mock_cfg.expect_fail_wft_matcher = Box::new(move |_, cause, f| {
             matches!(cause, WorkflowTaskFailedCause::NonDeterministicError)
-                && matches!(f, Some(Failure { source, .. }) 
-            if source.contains("Timer fired event did not have expected timer id 1"))
+                && matches!(f, Some(Failure {message, .. })
+            if message.contains("Timer fired event did not have expected timer id 1"))
         });
         let mut worker = build_fake_sdk(mock_cfg);
         worker.register_wf(DEFAULT_WORKFLOW_TYPE, |ctx: WfContext| async move {
