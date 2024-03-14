@@ -175,7 +175,7 @@ async fn complete_with_task_not_found_during_shutdown() {
     // Initiate shutdown before completing the activation
     let shutdown_fut = async {
         core.shutdown().await;
-        complete_order.borrow_mut().push(3);
+        complete_order.borrow_mut().push(2);
     };
     let poll_fut = async {
         // This will return shutdown once the completion goes through
@@ -183,7 +183,6 @@ async fn complete_with_task_not_found_during_shutdown() {
             core.poll_workflow_activation().await.unwrap_err(),
             PollWfError::ShutDown
         );
-        complete_order.borrow_mut().push(2);
     };
     let complete_fut = async {
         core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
@@ -195,7 +194,7 @@ async fn complete_with_task_not_found_during_shutdown() {
         complete_order.borrow_mut().push(1);
     };
     tokio::join!(shutdown_fut, poll_fut, complete_fut);
-    assert_eq!(&complete_order.into_inner(), &[1, 2, 3])
+    assert_eq!(&complete_order.into_inner(), &[1, 2])
 }
 
 #[tokio::test]

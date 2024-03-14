@@ -139,7 +139,10 @@ pub(crate) fn build_fake_worker(
 
 pub(crate) fn build_fake_sdk(mock_cfg: MockPollCfg) -> temporal_sdk::Worker {
     let mut mock = build_mock_pollers(mock_cfg);
-    mock.worker_cfg(|c| c.max_cached_workflows = 1);
+    mock.worker_cfg(|c| {
+        c.max_cached_workflows = 1;
+        c.ignore_evicts_on_shutdown = false;
+    });
     let core = mock_worker(mock);
     let mut worker = temporal_sdk::Worker::new_from_core(Arc::new(core), "replay_q".to_string());
     worker.set_worker_interceptor(FailOnNondeterminismInterceptor {});

@@ -11,7 +11,7 @@ pub mod workflows;
 pub use temporal_sdk_core::replay::HistoryForReplay;
 
 use crate::stream::{Stream, TryStreamExt};
-use anyhow::Context;
+use anyhow::{Context, Error};
 use base64::{prelude::BASE64_STANDARD, Engine};
 use futures::{future, stream, stream::FuturesUnordered, StreamExt};
 use parking_lot::Mutex;
@@ -47,6 +47,7 @@ use temporal_sdk_core_api::{
 };
 use temporal_sdk_core_protos::{
     coresdk::{
+        workflow_activation::WorkflowActivation,
         workflow_commands::{
             workflow_command, ActivityCancellationType, CompleteWorkflowExecution, QueryResult,
             QuerySuccess, ScheduleActivity, ScheduleLocalActivity, StartTimer,
@@ -510,7 +511,7 @@ impl TestWorker {
         });
     }
 
-    /// Runs until all expected workflows have completed
+    /// Runs until all expected workflows have completed and then shuts down the worker
     pub async fn run_until_done(&mut self) -> Result<(), anyhow::Error> {
         self.run_until_done_intercepted(Option::<TestWorkerCompletionIceptor>::None)
             .await
@@ -603,6 +604,12 @@ impl WorkerInterceptor for TestWorkerCompletionIceptor {
         if let Some(n) = self.next.as_ref() {
             n.on_shutdown(sdk_worker);
         }
+    }
+    async fn on_workflow_activation(&self, a: &WorkflowActivation) -> Result<(), Error> {
+        if let Some(n) = self.next.as_ref() {
+            n.on_workflow_activation(a).await?;
+        }
+        Ok(())
     }
 }
 

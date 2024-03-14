@@ -288,7 +288,7 @@ impl Workflows {
                     self.activation_completed(
                         WorkflowActivationCompletion {
                             run_id,
-                            status: Some(auto_fail_to_complete_status(machines_err)),
+                            status: Some(machines_err.as_failure().into()),
                         },
                         true,
                         Option::<Box<dyn Fn(PostActivateHookData) + Send>>::None,
@@ -1297,6 +1297,18 @@ impl WFMachinesError {
             WFMachinesError::Fatal(_) => EvictionReason::Fatal,
         }
     }
+
+    pub fn as_failure(&self) -> Failure {
+        Failure {
+            failure: Some(
+                temporal_sdk_core_protos::temporal::api::failure::v1::Failure::application_failure(
+                    self.to_string(),
+                    false,
+                ),
+            ),
+            force_cause: WorkflowTaskFailedCause::from(self.evict_reason()) as i32,
+        }
+    }
 }
 
 impl From<TimestampError> for WFMachinesError {
@@ -1309,22 +1321,6 @@ impl From<anyhow::Error> for WFMachinesError {
     fn from(value: anyhow::Error) -> Self {
         WFMachinesError::Fatal(value.to_string())
     }
-}
-
-fn auto_fail_to_complete_status(err: WFMachinesError) -> workflow_activation_completion::Status {
-    workflow_activation_completion::Status::Failed(Failure {
-        failure: Some(
-            temporal_sdk_core_protos::temporal::api::failure::v1::Failure {
-                message: "Error while processing workflow task".to_string(),
-                source: err.to_string(),
-                stack_trace: "".to_string(),
-                encoded_attributes: None,
-                cause: None,
-                failure_info: None,
-            },
-        ),
-        force_cause: WorkflowTaskFailedCause::from(err.evict_reason()) as i32,
-    })
 }
 
 pub(crate) trait LocalActivityRequestSink: Send + Sync + 'static {

@@ -968,11 +968,10 @@ impl ManagedRun {
                     } else {
                         WorkflowTaskFailedCause::Unspecified
                     };
-                    let wft_fail_str = format!("{:?}", fail.source);
                     self.failed_completion(
                         fail_cause,
                         fail.source.evict_reason(),
-                        Failure::application_failure(wft_fail_str, false).into(),
+                        fail.source.as_failure(),
                         true,
                         Some(resp_chan),
                     )
