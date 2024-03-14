@@ -2,9 +2,9 @@ use crate::{abstractions::dbg_panic, telemetry::TelemetryInstance};
 
 use std::{fmt::Debug, sync::Arc, time::Duration};
 use temporal_sdk_core_api::telemetry::metrics::{
-    BufferAttributes, BufferInstrumentRef, CoreMeter, Counter, Gauge, Histogram,
-    LazyBufferInstrument, MetricAttributes, MetricCallBufferer, MetricEvent, MetricKeyValue,
-    MetricKind, MetricParameters, MetricUpdateVal, NewAttributes, NoOpCoreMeter,
+    BufferAttributes, BufferInstrumentRef, CoreMeter, Counter, Gauge, GaugeF64, Histogram,
+    HistogramF64, LazyBufferInstrument, MetricAttributes, MetricCallBufferer, MetricEvent,
+    MetricKeyValue, MetricKind, MetricParameters, MetricUpdateVal, NewAttributes, NoOpCoreMeter,
 };
 
 /// Used to track context associated with metrics, and record/update them
@@ -544,7 +544,15 @@ where
         Arc::new(self.new_instrument(params, MetricKind::Histogram))
     }
 
+    fn histogram_f64(&self, params: MetricParameters) -> Arc<dyn HistogramF64> {
+        Arc::new(self.new_instrument(params, MetricKind::Histogram))
+    }
+
     fn gauge(&self, params: MetricParameters) -> Arc<dyn Gauge> {
+        Arc::new(self.new_instrument(params, MetricKind::Gauge))
+    }
+
+    fn gauge_f64(&self, params: MetricParameters) -> Arc<dyn GaugeF64> {
         Arc::new(self.new_instrument(params, MetricKind::Gauge))
     }
 }
@@ -566,27 +574,37 @@ impl<I> BufferInstrument<I>
 where
     I: Clone + BufferInstrumentRef,
 {
-    fn send(&self, value: u64, attributes: &MetricAttributes) {
+    fn send(&self, value: IntOrFloatVal, attributes: &MetricAttributes) {
         let attributes = match attributes {
             MetricAttributes::Buffer(l) => l.clone(),
             _ => panic!("MetricsCallBuffer only works with MetricAttributes::Lang"),
         };
         self.tx.send(MetricEvent::Update {
             instrument: self.instrument_ref.clone(),
-            update: match self.kind {
-                MetricKind::Counter => MetricUpdateVal::Delta(value),
-                MetricKind::Gauge | MetricKind::Histogram => MetricUpdateVal::Value(value),
+            update: match (self.kind, value) {
+                (MetricKind::Counter, IntOrFloatVal::U64(v)) => MetricUpdateVal::Delta(v),
+                (MetricKind::Counter, IntOrFloatVal::F64(v)) => MetricUpdateVal::DeltaF64(v),
+                (MetricKind::Gauge | MetricKind::Histogram, IntOrFloatVal::U64(v)) => {
+                    MetricUpdateVal::Value(v)
+                }
+                (MetricKind::Gauge | MetricKind::Histogram, IntOrFloatVal::F64(v)) => {
+                    MetricUpdateVal::ValueF64(v)
+                }
             },
             attributes: attributes.clone(),
         });
     }
+}
+enum IntOrFloatVal {
+    U64(u64),
+    F64(f64),
 }
 impl<I> Counter for BufferInstrument<I>
 where
     I: BufferInstrumentRef + Send + Sync + Clone,
 {
     fn add(&self, value: u64, attributes: &MetricAttributes) {
-        self.send(value, attributes)
+        self.send(IntOrFloatVal::U64(value), attributes)
     }
 }
 impl<I> Gauge for BufferInstrument<I>
@@ -594,7 +612,15 @@ where
     I: BufferInstrumentRef + Send + Sync + Clone,
 {
     fn record(&self, value: u64, attributes: &MetricAttributes) {
-        self.send(value, attributes)
+        self.send(IntOrFloatVal::U64(value), attributes)
+    }
+}
+impl<I> GaugeF64 for BufferInstrument<I>
+where
+    I: BufferInstrumentRef + Send + Sync + Clone,
+{
+    fn record(&self, value: f64, attributes: &MetricAttributes) {
+        self.send(IntOrFloatVal::F64(value), attributes)
     }
 }
 impl<I> Histogram for BufferInstrument<I>
@@ -602,7 +628,15 @@ where
     I: BufferInstrumentRef + Send + Sync + Clone,
 {
     fn record(&self, value: u64, attributes: &MetricAttributes) {
-        self.send(value, attributes)
+        self.send(IntOrFloatVal::U64(value), attributes)
+    }
+}
+impl<I> HistogramF64 for BufferInstrument<I>
+where
+    I: BufferInstrumentRef + Send + Sync + Clone,
+{
+    fn record(&self, value: f64, attributes: &MetricAttributes) {
+        self.send(IntOrFloatVal::F64(value), attributes)
     }
 }
 
@@ -634,9 +668,19 @@ impl<CM: CoreMeter> CoreMeter for PrefixedMetricsMeter<CM> {
         self.meter.histogram(params)
     }
 
+    fn histogram_f64(&self, mut params: MetricParameters) -> Arc<dyn HistogramF64> {
+        params.name = (self.prefix.clone() + &*params.name).into();
+        self.meter.histogram_f64(params)
+    }
+
     fn gauge(&self, mut params: MetricParameters) -> Arc<dyn Gauge> {
         params.name = (self.prefix.clone() + &*params.name).into();
         self.meter.gauge(params)
+    }
+
+    fn gauge_f64(&self, mut params: MetricParameters) -> Arc<dyn GaugeF64> {
+        params.name = (self.prefix.clone() + &*params.name).into();
+        self.meter.gauge_f64(params)
     }
 }
 

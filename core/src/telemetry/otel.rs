@@ -29,7 +29,8 @@ use parking_lot::RwLock;
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 use temporal_sdk_core_api::telemetry::{
     metrics::{
-        CoreMeter, Counter, Gauge, Histogram, MetricAttributes, MetricParameters, NewAttributes,
+        CoreMeter, Counter, Gauge, GaugeF64, Histogram, HistogramF64, MetricAttributes,
+        MetricParameters, NewAttributes,
     },
     MetricTemporality, OtelCollectorOptions, PrometheusExporterOptions,
 };
@@ -96,40 +97,49 @@ pub(super) fn augment_meter_provider_with_defaults(
 
 /// OTel has no built-in synchronous Gauge. Histograms used to be able to serve that purpose, but
 /// they broke that. Lovely. So, we need to implement one by hand.
-pub(crate) struct MemoryGaugeU64 {
-    labels_to_values: Arc<RwLock<HashMap<AttributeSet, u64>>>,
+pub(crate) struct MemoryGauge<U> {
+    labels_to_values: Arc<RwLock<HashMap<AttributeSet, U>>>,
 }
 
-impl MemoryGaugeU64 {
-    fn new(params: MetricParameters, meter: &Meter) -> Self {
-        let gauge = meter
-            .u64_observable_gauge(params.name)
-            .with_unit(Unit::new(params.unit))
-            .with_description(params.description)
-            .init();
-        let map = Arc::new(RwLock::new(HashMap::<AttributeSet, u64>::new()));
-        let map_c = map.clone();
-        meter
-            .register_callback(&[gauge.as_any()], move |o| {
-                // This whole thing is... extra stupid.
-                // See https://github.com/open-telemetry/opentelemetry-rust/issues/1181
-                // The performance is likely bad here, but, given this is only called when metrics
-                // are exported it should be livable for now.
-                let map_rlock = map_c.read();
-                for (kvs, val) in map_rlock.iter() {
-                    let kvs: Vec<_> = kvs
-                        .iter()
-                        .map(|(k, v)| KeyValue::new(k.clone(), v.clone()))
-                        .collect();
-                    o.observe_u64(&gauge, *val, kvs.as_slice())
+macro_rules! impl_memory_gauge {
+    ($ty:ty, $gauge_fn:ident, $observe_fn:ident) => {
+        impl MemoryGauge<$ty> {
+            fn new(params: MetricParameters, meter: &Meter) -> Self {
+                let gauge = meter
+                    .$gauge_fn(params.name)
+                    .with_unit(Unit::new(params.unit))
+                    .with_description(params.description)
+                    .init();
+                let map = Arc::new(RwLock::new(HashMap::<AttributeSet, $ty>::new()));
+                let map_c = map.clone();
+                meter
+                    .register_callback(&[gauge.as_any()], move |o| {
+                        // This whole thing is... extra stupid.
+                        // See https://github.com/open-telemetry/opentelemetry-rust/issues/1181
+                        // The performance is likely bad here, but, given this is only called when
+                        // metrics are exported it should be livable for now.
+                        let map_rlock = map_c.read();
+                        for (kvs, val) in map_rlock.iter() {
+                            let kvs: Vec<_> = kvs
+                                .iter()
+                                .map(|(k, v)| KeyValue::new(k.clone(), v.clone()))
+                                .collect();
+                            o.$observe_fn(&gauge, *val, kvs.as_slice())
+                        }
+                    })
+                    .expect("instrument must exist we just created it");
+                MemoryGauge {
+                    labels_to_values: map,
                 }
-            })
-            .expect("instrument must exist we just created it");
-        MemoryGaugeU64 {
-            labels_to_values: map,
+            }
         }
-    }
-    fn record(&self, val: u64, kvs: &[KeyValue]) {
+    };
+}
+impl_memory_gauge!(u64, u64_observable_gauge, observe_u64);
+impl_memory_gauge!(f64, f64_observable_gauge, observe_f64);
+
+impl<U> MemoryGauge<U> {
+    fn record(&self, val: U, kvs: &[KeyValue]) {
         self.labels_to_values
             .write()
             .insert(AttributeSet::from(kvs), val);
@@ -230,13 +240,36 @@ impl CoreMeter for CoreOtelMeter {
         )
     }
 
+    fn histogram_f64(&self, params: MetricParameters) -> Arc<dyn HistogramF64> {
+        Arc::new(
+            self.0
+                .f64_histogram(params.name)
+                .with_unit(Unit::new(params.unit))
+                .with_description(params.description)
+                .init(),
+        )
+    }
+
     fn gauge(&self, params: MetricParameters) -> Arc<dyn Gauge> {
-        Arc::new(MemoryGaugeU64::new(params, &self.0))
+        Arc::new(MemoryGauge::<u64>::new(params, &self.0))
+    }
+
+    fn gauge_f64(&self, params: MetricParameters) -> Arc<dyn GaugeF64> {
+        Arc::new(MemoryGauge::<f64>::new(params, &self.0))
     }
 }
 
-impl Gauge for MemoryGaugeU64 {
+impl Gauge for MemoryGauge<u64> {
     fn record(&self, value: u64, attributes: &MetricAttributes) {
+        if let MetricAttributes::OTel { kvs } = attributes {
+            self.record(value, kvs);
+        } else {
+            dbg_panic!("Must use OTel attributes with an OTel metric implementation");
+        }
+    }
+}
+impl GaugeF64 for MemoryGauge<f64> {
+    fn record(&self, value: f64, attributes: &MetricAttributes) {
         if let MetricAttributes::OTel { kvs } = attributes {
             self.record(value, kvs);
         } else {
