@@ -61,9 +61,12 @@ pub struct OtelCollectorOptions {
     /// Specifies the aggregation temporality for metric export. Defaults to cumulative.
     #[builder(default = "MetricTemporality::Cumulative")]
     pub metric_temporality: MetricTemporality,
-    // A map of tags to be applied to all metrics
+    /// A map of tags to be applied to all metrics
     #[builder(default)]
     pub global_tags: HashMap<String, String>,
+    /// If set to true, use f64 seconds for durations instead of u64 milliseconds
+    #[builder(default)]
+    pub use_seconds_for_durations: bool,
 }
 
 /// Options for exporting metrics to Prometheus
@@ -80,6 +83,9 @@ pub struct PrometheusExporterOptions {
     /// Ex: "_milliseconds".
     #[builder(default = "false")]
     pub unit_suffix: bool,
+    /// If set to true, use f64 seconds for durations instead of u64 milliseconds
+    #[builder(default)]
+    pub use_seconds_for_durations: bool,
 }
 
 /// Control where logs go

@@ -26,11 +26,11 @@ use opentelemetry_sdk::{
     runtime, AttributeSet, Resource,
 };
 use parking_lot::RwLock;
-use std::{collections::HashMap, net::SocketAddr, sync::Arc};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 use temporal_sdk_core_api::telemetry::{
     metrics::{
-        CoreMeter, Counter, Gauge, GaugeF64, Histogram, HistogramF64, MetricAttributes,
-        MetricParameters, NewAttributes,
+        CoreMeter, Counter, Gauge, GaugeF64, Histogram, HistogramDuration, HistogramF64,
+        MetricAttributes, MetricParameters, NewAttributes,
     },
     MetricTemporality, OtelCollectorOptions, PrometheusExporterOptions,
 };
@@ -165,7 +165,10 @@ pub fn build_otlp_metric_exporter(
         &opts.global_tags,
     )?
     .build();
-    Ok::<_, anyhow::Error>(CoreOtelMeter(mp.meter(TELEM_SERVICE_NAME)))
+    Ok::<_, anyhow::Error>(CoreOtelMeter {
+        meter: mp.meter(TELEM_SERVICE_NAME),
+        use_seconds_for_durations: opts.use_seconds_for_durations,
+    })
 }
 
 pub struct StartedPromServer {
@@ -190,14 +193,20 @@ pub fn start_prometheus_metric_exporter(
     let bound_addr = srv.bound_addr()?;
     let handle = tokio::spawn(async move { srv.run().await });
     Ok(StartedPromServer {
-        meter: Arc::new(CoreOtelMeter(meter_provider.meter(TELEM_SERVICE_NAME))),
+        meter: Arc::new(CoreOtelMeter {
+            meter: meter_provider.meter(TELEM_SERVICE_NAME),
+            use_seconds_for_durations: opts.use_seconds_for_durations,
+        }),
         bound_addr,
         abort_handle: handle.abort_handle(),
     })
 }
 
 #[derive(Debug)]
-pub struct CoreOtelMeter(Meter);
+pub struct CoreOtelMeter {
+    meter: Meter,
+    use_seconds_for_durations: bool,
+}
 
 impl CoreMeter for CoreOtelMeter {
     fn new_attributes(&self, attribs: NewAttributes) -> MetricAttributes {
@@ -222,7 +231,7 @@ impl CoreMeter for CoreOtelMeter {
 
     fn counter(&self, params: MetricParameters) -> Arc<dyn Counter> {
         Arc::new(
-            self.0
+            self.meter
                 .u64_counter(params.name)
                 .with_unit(Unit::new(params.unit))
                 .with_description(params.description)
@@ -232,7 +241,7 @@ impl CoreMeter for CoreOtelMeter {
 
     fn histogram(&self, params: MetricParameters) -> Arc<dyn Histogram> {
         Arc::new(
-            self.0
+            self.meter
                 .u64_histogram(params.name)
                 .with_unit(Unit::new(params.unit))
                 .with_description(params.description)
@@ -242,7 +251,7 @@ impl CoreMeter for CoreOtelMeter {
 
     fn histogram_f64(&self, params: MetricParameters) -> Arc<dyn HistogramF64> {
         Arc::new(
-            self.0
+            self.meter
                 .f64_histogram(params.name)
                 .with_unit(Unit::new(params.unit))
                 .with_description(params.description)
@@ -250,12 +259,35 @@ impl CoreMeter for CoreOtelMeter {
         )
     }
 
+    fn histogram_duration(&self, params: MetricParameters) -> Arc<dyn HistogramDuration> {
+        Arc::new(if self.use_seconds_for_durations {
+            DurationHistogram::Seconds(self.histogram_f64(params))
+        } else {
+            DurationHistogram::Milliseconds(self.histogram(params))
+        })
+    }
+
     fn gauge(&self, params: MetricParameters) -> Arc<dyn Gauge> {
-        Arc::new(MemoryGauge::<u64>::new(params, &self.0))
+        Arc::new(MemoryGauge::<u64>::new(params, &self.meter))
     }
 
     fn gauge_f64(&self, params: MetricParameters) -> Arc<dyn GaugeF64> {
-        Arc::new(MemoryGauge::<f64>::new(params, &self.0))
+        Arc::new(MemoryGauge::<f64>::new(params, &self.meter))
+    }
+}
+
+/// A histogram being used to record durations.
+#[derive(Clone)]
+enum DurationHistogram {
+    Milliseconds(Arc<dyn Histogram>),
+    Seconds(Arc<dyn HistogramF64>),
+}
+impl HistogramDuration for DurationHistogram {
+    fn record(&self, value: Duration, attributes: &MetricAttributes) {
+        match self {
+            DurationHistogram::Milliseconds(h) => h.record(value.as_millis() as u64, attributes),
+            DurationHistogram::Seconds(h) => h.record(value.as_secs_f64(), attributes),
+        }
     }
 }
 

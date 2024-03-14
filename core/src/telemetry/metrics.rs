@@ -3,8 +3,9 @@ use crate::{abstractions::dbg_panic, telemetry::TelemetryInstance};
 use std::{fmt::Debug, sync::Arc, time::Duration};
 use temporal_sdk_core_api::telemetry::metrics::{
     BufferAttributes, BufferInstrumentRef, CoreMeter, Counter, Gauge, GaugeF64, Histogram,
-    HistogramF64, LazyBufferInstrument, MetricAttributes, MetricCallBufferer, MetricEvent,
-    MetricKeyValue, MetricKind, MetricParameters, MetricUpdateVal, NewAttributes, NoOpCoreMeter,
+    HistogramDuration, HistogramF64, LazyBufferInstrument, MetricAttributes, MetricCallBufferer,
+    MetricEvent, MetricKeyValue, MetricKind, MetricParameters, MetricUpdateVal, NewAttributes,
+    NoOpCoreMeter,
 };
 
 /// Used to track context associated with metrics, and record/update them
@@ -23,7 +24,7 @@ struct Instruments {
     wf_canceled_counter: Arc<dyn Counter>,
     wf_failed_counter: Arc<dyn Counter>,
     wf_cont_counter: Arc<dyn Counter>,
-    wf_e2e_latency: Arc<dyn Histogram>,
+    wf_e2e_latency: Arc<dyn HistogramDuration>,
     wf_task_queue_poll_empty_counter: Arc<dyn Counter>,
     wf_task_queue_poll_succeed_counter: Arc<dyn Counter>,
     wf_task_execution_failure_counter: Arc<dyn Counter>,
@@ -130,9 +131,7 @@ impl MetricsContext {
 
     /// Record workflow total execution time in milliseconds
     pub(crate) fn wf_e2e_latency(&self, dur: Duration) {
-        self.instruments
-            .wf_e2e_latency
-            .record(dur.as_millis() as u64, &self.kvs);
+        self.instruments.wf_e2e_latency.record(dur, &self.kvs);
     }
 
     /// Record workflow task schedule to start time in millis
@@ -247,7 +246,7 @@ impl Instruments {
                 description: "Count of continued-as-new workflows".into(),
                 unit: "".into(),
             }),
-            wf_e2e_latency: meter.histogram(MetricParameters {
+            wf_e2e_latency: meter.histogram_duration(MetricParameters {
                 name: WF_E2E_LATENCY_NAME.into(),
                 unit: "ms".into(),
                 description: "Histogram of total workflow execution latencies".into(),
@@ -496,7 +495,6 @@ where
             populate_into: hole.clone(),
         });
         BufferInstrument {
-            kind,
             instrument_ref: hole,
             tx: self.calls_tx.clone(),
         }
@@ -545,7 +543,11 @@ where
     }
 
     fn histogram_f64(&self, params: MetricParameters) -> Arc<dyn HistogramF64> {
-        Arc::new(self.new_instrument(params, MetricKind::Histogram))
+        Arc::new(self.new_instrument(params, MetricKind::HistogramF64))
+    }
+
+    fn histogram_duration(&self, params: MetricParameters) -> Arc<dyn HistogramDuration> {
+        Arc::new(self.new_instrument(params, MetricKind::HistogramDuration))
     }
 
     fn gauge(&self, params: MetricParameters) -> Arc<dyn Gauge> {
@@ -553,7 +555,7 @@ where
     }
 
     fn gauge_f64(&self, params: MetricParameters) -> Arc<dyn GaugeF64> {
-        Arc::new(self.new_instrument(params, MetricKind::Gauge))
+        Arc::new(self.new_instrument(params, MetricKind::GaugeF64))
     }
 }
 impl<I> MetricCallBufferer<I> for MetricsCallBuffer<I>
@@ -566,7 +568,6 @@ where
 }
 
 struct BufferInstrument<I: BufferInstrumentRef> {
-    kind: MetricKind,
     instrument_ref: LazyBufferInstrument<I>,
     tx: LogErrOnFullSender<MetricEvent<I>>,
 }
@@ -574,37 +575,24 @@ impl<I> BufferInstrument<I>
 where
     I: Clone + BufferInstrumentRef,
 {
-    fn send(&self, value: IntOrFloatVal, attributes: &MetricAttributes) {
+    fn send(&self, value: MetricUpdateVal, attributes: &MetricAttributes) {
         let attributes = match attributes {
             MetricAttributes::Buffer(l) => l.clone(),
             _ => panic!("MetricsCallBuffer only works with MetricAttributes::Lang"),
         };
         self.tx.send(MetricEvent::Update {
             instrument: self.instrument_ref.clone(),
-            update: match (self.kind, value) {
-                (MetricKind::Counter, IntOrFloatVal::U64(v)) => MetricUpdateVal::Delta(v),
-                (MetricKind::Counter, IntOrFloatVal::F64(v)) => MetricUpdateVal::DeltaF64(v),
-                (MetricKind::Gauge | MetricKind::Histogram, IntOrFloatVal::U64(v)) => {
-                    MetricUpdateVal::Value(v)
-                }
-                (MetricKind::Gauge | MetricKind::Histogram, IntOrFloatVal::F64(v)) => {
-                    MetricUpdateVal::ValueF64(v)
-                }
-            },
+            update: value,
             attributes: attributes.clone(),
         });
     }
-}
-enum IntOrFloatVal {
-    U64(u64),
-    F64(f64),
 }
 impl<I> Counter for BufferInstrument<I>
 where
     I: BufferInstrumentRef + Send + Sync + Clone,
 {
     fn add(&self, value: u64, attributes: &MetricAttributes) {
-        self.send(IntOrFloatVal::U64(value), attributes)
+        self.send(MetricUpdateVal::Delta(value), attributes)
     }
 }
 impl<I> Gauge for BufferInstrument<I>
@@ -612,7 +600,7 @@ where
     I: BufferInstrumentRef + Send + Sync + Clone,
 {
     fn record(&self, value: u64, attributes: &MetricAttributes) {
-        self.send(IntOrFloatVal::U64(value), attributes)
+        self.send(MetricUpdateVal::Value(value), attributes)
     }
 }
 impl<I> GaugeF64 for BufferInstrument<I>
@@ -620,7 +608,7 @@ where
     I: BufferInstrumentRef + Send + Sync + Clone,
 {
     fn record(&self, value: f64, attributes: &MetricAttributes) {
-        self.send(IntOrFloatVal::F64(value), attributes)
+        self.send(MetricUpdateVal::ValueF64(value), attributes)
     }
 }
 impl<I> Histogram for BufferInstrument<I>
@@ -628,7 +616,7 @@ where
     I: BufferInstrumentRef + Send + Sync + Clone,
 {
     fn record(&self, value: u64, attributes: &MetricAttributes) {
-        self.send(IntOrFloatVal::U64(value), attributes)
+        self.send(MetricUpdateVal::Value(value), attributes)
     }
 }
 impl<I> HistogramF64 for BufferInstrument<I>
@@ -636,7 +624,15 @@ where
     I: BufferInstrumentRef + Send + Sync + Clone,
 {
     fn record(&self, value: f64, attributes: &MetricAttributes) {
-        self.send(IntOrFloatVal::F64(value), attributes)
+        self.send(MetricUpdateVal::ValueF64(value), attributes)
+    }
+}
+impl<I> HistogramDuration for BufferInstrument<I>
+where
+    I: BufferInstrumentRef + Send + Sync + Clone,
+{
+    fn record(&self, value: Duration, attributes: &MetricAttributes) {
+        self.send(MetricUpdateVal::Duration(value), attributes)
     }
 }
 
@@ -671,6 +667,11 @@ impl<CM: CoreMeter> CoreMeter for PrefixedMetricsMeter<CM> {
     fn histogram_f64(&self, mut params: MetricParameters) -> Arc<dyn HistogramF64> {
         params.name = (self.prefix.clone() + &*params.name).into();
         self.meter.histogram_f64(params)
+    }
+
+    fn histogram_duration(&self, mut params: MetricParameters) -> Arc<dyn HistogramDuration> {
+        params.name = (self.prefix.clone() + &*params.name).into();
+        self.meter.histogram_duration(params)
     }
 
     fn gauge(&self, mut params: MetricParameters) -> Arc<dyn Gauge> {
