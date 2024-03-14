@@ -1,15 +1,14 @@
 use super::{
+    default_buckets_for,
     metrics::{
-        ACT_EXEC_LATENCY_NAME, ACT_EXE_MS_BUCKETS, ACT_SCHED_TO_START_LATENCY_NAME,
-        DEFAULT_MS_BUCKETS, TASK_SCHED_TO_START_MS_BUCKETS, WF_E2E_LATENCY_NAME,
-        WF_LATENCY_MS_BUCKETS, WF_TASK_EXECUTION_LATENCY_NAME, WF_TASK_MS_BUCKETS,
-        WF_TASK_REPLAY_LATENCY_NAME, WF_TASK_SCHED_TO_START_LATENCY_NAME,
+        ACT_EXEC_LATENCY_NAME, ACT_SCHED_TO_START_LATENCY_NAME, DEFAULT_MS_BUCKETS,
+        WF_E2E_LATENCY_NAME, WF_TASK_EXECUTION_LATENCY_NAME, WF_TASK_REPLAY_LATENCY_NAME,
+        WF_TASK_SCHED_TO_START_LATENCY_NAME,
     },
     prometheus_server::PromServer,
     TELEM_SERVICE_NAME,
 };
-use crate::abstractions::dbg_panic;
-
+use crate::{abstractions::dbg_panic, telemetry::metrics::DEFAULT_S_BUCKETS};
 use opentelemetry::{
     self,
     metrics::{Meter, MeterProvider as MeterProviderT, Unit},
@@ -38,16 +37,29 @@ use tokio::task::AbortHandle;
 use tonic::metadata::MetadataMap;
 
 /// Chooses appropriate aggregators for our metrics
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct SDKAggSelector {
+    use_seconds: bool,
     default: DefaultAggregationSelector,
+}
+impl SDKAggSelector {
+    pub fn new(use_seconds: bool) -> Self {
+        Self {
+            use_seconds,
+            default: Default::default(),
+        }
+    }
 }
 
 impl AggregationSelector for SDKAggSelector {
     fn aggregation(&self, kind: InstrumentKind) -> Aggregation {
         match kind {
             InstrumentKind::Histogram => Aggregation::ExplicitBucketHistogram {
-                boundaries: DEFAULT_MS_BUCKETS.to_vec(),
+                boundaries: if self.use_seconds {
+                    DEFAULT_S_BUCKETS.to_vec()
+                } else {
+                    DEFAULT_MS_BUCKETS.to_vec()
+                },
                 record_min_max: true,
             },
             _ => self.default.aggregation(kind),
@@ -57,8 +69,9 @@ impl AggregationSelector for SDKAggSelector {
 
 fn histo_view(
     metric_name: &'static str,
-    buckets: &[f64],
+    use_seconds: bool,
 ) -> opentelemetry::metrics::Result<Box<dyn View>> {
+    let buckets = default_buckets_for(metric_name, use_seconds);
     new_view(
         Instrument::new().name(format!("*{metric_name}")),
         opentelemetry_sdk::metrics::Stream::new().aggregation(
@@ -73,25 +86,20 @@ fn histo_view(
 pub(super) fn augment_meter_provider_with_defaults(
     mpb: MeterProviderBuilder,
     global_tags: &HashMap<String, String>,
+    use_seconds: bool,
 ) -> opentelemetry::metrics::Result<MeterProviderBuilder> {
     // Some histograms are actually gauges, but we have to use histograms otherwise they forget
     // their value between collections since we don't use callbacks.
     Ok(mpb
-        .with_view(histo_view(WF_E2E_LATENCY_NAME, WF_LATENCY_MS_BUCKETS)?)
-        .with_view(histo_view(
-            WF_TASK_EXECUTION_LATENCY_NAME,
-            WF_TASK_MS_BUCKETS,
-        )?)
-        .with_view(histo_view(WF_TASK_REPLAY_LATENCY_NAME, WF_TASK_MS_BUCKETS)?)
+        .with_view(histo_view(WF_E2E_LATENCY_NAME, use_seconds)?)
+        .with_view(histo_view(WF_TASK_EXECUTION_LATENCY_NAME, use_seconds)?)
+        .with_view(histo_view(WF_TASK_REPLAY_LATENCY_NAME, use_seconds)?)
         .with_view(histo_view(
             WF_TASK_SCHED_TO_START_LATENCY_NAME,
-            TASK_SCHED_TO_START_MS_BUCKETS,
+            use_seconds,
         )?)
-        .with_view(histo_view(
-            ACT_SCHED_TO_START_LATENCY_NAME,
-            TASK_SCHED_TO_START_MS_BUCKETS,
-        )?)
-        .with_view(histo_view(ACT_EXEC_LATENCY_NAME, ACT_EXE_MS_BUCKETS)?)
+        .with_view(histo_view(ACT_SCHED_TO_START_LATENCY_NAME, use_seconds)?)
+        .with_view(histo_view(ACT_EXEC_LATENCY_NAME, use_seconds)?)
         .with_resource(default_resource(global_tags)))
 }
 
@@ -154,7 +162,7 @@ pub fn build_otlp_metric_exporter(
         .with_endpoint(opts.url.to_string())
         .with_metadata(MetadataMap::from_headers((&opts.headers).try_into()?))
         .build_metrics_exporter(
-            Box::<SDKAggSelector>::default(),
+            Box::new(SDKAggSelector::new(opts.use_seconds_for_durations)),
             Box::new(metric_temporality_to_selector(opts.metric_temporality)),
         )?;
     let reader = PeriodicReader::builder(exporter, runtime::Tokio)
@@ -163,6 +171,7 @@ pub fn build_otlp_metric_exporter(
     let mp = augment_meter_provider_with_defaults(
         MeterProviderBuilder::default().with_reader(reader),
         &opts.global_tags,
+        opts.use_seconds_for_durations,
     )?
     .build();
     Ok::<_, anyhow::Error>(CoreOtelMeter {
@@ -184,10 +193,12 @@ pub struct StartedPromServer {
 pub fn start_prometheus_metric_exporter(
     opts: PrometheusExporterOptions,
 ) -> Result<StartedPromServer, anyhow::Error> {
-    let (srv, exporter) = PromServer::new(&opts, SDKAggSelector::default())?;
+    let (srv, exporter) =
+        PromServer::new(&opts, SDKAggSelector::new(opts.use_seconds_for_durations))?;
     let meter_provider = augment_meter_provider_with_defaults(
         MeterProviderBuilder::default().with_reader(exporter),
         &opts.global_tags,
+        opts.use_seconds_for_durations,
     )?
     .build();
     let bound_addr = srv.bound_addr()?;
@@ -259,10 +270,12 @@ impl CoreMeter for CoreOtelMeter {
         )
     }
 
-    fn histogram_duration(&self, params: MetricParameters) -> Arc<dyn HistogramDuration> {
+    fn histogram_duration(&self, mut params: MetricParameters) -> Arc<dyn HistogramDuration> {
         Arc::new(if self.use_seconds_for_durations {
+            params.unit = "s".into();
             DurationHistogram::Seconds(self.histogram_f64(params))
         } else {
+            params.unit = "ms".into();
             DurationHistogram::Milliseconds(self.histogram(params))
         })
     }

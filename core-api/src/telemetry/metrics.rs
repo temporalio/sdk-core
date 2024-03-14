@@ -25,6 +25,10 @@ pub trait CoreMeter: Send + Sync + Debug {
     fn counter(&self, params: MetricParameters) -> Arc<dyn Counter>;
     fn histogram(&self, params: MetricParameters) -> Arc<dyn Histogram>;
     fn histogram_f64(&self, params: MetricParameters) -> Arc<dyn HistogramF64>;
+    /// Create a histogram which records Durations. Implementations should choose to emit in
+    /// either milliseconds or seconds depending on how they have been configured.
+    /// [MetricParameters::unit] should be overwritten by implementations to be `ms` or `s`
+    /// accordingly.
     fn histogram_duration(&self, params: MetricParameters) -> Arc<dyn HistogramDuration>;
     fn gauge(&self, params: MetricParameters) -> Arc<dyn Gauge>;
     fn gauge_f64(&self, params: MetricParameters) -> Arc<dyn GaugeF64>;

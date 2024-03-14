@@ -1,6 +1,6 @@
 use crate::{abstractions::dbg_panic, telemetry::TelemetryInstance};
 
-use std::{fmt::Debug, sync::Arc, time::Duration};
+use std::{fmt::Debug, iter::Iterator, sync::Arc, time::Duration};
 use temporal_sdk_core_api::telemetry::metrics::{
     BufferAttributes, BufferInstrumentRef, CoreMeter, Counter, Gauge, GaugeF64, Histogram,
     HistogramDuration, HistogramF64, LazyBufferInstrument, MetricAttributes, MetricCallBufferer,
@@ -28,14 +28,14 @@ struct Instruments {
     wf_task_queue_poll_empty_counter: Arc<dyn Counter>,
     wf_task_queue_poll_succeed_counter: Arc<dyn Counter>,
     wf_task_execution_failure_counter: Arc<dyn Counter>,
-    wf_task_sched_to_start_latency: Arc<dyn Histogram>,
-    wf_task_replay_latency: Arc<dyn Histogram>,
-    wf_task_execution_latency: Arc<dyn Histogram>,
+    wf_task_sched_to_start_latency: Arc<dyn HistogramDuration>,
+    wf_task_replay_latency: Arc<dyn HistogramDuration>,
+    wf_task_execution_latency: Arc<dyn HistogramDuration>,
     act_poll_no_task: Arc<dyn Counter>,
     act_task_received_counter: Arc<dyn Counter>,
     act_execution_failed: Arc<dyn Counter>,
-    act_sched_to_start_latency: Arc<dyn Histogram>,
-    act_exec_latency: Arc<dyn Histogram>,
+    act_sched_to_start_latency: Arc<dyn HistogramDuration>,
+    act_exec_latency: Arc<dyn HistogramDuration>,
     worker_registered: Arc<dyn Counter>,
     num_pollers: Arc<dyn Gauge>,
     task_slots_available: Arc<dyn Gauge>,
@@ -138,21 +138,21 @@ impl MetricsContext {
     pub(crate) fn wf_task_sched_to_start_latency(&self, dur: Duration) {
         self.instruments
             .wf_task_sched_to_start_latency
-            .record(dur.as_millis() as u64, &self.kvs);
+            .record(dur, &self.kvs);
     }
 
     /// Record workflow task execution time in milliseconds
     pub(crate) fn wf_task_latency(&self, dur: Duration) {
         self.instruments
             .wf_task_execution_latency
-            .record(dur.as_millis() as u64, &self.kvs);
+            .record(dur, &self.kvs);
     }
 
     /// Record time it takes to catch up on replaying a WFT
     pub(crate) fn wf_task_replay_latency(&self, dur: Duration) {
         self.instruments
             .wf_task_replay_latency
-            .record(dur.as_millis() as u64, &self.kvs);
+            .record(dur, &self.kvs);
     }
 
     /// An activity long poll timed out
@@ -174,15 +174,13 @@ impl MetricsContext {
     pub(crate) fn act_sched_to_start_latency(&self, dur: Duration) {
         self.instruments
             .act_sched_to_start_latency
-            .record(dur.as_millis() as u64, &self.kvs);
+            .record(dur, &self.kvs);
     }
 
     /// Record time it took to complete activity execution, from the time core generated the
     /// activity task, to the time lang responded with a completion (failure or success).
     pub(crate) fn act_execution_latency(&self, dur: Duration) {
-        self.instruments
-            .act_exec_latency
-            .record(dur.as_millis() as u64, &self.kvs);
+        self.instruments.act_exec_latency.record(dur, &self.kvs);
     }
 
     /// A worker was registered
@@ -248,7 +246,7 @@ impl Instruments {
             }),
             wf_e2e_latency: meter.histogram_duration(MetricParameters {
                 name: WF_E2E_LATENCY_NAME.into(),
-                unit: "ms".into(),
+                unit: "duration".into(),
                 description: "Histogram of total workflow execution latencies".into(),
             }),
             wf_task_queue_poll_empty_counter: meter.counter(MetricParameters {
@@ -266,19 +264,19 @@ impl Instruments {
                 description: "Count of workflow task execution failures".into(),
                 unit: "".into(),
             }),
-            wf_task_sched_to_start_latency: meter.histogram(MetricParameters {
+            wf_task_sched_to_start_latency: meter.histogram_duration(MetricParameters {
                 name: WF_TASK_SCHED_TO_START_LATENCY_NAME.into(),
-                unit: "ms".into(),
+                unit: "duration".into(),
                 description: "Histogram of workflow task schedule-to-start latencies".into(),
             }),
-            wf_task_replay_latency: meter.histogram(MetricParameters {
+            wf_task_replay_latency: meter.histogram_duration(MetricParameters {
                 name: WF_TASK_REPLAY_LATENCY_NAME.into(),
-                unit: "ms".into(),
+                unit: "duration".into(),
                 description: "Histogram of workflow task replay latencies".into(),
             }),
-            wf_task_execution_latency: meter.histogram(MetricParameters {
+            wf_task_execution_latency: meter.histogram_duration(MetricParameters {
                 name: WF_TASK_EXECUTION_LATENCY_NAME.into(),
-                unit: "ms".into(),
+                unit: "duration".into(),
                 description: "Histogram of workflow task execution (not replay) latencies".into(),
             }),
             act_poll_no_task: meter.counter(MetricParameters {
@@ -296,14 +294,14 @@ impl Instruments {
                 description: "Count of activity task execution failures".into(),
                 unit: "".into(),
             }),
-            act_sched_to_start_latency: meter.histogram(MetricParameters {
+            act_sched_to_start_latency: meter.histogram_duration(MetricParameters {
                 name: ACT_SCHED_TO_START_LATENCY_NAME.into(),
-                unit: "ms".into(),
+                unit: "duration".into(),
                 description: "Histogram of activity schedule-to-start latencies".into(),
             }),
-            act_exec_latency: meter.histogram(MetricParameters {
+            act_exec_latency: meter.histogram_duration(MetricParameters {
                 name: ACT_EXEC_LATENCY_NAME.into(),
-                unit: "ms".into(),
+                unit: "duration".into(),
                 description: "Histogram of activity execution latencies".into(),
             }),
             // name kept as worker start for compat with old sdk / what users expect
@@ -399,59 +397,78 @@ pub(super) const NUM_POLLERS_NAME: &str = "num_pollers";
 pub(super) const TASK_SLOTS_AVAILABLE_NAME: &str = "worker_task_slots_available";
 pub(super) const STICKY_CACHE_SIZE_NAME: &str = "sticky_cache_size";
 
-/// Artisanal, handcrafted latency buckets for workflow e2e latency which should expose a useful
-/// set of buckets for < 1 day runtime workflows. Beyond that, this metric probably isn't very
-/// helpful
-pub(super) static WF_LATENCY_MS_BUCKETS: &[f64] = &[
-    100.,
-    500.,
-    1000.,
-    1500.,
-    2000.,
-    5000.,
-    10_000.,
-    30_000.,
-    60_000.,
-    120_000.,
-    300_000.,
-    600_000.,
-    1_800_000.,  // 30 min
-    3_600_000.,  //  1 hr
-    30_600_000., // 10 hrs
-    8.64e7,      // 24 hrs
-];
+/// Helps define buckets once in terms of millis, but also generates a seconds version
+macro_rules! define_latency_buckets {
+    ($(($metric_name:pat, $name:ident, $sec_name:ident, [$($bucket:expr),*])),*) => {
+        $(
+            pub(super) static $name: &[f64] = &[$($bucket,)*];
+            pub(super) static $sec_name: &[f64] = &[$( $bucket / 1000.0, )*];
+        )*
 
-/// Task latencies are expected to be fast, no longer than a second which was generally the deadlock
-/// timeout in old SDKs. Here it's a bit different since a WFT may represent multiple activations.
-pub(super) static WF_TASK_MS_BUCKETS: &[f64] = &[1., 10., 20., 50., 100., 200., 500., 1000.];
-
-/// Activity are generally expected to take at least a little time, and sometimes quite a while,
-/// since they're doing side-effecty things, etc.
-pub(super) static ACT_EXE_MS_BUCKETS: &[f64] = &[50., 100., 500., 1000., 5000., 10_000., 60_000.];
-
-/// Schedule-to-start latency buckets for both WFT and AT
-pub(super) static TASK_SCHED_TO_START_MS_BUCKETS: &[f64] =
-    &[100., 500., 1000., 5000., 10_000., 100_000., 1_000_000.];
-
-/// Default buckets. Should never really be used as they will be meaningless for many things, but
-/// broadly it's trying to represent latencies in millis.
-pub(super) static DEFAULT_MS_BUCKETS: &[f64] = &[50., 100., 500., 1000., 2500., 10_000.];
-
-/// Returns the default histogram buckets that lang should use for a given metric name if they
-/// have not been overridden by the user.
-///
-/// The name must *not* be prefixed with `temporal_`
-pub fn default_buckets_for(histo_name: &str) -> &'static [f64] {
-    match histo_name {
-        WF_E2E_LATENCY_NAME => WF_LATENCY_MS_BUCKETS,
-        WF_TASK_EXECUTION_LATENCY_NAME | WF_TASK_REPLAY_LATENCY_NAME => WF_TASK_MS_BUCKETS,
-        WF_TASK_SCHED_TO_START_LATENCY_NAME | ACT_SCHED_TO_START_LATENCY_NAME => {
-            TASK_SCHED_TO_START_MS_BUCKETS
+        /// Returns the default histogram buckets that lang should use for a given metric name if
+        /// they have not been overridden by the user. If `use_seconds` is true, returns buckets
+        /// in terms of seconds rather than milliseconds.
+        ///
+        /// The name must *not* be prefixed with `temporal_`
+        pub fn default_buckets_for(histo_name: &str, use_seconds: bool) -> &'static [f64] {
+            match histo_name {
+                $(
+                    $metric_name => { if use_seconds { &$sec_name } else { &$name } },
+                )*
+            }
         }
-        ACT_EXEC_LATENCY_NAME => ACT_EXE_MS_BUCKETS,
-        _ => DEFAULT_MS_BUCKETS,
-    }
+    };
 }
+
+define_latency_buckets!(
+    (
+        WF_E2E_LATENCY_NAME,
+        WF_LATENCY_MS_BUCKETS,
+        WF_LATENCY_S_BUCKETS,
+        [
+            100.,
+            500.,
+            1000.,
+            1500.,
+            2000.,
+            5000.,
+            10_000.,
+            30_000.,
+            60_000.,
+            120_000.,
+            300_000.,
+            600_000.,
+            1_800_000.,  // 30 min
+            3_600_000.,  //  1 hr
+            30_600_000., // 10 hrs
+            8.64e7       // 24 hrs
+        ]
+    ),
+    (
+        WF_TASK_EXECUTION_LATENCY_NAME | WF_TASK_REPLAY_LATENCY_NAME,
+        WF_TASK_MS_BUCKETS,
+        WF_TASK_S_BUCKETS,
+        [1., 10., 20., 50., 100., 200., 500., 1000.]
+    ),
+    (
+        ACT_EXEC_LATENCY_NAME,
+        ACT_EXE_MS_BUCKETS,
+        ACT_EXE_S_BUCKETS,
+        [50., 100., 500., 1000., 5000., 10_000., 60_000.]
+    ),
+    (
+        WF_TASK_SCHED_TO_START_LATENCY_NAME | ACT_SCHED_TO_START_LATENCY_NAME,
+        TASK_SCHED_TO_START_MS_BUCKETS,
+        TASK_SCHED_TO_START_S_BUCKETS,
+        [100., 500., 1000., 5000., 10_000., 100_000., 1_000_000.]
+    ),
+    (
+        _,
+        DEFAULT_MS_BUCKETS,
+        DEFAULT_S_BUCKETS,
+        [50., 100., 500., 1000., 2500., 10_000.]
+    )
+);
 
 /// Buffers [MetricEvent]s for periodic consumption by lang
 #[derive(Debug)]
@@ -785,9 +802,10 @@ mod tests {
             MetricEvent::Update {
                 instrument,
                 attributes,
-                update: MetricUpdateVal::Value(1000) // milliseconds
+                update: MetricUpdateVal::Duration(d)
             }
             if DummyCustomAttrs::as_id(attributes) == 2 && instrument.get().0 == 11
+               && d == &Duration::from_secs(1)
         );
     }
 
@@ -809,6 +827,11 @@ mod tests {
             description: "a counter".into(),
             unit: "bleezles".into(),
         });
+        let histo_dur = call_buffer.histogram_duration(MetricParameters {
+            name: "histo_dur".into(),
+            description: "a duration histogram".into(),
+            unit: "seconds".into(),
+        });
         let attrs_1 = call_buffer.new_attributes(NewAttributes {
             attributes: vec![MetricKeyValue::new("hi", "yo")],
         });
@@ -818,6 +841,7 @@ mod tests {
         ctr.add(1, &attrs_1);
         histo.record(2, &attrs_1);
         gauge.record(3, &attrs_2);
+        histo_dur.record(Duration::from_secs_f64(1.2), &attrs_1);
 
         let mut calls = call_buffer.retrieve();
         calls.reverse();
@@ -854,6 +878,17 @@ mod tests {
             => populate_into
         );
         gauge_3.set(Arc::new(DummyInstrumentRef(3))).unwrap();
+        let hist_4 = assert_matches!(
+            calls.pop(),
+            Some(MetricEvent::Create {
+                params,
+                populate_into,
+                kind: MetricKind::HistogramDuration
+            })
+            if params.name == "histo_dur"
+            => populate_into
+        );
+        hist_4.set(Arc::new(DummyInstrumentRef(4))).unwrap();
         let a1 = assert_matches!(
             calls.pop(),
             Some(MetricEvent::CreateAttributes {
@@ -901,7 +936,17 @@ mod tests {
                 attributes,
                 update: MetricUpdateVal::Value(3)
             })
-            if DummyCustomAttrs::as_id(&attributes) == 2&& instrument.get().0 == 3
+            if DummyCustomAttrs::as_id(&attributes) == 2 && instrument.get().0 == 3
+        );
+        assert_matches!(
+            dbg!(calls.pop()),
+            Some(MetricEvent::Update{
+                instrument,
+                attributes,
+                update: MetricUpdateVal::Duration(d)
+            })
+            if DummyCustomAttrs::as_id(&attributes) == 1 && instrument.get().0 == 4
+               && d == Duration::from_secs_f64(1.2)
         );
     }
 }

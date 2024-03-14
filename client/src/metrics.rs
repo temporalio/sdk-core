@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 use temporal_sdk_core_api::telemetry::metrics::{
-    CoreMeter, Counter, Histogram, MetricAttributes, MetricKeyValue, MetricParameters,
+    CoreMeter, Counter, HistogramDuration, MetricAttributes, MetricKeyValue, MetricParameters,
     TemporalMeter,
 };
 use tonic::{body::BoxBody, transport::Channel};
@@ -27,8 +27,8 @@ pub struct MetricsContext {
     long_svc_request: Arc<dyn Counter>,
     long_svc_request_failed: Arc<dyn Counter>,
 
-    svc_request_latency: Arc<dyn Histogram>,
-    long_svc_request_latency: Arc<dyn Histogram>,
+    svc_request_latency: Arc<dyn HistogramDuration>,
+    long_svc_request_latency: Arc<dyn HistogramDuration>,
 }
 
 impl MetricsContext {
@@ -57,14 +57,14 @@ impl MetricsContext {
                 description: "Count of long-poll request failures by rpc name".into(),
                 unit: "".into(),
             }),
-            svc_request_latency: meter.histogram(MetricParameters {
+            svc_request_latency: meter.histogram_duration(MetricParameters {
                 name: "request_latency".into(),
-                unit: "ms".into(),
+                unit: "duration".into(),
                 description: "Histogram of client request latencies".into(),
             }),
-            long_svc_request_latency: meter.histogram(MetricParameters {
+            long_svc_request_latency: meter.histogram_duration(MetricParameters {
                 name: "long_request_latency".into(),
-                unit: "ms".into(),
+                unit: "duration".into(),
                 description: "Histogram of client long-poll request latencies".into(),
             }),
             meter,
@@ -103,11 +103,9 @@ impl MetricsContext {
     /// Record service request latency
     pub(crate) fn record_svc_req_latency(&self, dur: Duration) {
         if self.poll_is_long {
-            self.long_svc_request_latency
-                .record(dur.as_millis() as u64, &self.kvs);
+            self.long_svc_request_latency.record(dur, &self.kvs);
         } else {
-            self.svc_request_latency
-                .record(dur.as_millis() as u64, &self.kvs);
+            self.svc_request_latency.record(dur, &self.kvs);
         }
     }
 }
