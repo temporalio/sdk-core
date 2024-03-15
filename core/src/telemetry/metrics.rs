@@ -939,7 +939,7 @@ mod tests {
             if DummyCustomAttrs::as_id(&attributes) == 2 && instrument.get().0 == 3
         );
         assert_matches!(
-            dbg!(calls.pop()),
+            calls.pop(),
             Some(MetricEvent::Update{
                 instrument,
                 attributes,
