@@ -30,7 +30,7 @@ pub(crate) struct MeteredPermitDealer<SK: SlotKind> {
 
 impl<SK> MeteredPermitDealer<SK>
 where
-    SK: SlotKind,
+    SK: SlotKind + 'static,
 {
     pub(crate) fn new(
         supplier: Arc<dyn SlotSupplier<SlotKind = SK> + Send + Sync>,
@@ -70,38 +70,29 @@ where
 
     fn build_owned(&self, res: SlotSupplierPermit) -> OwnedMeteredSemPermit {
         self.unused_claimants.fetch_add(1, Ordering::Release);
-        // self.record();
+        let record_fn = self.record_owned();
+        record_fn(false);
         OwnedMeteredSemPermit {
             inner: res,
             unused_claimants: Some(self.unused_claimants.clone()),
-            // TODO: Fix
-            record_fn: Box::new(|_| {}),
+            record_fn,
         }
     }
 
-    // TODO: Move inside semaphore slot supplier impl
-    // fn record(&self) {
-    //     (self.record_fn)(
-    //         &self.metrics_ctx,
-    //         self.sem.available_permits() + self.unused_claimants.load(Ordering::Acquire),
-    //     );
-    // }
-    //
-    // fn record_owned(&self) -> Box<dyn Fn(bool) + Send + Sync> {
-    //     let rcf = self.record_fn;
-    //     let mets = self.metrics_ctx.clone();
-    //     let sem = self.sem.clone();
-    //     let uc = self.unused_claimants.clone();
-    //     // When being called from the drop impl, the semaphore permit isn't actually dropped yet,
-    //     // so account for that.
-    //     Box::new(move |add_one: bool| {
-    //         let extra = usize::from(add_one);
-    //         rcf(
-    //             &mets,
-    //             sem.available_permits() + uc.load(Ordering::Acquire) + extra,
-    //         )
-    //     })
-    // }
+    fn record_owned(&self) -> Box<dyn Fn(bool) + Send + Sync> {
+        let rcf = self.record_fn;
+        let mets = self.metrics_ctx.clone();
+        let supp = self.supplier.clone();
+        let uc = self.unused_claimants.clone();
+        // When being called from the drop impl, the semaphore permit isn't actually dropped yet,
+        // so account for that.
+        Box::new(move |add_one: bool| {
+            let extra = usize::from(add_one);
+            if let Some(avail) = supp.available_slots() {
+                rcf(&mets, avail + uc.load(Ordering::Acquire) + extra)
+            }
+        })
+    }
 }
 
 /// A version of [MeteredPermitDealer] that can be closed and supports waiting for close to complete.
@@ -249,12 +240,24 @@ macro_rules! dbg_panic {
 pub(crate) use dbg_panic;
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+    use crate::worker::slot_supplier::FixedSizeSlotSupplier;
+    use temporal_sdk_core_api::worker::WorkflowSlotKind;
+
+    pub fn fixed_size_permit_dealer<SK: SlotKind + Send + Sync + 'static>(
+        size: usize,
+    ) -> MeteredPermitDealer<SK> {
+        MeteredPermitDealer::new(
+            Arc::new(FixedSizeSlotSupplier::new(size)),
+            MetricsContext::no_op(),
+            |_, _| {},
+        )
+    }
 
     #[tokio::test]
     async fn closable_semaphore_permit_drop_returns_permit() {
-        let inner = MeteredPermitDealer::new(2, MetricsContext::no_op(), |_, _| {});
+        let inner = fixed_size_permit_dealer::<WorkflowSlotKind>(2);
         let sem = ClosableMeteredPermitDealer::new_arc(Arc::new(inner));
         let perm = sem.try_acquire_owned().unwrap();
         let permits = sem.outstanding_permits.load(Ordering::Acquire);
@@ -266,7 +269,7 @@ mod tests {
 
     #[tokio::test]
     async fn closable_semaphore_permit_drop_after_close_resolves_close_complete() {
-        let inner = MeteredPermitDealer::new(2, MetricsContext::no_op(), |_, _| {});
+        let inner = fixed_size_permit_dealer::<WorkflowSlotKind>(2);
         let sem = ClosableMeteredPermitDealer::new_arc(Arc::new(inner));
         let perm = sem.try_acquire_owned().unwrap();
         sem.close();
@@ -276,7 +279,7 @@ mod tests {
 
     #[tokio::test]
     async fn closable_semaphore_close_complete_ready_if_unused() {
-        let inner = MeteredPermitDealer::new(2, MetricsContext::no_op(), |_, _| {});
+        let inner = fixed_size_permit_dealer::<WorkflowSlotKind>(2);
         let sem = ClosableMeteredPermitDealer::new_arc(Arc::new(inner));
         sem.close();
         sem.close_complete().await;
@@ -284,7 +287,7 @@ mod tests {
 
     #[tokio::test]
     async fn closable_semaphore_does_not_hand_out_permits_after_closed() {
-        let inner = MeteredPermitDealer::new(2, MetricsContext::no_op(), |_, _| {});
+        let inner = fixed_size_permit_dealer::<WorkflowSlotKind>(2);
         let sem = ClosableMeteredPermitDealer::new_arc(Arc::new(inner));
         sem.close();
         let perm = sem.try_acquire_owned().unwrap_err();

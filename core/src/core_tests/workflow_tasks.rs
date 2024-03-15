@@ -10,8 +10,11 @@ use crate::{
         test_worker_cfg, FakeWfResponses, MockPollCfg, MocksHolder, ResponseType, WorkerExt,
         WorkflowCachingPolicy::{self, AfterEveryReply, NonSticky},
     },
-    worker::client::mocks::{mock_manual_workflow_client, mock_workflow_client},
-    Worker,
+    worker::{
+        client::mocks::{mock_manual_workflow_client, mock_workflow_client},
+        slot_supplier::FixedSizeSlotSupplier,
+    },
+    Worker, WorkerConfigSlotSupplierExt,
 };
 use futures::{stream, FutureExt};
 use rstest::{fixture, rstest};
@@ -911,7 +914,7 @@ async fn max_wft_respected() {
     let mh = MockPollCfg::new(hists.into_iter().collect(), true, 0);
     let mut worker = mock_sdk_cfg(mh, |cfg| {
         cfg.max_cached_workflows = total_wfs as usize;
-        cfg.max_outstanding_workflow_tasks = 1;
+        cfg.workflow_task_slot_supplier = Arc::new(FixedSizeSlotSupplier::new(1));
     });
     let active_count: &'static _ = Box::leak(Box::new(Semaphore::new(1)));
     worker.register_wf(DEFAULT_WORKFLOW_TYPE, move |ctx: WfContext| async move {
@@ -1506,7 +1509,7 @@ async fn failing_wft_doesnt_eat_permit_forever() {
     let mut mock = build_mock_pollers(mock);
     mock.worker_cfg(|cfg| {
         cfg.max_cached_workflows = 2;
-        cfg.max_outstanding_workflow_tasks = 2;
+        cfg.workflow_task_slot_supplier = Arc::new(FixedSizeSlotSupplier::new(2));
     });
     let outstanding_mock_tasks = mock.outstanding_task_map.clone();
     let worker = mock_worker(mock);
@@ -1546,7 +1549,7 @@ async fn failing_wft_doesnt_eat_permit_forever() {
     outstanding_mock_tasks.unwrap().release_run(&run_id);
     let activation = worker.poll_workflow_activation().await.unwrap();
     // There should be no change in permits, since this just unbuffered the buffered task
-    assert_eq!(worker.available_wft_permits(), 1);
+    assert_eq!(worker.available_wft_permits(), Some(1));
     worker
         .complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
             activation.run_id,
@@ -1555,7 +1558,7 @@ async fn failing_wft_doesnt_eat_permit_forever() {
         .await
         .unwrap();
     worker.shutdown().await;
-    assert_eq!(worker.available_wft_permits(), 2);
+    assert_eq!(worker.available_wft_permits(), Some(2));
 }
 
 #[tokio::test]
@@ -1582,7 +1585,7 @@ async fn cache_miss_will_fetch_history() {
     mock.worker_cfg(|cfg| {
         cfg.max_cached_workflows = 1;
         // Also verifies tying the WFT permit to the fetch request doesn't get us stuck
-        cfg.max_outstanding_workflow_tasks = 1;
+        cfg.workflow_task_slot_supplier = Arc::new(FixedSizeSlotSupplier::new(1));
     });
     let worker = mock_worker(mock);
 
@@ -1808,7 +1811,7 @@ async fn poll_faster_than_complete_wont_overflow_cache() {
     let mut mock = build_mock_pollers(mock_cfg);
     mock.worker_cfg(|wc| {
         wc.max_cached_workflows = 3;
-        wc.max_outstanding_workflow_tasks = 3;
+        wc.workflow_task_slot_supplier = Arc::new(FixedSizeSlotSupplier::new(3));
     });
     let core = mock_worker(mock);
     // Poll 4 times, completing once, such that max tasks are never exceeded
@@ -1915,7 +1918,7 @@ async fn poll_faster_than_complete_wont_overflow_cache() {
 
     join!(blocking_poll, complete_evict);
     // p5 outstanding and final poll outstanding -- hence one permit available
-    assert_eq!(core.available_wft_permits(), 1);
+    assert_eq!(core.available_wft_permits(), Some(1));
     assert_eq!(core.cached_workflows().await, 3);
 }
 
@@ -2663,8 +2666,8 @@ async fn poller_wont_run_ahead_of_task_slots() {
     }
 
     assert_eq!(worker.outstanding_workflow_tasks().await, 10);
-    assert_eq!(worker.available_wft_permits(), 0);
-    assert_eq!(worker.unused_wft_permits(), 0);
+    assert_eq!(worker.available_wft_permits(), Some(0));
+    assert_eq!(worker.unused_wft_permits(), Some(0));
 
     // This one should hang until we complete some tasks since we're at the limit
     let hung_poll = async {

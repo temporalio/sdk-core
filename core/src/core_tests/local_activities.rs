@@ -5,7 +5,9 @@ use crate::{
         build_mock_pollers, hist_to_poll_resp, mock_sdk, mock_sdk_cfg, mock_worker,
         single_hist_mock_sg, MockPollCfg, ResponseType, WorkerExt,
     },
-    worker::{client::mocks::mock_workflow_client, LEGACY_QUERY_ID},
+    worker::{
+        client::mocks::mock_workflow_client, slot_supplier::FixedSizeSlotSupplier, LEGACY_QUERY_ID,
+    },
 };
 use anyhow::anyhow;
 use crossbeam_queue::SegQueue;
@@ -187,7 +189,7 @@ async fn local_act_heartbeat(#[case] shutdown_middle: bool) {
     mh.enforce_correct_number_of_polls = false;
     let mut worker = mock_sdk_cfg(mh, |wc| {
         wc.max_cached_workflows = 1;
-        wc.max_outstanding_workflow_tasks = 1;
+        wc.workflow_task_slot_supplier = Arc::new(FixedSizeSlotSupplier::new(1));
     });
     let core = worker.core_worker.clone();
 
@@ -1084,7 +1086,7 @@ async fn local_act_records_nonfirst_attempts_ok() {
     }));
     let mut worker = mock_sdk_cfg(mh, |wc| {
         wc.max_cached_workflows = 1;
-        wc.max_outstanding_workflow_tasks = 1;
+        wc.workflow_task_slot_supplier = Arc::new(FixedSizeSlotSupplier::new(1));
     });
 
     worker.register_wf(

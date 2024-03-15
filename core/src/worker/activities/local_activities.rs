@@ -241,16 +241,12 @@ impl LocalActivityManager {
     }
 
     #[cfg(test)]
-    fn test(
-        slot_supplier: Arc<dyn SlotSupplier<SlotKind = LocalActivitySlotKind> + Send + Sync>,
-    ) -> Self {
+    fn test(max_concurrent: usize) -> Self {
+        use crate::worker::slot_supplier::FixedSizeSlotSupplier;
+
+        let ss = Arc::new(FixedSizeSlotSupplier::new(max_concurrent));
         let (hb_tx, _hb_rx) = unbounded_channel();
-        Self::new(
-            slot_supplier,
-            "fake_ns".to_string(),
-            hb_tx,
-            MetricsContext::no_op(),
-        )
+        Self::new(ss, "fake_ns".to_string(), hb_tx, MetricsContext::no_op())
     }
 
     #[cfg(test)]

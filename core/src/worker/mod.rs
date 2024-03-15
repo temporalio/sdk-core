@@ -4,6 +4,7 @@ mod slot_provider;
 pub(crate) mod slot_supplier;
 mod workflow;
 
+pub use slot_supplier::WorkerConfigSlotSupplierExt;
 pub use temporal_sdk_core_api::worker::{WorkerConfig, WorkerConfigBuilder};
 
 pub(crate) use activities::{
@@ -728,7 +729,7 @@ mod tests {
                 .as_ref()
                 .unwrap()
                 .remaining_activity_capacity(),
-            5
+            Some(5)
         );
     }
 
@@ -745,16 +746,15 @@ mod tests {
             .unwrap();
         let worker = Worker::new_test(cfg, mock_client);
         assert!(worker.activity_poll().await.is_err());
-        assert_eq!(worker.at_task_mgr.unwrap().remaining_activity_capacity(), 5);
+        assert_eq!(
+            worker.at_task_mgr.unwrap().remaining_activity_capacity(),
+            Some(5)
+        );
     }
 
     #[test]
     fn max_polls_calculated_properly() {
-        let mut wcb = WorkerConfigBuilder::default();
-        let cfg = wcb
-            .namespace("default")
-            .task_queue("whatever")
-            .worker_build_id("test_bin_id")
+        let cfg = test_worker_cfg()
             .max_concurrent_wft_polls(5_usize)
             .build()
             .unwrap();

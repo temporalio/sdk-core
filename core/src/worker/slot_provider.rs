@@ -87,6 +87,7 @@ impl SlotProviderTrait for SlotProvider {
 mod tests {
     use super::*;
 
+    use crate::abstractions::tests::fixed_size_permit_dealer;
     use temporal_sdk_core_protos::temporal::api::{
         common::v1::{WorkflowExecution, WorkflowType},
         history::v1::History,
@@ -107,11 +108,7 @@ mod tests {
 
     #[tokio::test]
     async fn slot_propagates_through_channel() {
-        let wft_semaphore = Arc::new(MeteredPermitDealer::new(
-            2,
-            crate::MetricsContext::no_op(),
-            |_, _| {},
-        ));
+        let wft_semaphore = Arc::new(fixed_size_permit_dealer(2));
         let (external_wft_tx, mut external_wft_rx) = unbounded_channel();
 
         let provider = SlotProvider::new(
@@ -134,11 +131,7 @@ mod tests {
         let (external_wft_tx, mut external_wft_rx) = unbounded_channel();
         {
             let external_wft_tx = external_wft_tx;
-            let wft_semaphore = Arc::new(MeteredPermitDealer::new(
-                2,
-                crate::MetricsContext::no_op(),
-                |_, _| {},
-            ));
+            let wft_semaphore = Arc::new(fixed_size_permit_dealer(2));
             let provider = SlotProvider::new(
                 "my_namespace".to_string(),
                 "my_queue".to_string(),
@@ -152,11 +145,7 @@ mod tests {
 
     #[tokio::test]
     async fn unused_slots_reclaimed() {
-        let wft_semaphore = Arc::new(MeteredPermitDealer::new(
-            2,
-            crate::MetricsContext::no_op(),
-            |_, _| {},
-        ));
+        let wft_semaphore = Arc::new(fixed_size_permit_dealer(2));
         {
             let wft_semaphore = wft_semaphore.clone();
             let (external_wft_tx, _) = unbounded_channel();
@@ -168,9 +157,9 @@ mod tests {
             );
             let slot = provider.try_reserve_wft_slot();
             assert!(slot.is_some());
-            assert_eq!(wft_semaphore.available_permits(), 1);
+            assert_eq!(wft_semaphore.available_permits(), Some(1));
             // drop slot without using it
         }
-        assert_eq!(wft_semaphore.available_permits(), 2);
+        assert_eq!(wft_semaphore.available_permits(), Some(2));
     }
 }

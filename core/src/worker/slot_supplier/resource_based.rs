@@ -39,7 +39,7 @@ where
 
     fn try_reserve_slot(&self) -> Option<SlotSupplierPermit> {
         if self.can_reserve() {
-            Some(SlotSupplierPermit::OtherImpl)
+            Some(SlotSupplierPermit::NoData)
         } else {
             None
         }
@@ -114,9 +114,9 @@ mod tests {
             assumed_maximum_marginal_contribution: 0.1,
             mem_info_supplier: fmis,
         };
-        assert!(rbs.try_reserve_slot());
+        assert!(rbs.try_reserve_slot().is_some());
         used.store(90_000, Ordering::Release);
-        assert!(!rbs.try_reserve_slot());
+        assert!(rbs.try_reserve_slot().is_none());
     }
 
     #[tokio::test]

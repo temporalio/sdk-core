@@ -38,7 +38,7 @@ pub use temporal_sdk_core_api as api;
 pub use temporal_sdk_core_protos as protos;
 pub use temporal_sdk_core_protos::TaskToken;
 pub use url::Url;
-pub use worker::{Worker, WorkerConfig, WorkerConfigBuilder};
+pub use worker::{Worker, WorkerConfig, WorkerConfigBuilder, WorkerConfigSlotSupplierExt};
 
 use crate::{
     replay::{HistoryForReplay, ReplayWorkerInput},

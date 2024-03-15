@@ -445,7 +445,7 @@ impl WorkerActivityTasks {
     }
 
     #[cfg(test)]
-    pub(crate) fn remaining_activity_capacity(&self) -> usize {
+    pub(crate) fn remaining_activity_capacity(&self) -> Option<usize> {
         self.eager_activities_semaphore.unused_permits()
     }
 }
@@ -698,7 +698,8 @@ fn worker_shutdown_failure() -> Failure {
 mod tests {
     use super::*;
     use crate::{
-        pollers::new_activity_task_buffer, prost_dur, worker::client::mocks::mock_workflow_client,
+        abstractions::tests::fixed_size_permit_dealer, pollers::new_activity_task_buffer,
+        prost_dur, worker::client::mocks::mock_workflow_client,
     };
     use temporal_sdk_core_protos::coresdk::activity_result::ActivityExecutionResult;
 
@@ -730,11 +731,7 @@ mod tests {
             .times(2)
             .returning(|_, _| Ok(Default::default()));
         let mock_client = Arc::new(mock_client);
-        let sem = Arc::new(MeteredPermitDealer::new(
-            10,
-            MetricsContext::no_op(),
-            MetricsContext::available_task_slots,
-        ));
+        let sem = Arc::new(fixed_size_permit_dealer(10));
         let shutdown_token = CancellationToken::new();
         let ap = new_activity_task_buffer(
             mock_client.clone(),
@@ -823,11 +820,7 @@ mod tests {
                 })
             });
         let mock_client = Arc::new(mock_client);
-        let sem = Arc::new(MeteredPermitDealer::new(
-            1, // Just one task at a time
-            MetricsContext::no_op(),
-            MetricsContext::available_task_slots,
-        ));
+        let sem = Arc::new(fixed_size_permit_dealer(1));
         let shutdown_token = CancellationToken::new();
         let ap = new_activity_task_buffer(
             mock_client.clone(),
@@ -898,11 +891,7 @@ mod tests {
             .times(2)
             .returning(|_, _| Ok(Default::default()));
         let mock_client = Arc::new(mock_client);
-        let sem = Arc::new(MeteredPermitDealer::new(
-            1, // Just one task at a time
-            MetricsContext::no_op(),
-            MetricsContext::available_task_slots,
-        ));
+        let sem = Arc::new(fixed_size_permit_dealer(1));
         let shutdown_token = CancellationToken::new();
         let ap = new_activity_task_buffer(
             mock_client.clone(),

@@ -1,10 +1,11 @@
 use crate::errors::WorkflowErrorType;
 use std::{
+    any::Any,
     collections::{HashMap, HashSet},
+    sync::Arc,
     time::Duration,
 };
 
-const MAX_OUTSTANDING_WFT_DEFAULT: usize = 100;
 const MAX_CONCURRENT_WFT_POLLS_DEFAULT: usize = 5;
 
 /// Defines per-worker configuration options
@@ -33,12 +34,15 @@ pub struct WorkerConfig {
     #[builder(default = "0")]
     pub max_cached_workflows: usize,
     // TODO: DOC
+    #[builder(setter(into = false))]
     pub workflow_task_slot_supplier:
         Arc<dyn SlotSupplier<SlotKind = WorkflowSlotKind> + Send + Sync>,
     // TODO: DOC
+    #[builder(setter(into = false))]
     pub activity_task_slot_supplier:
         Arc<dyn SlotSupplier<SlotKind = ActivitySlotKind> + Send + Sync>,
     // TODO: DOC
+    #[builder(setter(into = false))]
     pub local_activity_task_slot_supplier:
         Arc<dyn SlotSupplier<SlotKind = LocalActivitySlotKind> + Send + Sync>,
     /// Maximum number of concurrent poll workflow task requests we will perform at a time on this
@@ -267,8 +271,8 @@ pub trait SlotSupplier {
 }
 
 pub enum SlotSupplierPermit {
-    // Semaphore(OwnedSemaphorePermit),
-    OtherImpl,
+    Data(Box<dyn Any + Send + Sync>),
+    NoData,
 }
 
 pub enum SlotReleaseReason {

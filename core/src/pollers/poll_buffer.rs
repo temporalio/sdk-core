@@ -325,7 +325,8 @@ where
 mod tests {
     use super::*;
     use crate::{
-        telemetry::metrics::MetricsContext, worker::client::mocks::mock_manual_workflow_client,
+        abstractions::tests::fixed_size_permit_dealer,
+        worker::client::mocks::mock_manual_workflow_client,
     };
     use futures::FutureExt;
     use std::time::Duration;
@@ -354,11 +355,7 @@ mod tests {
                 normal_name: "".to_string(),
             },
             1,
-            Arc::new(MeteredPermitDealer::new(
-                10,
-                MetricsContext::no_op(),
-                |_, _| {},
-            )),
+            Arc::new(fixed_size_permit_dealer(10)),
             CancellationToken::new(),
             None::<fn(usize)>,
         );

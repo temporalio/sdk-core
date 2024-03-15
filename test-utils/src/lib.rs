@@ -36,6 +36,7 @@ use temporal_sdk_core::{
     replay::ReplayWorkerInput,
     telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter},
     ClientOptions, ClientOptionsBuilder, CoreRuntime, WorkerConfigBuilder,
+    WorkerConfigSlotSupplierExt,
 };
 use temporal_sdk_core_api::{
     errors::{PollActivityError, PollWfError},
@@ -331,20 +332,20 @@ impl CoreWfStarter {
         self
     }
 
-    // pub fn max_wft(&mut self, max: usize) -> &mut Self {
-    //     self.worker_config.max_outstanding_workflow_tasks(max);
-    //     self
-    // }
-    //
-    // pub fn max_at(&mut self, max: usize) -> &mut Self {
-    //     self.worker_config.max_outstanding_activities(max);
-    //     self
-    // }
-    //
-    // pub fn max_local_at(&mut self, max: usize) -> &mut Self {
-    //     self.worker_config.max_outstanding_local_activities(max);
-    //     self
-    // }
+    pub fn max_wft(&mut self, max: usize) -> &mut Self {
+        self.worker_config.max_outstanding_workflow_tasks(max);
+        self
+    }
+
+    pub fn max_at(&mut self, max: usize) -> &mut Self {
+        self.worker_config.max_outstanding_activities(max);
+        self
+    }
+
+    pub fn max_local_at(&mut self, max: usize) -> &mut Self {
+        self.worker_config.max_outstanding_local_activities(max);
+        self
+    }
 
     pub fn max_at_polls(&mut self, max: usize) -> &mut Self {
         self.worker_config.max_concurrent_at_polls(max);

@@ -66,10 +66,12 @@ pub(crate) fn validate_wft(
 mod tests {
     use super::*;
     use crate::{
-        abstractions::MeteredPermitDealer, pollers::MockPermittedPollBuffer, test_help::mock_poller,
+        abstractions::tests::fixed_size_permit_dealer, pollers::MockPermittedPollBuffer,
+        test_help::mock_poller,
     };
     use futures::{pin_mut, StreamExt};
     use std::sync::Arc;
+    use temporal_sdk_core_api::worker::WorkflowSlotKind;
 
     #[tokio::test]
     async fn poll_timeouts_do_not_produce_responses() {
@@ -80,11 +82,7 @@ mod tests {
             .returning(|| Some(Ok(PollWorkflowTaskQueueResponse::default())));
         mock_poller.expect_poll().times(1).returning(|| None);
         mock_poller.expect_shutdown().times(1).returning(|| ());
-        let sem = Arc::new(MeteredPermitDealer::new(
-            10,
-            MetricsContext::no_op(),
-            MetricsContext::available_task_slots,
-        ));
+        let sem = Arc::new(fixed_size_permit_dealer::<WorkflowSlotKind>(10));
         let stream = new_wft_poller(
             Box::new(MockPermittedPollBuffer::new(sem, mock_poller)),
             MetricsContext::no_op(),
@@ -100,11 +98,7 @@ mod tests {
             .expect_poll()
             .times(1)
             .returning(|| Some(Err(tonic::Status::internal("ahhh"))));
-        let sem = Arc::new(MeteredPermitDealer::new(
-            10,
-            MetricsContext::no_op(),
-            MetricsContext::available_task_slots,
-        ));
+        let sem = Arc::new(fixed_size_permit_dealer::<WorkflowSlotKind>(10));
         let stream = new_wft_poller(
             Box::new(MockPermittedPollBuffer::new(sem, mock_poller)),
             MetricsContext::no_op(),

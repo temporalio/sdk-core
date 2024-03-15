@@ -1,7 +1,10 @@
 use assert_matches::assert_matches;
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use temporal_client::{WorkflowClientTrait, WorkflowOptions, WorkflowService};
-use temporal_sdk_core::{init_worker, telemetry::start_prometheus_metric_exporter, CoreRuntime};
+use temporal_sdk_core::{
+    init_worker, telemetry::start_prometheus_metric_exporter, CoreRuntime,
+    WorkerConfigSlotSupplierExt,
+};
 use temporal_sdk_core_api::{
     telemetry::{
         metrics::{CoreMeter, MetricAttributes, MetricParameters},
