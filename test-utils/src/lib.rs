@@ -97,6 +97,17 @@ pub async fn init_core_and_create_wf(test_name: &str) -> CoreWfStarter {
     starter
 }
 
+pub fn integ_worker_config(tq: &str) -> WorkerConfigBuilder {
+    let mut b = WorkerConfigBuilder::default();
+    b.namespace(NAMESPACE)
+        .task_queue(tq)
+        .max_outstanding_activities(100)
+        .max_outstanding_local_activities(100)
+        .max_outstanding_workflow_tasks(100)
+        .worker_build_id("test_build_id");
+    b
+}
+
 /// Create a worker replay instance preloaded with provided histories. Returns the worker impl.
 pub fn init_core_replay_preloaded<I>(test_name: &str, histories: I) -> Arc<dyn CoreWorker>
 where
@@ -110,10 +121,7 @@ where
     I: Stream<Item = HistoryForReplay> + Send + 'static,
 {
     init_integ_telem();
-    let worker_cfg = WorkerConfigBuilder::default()
-        .namespace(NAMESPACE)
-        .task_queue(test_name)
-        .worker_build_id("test_bin_id")
+    let worker_cfg = integ_worker_config(test_name)
         .build()
         .expect("Configuration options construct properly");
     let worker = init_replay_worker(ReplayWorkerInput::new(worker_cfg, histories))
@@ -188,11 +196,9 @@ impl CoreWfStarter {
         let rand_bytes: Vec<u8> = rand::thread_rng().sample_iter(&Standard).take(6).collect();
         let task_q_salt = BASE64_STANDARD.encode(rand_bytes);
         let task_queue = format!("{test_name}_{task_q_salt}");
-        let mut worker_config = WorkerConfigBuilder::default();
+        let mut worker_config = integ_worker_config(&task_queue);
         worker_config
             .namespace(env::var(INTEG_NAMESPACE_ENV_VAR).unwrap_or(NAMESPACE.to_string()))
-            .task_queue(task_queue.clone())
-            .worker_build_id("test_build_id")
             .max_cached_workflows(1000_usize);
         Self {
             task_queue_name: task_queue,
