@@ -47,11 +47,16 @@ impl Drop for AbortOnDrop {
     }
 }
 
-pub fn prom_metrics() -> (TelemetryOptions, SocketAddr, AbortOnDrop) {
+pub fn prom_metrics(
+    use_seconds: bool,
+    show_units: bool,
+) -> (TelemetryOptions, SocketAddr, AbortOnDrop) {
     let mut telemopts = get_integ_telem_options();
     let prom_info = start_prometheus_metric_exporter(
         PrometheusExporterOptionsBuilder::default()
             .socket_addr(ANY_PORT.parse().unwrap())
+            .use_seconds_for_durations(use_seconds)
+            .unit_suffix(show_units)
             .build()
             .unwrap(),
     )
@@ -66,9 +71,10 @@ pub fn prom_metrics() -> (TelemetryOptions, SocketAddr, AbortOnDrop) {
     )
 }
 
+#[rstest::rstest]
 #[tokio::test]
-async fn prometheus_metrics_exported() {
-    let (telemopts, addr, _aborter) = prom_metrics();
+async fn prometheus_metrics_exported(#[values(true, false)] use_seconds_latency: bool) {
+    let (telemopts, addr, _aborter) = prom_metrics(use_seconds_latency, false);
     let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
     let opts = get_integ_server_options();
     let mut raw_client = opts
@@ -89,6 +95,17 @@ async fn prometheus_metrics_exported() {
     assert!(body.contains(
         "temporal_request_latency_count{operation=\"GetSystemInfo\",service_name=\"temporal-core-sdk\"} 1"
     ));
+    if use_seconds_latency {
+        assert!(body.contains(
+            "temporal_request_latency_bucket{\
+             operation=\"GetSystemInfo\",service_name=\"temporal-core-sdk\",le=\"0.05\"}"
+        ));
+    } else {
+        assert!(body.contains(
+            "temporal_request_latency_bucket{\
+             operation=\"GetSystemInfo\",service_name=\"temporal-core-sdk\",le=\"50\"}"
+        ));
+    }
     // Verify counter names are appropriate (don't end w/ '_total')
     assert!(body.contains("temporal_request{"));
     // Verify non-temporal metrics meter does not prefix
@@ -106,7 +123,7 @@ async fn prometheus_metrics_exported() {
 
 #[tokio::test]
 async fn one_slot_worker_reports_available_slot() {
-    let (telemopts, addr, _aborter) = prom_metrics();
+    let (telemopts, addr, _aborter) = prom_metrics(false, false);
     let tq = "one_slot_worker_tq";
     let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
 
@@ -318,7 +335,7 @@ async fn query_of_closed_workflow_doesnt_tick_terminal_metric(
     )]
     completion: workflow_command::Variant,
 ) {
-    let (telemopts, addr, _aborter) = prom_metrics();
+    let (telemopts, addr, _aborter) = prom_metrics(false, false);
     let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
     let mut starter =
         CoreWfStarter::new_with_runtime("query_of_closed_workflow_doesnt_tick_terminal_metric", rt);
@@ -447,7 +464,7 @@ fn runtime_new() {
     .unwrap();
     let handle = rt.tokio_handle();
     let _rt = handle.enter();
-    let (telemopts, addr, _aborter) = prom_metrics();
+    let (telemopts, addr, _aborter) = prom_metrics(false, false);
     rt.telemetry_mut()
         .attach_late_init_metrics(telemopts.metrics.unwrap());
     let opts = get_integ_server_options();
@@ -464,4 +481,44 @@ fn runtime_new() {
         let body = get_text(format!("http://{addr}/metrics")).await;
         assert!(body.contains("temporal_request"));
     });
+}
+
+#[rstest::rstest]
+#[tokio::test]
+async fn latency_metrics(
+    #[values(true, false)] use_seconds_latency: bool,
+    #[values(true, false)] show_units: bool,
+) {
+    let (telemopts, addr, _aborter) = prom_metrics(use_seconds_latency, show_units);
+    let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
+    let mut starter = CoreWfStarter::new_with_runtime("latency_metrics", rt);
+    let worker = starter.get_worker().await;
+    starter.start_wf().await;
+    // Immediately finish workflow
+    let task = worker.poll_workflow_activation().await.unwrap();
+    worker
+        .complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+            task.run_id,
+            CompleteWorkflowExecution { result: None }.into(),
+        ))
+        .await
+        .unwrap();
+
+    let body = get_text(format!("http://{addr}/metrics")).await;
+    let matching_line = body
+        .lines()
+        .find(|l| l.starts_with("temporal_workflow_endtoend_latency"))
+        .unwrap();
+
+    if use_seconds_latency {
+        if show_units {
+            assert!(matching_line.contains("temporal_workflow_endtoend_latency_seconds"));
+        }
+        assert!(matching_line.contains("le=\"0.1\""));
+    } else {
+        if show_units {
+            assert!(matching_line.contains("temporal_workflow_endtoend_latency_milliseconds"));
+        }
+        assert!(matching_line.contains("le=\"100\""));
+    }
 }

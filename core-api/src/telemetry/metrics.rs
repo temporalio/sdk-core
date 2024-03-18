@@ -3,6 +3,7 @@ use std::{
     borrow::Cow,
     fmt::Debug,
     sync::{Arc, OnceLock},
+    time::Duration,
 };
 
 /// Implementors of this trait are expected to be defined in each language's bridge.
@@ -23,7 +24,14 @@ pub trait CoreMeter: Send + Sync + Debug {
     ) -> MetricAttributes;
     fn counter(&self, params: MetricParameters) -> Arc<dyn Counter>;
     fn histogram(&self, params: MetricParameters) -> Arc<dyn Histogram>;
+    fn histogram_f64(&self, params: MetricParameters) -> Arc<dyn HistogramF64>;
+    /// Create a histogram which records Durations. Implementations should choose to emit in
+    /// either milliseconds or seconds depending on how they have been configured.
+    /// [MetricParameters::unit] should be overwritten by implementations to be `ms` or `s`
+    /// accordingly.
+    fn histogram_duration(&self, params: MetricParameters) -> Arc<dyn HistogramDuration>;
     fn gauge(&self, params: MetricParameters) -> Arc<dyn Gauge>;
+    fn gauge_f64(&self, params: MetricParameters) -> Arc<dyn GaugeF64>;
 }
 
 #[derive(Debug, Clone, derive_builder::Builder)]
@@ -74,8 +82,21 @@ impl CoreMeter for Arc<dyn CoreMeter> {
     fn histogram(&self, params: MetricParameters) -> Arc<dyn Histogram> {
         self.as_ref().histogram(params)
     }
+
+    fn histogram_f64(&self, params: MetricParameters) -> Arc<dyn HistogramF64> {
+        self.as_ref().histogram_f64(params)
+    }
+
+    fn histogram_duration(&self, params: MetricParameters) -> Arc<dyn HistogramDuration> {
+        self.as_ref().histogram_duration(params)
+    }
+
     fn gauge(&self, params: MetricParameters) -> Arc<dyn Gauge> {
         self.as_ref().gauge(params)
+    }
+
+    fn gauge_f64(&self, params: MetricParameters) -> Arc<dyn GaugeF64> {
+        self.as_ref().gauge_f64(params)
     }
 }
 
@@ -158,22 +179,34 @@ pub trait Histogram: Send + Sync {
     // When referring to durations, this value is in millis
     fn record(&self, value: u64, attributes: &MetricAttributes);
 }
+pub trait HistogramF64: Send + Sync {
+    // When referring to durations, this value is in seconds
+    fn record(&self, value: f64, attributes: &MetricAttributes);
+}
+pub trait HistogramDuration: Send + Sync {
+    fn record(&self, value: Duration, attributes: &MetricAttributes);
+}
 
 pub trait Gauge: Send + Sync {
     // When referring to durations, this value is in millis
     fn record(&self, value: u64, attributes: &MetricAttributes);
+}
+pub trait GaugeF64: Send + Sync {
+    // When referring to durations, this value is in seconds
+    fn record(&self, value: f64, attributes: &MetricAttributes);
 }
 
 #[derive(Debug, Clone)]
 pub enum MetricEvent<I: BufferInstrumentRef> {
     Create {
         params: MetricParameters,
-        /// One you receive this event, call `set` on this with the initialized instrument reference
+        /// Once you receive this event, call `set` on this with the initialized instrument
+        /// reference
         populate_into: LazyBufferInstrument<I>,
         kind: MetricKind,
     },
     CreateAttributes {
-        /// One you receive this event, call `set` on this with the initialized attributes
+        /// Once you receive this event, call `set` on this with the initialized attributes
         populate_into: BufferAttributes,
         /// If not `None`, use these already-initialized attributes as the base (extended with
         /// `attributes`) for the ones you are about to initialize.
@@ -190,14 +223,18 @@ pub enum MetricEvent<I: BufferInstrumentRef> {
 pub enum MetricKind {
     Counter,
     Gauge,
+    GaugeF64,
     Histogram,
+    HistogramF64,
+    HistogramDuration,
 }
 #[derive(Debug, Clone, Copy)]
 pub enum MetricUpdateVal {
-    // Currently all deltas are natural numbers
     Delta(u64),
-    // Currently all values are natural numbers
+    DeltaF64(f64),
     Value(u64),
+    ValueF64(f64),
+    Duration(Duration),
 }
 
 pub trait MetricCallBufferer<I: BufferInstrumentRef>: Send + Sync {
@@ -260,7 +297,19 @@ impl CoreMeter for NoOpCoreMeter {
         Arc::new(NoOpInstrument)
     }
 
+    fn histogram_f64(&self, _: MetricParameters) -> Arc<dyn HistogramF64> {
+        Arc::new(NoOpInstrument)
+    }
+
+    fn histogram_duration(&self, _: MetricParameters) -> Arc<dyn HistogramDuration> {
+        Arc::new(NoOpInstrument)
+    }
+
     fn gauge(&self, _: MetricParameters) -> Arc<dyn Gauge> {
+        Arc::new(NoOpInstrument)
+    }
+
+    fn gauge_f64(&self, _: MetricParameters) -> Arc<dyn GaugeF64> {
         Arc::new(NoOpInstrument)
     }
 }
@@ -272,8 +321,17 @@ impl Counter for NoOpInstrument {
 impl Histogram for NoOpInstrument {
     fn record(&self, _: u64, _: &MetricAttributes) {}
 }
+impl HistogramF64 for NoOpInstrument {
+    fn record(&self, _: f64, _: &MetricAttributes) {}
+}
+impl HistogramDuration for NoOpInstrument {
+    fn record(&self, _: Duration, _: &MetricAttributes) {}
+}
 impl Gauge for NoOpInstrument {
     fn record(&self, _: u64, _: &MetricAttributes) {}
+}
+impl GaugeF64 for NoOpInstrument {
+    fn record(&self, _: f64, _: &MetricAttributes) {}
 }
 
 #[derive(Debug, Clone)]
@@ -321,6 +379,19 @@ mod otel_impls {
 
     impl Histogram for metrics::Histogram<u64> {
         fn record(&self, value: u64, attributes: &MetricAttributes) {
+            if let MetricAttributes::OTel { kvs } = attributes {
+                self.record(value, kvs);
+            } else {
+                debug_assert!(
+                    false,
+                    "Must use OTel attributes with an OTel metric implementation"
+                );
+            }
+        }
+    }
+
+    impl HistogramF64 for metrics::Histogram<f64> {
+        fn record(&self, value: f64, attributes: &MetricAttributes) {
             if let MetricAttributes::OTel { kvs } = attributes {
                 self.record(value, kvs);
             } else {
