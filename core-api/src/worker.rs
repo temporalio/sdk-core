@@ -270,6 +270,8 @@ pub trait SlotSupplier {
     fn available_slots(&self) -> Option<usize>;
 }
 
+pub struct SlotReservationContext {}
+
 pub enum SlotSupplierPermit {
     Data(Box<dyn Any + Send + Sync>),
     NoData,

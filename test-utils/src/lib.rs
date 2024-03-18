@@ -338,6 +338,7 @@ impl CoreWfStarter {
         self
     }
 
+    // TODO: Eliminate these dumb pass-through ones
     pub fn max_wft(&mut self, max: usize) -> &mut Self {
         self.worker_config.max_outstanding_workflow_tasks(max);
         self

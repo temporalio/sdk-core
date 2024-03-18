@@ -169,8 +169,12 @@ where
         self.notify_shutdown();
         while let Some(jh) = self.join_handles.next().await {
             if let Err(e) = jh {
-                if !e.is_cancelled() {
-                    dbg_panic!("Poller task did not terminate cleanly: {:?}", e);
+                if e.is_panic() {
+                    let as_panic = e.into_panic().downcast::<String>();
+                    dbg_panic!(
+                        "Poller task died or did not terminate cleanly: {:?}",
+                        as_panic
+                    );
                 }
             }
         }

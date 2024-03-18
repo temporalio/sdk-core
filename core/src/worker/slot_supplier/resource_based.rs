@@ -1,13 +1,27 @@
-use std::time::Duration;
+use crossbeam_utils::atomic::AtomicCell;
+use parking_lot::Mutex;
+use std::time::{Duration, Instant};
 use temporal_sdk_core_api::worker::{
     SlotKind, SlotReleaseReason, SlotSupplier, SlotSupplierPermit, WorkflowCacheSizer,
     WorkflowSlotInfo, WorkflowSlotKind, WorkflowSlotsInfo,
 };
 
-struct ResourceBasedWorkflowSlots<MI> {
+pub struct ResourceBasedWorkflowSlots<MI> {
     target_mem_usage: f64,
     assumed_maximum_marginal_contribution: f64,
     mem_info_supplier: MI,
+    max: usize,
+}
+
+impl ResourceBasedWorkflowSlots<SysinfoMem> {
+    pub fn new(target_mem_usage: f64, marginal_contribution: f64) -> Self {
+        Self {
+            target_mem_usage,
+            assumed_maximum_marginal_contribution: marginal_contribution,
+            mem_info_supplier: SysinfoMem::new(),
+            max: 200,
+        }
+    }
 }
 
 trait MemoryInfo {
@@ -33,7 +47,8 @@ where
             if let Some(p) = self.try_reserve_slot() {
                 return p;
             }
-            tokio::time::sleep(Duration::from_millis(5)).await
+            warn!("Waiting for slot");
+            tokio::time::sleep(Duration::from_millis(100)).await
         }
     }
 
@@ -76,6 +91,49 @@ impl<MI: MemoryInfo + Sync> ResourceBasedWorkflowSlots<MI> {
     fn can_reserve(&self) -> bool {
         self.mem_info_supplier.process_used_percent() + self.assumed_maximum_marginal_contribution
             <= self.target_mem_usage
+    }
+}
+
+#[derive(Debug)]
+pub struct SysinfoMem {
+    sys: Mutex<sysinfo::System>,
+    pid: sysinfo::Pid,
+    last_refresh: AtomicCell<Instant>,
+}
+impl SysinfoMem {
+    fn new() -> Self {
+        let mut sys = sysinfo::System::new();
+        let pid = sysinfo::get_current_pid().expect("get pid works");
+        sys.refresh_processes();
+        sys.refresh_memory();
+        Self {
+            sys: Default::default(),
+            last_refresh: AtomicCell::new(Instant::now()),
+            pid,
+        }
+    }
+    fn refresh_if_needed(&self) {
+        // This is all quite expensive and meaningfully slows everything down if it's allowed to
+        // happen more often. A better approach than a lock would be needed to go faster.
+        if (Instant::now() - self.last_refresh.load()) > Duration::from_millis(100) {
+            let mut lock = self.sys.lock();
+            lock.refresh_memory();
+            lock.refresh_processes();
+            self.last_refresh.store(Instant::now())
+        }
+    }
+}
+impl MemoryInfo for SysinfoMem {
+    fn total_mem(&self) -> u64 {
+        self.refresh_if_needed();
+        self.sys.lock().total_memory()
+    }
+
+    fn process_used_mem(&self) -> u64 {
+        self.refresh_if_needed();
+        let sys = self.sys.lock();
+        let proc = sys.process(self.pid).expect("exists");
+        proc.memory()
     }
 }
 

@@ -6,6 +6,8 @@ use tokio::sync::Semaphore;
 
 mod resource_based;
 
+pub use resource_based::ResourceBasedWorkflowSlots;
+
 pub(crate) struct FixedSizeSlotSupplier<SK> {
     sem: Arc<Semaphore>,
     _pd: PhantomData<SK>,
