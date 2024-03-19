@@ -5,12 +5,21 @@ use crate::{
     MetricsContext,
 };
 use futures::{stream, Stream};
+use temporal_sdk_core_api::worker::WorkflowSlotKind;
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse;
 
 pub(crate) fn new_wft_poller(
     poller: BoxedWFPoller,
     metrics: MetricsContext,
-) -> impl Stream<Item = Result<(ValidPollWFTQResponse, OwnedMeteredSemPermit), tonic::Status>> {
+) -> impl Stream<
+    Item = Result<
+        (
+            ValidPollWFTQResponse,
+            OwnedMeteredSemPermit<WorkflowSlotKind>,
+        ),
+        tonic::Status,
+    >,
+> {
     stream::unfold((poller, metrics), |(poller, metrics)| async move {
         loop {
             return match poller.poll().await {

@@ -258,8 +258,8 @@ pub trait SlotSupplier {
     fn mark_slot_used(
         &self,
         // TODO: Should be enum of either or
-        info: Option<&<Self::SlotKind as SlotKind>::Info>,
-        error: Option<&()>,
+        info: Option<<Self::SlotKind as SlotKind>::Info<'_>>,
+        error: Option<()>,
     );
 
     /// Frees a slot.
@@ -283,38 +283,42 @@ pub enum SlotReleaseReason {
     Error, // TODO: Details
 }
 
-pub struct WorkflowSlotInfo {
-    workflow_type: String,
+pub struct WorkflowSlotInfo<'a> {
+    pub workflow_type: &'a str,
     // etc...
 }
 
-pub struct ActivitySlotInfo {
-    activity_type: String,
+pub struct ActivitySlotInfo<'a> {
+    pub activity_type: &'a str,
     // etc...
 }
-pub struct LocalActivitySlotInfo {
-    activity_type: String,
+pub struct LocalActivitySlotInfo<'a> {
+    pub activity_type: &'a str,
     // etc...
 }
 
+#[derive(Debug)]
 pub struct WorkflowSlotKind {}
+#[derive(Debug)]
 pub struct ActivitySlotKind {}
+#[derive(Debug)]
 pub struct LocalActivitySlotKind {}
 pub trait SlotKind {
-    type Info;
+    type Info<'a>;
 }
 impl SlotKind for WorkflowSlotKind {
-    type Info = WorkflowSlotInfo;
+    type Info<'a> = WorkflowSlotInfo<'a>;
 }
 impl SlotKind for ActivitySlotKind {
-    type Info = ActivitySlotInfo;
+    type Info<'a> = ActivitySlotInfo<'a>;
 }
 impl SlotKind for LocalActivitySlotKind {
-    type Info = LocalActivitySlotInfo;
+    type Info<'a> = LocalActivitySlotInfo<'a>;
 }
 
 pub struct WorkflowSlotsInfo {
-    used_slots: Vec<WorkflowSlotInfo>,
+    // TODO: Use wf slot info
+    used_slots: Vec<()>,
     /// Current size of the workflow cache.
     num_cached_workflows: usize,
     /// The limit on the size of the cache, if any. This is important for users to know as discussed below in the section

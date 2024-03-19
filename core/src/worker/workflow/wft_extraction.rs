@@ -12,6 +12,7 @@ use crate::{
 use futures::Stream;
 use futures_util::{stream, stream::PollNext, FutureExt, StreamExt};
 use std::{future, sync::Arc};
+use temporal_sdk_core_api::worker::{WorkflowSlotInfo, WorkflowSlotKind};
 use temporal_sdk_core_protos::TaskToken;
 use tracing::Span;
 
@@ -40,7 +41,13 @@ pub(super) enum WFTExtractorOutput {
     PollerDead,
 }
 
-pub(crate) type WFTStreamIn = Result<(ValidPollWFTQResponse, OwnedMeteredSemPermit), tonic::Status>;
+pub(crate) type WFTStreamIn = Result<
+    (
+        ValidPollWFTQResponse,
+        OwnedMeteredSemPermit<WorkflowSlotKind>,
+    ),
+    tonic::Status,
+>;
 #[derive(derive_more::From, Debug)]
 pub(super) enum HistoryFetchReq {
     Full(CacheMissFetchReq, Arc<HistfetchRC>),
@@ -68,8 +75,10 @@ impl WFTExtractor {
                             let tt = wft.task_token.clone();
                             Ok(match HistoryPaginator::from_poll(wft, client).await {
                                 Ok((pag, prep)) => WFTExtractorOutput::NewWFT(PermittedWFT {
+                                    permit: permit.into_used(WorkflowSlotInfo {
+                                        workflow_type: prep.workflow_type.as_str(),
+                                    }),
                                     work: prep,
-                                    permit: permit.into_used(),
                                     paginator: pag,
                                 }),
                                 Err(err) => WFTExtractorOutput::FailedFetch {

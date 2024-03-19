@@ -58,7 +58,7 @@ use std::{
 };
 use temporal_sdk_core_api::{
     errors::{CompleteWfError, PollWfError},
-    worker::{WorkerConfig, WorkflowSlotKind},
+    worker::{ActivitySlotKind, WorkerConfig, WorkflowSlotKind},
 };
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -613,7 +613,7 @@ impl Workflows {
     /// Process eagerly returned activities from WFT completion
     fn handle_eager_activities(
         &self,
-        reserved_act_permits: Vec<TrackedOwnedMeteredSemPermit>,
+        reserved_act_permits: Vec<TrackedOwnedMeteredSemPermit<ActivitySlotKind>>,
         eager_acts: Vec<PollActivityTaskQueueResponse>,
     ) {
         if let Some(at_handle) = self.activity_tasks_handle.as_ref() {
@@ -657,7 +657,7 @@ impl Workflows {
     fn reserve_activity_slots_for_outgoing_commands(
         &self,
         commands: &mut [Command],
-    ) -> Vec<TrackedOwnedMeteredSemPermit> {
+    ) -> Vec<TrackedOwnedMeteredSemPermit<ActivitySlotKind>> {
         let mut reserved = vec![];
         for cmd in commands {
             if let Some(Attributes::ScheduleActivityTaskCommandAttributes(attrs)) =
@@ -757,7 +757,7 @@ enum ActivationOrAuto {
 #[debug(fmt = "PermittedWft({work:?})")]
 pub(crate) struct PermittedWFT {
     work: PreparedWFT,
-    permit: UsedMeteredSemPermit,
+    permit: UsedMeteredSemPermit<WorkflowSlotKind>,
     paginator: HistoryPaginator,
 }
 /// A WFT without a permit
@@ -803,7 +803,7 @@ struct OutstandingTask {
     start_time: Instant,
     /// The WFT permit owned by this task, ensures we don't exceed max concurrent WFT, and makes
     /// sure the permit is automatically freed when we delete the task.
-    permit: UsedMeteredSemPermit,
+    permit: UsedMeteredSemPermit<WorkflowSlotKind>,
 }
 
 impl OutstandingTask {

@@ -62,8 +62,8 @@ where
 
     fn mark_slot_used(
         &self,
-        _info: Option<&<Self::SlotKind as SlotKind>::Info>,
-        _error: Option<&()>,
+        _info: Option<<Self::SlotKind as SlotKind>::Info<'_>>,
+        _error: Option<()>,
     ) {
     }
 
@@ -171,6 +171,7 @@ mod tests {
             target_mem_usage: 0.8,
             assumed_maximum_marginal_contribution: 0.1,
             mem_info_supplier: fmis,
+            max: 1000,
         };
         assert!(rbs.try_reserve_slot().is_some());
         used.store(90_000, Ordering::Release);
@@ -185,6 +186,7 @@ mod tests {
             target_mem_usage: 0.8,
             assumed_maximum_marginal_contribution: 0.1,
             mem_info_supplier: fmis,
+            max: 1000,
         };
         let order = crossbeam_queue::ArrayQueue::new(2);
         let waits_free = async {

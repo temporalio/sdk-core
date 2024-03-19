@@ -15,16 +15,26 @@ use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollWorkflowTa
 use tokio::sync::mpsc::UnboundedSender;
 use tonic::Status;
 
-type WFTStreamSender =
-    UnboundedSender<Result<(ValidPollWFTQResponse, OwnedMeteredSemPermit), Status>>;
+type WFTStreamSender = UnboundedSender<
+    Result<
+        (
+            ValidPollWFTQResponse,
+            OwnedMeteredSemPermit<WorkflowSlotKind>,
+        ),
+        Status,
+    >,
+>;
 
 struct Slot {
-    permit: OwnedMeteredSemPermit,
+    permit: OwnedMeteredSemPermit<WorkflowSlotKind>,
     external_wft_tx: WFTStreamSender,
 }
 
 impl Slot {
-    fn new(permit: OwnedMeteredSemPermit, external_wft_tx: WFTStreamSender) -> Self {
+    fn new(
+        permit: OwnedMeteredSemPermit<WorkflowSlotKind>,
+        external_wft_tx: WFTStreamSender,
+    ) -> Self {
         Self {
             permit,
             external_wft_tx,

@@ -17,6 +17,7 @@ use temporal_sdk_core_protos::temporal::api::workflowservice::v1::{
 use futures::Future;
 #[cfg(test)]
 pub(crate) use poll_buffer::MockPermittedPollBuffer;
+use temporal_sdk_core_api::worker::{ActivitySlotKind, WorkflowSlotKind};
 
 pub(crate) type Result<T, E = tonic::Status> = std::result::Result<T, E>;
 
@@ -36,9 +37,14 @@ where
     async fn shutdown_box(self: Box<Self>);
 }
 pub(crate) type BoxedPoller<T> = Box<dyn Poller<T> + Send + Sync + 'static>;
-pub(crate) type BoxedWFPoller = BoxedPoller<(PollWorkflowTaskQueueResponse, OwnedMeteredSemPermit)>;
-pub(crate) type BoxedActPoller =
-    BoxedPoller<(PollActivityTaskQueueResponse, OwnedMeteredSemPermit)>;
+pub(crate) type BoxedWFPoller = BoxedPoller<(
+    PollWorkflowTaskQueueResponse,
+    OwnedMeteredSemPermit<WorkflowSlotKind>,
+)>;
+pub(crate) type BoxedActPoller = BoxedPoller<(
+    PollActivityTaskQueueResponse,
+    OwnedMeteredSemPermit<ActivitySlotKind>,
+)>;
 
 #[async_trait::async_trait]
 impl<T> Poller<T> for Box<dyn Poller<T> + Send + Sync>

@@ -16,7 +16,7 @@ use std::{
     task::{Context, Poll},
     time::{Duration, Instant, SystemTime},
 };
-use temporal_sdk_core_api::worker::{LocalActivitySlotKind, SlotSupplier};
+use temporal_sdk_core_api::worker::{LocalActivitySlotInfo, LocalActivitySlotKind, SlotSupplier};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{Cancellation, Failure as ActFail, Success},
@@ -53,7 +53,7 @@ struct LocalInFlightActInfo {
     la_info: NewLocalAct,
     dispatch_time: Instant,
     attempt: u32,
-    _permit: UsedMeteredSemPermit,
+    _permit: UsedMeteredSemPermit<LocalActivitySlotKind>,
 }
 
 #[derive(Debug, Clone)]
@@ -476,7 +476,9 @@ impl LocalActivityManager {
                 la_info: la_info_for_in_flight_map,
                 dispatch_time: Instant::now(),
                 attempt,
-                _permit: permit.into_used(),
+                _permit: permit.into_used(LocalActivitySlotInfo {
+                    activity_type: new_la.workflow_type.as_str(),
+                }),
             },
         );
 
@@ -792,7 +794,7 @@ enum CancelOrTimeout {
 
 #[allow(clippy::large_enum_variant)]
 enum NewOrCancel {
-    New(NewOrRetry, OwnedMeteredSemPermit),
+    New(NewOrRetry, OwnedMeteredSemPermit<LocalActivitySlotKind>),
     Cancel(CancelOrTimeout),
 }
 

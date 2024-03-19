@@ -55,12 +55,12 @@ where
             .map(|ap| ap + self.unused_claimants.load(Ordering::Acquire))
     }
 
-    pub(crate) async fn acquire_owned(&self) -> Result<OwnedMeteredSemPermit, ()> {
+    pub(crate) async fn acquire_owned(&self) -> Result<OwnedMeteredSemPermit<SK>, ()> {
         let res = self.supplier.reserve_slot().await;
         Ok(self.build_owned(res))
     }
 
-    pub(crate) fn try_acquire_owned(&self) -> Result<OwnedMeteredSemPermit, ()> {
+    pub(crate) fn try_acquire_owned(&self) -> Result<OwnedMeteredSemPermit<SK>, ()> {
         if let Some(res) = self.supplier.try_reserve_slot() {
             Ok(self.build_owned(res))
         } else {
@@ -68,7 +68,7 @@ where
         }
     }
 
-    fn build_owned(&self, res: SlotSupplierPermit) -> OwnedMeteredSemPermit {
+    fn build_owned(&self, res: SlotSupplierPermit) -> OwnedMeteredSemPermit<SK> {
         self.unused_claimants.fetch_add(1, Ordering::Release);
         let record_fn = self.record_owned();
         record_fn(false);
@@ -76,6 +76,7 @@ where
             inner: res,
             unused_claimants: Some(self.unused_claimants.clone()),
             record_fn,
+            use_fn: Box::new(|_| {}),
         }
     }
 
@@ -142,7 +143,7 @@ where
     }
 
     /// Acquire a permit if one is available and close was not requested.
-    pub(crate) fn try_acquire_owned(self: &Arc<Self>) -> Result<TrackedOwnedMeteredSemPermit, ()> {
+    pub(crate) fn try_acquire_owned(self: &Arc<Self>) -> Result<TrackedOwnedMeteredSemPermit<SK>, ()> {
         if self.close_requested.load(Ordering::Acquire) {
             return Err(());
         }
@@ -173,34 +174,35 @@ where
 /// Tracks an OwnedMeteredSemPermit and calls on_drop when dropped.
 #[derive(DebugCustom)]
 #[debug(fmt = "Tracked({inner:?})")]
-pub(crate) struct TrackedOwnedMeteredSemPermit {
-    inner: Option<OwnedMeteredSemPermit>,
+pub(crate) struct TrackedOwnedMeteredSemPermit<SK: SlotKind> {
+    inner: Option<OwnedMeteredSemPermit<SK>>,
     on_drop: Box<dyn Fn() + Send + Sync>,
 }
-impl From<TrackedOwnedMeteredSemPermit> for OwnedMeteredSemPermit {
-    fn from(mut value: TrackedOwnedMeteredSemPermit) -> Self {
+impl<SK: SlotKind> From<TrackedOwnedMeteredSemPermit<SK>> for OwnedMeteredSemPermit<SK> {
+    fn from(mut value: TrackedOwnedMeteredSemPermit<SK>) -> Self {
         value
             .inner
             .take()
             .expect("Inner permit should be available")
     }
 }
-impl Drop for TrackedOwnedMeteredSemPermit {
+impl<SK: SlotKind> Drop for TrackedOwnedMeteredSemPermit<SK> {
     fn drop(&mut self) {
         (self.on_drop)();
     }
 }
 
 /// Wraps an [OwnedSemaphorePermit] to update metrics when it's dropped
-pub(crate) struct OwnedMeteredSemPermit {
+pub(crate) struct OwnedMeteredSemPermit<SK: SlotKind> {
     inner: SlotSupplierPermit,
     /// See [MeteredPermitDealer::unused_claimants]. If present when dropping, used to decrement the
     /// count.
     unused_claimants: Option<Arc<AtomicUsize>>,
     // TODO: Should probably be ref to supplier
     record_fn: Box<dyn Fn(bool) + Send + Sync>,
+    use_fn: Box<dyn Fn(&SK::Info<'_>) + Send + Sync>,
 }
-impl Drop for OwnedMeteredSemPermit {
+impl<SK: SlotKind> Drop for OwnedMeteredSemPermit<SK> {
     fn drop(&mut self) {
         if let Some(uc) = self.unused_claimants.take() {
             uc.fetch_sub(1, Ordering::Release);
@@ -208,15 +210,15 @@ impl Drop for OwnedMeteredSemPermit {
         (self.record_fn)(true)
     }
 }
-impl Debug for OwnedMeteredSemPermit {
+impl<SK: SlotKind> Debug for OwnedMeteredSemPermit<SK> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.write_str("OwnedMeteredSemPermit()")
     }
 }
-impl OwnedMeteredSemPermit {
+impl<SK: SlotKind> OwnedMeteredSemPermit<SK> {
     /// Should be called once this permit is actually being "used" for the work it was meant to
     /// permit.
-    pub(crate) fn into_used(mut self) -> UsedMeteredSemPermit {
+    pub(crate) fn into_used(mut self, info: SK::Info<'_>) -> UsedMeteredSemPermit<SK> {
         if let Some(uc) = self.unused_claimants.take() {
             uc.fetch_sub(1, Ordering::Release);
             (self.record_fn)(false)
@@ -226,10 +228,7 @@ impl OwnedMeteredSemPermit {
 }
 
 #[derive(Debug)]
-pub(crate) struct UsedMeteredSemPermit(
-    // Field isn't read, but we need to hold on to it.
-    #[allow(dead_code)] OwnedMeteredSemPermit,
-);
+pub(crate) struct UsedMeteredSemPermit<SK: SlotKind>(OwnedMeteredSemPermit<SK>);
 
 macro_rules! dbg_panic {
   ($($arg:tt)*) => {

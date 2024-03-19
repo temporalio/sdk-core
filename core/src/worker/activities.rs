@@ -39,7 +39,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use temporal_sdk_core_api::worker::ActivitySlotKind;
+use temporal_sdk_core_api::worker::{ActivitySlotInfo, ActivitySlotKind};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{self as ar, activity_execution_result as aer},
@@ -112,10 +112,13 @@ struct RemoteInFlightActInfo {
     /// Used to reset the local heartbeat timeout every time we record a heartbeat
     timeout_resetter: Option<Arc<Notify>>,
     /// The permit from the max concurrent semaphore
-    _permit: UsedMeteredSemPermit,
+    _permit: UsedMeteredSemPermit<ActivitySlotKind>,
 }
 impl RemoteInFlightActInfo {
-    fn new(poll_resp: &PollActivityTaskQueueResponse, permit: UsedMeteredSemPermit) -> Self {
+    fn new(
+        poll_resp: &PollActivityTaskQueueResponse,
+        permit: UsedMeteredSemPermit<ActivitySlotKind>,
+    ) -> Self {
         let wec = poll_resp.workflow_execution.clone().unwrap_or_default();
         Self {
             base: InFlightActInfo {
@@ -513,11 +516,13 @@ where
                     }
                     ActivityTaskSource::PendingStart(res) => {
                         Some(res.map(|(task, is_eager)| {
+                            let mut activity_type_name = "";
                             if let Some(ref act_type) = task.resp.activity_type {
+                                activity_type_name = act_type.name.as_str();
                                 if let Some(ref wf_type) = task.resp.workflow_type {
                                     self.metrics
                                         .with_new_attrs([
-                                            activity_type(act_type.name.clone()),
+                                            activity_type(activity_type_name.to_owned()),
                                             workflow_type(wf_type.name.clone()),
                                             eager(is_eager),
                                         ])
@@ -534,9 +539,13 @@ where
 
                             let tt: TaskToken = task.resp.task_token.clone().into();
                             let outstanding_entry = self.outstanding_tasks.entry(tt.clone());
-                            let mut outstanding_info = outstanding_entry.insert(
-                                RemoteInFlightActInfo::new(&task.resp, task.permit.into_used()),
-                            );
+                            let mut outstanding_info =
+                                outstanding_entry.insert(RemoteInFlightActInfo::new(
+                                    &task.resp,
+                                    task.permit.into_used(ActivitySlotInfo {
+                                        activity_type: activity_type_name,
+                                    }),
+                                ));
                             // If we have already waited the grace period and issued cancels,
                             // this will have been set true, indicating anything that happened
                             // to be buffered/in-flight/etc should get an immediate cancel. This
@@ -649,7 +658,7 @@ pub(crate) struct ActivitiesFromWFTsHandle {
 impl ActivitiesFromWFTsHandle {
     /// Returns a handle that can be used to reserve an activity slot. EX: When requesting eager
     /// dispatch of an activity to this worker upon workflow task completion
-    pub(crate) fn reserve_slot(&self) -> Option<TrackedOwnedMeteredSemPermit> {
+    pub(crate) fn reserve_slot(&self) -> Option<TrackedOwnedMeteredSemPermit<ActivitySlotKind>> {
         // TODO: check if rate limit is not exceeded and count this reservation towards the rate limit
         self.sem.try_acquire_owned().ok()
     }
@@ -667,13 +676,13 @@ impl ActivitiesFromWFTsHandle {
 
 #[derive(Debug)]
 pub(crate) struct PermittedTqResp {
-    pub(crate) permit: OwnedMeteredSemPermit,
+    pub(crate) permit: OwnedMeteredSemPermit<ActivitySlotKind>,
     pub(crate) resp: PollActivityTaskQueueResponse,
 }
 
 #[derive(Debug)]
 pub(crate) struct TrackedPermittedTqResp {
-    pub(crate) permit: TrackedOwnedMeteredSemPermit,
+    pub(crate) permit: TrackedOwnedMeteredSemPermit<ActivitySlotKind>,
     pub(crate) resp: PollActivityTaskQueueResponse,
 }
 

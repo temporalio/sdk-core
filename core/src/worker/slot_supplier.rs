@@ -39,7 +39,7 @@ where
         perm.ok().map(|p| SlotSupplierPermit::Data(Box::new(p)))
     }
 
-    fn mark_slot_used(&self, _info: Option<&SK::Info>, _error: Option<&()>) {}
+    fn mark_slot_used(&self, _info: Option<SK::Info<'_>>, _error: Option<()>) {}
 
     fn release_slot(&self, _: SlotReleaseReason) {}
 
