@@ -4,7 +4,7 @@ mod slot_provider;
 pub(crate) mod slot_supplier;
 mod workflow;
 
-pub use slot_supplier::{ResourceBasedWorkflowSlots, WorkerConfigSlotSupplierExt};
+pub use slot_supplier::{ResourceBasedSlots, WorkerConfigSlotSupplierExt};
 pub use temporal_sdk_core_api::worker::{WorkerConfig, WorkerConfigBuilder};
 
 pub(crate) use activities::{

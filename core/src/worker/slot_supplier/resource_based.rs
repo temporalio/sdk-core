@@ -1,25 +1,33 @@
 use crossbeam_utils::atomic::AtomicCell;
 use parking_lot::Mutex;
-use std::time::{Duration, Instant};
+use std::{
+    marker::PhantomData,
+    sync::{atomic::AtomicU64, Arc},
+    time::{Duration, Instant},
+};
 use temporal_sdk_core_api::worker::{
-    SlotKind, SlotReleaseReason, SlotSupplier, SlotSupplierPermit, WorkflowCacheSizer,
-    WorkflowSlotInfo, WorkflowSlotKind, WorkflowSlotsInfo,
+    SlotKind, SlotReleaseReason, SlotReservationContext, SlotSupplier, SlotSupplierPermit,
+    WorkflowCacheSizer, WorkflowSlotInfo, WorkflowSlotsInfo,
 };
 
-pub struct ResourceBasedWorkflowSlots<MI> {
+pub struct ResourceBasedSlots<MI> {
     target_mem_usage: f64,
     assumed_maximum_marginal_contribution: f64,
     mem_info_supplier: MI,
     max: usize,
 }
+pub struct ResourceBasedSlotsForType<MI, SK> {
+    inner: Arc<ResourceBasedSlots<MI>>,
+    _slot_kind: PhantomData<SK>,
+}
 
-impl ResourceBasedWorkflowSlots<SysinfoMem> {
-    pub fn new(target_mem_usage: f64, marginal_contribution: f64) -> Self {
+impl ResourceBasedSlots<SysinfoMem> {
+    pub fn new(target_mem_usage: f64, marginal_contribution: f64, max: usize) -> Self {
         Self {
             target_mem_usage,
             assumed_maximum_marginal_contribution: marginal_contribution,
             mem_info_supplier: SysinfoMem::new(),
-            max: 200,
+            max,
         }
     }
 }
@@ -28,6 +36,7 @@ trait MemoryInfo {
     /// Return total available system memory in bytes
     fn total_mem(&self) -> u64;
     /// Return memory used by this process in bytes
+    // TODO: probably needs to be just overall used... won't work w/ subprocesses for example
     fn process_used_mem(&self) -> u64;
 
     fn process_used_percent(&self) -> f64 {
@@ -36,36 +45,31 @@ trait MemoryInfo {
 }
 
 #[async_trait::async_trait]
-impl<MI> SlotSupplier for ResourceBasedWorkflowSlots<MI>
+impl<MI, SK> SlotSupplier for ResourceBasedSlotsForType<MI, SK>
 where
-    MI: MemoryInfo + Sync,
+    MI: MemoryInfo + Send + Sync,
+    SK: SlotKind + Send + Sync,
 {
-    type SlotKind = WorkflowSlotKind;
+    type SlotKind = SK;
 
-    async fn reserve_slot(&self) -> SlotSupplierPermit {
+    async fn reserve_slot(&self, ctx: &dyn SlotReservationContext) -> SlotSupplierPermit {
         loop {
-            if let Some(p) = self.try_reserve_slot() {
+            if let Some(p) = self.try_reserve_slot(ctx) {
                 return p;
             }
-            warn!("Waiting for slot");
             tokio::time::sleep(Duration::from_millis(100)).await
         }
     }
 
-    fn try_reserve_slot(&self) -> Option<SlotSupplierPermit> {
-        if self.can_reserve() {
+    fn try_reserve_slot(&self, ctx: &dyn SlotReservationContext) -> Option<SlotSupplierPermit> {
+        if self.inner.can_reserve(ctx.num_used_slots()) {
             Some(SlotSupplierPermit::NoData)
         } else {
             None
         }
     }
 
-    fn mark_slot_used(
-        &self,
-        _info: Option<<Self::SlotKind as SlotKind>::Info<'_>>,
-        _error: Option<()>,
-    ) {
-    }
+    fn mark_slot_used(&self, _info: SK::Info<'_>) {}
 
     fn release_slot(&self, _info: SlotReleaseReason) {}
 
@@ -74,21 +78,41 @@ where
     }
 }
 
-impl<MI> WorkflowCacheSizer for ResourceBasedWorkflowSlots<MI>
+impl<MI> WorkflowCacheSizer for ResourceBasedSlots<MI>
 where
     MI: MemoryInfo + Sync,
 {
     fn can_allow_workflow(
         &self,
-        _slots_info: &WorkflowSlotsInfo,
+        slots_info: &WorkflowSlotsInfo,
         _new_task: &WorkflowSlotInfo,
     ) -> bool {
-        self.can_reserve()
+        self.can_reserve(slots_info.used_slots.len())
     }
 }
 
-impl<MI: MemoryInfo + Sync> ResourceBasedWorkflowSlots<MI> {
-    fn can_reserve(&self) -> bool {
+impl<MI: MemoryInfo + Sync> ResourceBasedSlots<MI> {
+    // TODO: Can just be an into impl probably?
+    pub fn as_kind<SK: SlotKind + Send + Sync>(
+        self: &Arc<Self>,
+    ) -> Arc<ResourceBasedSlotsForType<MI, SK>> {
+        Arc::new(ResourceBasedSlotsForType {
+            inner: self.clone(),
+            _slot_kind: PhantomData,
+        })
+    }
+
+    pub fn into_kind<SK: SlotKind + Send + Sync>(self) -> ResourceBasedSlotsForType<MI, SK> {
+        ResourceBasedSlotsForType {
+            inner: Arc::new(self),
+            _slot_kind: PhantomData,
+        }
+    }
+
+    fn can_reserve(&self, num_used: usize) -> bool {
+        if num_used > self.max {
+            return false;
+        }
         self.mem_info_supplier.process_used_percent() + self.assumed_maximum_marginal_contribution
             <= self.target_mem_usage
     }
@@ -98,6 +122,7 @@ impl<MI: MemoryInfo + Sync> ResourceBasedWorkflowSlots<MI> {
 pub struct SysinfoMem {
     sys: Mutex<sysinfo::System>,
     pid: sysinfo::Pid,
+    cur_mem_usage: AtomicU64,
     last_refresh: AtomicCell<Instant>,
 }
 impl SysinfoMem {
@@ -110,6 +135,7 @@ impl SysinfoMem {
             sys: Default::default(),
             last_refresh: AtomicCell::new(Instant::now()),
             pid,
+            cur_mem_usage: AtomicU64::new(0),
         }
     }
     fn refresh_if_needed(&self) {
@@ -119,6 +145,9 @@ impl SysinfoMem {
             let mut lock = self.sys.lock();
             lock.refresh_memory();
             lock.refresh_processes();
+            let proc = lock.process(self.pid).expect("exists");
+            self.cur_mem_usage
+                .store(dbg!(proc.memory()), std::sync::atomic::Ordering::Release);
             self.last_refresh.store(Instant::now())
         }
     }
@@ -131,9 +160,8 @@ impl MemoryInfo for SysinfoMem {
 
     fn process_used_mem(&self) -> u64 {
         self.refresh_if_needed();
-        let sys = self.sys.lock();
-        let proc = sys.process(self.pid).expect("exists");
-        proc.memory()
+        self.cur_mem_usage
+            .load(std::sync::atomic::Ordering::Acquire)
     }
 }
 
@@ -144,6 +172,7 @@ mod tests {
         atomic::{AtomicU64, Ordering},
         Arc,
     };
+    use temporal_sdk_core_api::worker::WorkflowSlotKind;
 
     struct FakeMIS {
         used: Arc<AtomicU64>,
@@ -163,34 +192,42 @@ mod tests {
             self.used.load(Ordering::Acquire)
         }
     }
+    struct FakeResCtx {}
+    impl SlotReservationContext for FakeResCtx {
+        fn num_used_slots(&self) -> usize {
+            0
+        }
+    }
 
     #[test]
     fn mem_workflow_sync() {
         let (fmis, used) = FakeMIS::new();
-        let rbs = ResourceBasedWorkflowSlots {
+        let rbs = ResourceBasedSlots {
             target_mem_usage: 0.8,
             assumed_maximum_marginal_contribution: 0.1,
             mem_info_supplier: fmis,
             max: 1000,
-        };
-        assert!(rbs.try_reserve_slot().is_some());
+        }
+        .into_kind::<WorkflowSlotKind>();
+        assert!(rbs.try_reserve_slot(&FakeResCtx {}).is_some());
         used.store(90_000, Ordering::Release);
-        assert!(rbs.try_reserve_slot().is_none());
+        assert!(rbs.try_reserve_slot(&FakeResCtx {}).is_none());
     }
 
     #[tokio::test]
     async fn mem_workflow_async() {
         let (fmis, used) = FakeMIS::new();
         used.store(90_000, Ordering::Release);
-        let rbs = ResourceBasedWorkflowSlots {
+        let rbs = ResourceBasedSlots {
             target_mem_usage: 0.8,
             assumed_maximum_marginal_contribution: 0.1,
             mem_info_supplier: fmis,
             max: 1000,
-        };
+        }
+        .into_kind::<WorkflowSlotKind>();
         let order = crossbeam_queue::ArrayQueue::new(2);
         let waits_free = async {
-            rbs.reserve_slot().await;
+            rbs.reserve_slot(&FakeResCtx {}).await;
             order.push(2).unwrap();
         };
         let frees = async {

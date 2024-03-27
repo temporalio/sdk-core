@@ -1,12 +1,13 @@
 use std::{marker::PhantomData, sync::Arc};
 use temporal_sdk_core_api::worker::{
-    SlotKind, SlotReleaseReason, SlotSupplier, SlotSupplierPermit, WorkerConfigBuilder,
+    SlotKind, SlotReleaseReason, SlotReservationContext, SlotSupplier, SlotSupplierPermit,
+    WorkerConfigBuilder,
 };
 use tokio::sync::Semaphore;
 
 mod resource_based;
 
-pub use resource_based::ResourceBasedWorkflowSlots;
+pub use resource_based::ResourceBasedSlots;
 
 pub(crate) struct FixedSizeSlotSupplier<SK> {
     sem: Arc<Semaphore>,
@@ -29,17 +30,17 @@ where
 {
     type SlotKind = SK;
 
-    async fn reserve_slot(&self) -> SlotSupplierPermit {
+    async fn reserve_slot(&self, _: &dyn SlotReservationContext) -> SlotSupplierPermit {
         let perm = self.sem.clone().acquire_owned().await.expect("todo");
         SlotSupplierPermit::Data(Box::new(perm))
     }
 
-    fn try_reserve_slot(&self) -> Option<SlotSupplierPermit> {
+    fn try_reserve_slot(&self, _: &dyn SlotReservationContext) -> Option<SlotSupplierPermit> {
         let perm = self.sem.clone().try_acquire_owned();
         perm.ok().map(|p| SlotSupplierPermit::Data(Box::new(p)))
     }
 
-    fn mark_slot_used(&self, _info: Option<SK::Info<'_>>, _error: Option<()>) {}
+    fn mark_slot_used(&self, _info: SK::Info<'_>) {}
 
     fn release_slot(&self, _: SlotReleaseReason) {}
 

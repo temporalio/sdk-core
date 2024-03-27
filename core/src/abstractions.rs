@@ -11,7 +11,9 @@ use std::{
         Arc,
     },
 };
-use temporal_sdk_core_api::worker::{SlotKind, SlotSupplier, SlotSupplierPermit};
+use temporal_sdk_core_api::worker::{
+    SlotKind, SlotReservationContext, SlotSupplier, SlotSupplierPermit,
+};
 use tokio_util::sync::CancellationToken;
 
 /// Wraps a [SlotSupplier] and turns successful slot reservations into permit structs, as well
@@ -24,6 +26,8 @@ pub(crate) struct MeteredPermitDealer<SK: SlotKind> {
     /// slots, since we typically wait for a permit first before polling, but that slot isn't used
     /// in the sense the user expects until we actually also get the corresponding task.
     unused_claimants: Arc<AtomicUsize>,
+    /// The number of permits that have been handed out
+    extant_permits: Arc<AtomicUsize>,
     metrics_ctx: MetricsContext,
     record_fn: fn(&MetricsContext, usize),
 }
@@ -40,6 +44,7 @@ where
         Self {
             supplier,
             unused_claimants: Arc::new(AtomicUsize::new(0)),
+            extant_permits: Arc::new(AtomicUsize::new(0)),
             metrics_ctx,
             record_fn,
         }
@@ -56,12 +61,12 @@ where
     }
 
     pub(crate) async fn acquire_owned(&self) -> Result<OwnedMeteredSemPermit<SK>, ()> {
-        let res = self.supplier.reserve_slot().await;
+        let res = self.supplier.reserve_slot(self).await;
         Ok(self.build_owned(res))
     }
 
     pub(crate) fn try_acquire_owned(&self) -> Result<OwnedMeteredSemPermit<SK>, ()> {
-        if let Some(res) = self.supplier.try_reserve_slot() {
+        if let Some(res) = self.supplier.try_reserve_slot(self) {
             Ok(self.build_owned(res))
         } else {
             Err(())
@@ -70,29 +75,43 @@ where
 
     fn build_owned(&self, res: SlotSupplierPermit) -> OwnedMeteredSemPermit<SK> {
         self.unused_claimants.fetch_add(1, Ordering::Release);
-        let record_fn = self.record_owned();
-        record_fn(false);
+        self.extant_permits.fetch_add(1, Ordering::Release);
+        let uc_c = self.unused_claimants.clone();
+        let ep_c = self.extant_permits.clone();
+        let supp = self.supplier.clone();
+        let supp_c = self.supplier.clone();
+        let mets = self.metrics_ctx.clone();
+        let rcf = self.record_fn;
+        let metric_rec =
+            // When being called from the drop impl, the semaphore permit isn't actually dropped yet,
+            // so account for that. TODO: that should move somehow into fixed impl only
+            move |add_one: bool| {
+                let extra = usize::from(add_one);
+                if let Some(avail) = supp.available_slots() {
+                    rcf(&mets, avail + uc_c.load(Ordering::Acquire) + extra)
+                }
+            };
+        let mrc = metric_rec.clone();
+        mrc(false);
+
         OwnedMeteredSemPermit {
-            inner: res,
+            _inner: res,
             unused_claimants: Some(self.unused_claimants.clone()),
-            record_fn,
-            use_fn: Box::new(|_| {}),
+            use_fn: Box::new(move |info| {
+                supp_c.mark_slot_used(info);
+                metric_rec(false)
+            }),
+            release_fn: Box::new(move || {
+                ep_c.fetch_sub(1, Ordering::Release);
+                mrc(true)
+            }),
         }
     }
+}
 
-    fn record_owned(&self) -> Box<dyn Fn(bool) + Send + Sync> {
-        let rcf = self.record_fn;
-        let mets = self.metrics_ctx.clone();
-        let supp = self.supplier.clone();
-        let uc = self.unused_claimants.clone();
-        // When being called from the drop impl, the semaphore permit isn't actually dropped yet,
-        // so account for that.
-        Box::new(move |add_one: bool| {
-            let extra = usize::from(add_one);
-            if let Some(avail) = supp.available_slots() {
-                rcf(&mets, avail + uc.load(Ordering::Acquire) + extra)
-            }
-        })
+impl<SK: SlotKind> SlotReservationContext for MeteredPermitDealer<SK> {
+    fn num_used_slots(&self) -> usize {
+        self.extant_permits.load(Ordering::Acquire)
     }
 }
 
@@ -173,6 +192,7 @@ where
 
 /// Tracks an OwnedMeteredSemPermit and calls on_drop when dropped.
 #[derive(DebugCustom)]
+#[clippy::has_significant_drop]
 #[debug(fmt = "Tracked({inner:?})")]
 pub(crate) struct TrackedOwnedMeteredSemPermit<SK: SlotKind> {
     inner: Option<OwnedMeteredSemPermit<SK>>,
@@ -193,21 +213,21 @@ impl<SK: SlotKind> Drop for TrackedOwnedMeteredSemPermit<SK> {
 }
 
 /// Wraps an [OwnedSemaphorePermit] to update metrics when it's dropped
+#[clippy::has_significant_drop]
 pub(crate) struct OwnedMeteredSemPermit<SK: SlotKind> {
-    inner: SlotSupplierPermit,
+    _inner: SlotSupplierPermit,
     /// See [MeteredPermitDealer::unused_claimants]. If present when dropping, used to decrement the
     /// count.
     unused_claimants: Option<Arc<AtomicUsize>>,
-    // TODO: Should probably be ref to supplier
-    record_fn: Box<dyn Fn(bool) + Send + Sync>,
-    use_fn: Box<dyn Fn(&SK::Info<'_>) + Send + Sync>,
+    use_fn: Box<dyn Fn(SK::Info<'_>) + Send + Sync>,
+    release_fn: Box<dyn Fn() + Send + Sync>,
 }
 impl<SK: SlotKind> Drop for OwnedMeteredSemPermit<SK> {
     fn drop(&mut self) {
         if let Some(uc) = self.unused_claimants.take() {
             uc.fetch_sub(1, Ordering::Release);
         }
-        (self.record_fn)(true)
+        (self.release_fn)()
     }
 }
 impl<SK: SlotKind> Debug for OwnedMeteredSemPermit<SK> {
@@ -221,14 +241,14 @@ impl<SK: SlotKind> OwnedMeteredSemPermit<SK> {
     pub(crate) fn into_used(mut self, info: SK::Info<'_>) -> UsedMeteredSemPermit<SK> {
         if let Some(uc) = self.unused_claimants.take() {
             uc.fetch_sub(1, Ordering::Release);
-            (self.record_fn)(false)
         }
+        (self.use_fn)(info);
         UsedMeteredSemPermit(self)
     }
 }
 
 #[derive(Debug)]
-pub(crate) struct UsedMeteredSemPermit<SK: SlotKind>(OwnedMeteredSemPermit<SK>);
+pub(crate) struct UsedMeteredSemPermit<SK: SlotKind>(#[allow(dead_code)] OwnedMeteredSemPermit<SK>);
 
 macro_rules! dbg_panic {
   ($($arg:tt)*) => {

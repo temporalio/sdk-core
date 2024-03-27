@@ -5,7 +5,7 @@ use std::{
 };
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{ActContext, ActivityOptions, WfContext, WorkflowResult};
-use temporal_sdk_core::ResourceBasedWorkflowSlots;
+use temporal_sdk_core::ResourceBasedSlots;
 use temporal_sdk_core_protos::coresdk::{
     workflow_commands::ActivityCancellationType, AsJsonPayloadExt,
 };
@@ -82,19 +82,103 @@ async fn activity_load() {
     dbg!(running.elapsed());
 }
 
+#[tokio::test]
+async fn chunky_activities() {
+    const CONCURRENCY: usize = 1024;
+    const CACHE_SIZE: usize = 1024;
+
+    let mut starter = CoreWfStarter::new("chunky_activities");
+    let resource_slots = Arc::new(ResourceBasedSlots::new(0.5, 0.01, CACHE_SIZE));
+    starter
+        .worker_config
+        .max_concurrent_wft_polls(10_usize)
+        .max_concurrent_at_polls(10_usize);
+    // starter
+    //     .worker_config
+    //     .max_outstanding_activities(CONCURRENCY)
+    //     .max_outstanding_workflow_tasks(CONCURRENCY);
+    starter
+        .worker_config
+        .workflow_task_slot_supplier(resource_slots.as_kind())
+        .activity_task_slot_supplier(resource_slots.as_kind());
+    let mut worker = starter.worker().await;
+
+    let activity_id = "act-1";
+    let activity_timeout = Duration::from_secs(30);
+
+    let wf_fn = move |ctx: WfContext| {
+        let payload = "yo".as_json_payload().unwrap();
+        async move {
+            let activity = ActivityOptions {
+                activity_id: Some(activity_id.to_string()),
+                activity_type: "test_activity".to_string(),
+                input: payload.clone(),
+                start_to_close_timeout: Some(activity_timeout),
+                ..Default::default()
+            };
+            let res = ctx.activity(activity).await.unwrap_ok_payload();
+            assert_eq!(res.data, payload.data);
+            Ok(().into())
+        }
+    };
+
+    let starting = Instant::now();
+    let wf_type = "chunky_activity_wf";
+    worker.register_wf(wf_type.to_owned(), wf_fn);
+    worker.register_activity(
+        "test_activity",
+        |_ctx: ActContext, echo: String| async move {
+            tokio::task::spawn_blocking(move || {
+                // Allocate a gig and then do some CPU stuff on it
+                let mut mem = vec![0_u8; 1000 * 1024 * 1024];
+                for _ in 1..10 {
+                    for i in 0..mem.len() {
+                        mem[i] = mem[i] & mem[mem.len() - 1 - i]
+                    }
+                }
+                Ok(echo)
+            })
+            .await?
+        },
+    );
+    join_all((0..CONCURRENCY).map(|i| {
+        let worker = &worker;
+        let wf_id = format!("chunk_activity_{i}");
+        async move {
+            worker
+                .submit_wf(
+                    wf_id,
+                    wf_type.to_owned(),
+                    vec![],
+                    WorkflowOptions::default(),
+                )
+                .await
+                .unwrap();
+        }
+    }))
+    .await;
+    dbg!(starting.elapsed());
+
+    let running = Instant::now();
+
+    worker.run_until_done().await.unwrap();
+    dbg!(running.elapsed());
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn workflow_load() {
     const SIGNAME: &str = "signame";
     let num_workflows = 500;
+    let cache_size = 200;
     let wf_name = "workflow_load";
     let mut starter = CoreWfStarter::new("workflow_load");
     starter.worker_config.max_concurrent_wft_polls(10_usize);
-    starter
-        .worker_config
-        .workflow_task_slot_supplier(Arc::new(ResourceBasedWorkflowSlots::new(0.7, 0.01)));
+    starter.worker_config.workflow_task_slot_supplier(
+        Arc::new(ResourceBasedSlots::new(0.7, 0.01, cache_size)).as_kind(),
+    );
     starter
         // .max_wft(100)
-        .max_cached_workflows(200)
+        .max_cached_workflows(cache_size)
         .max_at_polls(10)
         .max_at(500);
     let mut worker = starter.worker().await;

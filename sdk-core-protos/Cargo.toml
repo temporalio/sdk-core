@@ -15,7 +15,7 @@ history_builders = ["uuid", "rand"]
 
 [dependencies]
 anyhow = "1.0"
-base64 = "0.21"
+base64 = "0.22"
 derive_more = { workspace = true }
 prost = { workspace = true }
 prost-wkt = "0.5"
