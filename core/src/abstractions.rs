@@ -221,7 +221,10 @@ impl OwnedMeteredSemPermit {
 }
 
 #[derive(Debug)]
-pub(crate) struct UsedMeteredSemPermit(OwnedMeteredSemPermit);
+pub(crate) struct UsedMeteredSemPermit(
+    // Field isn't read, but we need to hold on to it.
+    #[allow(dead_code)] OwnedMeteredSemPermit,
+);
 
 macro_rules! dbg_panic {
   ($($arg:tt)*) => {
