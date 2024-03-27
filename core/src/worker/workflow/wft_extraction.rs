@@ -21,7 +21,11 @@ pub(super) struct WFTExtractor {}
 
 pub(super) enum WFTExtractorOutput {
     NewWFT(PermittedWFT),
-    FetchResult(PermittedWFT, Arc<HistfetchRC>),
+    FetchResult(
+        PermittedWFT,
+        // Field isn't read, but we need to hold on to it.
+        #[allow(dead_code)] Arc<HistfetchRC>,
+    ),
     NextPage {
         paginator: HistoryPaginator,
         update: HistoryUpdate,
