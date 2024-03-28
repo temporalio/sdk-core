@@ -30,6 +30,7 @@ import "temporal/sdk/core/common/common.proto";
 // * Signal and update handlers should be invoked before workflow routines are iterated. That is to
 //   say before the users' main workflow function and anything spawned by it is allowed to continue.
 // * Queries always go last (and, in fact, always come in their own activation)
+// * Evictions also always come in their own activation
 //
 // The downside of this reordering is that a signal or update handler may not observe that some
 // other event had already happened (ex: an activity completed) when it is first invoked, though it
@@ -41,11 +42,9 @@ import "temporal/sdk/core/common/common.proto";
 //
 // ## Evictions
 //
-// Activations that contain only a `remove_from_cache` job should not cause the workflow code
-// to be invoked and may be responded to with an empty command list. Eviction jobs may also
-// appear with other jobs, but will always appear last in the job list. In this case it is
-// expected that the workflow code will be invoked, and the response produced as normal, but
-// the caller should evict the run after doing so.
+// Evictions appear as an activations that contains only a `remove_from_cache` job. Such activations
+// should not cause the workflow code to be invoked and may be responded to with an empty command
+// list.
 message WorkflowActivation {
     // The id of the currently active run of the workflow. Also used as a cache key. There may
     // only ever be one active workflow task (and hence activation) of a run at one time.
@@ -81,7 +80,8 @@ message WorkflowActivationJob {
         FireTimer fire_timer = 2;
         // Workflow was reset. The randomness seed must be updated.
         UpdateRandomSeed update_random_seed = 4;
-        // A request to query the workflow was received.
+        // A request to query the workflow was received. It is guaranteed that queries (one or more)
+        // always come in their own activation after other mutating jobs.
         QueryWorkflow query_workflow = 5;
         // A request to cancel the workflow was received.
         CancelWorkflow cancel_workflow = 6;
@@ -103,11 +103,9 @@ message WorkflowActivationJob {
         ResolveRequestCancelExternalWorkflow resolve_request_cancel_external_workflow = 13;
         // A request to handle a workflow update.
         DoUpdate do_update = 14;
-        // Remove the workflow identified by the [WorkflowActivation] containing this job from the cache
-        // after performing the activation.
-        //
-        // If other job variant are present in the list, this variant will be the last job in the
-        // job list. The string value is a reason for eviction.
+        // Remove the workflow identified by the [WorkflowActivation] containing this job from the
+        // cache after performing the activation. It is guaranteed that this will be the only job
+        // in the activation if present.
         RemoveFromCache remove_from_cache = 50;
     }
 }
@@ -208,7 +206,7 @@ message ResolveChildWorkflowExecutionStartFailure {
 // `failure` should be ChildWorkflowFailure with cause set to CancelledFailure.
 // The failure is constructed in core for lang's convenience.
 message ResolveChildWorkflowExecutionStartCancelled {
-  temporal.api.failure.v1.Failure failure = 1;
+    temporal.api.failure.v1.Failure failure = 1;
 }
 
 // Notify a workflow that a child workflow execution has been resolved

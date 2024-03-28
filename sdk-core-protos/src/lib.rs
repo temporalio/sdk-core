@@ -483,25 +483,17 @@ pub mod coresdk {
         }
 
         impl WorkflowActivation {
-            /// Returns the index of the eviction job if this activation contains one. If present
-            /// it should always be the last job in the list.
-            pub fn eviction_index(&self) -> Option<usize> {
-                self.jobs.iter().position(|j| {
-                    matches!(
-                        j,
-                        WorkflowActivationJob {
-                            variant: Some(workflow_activation_job::Variant::RemoveFromCache(_))
-                        }
-                    )
-                })
-            }
-
-            /// Returns true if the only job is eviction
+            /// Returns true if the only job in the activation is eviction
             pub fn is_only_eviction(&self) -> bool {
-                self.jobs.len() == 1 && self.eviction_index().is_some()
+                matches!(
+                    self.jobs.as_slice(),
+                    [WorkflowActivationJob {
+                        variant: Some(workflow_activation_job::Variant::RemoveFromCache(_))
+                    }]
+                )
             }
 
-            /// Returns eviction reason if this activation has an evict job
+            /// Returns eviction reason if this activation is an eviction
             pub fn eviction_reason(&self) -> Option<EvictionReason> {
                 self.jobs.iter().find_map(|j| {
                     if let Some(workflow_activation_job::Variant::RemoveFromCache(ref rj)) =
@@ -512,22 +504,6 @@ pub mod coresdk {
                         None
                     }
                 })
-            }
-
-            /// Append an eviction job to the joblist
-            pub fn append_evict_job(&mut self, evict_job: RemoveFromCache) {
-                if let Some(last_job) = self.jobs.last() {
-                    if matches!(
-                        last_job.variant,
-                        Some(workflow_activation_job::Variant::RemoveFromCache(_))
-                    ) {
-                        return;
-                    }
-                }
-                let evict_job = WorkflowActivationJob::from(
-                    workflow_activation_job::Variant::RemoveFromCache(evict_job),
-                );
-                self.jobs.push(evict_job);
             }
         }
 

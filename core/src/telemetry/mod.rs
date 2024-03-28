@@ -121,7 +121,8 @@ impl TelemetryInstance {
 }
 
 thread_local! {
-    static SUB_GUARD: RefCell<Option<tracing::subscriber::DefaultGuard>> = RefCell::new(None);
+    static SUB_GUARD: RefCell<Option<tracing::subscriber::DefaultGuard>> =
+        const { RefCell::new(None) };
 }
 /// Set the trace subscriber for the current thread. This must be done in every thread which uses
 /// core stuff, otherwise traces/logs will not be collected on that thread. For example, if using
