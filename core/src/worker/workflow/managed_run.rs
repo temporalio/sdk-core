@@ -31,7 +31,7 @@ use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::{
             create_evict_activation, query_to_job, remove_from_cache::EvictionReason,
-            workflow_activation_job, RemoveFromCache, WorkflowActivation,
+            workflow_activation_job, WorkflowActivation,
         },
         workflow_commands::{FailWorkflowExecution, QueryResult},
         workflow_completion,
@@ -347,15 +347,8 @@ impl ManagedRun {
                 }
             }
             if let Some(wte) = self.trying_to_evict.clone() {
-                let mut act = self.wfm.machines.get_wf_activation();
-                // No other jobs make any sense to send if we encountered an error.
-                if self.am_broken {
-                    act.jobs = vec![];
-                }
-                act.append_evict_job(RemoveFromCache {
-                    message: wte.message,
-                    reason: wte.reason as i32,
-                });
+                let act =
+                    create_evict_activation(self.run_id().to_string(), wte.message, wte.reason);
                 Ok(Some(ActivationOrAuto::LangActivation(act)))
             } else {
                 Ok(None)
@@ -375,7 +368,7 @@ impl ManagedRun {
         used_flags: Vec<u32>,
         resp_chan: Option<oneshot::Sender<ActivationCompleteResult>>,
     ) -> Result<RunUpdateAct, NextPageReq> {
-        let activation_was_only_eviction = self.activation_has_only_eviction();
+        let activation_was_only_eviction = self.activation_is_eviction();
         let (task_token, has_pending_query, start_time) = if let Some(entry) = self.wft.as_ref() {
             (
                 entry.info.task_token.clone(),
@@ -444,15 +437,14 @@ impl ManagedRun {
                 .collect();
 
             if activation_was_only_eviction && !commands.is_empty() {
-                dbg_panic!("Reply to an eviction only containing an eviction included commands");
+                dbg_panic!("Reply to an eviction included commands");
             }
 
             let rac = RunActivationCompletion {
                 task_token,
                 start_time,
                 commands,
-                activation_was_eviction: self.activation_has_eviction(),
-                activation_was_only_eviction,
+                activation_was_eviction: self.activation_is_eviction(),
                 has_pending_query,
                 query_responses,
                 used_flags,
@@ -623,7 +615,8 @@ impl ManagedRun {
     ) -> (bool, BufferedTasks) {
         let evict = if self.activation().map(pred).unwrap_or_default() {
             let act = self.activation.take();
-            act.map(|a| a.has_eviction()).unwrap_or_default()
+            act.map(|a| matches!(a, OutstandingActivation::Eviction))
+                .unwrap_or_default()
         } else {
             false
         };
@@ -655,14 +648,14 @@ impl ManagedRun {
             task_token: completion.task_token,
             query_responses: completion.query_responses,
             has_pending_query: completion.has_pending_query,
-            activation_was_only_eviction: completion.activation_was_only_eviction,
+            activation_was_eviction: completion.activation_was_eviction,
         };
 
         self.wfm.machines.add_lang_used_flags(completion.used_flags);
 
-        // If this is just bookkeeping after a reply to an only-eviction activation, we can bypass
+        // If this is just bookkeeping after a reply to an eviction activation, we can bypass
         // everything, since there is no reason to continue trying to update machines.
-        if completion.activation_was_only_eviction {
+        if completion.activation_was_eviction {
             return Ok(Some(self.prepare_complete_resp(
                 completion.resp_chan,
                 data,
@@ -793,11 +786,9 @@ impl ManagedRun {
             self.trying_to_evict.is_some()
         };
         let act_work = if ignore_evicts {
-            if let Some(ref act) = self.activation {
-                !act.has_only_eviction()
-            } else {
-                false
-            }
+            self.activation
+                .map(|a| !matches!(a, OutstandingActivation::Eviction))
+                .unwrap_or_default()
         } else {
             self.activation.is_some()
         };
@@ -854,7 +845,7 @@ impl ManagedRun {
             return EvictionRequestResult::EvictionRequested(attempts, run_upd);
         }
 
-        if !self.activation_has_eviction() && self.trying_to_evict.is_none() {
+        if !self.activation_is_eviction() && self.trying_to_evict.is_none() {
             debug!(run_id=%info.run_id, reason=%info.message, "Eviction requested");
             self.trying_to_evict = Some(info);
             EvictionRequestResult::EvictionRequested(attempts, self.check_more_activations())
@@ -990,13 +981,12 @@ impl ManagedRun {
     fn insert_outstanding_activation(&mut self, act: &ActivationOrAuto) {
         let act_type = match &act {
             ActivationOrAuto::LangActivation(act) | ActivationOrAuto::ReadyForQueries(act) => {
-                if act.is_legacy_query() {
+                if act.is_only_eviction() {
+                    OutstandingActivation::Eviction
+                } else if act.is_legacy_query() {
                     OutstandingActivation::LegacyQuery
                 } else {
-                    OutstandingActivation::Normal {
-                        contains_eviction: act.eviction_index().is_some(),
-                        num_jobs: act.jobs.len(),
-                    }
+                    OutstandingActivation::Normal
                 }
             }
             ActivationOrAuto::Autocomplete { .. } | ActivationOrAuto::AutoFail { .. } => {
@@ -1021,7 +1011,7 @@ impl ManagedRun {
         due_to_heartbeat_timeout: bool,
     ) -> FulfillableActivationComplete {
         let mut machines_wft_response = self.wfm.prepare_for_wft_response();
-        if data.activation_was_only_eviction
+        if data.activation_was_eviction
             && (machines_wft_response.commands().peek().is_some()
                 || machines_wft_response.has_messages())
             && !self.am_broken
@@ -1045,7 +1035,7 @@ impl ManagedRun {
         let should_respond = !(machines_wft_response.has_pending_jobs
             || machines_wft_response.replaying
             || is_query_playback
-            || data.activation_was_only_eviction
+            || data.activation_was_eviction
             || machines_wft_response.have_seen_terminal_event);
         // If there are pending LA resolutions, and we're responding to a query here,
         // we want to make sure to force a new task, as otherwise once we tell lang about
@@ -1058,7 +1048,7 @@ impl ManagedRun {
         let outcome = if should_respond || has_query_responses {
             // If we broke there could be commands or messages in the pipe that we didn't
             // get a chance to handle properly during replay. Don't send them.
-            let (commands, messages) = if self.am_broken && data.activation_was_only_eviction {
+            let (commands, messages) = if self.am_broken && data.activation_was_eviction {
                 (vec![], vec![])
             } else {
                 (
@@ -1168,15 +1158,9 @@ impl ManagedRun {
         self.wfm.machines.last_processed_event
     }
 
-    fn activation_has_eviction(&mut self) -> bool {
+    fn activation_is_eviction(&mut self) -> bool {
         self.activation
-            .map(OutstandingActivation::has_eviction)
-            .unwrap_or_default()
-    }
-
-    fn activation_has_only_eviction(&mut self) -> bool {
-        self.activation
-            .map(OutstandingActivation::has_only_eviction)
+            .map(|a| matches!(a, OutstandingActivation::Eviction))
             .unwrap_or_default()
     }
 
@@ -1245,7 +1229,7 @@ struct CompletionDataForWFT {
     task_token: TaskToken,
     query_responses: Vec<QueryResult>,
     has_pending_query: bool,
-    activation_was_only_eviction: bool,
+    activation_was_eviction: bool,
 }
 
 /// Manages an instance of a [WorkflowMachines], which is not thread-safe, as well as other data
@@ -1385,7 +1369,6 @@ struct RunActivationCompletion {
     start_time: Instant,
     commands: Vec<WFCommand>,
     activation_was_eviction: bool,
-    activation_was_only_eviction: bool,
     has_pending_query: bool,
     query_responses: Vec<QueryResult>,
     used_flags: Vec<u32>,

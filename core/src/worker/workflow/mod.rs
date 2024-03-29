@@ -817,37 +817,13 @@ impl OutstandingTask {
 #[derive(Copy, Clone, Debug)]
 pub(crate) enum OutstandingActivation {
     /// A normal activation with a joblist
-    Normal {
-        /// True if there is an eviction in the joblist
-        contains_eviction: bool,
-        /// Number of jobs in the activation
-        num_jobs: usize,
-    },
+    Normal,
+    /// An eviction job
+    Eviction,
     /// An activation for a legacy query
     LegacyQuery,
     /// A fake activation which is never sent to lang, but used internally
     Autocomplete,
-}
-
-impl OutstandingActivation {
-    pub(crate) const fn has_only_eviction(self) -> bool {
-        matches!(
-            self,
-            OutstandingActivation::Normal {
-                contains_eviction: true,
-                num_jobs: nj
-            }
-        if nj == 1)
-    }
-    pub(crate) const fn has_eviction(self) -> bool {
-        matches!(
-            self,
-            OutstandingActivation::Normal {
-                contains_eviction: true,
-                ..
-            }
-        )
-    }
 }
 
 /// Contains important information about a given workflow task that we need to memorize while

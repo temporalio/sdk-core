@@ -37,7 +37,7 @@ use temporal_sdk_core_api::{
 };
 use temporal_sdk_core_protos::{
     coresdk::{
-        workflow_activation::WorkflowActivation,
+        workflow_activation::{workflow_activation_job, WorkflowActivation},
         workflow_commands::workflow_command,
         workflow_completion::{self, workflow_activation_completion, WorkflowActivationCompletion},
     },
@@ -831,18 +831,23 @@ pub(crate) async fn poll_and_reply_clears_outstanding_evicts<'a>(
             }
 
             let mut res = worker.poll_workflow_activation().await.unwrap();
-            let contains_eviction = res.eviction_index();
+            if res.jobs.iter().any(|j| {
+                matches!(
+                    j.variant,
+                    Some(workflow_activation_job::Variant::RemoveFromCache(_))
+                )
+            }) && res.jobs.len() > 1
+            {
+                panic!("Saw an activation with an eviction & other work! {res:?}");
+            }
+            let is_eviction = res.is_only_eviction();
 
             let mut do_release = false;
-            if let Some(eviction_job_ix) = contains_eviction {
-                // If the job list has an eviction, make sure it was the last item in the list
-                // then remove it, since in the tests we don't explicitly specify evict assertions
-                assert_eq!(
-                    eviction_job_ix,
-                    res.jobs.len() - 1,
-                    "Eviction job was not last job in job list"
-                );
-                res.jobs.remove(eviction_job_ix);
+
+            if is_eviction {
+                // If the job is an eviction, clear it, since in the tests we don't explicitly
+                // specify evict assertions
+                res.jobs.clear();
                 do_release = true;
             }
 
@@ -873,7 +878,7 @@ pub(crate) async fn poll_and_reply_clears_outstanding_evicts<'a>(
             }
             // Restart assertions from the beginning if it was an eviction (and workflow execution
             // isn't over)
-            if contains_eviction.is_some() && !ends_execution {
+            if is_eviction && !ends_execution {
                 continue 'outer;
             }
 
