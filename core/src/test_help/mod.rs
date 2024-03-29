@@ -831,18 +831,14 @@ pub(crate) async fn poll_and_reply_clears_outstanding_evicts<'a>(
             }
 
             let mut res = worker.poll_workflow_activation().await.unwrap();
-            if res
-                .jobs
-                .iter()
-                .find(|j| match j.variant {
-                    Some(workflow_activation_job::Variant::RemoveFromCache(_)) => true,
-                    _ => false,
-                })
-                .is_some()
+            if res.jobs.iter().any(|j| {
+                matches!(
+                    j.variant,
+                    Some(workflow_activation_job::Variant::RemoveFromCache(_))
+                )
+            }) && res.jobs.len() > 1
             {
-                if res.jobs.len() > 1 {
-                    panic!("Saw an activation with an eviction & other work! {res:?}");
-                }
+                panic!("Saw an activation with an eviction & other work! {res:?}");
             }
             let is_eviction = res.is_only_eviction();
 
