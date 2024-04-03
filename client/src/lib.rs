@@ -8,11 +8,13 @@
 extern crate tracing;
 
 mod metrics;
+mod proxy;
 mod raw;
 mod retry;
 mod worker_registry;
 mod workflow_handle;
 
+pub use crate::proxy::HttpConnectProxyOptions;
 pub use crate::retry::{CallType, RetryClient, RETRYABLE_ERROR_CODES};
 pub use raw::{HealthService, OperatorService, TestService, WorkflowService};
 pub use temporal_sdk_core_protos::temporal::api::{
@@ -142,6 +144,10 @@ pub struct ClientOptions {
     /// be applied if the headers don't already have an "Authorization" header.
     #[builder(default)]
     pub api_key: Option<String>,
+
+    /// HTTP CONNECT proxy to use for this client.
+    #[builder(default)]
+    pub http_connect_proxy: Option<HttpConnectProxyOptions>,
 }
 
 /// Configuration options for TLS
@@ -403,7 +409,12 @@ impl ClientOptions {
         } else {
             channel
         };
-        let channel = channel.connect().await?;
+        // If there is a proxy, we have to connect that way
+        let channel = if let Some(proxy) = self.http_connect_proxy.as_ref() {
+            proxy.connect_endpoint(&channel).await?
+        } else {
+            channel.connect().await?
+        };
         let service = ServiceBuilder::new()
             .layer_fn(move |channel| GrpcMetricSvc {
                 inner: channel,

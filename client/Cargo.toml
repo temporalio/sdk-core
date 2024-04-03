@@ -17,11 +17,13 @@ telemetry = ["dep:opentelemetry"]
 anyhow = "1.0"
 async-trait = "0.1"
 backoff = "0.4"
+base64 = "0.21.7"
 derive_builder = { workspace = true }
 derive_more = "0.99"
 futures = "0.3"
 futures-retry = "0.6.0"
 http = "0.2"
+hyper = { version = "0.14.28" }
 once_cell = { workspace = true }
 opentelemetry = { workspace = true, features = ["metrics"], optional = true  }
 parking_lot = "0.12"
