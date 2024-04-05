@@ -14,7 +14,7 @@ use tower::{service_fn, Service};
 pub struct HttpConnectProxyOptions {
     /// The host:port to proxy through.
     pub target_addr: String,
-    /// Optional HTTP basic auth for the proxy.
+    /// Optional HTTP basic auth for the proxy as user/pass tuple.
     pub basic_auth: Option<(String, String)>,
 }
 
