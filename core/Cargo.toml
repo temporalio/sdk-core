@@ -18,6 +18,7 @@ otel = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp",
     "dep:opentelemetry-prometheus", "dep:hyper", "dep:hyper-util", "dep:http-body-util"]
 tokio-console = ["console-subscriber"]
 ephemeral-server = ["dep:flate2", "dep:nix", "dep:reqwest", "dep:tar", "dep:zip"]
+fix-python-37-zombie-processes = ["ephemeral-server"]
 
 [dependencies]
 anyhow = "1.0"

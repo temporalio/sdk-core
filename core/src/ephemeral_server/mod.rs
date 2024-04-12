@@ -318,7 +318,7 @@ impl EphemeralServer {
     /// a kill if the child process appears completed, but such a check is not
     /// atomic so a kill could still fail as completed if completed just before
     /// kill.
-    #[cfg(not(target_family = "unix"))]
+    #[cfg(any(not(feature = "fix-python-37-zombie-processes"), not(target_family = "unix")))]
     pub async fn shutdown(&mut self) -> anyhow::Result<()> {
         // Only kill if there is a PID
         if self.child.id().is_some() {
@@ -332,7 +332,7 @@ impl EphemeralServer {
     /// a kill if the child process appears completed, but such a check is not
     /// atomic so a kill could still fail as completed if completed just before
     /// kill.
-    #[cfg(target_family = "unix")]
+    #[cfg(all(feature = "fix-python-37-zombie-processes", target_family = "unix"))]
     pub async fn shutdown(&mut self) -> anyhow::Result<()> {
         // For whatever reason, Tokio is not properly waiting on result
         // after sending kill in some cases which is causing defunct zombie
