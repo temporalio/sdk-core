@@ -5,9 +5,10 @@ use std::{
 };
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{ActContext, ActivityOptions, WfContext, WorkflowResult};
-use temporal_sdk_core::ResourceBasedSlots;
-use temporal_sdk_core_protos::coresdk::{
-    workflow_commands::ActivityCancellationType, AsJsonPayloadExt,
+use temporal_sdk_core::{ResourceBasedSlots, WorkerConfigSlotSupplierExt};
+use temporal_sdk_core_protos::{
+    coresdk::{workflow_commands::ActivityCancellationType, AsJsonPayloadExt},
+    temporal::api::enums::v1::WorkflowIdReusePolicy,
 };
 use temporal_sdk_core_test_utils::{workflows::la_problem_workflow, CoreWfStarter};
 
@@ -84,23 +85,22 @@ async fn activity_load() {
 
 #[tokio::test]
 async fn chunky_activities() {
-    const CONCURRENCY: usize = 1024;
-    const CACHE_SIZE: usize = 1024;
+    const WORKFLOWS: usize = 100;
 
     let mut starter = CoreWfStarter::new("chunky_activities");
-    let resource_slots = Arc::new(ResourceBasedSlots::new(0.5, 0.01, CACHE_SIZE));
     starter
         .worker_config
         .max_concurrent_wft_polls(10_usize)
         .max_concurrent_at_polls(10_usize);
     // starter
     //     .worker_config
-    //     .max_outstanding_activities(CONCURRENCY)
-    //     .max_outstanding_workflow_tasks(CONCURRENCY);
+    //     .max_outstanding_activities(25)
+    //     .max_outstanding_workflow_tasks(25);
+    let resource_slots = Arc::new(ResourceBasedSlots::new(0.5, 0.01, 1024));
     starter
         .worker_config
-        .workflow_task_slot_supplier(resource_slots.as_kind())
-        .activity_task_slot_supplier(resource_slots.as_kind());
+        .workflow_task_slot_supplier(resource_slots.as_kind(25, Duration::from_millis(0)))
+        .activity_task_slot_supplier(resource_slots.as_kind(5, Duration::from_millis(100)));
     let mut worker = starter.worker().await;
 
     let activity_id = "act-1";
@@ -141,7 +141,7 @@ async fn chunky_activities() {
             .await?
         },
     );
-    join_all((0..CONCURRENCY).map(|i| {
+    join_all((0..WORKFLOWS).map(|i| {
         let worker = &worker;
         let wf_id = format!("chunk_activity_{i}");
         async move {
@@ -150,7 +150,10 @@ async fn chunky_activities() {
                     wf_id,
                     wf_type.to_owned(),
                     vec![],
-                    WorkflowOptions::default(),
+                    WorkflowOptions {
+                        id_reuse_policy: WorkflowIdReusePolicy::TerminateIfRunning,
+                        ..Default::default()
+                    },
                 )
                 .await
                 .unwrap();
@@ -174,7 +177,8 @@ async fn workflow_load() {
     let mut starter = CoreWfStarter::new("workflow_load");
     starter.worker_config.max_concurrent_wft_polls(10_usize);
     starter.worker_config.workflow_task_slot_supplier(
-        Arc::new(ResourceBasedSlots::new(0.7, 0.01, cache_size)).as_kind(),
+        Arc::new(ResourceBasedSlots::new(0.7, 0.01, cache_size))
+            .as_kind(10, Duration::from_millis(0)),
     );
     starter
         // .max_wft(100)

@@ -110,7 +110,7 @@ where
 }
 
 impl<SK: SlotKind> SlotReservationContext for MeteredPermitDealer<SK> {
-    fn num_used_slots(&self) -> usize {
+    fn num_issued_slots(&self) -> usize {
         self.extant_permits.load(Ordering::Acquire)
     }
 }

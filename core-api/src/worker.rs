@@ -263,7 +263,7 @@ pub trait SlotSupplier {
 
 pub trait SlotReservationContext: Send + Sync {
     /// Returns the number of currently in-use slots
-    fn num_used_slots(&self) -> usize;
+    fn num_issued_slots(&self) -> usize;
 }
 
 pub enum SlotSupplierPermit {

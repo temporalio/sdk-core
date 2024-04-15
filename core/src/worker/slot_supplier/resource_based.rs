@@ -2,6 +2,7 @@ use crossbeam_utils::atomic::AtomicCell;
 use parking_lot::Mutex;
 use std::{
     marker::PhantomData,
+    ops::SubAssign,
     sync::{atomic::AtomicU64, Arc},
     time::{Duration, Instant},
 };
@@ -9,6 +10,7 @@ use temporal_sdk_core_api::worker::{
     SlotKind, SlotReleaseReason, SlotReservationContext, SlotSupplier, SlotSupplierPermit,
     WorkflowCacheSizer, WorkflowSlotInfo, WorkflowSlotsInfo,
 };
+use tokio::sync::watch;
 
 pub struct ResourceBasedSlots<MI> {
     target_mem_usage: f64,
@@ -18,6 +20,13 @@ pub struct ResourceBasedSlots<MI> {
 }
 pub struct ResourceBasedSlotsForType<MI, SK> {
     inner: Arc<ResourceBasedSlots<MI>>,
+    minimum: usize,
+    /// Minimum time we will wait (after passing the minimum slots number) between handing out new
+    /// slots
+    ramp_throttle: Duration,
+
+    last_slot_issued_tx: watch::Sender<Instant>,
+    last_slot_issued_rx: watch::Receiver<Instant>,
     _slot_kind: PhantomData<SK>,
 }
 
@@ -54,15 +63,25 @@ where
 
     async fn reserve_slot(&self, ctx: &dyn SlotReservationContext) -> SlotSupplierPermit {
         loop {
+            if ctx.num_issued_slots() >= self.minimum {
+                let must_wait_for = self
+                    .ramp_throttle
+                    .saturating_sub(self.time_since_last_issued());
+                if must_wait_for > Duration::from_millis(0) {
+                    tokio::time::sleep(must_wait_for).await;
+                }
+            }
             if let Some(p) = self.try_reserve_slot(ctx) {
                 return p;
             }
-            tokio::time::sleep(Duration::from_millis(100)).await
         }
     }
 
     fn try_reserve_slot(&self, ctx: &dyn SlotReservationContext) -> Option<SlotSupplierPermit> {
-        if self.inner.can_reserve(ctx.num_used_slots()) {
+        if self.time_since_last_issued() > self.ramp_throttle
+            && self.inner.can_reserve(ctx.num_issued_slots())
+        {
+            let _ = self.last_slot_issued_tx.send(Instant::now());
             Some(SlotSupplierPermit::NoData)
         } else {
             None
@@ -75,6 +94,18 @@ where
 
     fn available_slots(&self) -> Option<usize> {
         None
+    }
+}
+
+impl<MI, SK> ResourceBasedSlotsForType<MI, SK>
+where
+    MI: MemoryInfo + Send + Sync,
+    SK: SlotKind + Send + Sync,
+{
+    fn time_since_last_issued(&self) -> Duration {
+        Instant::now()
+            .checked_duration_since(*self.last_slot_issued_rx.borrow())
+            .unwrap_or_default()
     }
 }
 
@@ -95,16 +126,29 @@ impl<MI: MemoryInfo + Sync> ResourceBasedSlots<MI> {
     // TODO: Can just be an into impl probably?
     pub fn as_kind<SK: SlotKind + Send + Sync>(
         self: &Arc<Self>,
+        minimum: usize,
+        ramp_throttle: Duration,
     ) -> Arc<ResourceBasedSlotsForType<MI, SK>> {
+        let (tx, rx) = watch::channel(Instant::now());
         Arc::new(ResourceBasedSlotsForType {
             inner: self.clone(),
+            minimum,
+            ramp_throttle,
+            last_slot_issued_tx: tx,
+            last_slot_issued_rx: rx,
             _slot_kind: PhantomData,
         })
     }
 
     pub fn into_kind<SK: SlotKind + Send + Sync>(self) -> ResourceBasedSlotsForType<MI, SK> {
+        let (tx, rx) = watch::channel(Instant::now());
         ResourceBasedSlotsForType {
             inner: Arc::new(self),
+            // TODO: Configure
+            minimum: 1,
+            ramp_throttle: Duration::from_millis(0),
+            last_slot_issued_tx: tx,
+            last_slot_issued_rx: rx,
             _slot_kind: PhantomData,
         }
     }
@@ -194,7 +238,7 @@ mod tests {
     }
     struct FakeResCtx {}
     impl SlotReservationContext for FakeResCtx {
-        fn num_used_slots(&self) -> usize {
+        fn num_issued_slots(&self) -> usize {
             0
         }
     }
