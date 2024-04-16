@@ -2,6 +2,7 @@
 
 pub(crate) mod mocks;
 use std::sync::Arc;
+use std::sync::RwLock;
 use temporal_client::{Client, RetryClient, SlotManager, WorkflowService};
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::QueryResult,
@@ -26,7 +27,7 @@ type Result<T, E = tonic::Status> = std::result::Result<T, E>;
 
 /// Contains everything a worker needs to interact with the server
 pub(crate) struct WorkerClientBag {
-    client: RetryClient<Client>,
+    replaceable_client: RwLock<RetryClient<Client>>,
     namespace: String,
     identity: String,
     worker_build_id: String,
@@ -42,7 +43,7 @@ impl WorkerClientBag {
         use_versioning: bool,
     ) -> Self {
         Self {
-            client,
+            replaceable_client: RwLock::new(client),
             namespace,
             identity,
             worker_build_id,
@@ -50,8 +51,15 @@ impl WorkerClientBag {
         }
     }
 
+    fn cloned_client(&self) -> RetryClient<Client> {
+        self.replaceable_client
+            .read()
+            .expect("failed client read lock")
+            .clone()
+    }
+
     fn default_capabilities(&self) -> Capabilities {
-        self.capabilities().cloned().unwrap_or_default()
+        self.capabilities().as_ref().clone().unwrap_or_default()
     }
 
     fn binary_checksum(&self) -> String {
@@ -142,8 +150,8 @@ pub(crate) trait WorkerClient: Sync + Send {
         query_result: QueryResult,
     ) -> Result<RespondQueryTaskCompletedResponse>;
 
-    #[allow(clippy::needless_lifetimes)] // Clippy is wrong here
-    fn capabilities<'a>(&'a self) -> Option<&'a get_system_info_response::Capabilities>;
+    fn replace_client(&self, new_client: RetryClient<Client>);
+    fn capabilities(&self) -> Arc<Option<get_system_info_response::Capabilities>>;
     fn workers(&self) -> Arc<SlotManager>;
     fn is_mock(&self) -> bool;
 }
@@ -163,8 +171,7 @@ impl WorkerClient for WorkerClientBag {
         };
 
         Ok(self
-            .client
-            .clone()
+            .cloned_client()
             .poll_workflow_task_queue(request)
             .await?
             .into_inner())
@@ -190,8 +197,7 @@ impl WorkerClient for WorkerClientBag {
         };
 
         Ok(self
-            .client
-            .clone()
+            .cloned_client()
             .poll_activity_task_queue(request)
             .await?
             .into_inner())
@@ -231,8 +237,7 @@ impl WorkerClient for WorkerClientBag {
             metering_metadata: Some(request.metering_metadata),
         };
         Ok(self
-            .client
-            .clone()
+            .cloned_client()
             .respond_workflow_task_completed(request)
             .await?
             .into_inner())
@@ -244,8 +249,7 @@ impl WorkerClient for WorkerClientBag {
         result: Option<Payloads>,
     ) -> Result<RespondActivityTaskCompletedResponse> {
         Ok(self
-            .client
-            .clone()
+            .cloned_client()
             .respond_activity_task_completed(RespondActivityTaskCompletedRequest {
                 task_token: task_token.0,
                 result,
@@ -263,8 +267,7 @@ impl WorkerClient for WorkerClientBag {
         details: Option<Payloads>,
     ) -> Result<RecordActivityTaskHeartbeatResponse> {
         Ok(self
-            .client
-            .clone()
+            .cloned_client()
             .record_activity_task_heartbeat(RecordActivityTaskHeartbeatRequest {
                 task_token: task_token.0,
                 details,
@@ -281,8 +284,7 @@ impl WorkerClient for WorkerClientBag {
         details: Option<Payloads>,
     ) -> Result<RespondActivityTaskCanceledResponse> {
         Ok(self
-            .client
-            .clone()
+            .cloned_client()
             .respond_activity_task_canceled(RespondActivityTaskCanceledRequest {
                 task_token: task_token.0,
                 details,
@@ -300,8 +302,7 @@ impl WorkerClient for WorkerClientBag {
         failure: Option<Failure>,
     ) -> Result<RespondActivityTaskFailedResponse> {
         Ok(self
-            .client
-            .clone()
+            .cloned_client()
             .respond_activity_task_failed(RespondActivityTaskFailedRequest {
                 task_token: task_token.0,
                 failure,
@@ -332,8 +333,7 @@ impl WorkerClient for WorkerClientBag {
             worker_version: self.worker_version_stamp(),
         };
         Ok(self
-            .client
-            .clone()
+            .cloned_client()
             .respond_workflow_task_failed(request)
             .await?
             .into_inner())
@@ -346,8 +346,7 @@ impl WorkerClient for WorkerClientBag {
         page_token: Vec<u8>,
     ) -> Result<GetWorkflowExecutionHistoryResponse> {
         Ok(self
-            .client
-            .clone()
+            .cloned_client()
             .get_workflow_execution_history(GetWorkflowExecutionHistoryRequest {
                 namespace: self.namespace.clone(),
                 execution: Some(WorkflowExecution {
@@ -368,8 +367,7 @@ impl WorkerClient for WorkerClientBag {
     ) -> Result<RespondQueryTaskCompletedResponse> {
         let (_, completed_type, query_result, error_message) = query_result.into_components();
         Ok(self
-            .client
-            .clone()
+            .cloned_client()
             .respond_query_task_completed(RespondQueryTaskCompletedRequest {
                 task_token: task_token.into(),
                 completed_type: completed_type as i32,
@@ -381,12 +379,28 @@ impl WorkerClient for WorkerClientBag {
             .into_inner())
     }
 
-    fn capabilities(&self) -> Option<&Capabilities> {
-        self.client.get_client().inner().capabilities()
+    fn replace_client(&self, new_client: RetryClient<Client>) {
+        let mut replaceable_client = self
+            .replaceable_client
+            .write()
+            .expect("failed client write lock");
+        *replaceable_client = new_client;
+    }
+
+    fn capabilities(&self) -> Arc<Option<Capabilities>> {
+        let client = self
+            .replaceable_client
+            .read()
+            .expect("failed client read lock");
+        client.get_client().inner().capabilities()
     }
 
     fn workers(&self) -> Arc<SlotManager> {
-        self.client.get_client().inner().workers()
+        let client = self
+            .replaceable_client
+            .read()
+            .expect("failed client read lock");
+        client.get_client().inner().workers()
     }
 
     fn is_mock(&self) -> bool {
