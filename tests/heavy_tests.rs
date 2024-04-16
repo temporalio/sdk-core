@@ -10,7 +10,9 @@ use temporal_sdk_core_protos::{
     coresdk::{workflow_commands::ActivityCancellationType, AsJsonPayloadExt},
     temporal::api::enums::v1::WorkflowIdReusePolicy,
 };
-use temporal_sdk_core_test_utils::{workflows::la_problem_workflow, CoreWfStarter};
+use temporal_sdk_core_test_utils::{
+    canned_histories::cancel_scheduled_activity, workflows::la_problem_workflow, CoreWfStarter,
+};
 
 mod fuzzy_workflow;
 
@@ -96,11 +98,16 @@ async fn chunky_activities() {
     //     .worker_config
     //     .max_outstanding_activities(25)
     //     .max_outstanding_workflow_tasks(25);
-    let resource_slots = Arc::new(ResourceBasedSlots::new(0.5, 0.01, 1024));
+    // TODO: Fix /1 or /100 thing
+    let resource_slots = Arc::new(ResourceBasedSlots::new(0.5, 90.0));
     starter
         .worker_config
-        .workflow_task_slot_supplier(resource_slots.as_kind(25, Duration::from_millis(0)))
-        .activity_task_slot_supplier(resource_slots.as_kind(5, Duration::from_millis(100)));
+        .workflow_task_slot_supplier(resource_slots.as_kind(
+            25,
+            WORKFLOWS,
+            Duration::from_millis(0),
+        ))
+        .activity_task_slot_supplier(resource_slots.as_kind(5, 1000, Duration::from_millis(50)));
     let mut worker = starter.worker().await;
 
     let activity_id = "act-1";
@@ -177,8 +184,11 @@ async fn workflow_load() {
     let mut starter = CoreWfStarter::new("workflow_load");
     starter.worker_config.max_concurrent_wft_polls(10_usize);
     starter.worker_config.workflow_task_slot_supplier(
-        Arc::new(ResourceBasedSlots::new(0.7, 0.01, cache_size))
-            .as_kind(10, Duration::from_millis(0)),
+        Arc::new(ResourceBasedSlots::new(0.7, 0.9)).as_kind(
+            10,
+            cache_size,
+            Duration::from_millis(0),
+        ),
     );
     starter
         // .max_wft(100)
