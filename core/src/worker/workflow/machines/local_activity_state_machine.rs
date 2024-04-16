@@ -893,7 +893,7 @@ mod tests {
     use temporal_sdk_core_protos::{
         coresdk::{
             workflow_activation::{workflow_activation_job, WorkflowActivationJob},
-            AsJsonPayloadExt,
+            ToPayload,
         },
         temporal::api::{
             common::v1::RetryPolicy, enums::v1::WorkflowTaskFailedCause, failure::v1::Failure,
@@ -906,7 +906,7 @@ mod tests {
     async fn la_wf(ctx: WfContext) -> WorkflowResult<()> {
         ctx.local_activity(LocalActivityOptions {
             activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
-            input: ().as_json_payload().unwrap(),
+            input: ().to_payload().unwrap(),
             retry_policy: RetryPolicy {
                 maximum_attempts: 1,
                 ..Default::default()
@@ -1003,13 +1003,13 @@ mod tests {
     async fn two_la_wf(ctx: WfContext) -> WorkflowResult<()> {
         ctx.local_activity(LocalActivityOptions {
             activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
-            input: ().as_json_payload().unwrap(),
+            input: ().to_payload().unwrap(),
             ..Default::default()
         })
         .await;
         ctx.local_activity(LocalActivityOptions {
             activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
-            input: ().as_json_payload().unwrap(),
+            input: ().to_payload().unwrap(),
             ..Default::default()
         })
         .await;
@@ -1020,12 +1020,12 @@ mod tests {
         tokio::join!(
             ctx.local_activity(LocalActivityOptions {
                 activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
-                input: ().as_json_payload().unwrap(),
+                input: ().to_payload().unwrap(),
                 ..Default::default()
             }),
             ctx.local_activity(LocalActivityOptions {
                 activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
-                input: ().as_json_payload().unwrap(),
+                input: ().to_payload().unwrap(),
                 ..Default::default()
             })
         );
@@ -1131,14 +1131,14 @@ mod tests {
     async fn la_timer_la(ctx: WfContext) -> WorkflowResult<()> {
         ctx.local_activity(LocalActivityOptions {
             activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
-            input: ().as_json_payload().unwrap(),
+            input: ().to_payload().unwrap(),
             ..Default::default()
         })
         .await;
         ctx.timer(Duration::from_secs(5)).await;
         ctx.local_activity(LocalActivityOptions {
             activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
-            input: ().as_json_payload().unwrap(),
+            input: ().to_payload().unwrap(),
             ..Default::default()
         })
         .await;
@@ -1426,7 +1426,7 @@ mod tests {
         worker.register_wf(DEFAULT_WORKFLOW_TYPE, move |ctx: WfContext| async move {
             let la = ctx.local_activity(LocalActivityOptions {
                 cancel_type,
-                input: ().as_json_payload().unwrap(),
+                input: ().to_payload().unwrap(),
                 activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
                 ..Default::default()
             });

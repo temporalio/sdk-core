@@ -39,7 +39,7 @@ use std::{
 };
 use temporal_sdk_core_protos::{
     constants::PATCH_MARKER_NAME,
-    coresdk::{common::build_has_change_marker_details, AsJsonPayloadExt},
+    coresdk::{common::build_has_change_marker_details, ToPayload},
     temporal::api::{
         command::v1::{
             Command, RecordMarkerCommandAttributes, UpsertWorkflowSearchAttributesCommandAttributes,
@@ -135,7 +135,7 @@ pub(super) fn has_change<'a>(
         let mut all_ids = BTreeSet::from_iter(existing_patch_ids);
         all_ids.insert(machine.shared_state.patch_id.as_str());
         let serialized = all_ids
-            .as_json_payload()
+            .to_payload()
             .context("Could not serialize search attribute value for patch machine")
             .map_err(|e| WFMachinesError::Fatal(e.to_string()))?;
 
@@ -296,7 +296,7 @@ mod tests {
         coresdk::{
             common::decode_change_marker_details,
             workflow_activation::{workflow_activation_job, NotifyHasPatch, WorkflowActivationJob},
-            AsJsonPayloadExt, FromJsonPayloadExt,
+            FromPayload, ToPayload,
         },
         temporal::api::{
             command::v1::{
@@ -606,7 +606,7 @@ mod tests {
                                 { search_attributes: Some(attrs) }
                             )
                             if attrs.indexed_fields.get(VERSION_SEARCH_ATTR_KEY).unwrap()
-                              == &[MY_PATCH_ID].as_json_payload().unwrap()
+                              == &[MY_PATCH_ID].to_payload().unwrap()
                         );
                     }
                     // The only time the "old" timer should fire is in v2, replaying, without a marker.
@@ -790,7 +790,7 @@ mod tests {
                         );
                         let expected_patches: HashSet<String, _> =
                             (1..i).map(|i| format!("patch-{i}")).collect();
-                        let deserialized = HashSet::<String, RandomState>::from_json_payload(
+                        let deserialized = HashSet::<String, RandomState>::from_payload(
                             attrs.indexed_fields.get(VERSION_SEARCH_ATTR_KEY).unwrap(),
                         )
                         .unwrap();

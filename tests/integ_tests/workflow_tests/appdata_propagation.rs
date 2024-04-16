@@ -2,7 +2,7 @@ use assert_matches::assert_matches;
 use std::time::Duration;
 use temporal_client::{WfClientExt, WorkflowExecutionResult, WorkflowOptions};
 use temporal_sdk::{ActContext, ActivityOptions, WfContext, WorkflowResult};
-use temporal_sdk_core_protos::coresdk::AsJsonPayloadExt;
+use temporal_sdk_core_protos::coresdk::ToPayload;
 use temporal_sdk_core_test_utils::CoreWfStarter;
 
 const TEST_APPDATA_MESSAGE: &str = "custom app data, yay";
@@ -15,7 +15,7 @@ pub async fn appdata_activity_wf(ctx: WfContext) -> WorkflowResult<()> {
     ctx.activity(ActivityOptions {
         activity_type: "echo_activity".to_string(),
         start_to_close_timeout: Some(Duration::from_secs(5)),
-        input: "hi!".as_json_payload().expect("serializes fine"),
+        input: "hi!".to_payload().expect("serializes fine"),
         ..Default::default()
     })
     .await;

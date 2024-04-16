@@ -1,7 +1,7 @@
 use std::{collections::HashMap, env};
 use temporal_client::{WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{WfContext, WorkflowResult};
-use temporal_sdk_core_protos::coresdk::{AsJsonPayloadExt, FromJsonPayloadExt};
+use temporal_sdk_core_protos::coresdk::{FromPayload, ToPayload};
 use temporal_sdk_core_test_utils::{CoreWfStarter, INTEG_TEMPORAL_DEV_SERVER_USED_ENV_VAR};
 use tracing::warn;
 use uuid::Uuid;
@@ -13,8 +13,8 @@ static INT_ATTR: &str = "CustomIntField";
 
 async fn search_attr_updater(ctx: WfContext) -> WorkflowResult<()> {
     ctx.upsert_search_attributes([
-        (TXT_ATTR.to_string(), "goodbye".as_json_payload().unwrap()),
-        (INT_ATTR.to_string(), 98.as_json_payload().unwrap()),
+        (TXT_ATTR.to_string(), "goodbye".to_payload().unwrap()),
+        (INT_ATTR.to_string(), 98.to_payload().unwrap()),
     ]);
     Ok(().into())
 }
@@ -40,8 +40,8 @@ async fn sends_upsert() {
             vec![],
             WorkflowOptions {
                 search_attributes: Some(HashMap::from([
-                    (TXT_ATTR.to_string(), "hello".as_json_payload().unwrap()),
-                    (INT_ATTR.to_string(), 1.as_json_payload().unwrap()),
+                    (TXT_ATTR.to_string(), "hello".to_payload().unwrap()),
+                    (INT_ATTR.to_string(), 1.to_payload().unwrap()),
                 ])),
                 ..Default::default()
             },
@@ -66,9 +66,6 @@ async fn sends_upsert() {
     for payload in [txt_attr_payload, int_attr_payload] {
         assert!(payload.is_json_payload());
     }
-    assert_eq!(
-        "goodbye",
-        String::from_json_payload(txt_attr_payload).unwrap()
-    );
-    assert_eq!(98, usize::from_json_payload(int_attr_payload).unwrap());
+    assert_eq!("goodbye", String::from_payload(txt_attr_payload).unwrap());
+    assert_eq!(98, usize::from_payload(int_attr_payload).unwrap());
 }

@@ -1,6 +1,6 @@
 use temporal_client::WorkflowClientTrait;
 use temporal_sdk::{WfContext, WorkflowResult};
-use temporal_sdk_core_protos::coresdk::{AsJsonPayloadExt, FromJsonPayloadExt};
+use temporal_sdk_core_protos::coresdk::{FromPayload, ToPayload};
 use temporal_sdk_core_test_utils::CoreWfStarter;
 use uuid::Uuid;
 
@@ -9,8 +9,8 @@ static FIELD_B: &str = "cute_level";
 
 async fn memo_upserter(ctx: WfContext) -> WorkflowResult<()> {
     ctx.upsert_memo([
-        (FIELD_A.to_string(), "enchi".as_json_payload().unwrap()),
-        (FIELD_B.to_string(), 9001.as_json_payload().unwrap()),
+        (FIELD_A.to_string(), "enchi".to_payload().unwrap()),
+        (FIELD_B.to_string(), 9001.to_payload().unwrap()),
     ]);
     Ok(().into())
 }
@@ -46,6 +46,6 @@ async fn sends_modify_wf_props() {
     for payload in [catname, cuteness] {
         assert!(payload.is_json_payload());
     }
-    assert_eq!("enchi", String::from_json_payload(catname).unwrap());
-    assert_eq!(9001, usize::from_json_payload(cuteness).unwrap());
+    assert_eq!("enchi", String::from_payload(catname).unwrap());
+    assert_eq!(9001, usize::from_payload(cuteness).unwrap());
 }

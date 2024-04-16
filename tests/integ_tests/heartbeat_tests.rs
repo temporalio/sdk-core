@@ -11,7 +11,7 @@ use temporal_sdk_core_protos::{
         workflow_activation::{workflow_activation_job, ResolveActivity, WorkflowActivationJob},
         workflow_commands::{ActivityCancellationType, ScheduleActivity},
         workflow_completion::WorkflowActivationCompletion,
-        ActivityHeartbeat, ActivityTaskCompletion, AsJsonPayloadExt, IntoCompletion,
+        ActivityHeartbeat, ActivityTaskCompletion, IntoCompletion, ToPayload,
     },
     temporal::api::{
         common::v1::{Payload, RetryPolicy},
@@ -191,7 +191,7 @@ async fn activity_doesnt_heartbeat_hits_timeout_then_completes() {
         let res = ctx
             .activity(ActivityOptions {
                 activity_type: "echo_activity".to_string(),
-                input: "hi!".as_json_payload().expect("serializes fine"),
+                input: "hi!".to_payload().expect("serializes fine"),
                 start_to_close_timeout: Some(Duration::from_secs(10)),
                 heartbeat_timeout: Some(Duration::from_secs(2)),
                 retry_policy: Some(RetryPolicy {

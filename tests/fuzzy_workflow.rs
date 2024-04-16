@@ -3,7 +3,9 @@ use rand::{prelude::Distribution, rngs::SmallRng, Rng, SeedableRng};
 use std::{future, time::Duration};
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{ActContext, ActivityOptions, LocalActivityOptions, WfContext, WorkflowResult};
-use temporal_sdk_core_protos::coresdk::{AsJsonPayloadExt, FromJsonPayloadExt, IntoPayloadsExt};
+use temporal_sdk_core_protos::coresdk::{
+    FromPayload, IntoPayloadsExt, Json, PayloadExt, ToPayload,
+};
 use temporal_sdk_core_test_utils::CoreWfStarter;
 use tokio_util::sync::CancellationToken;
 
@@ -14,6 +16,10 @@ enum FuzzyWfAction {
     Shutdown,
     DoAct,
     DoLocalAct,
+}
+
+impl PayloadExt for FuzzyWfAction {
+    type Encoding = Json;
 }
 
 struct FuzzyWfActionSampler;
@@ -35,7 +41,7 @@ async fn echo(_ctx: ActContext, echo_me: String) -> Result<String, anyhow::Error
 async fn fuzzy_wf_def(ctx: WfContext) -> WorkflowResult<()> {
     let sigchan = ctx
         .make_signal_channel(FUZZY_SIG)
-        .map(|sd| FuzzyWfAction::from_json_payload(&sd.input[0]).expect("Can deserialize signal"));
+        .map(|sd| FuzzyWfAction::from_payload(&sd.input[0]).expect("Can deserialize signal"));
     let done = CancellationToken::new();
     let done_setter = done.clone();
 
@@ -47,7 +53,7 @@ async fn fuzzy_wf_def(ctx: WfContext) -> WorkflowResult<()> {
                     .activity(ActivityOptions {
                         activity_type: "echo_activity".to_string(),
                         start_to_close_timeout: Some(Duration::from_secs(5)),
-                        input: "hi!".as_json_payload().expect("serializes fine"),
+                        input: "hi!".to_payload().expect("serializes fine"),
                         ..Default::default()
                     })
                     .map(|_| ())
@@ -56,7 +62,7 @@ async fn fuzzy_wf_def(ctx: WfContext) -> WorkflowResult<()> {
                     .local_activity(LocalActivityOptions {
                         activity_type: "echo_activity".to_string(),
                         start_to_close_timeout: Some(Duration::from_secs(5)),
-                        input: "hi!".as_json_payload().expect("serializes fine"),
+                        input: "hi!".to_payload().expect("serializes fine"),
                         ..Default::default()
                     })
                     .map(|_| ())
@@ -112,7 +118,7 @@ async fn fuzzy_workflow() {
                         format!("{wf_name}_{i}"),
                         "".to_string(),
                         FUZZY_SIG.to_string(),
-                        [action.as_json_payload().expect("Serializes ok")].into_payloads(),
+                        [action.to_payload().expect("Serializes ok")].into_payloads(),
                         None,
                     )
                 })

@@ -7,7 +7,7 @@ use crate::{
         },
         external_data::LocalActivityMarkerData,
         workflow_commands::ScheduleActivity,
-        AsJsonPayloadExt, IntoPayloadsExt,
+        IntoPayloadsExt, Json, ToPayload,
     },
     temporal::api::{
         common::v1::{
@@ -17,8 +17,7 @@ use crate::{
         failure::v1::{failure, CanceledFailureInfo, Failure},
         history::v1::{history_event::Attributes, *},
         taskqueue::v1::TaskQueue,
-        update,
-        update::v1::outcome,
+        update::{self, v1::outcome},
     },
     HistoryInfo,
 };
@@ -429,7 +428,7 @@ impl TestHistoryBuilder {
         let mut indexed_fields = HashMap::new();
         indexed_fields.insert(
             "TemporalChangeVersion".to_string(),
-            attribs.as_json_payload().unwrap(),
+            attribs.to_payload().unwrap(),
         );
         let attrs = UpsertWorkflowSearchAttributesEventAttributes {
             workflow_task_completed_event_id: self.previous_task_completed_id,
@@ -603,6 +602,10 @@ impl TestHistoryBuilder {
         self.events.push(evt);
         self.current_event_id
     }
+}
+
+impl ToPayload for &[String] {
+    type Encoder = Json;
 }
 
 fn default_attribs(et: EventType) -> Result<Attributes> {

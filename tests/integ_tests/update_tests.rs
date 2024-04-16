@@ -20,7 +20,7 @@ use temporal_sdk_core_protos::{
             update_response, CompleteWorkflowExecution, ScheduleLocalActivity, UpdateResponse,
         },
         workflow_completion::WorkflowActivationCompletion,
-        ActivityTaskCompletion, AsJsonPayloadExt, IntoPayloadsExt,
+        ActivityTaskCompletion, IntoPayloadsExt, ToPayload,
     },
     temporal::api::{
         enums::v1::{EventType, UpdateWorkflowExecutionLifecycleStage},
@@ -498,7 +498,7 @@ async fn update_with_local_acts() {
                 ctx.wf_ctx
                     .local_activity(LocalActivityOptions {
                         activity_type: "echo_activity".to_string(),
-                        input: "hi!".as_json_payload().expect("serializes fine"),
+                        input: "hi!".to_payload().expect("serializes fine"),
                         ..Default::default()
                     })
                     .await;
@@ -532,7 +532,7 @@ async fn update_with_local_acts() {
                 WaitPolicy {
                     lifecycle_stage: UpdateWorkflowExecutionLifecycleStage::Completed as i32,
                 },
-                [().as_json_payload().unwrap()].into_payloads(),
+                [().to_payload().unwrap()].into_payloads(),
             )
         });
         for res in join_all(updates).await {
@@ -587,7 +587,7 @@ async fn update_rejection_sdk() {
                 WaitPolicy {
                     lifecycle_stage: UpdateWorkflowExecutionLifecycleStage::Completed as i32,
                 },
-                [().as_json_payload().unwrap()].into_payloads(),
+                [().to_payload().unwrap()].into_payloads(),
             )
             .await
             .unwrap();
@@ -631,7 +631,7 @@ async fn update_fail_sdk() {
                 WaitPolicy {
                     lifecycle_stage: UpdateWorkflowExecutionLifecycleStage::Completed as i32,
                 },
-                [().as_json_payload().unwrap()].into_payloads(),
+                [().to_payload().unwrap()].into_payloads(),
             )
             .await
             .unwrap();
@@ -679,7 +679,7 @@ async fn update_timer_sequence() {
                 WaitPolicy {
                     lifecycle_stage: UpdateWorkflowExecutionLifecycleStage::Completed as i32,
                 },
-                [().as_json_payload().unwrap()].into_payloads(),
+                [().to_payload().unwrap()].into_payloads(),
             )
             .await
             .unwrap();
@@ -730,7 +730,7 @@ async fn task_failure_during_validation() {
                 WaitPolicy {
                     lifecycle_stage: UpdateWorkflowExecutionLifecycleStage::Completed as i32,
                 },
-                [().as_json_payload().unwrap()].into_payloads(),
+                [().to_payload().unwrap()].into_payloads(),
             )
             .await
             .unwrap();
@@ -794,7 +794,7 @@ async fn task_failure_after_update() {
                 WaitPolicy {
                     lifecycle_stage: UpdateWorkflowExecutionLifecycleStage::Completed as i32,
                 },
-                [().as_json_payload().unwrap()].into_payloads(),
+                [().to_payload().unwrap()].into_payloads(),
             )
             .await
             .unwrap();
@@ -827,7 +827,7 @@ async fn worker_restarted_in_middle_of_update() {
                 ctx.wf_ctx
                     .activity(ActivityOptions {
                         activity_type: "blocks".to_string(),
-                        input: "hi!".as_json_payload().expect("serializes fine"),
+                        input: "hi!".to_payload().expect("serializes fine"),
                         start_to_close_timeout: Some(Duration::from_secs(2)),
                         ..Default::default()
                     })
@@ -859,7 +859,7 @@ async fn worker_restarted_in_middle_of_update() {
                 WaitPolicy {
                     lifecycle_stage: UpdateWorkflowExecutionLifecycleStage::Completed as i32,
                 },
-                [().as_json_payload().unwrap()].into_payloads(),
+                [().to_payload().unwrap()].into_payloads(),
             )
             .await
             .unwrap();

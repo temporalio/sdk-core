@@ -2,9 +2,7 @@ use futures::{future::join_all, sink, stream::FuturesUnordered, StreamExt};
 use std::time::{Duration, Instant};
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{ActContext, ActivityOptions, WfContext, WorkflowResult};
-use temporal_sdk_core_protos::coresdk::{
-    workflow_commands::ActivityCancellationType, AsJsonPayloadExt,
-};
+use temporal_sdk_core_protos::coresdk::{workflow_commands::ActivityCancellationType, ToPayload};
 use temporal_sdk_core_test_utils::{workflows::la_problem_workflow, CoreWfStarter};
 
 mod fuzzy_workflow;
@@ -27,7 +25,7 @@ async fn activity_load() {
 
     let wf_fn = move |ctx: WfContext| {
         let task_queue = task_queue.clone();
-        let payload = "yo".as_json_payload().unwrap();
+        let payload = "yo".to_payload().unwrap();
         async move {
             let activity = ActivityOptions {
                 activity_id: Some(activity_id.to_string()),
@@ -99,7 +97,7 @@ async fn workflow_load() {
                 ctx.activity(ActivityOptions {
                     activity_type: "echo_activity".to_string(),
                     start_to_close_timeout: Some(Duration::from_secs(5)),
-                    input: "hi!".as_json_payload().expect("serializes fine"),
+                    input: "hi!".to_payload().expect("serializes fine"),
                     ..Default::default()
                 })
                 .await;
