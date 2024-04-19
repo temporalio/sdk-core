@@ -8,9 +8,7 @@ use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::coresdk::{
     activity_task::activity_task as act_task,
     workflow_activation::{workflow_activation_job, FireTimer, WorkflowActivationJob},
-    workflow_commands::{
-        ActivityCancellationType, CompleteWorkflowExecution, RequestCancelActivity, StartTimer,
-    },
+    workflow_commands::{ActivityCancellationType, RequestCancelActivity, StartTimer},
     workflow_completion::WorkflowActivationCompletion,
     IntoCompletion,
 };
@@ -117,21 +115,22 @@ async fn switching_worker_client_changes_poll() {
 
     // Connect clients to both servers
     info!("Connecting clients");
-    let client1 = ClientOptionsBuilder::default()
+    let mut client_common_config = ClientOptionsBuilder::default();
+    client_common_config
         .identity("integ_tester".to_owned())
-        .target_url(Url::parse(&format!("http://{}", server1.target)).unwrap())
         .client_name("temporal-core".to_owned())
-        .client_version("0.1.0".to_owned())
+        .client_version("0.1.0".to_owned());
+    let client1 = client_common_config
+        .clone()
+        .target_url(Url::parse(&format!("http://{}", server1.target)).unwrap())
         .build()
         .unwrap()
         .connect("default", None)
         .await
         .unwrap();
-    let client2 = ClientOptionsBuilder::default()
-        .identity("integ_tester".to_owned())
+    let client2 = client_common_config
+        .clone()
         .target_url(Url::parse(&format!("http://{}", server2.target)).unwrap())
-        .client_name("temporal-core".to_owned())
-        .client_version("0.1.0".to_owned())
         .build()
         .unwrap()
         .connect("default", None)
@@ -182,13 +181,7 @@ async fn switching_worker_client_changes_poll() {
     info!("Doing initial poll");
     let act1 = worker.poll_workflow_activation().await.unwrap();
     assert_eq!(wf1.run_id, act1.run_id);
-    worker
-        .complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-            act1.run_id,
-            vec![CompleteWorkflowExecution { result: None }.into()],
-        ))
-        .await
-        .unwrap();
+    worker.complete_execution(&act1.run_id).await;
     info!("Waiting on first workflow complete");
     client1
         .get_untyped_workflow_handle("my-workflow-1", wf1.run_id)
@@ -201,13 +194,7 @@ async fn switching_worker_client_changes_poll() {
     worker.replace_client(client2.get_client().inner().clone());
     let act2 = worker.poll_workflow_activation().await.unwrap();
     assert_eq!(wf2.run_id, act2.run_id);
-    worker
-        .complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-            act2.run_id,
-            vec![CompleteWorkflowExecution { result: None }.into()],
-        ))
-        .await
-        .unwrap();
+    worker.complete_execution(&act2.run_id).await;
     info!("Waiting on second workflow complete");
     client2
         .get_untyped_workflow_handle("my-workflow-2", wf2.run_id)

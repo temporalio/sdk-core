@@ -1,8 +1,8 @@
 //! Worker-specific client needs
 
 pub(crate) mod mocks;
+use parking_lot::RwLock;
 use std::sync::Arc;
-use std::sync::RwLock;
 use temporal_client::{Client, RetryClient, SlotManager, WorkflowService};
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::QueryResult,
@@ -52,10 +52,7 @@ impl WorkerClientBag {
     }
 
     fn cloned_client(&self) -> RetryClient<Client> {
-        self.replaceable_client
-            .read()
-            .expect("failed client read lock")
-            .clone()
+        self.replaceable_client.read().clone()
     }
 
     fn default_capabilities(&self) -> Capabilities {
@@ -380,26 +377,17 @@ impl WorkerClient for WorkerClientBag {
     }
 
     fn replace_client(&self, new_client: RetryClient<Client>) {
-        let mut replaceable_client = self
-            .replaceable_client
-            .write()
-            .expect("failed client write lock");
+        let mut replaceable_client = self.replaceable_client.write();
         *replaceable_client = new_client;
     }
 
     fn capabilities(&self) -> Arc<Option<Capabilities>> {
-        let client = self
-            .replaceable_client
-            .read()
-            .expect("failed client read lock");
+        let client = self.replaceable_client.read();
         client.get_client().inner().capabilities()
     }
 
     fn workers(&self) -> Arc<SlotManager> {
-        let client = self
-            .replaceable_client
-            .read()
-            .expect("failed client read lock");
+        let client = self.replaceable_client.read();
         client.get_client().inner().workers()
     }
 

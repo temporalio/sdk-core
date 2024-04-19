@@ -36,13 +36,14 @@ use crate::{
 };
 use activities::WorkerActivityTasks;
 use futures_util::{stream, StreamExt};
+use parking_lot::Mutex;
 use slot_provider::SlotProvider;
 use std::{
     convert::TryInto,
     future,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
+        Arc,
     },
 };
 use temporal_sdk_core_protos::{
@@ -168,11 +169,7 @@ impl WorkerTrait for Worker {
         }
         self.shutdown_token.cancel();
         // First, disable Eager Workflow Start
-        if let Some(key) = *self
-            .worker_key
-            .lock()
-            .expect("failed getting worker key lock")
-        {
+        if let Some(key) = *self.worker_key.lock() {
             self.wf_client.workers().unregister(key);
         }
         // Second, we want to stop polling of both activity and workflow tasks
@@ -221,13 +218,10 @@ impl Worker {
     }
 
     /// Replace client and return a new client. For eager workflow purposes, this new client will
-    /// now apply and the older client will not.
+    /// now apply to future eager start requests and the older client will not.
     pub fn replace_client(&self, new_client: ConfiguredClient<TemporalServiceClientWithMetrics>) {
         // Unregister worker from current client, register in new client at the end
-        let mut worker_key = self
-            .worker_key
-            .lock()
-            .expect("failed getting worker key lock");
+        let mut worker_key = self.worker_key.lock();
         if let Some(key) = *worker_key {
             self.wf_client.workers().unregister(key);
         }
