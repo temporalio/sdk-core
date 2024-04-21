@@ -7,20 +7,18 @@ use temporal_client::SlotManager;
 static DEFAULT_WORKERS_REGISTRY: Lazy<Arc<SlotManager>> =
     Lazy::new(|| Arc::new(SlotManager::new()));
 
-pub(crate) static DEFAULT_TEST_CAPABILITIES: Lazy<Arc<Option<Capabilities>>> = Lazy::new(|| {
-    Arc::new(Some(Capabilities {
-        signal_and_query_header: true,
-        internal_error_differentiation: true,
-        activity_failure_include_heartbeat: true,
-        supports_schedules: true,
-        encoded_failure_attributes: true,
-        build_id_based_versioning: true,
-        upsert_memo: true,
-        eager_workflow_start: true,
-        sdk_metadata: true,
-        count_group_by_execution_status: false,
-    }))
-});
+pub(crate) static DEFAULT_TEST_CAPABILITIES: &Capabilities = &Capabilities {
+    signal_and_query_header: true,
+    internal_error_differentiation: true,
+    activity_failure_include_heartbeat: true,
+    supports_schedules: true,
+    encoded_failure_attributes: true,
+    build_id_based_versioning: true,
+    upsert_memo: true,
+    eager_workflow_start: true,
+    sdk_metadata: true,
+    count_group_by_execution_status: false,
+};
 
 #[cfg(test)]
 /// Create a mock client primed with basic necessary expectations
@@ -38,7 +36,7 @@ pub(crate) fn mock_workflow_client() -> MockWorkerClient {
 pub(crate) fn mock_manual_workflow_client() -> MockManualWorkerClient {
     let mut r = MockManualWorkerClient::new();
     r.expect_capabilities()
-        .returning(|| DEFAULT_TEST_CAPABILITIES.clone());
+        .returning(|| Some(DEFAULT_TEST_CAPABILITIES.clone()));
     r.expect_workers()
         .returning(|| DEFAULT_WORKERS_REGISTRY.clone());
     r.expect_is_mock().returning(|| true);
@@ -119,7 +117,7 @@ mockall::mock! {
 
         fn replace_client(&self, new_client: RetryClient<Client>);
 
-        fn capabilities(&self) -> Arc<Option<get_system_info_response::Capabilities>>;
+        fn capabilities(&self) -> Option<get_system_info_response::Capabilities>;
 
         fn workers(&self) -> Arc<SlotManager>;
 

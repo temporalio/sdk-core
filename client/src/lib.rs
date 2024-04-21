@@ -296,7 +296,7 @@ pub struct ConfiguredClient<C> {
     options: Arc<ClientOptions>,
     headers: Arc<RwLock<ClientHeaders>>,
     /// Capabilities as read from the `get_system_info` RPC call made on client connection
-    capabilities: Arc<Option<get_system_info_response::Capabilities>>,
+    capabilities: Option<get_system_info_response::Capabilities>,
     workers: Arc<SlotManager>,
 }
 
@@ -318,8 +318,8 @@ impl<C> ConfiguredClient<C> {
 
     /// Returns the server capabilities we (may have) learned about when establishing an initial
     /// connection
-    pub fn capabilities(&self) -> Arc<Option<get_system_info_response::Capabilities>> {
-        self.capabilities.clone()
+    pub fn capabilities(&self) -> Option<&get_system_info_response::Capabilities> {
+        self.capabilities.as_ref()
     }
 
     /// Returns a cloned reference to a registry with workers using this client instance
@@ -435,7 +435,7 @@ impl ClientOptions {
             headers,
             client: TemporalServiceClient::new(svc),
             options: Arc::new(self.clone()),
-            capabilities: Arc::new(None),
+            capabilities: None,
             workers: Arc::new(SlotManager::new()),
         };
         match client
@@ -443,7 +443,7 @@ impl ClientOptions {
             .await
         {
             Ok(sysinfo) => {
-                client.capabilities = Arc::new(sysinfo.into_inner().capabilities);
+                client.capabilities = sysinfo.into_inner().capabilities;
             }
             Err(status) => match status.code() {
                 Code::Unimplemented => {}

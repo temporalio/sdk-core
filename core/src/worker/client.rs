@@ -56,7 +56,7 @@ impl WorkerClientBag {
     }
 
     fn default_capabilities(&self) -> Capabilities {
-        self.capabilities().as_ref().clone().unwrap_or_default()
+        self.capabilities().unwrap_or_default()
     }
 
     fn binary_checksum(&self) -> String {
@@ -148,7 +148,7 @@ pub(crate) trait WorkerClient: Sync + Send {
     ) -> Result<RespondQueryTaskCompletedResponse>;
 
     fn replace_client(&self, new_client: RetryClient<Client>);
-    fn capabilities(&self) -> Arc<Option<get_system_info_response::Capabilities>>;
+    fn capabilities(&self) -> Option<get_system_info_response::Capabilities>;
     fn workers(&self) -> Arc<SlotManager>;
     fn is_mock(&self) -> bool;
 }
@@ -381,9 +381,9 @@ impl WorkerClient for WorkerClientBag {
         *replaceable_client = new_client;
     }
 
-    fn capabilities(&self) -> Arc<Option<Capabilities>> {
+    fn capabilities(&self) -> Option<Capabilities> {
         let client = self.replaceable_client.read();
-        client.get_client().inner().capabilities()
+        client.get_client().inner().capabilities().clone().cloned()
     }
 
     fn workers(&self) -> Arc<SlotManager> {
