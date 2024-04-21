@@ -383,7 +383,7 @@ impl WorkerClient for WorkerClientBag {
 
     fn capabilities(&self) -> Option<Capabilities> {
         let client = self.replaceable_client.read();
-        client.get_client().inner().capabilities().clone().cloned()
+        client.get_client().inner().capabilities().cloned()
     }
 
     fn workers(&self) -> Arc<SlotManager> {

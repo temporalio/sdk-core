@@ -42,13 +42,13 @@ impl SlotTrait for Slot {
     }
 }
 
-#[derive(derive_more::DebugCustom, Clone)]
+#[derive(derive_more::DebugCustom)]
 #[debug(fmt = "SlotProvider {{ namespace:{namespace}, task_queue: {task_queue} }}")]
 pub struct SlotProvider {
     namespace: String,
     task_queue: String,
     wft_semaphore: Arc<MeteredSemaphore>,
-    external_wft_tx: Arc<WFTStreamSender>,
+    external_wft_tx: WFTStreamSender,
 }
 
 impl SlotProvider {
@@ -56,7 +56,7 @@ impl SlotProvider {
         namespace: String,
         task_queue: String,
         wft_semaphore: Arc<MeteredSemaphore>,
-        external_wft_tx: Arc<WFTStreamSender>,
+        external_wft_tx: WFTStreamSender,
     ) -> Self {
         Self {
             namespace,
@@ -76,10 +76,7 @@ impl SlotProviderTrait for SlotProvider {
     }
     fn try_reserve_wft_slot(&self) -> Option<Box<dyn SlotTrait + Send>> {
         match self.wft_semaphore.try_acquire_owned().ok() {
-            Some(permit) => Some(Box::new(Slot::new(
-                permit,
-                self.external_wft_tx.as_ref().clone(),
-            ))),
+            Some(permit) => Some(Box::new(Slot::new(permit, self.external_wft_tx.clone()))),
             None => None,
         }
     }
@@ -120,7 +117,7 @@ mod tests {
             "my_namespace".to_string(),
             "my_queue".to_string(),
             wft_semaphore,
-            Arc::new(external_wft_tx),
+            external_wft_tx,
         );
 
         let slot = provider
@@ -145,7 +142,7 @@ mod tests {
                 "my_namespace".to_string(),
                 "my_queue".to_string(),
                 wft_semaphore,
-                Arc::new(external_wft_tx),
+                external_wft_tx,
             );
             assert!(provider.try_reserve_wft_slot().is_some());
         }
@@ -166,7 +163,7 @@ mod tests {
                 "my_namespace".to_string(),
                 "my_queue".to_string(),
                 wft_semaphore.clone(),
-                Arc::new(external_wft_tx),
+                external_wft_tx,
             );
             let slot = provider.try_reserve_wft_slot();
             assert!(slot.is_some());

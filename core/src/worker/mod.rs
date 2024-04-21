@@ -79,7 +79,7 @@ use {
 pub struct Worker {
     config: WorkerConfig,
     wf_client: Arc<dyn WorkerClient>,
-    slot_provider: SlotProvider,
+    slot_provider: Arc<SlotProvider>,
     /// Registration key to enable eager workflow start for this worker
     worker_key: Mutex<Option<WorkerKey>>,
     /// Manages all workflows and WFT processing
@@ -230,7 +230,7 @@ impl Worker {
         *worker_key = self
             .wf_client
             .workers()
-            .register(Box::new(self.slot_provider.clone()));
+            .register(self.slot_provider.clone());
     }
 
     #[cfg(test)]
@@ -385,13 +385,13 @@ impl Worker {
             info!("Activity polling is disabled for this worker");
         };
         let la_sink = LAReqSink::new(local_act_mgr.clone());
-        let slot_provider = SlotProvider::new(
+        let slot_provider = Arc::new(SlotProvider::new(
             config.namespace.clone(),
             config.task_queue.clone(),
             wft_semaphore.clone(),
-            Arc::new(external_wft_tx),
-        );
-        let worker_key = Mutex::new(client.workers().register(Box::new(slot_provider.clone())));
+            external_wft_tx,
+        ));
+        let worker_key = Mutex::new(client.workers().register(slot_provider.clone()));
         Self {
             slot_provider,
             worker_key,
