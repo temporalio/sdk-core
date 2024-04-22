@@ -11,7 +11,7 @@ pub(crate) use activities::{
 };
 pub(crate) use workflow::{wft_poller::new_wft_poller, LEGACY_QUERY_ID};
 
-use temporal_client::WorkerKey;
+use temporal_client::{ConfiguredClient, TemporalServiceClientWithMetrics, WorkerKey};
 
 use crate::{
     abstractions::{dbg_panic, MeteredSemaphore},
@@ -36,6 +36,7 @@ use crate::{
 };
 use activities::WorkerActivityTasks;
 use futures_util::{stream, StreamExt};
+use parking_lot::Mutex;
 use slot_provider::SlotProvider;
 use std::{
     convert::TryInto,
@@ -78,8 +79,9 @@ use {
 pub struct Worker {
     config: WorkerConfig,
     wf_client: Arc<dyn WorkerClient>,
+    slot_provider: Arc<SlotProvider>,
     /// Registration key to enable eager workflow start for this worker
-    worker_key: Option<WorkerKey>,
+    worker_key: Mutex<Option<WorkerKey>>,
     /// Manages all workflows and WFT processing
     workflows: Workflows,
     /// Manages activity tasks for this worker/task queue
@@ -167,7 +169,7 @@ impl WorkerTrait for Worker {
         }
         self.shutdown_token.cancel();
         // First, disable Eager Workflow Start
-        if let Some(key) = self.worker_key {
+        if let Some(key) = *self.worker_key.lock() {
             self.wf_client.workers().unregister(key);
         }
         // Second, we want to stop polling of both activity and workflow tasks
@@ -213,6 +215,22 @@ impl Worker {
             TaskPollers::Real,
             telem_instance,
         )
+    }
+
+    /// Replace client and return a new client. For eager workflow purposes, this new client will
+    /// now apply to future eager start requests and the older client will not.
+    pub fn replace_client(&self, new_client: ConfiguredClient<TemporalServiceClientWithMetrics>) {
+        // Unregister worker from current client, register in new client at the end
+        let mut worker_key = self.worker_key.lock();
+        if let Some(key) = *worker_key {
+            self.wf_client.workers().unregister(key);
+        }
+        self.wf_client
+            .replace_client(super::init_worker_client(&self.config, new_client));
+        *worker_key = self
+            .wf_client
+            .workers()
+            .register(self.slot_provider.clone());
     }
 
     #[cfg(test)]
@@ -367,14 +385,15 @@ impl Worker {
             info!("Activity polling is disabled for this worker");
         };
         let la_sink = LAReqSink::new(local_act_mgr.clone());
-        let provider = SlotProvider::new(
+        let slot_provider = Arc::new(SlotProvider::new(
             config.namespace.clone(),
             config.task_queue.clone(),
             wft_semaphore.clone(),
             external_wft_tx,
-        );
-        let worker_key = client.workers().register(Box::new(provider));
+        ));
+        let worker_key = Mutex::new(client.workers().register(slot_provider.clone()));
         Self {
+            slot_provider,
             worker_key,
             wf_client: client.clone(),
             workflows: Workflows::new(
@@ -382,7 +401,7 @@ impl Worker {
                     config.clone(),
                     metrics,
                     shutdown_token.child_token(),
-                    client.capabilities().cloned().unwrap_or_default(),
+                    client.capabilities().clone().unwrap_or_default(),
                 ),
                 sticky_queue_name.map(|sq| StickyExecutionAttributes {
                     worker_task_queue: Some(TaskQueue {

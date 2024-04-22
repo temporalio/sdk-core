@@ -146,7 +146,7 @@ pub async fn history_from_proto_binary(path_from_root: &str) -> Result<History, 
 }
 
 static INTEG_TESTS_RT: once_cell::sync::OnceCell<CoreRuntime> = once_cell::sync::OnceCell::new();
-pub fn init_integ_telem() {
+pub fn init_integ_telem() -> &'static CoreRuntime {
     INTEG_TESTS_RT.get_or_init(|| {
         let telemetry_options = get_integ_telem_options();
         let rt =
@@ -155,7 +155,7 @@ pub fn init_integ_telem() {
             let _ = tracing::subscriber::set_global_default(sub);
         }
         rt
-    });
+    })
 }
 
 /// Implements a builder pattern to help integ tests initialize core and create workflows

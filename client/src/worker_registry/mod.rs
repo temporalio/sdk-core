@@ -5,6 +5,7 @@
 use parking_lot::RwLock;
 use slotmap::SlotMap;
 use std::collections::{hash_map::Entry::Vacant, HashMap};
+use std::sync::Arc;
 
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse;
 
@@ -53,7 +54,7 @@ impl SlotKey {
 #[derive(Default, Debug)]
 struct SlotManagerImpl {
     /// Maps keys, i.e., namespace#task_queue, to provider.
-    providers: HashMap<SlotKey, Box<dyn SlotProvider + Send + Sync>>,
+    providers: HashMap<SlotKey, Arc<dyn SlotProvider + Send + Sync>>,
     /// Maps ids to keys in `providers`.
     index: SlotMap<WorkerKey, SlotKey>,
 }
@@ -81,7 +82,7 @@ impl SlotManagerImpl {
         None
     }
 
-    fn register(&mut self, provider: Box<dyn SlotProvider + Send + Sync>) -> Option<WorkerKey> {
+    fn register(&mut self, provider: Arc<dyn SlotProvider + Send + Sync>) -> Option<WorkerKey> {
         let key = SlotKey::new(
             provider.namespace().to_string(),
             provider.task_queue().to_string(),
@@ -135,7 +136,7 @@ impl SlotManager {
     }
 
     /// Register a local worker that can provide WFT processing slots.
-    pub fn register(&self, provider: Box<dyn SlotProvider + Send + Sync>) -> Option<WorkerKey> {
+    pub fn register(&self, provider: Arc<dyn SlotProvider + Send + Sync>) -> Option<WorkerKey> {
         self.manager.write().register(provider)
     }
 
@@ -196,8 +197,8 @@ mod tests {
         let mock_provider2 = new_mock_provider("foo".to_string(), "bar_q".to_string(), false, true);
 
         let manager = SlotManager::new();
-        let some_slots = manager.register(Box::new(mock_provider1));
-        let no_slots = manager.register(Box::new(mock_provider2));
+        let some_slots = manager.register(Arc::new(mock_provider1));
+        let no_slots = manager.register(Arc::new(mock_provider2));
         assert!(no_slots.is_none());
 
         let mut found = 0;
@@ -219,8 +220,8 @@ mod tests {
             new_mock_provider("foo".to_string(), "bar_q".to_string(), false, false);
         let mock_provider2 = new_mock_provider("foo".to_string(), "bar_q".to_string(), false, true);
 
-        let no_slots = manager.register(Box::new(mock_provider2));
-        let some_slots = manager.register(Box::new(mock_provider1));
+        let no_slots = manager.register(Arc::new(mock_provider2));
+        let some_slots = manager.register(Arc::new(mock_provider1));
         assert!(some_slots.is_none());
 
         let mut not_found = 0;
@@ -245,7 +246,7 @@ mod tests {
         for i in 0..10 {
             let namespace = format!("myId{}", i % 3);
             let mock_provider = new_mock_provider(namespace, "bar_q".to_string(), false, false);
-            worker_keys.push(manager.register(Box::new(mock_provider)));
+            worker_keys.push(manager.register(Arc::new(mock_provider)));
         }
         assert_eq!((3, 3), manager.num_providers());
 

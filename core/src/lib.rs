@@ -77,14 +77,7 @@ pub fn init_worker<CT>(
 where
     CT: Into<sealed::AnyClient>,
 {
-    let client = {
-        let ll = client.into().into_inner();
-        let mut client = Client::new(*ll, worker_config.namespace.clone());
-        if let Some(ref id_override) = worker_config.client_identity_override {
-            client.options_mut().identity = id_override.clone();
-        }
-        RetryClient::new(client, RetryConfig::default())
-    };
+    let client = init_worker_client(&worker_config, *client.into().into_inner());
     if client.namespace() != worker_config.namespace {
         panic!("Passed in client is not bound to the same namespace as the worker");
     }
@@ -121,6 +114,17 @@ where
         "Registering replay worker"
     );
     rwi.into_core_worker()
+}
+
+pub(crate) fn init_worker_client(
+    config: &WorkerConfig,
+    client: ConfiguredClient<TemporalServiceClientWithMetrics>,
+) -> RetryClient<Client> {
+    let mut client = Client::new(client, config.namespace.clone());
+    if let Some(ref id_override) = config.client_identity_override {
+        client.options_mut().identity = id_override.clone();
+    }
+    RetryClient::new(client, RetryConfig::default())
 }
 
 /// Creates a unique sticky queue name for a worker, iff the config allows for 1 or more cached
