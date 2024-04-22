@@ -1,5 +1,10 @@
 use assert_matches::assert_matches;
+use std::sync::Arc;
 use std::time::Duration;
+use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
+use temporal_sdk_core::ephemeral_server::TemporalDevServerConfigBuilder;
+use temporal_sdk_core::{init_worker, ClientOptionsBuilder, WorkerConfigBuilder};
+use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::coresdk::{
     activity_task::activity_task as act_task,
     workflow_activation::{workflow_activation_job, FireTimer, WorkflowActivationJob},
@@ -8,9 +13,12 @@ use temporal_sdk_core_protos::coresdk::{
     IntoCompletion,
 };
 use temporal_sdk_core_test_utils::{
-    init_core_and_create_wf, schedule_activity_cmd, WorkerTestHelpers,
+    default_cached_download, drain_pollers_and_shutdown, init_core_and_create_wf, init_integ_telem,
+    schedule_activity_cmd, WorkerTestHelpers,
 };
 use tokio::time::timeout;
+use tracing::info;
+use url::Url;
 
 #[tokio::test]
 async fn out_of_order_completion_doesnt_hang() {
@@ -87,4 +95,115 @@ async fn out_of_order_completion_doesnt_hang() {
     .unwrap();
 
     jh.await.unwrap();
+}
+
+#[tokio::test]
+async fn switching_worker_client_changes_poll() {
+    // Start two servers
+    info!("Starting servers");
+    let server_config = TemporalDevServerConfigBuilder::default()
+        .exe(default_cached_download())
+        // We need to lower the poll timeout so the poll call rolls over
+        .extra_args(vec![
+            "--dynamic-config-value".to_string(),
+            "matching.longPollExpirationInterval=\"1s\"".to_string(),
+        ])
+        .build()
+        .unwrap();
+    let mut server1 = server_config.start_server().await.unwrap();
+    let mut server2 = server_config.start_server().await.unwrap();
+
+    // Connect clients to both servers
+    info!("Connecting clients");
+    let mut client_common_config = ClientOptionsBuilder::default();
+    client_common_config
+        .identity("integ_tester".to_owned())
+        .client_name("temporal-core".to_owned())
+        .client_version("0.1.0".to_owned());
+    let client1 = client_common_config
+        .clone()
+        .target_url(Url::parse(&format!("http://{}", server1.target)).unwrap())
+        .build()
+        .unwrap()
+        .connect("default", None)
+        .await
+        .unwrap();
+    let client2 = client_common_config
+        .clone()
+        .target_url(Url::parse(&format!("http://{}", server2.target)).unwrap())
+        .build()
+        .unwrap()
+        .connect("default", None)
+        .await
+        .unwrap();
+
+    // Start a workflow on both servers
+    info!("Starting workflows");
+    let wf1 = client1
+        .start_workflow(
+            vec![],
+            "my-task-queue".to_owned(),
+            "my-workflow-1".to_owned(),
+            "my-workflow-type".to_owned(),
+            None,
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+    let wf2 = client2
+        .start_workflow(
+            vec![],
+            "my-task-queue".to_owned(),
+            "my-workflow-2".to_owned(),
+            "my-workflow-type".to_owned(),
+            None,
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+
+    // Create a worker only on the first server
+    let worker = init_worker(
+        init_integ_telem(),
+        WorkerConfigBuilder::default()
+            .namespace("default")
+            .task_queue("my-task-queue")
+            .worker_build_id("test_build_id")
+            // We want a cache so we don't get extra remove-job activations
+            .max_cached_workflows(100_usize)
+            .build()
+            .unwrap(),
+        client1.clone(),
+    )
+    .unwrap();
+
+    // Poll for first task, confirm it's first wf, complete, and wait for complete
+    info!("Doing initial poll");
+    let act1 = worker.poll_workflow_activation().await.unwrap();
+    assert_eq!(wf1.run_id, act1.run_id);
+    worker.complete_execution(&act1.run_id).await;
+    info!("Waiting on first workflow complete");
+    client1
+        .get_untyped_workflow_handle("my-workflow-1", wf1.run_id)
+        .get_workflow_result(Default::default())
+        .await
+        .unwrap();
+
+    // Swap client, poll for next task, confirm it's second wf, and respond w/ empty
+    info!("Replacing client and polling again");
+    worker.replace_client(client2.get_client().inner().clone());
+    let act2 = worker.poll_workflow_activation().await.unwrap();
+    assert_eq!(wf2.run_id, act2.run_id);
+    worker.complete_execution(&act2.run_id).await;
+    info!("Waiting on second workflow complete");
+    client2
+        .get_untyped_workflow_handle("my-workflow-2", wf2.run_id)
+        .get_workflow_result(Default::default())
+        .await
+        .unwrap();
+
+    // Shutdown workers and servers
+    drain_pollers_and_shutdown(&(Arc::new(worker) as Arc<dyn Worker>)).await;
+    server1.shutdown().await.unwrap();
+    server2.shutdown().await.unwrap();
 }
