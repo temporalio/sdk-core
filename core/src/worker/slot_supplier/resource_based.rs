@@ -89,6 +89,9 @@ where
                 if must_wait_for > Duration::from_millis(0) {
                     tokio::time::sleep(must_wait_for).await;
                 }
+            } else {
+                let _ = self.last_slot_issued_tx.send(Instant::now());
+                return SlotSupplierPermit::NoData;
             }
             if let Some(p) = self.try_reserve_slot(ctx) {
                 return p;
@@ -233,10 +236,9 @@ impl RealSysInfo {
             lock.refresh_processes();
             lock.refresh_cpu_usage();
             let proc = lock.process(self.pid).expect("exists");
-            self.cur_mem_usage
-                .store(dbg!(proc.memory()), Ordering::Release);
+            self.cur_mem_usage.store(proc.memory(), Ordering::Release);
             self.cur_cpu_usage.store(
-                dbg!(lock.global_cpu_info().cpu_usage()).to_bits(),
+                lock.global_cpu_info().cpu_usage().to_bits(),
                 Ordering::Release,
             );
             self.last_refresh.store(Instant::now())
