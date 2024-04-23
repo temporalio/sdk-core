@@ -222,9 +222,6 @@ impl Worker {
         // Unregister worker from current client, register in new client at the end
         let mut worker_key = self.worker_key.lock();
         let slot_provider = (*worker_key).and_then(|k| self.wf_client.workers().unregister(k));
-        if let Some(key) = *worker_key {
-            self.wf_client.workers().unregister(key);
-        }
         self.wf_client
             .replace_client(super::init_worker_client(&self.config, new_client));
         *worker_key = slot_provider
