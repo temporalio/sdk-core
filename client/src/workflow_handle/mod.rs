@@ -91,10 +91,12 @@ where
         }
     }
 
+    /// Get the workflow execution info
     pub fn info(&self) -> &WorkflowExecutionInfo {
         &self.info
     }
 
+    /// Await the result of the workflow execution
     pub async fn get_workflow_result(
         &self,
         opts: GetWorkflowResultOpts,
