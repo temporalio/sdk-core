@@ -45,23 +45,23 @@ use temporal_sdk_core_protos::{
 /// A validated version of a [PollWorkflowTaskQueueResponse]
 #[derive(Clone, PartialEq)]
 #[allow(clippy::manual_non_exhaustive)] // Clippy doesn't understand it's only for *in* this crate
-pub struct ValidPollWFTQResponse {
-    pub task_token: TaskToken,
-    pub task_queue: String,
-    pub workflow_execution: WorkflowExecution,
-    pub workflow_type: String,
-    pub history: History,
-    pub next_page_token: Vec<u8>,
-    pub attempt: u32,
-    pub previous_started_event_id: i64,
-    pub started_event_id: i64,
+pub(crate) struct ValidPollWFTQResponse {
+    pub(crate) task_token: TaskToken,
+    pub(crate) task_queue: String,
+    pub(crate) workflow_execution: WorkflowExecution,
+    pub(crate) workflow_type: String,
+    pub(crate) history: History,
+    pub(crate) next_page_token: Vec<u8>,
+    pub(crate) attempt: u32,
+    pub(crate) previous_started_event_id: i64,
+    pub(crate) started_event_id: i64,
     /// If this is present, `history` will be empty. This is not a very "tight" design, but it's
     /// enforced at construction time. From the `query` field.
-    pub legacy_query: Option<WorkflowQuery>,
+    pub(crate) legacy_query: Option<WorkflowQuery>,
     /// Query requests from the `queries` field
-    pub query_requests: Vec<QueryWorkflow>,
+    pub(crate) query_requests: Vec<QueryWorkflow>,
     /// Protocol messages
-    pub messages: Vec<IncomingProtocolMessage>,
+    pub(crate) messages: Vec<IncomingProtocolMessage>,
 
     /// Zero-size field to prevent explicit construction
     _cant_construct_me: (),
@@ -253,8 +253,8 @@ impl HistoryEventExt for HistoryEvent {
 }
 
 pub(crate) struct CompleteLocalActivityData {
-    pub marker_dat: LocalActivityMarkerData,
-    pub result: Result<Payload, Failure>,
+    pub(crate) marker_dat: LocalActivityMarkerData,
+    pub(crate) result: Result<Payload, Failure>,
 }
 
 pub(crate) fn validate_activity_completion(
@@ -303,23 +303,23 @@ impl TryFrom<activity_execution_result::Status> for LocalActivityExecutionResult
 /// One or both of `schedule_to_close_timeout` and `start_to_close_timeout` are guaranteed to exist.
 #[derive(Debug, Clone)]
 #[cfg_attr(test, derive(Default))]
-pub struct ValidScheduleLA {
-    pub seq: u32,
-    pub activity_id: String,
-    pub activity_type: String,
-    pub attempt: u32,
-    pub original_schedule_time: Option<SystemTime>,
-    pub headers: HashMap<String, Payload>,
-    pub arguments: Vec<Payload>,
-    pub schedule_to_start_timeout: Option<Duration>,
-    pub close_timeouts: LACloseTimeouts,
-    pub retry_policy: RetryPolicy,
-    pub local_retry_threshold: Duration,
-    pub cancellation_type: ActivityCancellationType,
+pub(crate) struct ValidScheduleLA {
+    pub(crate) seq: u32,
+    pub(crate) activity_id: String,
+    pub(crate) activity_type: String,
+    pub(crate) attempt: u32,
+    pub(crate) original_schedule_time: Option<SystemTime>,
+    pub(crate) headers: HashMap<String, Payload>,
+    pub(crate) arguments: Vec<Payload>,
+    pub(crate) schedule_to_start_timeout: Option<Duration>,
+    pub(crate) close_timeouts: LACloseTimeouts,
+    pub(crate) retry_policy: RetryPolicy,
+    pub(crate) local_retry_threshold: Duration,
+    pub(crate) cancellation_type: ActivityCancellationType,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum LACloseTimeouts {
+pub(crate) enum LACloseTimeouts {
     ScheduleOnly(Duration),
     StartOnly(Duration),
     Both { sched: Duration, start: Duration },
@@ -328,7 +328,7 @@ pub enum LACloseTimeouts {
 impl LACloseTimeouts {
     /// Splits into (schedule_to_close, start_to_close) options, one or both of which is guaranteed
     /// to be populated
-    pub fn into_sched_and_start(self) -> (Option<Duration>, Option<Duration>) {
+    pub(crate) fn into_sched_and_start(self) -> (Option<Duration>, Option<Duration>) {
         match self {
             LACloseTimeouts::ScheduleOnly(x) => (Some(x), None),
             LACloseTimeouts::StartOnly(x) => (None, Some(x)),
@@ -345,7 +345,7 @@ impl Default for LACloseTimeouts {
 }
 
 impl ValidScheduleLA {
-    pub fn from_schedule_la(v: ScheduleLocalActivity) -> Result<Self, anyhow::Error> {
+    pub(crate) fn from_schedule_la(v: ScheduleLocalActivity) -> Result<Self, anyhow::Error> {
         let original_schedule_time = v
             .original_schedule_time
             .map(|x| {

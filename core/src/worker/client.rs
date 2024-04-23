@@ -35,7 +35,7 @@ pub(crate) struct WorkerClientBag {
 }
 
 impl WorkerClientBag {
-    pub fn new(
+    pub(crate) fn new(
         client: RetryClient<Client>,
         namespace: String,
         identity: String,
@@ -401,21 +401,21 @@ impl WorkerClient for WorkerClientBag {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct WorkflowTaskCompletion {
     /// The task token that would've been received from polling for a workflow activation
-    pub task_token: TaskToken,
+    pub(crate) task_token: TaskToken,
     /// A list of new commands to send to the server, such as starting a timer.
-    pub commands: Vec<Command>,
+    pub(crate) commands: Vec<Command>,
     /// A list of protocol messages to send to the server.
-    pub messages: Vec<ProtocolMessage>,
+    pub(crate) messages: Vec<ProtocolMessage>,
     /// If set, indicate that next task should be queued on sticky queue with given attributes.
-    pub sticky_attributes: Option<StickyExecutionAttributes>,
+    pub(crate) sticky_attributes: Option<StickyExecutionAttributes>,
     /// Responses to queries in the `queries` field of the workflow task.
-    pub query_responses: Vec<QueryResult>,
+    pub(crate) query_responses: Vec<QueryResult>,
     /// Indicate that the task completion should return a new WFT if one is available
-    pub return_new_workflow_task: bool,
+    pub(crate) return_new_workflow_task: bool,
     /// Force a new WFT to be created after this completion
-    pub force_create_new_workflow_task: bool,
+    pub(crate) force_create_new_workflow_task: bool,
     /// SDK-specific metadata to send
-    pub sdk_metadata: WorkflowTaskCompletedMetadata,
+    pub(crate) sdk_metadata: WorkflowTaskCompletedMetadata,
     /// Metering info
-    pub metering_metadata: MeteringMetadata,
+    pub(crate) metering_metadata: MeteringMetadata,
 }

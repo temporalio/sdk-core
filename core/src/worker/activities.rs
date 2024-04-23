@@ -73,7 +73,7 @@ struct PendingActivityCancel {
 }
 
 impl PendingActivityCancel {
-    pub fn new(task_token: TaskToken, reason: ActivityCancelReason) -> Self {
+    fn new(task_token: TaskToken, reason: ActivityCancelReason) -> Self {
         Self {
             task_token,
             reason,
@@ -85,29 +85,29 @@ impl PendingActivityCancel {
 /// Contains details that core wants to store while an activity is running.
 #[derive(Debug)]
 struct InFlightActInfo {
-    pub activity_type: String,
-    pub workflow_type: String,
+    activity_type: String,
+    workflow_type: String,
     /// Only kept for logging reasons
-    pub workflow_id: String,
+    workflow_id: String,
     /// Only kept for logging reasons
-    pub workflow_run_id: String,
+    workflow_run_id: String,
     start_time: Instant,
 }
 
 /// Augments [InFlightActInfo] with details specific to remote activities
 struct RemoteInFlightActInfo {
-    pub base: InFlightActInfo,
+    base: InFlightActInfo,
     /// Used to calculate aggregation delay between activity heartbeats.
-    pub heartbeat_timeout: Option<prost_types::Duration>,
+    heartbeat_timeout: Option<prost_types::Duration>,
     /// Set if we have already issued a cancellation activation to lang for this activity, with
     /// the original reason we issued the cancel.
-    pub issued_cancel_to_lang: Option<ActivityCancelReason>,
+    issued_cancel_to_lang: Option<ActivityCancelReason>,
     /// Set to true if we have already learned from the server this activity doesn't exist. EX:
     /// we have learned from heartbeating and issued a cancel task, in which case we may simply
     /// discard the reply.
-    pub known_not_found: bool,
+    known_not_found: bool,
     /// Handle to the task containing local timeout tracking, if any.
-    pub local_timeouts_task: Option<JoinHandle<()>>,
+    local_timeouts_task: Option<JoinHandle<()>>,
     /// Used to reset the local heartbeat timeout every time we record a heartbeat
     timeout_resetter: Option<Arc<Notify>>,
     /// The permit from the max concurrent semaphore
@@ -666,14 +666,14 @@ impl ActivitiesFromWFTsHandle {
 
 #[derive(Debug)]
 pub(crate) struct PermittedTqResp {
-    pub permit: OwnedMeteredSemPermit,
-    pub resp: PollActivityTaskQueueResponse,
+    pub(crate) permit: OwnedMeteredSemPermit,
+    pub(crate) resp: PollActivityTaskQueueResponse,
 }
 
 #[derive(Debug)]
 pub(crate) struct TrackedPermittedTqResp {
-    pub permit: TrackedOwnedMeteredSemPermit,
-    pub resp: PollActivityTaskQueueResponse,
+    pub(crate) permit: TrackedOwnedMeteredSemPermit,
+    pub(crate) resp: PollActivityTaskQueueResponse,
 }
 
 fn worker_shutdown_failure() -> Failure {

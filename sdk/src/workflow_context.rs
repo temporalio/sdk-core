@@ -98,11 +98,11 @@ impl WfCtxProtectedDat {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct WfContextSharedData {
     /// Maps change ids -> resolved status
-    pub changes: HashMap<String, bool>,
-    pub is_replaying: bool,
-    pub wf_time: Option<SystemTime>,
-    pub history_length: u32,
-    pub current_build_id: Option<String>,
+    pub(crate) changes: HashMap<String, bool>,
+    pub(crate) is_replaying: bool,
+    pub(crate) wf_time: Option<SystemTime>,
+    pub(crate) history_length: u32,
+    pub(crate) current_build_id: Option<String>,
 }
 
 // TODO: Dataconverter type interface to replace Payloads here. Possibly just use serde
@@ -631,7 +631,7 @@ pub struct ChildWorkflow {
     opts: ChildWorkflowOptions,
 }
 
-pub struct ChildWfCommon {
+pub(crate) struct ChildWfCommon {
     workflow_id: String,
     result_future: CancellableWFCommandFut<ChildWorkflowResult, ()>,
 }

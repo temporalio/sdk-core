@@ -299,19 +299,19 @@ pub(super) struct AttachMetricLabels {
     pub(super) labels: Vec<MetricKeyValue>,
 }
 impl AttachMetricLabels {
-    pub fn new(kvs: impl Into<Vec<MetricKeyValue>>) -> Self {
+    pub(super) fn new(kvs: impl Into<Vec<MetricKeyValue>>) -> Self {
         Self { labels: kvs.into() }
     }
-    pub fn namespace(ns: impl Into<String>) -> Self {
+    pub(super) fn namespace(ns: impl Into<String>) -> Self {
         AttachMetricLabels::new(vec![namespace_kv(ns.into())])
     }
-    pub fn task_q(&mut self, tq: Option<TaskQueue>) -> &mut Self {
+    pub(super) fn task_q(&mut self, tq: Option<TaskQueue>) -> &mut Self {
         if let Some(tq) = tq {
             self.task_q_str(tq.name);
         }
         self
     }
-    pub fn task_q_str(&mut self, tq: impl Into<String>) -> &mut Self {
+    pub(super) fn task_q_str(&mut self, tq: impl Into<String>) -> &mut Self {
         self.labels.push(task_queue_kv(tq.into()));
         self
     }

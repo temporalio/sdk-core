@@ -17,7 +17,7 @@ use temporal_sdk_core_protos::{
 
 // TODO: Before release, probably best to avoid using proto types entirely here. They're awkward.
 
-pub trait IntoWorkflowCommand {
+pub(crate) trait IntoWorkflowCommand {
     type WFCommandType;
 
     /// Produces a workflow command from some options

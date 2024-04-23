@@ -781,7 +781,7 @@ fn new_cancel_failure(dat: &SharedState, attrs: ActivityTaskCanceledEventAttribu
     }
 }
 
-pub fn activity_fail_info(
+pub(super) fn activity_fail_info(
     act_type: String,
     act_id: String,
     identity: Option<String>,

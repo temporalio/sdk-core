@@ -1,6 +1,6 @@
 //! This module contains very generic helpers that can be used codebase-wide
 
-pub mod take_cell;
+pub(crate) mod take_cell;
 
 use crate::MetricsContext;
 use derive_more::DebugCustom;
@@ -29,7 +29,7 @@ pub(crate) struct MeteredSemaphore {
 }
 
 impl MeteredSemaphore {
-    pub fn new(
+    pub(crate) fn new(
         inital_permits: usize,
         metrics_ctx: MetricsContext,
         record_fn: fn(&MetricsContext, usize),
@@ -42,21 +42,21 @@ impl MeteredSemaphore {
         }
     }
 
-    pub fn available_permits(&self) -> usize {
+    pub(crate) fn available_permits(&self) -> usize {
         self.sem.available_permits()
     }
 
     #[cfg(test)]
-    pub fn unused_permits(&self) -> usize {
+    pub(crate) fn unused_permits(&self) -> usize {
         self.sem.available_permits() + self.unused_claimants.load(Ordering::Acquire)
     }
 
-    pub async fn acquire_owned(&self) -> Result<OwnedMeteredSemPermit, AcquireError> {
+    pub(crate) async fn acquire_owned(&self) -> Result<OwnedMeteredSemPermit, AcquireError> {
         let res = self.sem.clone().acquire_owned().await?;
         Ok(self.build_owned(res))
     }
 
-    pub fn try_acquire_owned(&self) -> Result<OwnedMeteredSemPermit, TryAcquireError> {
+    pub(crate) fn try_acquire_owned(&self) -> Result<OwnedMeteredSemPermit, TryAcquireError> {
         let res = self.sem.clone().try_acquire_owned()?;
         Ok(self.build_owned(res))
     }
@@ -106,7 +106,7 @@ pub(crate) struct ClosableMeteredSemaphore {
 }
 
 impl ClosableMeteredSemaphore {
-    pub fn new_arc(sem: Arc<MeteredSemaphore>) -> Arc<Self> {
+    pub(crate) fn new_arc(sem: Arc<MeteredSemaphore>) -> Arc<Self> {
         Arc::new(Self {
             inner: sem,
             outstanding_permits: Default::default(),
@@ -118,12 +118,12 @@ impl ClosableMeteredSemaphore {
 
 impl ClosableMeteredSemaphore {
     #[cfg(test)]
-    pub fn unused_permits(&self) -> usize {
+    pub(crate) fn unused_permits(&self) -> usize {
         self.inner.unused_permits()
     }
 
     /// Request to close the semaphore and prevent new permits from being acquired.
-    pub fn close(&self) {
+    pub(crate) fn close(&self) {
         self.close_requested.store(true, Ordering::Release);
         if self.outstanding_permits.load(Ordering::Acquire) == 0 {
             self.close_complete_token.cancel();
@@ -131,12 +131,12 @@ impl ClosableMeteredSemaphore {
     }
 
     /// Returns after close has been requested and all outstanding permits have been returned.
-    pub async fn close_complete(&self) {
+    pub(crate) async fn close_complete(&self) {
         self.close_complete_token.cancelled().await;
     }
 
     /// Acquire a permit if one is available and close was not requested.
-    pub fn try_acquire_owned(
+    pub(crate) fn try_acquire_owned(
         self: &Arc<Self>,
     ) -> Result<TrackedOwnedMeteredSemPermit, TryAcquireError> {
         if self.close_requested.load(Ordering::Acquire) {

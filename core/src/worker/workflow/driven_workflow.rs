@@ -12,7 +12,7 @@ use temporal_sdk_core_protos::{
 
 /// Represents a connection to a lang side workflow that can have activations fed into it and
 /// command responses pulled out.
-pub struct DrivenWorkflow {
+pub(crate) struct DrivenWorkflow {
     started_attrs: Option<WorkflowStartedInfo>,
     incoming_commands: Receiver<Vec<WFCommand>>,
     /// Outgoing activation jobs that need to be sent to the lang sdk
@@ -20,7 +20,7 @@ pub struct DrivenWorkflow {
 }
 
 impl DrivenWorkflow {
-    pub fn new() -> (Self, Sender<Vec<WFCommand>>) {
+    pub(super) fn new() -> (Self, Sender<Vec<WFCommand>>) {
         let (tx, rx) = mpsc::channel();
         (
             Self {
@@ -32,7 +32,7 @@ impl DrivenWorkflow {
         )
     }
     /// Start the workflow
-    pub fn start(
+    pub(super) fn start(
         &mut self,
         workflow_id: String,
         randomness_seed: u64,
@@ -53,7 +53,7 @@ impl DrivenWorkflow {
     }
 
     /// Return the attributes from the workflow execution started event if this workflow has started
-    pub fn get_started_info(&self) -> Option<&WorkflowStartedInfo> {
+    pub(super) fn get_started_info(&self) -> Option<&WorkflowStartedInfo> {
         self.started_attrs.as_ref()
     }
 
@@ -68,7 +68,7 @@ impl DrivenWorkflow {
     }
 
     /// Drain all pending jobs, so that they may be sent to the driven workflow
-    pub fn drain_jobs(&mut self) -> Vec<WorkflowActivationJob> {
+    pub(super) fn drain_jobs(&mut self) -> Vec<WorkflowActivationJob> {
         self.outgoing_wf_activation_jobs
             .drain(..)
             .map(Into::into)
@@ -79,7 +79,7 @@ impl DrivenWorkflow {
     /// responsible for calling workflow code as a result of receiving tasks from
     /// [crate::Core::poll_task], we cannot directly iterate it here. Commands are simply pulled
     /// from a buffer that the language side sinks into when it calls [crate::Core::complete_task]
-    pub fn fetch_workflow_iteration_output(&mut self) -> Vec<WFCommand> {
+    pub(super) fn fetch_workflow_iteration_output(&mut self) -> Vec<WFCommand> {
         let in_cmds = self.incoming_commands.try_recv();
         let in_cmds = in_cmds.unwrap_or_else(|_| vec![WFCommand::NoCommandsFromLang]);
         debug!(in_cmds = %in_cmds.display(), "wf bridge iteration fetch");

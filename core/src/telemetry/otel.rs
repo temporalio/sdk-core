@@ -38,12 +38,13 @@ use tonic::metadata::MetadataMap;
 
 /// Chooses appropriate aggregators for our metrics
 #[derive(Debug, Clone)]
-pub struct SDKAggSelector {
+struct SDKAggSelector {
     use_seconds: bool,
     default: DefaultAggregationSelector,
 }
+
 impl SDKAggSelector {
-    pub fn new(use_seconds: bool) -> Self {
+    fn new(use_seconds: bool) -> Self {
         Self {
             use_seconds,
             default: Default::default(),

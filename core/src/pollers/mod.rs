@@ -18,14 +18,14 @@ use futures::Future;
 #[cfg(test)]
 pub(crate) use poll_buffer::MockPermittedPollBuffer;
 
-pub type Result<T, E = tonic::Status> = std::result::Result<T, E>;
+pub(crate) type Result<T, E = tonic::Status> = std::result::Result<T, E>;
 
 /// A trait for things that poll the server. Hides complexity of concurrent polling or polling
 /// on sticky/nonsticky queues simultaneously.
 #[cfg_attr(test, mockall::automock)]
 #[cfg_attr(test, allow(unused))]
 #[async_trait::async_trait]
-pub trait Poller<PollResult>
+pub(crate) trait Poller<PollResult>
 where
     PollResult: Send + Sync + 'static,
 {

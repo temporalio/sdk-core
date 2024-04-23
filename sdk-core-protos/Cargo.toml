@@ -30,3 +30,6 @@ uuid = { version = "1.1", features = ["v4"], optional = true }
 [build-dependencies]
 tonic-build = { workspace = true }
 prost-wkt-build = "0.5"
+
+[lints]
+workspace = true

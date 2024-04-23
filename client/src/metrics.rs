@@ -17,7 +17,7 @@ use tower::Service;
 // appropriate k/vs have already been set.
 #[derive(Clone, derive_more::DebugCustom)]
 #[debug(fmt = "MetricsContext {{ attribs: {kvs:?}, poll_is_long: {poll_is_long} }}")]
-pub struct MetricsContext {
+pub(crate) struct MetricsContext {
     meter: Arc<dyn CoreMeter>,
     kvs: MetricAttributes,
     poll_is_long: bool,

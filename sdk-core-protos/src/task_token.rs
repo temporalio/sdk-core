@@ -52,6 +52,6 @@ impl Borrow<[u8]> for TaskToken {
     }
 }
 
-pub fn fmt_tt(tt: &[u8]) -> String {
+pub(crate) fn fmt_tt(tt: &[u8]) -> String {
     BASE64_STANDARD.encode(tt)
 }

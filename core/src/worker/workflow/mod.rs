@@ -128,20 +128,20 @@ pub(crate) struct Workflows {
 }
 
 pub(crate) struct WorkflowBasics {
-    pub worker_config: Arc<WorkerConfig>,
-    pub shutdown_token: CancellationToken,
-    pub metrics: MetricsContext,
-    pub server_capabilities: get_system_info_response::Capabilities,
+    pub(crate) worker_config: Arc<WorkerConfig>,
+    pub(crate) shutdown_token: CancellationToken,
+    pub(crate) metrics: MetricsContext,
+    pub(crate) server_capabilities: get_system_info_response::Capabilities,
 }
 
 pub(crate) struct RunBasics<'a> {
-    pub worker_config: Arc<WorkerConfig>,
-    pub workflow_id: String,
-    pub workflow_type: String,
-    pub run_id: String,
-    pub history: HistoryUpdate,
-    pub metrics: MetricsContext,
-    pub capabilities: &'a get_system_info_response::Capabilities,
+    pub(crate) worker_config: Arc<WorkerConfig>,
+    pub(crate) workflow_id: String,
+    pub(crate) workflow_type: String,
+    pub(crate) run_id: String,
+    pub(crate) history: HistoryUpdate,
+    pub(crate) metrics: MetricsContext,
+    pub(crate) capabilities: &'a get_system_info_response::Capabilities,
 }
 
 impl Workflows {
@@ -455,7 +455,6 @@ impl Workflows {
         if let Some(h) = post_activate_hook {
             h(PostActivateHookData {
                 run_id: &run_id,
-                most_recent_event: completion_outcome.most_recently_processed_event,
                 replaying: completion_outcome.replaying,
             });
         }
@@ -780,10 +779,11 @@ struct PreparedWFT {
     update: HistoryUpdate,
     messages: Vec<IncomingProtocolMessage>,
 }
+
 impl PreparedWFT {
     /// Returns true if the contained history update is incremental (IE: expects to hit a cached
     /// workflow)
-    pub fn is_incremental(&self) -> bool {
+    fn is_incremental(&self) -> bool {
         let start_event_id = self.update.first_event_id();
         let poll_resp_is_incremental = start_event_id.map(|eid| eid > 1).unwrap_or_default();
         poll_resp_is_incremental || start_event_id.is_none()
@@ -796,18 +796,18 @@ impl PreparedWFT {
 }
 
 #[derive(Debug)]
-pub(crate) struct OutstandingTask {
-    pub info: WorkflowTaskInfo,
+struct OutstandingTask {
+    info: WorkflowTaskInfo,
     /// Set if the outstanding task has quer(ies) which must be fulfilled upon finishing replay
-    pub pending_queries: Vec<QueryWorkflow>,
-    pub start_time: Instant,
+    pending_queries: Vec<QueryWorkflow>,
+    start_time: Instant,
     /// The WFT permit owned by this task, ensures we don't exceed max concurrent WFT, and makes
     /// sure the permit is automatically freed when we delete the task.
-    pub permit: UsedMeteredSemPermit,
+    permit: UsedMeteredSemPermit,
 }
 
 impl OutstandingTask {
-    pub fn has_pending_legacy_query(&self) -> bool {
+    fn has_pending_legacy_query(&self) -> bool {
         self.pending_queries
             .iter()
             .any(|q| q.query_id == LEGACY_QUERY_ID)
@@ -829,26 +829,26 @@ pub(crate) enum OutstandingActivation {
 /// Contains important information about a given workflow task that we need to memorize while
 /// lang handles it.
 #[derive(Clone, Debug)]
-pub struct WorkflowTaskInfo {
-    pub task_token: TaskToken,
-    pub attempt: u32,
+struct WorkflowTaskInfo {
+    task_token: TaskToken,
+    attempt: u32,
     /// Exists to allow easy tagging of spans with workflow ids. Is duplicative of info inside the
     /// run machines themselves, but that can't be accessed easily. Would be nice to somehow have a
     /// shared repository, or refcounts, or whatever, for strings like these that get duped all
     /// sorts of places.
-    pub wf_id: String,
+    wf_id: String,
 }
 
 #[derive(Debug)]
-pub enum FailedActivationWFTReport {
+enum FailedActivationWFTReport {
     Report(TaskToken, WorkflowTaskFailedCause, Failure),
     ReportLegacyQueryFailure(TaskToken, Failure),
 }
 
 #[derive(Debug)]
-pub(crate) struct ServerCommandsWithWorkflowInfo {
-    pub task_token: TaskToken,
-    pub action: ActivationAction,
+struct ServerCommandsWithWorkflowInfo {
+    task_token: TaskToken,
+    action: ActivationAction,
 }
 
 #[derive(Debug)]
@@ -884,8 +884,8 @@ impl EvictionRequestResult {
 #[derive(Debug)]
 #[allow(dead_code)] // Not always used in non-test
 pub(crate) struct WorkflowStateInfo {
-    pub cached_workflows: usize,
-    pub outstanding_wft: usize,
+    pub(crate) cached_workflows: usize,
+    pub(crate) outstanding_wft: usize,
 }
 
 #[derive(Debug)]
@@ -928,10 +928,10 @@ struct GetStateInfoMsg {
 /// Each activation completion produces one of these
 #[derive(Debug)]
 struct ActivationCompleteResult {
-    most_recently_processed_event: usize,
     replaying: bool,
     outcome: ActivationCompleteOutcome,
 }
+
 /// What needs to be done after calling [Workflows::activation_completed]
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
@@ -1093,7 +1093,7 @@ enum ValidatedCompletion {
 }
 
 impl ValidatedCompletion {
-    pub fn run_id(&self) -> &str {
+    fn run_id(&self) -> &str {
         match self {
             ValidatedCompletion::Success { run_id, .. } => run_id,
             ValidatedCompletion::Fail { run_id, .. } => run_id,
@@ -1106,7 +1106,7 @@ pub(crate) enum LocalResolution {
     LocalActivity(LocalActivityResolution),
 }
 impl LocalResolution {
-    pub fn is_la_cancel_confirmation(&self) -> bool {
+    fn is_la_cancel_confirmation(&self) -> bool {
         match self {
             LocalResolution::LocalActivity(lar) => {
                 matches!(lar.result, LocalActivityExecutionResult::Cancelled(_))
@@ -1117,13 +1117,13 @@ impl LocalResolution {
 
 #[derive(thiserror::Error, Debug, derive_more::From)]
 #[error("Lang provided workflow command with empty variant")]
-pub struct EmptyWorkflowCommandErr;
+struct EmptyWorkflowCommandErr;
 
 /// [DrivenWorkflow]s respond with these when called, to indicate what they want to do next.
 /// EX: Create a new timer, complete the workflow, etc.
 #[derive(Debug, derive_more::From, derive_more::Display)]
 #[allow(clippy::large_enum_variant)]
-pub enum WFCommand {
+enum WFCommand {
     /// Returned when we need to wait for the lang sdk to send us something
     NoCommandsFromLang,
     AddActivity(ScheduleActivity),
@@ -1201,7 +1201,7 @@ impl WFCommand {
     /// * Failed
     /// * Cancelled
     /// * Continue-as-new
-    pub fn is_terminal(&self) -> bool {
+    fn is_terminal(&self) -> bool {
         matches!(
             self,
             WFCommand::CompleteWorkflow(_)
@@ -1225,7 +1225,7 @@ enum CommandID {
 /// Details remembered from the workflow execution started event that we may need to recall later.
 /// Is a subset of `WorkflowExecutionStartedEventAttributes`, but avoids holding on to huge fields.
 #[derive(Debug, Clone)]
-pub struct WorkflowStartedInfo {
+struct WorkflowStartedInfo {
     workflow_task_timeout: Option<Duration>,
     memo: Option<Memo>,
     search_attrs: Option<SearchAttributes>,
@@ -1267,14 +1267,14 @@ pub(crate) enum WFMachinesError {
 }
 
 impl WFMachinesError {
-    pub fn evict_reason(&self) -> EvictionReason {
+    fn evict_reason(&self) -> EvictionReason {
         match self {
             WFMachinesError::Nondeterminism(_) => EvictionReason::Nondeterminism,
             WFMachinesError::Fatal(_) => EvictionReason::Fatal,
         }
     }
 
-    pub fn as_failure(&self) -> Failure {
+    fn as_failure(&self) -> Failure {
         Failure {
             failure: Some(
                 temporal_sdk_core_protos::temporal::api::failure::v1::Failure::application_failure(
