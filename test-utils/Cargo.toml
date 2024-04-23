@@ -41,3 +41,6 @@ uuid = "1.1"
 [dependencies.temporal-sdk-core-protos]
 path = "../sdk-core-protos"
 version = "0.1"
+
+[lints]
+workspace = true

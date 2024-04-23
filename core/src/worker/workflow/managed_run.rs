@@ -1092,7 +1092,6 @@ impl ManagedRun {
         FulfillableActivationComplete {
             result: ActivationCompleteResult {
                 outcome,
-                most_recently_processed_event: machines_wft_response.last_processed_event as usize,
                 replaying: machines_wft_response.replaying,
             },
             resp_chan,
@@ -1122,8 +1121,6 @@ impl ManagedRun {
             if chan
                 .send(ActivationCompleteResult {
                     outcome,
-                    most_recently_processed_event: self.most_recently_processed_event_number()
-                        as usize,
                     replaying: self.wfm.machines.replaying,
                 })
                 .is_err()

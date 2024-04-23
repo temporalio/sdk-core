@@ -93,7 +93,7 @@ enum SigChanOrBuffer {
     Buffer(Vec<SignalData>),
 }
 
-pub struct WorkflowFuture {
+pub(crate) struct WorkflowFuture {
     /// Future produced by calling the workflow function
     inner: BoxFuture<'static, WorkflowResult<Payload>>,
     /// Commands produced inside user's wf code

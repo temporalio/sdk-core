@@ -8,14 +8,15 @@ use temporal_sdk_core_protos::temporal::api::{
 
 /// A decoded & verified of a [Message] that came with a WFT.
 #[derive(Debug, Clone, PartialEq)]
-pub struct IncomingProtocolMessage {
-    pub id: String,
-    pub protocol_instance_id: String,
-    pub sequencing_id: Option<SequencingId>,
-    pub body: IncomingProtocolMessageBody,
+pub(crate) struct IncomingProtocolMessage {
+    pub(crate) id: String,
+    pub(crate) protocol_instance_id: String,
+    pub(crate) sequencing_id: Option<SequencingId>,
+    pub(crate) body: IncomingProtocolMessageBody,
 }
+
 impl IncomingProtocolMessage {
-    pub fn processable_after_event_id(&self) -> Option<i64> {
+    pub(crate) fn processable_after_event_id(&self) -> Option<i64> {
         match self.sequencing_id {
             None => Some(0),
             Some(SequencingId::EventId(id)) => Some(id),
@@ -23,6 +24,7 @@ impl IncomingProtocolMessage {
         }
     }
 }
+
 impl TryFrom<Message> for IncomingProtocolMessage {
     type Error = anyhow::Error;
 
@@ -40,7 +42,7 @@ impl TryFrom<Message> for IncomingProtocolMessage {
 /// All the protocol [Message] bodies Core understands that might come to us when receiving a new
 /// WFT.
 #[derive(Debug, Clone, PartialEq)]
-pub enum IncomingProtocolMessageBody {
+pub(crate) enum IncomingProtocolMessageBody {
     UpdateRequest(UpdateRequest),
 }
 
@@ -63,11 +65,11 @@ impl TryFrom<Option<prost_types::Any>> for IncomingProtocolMessageBody {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct UpdateRequest {
-    pub name: String,
-    pub headers: HashMap<String, Payload>,
-    pub input: Vec<Payload>,
-    pub meta: update::v1::Meta,
+pub(crate) struct UpdateRequest {
+    pub(crate) name: String,
+    pub(crate) headers: HashMap<String, Payload>,
+    pub(crate) input: Vec<Payload>,
+    pub(crate) meta: update::v1::Meta,
 }
 
 impl TryFrom<update::v1::Request> for UpdateRequest {

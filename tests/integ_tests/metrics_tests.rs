@@ -34,20 +34,21 @@ use tokio::{join, sync::Barrier, task::AbortHandle};
 
 static ANY_PORT: &str = "127.0.0.1:0";
 
-pub async fn get_text(endpoint: String) -> String {
+pub(crate) async fn get_text(endpoint: String) -> String {
     reqwest::get(endpoint).await.unwrap().text().await.unwrap()
 }
 
-pub struct AbortOnDrop {
+pub(crate) struct AbortOnDrop {
     ah: AbortHandle,
 }
+
 impl Drop for AbortOnDrop {
     fn drop(&mut self) {
         self.ah.abort();
     }
 }
 
-pub fn prom_metrics(
+pub(crate) fn prom_metrics(
     use_seconds: bool,
     show_units: bool,
 ) -> (TelemetryOptions, SocketAddr, AbortOnDrop) {

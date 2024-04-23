@@ -115,7 +115,8 @@ async fn parallel_workflows_same_queue() {
 }
 
 static RUN_CT: AtomicUsize = AtomicUsize::new(0);
-pub async fn cache_evictions_wf(command_sink: WfContext) -> WorkflowResult<()> {
+
+pub(crate) async fn cache_evictions_wf(command_sink: WfContext) -> WorkflowResult<()> {
     RUN_CT.fetch_add(1, Ordering::SeqCst);
     command_sink.timer(Duration::from_secs(1)).await;
     Ok(().into())

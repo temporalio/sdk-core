@@ -40,7 +40,7 @@ use temporal_sdk_core_test_utils::{
 };
 use tokio::{join, sync::Semaphore, time::sleep};
 
-pub async fn one_activity_wf(ctx: WfContext) -> WorkflowResult<()> {
+pub(crate) async fn one_activity_wf(ctx: WfContext) -> WorkflowResult<()> {
     ctx.activity(ActivityOptions {
         activity_type: "echo_activity".to_string(),
         start_to_close_timeout: Some(Duration::from_secs(5)),

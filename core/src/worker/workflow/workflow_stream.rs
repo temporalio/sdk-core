@@ -565,8 +565,8 @@ enum WFStreamInput {
 #[derive(derive_more::DebugCustom)]
 #[debug(fmt = "LocalInput {{ {input:?} }}")]
 pub(super) struct LocalInput {
-    pub input: LocalInputs,
-    pub span: Span,
+    pub(super) input: LocalInputs,
+    pub(super) span: Span,
 }
 impl From<HeartbeatTimeoutMsg> for LocalInput {
     fn from(hb: HeartbeatTimeoutMsg) -> Self {

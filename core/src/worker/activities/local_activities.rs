@@ -47,10 +47,10 @@ pub(crate) enum NextPendingLAAction {
 }
 
 #[derive(Debug)]
-pub(crate) struct LocalInFlightActInfo {
-    pub la_info: NewLocalAct,
-    pub dispatch_time: Instant,
-    pub attempt: u32,
+struct LocalInFlightActInfo {
+    la_info: NewLocalAct,
+    dispatch_time: Instant,
+    attempt: u32,
     _permit: UsedMeteredSemPermit,
 }
 
@@ -101,21 +101,22 @@ impl LocalActivityExecutionResult {
 
 #[derive(Debug, Clone)]
 pub(crate) struct LocalActivityResolution {
-    pub seq: u32,
-    pub result: LocalActivityExecutionResult,
-    pub runtime: Duration,
-    pub attempt: u32,
-    pub backoff: Option<prost_types::Duration>,
-    pub original_schedule_time: Option<SystemTime>,
+    pub(crate) seq: u32,
+    pub(crate) result: LocalActivityExecutionResult,
+    pub(crate) runtime: Duration,
+    pub(crate) attempt: u32,
+    pub(crate) backoff: Option<prost_types::Duration>,
+    pub(crate) original_schedule_time: Option<SystemTime>,
 }
 
 #[derive(Clone)]
 pub(crate) struct NewLocalAct {
-    pub schedule_cmd: ValidScheduleLA,
-    pub workflow_type: String,
-    pub workflow_exec_info: WorkflowExecution,
-    pub schedule_time: SystemTime,
+    pub(crate) schedule_cmd: ValidScheduleLA,
+    pub(crate) workflow_type: String,
+    pub(crate) workflow_exec_info: WorkflowExecution,
+    pub(crate) schedule_time: SystemTime,
 }
+
 impl Debug for NewLocalAct {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
@@ -146,8 +147,8 @@ pub(crate) enum LocalActRequest {
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub(crate) struct ExecutingLAId {
-    pub run_id: String,
-    pub seq_num: u32,
+    pub(crate) run_id: String,
+    pub(crate) seq_num: u32,
 }
 
 pub(crate) struct LocalActivityManager {

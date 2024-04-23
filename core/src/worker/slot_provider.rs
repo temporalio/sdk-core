@@ -17,7 +17,7 @@ use tonic::Status;
 type WFTStreamSender =
     UnboundedSender<Result<(ValidPollWFTQResponse, OwnedMeteredSemPermit), Status>>;
 
-pub struct Slot {
+struct Slot {
     permit: OwnedMeteredSemPermit,
     external_wft_tx: WFTStreamSender,
 }
@@ -44,7 +44,7 @@ impl SlotTrait for Slot {
 
 #[derive(derive_more::DebugCustom)]
 #[debug(fmt = "SlotProvider {{ namespace:{namespace}, task_queue: {task_queue} }}")]
-pub struct SlotProvider {
+pub(super) struct SlotProvider {
     namespace: String,
     task_queue: String,
     wft_semaphore: Arc<MeteredSemaphore>,
@@ -52,7 +52,7 @@ pub struct SlotProvider {
 }
 
 impl SlotProvider {
-    pub(crate) fn new(
+    pub(super) fn new(
         namespace: String,
         task_queue: String,
         wft_semaphore: Arc<MeteredSemaphore>,

@@ -21,7 +21,8 @@ use temporal_sdk_core_protos::{
 };
 
 static DID_FAIL: AtomicBool = AtomicBool::new(false);
-pub async fn timer_wf_fails_once(ctx: WfContext) -> WorkflowResult<()> {
+
+pub(crate) async fn timer_wf_fails_once(ctx: WfContext) -> WorkflowResult<()> {
     ctx.timer(Duration::from_secs(1)).await;
     if DID_FAIL
         .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)

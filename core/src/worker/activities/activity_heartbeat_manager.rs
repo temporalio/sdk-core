@@ -45,11 +45,11 @@ enum HeartbeatAction {
 }
 
 #[derive(Debug)]
-pub struct ValidActivityHeartbeat {
-    pub task_token: TaskToken,
-    pub details: Vec<Payload>,
-    pub throttle_interval: Duration,
-    pub timeout_resetter: Option<Arc<Notify>>,
+struct ValidActivityHeartbeat {
+    task_token: TaskToken,
+    details: Vec<Payload>,
+    throttle_interval: Duration,
+    timeout_resetter: Option<Arc<Notify>>,
 }
 
 #[derive(Debug)]
@@ -65,7 +65,7 @@ enum HeartbeatExecutorAction {
 
 /// Errors thrown when heartbeating
 #[derive(thiserror::Error, Debug)]
-pub enum ActivityHeartbeatError {
+pub(crate) enum ActivityHeartbeatError {
     /// Heartbeat referenced an activity that we don't think exists. It may have completed already.
     #[error("Heartbeat has been sent for activity that either completed or never started on this worker.")]
     UnknownActivity,

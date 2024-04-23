@@ -670,10 +670,9 @@ impl Worker {
     }
 }
 
-pub struct PostActivateHookData<'a> {
-    pub run_id: &'a str,
-    pub most_recent_event: usize,
-    pub replaying: bool,
+pub(crate) struct PostActivateHookData<'a> {
+    pub(crate) run_id: &'a str,
+    pub(crate) replaying: bool,
 }
 
 fn build_wf_basics(

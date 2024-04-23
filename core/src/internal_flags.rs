@@ -43,7 +43,7 @@ pub(crate) enum InternalFlags {
 }
 
 impl InternalFlags {
-    pub fn new(server_capabilities: &get_system_info_response::Capabilities) -> Self {
+    pub(crate) fn new(server_capabilities: &get_system_info_response::Capabilities) -> Self {
         match server_capabilities.sdk_metadata {
             true => Self::Enabled {
                 core: Default::default(),
@@ -55,7 +55,7 @@ impl InternalFlags {
         }
     }
 
-    pub fn add_from_complete(&mut self, e: &WorkflowTaskCompletedEventAttributes) {
+    pub(crate) fn add_from_complete(&mut self, e: &WorkflowTaskCompletedEventAttributes) {
         if let Self::Enabled { core, lang, .. } = self {
             if let Some(metadata) = e.sdk_metadata.as_ref() {
                 core.extend(
@@ -69,7 +69,7 @@ impl InternalFlags {
         }
     }
 
-    pub fn add_lang_used(&mut self, flags: impl IntoIterator<Item = u32>) {
+    pub(crate) fn add_lang_used(&mut self, flags: impl IntoIterator<Item = u32>) {
         if let Self::Enabled {
             lang_since_last_complete,
             ..
@@ -82,7 +82,7 @@ impl InternalFlags {
     /// Returns true if this flag may currently be used. If `should_record` is true, always returns
     /// true and records the flag as being used, for taking later via
     /// [Self::gather_for_wft_complete].
-    pub fn try_use(&mut self, core_patch: CoreInternalFlags, should_record: bool) -> bool {
+    pub(crate) fn try_use(&mut self, core_patch: CoreInternalFlags, should_record: bool) -> bool {
         match self {
             Self::Enabled {
                 core,
@@ -104,7 +104,7 @@ impl InternalFlags {
 
     /// Writes all known core flags to the set which should be recorded in the current WFT if not
     /// already known. Must only be called if not replaying.
-    pub fn write_all_known(&mut self) {
+    pub(crate) fn write_all_known(&mut self) {
         if let Self::Enabled {
             core_since_last_complete,
             ..
@@ -117,7 +117,7 @@ impl InternalFlags {
     /// Wipes the recorded flags used during the current WFT and returns a partially filled
     /// sdk metadata message that can be combined with any existing data before sending the WFT
     /// complete
-    pub fn gather_for_wft_complete(&mut self) -> WorkflowTaskCompletedMetadata {
+    pub(crate) fn gather_for_wft_complete(&mut self) -> WorkflowTaskCompletedMetadata {
         match self {
             Self::Enabled {
                 core_since_last_complete,
@@ -148,7 +148,7 @@ impl InternalFlags {
         }
     }
 
-    pub fn all_lang(&self) -> impl Iterator<Item = u32> + '_ {
+    pub(crate) fn all_lang(&self) -> impl Iterator<Item = u32> + '_ {
         match self {
             Self::Enabled { lang, .. } => Either::Left(lang.iter().copied()),
             Self::Disabled => Either::Right(iter::empty()),
@@ -165,7 +165,7 @@ impl CoreInternalFlags {
         }
     }
 
-    pub fn all_except_too_high() -> impl Iterator<Item = CoreInternalFlags> {
+    pub(crate) fn all_except_too_high() -> impl Iterator<Item = CoreInternalFlags> {
         enum_iterator::all::<CoreInternalFlags>()
             .filter(|f| !matches!(f, CoreInternalFlags::TooHigh))
     }

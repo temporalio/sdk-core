@@ -98,7 +98,7 @@ fsm! {
     Completed --(Cancel) --> Completed;
 }
 
-pub struct ChildWorkflowExecutionStartedEvent {
+pub(super) struct ChildWorkflowExecutionStartedEvent {
     workflow_execution: WorkflowExecution,
     started_event_id: i64,
 }

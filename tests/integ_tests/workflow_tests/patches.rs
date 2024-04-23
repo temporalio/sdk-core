@@ -14,7 +14,7 @@ use temporal_sdk_core_test_utils::CoreWfStarter;
 
 const MY_PATCH_ID: &str = "integ_test_change_name";
 
-pub async fn changes_wf(ctx: WfContext) -> WorkflowResult<()> {
+pub(crate) async fn changes_wf(ctx: WfContext) -> WorkflowResult<()> {
     if ctx.patched(MY_PATCH_ID) {
         ctx.timer(Duration::from_millis(100)).await;
     } else {
@@ -44,7 +44,8 @@ async fn writes_change_markers() {
 /// This one simulates a run as if the worker had the "old" code, then it fails at the end as
 /// a cheapo way of being re-run, at which point it runs with change checks and the "new" code.
 static DID_DIE: AtomicBool = AtomicBool::new(false);
-pub async fn no_change_then_change_wf(ctx: WfContext) -> WorkflowResult<()> {
+
+pub(crate) async fn no_change_then_change_wf(ctx: WfContext) -> WorkflowResult<()> {
     if DID_DIE.load(Ordering::Acquire) {
         assert!(!ctx.patched(MY_PATCH_ID));
     }
@@ -75,7 +76,8 @@ async fn can_add_change_markers() {
 }
 
 static DID_DIE_2: AtomicBool = AtomicBool::new(false);
-pub async fn replay_with_change_marker_wf(ctx: WfContext) -> WorkflowResult<()> {
+
+pub(crate) async fn replay_with_change_marker_wf(ctx: WfContext) -> WorkflowResult<()> {
     assert!(ctx.patched(MY_PATCH_ID));
     ctx.timer(Duration::from_millis(200)).await;
     if !DID_DIE_2.load(Ordering::Acquire) {

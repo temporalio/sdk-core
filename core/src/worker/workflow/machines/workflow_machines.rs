@@ -92,18 +92,18 @@ pub(crate) struct WorkflowMachines {
     /// The event id of the most recent event processed. It's possible in some situations (ex legacy
     /// queries) to receive a history with no new workflow tasks. If the last history we processed
     /// also had no new tasks, we need a way to know not to apply the same events over again.
-    pub last_processed_event: i64,
+    pub(crate) last_processed_event: i64,
     /// True if the workflow is replaying from history
-    pub replaying: bool,
+    pub(crate) replaying: bool,
     /// Workflow identifier
-    pub workflow_id: String,
+    pub(crate) workflow_id: String,
     /// Workflow type identifier. (Function name, class, etc)
-    pub workflow_type: String,
+    pub(crate) workflow_type: String,
     /// Identifies the current run
-    pub run_id: String,
+    pub(crate) run_id: String,
     /// Is set to true once we've seen the final event in workflow history, to avoid accidentally
     /// re-applying the final workflow task.
-    pub have_seen_terminal_event: bool,
+    pub(crate) have_seen_terminal_event: bool,
     /// The time the workflow execution began, as told by the WEStarted event
     workflow_start_time: Option<SystemTime>,
     /// The time the workflow execution finished, as determined by when the machines handled
@@ -157,7 +157,7 @@ pub(crate) struct WorkflowMachines {
     drive_me: DrivenWorkflow,
 
     /// Metrics context
-    pub metrics: MetricsContext,
+    pub(crate) metrics: MetricsContext,
     worker_config: Arc<WorkerConfig>,
 }
 
@@ -376,7 +376,6 @@ impl WorkflowMachines {
             has_pending_jobs: self.has_pending_jobs(),
             have_seen_terminal_event: self.have_seen_terminal_event,
             have_pending_la_resolutions: self.has_pending_la_resolutions(),
-            last_processed_event: self.last_processed_event,
             me: self,
         }
     }
@@ -1548,25 +1547,28 @@ impl WorkflowMachines {
 /// Contains everything workflow machine internals need to bubble up when we're getting ready to
 /// respond with a WFT completion. Allows for lazy mutation of the machine, since mutation is not
 /// desired unless we are actually going to respond to the WFT, which may not always happen.
-pub struct MachinesWFTResponseContent<'a> {
+pub(crate) struct MachinesWFTResponseContent<'a> {
     me: &'a mut WorkflowMachines,
-    pub replaying: bool,
-    pub has_pending_jobs: bool,
-    pub have_seen_terminal_event: bool,
-    pub have_pending_la_resolutions: bool,
-    pub last_processed_event: i64,
+    pub(crate) replaying: bool,
+    pub(crate) has_pending_jobs: bool,
+    pub(crate) have_seen_terminal_event: bool,
+    pub(crate) have_pending_la_resolutions: bool,
 }
+
 impl<'a> MachinesWFTResponseContent<'a> {
-    pub fn commands(&self) -> Peekable<impl Iterator<Item = ProtoCommand> + '_> {
+    pub(crate) fn commands(&self) -> Peekable<impl Iterator<Item = ProtoCommand> + '_> {
         self.me.get_commands().peekable()
     }
-    pub fn has_messages(&self) -> bool {
+
+    pub(crate) fn has_messages(&self) -> bool {
         !self.me.message_outbox.is_empty()
     }
-    pub fn messages(&mut self) -> Vec<ProtocolMessage> {
+
+    pub(crate) fn messages(&mut self) -> Vec<ProtocolMessage> {
         self.me.message_outbox.drain(..).collect()
     }
-    pub fn metadata_for_complete(&mut self) -> WorkflowTaskCompletedMetadata {
+
+    pub(crate) fn metadata_for_complete(&mut self) -> WorkflowTaskCompletedMetadata {
         self.me.get_metadata_for_wft_complete()
     }
 }

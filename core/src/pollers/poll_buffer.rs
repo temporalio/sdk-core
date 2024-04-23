@@ -29,7 +29,7 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
-pub struct LongPollBuffer<T> {
+pub(crate) struct LongPollBuffer<T> {
     buffered_polls: Mutex<UnboundedReceiver<pollers::Result<(T, OwnedMeteredSemPermit)>>>,
     shutdown: CancellationToken,
     join_handles: FuturesUnordered<JoinHandle<()>>,
@@ -183,7 +183,7 @@ where
 
 /// A poller capable of polling on a sticky and a nonsticky queue simultaneously for workflow tasks.
 #[derive(derive_more::Constructor)]
-pub struct WorkflowTaskPoller {
+pub(crate) struct WorkflowTaskPoller {
     normal_poller: PollWorkflowTaskBuffer,
     sticky_poller: Option<PollWorkflowTaskBuffer>,
 }
@@ -223,7 +223,8 @@ impl Poller<(PollWorkflowTaskQueueResponse, OwnedMeteredSemPermit)> for Workflow
     }
 }
 
-pub type PollWorkflowTaskBuffer = LongPollBuffer<PollWorkflowTaskQueueResponse>;
+pub(crate) type PollWorkflowTaskBuffer = LongPollBuffer<PollWorkflowTaskQueueResponse>;
+
 pub(crate) fn new_workflow_task_buffer(
     client: Arc<dyn WorkerClient>,
     task_queue: TaskQueue,
@@ -246,7 +247,8 @@ pub(crate) fn new_workflow_task_buffer(
     )
 }
 
-pub type PollActivityTaskBuffer = LongPollBuffer<PollActivityTaskQueueResponse>;
+pub(crate) type PollActivityTaskBuffer = LongPollBuffer<PollActivityTaskQueueResponse>;
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn new_activity_task_buffer(
     client: Arc<dyn WorkerClient>,
