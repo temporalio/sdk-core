@@ -1,0 +1,22 @@
+[package]
+name = "temporal-workflow-api"
+version = "0.1.0"
+edition = "2021"
+authors = ["Spencer Judge <spencer@temporal.io>"]
+license-file = "LICENSE.txt"
+description = "Temporal Rust SDK Worflow APIs"
+homepage = "https://temporal.io/"
+repository = "https://github.com/temporalio/sdk-core"
+keywords = ["temporal", "workflow"]
+categories = ["development-tools"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1.0"
+futures = "0.3"
+
+[dependencies.temporal-sdk-core-protos]
+path = "../sdk-core-protos"
+version = "0.1"
+
