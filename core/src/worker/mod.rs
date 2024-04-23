@@ -79,7 +79,6 @@ use {
 pub struct Worker {
     config: WorkerConfig,
     wf_client: Arc<dyn WorkerClient>,
-    slot_provider: Arc<SlotProvider>,
     /// Registration key to enable eager workflow start for this worker
     worker_key: Mutex<Option<WorkerKey>>,
     /// Manages all workflows and WFT processing
@@ -222,15 +221,14 @@ impl Worker {
     pub fn replace_client(&self, new_client: ConfiguredClient<TemporalServiceClientWithMetrics>) {
         // Unregister worker from current client, register in new client at the end
         let mut worker_key = self.worker_key.lock();
+        let slot_provider = (*worker_key).and_then(|k| self.wf_client.workers().unregister(k));
         if let Some(key) = *worker_key {
             self.wf_client.workers().unregister(key);
         }
         self.wf_client
             .replace_client(super::init_worker_client(&self.config, new_client));
-        *worker_key = self
-            .wf_client
-            .workers()
-            .register(self.slot_provider.clone());
+        *worker_key = slot_provider
+            .and_then(|slot_provider| self.wf_client.workers().register(slot_provider));
     }
 
     #[cfg(test)]
@@ -385,15 +383,14 @@ impl Worker {
             info!("Activity polling is disabled for this worker");
         };
         let la_sink = LAReqSink::new(local_act_mgr.clone());
-        let slot_provider = Arc::new(SlotProvider::new(
+        let provider = SlotProvider::new(
             config.namespace.clone(),
             config.task_queue.clone(),
             wft_semaphore.clone(),
             external_wft_tx,
-        ));
-        let worker_key = Mutex::new(client.workers().register(slot_provider.clone()));
+        );
+        let worker_key = Mutex::new(client.workers().register(Box::new(provider)));
         Self {
-            slot_provider,
             worker_key,
             wf_client: client.clone(),
             workflows: Workflows::new(
