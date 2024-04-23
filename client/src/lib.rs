@@ -27,7 +27,9 @@ pub use temporal_sdk_core_protos::temporal::api::{
 };
 pub use tonic;
 pub use worker_registry::{Slot, SlotManager, SlotProvider, WorkerKey};
-pub use workflow_handle::{WorkflowExecutionInfo, WorkflowExecutionResult};
+pub use workflow_handle::{
+    GetWorkflowResultOpts, WorkflowExecutionInfo, WorkflowExecutionResult, WorkflowHandle,
+};
 
 use crate::{
     metrics::{GrpcMetricSvc, MetricsContext},
