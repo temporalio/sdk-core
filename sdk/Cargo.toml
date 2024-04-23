@@ -45,3 +45,6 @@ version = "0.1"
 [dependencies.temporal-client]
 path = "../client"
 version = "0.1"
+
+[lints]
+workspace = true

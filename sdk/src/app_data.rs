@@ -6,20 +6,20 @@ use std::{
 
 /// A Wrapper Type for workflow and activity app data
 #[derive(Default)]
-pub struct AppData {
+pub(crate) struct AppData {
     map: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
 }
 
 impl AppData {
     /// Insert an item, overwritting duplicates
-    pub fn insert<T: Send + Sync + 'static>(&mut self, val: T) -> Option<T> {
+    pub(crate) fn insert<T: Send + Sync + 'static>(&mut self, val: T) -> Option<T> {
         self.map
             .insert(TypeId::of::<T>(), Box::new(val))
             .and_then(downcast_owned)
     }
 
     /// Get a reference to a type in the map
-    pub fn get<T: 'static>(&self) -> Option<&T> {
+    pub(crate) fn get<T: 'static>(&self) -> Option<&T> {
         self.map
             .get(&TypeId::of::<T>())
             .and_then(|boxed| boxed.downcast_ref())

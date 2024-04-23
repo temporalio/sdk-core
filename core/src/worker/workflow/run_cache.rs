@@ -22,7 +22,7 @@ pub(super) struct RunCache {
 }
 
 impl RunCache {
-    pub fn new(
+    pub(super) fn new(
         worker_config: Arc<WorkerConfig>,
         server_capabilities: get_system_info_response::Capabilities,
         local_activity_request_sink: impl LocalActivityRequestSink,
@@ -46,7 +46,7 @@ impl RunCache {
         }
     }
 
-    pub fn instantiate_or_update(&mut self, pwft: PermittedWFT) -> RunUpdateAct {
+    pub(super) fn instantiate_or_update(&mut self, pwft: PermittedWFT) -> RunUpdateAct {
         let cur_num_cached_runs = self.runs.len();
         let run_id = pwft.work.execution.run_id.clone();
 
@@ -80,44 +80,53 @@ impl RunCache {
         self.metrics.cache_size(cur_num_cached_runs as u64 + 1);
         rur
     }
-    pub fn remove(&mut self, k: &str) -> Option<ManagedRun> {
+
+    pub(super) fn remove(&mut self, k: &str) -> Option<ManagedRun> {
         let r = self.runs.pop(k);
         self.metrics.cache_size(self.len() as u64);
         self.metrics.cache_eviction();
         r
     }
 
-    pub fn get_mut(&mut self, k: &str) -> Option<&mut ManagedRun> {
+    pub(super) fn get_mut(&mut self, k: &str) -> Option<&mut ManagedRun> {
         self.runs.get_mut(k)
     }
-    pub fn get(&mut self, k: &str) -> Option<&ManagedRun> {
+
+    pub(super) fn get(&mut self, k: &str) -> Option<&ManagedRun> {
         self.runs.get(k)
     }
 
     /// Returns the current least-recently-used run. Returns `None` when cache empty.
-    pub fn current_lru_run(&self) -> Option<&str> {
+    pub(super) fn current_lru_run(&self) -> Option<&str> {
         self.runs.peek_lru().map(|(run_id, _)| run_id.as_str())
     }
+
     /// Returns an iterator yielding cached runs in LRU order
-    pub fn runs_lru_order(&self) -> impl Iterator<Item = (&str, &ManagedRun)> {
+    pub(super) fn runs_lru_order(&self) -> impl Iterator<Item = (&str, &ManagedRun)> {
         self.runs.iter().rev().map(|(k, v)| (k.as_str(), v))
     }
-    pub fn peek(&self, k: &str) -> Option<&ManagedRun> {
+
+    pub(super) fn peek(&self, k: &str) -> Option<&ManagedRun> {
         self.runs.peek(k)
     }
-    pub fn has_run(&self, k: &str) -> bool {
+
+    pub(super) fn has_run(&self, k: &str) -> bool {
         self.runs.contains(k)
     }
-    pub fn handles(&self) -> impl Iterator<Item = &ManagedRun> {
+
+    pub(super) fn handles(&self) -> impl Iterator<Item = &ManagedRun> {
         self.runs.iter().map(|(_, v)| v)
     }
-    pub fn is_full(&self) -> bool {
+
+    pub(super) fn is_full(&self) -> bool {
         self.runs.cap().get() == self.runs.len()
     }
-    pub fn len(&self) -> usize {
+
+    pub(super) fn len(&self) -> usize {
         self.runs.len()
     }
-    pub fn cache_capacity(&self) -> usize {
+
+    pub(super) fn cache_capacity(&self) -> usize {
         self.worker_config.max_cached_workflows
     }
 }

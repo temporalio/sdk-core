@@ -10,7 +10,7 @@ use temporal_sdk_core_test_utils::{
     WorkerTestHelpers,
 };
 
-pub async fn timer_wf(command_sink: WfContext) -> WorkflowResult<()> {
+pub(crate) async fn timer_wf(command_sink: WfContext) -> WorkflowResult<()> {
     command_sink.timer(Duration::from_secs(1)).await;
     Ok(().into())
 }

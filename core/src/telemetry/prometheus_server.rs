@@ -18,7 +18,7 @@ pub(super) struct PromServer {
 }
 
 impl PromServer {
-    pub fn new(
+    pub(super) fn new(
         opts: &PrometheusExporterOptions,
         aggregation: impl AggregationSelector + Send + Sync + 'static,
     ) -> Result<(Self, PrometheusExporter), anyhow::Error> {
@@ -46,7 +46,7 @@ impl PromServer {
         ))
     }
 
-    pub async fn run(self) -> Result<(), anyhow::Error> {
+    pub(super) async fn run(self) -> Result<(), anyhow::Error> {
         // Spin up hyper server to serve metrics for scraping. We use hyper since we already depend
         // on it via Tonic.
         self.listener.set_nonblocking(true)?;
@@ -70,7 +70,7 @@ impl PromServer {
         }
     }
 
-    pub fn bound_addr(&self) -> io::Result<SocketAddr> {
+    pub(super) fn bound_addr(&self) -> io::Result<SocketAddr> {
         self.listener.local_addr()
     }
 }

@@ -26,7 +26,7 @@ use temporal_sdk_core_test_utils::{
 };
 use tokio_util::sync::CancellationToken;
 
-pub async fn one_local_activity_wf(ctx: WfContext) -> WorkflowResult<()> {
+pub(crate) async fn one_local_activity_wf(ctx: WfContext) -> WorkflowResult<()> {
     let initial_workflow_time = ctx.workflow_time().expect("Workflow time should be set");
     ctx.local_activity(LocalActivityOptions {
         activity_type: "echo_activity".to_string(),
@@ -51,7 +51,7 @@ async fn one_local_activity() {
     worker.run_until_done().await.unwrap();
 }
 
-pub async fn local_act_concurrent_with_timer_wf(ctx: WfContext) -> WorkflowResult<()> {
+pub(crate) async fn local_act_concurrent_with_timer_wf(ctx: WfContext) -> WorkflowResult<()> {
     let la = ctx.local_activity(LocalActivityOptions {
         activity_type: "echo_activity".to_string(),
         input: "hi!".as_json_payload().expect("serializes fine"),
@@ -74,7 +74,7 @@ async fn local_act_concurrent_with_timer() {
     worker.run_until_done().await.unwrap();
 }
 
-pub async fn local_act_then_timer_then_wait(ctx: WfContext) -> WorkflowResult<()> {
+pub(crate) async fn local_act_then_timer_then_wait(ctx: WfContext) -> WorkflowResult<()> {
     let la = ctx.local_activity(LocalActivityOptions {
         activity_type: "echo_activity".to_string(),
         input: "hi!".as_json_payload().expect("serializes fine"),
@@ -114,7 +114,7 @@ async fn long_running_local_act_with_timer() {
     worker.run_until_done().await.unwrap();
 }
 
-pub async fn local_act_fanout_wf(ctx: WfContext) -> WorkflowResult<()> {
+pub(crate) async fn local_act_fanout_wf(ctx: WfContext) -> WorkflowResult<()> {
     let las: Vec<_> = (1..=50)
         .map(|i| {
             ctx.local_activity(LocalActivityOptions {

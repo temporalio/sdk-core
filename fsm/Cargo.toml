@@ -16,3 +16,6 @@ rustfsm_trait = { version = "0.1", path = "rustfsm_trait" }
 
 [package.metadata.workspaces]
 independent = true
+
+[lints]
+workspace = true

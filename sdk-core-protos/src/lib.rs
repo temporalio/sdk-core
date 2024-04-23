@@ -364,13 +364,16 @@ pub mod coresdk {
         #[derive(Serialize, Deserialize)]
         #[serde(remote = "Timestamp")]
         struct TimestampDef {
-            pub seconds: i64,
-            pub nanos: i32,
+            seconds: i64,
+            nanos: i32,
         }
         mod opt_timestamp {
             use super::*;
 
-            pub fn serialize<S>(value: &Option<Timestamp>, serializer: S) -> Result<S::Ok, S::Error>
+            pub(super) fn serialize<S>(
+                value: &Option<Timestamp>,
+                serializer: S,
+            ) -> Result<S::Ok, S::Error>
             where
                 S: Serializer,
             {
@@ -380,7 +383,9 @@ pub mod coresdk {
                 value.as_ref().map(Helper).serialize(serializer)
             }
 
-            pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Timestamp>, D::Error>
+            pub(super) fn deserialize<'de, D>(
+                deserializer: D,
+            ) -> Result<Option<Timestamp>, D::Error>
             where
                 D: Deserializer<'de>,
             {
@@ -396,13 +401,16 @@ pub mod coresdk {
         #[derive(Serialize, Deserialize)]
         #[serde(remote = "Duration")]
         struct DurationDef {
-            pub seconds: i64,
-            pub nanos: i32,
+            seconds: i64,
+            nanos: i32,
         }
         mod opt_duration {
             use super::*;
 
-            pub fn serialize<S>(value: &Option<Duration>, serializer: S) -> Result<S::Ok, S::Error>
+            pub(super) fn serialize<S>(
+                value: &Option<Duration>,
+                serializer: S,
+            ) -> Result<S::Ok, S::Error>
             where
                 S: Serializer,
             {
@@ -412,7 +420,7 @@ pub mod coresdk {
                 value.as_ref().map(Helper).serialize(serializer)
             }
 
-            pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Duration>, D::Error>
+            pub(super) fn deserialize<'de, D>(deserializer: D) -> Result<Option<Duration>, D::Error>
             where
                 D: Deserializer<'de>,
             {

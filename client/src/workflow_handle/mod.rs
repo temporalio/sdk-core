@@ -75,7 +75,7 @@ impl WorkflowExecutionInfo {
 }
 
 /// A workflow handle to a workflow with unknown types. Uses raw payloads.
-pub type UntypedWorkflowHandle<CT> = WorkflowHandle<CT, Vec<Payload>>;
+pub(crate) type UntypedWorkflowHandle<CT> = WorkflowHandle<CT, Vec<Payload>>;
 
 impl<CT, RT> WorkflowHandle<CT, RT>
 where

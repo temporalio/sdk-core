@@ -11,7 +11,7 @@ struct Data {
     message: String,
 }
 
-pub async fn appdata_activity_wf(ctx: WfContext) -> WorkflowResult<()> {
+pub(crate) async fn appdata_activity_wf(ctx: WfContext) -> WorkflowResult<()> {
     ctx.activity(ActivityOptions {
         activity_type: "echo_activity".to_string(),
         start_to_close_timeout: Some(Duration::from_secs(5)),

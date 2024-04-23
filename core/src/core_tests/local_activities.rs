@@ -112,7 +112,7 @@ async fn local_act_two_wfts_before_marker(#[case] replay: bool, #[case] cached: 
     worker.run_until_done().await.unwrap();
 }
 
-pub async fn local_act_fanout_wf(ctx: WfContext) -> WorkflowResult<()> {
+pub(crate) async fn local_act_fanout_wf(ctx: WfContext) -> WorkflowResult<()> {
     let las: Vec<_> = (1..=50)
         .map(|i| {
             ctx.local_activity(LocalActivityOptions {

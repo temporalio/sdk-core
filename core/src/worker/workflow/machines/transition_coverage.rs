@@ -29,7 +29,12 @@ struct CoveredTransition {
     event: String,
 }
 
-pub fn add_coverage(machine_name: String, from_state: String, to_state: String, event: String) {
+pub(super) fn add_coverage(
+    machine_name: String,
+    from_state: String,
+    to_state: String,
+    event: String,
+) {
     let ct = CoveredTransition {
         from_state,
         to_state,

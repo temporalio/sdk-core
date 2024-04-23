@@ -32,20 +32,21 @@ static EMPTY_TASK_ERR: Lazy<tonic::Status> = Lazy::new(|| {
 
 /// Represents one or more complete WFT sequences. History events are expected to be consumed from
 /// it and applied to the state machines via [HistoryUpdate::take_next_wft_sequence]
-pub struct HistoryUpdate {
+pub(crate) struct HistoryUpdate {
     events: Vec<HistoryEvent>,
     /// The event ID of the last started WFT, as according to the WFT which this update was
     /// extracted from. Hence, while processing multiple logical WFTs during replay which were part
     /// of one large history fetched from server, multiple updates may have the same value here.
-    pub previous_wft_started_id: i64,
+    pub(crate) previous_wft_started_id: i64,
     /// The `started_event_id` field from the WFT which this update is tied to. Multiple updates
     /// may have the same value if they're associated with the same WFT.
-    pub wft_started_id: i64,
+    pub(crate) wft_started_id: i64,
     /// True if this update contains the final WFT in history, and no more attempts to extract
     /// additional updates should be made.
     has_last_wft: bool,
     wft_count: usize,
 }
+
 impl Debug for HistoryUpdate {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.is_real() {
@@ -65,7 +66,7 @@ impl Debug for HistoryUpdate {
 }
 
 #[derive(Debug)]
-pub enum NextWFT {
+pub(crate) enum NextWFT {
     ReplayOver,
     WFT(Vec<HistoryEvent>, bool),
     NeedFetch,
@@ -73,7 +74,7 @@ pub enum NextWFT {
 
 #[derive(derive_more::DebugCustom)]
 #[debug(fmt = "HistoryPaginator(run_id: {run_id})")]
-pub struct HistoryPaginator {
+pub(crate) struct HistoryPaginator {
     pub(crate) wf_id: String,
     pub(crate) run_id: String,
     pub(crate) previous_wft_started_id: i64,
@@ -89,7 +90,7 @@ pub struct HistoryPaginator {
 }
 
 #[derive(Clone, Debug)]
-pub enum NextPageToken {
+pub(crate) enum NextPageToken {
     /// There is no page token, we need to fetch history from the beginning
     FetchFromStart,
     /// There is a page token
@@ -380,7 +381,7 @@ struct StreamingHistoryPaginator {
 impl StreamingHistoryPaginator {
     // Kept since can be used for history downloading
     #[cfg(test)]
-    pub fn new(inner: HistoryPaginator) -> Self {
+    fn new(inner: HistoryPaginator) -> Self {
         Self {
             inner,
             open_history_request: None,
@@ -422,7 +423,7 @@ impl Stream for StreamingHistoryPaginator {
 impl HistoryUpdate {
     /// Sometimes it's useful to take an update out of something without needing to use an option
     /// field. Use this to replace the field with an empty update.
-    pub fn dummy() -> Self {
+    pub(crate) fn dummy() -> Self {
         Self {
             events: vec![],
             previous_wft_started_id: -1,
@@ -431,10 +432,12 @@ impl HistoryUpdate {
             wft_count: 0,
         }
     }
-    pub fn is_real(&self) -> bool {
+
+    pub(crate) fn is_real(&self) -> bool {
         self.previous_wft_started_id >= 0
     }
-    pub fn first_event_id(&self) -> Option<i64> {
+
+    pub(crate) fn first_event_id(&self) -> Option<i64> {
         self.events.first().map(|e| e.event_id)
     }
 
@@ -456,7 +459,7 @@ impl HistoryUpdate {
     /// partial WFT sequence at the end, all events after the last complete WFT sequence (ending
     /// with WFT started) are returned back to the caller, since the history update only works in
     /// terms of complete WFT sequences.
-    pub fn from_events<I: IntoIterator<Item = HistoryEvent>>(
+    pub(crate) fn from_events<I: IntoIterator<Item = HistoryEvent>>(
         events: I,
         previous_wft_started_id: i64,
         wft_started_id: i64,
@@ -537,7 +540,7 @@ impl HistoryUpdate {
     /// of one or more complete WFT sequences. IE: The event iterator must not end in the middle
     /// of a WFT sequence.
     #[cfg(test)]
-    pub fn new_from_events<I: IntoIterator<Item = HistoryEvent>>(
+    fn new_from_events<I: IntoIterator<Item = HistoryEvent>>(
         events: I,
         previous_wft_started_id: i64,
         wft_started_id: i64,
@@ -561,7 +564,7 @@ impl HistoryUpdate {
     ///
     /// If we are out of WFT sequences that can be yielded by this update, it will return an empty
     /// vec, indicating more pages will need to be fetched.
-    pub fn take_next_wft_sequence(&mut self, from_wft_started_id: i64) -> NextWFT {
+    pub(crate) fn take_next_wft_sequence(&mut self, from_wft_started_id: i64) -> NextWFT {
         // First, drop any events from the queue which are earlier than the passed-in id.
         if let Some(ix_first_relevant) = self.starting_index_after_skipping(from_wft_started_id) {
             self.events.drain(0..ix_first_relevant);
@@ -600,7 +603,7 @@ impl HistoryUpdate {
     /// [take_next_wft_sequence]. Will always return the first available WFT sequence if that has
     /// not been called first. May also return an empty iterator or incomplete sequence if we are at
     /// the end of history.
-    pub fn peek_next_wft_sequence(&self, from_wft_started_id: i64) -> &[HistoryEvent] {
+    pub(crate) fn peek_next_wft_sequence(&self, from_wft_started_id: i64) -> &[HistoryEvent] {
         let ix_first_relevant = self
             .starting_index_after_skipping(from_wft_started_id)
             .unwrap_or_default();
@@ -616,7 +619,7 @@ impl HistoryUpdate {
 
     /// Returns true if this update has the next needed WFT sequence, false if events will need to
     /// be fetched in order to create a complete update with the entire next WFT sequence.
-    pub fn can_take_next_wft_sequence(&self, from_wft_started_id: i64) -> bool {
+    pub(crate) fn can_take_next_wft_sequence(&self, from_wft_started_id: i64) -> bool {
         let next_wft_ix =
             find_end_index_of_next_wft_seq(&self.events, from_wft_started_id, self.has_last_wft);
         if let NextWFTSeqEndIndex::Incomplete(_) = next_wft_ix {
@@ -629,7 +632,7 @@ impl HistoryUpdate {
 
     /// Returns the next WFT completed event attributes, if any, starting at (inclusive) the
     /// `from_id`
-    pub fn peek_next_wft_completed(
+    pub(crate) fn peek_next_wft_completed(
         &self,
         from_id: i64,
     ) -> Option<&WorkflowTaskCompletedEventAttributes> {
@@ -747,7 +750,7 @@ fn find_end_index_of_next_wft_seq(
 }
 
 #[cfg(test)]
-pub mod tests {
+mod tests {
     use super::*;
     use crate::{
         replay::{HistoryInfo, TestHistoryBuilder},
@@ -777,7 +780,7 @@ pub mod tests {
         }
     }
 
-    pub trait TestHBExt {
+    trait TestHBExt {
         fn as_history_update(&self) -> HistoryUpdate;
     }
 

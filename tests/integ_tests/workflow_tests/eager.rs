@@ -3,7 +3,7 @@ use temporal_client::WorkflowClientTrait;
 use temporal_sdk::{WfContext, WorkflowResult};
 use temporal_sdk_core_test_utils::{get_integ_server_options, CoreWfStarter, NAMESPACE};
 
-pub async fn eager_wf(_context: WfContext) -> WorkflowResult<()> {
+pub(crate) async fn eager_wf(_context: WfContext) -> WorkflowResult<()> {
     Ok(().into())
 }
 
