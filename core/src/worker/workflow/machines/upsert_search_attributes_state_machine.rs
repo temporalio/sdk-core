@@ -211,7 +211,7 @@ mod tests {
             workflow_activation::{workflow_activation_job, WorkflowActivationJob},
             workflow_commands::SetPatchMarker,
             workflow_completion::WorkflowActivationCompletion,
-            AsJsonPayloadExt,
+            ToPayload,
         },
         temporal::api::{
             command::v1::command::Attributes, common::v1::Payload,
@@ -370,7 +370,7 @@ mod tests {
         let mut ver_upsert = HashMap::new();
         ver_upsert.insert(
             VERSION_SEARCH_ATTR_KEY.to_string(),
-            "hi".as_json_payload().unwrap(),
+            "hi".to_payload().unwrap(),
         );
         let act = core.poll_workflow_activation().await.unwrap();
         let mut cmds = if with_patched_cmd {

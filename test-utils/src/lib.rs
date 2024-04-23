@@ -421,10 +421,10 @@ impl TestWorker {
         self.inner.register_wf(workflow_type, wf_function)
     }
 
-    pub fn register_activity<A, R, O>(
+    pub fn register_activity<A, R>(
         &mut self,
         activity_type: impl Into<String>,
-        act_function: impl IntoActivityFunc<A, R, O>,
+        act_function: impl IntoActivityFunc<A, R>,
     ) {
         self.inner.register_activity(activity_type, act_function)
     }

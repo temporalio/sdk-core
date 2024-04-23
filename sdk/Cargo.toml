@@ -23,6 +23,7 @@ parking_lot = { version = "0.12", features = ["send_guard"] }
 prost-types = { version = "0.5", package = "prost-wkt-types" }
 sha2 = "0.10"
 serde = "1.0"
+serde_json = "1"
 tokio = { version = "1.26", features = ["rt", "rt-multi-thread", "parking_lot", "time", "fs"] }
 tokio-util = { version = "0.7" }
 tokio-stream = "0.1"

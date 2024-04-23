@@ -24,8 +24,7 @@ use temporal_sdk_core_protos::{
             ActivityCancellationType, RequestCancelActivity, ScheduleActivity, StartTimer,
         },
         workflow_completion::WorkflowActivationCompletion,
-        ActivityHeartbeat, ActivityTaskCompletion, AsJsonPayloadExt, FromJsonPayloadExt,
-        IntoCompletion,
+        ActivityHeartbeat, ActivityTaskCompletion, FromPayload, IntoCompletion, ToPayload,
     },
     temporal::api::{
         common::v1::{ActivityType, Payload, Payloads, RetryPolicy},
@@ -44,7 +43,7 @@ pub async fn one_activity_wf(ctx: WfContext) -> WorkflowResult<()> {
     ctx.activity(ActivityOptions {
         activity_type: "echo_activity".to_string(),
         start_to_close_timeout: Some(Duration::from_secs(5)),
-        input: "hi!".as_json_payload().expect("serializes fine"),
+        input: "hi!".to_payload().expect("serializes fine"),
         ..Default::default()
     })
     .await;
@@ -797,7 +796,7 @@ async fn one_activity_abandon_cancelled_after_complete() {
         let act_fut = ctx.activity(ActivityOptions {
             activity_type: "echo_activity".to_string(),
             start_to_close_timeout: Some(Duration::from_secs(5)),
-            input: "hi!".as_json_payload().expect("serializes fine"),
+            input: "hi!".to_payload().expect("serializes fine"),
             cancellation_type: ActivityCancellationType::Abandon,
             ..Default::default()
         });
@@ -848,16 +847,16 @@ async fn it_can_complete_async() {
         let activity_resolution = ctx
             .activity(ActivityOptions {
                 activity_type: "complete_async_activity".to_string(),
-                input: "hi".as_json_payload().expect("serializes fine"),
+                input: "hi".to_payload().expect("serializes fine"),
                 start_to_close_timeout: Some(Duration::from_secs(30)),
                 ..Default::default()
             })
             .await;
 
         let res = match activity_resolution.status {
-            Some(act_res::Status::Completed(activity_result::Success { result })) => result
-                .map(|p| String::from_json_payload(&p).unwrap())
-                .unwrap(),
+            Some(act_res::Status::Completed(activity_result::Success { result })) => {
+                result.map(|p| String::from_payload(&p).unwrap()).unwrap()
+            }
             _ => panic!("activity task failed {activity_resolution:?}"),
         };
 
@@ -891,7 +890,7 @@ async fn it_can_complete_async() {
                 client
                     .complete_activity_task(
                         TaskToken(task_token),
-                        Some(async_response.as_json_payload().unwrap().into()),
+                        Some(async_response.to_payload().unwrap().into()),
                     )
                     .await
                     .unwrap();
@@ -932,7 +931,7 @@ async fn graceful_shutdown() {
                     ..Default::default()
                 }),
                 cancellation_type: ActivityCancellationType::WaitCancellationCompleted,
-                input: "hi".as_json_payload().unwrap(),
+                input: "hi".to_payload().unwrap(),
                 ..Default::default()
             })
         });
@@ -991,7 +990,7 @@ async fn activity_can_be_cancelled_by_local_timeout() {
             .activity(ActivityOptions {
                 activity_type: "echo_activity".to_string(),
                 start_to_close_timeout: Some(Duration::from_secs(1)),
-                input: "hi!".as_json_payload().expect("serializes fine"),
+                input: "hi!".to_payload().expect("serializes fine"),
                 retry_policy: Some(RetryPolicy {
                     maximum_attempts: 1,
                     ..Default::default()

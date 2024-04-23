@@ -16,7 +16,7 @@ use temporal_sdk_core_protos::{
         workflow_commands::{workflow_command::Variant, ActivityCancellationType},
         workflow_completion,
         workflow_completion::{workflow_activation_completion, WorkflowActivationCompletion},
-        AsJsonPayloadExt,
+        ToPayload,
     },
     temporal::api::{common::v1::RetryPolicy, enums::v1::TimeoutType},
     TestHistoryBuilder,
@@ -30,7 +30,7 @@ pub async fn one_local_activity_wf(ctx: WfContext) -> WorkflowResult<()> {
     let initial_workflow_time = ctx.workflow_time().expect("Workflow time should be set");
     ctx.local_activity(LocalActivityOptions {
         activity_type: "echo_activity".to_string(),
-        input: "hi!".as_json_payload().expect("serializes fine"),
+        input: "hi!".to_payload().expect("serializes fine"),
         ..Default::default()
     })
     .await;
@@ -54,7 +54,7 @@ async fn one_local_activity() {
 pub async fn local_act_concurrent_with_timer_wf(ctx: WfContext) -> WorkflowResult<()> {
     let la = ctx.local_activity(LocalActivityOptions {
         activity_type: "echo_activity".to_string(),
-        input: "hi!".as_json_payload().expect("serializes fine"),
+        input: "hi!".to_payload().expect("serializes fine"),
         ..Default::default()
     });
     let timer = ctx.timer(Duration::from_secs(1));
@@ -77,7 +77,7 @@ async fn local_act_concurrent_with_timer() {
 pub async fn local_act_then_timer_then_wait(ctx: WfContext) -> WorkflowResult<()> {
     let la = ctx.local_activity(LocalActivityOptions {
         activity_type: "echo_activity".to_string(),
-        input: "hi!".as_json_payload().expect("serializes fine"),
+        input: "hi!".to_payload().expect("serializes fine"),
         ..Default::default()
     });
     ctx.timer(Duration::from_secs(1)).await;
@@ -119,9 +119,7 @@ pub async fn local_act_fanout_wf(ctx: WfContext) -> WorkflowResult<()> {
         .map(|i| {
             ctx.local_activity(LocalActivityOptions {
                 activity_type: "echo_activity".to_string(),
-                input: format!("Hi {i}")
-                    .as_json_payload()
-                    .expect("serializes fine"),
+                input: format!("Hi {i}").to_payload().expect("serializes fine"),
                 ..Default::default()
             })
         })
@@ -153,7 +151,7 @@ async fn local_act_retry_timer_backoff() {
         let res = ctx
             .local_activity(LocalActivityOptions {
                 activity_type: "echo".to_string(),
-                input: "hi".as_json_payload().expect("serializes fine"),
+                input: "hi".to_payload().expect("serializes fine"),
                 retry_policy: RetryPolicy {
                     initial_interval: Some(prost_dur!(from_micros(15))),
                     // We want two local backoffs that are short. Third backoff will use timer
@@ -201,7 +199,7 @@ async fn cancel_immediate(#[case] cancel_type: ActivityCancellationType) {
     worker.register_wf(&wf_name, move |ctx: WfContext| async move {
         let la = ctx.local_activity(LocalActivityOptions {
             activity_type: "echo".to_string(),
-            input: "hi".as_json_payload().expect("serializes fine"),
+            input: "hi".to_payload().expect("serializes fine"),
             cancel_type,
             ..Default::default()
         });
@@ -289,7 +287,7 @@ async fn cancel_after_act_starts(
     worker.register_wf(&wf_name, move |ctx: WfContext| async move {
         let la = ctx.local_activity(LocalActivityOptions {
             activity_type: "echo".to_string(),
-            input: "hi".as_json_payload().expect("serializes fine"),
+            input: "hi".to_payload().expect("serializes fine"),
             retry_policy: RetryPolicy {
                 initial_interval: Some(bo_dur.try_into().unwrap()),
                 backoff_coefficient: 1.,
@@ -382,7 +380,7 @@ async fn x_to_close_timeout(#[case] is_schedule: bool) {
         let res = ctx
             .local_activity(LocalActivityOptions {
                 activity_type: "echo".to_string(),
-                input: "hi".as_json_payload().expect("serializes fine"),
+                input: "hi".to_payload().expect("serializes fine"),
                 retry_policy: RetryPolicy {
                     initial_interval: Some(prost_dur!(from_micros(15))),
                     backoff_coefficient: 1_000.,
@@ -431,7 +429,7 @@ async fn schedule_to_close_timeout_across_timer_backoff(#[case] cached: bool) {
         let res = ctx
             .local_activity(LocalActivityOptions {
                 activity_type: "echo".to_string(),
-                input: "hi".as_json_payload().expect("serializes fine"),
+                input: "hi".to_payload().expect("serializes fine"),
                 retry_policy: RetryPolicy {
                     initial_interval: Some(prost_dur!(from_millis(15))),
                     backoff_coefficient: 1_000.,
@@ -496,7 +494,7 @@ async fn timer_backoff_concurrent_with_non_timer_backoff() {
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         let r1 = ctx.local_activity(LocalActivityOptions {
             activity_type: "echo".to_string(),
-            input: "hi".as_json_payload().expect("serializes fine"),
+            input: "hi".to_payload().expect("serializes fine"),
             retry_policy: RetryPolicy {
                 initial_interval: Some(prost_dur!(from_micros(15))),
                 backoff_coefficient: 1_000.,
@@ -509,7 +507,7 @@ async fn timer_backoff_concurrent_with_non_timer_backoff() {
         });
         let r2 = ctx.local_activity(LocalActivityOptions {
             activity_type: "echo".to_string(),
-            input: "hi".as_json_payload().expect("serializes fine"),
+            input: "hi".to_payload().expect("serializes fine"),
             retry_policy: RetryPolicy {
                 initial_interval: Some(prost_dur!(from_millis(15))),
                 backoff_coefficient: 10.,
@@ -543,7 +541,7 @@ async fn repro_nondeterminism_with_timer_bug() {
         let t1 = ctx.timer(Duration::from_secs(30));
         let r1 = ctx.local_activity(LocalActivityOptions {
             activity_type: "delay".to_string(),
-            input: "hi".as_json_payload().expect("serializes fine"),
+            input: "hi".to_payload().expect("serializes fine"),
             retry_policy: RetryPolicy {
                 initial_interval: Some(prost_dur!(from_micros(15))),
                 backoff_coefficient: 1_000.,

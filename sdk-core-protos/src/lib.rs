@@ -21,7 +21,7 @@ pub use history_info::HistoryInfo;
 pub use task_token::TaskToken;
 
 pub static ENCODING_PAYLOAD_KEY: &str = "encoding";
-pub static JSON_ENCODING_VAL: &str = "json/plain";
+pub static JSON_ENCODING_VAL: &[u8] = b"json/plain";
 pub static PATCHED_MARKER_DETAILS_KEY: &str = "patch-data";
 
 #[allow(
@@ -46,9 +46,9 @@ pub mod coresdk {
         ENCODING_PAYLOAD_KEY, JSON_ENCODING_VAL,
     };
     use activity_task::ActivityTask;
-    use serde::{Deserialize, Serialize};
+    use serde::{de::DeserializeOwned, Serialize};
     use std::{
-        collections::HashMap,
+        collections::{hash_map::RandomState, BTreeSet, HashMap, HashSet},
         convert::TryFrom,
         fmt::{Display, Formatter},
         iter::FromIterator,
@@ -273,10 +273,7 @@ pub mod coresdk {
         tonic::include_proto!("coresdk.common");
         use super::external_data::LocalActivityMarkerData;
         use crate::{
-            coresdk::{
-                external_data::PatchedMarkerData, AsJsonPayloadExt, FromJsonPayloadExt,
-                IntoPayloadsExt,
-            },
+            coresdk::{external_data::PatchedMarkerData, FromPayload, IntoPayloadsExt, ToPayload},
             temporal::api::common::v1::{Payload, Payloads},
             PATCHED_MARKER_DETAILS_KEY,
         };
@@ -291,7 +288,7 @@ pub mod coresdk {
                 id: patch_id.into(),
                 deprecated,
             }
-            .as_json_payload()?;
+            .to_payload()?;
             hm.insert(PATCHED_MARKER_DETAILS_KEY.to_string(), encoded.into());
             Ok(hm)
         }
@@ -302,7 +299,7 @@ pub mod coresdk {
             // We used to write change markers with plain bytes, so try to decode if they are
             // json first, then fall back to that.
             if let Some(cd) = details.get(PATCHED_MARKER_DETAILS_KEY) {
-                let decoded = PatchedMarkerData::from_json_payload(cd.payloads.first()?).ok()?;
+                let decoded = PatchedMarkerData::from_payload(cd.payloads.first()?).ok()?;
                 return Some((decoded.id, decoded.deprecated));
             }
 
@@ -320,7 +317,7 @@ pub mod coresdk {
             let mut hm = HashMap::new();
             // It would be more efficient for this to be proto binary, but then it shows up as
             // meaningless in the Temporal UI...
-            if let Some(jsonified) = metadata.as_json_payload().into_payloads() {
+            if let Some(jsonified) = metadata.to_payload().into_payloads() {
                 hm.insert("data".to_string(), jsonified);
             }
             if let Some(res) = result {
@@ -354,6 +351,7 @@ pub mod coresdk {
     }
 
     pub mod external_data {
+        use crate::coresdk::{Json, PayloadExt};
         use prost_wkt_types::{Duration, Timestamp};
         use serde::{Deserialize, Deserializer, Serialize, Serializer};
         tonic::include_proto!("coresdk.external_data");
@@ -390,6 +388,14 @@ pub mod coresdk {
                 let helper = Option::deserialize(deserializer)?;
                 Ok(helper.map(|Helper(external)| external))
             }
+        }
+
+        impl PayloadExt for PatchedMarkerData {
+            type Encoding = Json;
+        }
+
+        impl PayloadExt for LocalActivityMarkerData {
+            type Encoding = Json;
         }
 
         // Luckily Duration is also stored the exact same way
@@ -1325,42 +1331,142 @@ pub mod coresdk {
         DeserializeErr(#[from] anyhow::Error),
     }
 
-    // TODO: Once the prototype SDK is un-prototyped this serialization will need to be compat with
-    //   other SDKs (given they might execute an activity).
-    pub trait AsJsonPayloadExt {
-        fn as_json_payload(&self) -> anyhow::Result<Payload>;
+    /// JSON encoding for payload types
+    pub struct Json(());
+
+    impl<T: DeserializeOwned + Sized> Decoder<T> for Json {
+        type Error = serde_json::Error;
+
+        fn decode(payload: &Payload) -> Result<T, Self::Error> {
+            serde_json::from_slice(&payload.data)
+        }
     }
-    impl<T> AsJsonPayloadExt for T
-    where
-        T: Serialize,
-    {
-        fn as_json_payload(&self) -> anyhow::Result<Payload> {
-            let as_json = serde_json::to_string(self)?;
-            let mut metadata = HashMap::new();
-            metadata.insert(
-                ENCODING_PAYLOAD_KEY.to_string(),
-                JSON_ENCODING_VAL.as_bytes().to_vec(),
-            );
-            Ok(Payload {
-                metadata,
-                data: as_json.into_bytes(),
+
+    impl<T: Serialize + ?Sized> Encoder<T> for Json {
+        type Error = serde_json::Error;
+
+        fn encode(value: &T) -> Result<Payload, Self::Error> {
+            let mut metadata = HashMap::default();
+            metadata.insert(ENCODING_PAYLOAD_KEY.to_owned(), JSON_ENCODING_VAL.to_vec());
+            serde_json::to_vec(value).map(|data| Payload { metadata, data })
+        }
+    }
+
+    pub trait Encoder<T: ?Sized> {
+        /// Error type for encoding
+        type Error: std::error::Error + Send + Sync + 'static;
+
+        /// Encode a value of the given type into a [`Payload`]
+        fn encode(value: &T) -> Result<Payload, Self::Error>;
+    }
+
+    pub trait Decoder<T> {
+        /// Error type for decoding
+        type Error: std::error::Error + Send + Sync + 'static;
+
+        /// Decode a [`Payload`] into a value of the desired type
+        fn decode(payload: &Payload) -> Result<T, Self::Error>;
+    }
+
+    /// Trait for types that are used as workflow or activity output
+    pub trait ToPayload {
+        /// The encoding with which the payload is serialized
+        type Encoder: Encoder<Self>;
+
+        /// Encode a payload of type `Self` into a [`Payload`]
+        fn to_payload(&self) -> Result<Payload, <Self::Encoder as Encoder<Self>>::Error> {
+            <Self::Encoder>::encode(self)
+        }
+    }
+
+    pub trait FromPayload: Sized {
+        /// The decoding with which the payload is deserialized
+        type Decoder: Decoder<Self>;
+
+        /// Decode a [`Payload`] into a value of type `Self`
+        fn from_payload(
+            payload: &Payload,
+        ) -> Result<Self, <Self::Decoder as Decoder<Self>>::Error> {
+            <Self::Decoder>::decode(payload)
+        }
+    }
+
+    /// Trait for types that are used as workflow or activity input or output
+    pub trait PayloadExt: Sized {
+        /// The encoding with which the payload is (de)serialized
+        type Encoding: Encoder<Self> + Decoder<Self>;
+    }
+
+    impl<T: PayloadExt> FromPayload for T {
+        type Decoder = T::Encoding;
+    }
+
+    impl<T: PayloadExt> ToPayload for T {
+        type Encoder = T::Encoding;
+    }
+
+    impl PayloadExt for String {
+        type Encoding = Json;
+    }
+
+    impl ToPayload for &str {
+        type Encoder = Json;
+    }
+
+    impl PayloadExt for () {
+        type Encoding = Json;
+    }
+
+    impl ToPayload for BTreeSet<&str> {
+        type Encoder = Json;
+    }
+
+    impl ToPayload for [&str] {
+        type Encoder = Json;
+    }
+
+    impl PayloadExt for i32 {
+        type Encoding = Json;
+    }
+
+    impl PayloadExt for usize {
+        type Encoding = Json;
+    }
+
+    impl FromPayload for HashSet<String, RandomState> {
+        type Decoder = Json;
+    }
+
+    /// Activity functions may return these values when exiting
+    pub enum ActExitValue<T> {
+        /// Completion requires an asynchronous callback
+        WillCompleteAsync,
+        /// Finish with a result
+        Normal(T),
+    }
+
+    pub trait ActivityOutput {
+        fn encode(self) -> Result<ActExitValue<Payload>, anyhow::Error>;
+    }
+
+    impl ActivityOutput for ActExitValue<Payload> {
+        fn encode(self) -> Result<ActExitValue<Payload>, anyhow::Error> {
+            Ok(self)
+        }
+    }
+
+    impl<T: ToPayload> ActivityOutput for ActExitValue<T> {
+        fn encode(self) -> Result<ActExitValue<Payload>, anyhow::Error> {
+            Ok(match self {
+                ActExitValue::WillCompleteAsync => ActExitValue::WillCompleteAsync,
+                ActExitValue::Normal(x) => ActExitValue::Normal(x.to_payload()?),
             })
         }
     }
 
-    pub trait FromJsonPayloadExt: Sized {
-        fn from_json_payload(payload: &Payload) -> Result<Self, PayloadDeserializeErr>;
-    }
-    impl<T> FromJsonPayloadExt for T
-    where
-        T: for<'de> Deserialize<'de>,
-    {
-        fn from_json_payload(payload: &Payload) -> Result<Self, PayloadDeserializeErr> {
-            if !payload.is_json_payload() {
-                return Err(PayloadDeserializeErr::DeserializerDoesNotHandle);
-            }
-            let payload_str = std::str::from_utf8(&payload.data).map_err(anyhow::Error::from)?;
-            Ok(serde_json::from_str(payload_str).map_err(anyhow::Error::from)?)
+    impl<T: ToPayload> ActivityOutput for T {
+        fn encode(self) -> Result<ActExitValue<Payload>, anyhow::Error> {
+            Ok(ActExitValue::Normal(self.to_payload()?))
         }
     }
 
@@ -1663,7 +1769,7 @@ pub mod temporal {
                     pub fn is_json_payload(&self) -> bool {
                         self.metadata
                             .get(ENCODING_PAYLOAD_KEY)
-                            .map(|v| v.as_slice() == JSON_ENCODING_VAL.as_bytes())
+                            .map(|v| v.as_slice() == JSON_ENCODING_VAL)
                             .unwrap_or_default()
                     }
                 }

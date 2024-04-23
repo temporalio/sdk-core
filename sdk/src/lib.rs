@@ -64,7 +64,6 @@ use crate::{interceptors::WorkerInterceptor, workflow_context::ChildWfCommon};
 use anyhow::{anyhow, bail, Context};
 use app_data::AppData;
 use futures::{future::BoxFuture, FutureExt, StreamExt, TryFutureExt, TryStreamExt};
-use serde::Serialize;
 use std::{
     any::{Any, TypeId},
     cell::RefCell,
@@ -80,6 +79,7 @@ use temporal_sdk_core_api::{
     errors::{PollActivityError, PollWfError},
     Worker as CoreWorker,
 };
+pub use temporal_sdk_core_protos::coresdk::ActExitValue;
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{ActivityExecutionResult, ActivityResolution},
@@ -92,7 +92,7 @@ use temporal_sdk_core_protos::{
         },
         workflow_commands::{workflow_command, ContinueAsNewWorkflowExecution},
         workflow_completion::WorkflowActivationCompletion,
-        ActivityTaskCompletion, AsJsonPayloadExt, FromJsonPayloadExt,
+        ActivityOutput, ActivityTaskCompletion, Encoder, FromPayload, ToPayload,
     },
     temporal::api::{common::v1::Payload, failure::v1::Failure},
     TaskToken,
@@ -206,10 +206,10 @@ impl Worker {
 
     /// Register an Activity function to invoke when the Worker is asked to run an activity of
     /// `activity_type`
-    pub fn register_activity<A, R, O>(
+    pub fn register_activity<A, R>(
         &mut self,
         activity_type: impl Into<String>,
-        act_function: impl IntoActivityFunc<A, R, O>,
+        act_function: impl IntoActivityFunc<A, R>,
     ) {
         self.activity_half.activity_fns.insert(
             activity_type.into(),
@@ -714,7 +714,7 @@ impl<F, Fut, O> From<F> for WorkflowFunction
 where
     F: Fn(WfContext) -> Fut + Send + Sync + 'static,
     Fut: Future<Output = Result<WfExitValue<O>, anyhow::Error>> + Send + 'static,
-    O: Serialize,
+    O: ToPayload,
 {
     fn from(wf_func: F) -> Self {
         Self::new(wf_func)
@@ -727,7 +727,7 @@ impl WorkflowFunction {
     where
         F: Fn(WfContext) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<WfExitValue<O>, anyhow::Error>> + Send + 'static,
-        O: Serialize,
+        O: ToPayload,
     {
         Self {
             wf_func: Box::new(move |ctx: WfContext| {
@@ -738,7 +738,7 @@ impl WorkflowFunction {
                                 WfExitValue::ContinueAsNew(b) => WfExitValue::ContinueAsNew(b),
                                 WfExitValue::Cancelled => WfExitValue::Cancelled,
                                 WfExitValue::Evicted => WfExitValue::Evicted,
-                                WfExitValue::Normal(o) => WfExitValue::Normal(o.as_json_payload()?),
+                                WfExitValue::Normal(o) => WfExitValue::Normal(o.to_payload()?),
                             })
                         })
                     })
@@ -771,20 +771,6 @@ impl<T> WfExitValue<T> {
     /// Construct a [WfExitValue::ContinueAsNew] variant (handles boxing)
     pub fn continue_as_new(can: ContinueAsNewWorkflowExecution) -> Self {
         Self::ContinueAsNew(Box::new(can))
-    }
-}
-
-/// Activity functions may return these values when exiting
-pub enum ActExitValue<T> {
-    /// Completion requires an asynchronous callback
-    WillCompleteAsync,
-    /// Finish with a result
-    Normal(T),
-}
-
-impl<T: AsJsonPayloadExt> From<T> for ActExitValue<T> {
-    fn from(t: T) -> Self {
-        Self::Normal(t)
     }
 }
 
@@ -831,35 +817,24 @@ impl Display for ActivityCancelledError {
 pub struct NonRetryableActivityError(pub anyhow::Error);
 
 /// Closures / functions which can be turned into activity functions implement this trait
-pub trait IntoActivityFunc<Args, Res, Out> {
+pub trait IntoActivityFunc<Args, Res> {
     /// Consume the closure or fn pointer and turned it into a boxed activity function
     fn into_activity_fn(self) -> BoxActFn;
 }
 
-impl<A, Rf, R, O, F> IntoActivityFunc<A, Rf, O> for F
+impl<A, Rf, R, F> IntoActivityFunc<A, Rf> for F
 where
     F: (Fn(ActContext, A) -> Rf) + Sync + Send + 'static,
-    A: FromJsonPayloadExt + Send,
+    A: FromPayload + Send,
     Rf: Future<Output = Result<R, anyhow::Error>> + Send + 'static,
-    R: Into<ActExitValue<O>>,
-    O: AsJsonPayloadExt,
+    R: ActivityOutput,
 {
     fn into_activity_fn(self) -> BoxActFn {
         let wrapper = move |ctx: ActContext, input: Payload| {
             // Some minor gymnastics are required to avoid needing to clone the function
-            match A::from_json_payload(&input) {
+            match A::from_payload(&input) {
                 Ok(deser) => (self)(ctx, deser)
-                    .map(|r| {
-                        r.and_then(|r| {
-                            let exit_val: ActExitValue<O> = r.into();
-                            Ok(match exit_val {
-                                ActExitValue::WillCompleteAsync => ActExitValue::WillCompleteAsync,
-                                ActExitValue::Normal(x) => {
-                                    ActExitValue::Normal(x.as_json_payload()?)
-                                }
-                            })
-                        })
-                    })
+                    .map(|r| r.and_then(|r| r.encode()))
                     .boxed(),
                 Err(e) => async move { Err(e.into()) }.boxed(),
             }
@@ -910,11 +885,11 @@ pub trait IntoUpdateValidatorFunc<Arg> {
 }
 impl<A, F> IntoUpdateValidatorFunc<A> for F
 where
-    A: FromJsonPayloadExt + Send,
+    A: FromPayload + Send,
     F: (for<'a> Fn(&'a UpdateInfo, A) -> Result<(), anyhow::Error>) + Send + 'static,
 {
     fn into_update_validator_fn(self) -> BoxUpdateValidatorFn {
-        let wrapper = move |ctx: &UpdateInfo, input: &Payload| match A::from_json_payload(input) {
+        let wrapper = move |ctx: &UpdateInfo, input: &Payload| match A::from_payload(input) {
             Ok(deser) => (self)(ctx, deser),
             Err(e) => Err(e.into()),
         };
@@ -931,15 +906,16 @@ pub trait IntoUpdateHandlerFunc<Arg, Res> {
 }
 impl<A, F, Rf, R> IntoUpdateHandlerFunc<A, R> for F
 where
-    A: FromJsonPayloadExt + Send,
+    A: FromPayload + Send,
     F: (FnMut(UpdateContext, A) -> Rf) + Send + 'static,
     Rf: Future<Output = Result<R, anyhow::Error>> + Send + 'static,
-    R: AsJsonPayloadExt,
+    R: ToPayload,
+    <<R as ToPayload>::Encoder as Encoder<R>>::Error: Into<anyhow::Error>,
 {
     fn into_update_handler_fn(mut self) -> BoxUpdateHandlerFn {
-        let wrapper = move |ctx: UpdateContext, input: &Payload| match A::from_json_payload(input) {
+        let wrapper = move |ctx: UpdateContext, input: &Payload| match A::from_payload(input) {
             Ok(deser) => (self)(ctx, deser)
-                .map(|r| r.and_then(|r| r.as_json_payload()))
+                .map(|r| r.and_then(|r| Ok(r.to_payload()?)))
                 .boxed(),
             Err(e) => async move { Err(e.into()) }.boxed(),
         };
