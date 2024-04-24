@@ -115,11 +115,5 @@ test = false
 name = "workflow_replay"
 harness = false
 
-# This is maybe a bit hacky, but we call the runner an "example" because that gets it compiling with
-# the dev-dependencies, which we want.
-[[example]]
-name = "integ_runner"
-path = "../tests/runner.rs"
-
 [lints]
 workspace = true
