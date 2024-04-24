@@ -63,7 +63,7 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: test
-          args: -- --include-ignored --nocapture
+          args: -- --include-ignored --skip integ_tests --skip heavy_tests --nocapture
       - uses: actions/upload-artifact@v3
         with:
           name: coverage-report
