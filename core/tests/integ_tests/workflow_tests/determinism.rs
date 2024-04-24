@@ -33,6 +33,7 @@ pub(crate) async fn timer_wf_nondeterministic(ctx: WfContext) -> WorkflowResult<
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_determinism_error_then_recovers() {
     let wf_name = "test_determinism_error_then_recovers";
     let mut starter = CoreWfStarter::new(wf_name);

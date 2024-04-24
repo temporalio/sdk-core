@@ -60,6 +60,7 @@ use uuid::Uuid;
 //  matches.
 
 #[tokio::test]
+#[ignore]
 async fn parallel_workflows_same_queue() {
     let mut starter = CoreWfStarter::new("parallel_workflows_same_queue");
     let core = starter.get_worker().await;
@@ -123,6 +124,7 @@ pub(crate) async fn cache_evictions_wf(command_sink: WfContext) -> WorkflowResul
 }
 
 #[tokio::test]
+#[ignore]
 async fn workflow_lru_cache_evictions() {
     let wf_type = "workflow_lru_cache_evictions";
     let mut starter = CoreWfStarter::new(wf_type);
@@ -164,6 +166,7 @@ async fn workflow_lru_cache_evictions() {
 // code a bunch and just isn't worth it. Do it when https://github.com/asomers/mockall/issues/189 is
 // fixed.
 #[tokio::test]
+#[ignore]
 async fn shutdown_aborts_actively_blocked_poll() {
     let mut starter = CoreWfStarter::new("shutdown_aborts_actively_blocked_poll");
     let core = starter.get_worker().await;
@@ -188,6 +191,7 @@ async fn shutdown_aborts_actively_blocked_poll() {
 
 #[rstest::rstest]
 #[tokio::test]
+#[ignore]
 async fn fail_wf_task(#[values(true, false)] replay: bool) {
     let core = if replay {
         // We need to send the history twice, since we fail it the first time.
@@ -252,6 +256,7 @@ async fn fail_wf_task(#[values(true, false)] replay: bool) {
 }
 
 #[tokio::test]
+#[ignore]
 async fn fail_workflow_execution() {
     let core = init_core_and_create_wf("fail_workflow_execution")
         .await
@@ -273,6 +278,7 @@ async fn fail_workflow_execution() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn signal_workflow() {
     let mut starter = init_core_and_create_wf("signal_workflow").await;
     let core = starter.get_worker().await;
@@ -352,6 +358,7 @@ async fn signal_workflow() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn signal_workflow_signal_not_handled_on_workflow_completion() {
     let mut starter =
         init_core_and_create_wf("signal_workflow_signal_not_handled_on_workflow_completion").await;
@@ -435,6 +442,7 @@ async fn signal_workflow_signal_not_handled_on_workflow_completion() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
     let activity_id = "act-1";
     let signal_at_start = "at-start";
@@ -556,6 +564,7 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
 ///
 /// It's expected that this test may generate some task timeouts.
 #[tokio::test]
+#[ignore]
 async fn slow_completes_with_small_cache() {
     let wf_name = "slow_completes_with_small_cache";
     let mut starter = CoreWfStarter::new(wf_name);
@@ -603,6 +612,7 @@ async fn slow_completes_with_small_cache() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn build_id_correct_in_wf_info() {
     let wf_type = "build_id_correct_in_wf_info";
     let mut starter = CoreWfStarter::new(wf_type);
@@ -740,6 +750,7 @@ async fn build_id_correct_in_wf_info() {
 
 #[rstest::rstest]
 #[tokio::test]
+#[ignore]
 async fn nondeterminism_errors_fail_workflow_when_configured_to(
     #[values(true, false)] whole_worker: bool,
 ) {

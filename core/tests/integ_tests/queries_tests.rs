@@ -17,6 +17,7 @@ use temporal_sdk_core_test_utils::{
 use tokio::join;
 
 #[tokio::test]
+#[ignore]
 async fn simple_query_legacy() {
     let query_resp = b"response";
     let mut starter = init_core_and_create_wf("simple_query_legacy").await;
@@ -113,6 +114,7 @@ async fn simple_query_legacy() {
 #[case::no_eviction(false)]
 #[case::with_eviction(true)]
 #[tokio::test]
+#[ignore]
 async fn query_after_execution_complete(#[case] do_evict: bool) {
     let query_resp = b"response";
     let mut starter =
@@ -213,6 +215,7 @@ async fn query_after_execution_complete(#[case] do_evict: bool) {
 }
 
 #[tokio::test]
+#[ignore]
 async fn fail_legacy_query() {
     let query_err = "oh no broken";
     let mut starter = init_core_and_create_wf("fail_legacy_query").await;
@@ -316,6 +319,7 @@ async fn fail_legacy_query() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn multiple_concurrent_queries_no_new_history() {
     let mut starter = init_core_and_create_wf("multiple_concurrent_queries_no_new_history").await;
     let core = starter.get_worker().await;
@@ -384,6 +388,7 @@ async fn multiple_concurrent_queries_no_new_history() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn queries_handled_before_next_wft() {
     let mut starter = init_core_and_create_wf("queries_handled_before_next_wft").await;
     let core = starter.get_worker().await;

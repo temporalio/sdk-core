@@ -26,6 +26,7 @@ use temporal_sdk_core_test_utils::{
 use tokio::time::sleep;
 
 #[tokio::test]
+#[ignore]
 async fn activity_heartbeat() {
     let mut starter = init_core_and_create_wf("activity_heartbeat").await;
     let core = starter.get_worker().await;
@@ -97,6 +98,7 @@ async fn activity_heartbeat() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn many_act_fails_with_heartbeats() {
     let mut starter = init_core_and_create_wf("many_act_fails_with_heartbeats").await;
     let core = starter.get_worker().await;
@@ -175,6 +177,7 @@ async fn many_act_fails_with_heartbeats() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn activity_doesnt_heartbeat_hits_timeout_then_completes() {
     let wf_name = "activity_doesnt_heartbeat_hits_timeout_then_completes";
     let mut starter = CoreWfStarter::new(wf_name);

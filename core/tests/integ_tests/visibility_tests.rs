@@ -14,6 +14,7 @@ use temporal_sdk_core_test_utils::{
 use tokio::time::sleep;
 
 #[tokio::test]
+#[ignore]
 async fn client_list_open_closed_workflow_executions() {
     let wf_name = "client_list_open_closed_workflow_executions".to_owned();
     let mut starter = CoreWfStarter::new(&wf_name);
@@ -88,6 +89,7 @@ async fn client_list_open_closed_workflow_executions() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn client_create_namespace() {
     let client = Arc::new(
         get_integ_server_options()
@@ -135,6 +137,7 @@ async fn client_create_namespace() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn client_describe_namespace() {
     let client = Arc::new(
         get_integ_server_options()

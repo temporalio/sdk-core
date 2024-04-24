@@ -31,6 +31,7 @@ async fn cancel_receiver(ctx: WfContext) -> WorkflowResult<()> {
 }
 
 #[tokio::test]
+#[ignore]
 async fn sends_cancel_to_other_wf() {
     let mut starter = CoreWfStarter::new("sends_cancel_to_other_wf");
     starter.no_remote_activities();

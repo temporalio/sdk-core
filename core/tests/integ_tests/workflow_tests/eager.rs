@@ -8,6 +8,7 @@ pub(crate) async fn eager_wf(_context: WfContext) -> WorkflowResult<()> {
 }
 
 #[tokio::test]
+#[ignore]
 async fn eager_wf_start() {
     let wf_name = "eager_wf_start";
     let mut starter = CoreWfStarter::new(wf_name);
@@ -22,6 +23,7 @@ async fn eager_wf_start() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn eager_wf_start_different_clients() {
     let wf_name = "eager_wf_start";
     let mut starter = CoreWfStarter::new(wf_name);

@@ -9,6 +9,7 @@ use temporal_sdk_core_test_utils::{default_cached_download, NAMESPACE};
 use url::Url;
 
 #[tokio::test]
+#[ignore]
 async fn temporal_cli_default() {
     let config = TemporalDevServerConfigBuilder::default()
         .exe(default_cached_download())
@@ -20,6 +21,7 @@ async fn temporal_cli_default() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn temporal_cli_fixed() {
     let config = TemporalDevServerConfigBuilder::default()
         .exe(fixed_cached_download("v0.4.0"))
@@ -31,6 +33,7 @@ async fn temporal_cli_fixed() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn temporalite_default() {
     let config = TemporaliteConfigBuilder::default()
         .exe(default_cached_download())
@@ -42,6 +45,7 @@ async fn temporalite_default() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn temporalite_fixed() {
     let config = TemporaliteConfigBuilder::default()
         .exe(fixed_cached_download("v0.2.0"))
@@ -53,6 +57,7 @@ async fn temporalite_fixed() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn temporalite_shutdown_port_reuse() {
     // Start, test shutdown, do again immediately on same port to ensure we can
     // reuse after shutdown
@@ -70,6 +75,7 @@ async fn temporalite_shutdown_port_reuse() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_server_default() {
     let config = TestServerConfigBuilder::default()
         .exe(default_cached_download())
@@ -81,6 +87,7 @@ async fn test_server_default() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_server_fixed() {
     let config = TestServerConfigBuilder::default()
         .exe(fixed_cached_download("v1.16.0"))
@@ -92,6 +99,7 @@ async fn test_server_fixed() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_server_shutdown_port_reuse() {
     // Start, test shutdown, do again immediately on same port to ensure we can
     // reuse after shutdown

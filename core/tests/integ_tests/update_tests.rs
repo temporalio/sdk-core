@@ -36,6 +36,7 @@ use tokio::{join, sync::Barrier};
 
 #[rstest::rstest]
 #[tokio::test]
+#[ignore]
 async fn update_workflow(#[values(true, false)] will_fail: bool) {
     let mut starter = init_core_and_create_wf("update_workflow").await;
     let core = starter.get_worker().await;
@@ -138,6 +139,7 @@ async fn _do_update_workflow(will_fail: bool, core: &dyn Worker) {
 }
 
 #[tokio::test]
+#[ignore]
 async fn update_rejection() {
     let mut starter = init_core_and_create_wf("update_workflow").await;
     let core = starter.get_worker().await;
@@ -213,6 +215,7 @@ async fn update_rejection() {
 
 #[rstest::rstest]
 #[tokio::test]
+#[ignore]
 async fn update_insta_complete(#[values(true, false)] accept_first: bool) {
     let mut starter = init_core_and_create_wf("update_workflow").await;
     let core = starter.get_worker().await;
@@ -302,6 +305,7 @@ async fn update_insta_complete(#[values(true, false)] accept_first: bool) {
 }
 
 #[tokio::test]
+#[ignore]
 async fn update_complete_after_accept_without_new_task() {
     let mut starter = init_core_and_create_wf("update_workflow").await;
     let core = starter.get_worker().await;
@@ -398,6 +402,7 @@ async fn update_complete_after_accept_without_new_task() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn update_speculative_wft() {
     let mut starter = init_core_and_create_wf("update_workflow").await;
     let core = starter.get_worker().await;
@@ -483,6 +488,7 @@ async fn update_speculative_wft() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn update_with_local_acts() {
     let wf_name = "update_with_local_acts";
     let mut starter = CoreWfStarter::new(wf_name);
@@ -560,6 +566,7 @@ async fn update_with_local_acts() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn update_rejection_sdk() {
     let wf_name = "update_rejection_sdk";
     let mut starter = CoreWfStarter::new(wf_name);
@@ -604,6 +611,7 @@ async fn update_rejection_sdk() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn update_fail_sdk() {
     let wf_name = "update_fail_sdk";
     let mut starter = CoreWfStarter::new(wf_name);
@@ -648,6 +656,7 @@ async fn update_fail_sdk() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn update_timer_sequence() {
     let wf_name = "update_timer_sequence";
     let mut starter = CoreWfStarter::new(wf_name);
@@ -696,6 +705,7 @@ async fn update_timer_sequence() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn task_failure_during_validation() {
     let wf_name = "task_failure_during_validation";
     let mut starter = CoreWfStarter::new(wf_name);
@@ -762,6 +772,7 @@ async fn task_failure_during_validation() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn task_failure_after_update() {
     let wf_name = "task_failure_after_update";
     let mut starter = CoreWfStarter::new(wf_name);
@@ -811,6 +822,7 @@ async fn task_failure_after_update() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn worker_restarted_in_middle_of_update() {
     let wf_name = "worker_restarted_in_middle_of_update";
     let mut starter = CoreWfStarter::new(wf_name);

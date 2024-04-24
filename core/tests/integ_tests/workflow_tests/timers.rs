@@ -16,6 +16,7 @@ pub(crate) async fn timer_wf(command_sink: WfContext) -> WorkflowResult<()> {
 }
 
 #[tokio::test]
+#[ignore]
 async fn timer_workflow_workflow_driver() {
     let wf_name = "timer_wf_new";
     let mut starter = CoreWfStarter::new(wf_name);
@@ -28,6 +29,7 @@ async fn timer_workflow_workflow_driver() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn timer_workflow_manual() {
     let mut starter = init_core_and_create_wf("timer_workflow").await;
     let core = starter.get_worker().await;
@@ -49,6 +51,7 @@ async fn timer_workflow_manual() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn timer_cancel_workflow() {
     let mut starter = init_core_and_create_wf("timer_cancel_workflow").await;
     let core = starter.get_worker().await;
@@ -84,6 +87,7 @@ async fn timer_cancel_workflow() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn timer_immediate_cancel_workflow() {
     let mut starter = init_core_and_create_wf("timer_immediate_cancel_workflow").await;
     let core = starter.get_worker().await;
@@ -108,6 +112,7 @@ async fn parallel_timer_wf(command_sink: WfContext) -> WorkflowResult<()> {
 }
 
 #[tokio::test]
+#[ignore]
 async fn parallel_timers() {
     let wf_name = "parallel_timers";
     let mut starter = CoreWfStarter::new(wf_name);

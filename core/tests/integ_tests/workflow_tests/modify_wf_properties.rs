@@ -16,6 +16,7 @@ async fn memo_upserter(ctx: WfContext) -> WorkflowResult<()> {
 }
 
 #[tokio::test]
+#[ignore]
 async fn sends_modify_wf_props() {
     let wf_name = "can_upsert_memo";
     let wf_id = Uuid::new_v4();

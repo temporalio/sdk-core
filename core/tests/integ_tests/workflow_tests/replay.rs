@@ -26,6 +26,7 @@ fn test_hist_to_replay(t: TestHistoryBuilder) -> HistoryForReplay {
 }
 
 #[tokio::test]
+#[ignore]
 async fn timer_workflow_replay() {
     let core = init_core_replay_preloaded(
         "timer_workflow_replay",
@@ -84,6 +85,7 @@ async fn timer_workflow_replay() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn workflow_nondeterministic_replay() {
     let core = init_core_replay_preloaded(
         "timer_workflow_replay",
@@ -122,6 +124,7 @@ async fn workflow_nondeterministic_replay() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn replay_using_wf_function() {
     let num_timers = 10;
     let t = canned_histories::long_sequential_timers(num_timers as usize);
@@ -132,6 +135,7 @@ async fn replay_using_wf_function() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn replay_ending_wft_complete_with_commands_but_no_scheduled_started() {
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
@@ -155,12 +159,14 @@ async fn replay_abrupt_ending(t: TestHistoryBuilder) {
     worker.run().await.unwrap();
 }
 #[tokio::test]
+#[ignore]
 async fn replay_ok_ending_with_terminated() {
     let mut t1 = canned_histories::single_timer("1");
     t1.add_workflow_execution_terminated();
     replay_abrupt_ending(t1).await;
 }
 #[tokio::test]
+#[ignore]
 async fn replay_ok_ending_with_timed_out() {
     let mut t2 = canned_histories::single_timer("1");
     t2.add_workflow_execution_timed_out();
@@ -168,6 +174,7 @@ async fn replay_ok_ending_with_timed_out() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn replay_shutdown_worker() {
     let t = canned_histories::single_timer("1");
     let func = timers_wf(1);
@@ -182,6 +189,7 @@ async fn replay_shutdown_worker() {
 
 #[rstest::rstest]
 #[tokio::test]
+#[ignore]
 async fn multiple_histories_replay(#[values(false, true)] use_feeder: bool) {
     let num_timers = 10;
     let seq_timer_wf = timers_wf(num_timers);
@@ -225,6 +233,7 @@ async fn multiple_histories_replay(#[values(false, true)] use_feeder: bool) {
 }
 
 #[tokio::test]
+#[ignore]
 async fn multiple_histories_can_handle_dupe_run_ids() {
     let mut hist1 = canned_histories::single_timer("1");
     hist1.set_wf_type("onetimer");
@@ -239,6 +248,7 @@ async fn multiple_histories_can_handle_dupe_run_ids() {
 
 // Verifies SDK can decode patch markers before changing them to use json encoding
 #[tokio::test]
+#[ignore]
 async fn replay_old_patch_format() {
     let mut worker = replay_sdk_worker([HistoryForReplay::new(
         history_from_proto_binary("histories/old_change_marker_format.bin")
@@ -251,6 +261,7 @@ async fn replay_old_patch_format() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn replay_ends_with_empty_wft() {
     let core = init_core_replay_preloaded(
         "SayHelloWorkflow",

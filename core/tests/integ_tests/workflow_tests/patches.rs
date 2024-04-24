@@ -30,6 +30,7 @@ pub(crate) async fn changes_wf(ctx: WfContext) -> WorkflowResult<()> {
 }
 
 #[tokio::test]
+#[ignore]
 async fn writes_change_markers() {
     let wf_name = "writes_change_markers";
     let mut starter = CoreWfStarter::new(wf_name);
@@ -64,6 +65,7 @@ pub(crate) async fn no_change_then_change_wf(ctx: WfContext) -> WorkflowResult<(
 }
 
 #[tokio::test]
+#[ignore]
 async fn can_add_change_markers() {
     let wf_name = "can_add_change_markers";
     let mut starter = CoreWfStarter::new(wf_name);
@@ -88,6 +90,7 @@ pub(crate) async fn replay_with_change_marker_wf(ctx: WfContext) -> WorkflowResu
 }
 
 #[tokio::test]
+#[ignore]
 async fn replaying_with_patch_marker() {
     let wf_name = "replaying_with_patch_marker";
     let mut starter = CoreWfStarter::new(wf_name);
@@ -103,6 +106,7 @@ async fn replaying_with_patch_marker() {
 /// Used as regression test for a bug that detected that we did not look ahead far enough to find
 /// the next workflow task completion, which the flags are attached to.
 #[tokio::test]
+#[ignore]
 async fn patched_on_second_workflow_task_is_deterministic() {
     let wf_name = "timer_patched_timer";
     let mut starter = CoreWfStarter::new(wf_name);
@@ -127,6 +131,7 @@ async fn patched_on_second_workflow_task_is_deterministic() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn can_remove_deprecated_patch_near_other_patch() {
     let wf_name = "can_add_change_markers";
     let mut starter = CoreWfStarter::new(wf_name);
@@ -158,6 +163,7 @@ async fn can_remove_deprecated_patch_near_other_patch() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn deprecated_patch_removal() {
     let wf_name = "deprecated_patch_removal";
     let mut starter = CoreWfStarter::new(wf_name);

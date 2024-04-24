@@ -20,6 +20,7 @@ async fn search_attr_updater(ctx: WfContext) -> WorkflowResult<()> {
 }
 
 #[tokio::test]
+#[ignore]
 async fn sends_upsert() {
     let wf_name = "sends_upsert_search_attrs";
     let wf_id = Uuid::new_v4();

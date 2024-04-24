@@ -23,6 +23,7 @@ pub(crate) async fn appdata_activity_wf(ctx: WfContext) -> WorkflowResult<()> {
 }
 
 #[tokio::test]
+#[ignore]
 async fn appdata_access_in_activities_and_workflows() {
     let wf_name = "appdata_activity";
     let mut starter = CoreWfStarter::new(wf_name);

@@ -102,14 +102,10 @@ tonic-build = { workspace = true }
 [[test]]
 name = "integ_tests"
 path = "tests/main.rs"
-# Prevents autodiscovery, and hence these getting run with `cargo test`. Run with
-# `cargo test --test integ_tests`
-test = false
 
 [[test]]
 name = "heavy_tests"
 path = "tests/heavy_tests.rs"
-test = false
 
 [[bench]]
 name = "workflow_replay"

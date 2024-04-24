@@ -29,6 +29,7 @@ async fn signal_sender(ctx: WfContext) -> WorkflowResult<()> {
 }
 
 #[tokio::test]
+#[ignore]
 async fn sends_signal_to_missing_wf() {
     let wf_name = "sends_signal_to_missing_wf";
     let mut starter = CoreWfStarter::new(wf_name);
@@ -69,6 +70,7 @@ async fn signal_with_create_wf_receiver(ctx: WfContext) -> WorkflowResult<()> {
 }
 
 #[tokio::test]
+#[ignore]
 async fn sends_signal_to_other_wf() {
     let mut starter = CoreWfStarter::new("sends_signal_to_other_wf");
     starter.no_remote_activities();
@@ -98,6 +100,7 @@ async fn sends_signal_to_other_wf() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn sends_signal_with_create_wf() {
     let mut starter = CoreWfStarter::new("sends_signal_with_create_wf");
     starter.no_remote_activities();
@@ -144,6 +147,7 @@ async fn signals_child(ctx: WfContext) -> WorkflowResult<()> {
 }
 
 #[tokio::test]
+#[ignore]
 async fn sends_signal_to_child() {
     let mut starter = CoreWfStarter::new("sends_signal_to_child");
     starter.no_remote_activities();

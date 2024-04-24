@@ -4,6 +4,7 @@ use temporal_sdk_core_protos::temporal::api::workflowservice::v1::DescribeNamesp
 use temporal_sdk_core_test_utils::{get_integ_server_options, CoreWfStarter, NAMESPACE};
 
 #[tokio::test]
+#[ignore]
 async fn can_use_retry_client() {
     // Not terribly interesting by itself but can be useful for manually inspecting metrics etc
     let mut core = CoreWfStarter::new("retry_client");
@@ -15,6 +16,7 @@ async fn can_use_retry_client() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn can_use_retry_raw_client() {
     let opts = get_integ_server_options();
     let raw_client = opts.connect_no_namespace(None).await.unwrap();
@@ -29,6 +31,7 @@ async fn can_use_retry_raw_client() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn calls_get_system_info() {
     let opts = get_integ_server_options();
     let raw_client = opts.connect_no_namespace(None).await.unwrap();

@@ -14,6 +14,7 @@ use temporal_sdk_core_test_utils::{workflows::la_problem_workflow, CoreWfStarter
 use tokio_util::sync::CancellationToken;
 
 #[tokio::test]
+#[ignore]
 async fn activity_load() {
     const CONCURRENCY: usize = 512;
 
@@ -83,6 +84,7 @@ async fn activity_load() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
 async fn workflow_load() {
     const SIGNAME: &str = "signame";
     let num_workflows = 200;
@@ -163,6 +165,7 @@ async fn workflow_load() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
 async fn evict_while_la_running_no_interference() {
     let wf_name = "evict_while_la_running_no_interference";
     let mut starter = CoreWfStarter::new(wf_name);
@@ -229,6 +232,7 @@ pub async fn many_parallel_timers_longhist(ctx: WfContext) -> WorkflowResult<()>
 }
 
 #[tokio::test]
+#[ignore]
 async fn can_paginate_long_history() {
     let wf_name = "can_paginate_long_history";
     let mut starter = CoreWfStarter::new(wf_name);
@@ -336,6 +340,7 @@ async fn fuzzy_wf_def(ctx: WfContext) -> WorkflowResult<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore]
 async fn fuzzy_workflow() {
     let num_workflows = 200;
     let wf_name = "fuzzy_wf";

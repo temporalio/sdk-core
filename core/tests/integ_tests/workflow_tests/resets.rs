@@ -11,6 +11,7 @@ use tokio::sync::Notify;
 const POST_RESET_SIG: &str = "post-reset";
 
 #[tokio::test]
+#[ignore]
 async fn reset_workflow() {
     let wf_name = "reset_me_wf";
     let mut starter = CoreWfStarter::new(wf_name);

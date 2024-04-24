@@ -18,6 +18,7 @@ async fn cancelled_wf(ctx: WfContext) -> WorkflowResult<()> {
 }
 
 #[tokio::test]
+#[ignore]
 async fn cancel_during_timer() {
     let wf_name = "cancel_during_timer";
     let mut starter = CoreWfStarter::new(wf_name);

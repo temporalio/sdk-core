@@ -40,6 +40,7 @@ pub(crate) async fn one_local_activity_wf(ctx: WfContext) -> WorkflowResult<()> 
 }
 
 #[tokio::test]
+#[ignore]
 async fn one_local_activity() {
     let wf_name = "one_local_activity";
     let mut starter = CoreWfStarter::new(wf_name);
@@ -63,6 +64,7 @@ pub(crate) async fn local_act_concurrent_with_timer_wf(ctx: WfContext) -> Workfl
 }
 
 #[tokio::test]
+#[ignore]
 async fn local_act_concurrent_with_timer() {
     let wf_name = "local_act_concurrent_with_timer";
     let mut starter = CoreWfStarter::new(wf_name);
@@ -87,6 +89,7 @@ pub(crate) async fn local_act_then_timer_then_wait(ctx: WfContext) -> WorkflowRe
 }
 
 #[tokio::test]
+#[ignore]
 async fn local_act_then_timer_then_wait_result() {
     let wf_name = "local_act_then_timer_then_wait_result";
     let mut starter = CoreWfStarter::new(wf_name);
@@ -99,6 +102,7 @@ async fn local_act_then_timer_then_wait_result() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn long_running_local_act_with_timer() {
     let wf_name = "long_running_local_act_with_timer";
     let mut starter = CoreWfStarter::new(wf_name);
@@ -132,6 +136,7 @@ pub(crate) async fn local_act_fanout_wf(ctx: WfContext) -> WorkflowResult<()> {
 }
 
 #[tokio::test]
+#[ignore]
 async fn local_act_fanout() {
     let wf_name = "local_act_fanout";
     let mut starter = CoreWfStarter::new(wf_name);
@@ -145,6 +150,7 @@ async fn local_act_fanout() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn local_act_retry_timer_backoff() {
     let wf_name = "local_act_retry_timer_backoff";
     let mut starter = CoreWfStarter::new(wf_name);
@@ -194,6 +200,7 @@ async fn local_act_retry_timer_backoff() {
 #[case::try_cancel(ActivityCancellationType::TryCancel)]
 #[case::abandon(ActivityCancellationType::Abandon)]
 #[tokio::test]
+#[ignore]
 async fn cancel_immediate(#[case] cancel_type: ActivityCancellationType) {
     let wf_name = format!("cancel_immediate_{cancel_type:?}");
     let mut starter = CoreWfStarter::new(&wf_name);
@@ -272,6 +279,7 @@ impl WorkerInterceptor for LACancellerInterceptor {
 #[case::while_backing_off(Some(Duration::from_millis(1500)))]
 #[case::while_backing_off_locally(Some(Duration::from_millis(150)))]
 #[tokio::test]
+#[ignore]
 async fn cancel_after_act_starts(
     #[case] cancel_on_backoff: Option<Duration>,
     #[values(
@@ -360,6 +368,7 @@ async fn cancel_after_act_starts(
 #[case::schedule(true)]
 #[case::start(false)]
 #[tokio::test]
+#[ignore]
 async fn x_to_close_timeout(#[case] is_schedule: bool) {
     let wf_name = format!(
         "{}_to_close_timeout",
@@ -417,6 +426,7 @@ async fn x_to_close_timeout(#[case] is_schedule: bool) {
 #[case::cached(true)]
 #[case::not_cached(false)]
 #[tokio::test]
+#[ignore]
 async fn schedule_to_close_timeout_across_timer_backoff(#[case] cached: bool) {
     let wf_name = format!(
         "schedule_to_close_timeout_across_timer_backoff_{}",
@@ -462,6 +472,7 @@ async fn schedule_to_close_timeout_across_timer_backoff(#[case] cached: bool) {
 
 #[rstest::rstest]
 #[tokio::test]
+#[ignore]
 async fn eviction_wont_make_local_act_get_dropped(#[values(true, false)] short_wft_timeout: bool) {
     let wf_name = format!("eviction_wont_make_local_act_get_dropped_{short_wft_timeout}");
     let mut starter = CoreWfStarter::new(&wf_name);
@@ -489,6 +500,7 @@ async fn eviction_wont_make_local_act_get_dropped(#[values(true, false)] short_w
 }
 
 #[tokio::test]
+#[ignore]
 async fn timer_backoff_concurrent_with_non_timer_backoff() {
     let wf_name = "timer_backoff_concurrent_with_non_timer_backoff";
     let mut starter = CoreWfStarter::new(wf_name);
@@ -534,6 +546,7 @@ async fn timer_backoff_concurrent_with_non_timer_backoff() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn repro_nondeterminism_with_timer_bug() {
     let wf_name = "repro_nondeterminism_with_timer_bug";
     let mut starter = CoreWfStarter::new(wf_name);
@@ -587,6 +600,7 @@ async fn repro_nondeterminism_with_timer_bug() {
 
 #[rstest::rstest]
 #[tokio::test]
+#[ignore]
 async fn weird_la_nondeterminism_repro(#[values(true, false)] fix_hist: bool) {
     let mut hist = history_from_proto_binary(
         "histories/evict_while_la_running_no_interference-85_history.bin",
@@ -615,6 +629,7 @@ async fn weird_la_nondeterminism_repro(#[values(true, false)] fix_hist: bool) {
 }
 
 #[tokio::test]
+#[ignore]
 async fn second_weird_la_nondeterminism_repro() {
     let mut hist = history_from_proto_binary(
         "histories/evict_while_la_running_no_interference-23_history.bin",
@@ -640,6 +655,7 @@ async fn second_weird_la_nondeterminism_repro() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn third_weird_la_nondeterminism_repro() {
     let mut hist = history_from_proto_binary(
         "histories/evict_while_la_running_no_interference-16_history.bin",

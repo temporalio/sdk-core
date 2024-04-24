@@ -35,6 +35,7 @@ async fn parent_wf(ctx: WfContext) -> WorkflowResult<()> {
 }
 
 #[tokio::test]
+#[ignore]
 async fn child_workflow_happy_path() {
     let mut starter = CoreWfStarter::new("child-workflows");
     starter.no_remote_activities();
@@ -56,6 +57,7 @@ async fn child_workflow_happy_path() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn abandoned_child_bug_repro() {
     let mut starter = CoreWfStarter::new("child-workflow-abandon-bug");
     starter.no_remote_activities();
@@ -127,6 +129,7 @@ async fn abandoned_child_bug_repro() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn abandoned_child_resolves_post_cancel() {
     let mut starter = CoreWfStarter::new("child-workflow-resolves-post-cancel");
     starter.no_remote_activities();

@@ -52,6 +52,7 @@ pub(crate) async fn one_activity_wf(ctx: WfContext) -> WorkflowResult<()> {
 }
 
 #[tokio::test]
+#[ignore]
 async fn one_activity() {
     let wf_name = "one_activity";
     let mut starter = CoreWfStarter::new(wf_name);
@@ -79,6 +80,7 @@ async fn one_activity() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn activity_workflow() {
     let mut starter = init_core_and_create_wf("activity_workflow").await;
     let core = starter.get_worker().await;
@@ -141,6 +143,7 @@ async fn activity_workflow() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn activity_non_retryable_failure() {
     let mut starter = init_core_and_create_wf("activity_non_retryable_failure").await;
     let core = starter.get_worker().await;
@@ -208,6 +211,7 @@ async fn activity_non_retryable_failure() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn activity_non_retryable_failure_with_error() {
     let mut starter = init_core_and_create_wf("activity_non_retryable_failure").await;
     let core = starter.get_worker().await;
@@ -275,6 +279,7 @@ async fn activity_non_retryable_failure_with_error() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn activity_retry() {
     let mut starter = init_core_and_create_wf("activity_retry").await;
     let core = starter.get_worker().await;
@@ -340,6 +345,7 @@ async fn activity_retry() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn activity_cancellation_try_cancel() {
     let mut starter = init_core_and_create_wf("activity_cancellation_try_cancel").await;
     let core = starter.get_worker().await;
@@ -396,6 +402,7 @@ async fn activity_cancellation_try_cancel() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
     let mut starter =
         init_core_and_create_wf("activity_cancellation_plus_complete_doesnt_double_resolve").await;
@@ -487,6 +494,7 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn started_activity_timeout() {
     let mut starter = init_core_and_create_wf("started_activity_timeout").await;
     let core = starter.get_worker().await;
@@ -538,6 +546,7 @@ async fn started_activity_timeout() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn activity_cancellation_wait_cancellation_completed() {
     let mut starter =
         init_core_and_create_wf("activity_cancellation_wait_cancellation_completed").await;
@@ -601,6 +610,7 @@ async fn activity_cancellation_wait_cancellation_completed() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn activity_cancellation_abandon() {
     let mut starter = init_core_and_create_wf("activity_cancellation_abandon").await;
     let core = starter.get_worker().await;
@@ -659,6 +669,7 @@ async fn activity_cancellation_abandon() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn async_activity_completion_workflow() {
     let mut starter = init_core_and_create_wf("async_activity_workflow").await;
     let core = starter.get_worker().await;
@@ -726,6 +737,7 @@ async fn async_activity_completion_workflow() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn activity_cancelled_after_heartbeat_times_out() {
     let mut starter = init_core_and_create_wf("activity_cancelled_after_heartbeat_times_out").await;
     let core = starter.get_worker().await;
@@ -788,6 +800,7 @@ async fn activity_cancelled_after_heartbeat_times_out() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn one_activity_abandon_cancelled_after_complete() {
     let wf_name = "one_activity_abandon_cancelled_after_complete";
     let mut starter = CoreWfStarter::new(wf_name);
@@ -834,6 +847,7 @@ async fn one_activity_abandon_cancelled_after_complete() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn it_can_complete_async() {
     use std::sync::Arc;
     use tokio::sync::Mutex;
@@ -914,6 +928,7 @@ async fn it_can_complete_async() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn graceful_shutdown() {
     let wf_name = "graceful_shutdown";
     let mut starter = CoreWfStarter::new(wf_name);
@@ -979,6 +994,7 @@ async fn graceful_shutdown() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn activity_can_be_cancelled_by_local_timeout() {
     let wf_name = "activity_can_be_cancelled_by_local_timeout";
     let mut starter = CoreWfStarter::new(wf_name);

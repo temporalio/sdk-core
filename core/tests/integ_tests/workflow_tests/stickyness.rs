@@ -9,6 +9,7 @@ use temporal_sdk_core_test_utils::CoreWfStarter;
 use tokio::sync::Barrier;
 
 #[tokio::test]
+#[ignore]
 async fn timer_workflow_not_sticky() {
     let wf_name = "timer_wf_not_sticky";
     let mut starter = CoreWfStarter::new(wf_name);
@@ -35,6 +36,7 @@ async fn timer_timeout_wf(ctx: WfContext) -> WorkflowResult<()> {
 }
 
 #[tokio::test]
+#[ignore]
 async fn timer_workflow_timeout_on_sticky() {
     // This test intentionally times out a workflow task in order to make the next task be scheduled
     // on a not-sticky queue
@@ -52,6 +54,7 @@ async fn timer_workflow_timeout_on_sticky() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn cache_miss_ok() {
     let wf_name = "cache_miss_ok";
     let mut starter = CoreWfStarter::new(wf_name);

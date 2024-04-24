@@ -120,7 +120,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .args(
             test_args_preamble
                 .into_iter()
-                .chain(["--".to_string()])
+                .chain(["--".to_string(), "--include-ignored".to_owned()])
                 .chain(harness_args),
         )
         .status()

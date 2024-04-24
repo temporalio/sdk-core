@@ -74,6 +74,7 @@ pub(crate) fn prom_metrics(
 
 #[rstest::rstest]
 #[tokio::test]
+#[ignore]
 async fn prometheus_metrics_exported(#[values(true, false)] use_seconds_latency: bool) {
     let (telemopts, addr, _aborter) = prom_metrics(use_seconds_latency, false);
     let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
@@ -123,6 +124,7 @@ async fn prometheus_metrics_exported(#[values(true, false)] use_seconds_latency:
 }
 
 #[tokio::test]
+#[ignore]
 async fn one_slot_worker_reports_available_slot() {
     let (telemopts, addr, _aborter) = prom_metrics(false, false);
     let tq = "one_slot_worker_tq";
@@ -325,6 +327,7 @@ async fn one_slot_worker_reports_available_slot() {
 
 #[rstest::rstest]
 #[tokio::test]
+#[ignore]
 async fn query_of_closed_workflow_doesnt_tick_terminal_metric(
     #[values(
         CompleteWorkflowExecution { result: None }.into(),
@@ -486,6 +489,7 @@ fn runtime_new() {
 
 #[rstest::rstest]
 #[tokio::test]
+#[ignore]
 async fn latency_metrics(
     #[values(true, false)] use_seconds_latency: bool,
     #[values(true, false)] show_units: bool,

@@ -18,6 +18,7 @@ async fn continue_as_new_wf(ctx: WfContext) -> WorkflowResult<()> {
 }
 
 #[tokio::test]
+#[ignore]
 async fn continue_as_new_happy_path() {
     let wf_name = "continue_as_new_happy_path";
     let mut starter = CoreWfStarter::new(wf_name);
@@ -38,6 +39,7 @@ async fn continue_as_new_happy_path() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn continue_as_new_multiple_concurrent() {
     let wf_name = "continue_as_new_multiple_concurrent";
     let mut starter = CoreWfStarter::new(wf_name);

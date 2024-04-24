@@ -21,6 +21,7 @@ use tracing::info;
 use url::Url;
 
 #[tokio::test]
+#[ignore]
 async fn out_of_order_completion_doesnt_hang() {
     let mut starter = init_core_and_create_wf("out_of_order_completion_doesnt_hang").await;
     let core = starter.get_worker().await;
@@ -98,6 +99,7 @@ async fn out_of_order_completion_doesnt_hang() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn switching_worker_client_changes_poll() {
     // Start two servers
     info!("Starting servers");
