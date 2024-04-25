@@ -4,7 +4,7 @@ mod slot_provider;
 pub(crate) mod slot_supplier;
 mod workflow;
 
-pub use slot_supplier::{ResourceBasedSlots, WorkerConfigSlotSupplierExt};
+pub use slot_supplier::{RealSysInfo, ResourceBasedSlots, WorkerConfigSlotSupplierExt};
 pub use temporal_sdk_core_api::worker::{WorkerConfig, WorkerConfigBuilder};
 
 pub(crate) use activities::{
@@ -252,12 +252,10 @@ impl Worker {
         let wft_semaphore = Arc::new(MeteredPermitDealer::new(
             config.workflow_task_slot_supplier.clone(),
             metrics.with_new_attrs([workflow_worker_type()]),
-            MetricsContext::available_task_slots,
         ));
         let act_semaphore = Arc::new(MeteredPermitDealer::new(
             config.activity_task_slot_supplier.clone(),
             metrics.with_new_attrs([activity_worker_type()]),
-            MetricsContext::available_task_slots,
         ));
         let (external_wft_tx, external_wft_rx) = unbounded_channel();
         let (wft_stream, act_poller) = match task_pollers {

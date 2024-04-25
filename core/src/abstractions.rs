@@ -12,7 +12,7 @@ use std::{
     },
 };
 use temporal_sdk_core_api::worker::{
-    SlotKind, SlotReservationContext, SlotSupplier, SlotSupplierPermit,
+    SlotKind, SlotReleaseReason, SlotReservationContext, SlotSupplier, SlotSupplierPermit,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -29,7 +29,6 @@ pub(crate) struct MeteredPermitDealer<SK: SlotKind> {
     /// The number of permits that have been handed out
     extant_permits: Arc<AtomicUsize>,
     metrics_ctx: MetricsContext,
-    record_fn: fn(&MetricsContext, usize),
 }
 
 impl<SK> MeteredPermitDealer<SK>
@@ -39,14 +38,12 @@ where
     pub(crate) fn new(
         supplier: Arc<dyn SlotSupplier<SlotKind = SK> + Send + Sync>,
         metrics_ctx: MetricsContext,
-        record_fn: fn(&MetricsContext, usize),
     ) -> Self {
         Self {
             supplier,
             unused_claimants: Arc::new(AtomicUsize::new(0)),
             extant_permits: Arc::new(AtomicUsize::new(0)),
             metrics_ctx,
-            record_fn,
         }
     }
 
@@ -76,20 +73,23 @@ where
     fn build_owned(&self, res: SlotSupplierPermit) -> OwnedMeteredSemPermit<SK> {
         self.unused_claimants.fetch_add(1, Ordering::Release);
         self.extant_permits.fetch_add(1, Ordering::Release);
+        // Eww
         let uc_c = self.unused_claimants.clone();
         let ep_c = self.extant_permits.clone();
+        let ep_c_c = self.extant_permits.clone();
         let supp = self.supplier.clone();
         let supp_c = self.supplier.clone();
+        let supp_c_c = self.supplier.clone();
         let mets = self.metrics_ctx.clone();
-        let rcf = self.record_fn;
         let metric_rec =
             // When being called from the drop impl, the semaphore permit isn't actually dropped yet,
             // so account for that. TODO: that should move somehow into fixed impl only
             move |add_one: bool| {
                 let extra = usize::from(add_one);
                 if let Some(avail) = supp.available_slots() {
-                    rcf(&mets, avail + uc_c.load(Ordering::Acquire) + extra)
+                    mets.available_task_slots(avail + uc_c.load(Ordering::Acquire) + extra);
                 }
+                mets.task_slots_used((ep_c.load(Ordering::Acquire) + extra) as u64);
             };
         let mrc = metric_rec.clone();
         mrc(false);
@@ -102,7 +102,9 @@ where
                 metric_rec(false)
             }),
             release_fn: Box::new(move || {
-                ep_c.fetch_sub(1, Ordering::Release);
+                // TODO: Real release reason
+                supp_c_c.release_slot(SlotReleaseReason::TaskComplete);
+                ep_c_c.fetch_sub(1, Ordering::Release);
                 mrc(true)
             }),
         }
@@ -162,7 +164,9 @@ where
     }
 
     /// Acquire a permit if one is available and close was not requested.
-    pub(crate) fn try_acquire_owned(self: &Arc<Self>) -> Result<TrackedOwnedMeteredSemPermit<SK>, ()> {
+    pub(crate) fn try_acquire_owned(
+        self: &Arc<Self>,
+    ) -> Result<TrackedOwnedMeteredSemPermit<SK>, ()> {
         if self.close_requested.load(Ordering::Acquire) {
             return Err(());
         }

@@ -39,7 +39,8 @@ pub use temporal_sdk_core_protos as protos;
 pub use temporal_sdk_core_protos::TaskToken;
 pub use url::Url;
 pub use worker::{
-    ResourceBasedSlots, Worker, WorkerConfig, WorkerConfigBuilder, WorkerConfigSlotSupplierExt,
+    RealSysInfo, ResourceBasedSlots, Worker, WorkerConfig, WorkerConfigBuilder,
+    WorkerConfigSlotSupplierExt,
 };
 
 use crate::{

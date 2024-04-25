@@ -2,15 +2,19 @@ use crossbeam_utils::atomic::AtomicCell;
 use parking_lot::Mutex;
 use std::{
     marker::PhantomData,
+    ops::Sub,
     sync::{
         atomic::{AtomicU32, AtomicU64, Ordering},
-        Arc,
+        Arc, OnceLock,
     },
     time::{Duration, Instant},
 };
-use temporal_sdk_core_api::worker::{
-    SlotKind, SlotReleaseReason, SlotReservationContext, SlotSupplier, SlotSupplierPermit,
-    WorkflowCacheSizer, WorkflowSlotInfo, WorkflowSlotsInfo,
+use temporal_sdk_core_api::{
+    telemetry::metrics::{CoreMeter, GaugeF64, MetricAttributes, TemporalMeter},
+    worker::{
+        SlotKind, SlotReleaseReason, SlotReservationContext, SlotSupplier, SlotSupplierPermit,
+        WorkflowCacheSizer, WorkflowSlotInfo, WorkflowSlotsInfo,
+    },
 };
 use tokio::sync::watch;
 
@@ -18,9 +22,11 @@ pub struct ResourceBasedSlots<MI> {
     target_mem_usage: f64,
     target_cpu_usage: f32,
     sys_info_supplier: MI,
+    metrics: OnceLock<MetricInstruments>,
 }
 pub struct ResourceBasedSlotsForType<MI, SK> {
     inner: Arc<ResourceBasedSlots<MI>>,
+
     minimum: usize,
     /// Maximum amount of slots of this type permitted
     max: usize,
@@ -31,16 +37,27 @@ pub struct ResourceBasedSlotsForType<MI, SK> {
     pids: Arc<Mutex<PidControllers>>,
     last_slot_issued_tx: watch::Sender<Instant>,
     last_slot_issued_rx: watch::Receiver<Instant>,
+    last_metric_emission: AtomicCell<Instant>,
+    metric_attrs: OnceLock<MetricAttributes>,
     _slot_kind: PhantomData<SK>,
 }
 struct PidControllers {
     mem: pid::Pid<f64>,
     cpu: pid::Pid<f32>,
 }
+struct MetricInstruments {
+    meter: Arc<dyn CoreMeter>,
+    attribs: MetricAttributes,
+    mem_usage: Arc<dyn GaugeF64>,
+    cpu_usage: Arc<dyn GaugeF64>,
+    mem_pid_output: Arc<dyn GaugeF64>,
+    cpu_pid_output: Arc<dyn GaugeF64>,
+}
 
 impl ResourceBasedSlots<RealSysInfo> {
     pub fn new(target_mem_usage: f64, target_cpu_usage: f32) -> Self {
         Self {
+            metrics: OnceLock::new(),
             target_mem_usage,
             target_cpu_usage,
             sys_info_supplier: RealSysInfo::new(),
@@ -55,6 +72,28 @@ impl PidControllers {
         let mut cpu = pid::Pid::new(cpu_target, 100.0);
         cpu.p(5.0, 100.).i(0.0, 100.).d(1.0, 100.);
         Self { mem, cpu }
+    }
+}
+
+impl MetricInstruments {
+    fn new(meter: TemporalMeter) -> Self {
+        let mem_usage = meter.inner.gauge_f64("resource_slots_mem_usage".into());
+        let cpu_usage = meter.inner.gauge_f64("resource_slots_cpu_usage".into());
+        let mem_pid_output = meter
+            .inner
+            .gauge_f64("resource_slots_mem_pid_output".into());
+        let cpu_pid_output = meter
+            .inner
+            .gauge_f64("resource_slots_cpu_pid_output".into());
+        let attribs = meter.inner.new_attributes(meter.default_attribs);
+        Self {
+            meter: meter.inner,
+            attribs,
+            mem_usage,
+            cpu_usage,
+            mem_pid_output,
+            cpu_pid_output,
+        }
     }
 }
 
@@ -82,19 +121,23 @@ where
 
     async fn reserve_slot(&self, ctx: &dyn SlotReservationContext) -> SlotSupplierPermit {
         loop {
-            if ctx.num_issued_slots() >= self.minimum {
+            // TODO: Just using this for now to make sure metrics get emitted regularly
+            self.pid_decision();
+            if ctx.num_issued_slots() < self.minimum {
+                let _ = self.last_slot_issued_tx.send(Instant::now());
+                return SlotSupplierPermit::NoData;
+            } else {
                 let must_wait_for = self
                     .ramp_throttle
                     .saturating_sub(self.time_since_last_issued());
                 if must_wait_for > Duration::from_millis(0) {
                     tokio::time::sleep(must_wait_for).await;
                 }
-            } else {
-                let _ = self.last_slot_issued_tx.send(Instant::now());
-                return SlotSupplierPermit::NoData;
-            }
-            if let Some(p) = self.try_reserve_slot(ctx) {
-                return p;
+                if let Some(p) = self.try_reserve_slot(ctx) {
+                    return p;
+                } else {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
             }
         }
     }
@@ -126,6 +169,10 @@ where
     MI: MemoryInfo + Send + Sync,
     SK: SlotKind + Send + Sync,
 {
+    pub fn attach_metrics(&self, metrics: TemporalMeter) {
+        let _ = self.inner.metrics.set(MetricInstruments::new(metrics));
+    }
+
     fn new(
         inner: Arc<ResourceBasedSlots<MI>>,
         minimum: usize,
@@ -141,9 +188,11 @@ where
                 inner.target_mem_usage,
                 inner.target_cpu_usage,
             ))),
-            inner,
             last_slot_issued_tx: tx,
             last_slot_issued_rx: rx,
+            last_metric_emission: AtomicCell::new(Instant::now().sub(Duration::from_secs(1))),
+            metric_attrs: OnceLock::new(),
+            inner,
             _slot_kind: PhantomData,
         }
     }
@@ -157,14 +206,19 @@ where
     /// Returns true if the pid controllers think a new slot should be given out
     fn pid_decision(&self) -> bool {
         let mut pids = self.pids.lock();
-        let mem_output = pids
-            .mem
-            .next_control_output(self.inner.sys_info_supplier.process_used_percent())
-            .output;
-        let cpu_output = pids
-            .cpu
-            .next_control_output(self.inner.sys_info_supplier.used_cpu_percent())
-            .output;
+        let mem_used_percent = self.inner.sys_info_supplier.process_used_percent();
+        let cpu_used_percent = self.inner.sys_info_supplier.used_cpu_percent();
+        let mem_output = pids.mem.next_control_output(mem_used_percent).output;
+        let cpu_output = pids.cpu.next_control_output(cpu_used_percent).output;
+        if Instant::now() - self.last_metric_emission.load() > Duration::from_millis(100) {
+            if let Some(m) = self.inner.metrics.get() {
+                m.mem_pid_output.record(mem_output, &m.attribs);
+                m.cpu_pid_output.record(cpu_output as f64, &m.attribs);
+                m.mem_usage.record(mem_used_percent, &m.attribs);
+                m.cpu_usage.record(cpu_used_percent as f64, &m.attribs);
+            }
+            self.last_metric_emission.store(Instant::now());
+        }
         mem_output > 0.25 && cpu_output > 0.25
     }
 }
@@ -199,6 +253,10 @@ impl<MI: MemoryInfo + Sync + Send> ResourceBasedSlots<MI> {
         ResourceBasedSlotsForType::new(Arc::new(self), 1, 1000, Duration::from_millis(0))
     }
 
+    pub fn attach_metrics(&self, metrics: TemporalMeter) {
+        let _ = self.metrics.set(MetricInstruments::new(metrics));
+    }
+
     fn can_reserve(&self) -> bool {
         self.sys_info_supplier.process_used_percent() <= self.target_mem_usage
     }
@@ -214,35 +272,38 @@ pub struct RealSysInfo {
 }
 impl RealSysInfo {
     fn new() -> Self {
-        let mut sys = sysinfo::System::new();
+        let sys = sysinfo::System::new();
         let pid = sysinfo::get_current_pid().expect("get pid works");
-        sys.refresh_processes();
-        sys.refresh_memory();
-        sys.refresh_cpu();
-        Self {
-            sys: Default::default(),
+        let s = Self {
+            sys: Mutex::new(sys),
             last_refresh: AtomicCell::new(Instant::now()),
             pid,
             cur_mem_usage: AtomicU64::new(0),
             cur_cpu_usage: AtomicU32::new(0),
-        }
+        };
+        s.refresh();
+        s
     }
+
     fn refresh_if_needed(&self) {
         // This is all quite expensive and meaningfully slows everything down if it's allowed to
         // happen more often. A better approach than a lock would be needed to go faster.
         if (Instant::now() - self.last_refresh.load()) > Duration::from_millis(100) {
-            let mut lock = self.sys.lock();
-            lock.refresh_memory();
-            lock.refresh_processes();
-            lock.refresh_cpu_usage();
-            let proc = lock.process(self.pid).expect("exists");
-            self.cur_mem_usage.store(proc.memory(), Ordering::Release);
-            self.cur_cpu_usage.store(
-                lock.global_cpu_info().cpu_usage().to_bits(),
-                Ordering::Release,
-            );
-            self.last_refresh.store(Instant::now())
+            self.refresh();
         }
+    }
+
+    fn refresh(&self) {
+        let mut lock = self.sys.lock();
+        lock.refresh_processes();
+        lock.refresh_memory();
+        lock.refresh_cpu_usage();
+        let proc = lock.process(self.pid).expect("exists");
+        let mem = proc.memory();
+        let cpu = lock.global_cpu_info().cpu_usage();
+        self.cur_mem_usage.store(mem, Ordering::Release);
+        self.cur_cpu_usage.store(cpu.to_bits(), Ordering::Release);
+        self.last_refresh.store(Instant::now());
     }
 }
 impl MemoryInfo for RealSysInfo {
@@ -307,6 +368,7 @@ mod tests {
             target_mem_usage: 0.8,
             target_cpu_usage: 1.0,
             sys_info_supplier: fmis,
+            metrics: Default::default(),
         }
         .into_kind::<WorkflowSlotKind>();
         assert!(rbs.try_reserve_slot(&FakeResCtx {}).is_some());
@@ -322,6 +384,7 @@ mod tests {
             target_mem_usage: 0.8,
             target_cpu_usage: 1.0,
             sys_info_supplier: fmis,
+            metrics: Default::default(),
         }
         .into_kind::<WorkflowSlotKind>();
         let order = crossbeam_queue::ArrayQueue::new(2);

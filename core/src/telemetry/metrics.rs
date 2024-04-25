@@ -39,6 +39,7 @@ struct Instruments {
     worker_registered: Arc<dyn Counter>,
     num_pollers: Arc<dyn Gauge>,
     task_slots_available: Arc<dyn Gauge>,
+    task_slots_used: Arc<dyn Gauge>,
     sticky_cache_hit: Arc<dyn Counter>,
     sticky_cache_miss: Arc<dyn Counter>,
     sticky_cache_size: Arc<dyn Gauge>,
@@ -195,6 +196,11 @@ impl MetricsContext {
             .record(num as u64, &self.kvs)
     }
 
+    /// Record current number of used task slots. Context should have worker type set.
+    pub(crate) fn task_slots_used(&self, num: u64) {
+        self.instruments.task_slots_used.record(num, &self.kvs)
+    }
+
     /// Record current number of pollers. Context should include poller type / task queue tag.
     pub(crate) fn record_num_pollers(&self, num: usize) {
         self.instruments.num_pollers.record(num as u64, &self.kvs);
@@ -320,6 +326,11 @@ impl Instruments {
                 description: "Current number of available slots per task type".into(),
                 unit: "".into(),
             }),
+            task_slots_used: meter.gauge(MetricParameters {
+                name: TASK_SLOTS_USED_NAME.into(),
+                description: "Current number of used slots per task type".into(),
+                unit: "".into(),
+            }),
             sticky_cache_hit: meter.counter(MetricParameters {
                 name: "sticky_cache_hit".into(),
                 description: "Count of times the workflow cache was used for a new workflow task"
@@ -395,6 +406,7 @@ pub(super) const ACT_SCHED_TO_START_LATENCY_NAME: &str = "activity_schedule_to_s
 pub(super) const ACT_EXEC_LATENCY_NAME: &str = "activity_execution_latency";
 pub(super) const NUM_POLLERS_NAME: &str = "num_pollers";
 pub(super) const TASK_SLOTS_AVAILABLE_NAME: &str = "worker_task_slots_available";
+pub(super) const TASK_SLOTS_USED_NAME: &str = "worker_task_slots_used";
 pub(super) const STICKY_CACHE_SIZE_NAME: &str = "sticky_cache_size";
 
 /// Helps define buckets once in terms of millis, but also generates a seconds version

@@ -213,11 +213,7 @@ impl LocalActivityManager {
         let (act_req_tx, act_req_rx) = unbounded_channel();
         let (cancels_req_tx, cancels_req_rx) = unbounded_channel();
         let shutdown_complete_tok = CancellationToken::new();
-        let semaphore = MeteredPermitDealer::new(
-            slot_supplier,
-            metrics_context,
-            MetricsContext::available_task_slots,
-        );
+        let semaphore = MeteredPermitDealer::new(slot_supplier, metrics_context);
         Self {
             namespace,
             rcvs: tokio::sync::Mutex::new(RcvChans::new(

@@ -6,8 +6,9 @@ use temporal_sdk_core_api::worker::{
 use tokio::sync::Semaphore;
 
 mod resource_based;
+mod tracking;
 
-pub use resource_based::ResourceBasedSlots;
+pub use resource_based::{RealSysInfo, ResourceBasedSlots};
 
 pub(crate) struct FixedSizeSlotSupplier<SK> {
     sem: Arc<Semaphore>,
@@ -15,7 +16,7 @@ pub(crate) struct FixedSizeSlotSupplier<SK> {
 }
 
 impl<SK> FixedSizeSlotSupplier<SK> {
-    pub fn new(size: usize) -> Self {
+    pub(crate) fn new(size: usize) -> Self {
         Self {
             sem: Arc::new(Semaphore::new(size)),
             _pd: Default::default(),

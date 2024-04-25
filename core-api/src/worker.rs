@@ -299,15 +299,26 @@ pub struct ActivitySlotKind {}
 pub struct LocalActivitySlotKind {}
 pub trait SlotKind {
     type Info<'a>;
+    fn kind_name() -> &'static str;
 }
 impl SlotKind for WorkflowSlotKind {
     type Info<'a> = WorkflowSlotInfo<'a>;
+
+    fn kind_name() -> &'static str {
+        "workflow"
+    }
 }
 impl SlotKind for ActivitySlotKind {
     type Info<'a> = ActivitySlotInfo<'a>;
+    fn kind_name() -> &'static str {
+        "activity"
+    }
 }
 impl SlotKind for LocalActivitySlotKind {
     type Info<'a> = LocalActivitySlotInfo<'a>;
+    fn kind_name() -> &'static str {
+        "local_activity"
+    }
 }
 
 pub struct WorkflowSlotsInfo {

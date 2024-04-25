@@ -5,13 +5,13 @@ use std::{
 };
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{ActContext, ActivityOptions, WfContext, WorkflowResult};
-use temporal_sdk_core::{ResourceBasedSlots, WorkerConfigSlotSupplierExt};
+use temporal_sdk_core::ResourceBasedSlots;
 use temporal_sdk_core_protos::{
     coresdk::{workflow_commands::ActivityCancellationType, AsJsonPayloadExt},
     temporal::api::enums::v1::WorkflowIdReusePolicy,
 };
 use temporal_sdk_core_test_utils::{
-    canned_histories::cancel_scheduled_activity, workflows::la_problem_workflow, CoreWfStarter,
+    init_integ_telem, workflows::la_problem_workflow, CoreWfStarter,
 };
 
 mod fuzzy_workflow;
@@ -89,6 +89,11 @@ async fn activity_load() {
 async fn chunky_activities() {
     const WORKFLOWS: usize = 100;
 
+    let telem = init_integ_telem();
+    let metrics = telem
+        .telemetry()
+        .get_metric_meter()
+        .expect("metric meter exists");
     let mut starter = CoreWfStarter::new("chunky_activities");
     starter
         .worker_config
@@ -99,7 +104,8 @@ async fn chunky_activities() {
     //     .max_outstanding_activities(25)
     //     .max_outstanding_workflow_tasks(25);
     // TODO: Fix /1 or /100 thing
-    let resource_slots = Arc::new(ResourceBasedSlots::new(0.5, 90.0));
+    let resource_slots = Arc::new(ResourceBasedSlots::new(0.7, 90.0));
+    resource_slots.attach_metrics(metrics);
     starter
         .worker_config
         .workflow_task_slot_supplier(resource_slots.as_kind(
