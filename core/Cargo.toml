@@ -93,6 +93,7 @@ bimap = "0.6.1"
 clap = { version = "4.0", features = ["derive"] }
 criterion = "0.5"
 rstest = "0.18"
+sysinfo = "0.30"
 temporal-sdk-core-test-utils = { path = "../test-utils" }
 temporal-sdk = { path = "../sdk" }
 
