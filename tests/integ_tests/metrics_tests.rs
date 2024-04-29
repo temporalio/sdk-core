@@ -256,8 +256,7 @@ async fn one_slot_worker_reports_available_slot() {
 
         wf_task_barr.wait().await;
 
-        // At this point the workflow task is outstanding, so there should be 0 slots, and
-        // the activities haven't started, so there should still be 1 each.
+        // At this point the workflow task is outstanding and the activities haven't started
         let body = get_text(format!("http://{addr}/metrics")).await;
         assert!(body.contains(&format!(
             "temporal_worker_task_slots_available{{namespace=\"{NAMESPACE}\",\
@@ -274,8 +273,23 @@ async fn one_slot_worker_reports_available_slot() {
              service_name=\"temporal-core-sdk\",task_queue=\"one_slot_worker_tq\",\
              worker_type=\"LocalActivityWorker\"}} 1"
         )));
+        assert!(body.contains(&format!(
+            "temporal_worker_task_slots_used{{namespace=\"{NAMESPACE}\",\
+             service_name=\"temporal-core-sdk\",task_queue=\"one_slot_worker_tq\",\
+             worker_type=\"WorkflowWorker\"}} 1"
+        )));
+        assert!(body.contains(&format!(
+            "temporal_worker_task_slots_used{{namespace=\"{NAMESPACE}\",\
+             service_name=\"temporal-core-sdk\",task_queue=\"one_slot_worker_tq\",\
+             worker_type=\"ActivityWorker\"}} 0"
+        )));
+        assert!(body.contains(&format!(
+            "temporal_worker_task_slots_used{{namespace=\"{NAMESPACE}\",\
+             service_name=\"temporal-core-sdk\",task_queue=\"one_slot_worker_tq\",\
+             worker_type=\"LocalActivityWorker\"}} 0"
+        )));
 
-        // Now we allow the complete to proceed. Once it goes through, there should be 1 WFT slot
+        // Now we allow the complete to proceed. Once it goes through, there should be 2 WFT slot
         // open but 0 activity slots
         wf_task_barr.wait().await;
         wf_task_barr.wait().await;
@@ -291,6 +305,11 @@ async fn one_slot_worker_reports_available_slot() {
             "temporal_worker_task_slots_available{{namespace=\"{NAMESPACE}\",\
              service_name=\"temporal-core-sdk\",task_queue=\"one_slot_worker_tq\",\
              worker_type=\"ActivityWorker\"}} 0"
+        )));
+        assert!(body.contains(&format!(
+            "temporal_worker_task_slots_used{{namespace=\"{NAMESPACE}\",\
+             service_name=\"temporal-core-sdk\",task_queue=\"one_slot_worker_tq\",\
+             worker_type=\"ActivityWorker\"}} 1"
         )));
 
         // Now complete the activity and watch it go up
@@ -312,6 +331,11 @@ async fn one_slot_worker_reports_available_slot() {
             "temporal_worker_task_slots_available{{namespace=\"{NAMESPACE}\",\
              service_name=\"temporal-core-sdk\",task_queue=\"one_slot_worker_tq\",\
              worker_type=\"LocalActivityWorker\"}} 0"
+        )));
+        assert!(body.contains(&format!(
+            "temporal_worker_task_slots_used{{namespace=\"{NAMESPACE}\",\
+             service_name=\"temporal-core-sdk\",task_queue=\"one_slot_worker_tq\",\
+             worker_type=\"LocalActivityWorker\"}} 1"
         )));
         // When completion is done, we have 1 again
         act_task_barr.wait().await;

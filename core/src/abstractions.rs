@@ -86,10 +86,11 @@ where
             // so account for that. TODO: that should move somehow into fixed impl only
             move |add_one: bool| {
                 let extra = usize::from(add_one);
+                let unused = uc_c.load(Ordering::Acquire);
                 if let Some(avail) = supp.available_slots() {
-                    mets.available_task_slots(avail + uc_c.load(Ordering::Acquire) + extra);
+                    mets.available_task_slots(avail + unused + extra);
                 }
-                mets.task_slots_used((ep_c.load(Ordering::Acquire) + extra) as u64);
+                mets.task_slots_used((ep_c.load(Ordering::Acquire) - unused + extra) as u64);
             };
         let mrc = metric_rec.clone();
         mrc(false);
@@ -216,7 +217,7 @@ impl<SK: SlotKind> Drop for TrackedOwnedMeteredSemPermit<SK> {
     }
 }
 
-/// Wraps an [OwnedSemaphorePermit] to update metrics when it's dropped
+/// Wraps an [SlotSupplierPermit] to update metrics & when it's dropped
 #[clippy::has_significant_drop]
 pub(crate) struct OwnedMeteredSemPermit<SK: SlotKind> {
     _inner: SlotSupplierPermit,
