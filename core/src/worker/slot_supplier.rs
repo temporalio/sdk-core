@@ -50,6 +50,7 @@ where
     }
 }
 
+/// Extension trait providing backwards compatibility with old fixed-size slot options
 pub trait WorkerConfigSlotSupplierExt {
     /// Creates a [FixedSizeSlotSupplier] using the provided max and assigns it as the workflow
     /// task slot supplier

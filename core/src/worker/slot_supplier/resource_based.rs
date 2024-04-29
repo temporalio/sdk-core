@@ -18,12 +18,15 @@ use temporal_sdk_core_api::{
 };
 use tokio::sync::watch;
 
+/// Implements [SlotSupplier] and attempts to maintain certain levels of resource usage when
+/// under load.
 pub struct ResourceBasedSlots<MI> {
     target_mem_usage: f64,
     target_cpu_usage: f64,
     sys_info_supplier: MI,
     metrics: OnceLock<MetricInstruments>,
 }
+/// Wraps [ResourceBasedSlots] for a specific slot type
 pub struct ResourceBasedSlotsForType<MI, SK> {
     inner: Arc<ResourceBasedSlots<MI>>,
 
@@ -53,6 +56,8 @@ struct MetricInstruments {
 }
 
 impl ResourceBasedSlots<RealSysInfo> {
+    /// Create an instance attempting to target the provided memory and cpu thresholds as values
+    /// between 0 and 1.
     pub fn new(target_mem_usage: f64, target_cpu_usage: f64) -> Self {
         Self {
             metrics: OnceLock::new(),
@@ -94,7 +99,8 @@ impl MetricInstruments {
     }
 }
 
-trait MemoryInfo {
+/// Implementors provide information about system resource usage
+pub trait SystemResourceInfo {
     /// Return total available system memory in bytes
     fn total_mem(&self) -> u64;
     /// Return memory used by the system in bytes
@@ -111,7 +117,7 @@ trait MemoryInfo {
 #[async_trait::async_trait]
 impl<MI, SK> SlotSupplier for ResourceBasedSlotsForType<MI, SK>
 where
-    MI: MemoryInfo + Send + Sync,
+    MI: SystemResourceInfo + Send + Sync,
     SK: SlotKind + Send + Sync,
 {
     type SlotKind = SK;
@@ -163,7 +169,7 @@ where
 
 impl<MI, SK> ResourceBasedSlotsForType<MI, SK>
 where
-    MI: MemoryInfo + Send + Sync,
+    MI: SystemResourceInfo + Send + Sync,
     SK: SlotKind + Send + Sync,
 {
     pub fn attach_metrics(&self, metrics: TemporalMeter) {
@@ -221,15 +227,23 @@ where
 
 impl<MI> WorkflowCacheSizer for ResourceBasedSlots<MI>
 where
-    MI: MemoryInfo + Sync + Send,
+    MI: SystemResourceInfo + Sync + Send,
 {
     fn can_allow_workflow(&self, _: &WorkflowSlotsInfo, _: &WorkflowSlotInfo) -> bool {
         self.can_reserve()
     }
 }
 
-impl<MI: MemoryInfo + Sync + Send> ResourceBasedSlots<MI> {
-    // TODO: Can just be an into impl probably?
+impl<MI: SystemResourceInfo + Sync + Send> ResourceBasedSlots<MI> {
+    /// Create a [ResourceBasedSlotsForType] for this instance which is willing to hand out
+    /// `minimum` slots with no checks at all and `max` slots ever. Otherwise the underlying
+    /// mem/cpu targets will attempt to be matched while under load.
+    ///
+    /// `ramp_throttle` determines how long this will pause for between making determinations about
+    /// whether it is OK to hand out new slot(s). This is important to set to nonzero in situations
+    /// where activities might use a lot of resources, because otherwise the implementation may
+    /// hand out many slots quickly before resource usage has a chance to be reflected, possibly
+    /// resulting in OOM (for example).
     pub fn as_kind<SK: SlotKind + Send + Sync>(
         self: &Arc<Self>,
         minimum: usize,
@@ -244,11 +258,7 @@ impl<MI: MemoryInfo + Sync + Send> ResourceBasedSlots<MI> {
         ))
     }
 
-    pub fn into_kind<SK: SlotKind + Send + Sync>(self) -> ResourceBasedSlotsForType<MI, SK> {
-        // TODO: remove or parameterize
-        ResourceBasedSlotsForType::new(Arc::new(self), 1, 1000, Duration::from_millis(0))
-    }
-
+    /// Attach metrics to this slots instance
     pub fn attach_metrics(&self, metrics: TemporalMeter) {
         let _ = self.metrics.set(MetricInstruments::new(metrics));
     }
@@ -258,6 +268,7 @@ impl<MI: MemoryInfo + Sync + Send> ResourceBasedSlots<MI> {
     }
 }
 
+/// Implements [SystemResourceInfo] using the [sysinfo] crate
 #[derive(Debug)]
 pub struct RealSysInfo {
     sys: Mutex<sysinfo::System>,
@@ -301,7 +312,7 @@ impl RealSysInfo {
         self.last_refresh.store(Instant::now());
     }
 }
-impl MemoryInfo for RealSysInfo {
+impl SystemResourceInfo for RealSysInfo {
     fn total_mem(&self) -> u64 {
         self.total_mem
     }
@@ -335,7 +346,7 @@ mod tests {
             (Self { used: used.clone() }, used)
         }
     }
-    impl MemoryInfo for FakeMIS {
+    impl SystemResourceInfo for FakeMIS {
         fn total_mem(&self) -> u64 {
             100_000
         }
