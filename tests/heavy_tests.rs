@@ -104,7 +104,7 @@ async fn chunky_activities() {
     //     .max_outstanding_activities(25)
     //     .max_outstanding_workflow_tasks(25);
     // TODO: Fix /1 or /100 thing
-    let resource_slots = Arc::new(ResourceBasedSlots::new(0.7, 90.0));
+    let resource_slots = Arc::new(ResourceBasedSlots::new(0.7, 0.9));
     resource_slots.attach_metrics(metrics);
     starter
         .worker_config

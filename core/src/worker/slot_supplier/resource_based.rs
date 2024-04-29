@@ -4,7 +4,7 @@ use std::{
     marker::PhantomData,
     ops::Sub,
     sync::{
-        atomic::{AtomicU32, AtomicU64, Ordering},
+        atomic::{AtomicU64, Ordering},
         Arc, OnceLock,
     },
     time::{Duration, Instant},
@@ -20,7 +20,7 @@ use tokio::sync::watch;
 
 pub struct ResourceBasedSlots<MI> {
     target_mem_usage: f64,
-    target_cpu_usage: f32,
+    target_cpu_usage: f64,
     sys_info_supplier: MI,
     metrics: OnceLock<MetricInstruments>,
 }
@@ -38,15 +38,13 @@ pub struct ResourceBasedSlotsForType<MI, SK> {
     last_slot_issued_tx: watch::Sender<Instant>,
     last_slot_issued_rx: watch::Receiver<Instant>,
     last_metric_emission: AtomicCell<Instant>,
-    metric_attrs: OnceLock<MetricAttributes>,
     _slot_kind: PhantomData<SK>,
 }
 struct PidControllers {
     mem: pid::Pid<f64>,
-    cpu: pid::Pid<f32>,
+    cpu: pid::Pid<f64>,
 }
 struct MetricInstruments {
-    meter: Arc<dyn CoreMeter>,
     attribs: MetricAttributes,
     mem_usage: Arc<dyn GaugeF64>,
     cpu_usage: Arc<dyn GaugeF64>,
@@ -55,7 +53,7 @@ struct MetricInstruments {
 }
 
 impl ResourceBasedSlots<RealSysInfo> {
-    pub fn new(target_mem_usage: f64, target_cpu_usage: f32) -> Self {
+    pub fn new(target_mem_usage: f64, target_cpu_usage: f64) -> Self {
         Self {
             metrics: OnceLock::new(),
             target_mem_usage,
@@ -66,7 +64,7 @@ impl ResourceBasedSlots<RealSysInfo> {
 }
 
 impl PidControllers {
-    fn new(mem_target: f64, cpu_target: f32) -> Self {
+    fn new(mem_target: f64, cpu_target: f64) -> Self {
         let mut mem = pid::Pid::new(mem_target, 100.0);
         mem.p(5.0, 100).i(0.0, 100).d(1.0, 100);
         let mut cpu = pid::Pid::new(cpu_target, 100.0);
@@ -87,7 +85,6 @@ impl MetricInstruments {
             .gauge_f64("resource_slots_cpu_pid_output".into());
         let attribs = meter.inner.new_attributes(meter.default_attribs);
         Self {
-            meter: meter.inner,
             attribs,
             mem_usage,
             cpu_usage,
@@ -100,14 +97,14 @@ impl MetricInstruments {
 trait MemoryInfo {
     /// Return total available system memory in bytes
     fn total_mem(&self) -> u64;
-    /// Return memory used by this process in bytes
-    // TODO: probably needs to be just overall used... won't work w/ subprocesses for example
-    fn process_used_mem(&self) -> u64;
-
-    fn used_cpu_percent(&self) -> f32;
-
+    /// Return memory used by the system in bytes
+    fn used_mem(&self) -> u64;
+    /// Return system used CPU as a float in the range [0.0, 1.0] where 1.0 is defined as all
+    /// cores pegged
+    fn used_cpu_percent(&self) -> f64;
+    /// Return system used memory as a float in the range [0.0, 1.0]
     fn process_used_percent(&self) -> f64 {
-        self.process_used_mem() as f64 / self.total_mem() as f64
+        self.used_mem() as f64 / self.total_mem() as f64
     }
 }
 
@@ -191,7 +188,6 @@ where
             last_slot_issued_tx: tx,
             last_slot_issued_rx: rx,
             last_metric_emission: AtomicCell::new(Instant::now().sub(Duration::from_secs(1))),
-            metric_attrs: OnceLock::new(),
             inner,
             _slot_kind: PhantomData,
         }
@@ -213,13 +209,13 @@ where
         if Instant::now() - self.last_metric_emission.load() > Duration::from_millis(100) {
             if let Some(m) = self.inner.metrics.get() {
                 m.mem_pid_output.record(mem_output, &m.attribs);
-                m.cpu_pid_output.record(cpu_output as f64, &m.attribs);
-                m.mem_usage.record(mem_used_percent, &m.attribs);
-                m.cpu_usage.record(cpu_used_percent as f64, &m.attribs);
+                m.cpu_pid_output.record(cpu_output, &m.attribs);
+                m.mem_usage.record(mem_used_percent * 100., &m.attribs);
+                m.cpu_usage.record(cpu_used_percent * 100., &m.attribs);
             }
             self.last_metric_emission.store(Instant::now());
         }
-        mem_output > 0.25 && cpu_output > 0.25
+        mem_output > 0.25 && cpu_output > 0.05
     }
 }
 
@@ -265,21 +261,22 @@ impl<MI: MemoryInfo + Sync + Send> ResourceBasedSlots<MI> {
 #[derive(Debug)]
 pub struct RealSysInfo {
     sys: Mutex<sysinfo::System>,
-    pid: sysinfo::Pid,
+    total_mem: u64,
     cur_mem_usage: AtomicU64,
-    cur_cpu_usage: AtomicU32,
+    cur_cpu_usage: AtomicU64,
     last_refresh: AtomicCell<Instant>,
 }
 impl RealSysInfo {
     fn new() -> Self {
-        let sys = sysinfo::System::new();
-        let pid = sysinfo::get_current_pid().expect("get pid works");
+        let mut sys = sysinfo::System::new();
+        sys.refresh_memory();
+        let total_mem = sys.total_memory();
         let s = Self {
             sys: Mutex::new(sys),
             last_refresh: AtomicCell::new(Instant::now()),
-            pid,
             cur_mem_usage: AtomicU64::new(0),
-            cur_cpu_usage: AtomicU32::new(0),
+            cur_cpu_usage: AtomicU64::new(0),
+            total_mem,
         };
         s.refresh();
         s
@@ -295,12 +292,10 @@ impl RealSysInfo {
 
     fn refresh(&self) {
         let mut lock = self.sys.lock();
-        lock.refresh_processes();
         lock.refresh_memory();
         lock.refresh_cpu_usage();
-        let proc = lock.process(self.pid).expect("exists");
-        let mem = proc.memory();
-        let cpu = lock.global_cpu_info().cpu_usage();
+        let mem = lock.used_memory();
+        let cpu = lock.global_cpu_info().cpu_usage() as f64 / 100.;
         self.cur_mem_usage.store(mem, Ordering::Release);
         self.cur_cpu_usage.store(cpu.to_bits(), Ordering::Release);
         self.last_refresh.store(Instant::now());
@@ -308,18 +303,17 @@ impl RealSysInfo {
 }
 impl MemoryInfo for RealSysInfo {
     fn total_mem(&self) -> u64 {
-        self.refresh_if_needed();
-        self.sys.lock().total_memory()
+        self.total_mem
     }
 
-    fn process_used_mem(&self) -> u64 {
+    fn used_mem(&self) -> u64 {
         self.refresh_if_needed();
         self.cur_mem_usage.load(Ordering::Acquire)
     }
 
-    fn used_cpu_percent(&self) -> f32 {
+    fn used_cpu_percent(&self) -> f64 {
         self.refresh_if_needed();
-        f32::from_bits(self.cur_cpu_usage.load(Ordering::Acquire))
+        f64::from_bits(self.cur_cpu_usage.load(Ordering::Acquire))
     }
 }
 
@@ -346,7 +340,7 @@ mod tests {
             100_000
         }
 
-        fn process_used_mem(&self) -> u64 {
+        fn used_mem(&self) -> u64 {
             self.used.load(Ordering::Acquire)
         }
 
