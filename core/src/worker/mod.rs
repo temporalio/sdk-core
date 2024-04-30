@@ -263,13 +263,19 @@ impl Worker {
                 .attach_metrics(meter);
         }
         let shutdown_token = CancellationToken::new();
-        let wft_semaphore = Arc::new(MeteredPermitDealer::new(
+        let wft_slots = Arc::new(MeteredPermitDealer::new(
             config.workflow_task_slot_supplier.clone(),
             metrics.with_new_attrs([workflow_worker_type()]),
+            if config.max_cached_workflows > 0 {
+                Some(config.max_cached_workflows)
+            } else {
+                None
+            },
         ));
-        let act_semaphore = Arc::new(MeteredPermitDealer::new(
+        let act_slots = Arc::new(MeteredPermitDealer::new(
             config.activity_task_slot_supplier.clone(),
             metrics.with_new_attrs([activity_worker_type()]),
+            None,
         ));
         let (external_wft_tx, external_wft_rx) = unbounded_channel();
         let (wft_stream, act_poller) = match task_pollers {
@@ -289,7 +295,7 @@ impl Worker {
                         normal_name: "".to_string(),
                     },
                     max_nonsticky_polls,
-                    wft_semaphore.clone(),
+                    wft_slots.clone(),
                     shutdown_token.child_token(),
                     Some(move |np| {
                         wft_metrics.record_num_pollers(np);
@@ -305,7 +311,7 @@ impl Worker {
                             normal_name: config.task_queue.clone(),
                         },
                         max_sticky_polls,
-                        wft_semaphore.clone(),
+                        wft_slots.clone(),
                         shutdown_token.child_token(),
                         Some(move |np| {
                             sticky_metrics.record_num_pollers(np);
@@ -320,7 +326,7 @@ impl Worker {
                         client.clone(),
                         config.task_queue.clone(),
                         config.max_concurrent_at_polls,
-                        act_semaphore.clone(),
+                        act_slots.clone(),
                         config.max_task_queue_activities_per_second,
                         shutdown_token.child_token(),
                         Some(move |np| act_metrics.record_num_pollers(np)),
@@ -351,9 +357,8 @@ impl Worker {
                 wft_stream,
                 act_poller,
             } => {
-                let ap =
-                    act_poller.map(|ap| MockPermittedPollBuffer::new(act_semaphore.clone(), ap));
-                let wft_semaphore = wft_semaphore.clone();
+                let ap = act_poller.map(|ap| MockPermittedPollBuffer::new(act_slots.clone(), ap));
+                let wft_semaphore = wft_slots.clone();
                 let wfs = wft_stream.then(move |s| {
                     let wft_semaphore = wft_semaphore.clone();
                     async move {
@@ -378,7 +383,7 @@ impl Worker {
         ));
         let at_task_mgr = act_poller.map(|ap| {
             WorkerActivityTasks::new(
-                act_semaphore,
+                act_slots,
                 ap,
                 client.clone(),
                 metrics.clone(),
@@ -396,7 +401,7 @@ impl Worker {
         let provider = SlotProvider::new(
             config.namespace.clone(),
             config.task_queue.clone(),
-            wft_semaphore.clone(),
+            wft_slots.clone(),
             external_wft_tx,
         );
         let worker_key = Mutex::new(client.workers().register(Box::new(provider)));
@@ -424,7 +429,7 @@ impl Worker {
                     ),
                 }),
                 client,
-                wft_semaphore,
+                wft_slots,
                 wft_stream,
                 la_sink,
                 local_act_mgr.clone(),

@@ -14,6 +14,7 @@ use std::{
 use temporal_sdk_core_api::worker::{
     SlotKind, SlotReleaseReason, SlotReservationContext, SlotSupplier, SlotSupplierPermit,
 };
+use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
 /// Wraps a [SlotSupplier] and turns successful slot reservations into permit structs, as well
@@ -27,7 +28,13 @@ pub(crate) struct MeteredPermitDealer<SK: SlotKind> {
     /// in the sense the user expects until we actually also get the corresponding task.
     unused_claimants: Arc<AtomicUsize>,
     /// The number of permits that have been handed out
-    extant_permits: Arc<AtomicUsize>,
+    extant_permits: (watch::Sender<usize>, watch::Receiver<usize>),
+    /// The maximum number of extant permits which are allowed. Once the number of extant permits
+    /// is at this number, no more permits will be requested from the supplier until one is freed.
+    /// This avoids requesting slots when we are at the workflow cache size limit. If and when
+    /// we add user-defined cache sizing, that logic will need to live with the supplier and
+    /// there will need to be some associated refactoring.
+    max_permits: Option<usize>,
     metrics_ctx: MetricsContext,
 }
 
@@ -38,12 +45,14 @@ where
     pub(crate) fn new(
         supplier: Arc<dyn SlotSupplier<SlotKind = SK> + Send + Sync>,
         metrics_ctx: MetricsContext,
+        max_permits: Option<usize>,
     ) -> Self {
         Self {
             supplier,
             unused_claimants: Arc::new(AtomicUsize::new(0)),
-            extant_permits: Arc::new(AtomicUsize::new(0)),
+            extant_permits: watch::channel(0),
             metrics_ctx,
+            max_permits,
         }
     }
 
@@ -58,11 +67,24 @@ where
     }
 
     pub(crate) async fn acquire_owned(&self) -> Result<OwnedMeteredSemPermit<SK>, ()> {
+        if let Some(max) = self.max_permits {
+            self.extant_permits
+                .1
+                .clone()
+                .wait_for(|&ep| ep < max)
+                .await
+                .expect("Extant permit channel is never closed");
+        }
         let res = self.supplier.reserve_slot(self).await;
         Ok(self.build_owned(res))
     }
 
     pub(crate) fn try_acquire_owned(&self) -> Result<OwnedMeteredSemPermit<SK>, ()> {
+        if let Some(max) = self.max_permits {
+            if *self.extant_permits.1.borrow() >= max {
+                return Err(());
+            }
+        }
         if let Some(res) = self.supplier.try_reserve_slot(self) {
             Ok(self.build_owned(res))
         } else {
@@ -72,11 +94,11 @@ where
 
     fn build_owned(&self, res: SlotSupplierPermit) -> OwnedMeteredSemPermit<SK> {
         self.unused_claimants.fetch_add(1, Ordering::Release);
-        self.extant_permits.fetch_add(1, Ordering::Release);
+        self.extant_permits.0.send_modify(|ep| *ep += 1);
         // Eww
         let uc_c = self.unused_claimants.clone();
-        let ep_c = self.extant_permits.clone();
-        let ep_c_c = self.extant_permits.clone();
+        let ep_rx_c = self.extant_permits.1.clone();
+        let ep_tx_c = self.extant_permits.0.clone();
         let supp = self.supplier.clone();
         let supp_c = self.supplier.clone();
         let supp_c_c = self.supplier.clone();
@@ -90,7 +112,7 @@ where
                 if let Some(avail) = supp.available_slots() {
                     mets.available_task_slots(avail + unused + extra);
                 }
-                mets.task_slots_used((ep_c.load(Ordering::Acquire) - unused + extra) as u64);
+                mets.task_slots_used((*ep_rx_c.borrow() - unused + extra) as u64);
             };
         let mrc = metric_rec.clone();
         mrc(false);
@@ -105,7 +127,7 @@ where
             release_fn: Box::new(move || {
                 // TODO: Real release reason
                 supp_c_c.release_slot(SlotReleaseReason::TaskComplete);
-                ep_c_c.fetch_sub(1, Ordering::Release);
+                ep_tx_c.send_modify(|ep| *ep -= 1);
                 mrc(true)
             }),
         }
@@ -114,7 +136,7 @@ where
 
 impl<SK: SlotKind> SlotReservationContext for MeteredPermitDealer<SK> {
     fn num_issued_slots(&self) -> usize {
-        self.extant_permits.load(Ordering::Acquire)
+        *self.extant_permits.1.borrow()
     }
 }
 
@@ -267,7 +289,8 @@ pub(crate) use dbg_panic;
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::worker::slot_supplier::FixedSizeSlotSupplier;
+    use crate::{advance_fut, worker::slot_supplier::FixedSizeSlotSupplier};
+    use futures_util::FutureExt;
     use temporal_sdk_core_api::worker::WorkflowSlotKind;
 
     pub(crate) fn fixed_size_permit_dealer<SK: SlotKind + Send + Sync + 'static>(
@@ -276,11 +299,12 @@ pub(crate) mod tests {
         MeteredPermitDealer::new(
             Arc::new(FixedSizeSlotSupplier::new(size)),
             MetricsContext::no_op(),
+            None,
         )
     }
 
-    #[tokio::test]
-    async fn closable_semaphore_permit_drop_returns_permit() {
+    #[test]
+    fn closable_semaphore_permit_drop_returns_permit() {
         let inner = fixed_size_permit_dealer::<WorkflowSlotKind>(2);
         let sem = ClosableMeteredPermitDealer::new_arc(Arc::new(inner));
         let perm = sem.try_acquire_owned().unwrap();
@@ -309,11 +333,25 @@ pub(crate) mod tests {
         sem.close_complete().await;
     }
 
-    #[tokio::test]
-    async fn closable_semaphore_does_not_hand_out_permits_after_closed() {
+    #[test]
+    fn closable_semaphore_does_not_hand_out_permits_after_closed() {
         let inner = fixed_size_permit_dealer::<WorkflowSlotKind>(2);
         let sem = ClosableMeteredPermitDealer::new_arc(Arc::new(inner));
         sem.close();
         sem.try_acquire_owned().unwrap_err();
+    }
+
+    #[tokio::test]
+    async fn respects_max_extant_permits() {
+        let mut sem = fixed_size_permit_dealer::<WorkflowSlotKind>(2);
+        sem.max_permits = Some(1);
+        let perm = sem.try_acquire_owned().unwrap();
+        sem.try_acquire_owned().unwrap_err();
+        let acquire_fut = sem.acquire_owned();
+        // Will be pending
+        advance_fut!(acquire_fut);
+        drop(perm);
+        // Now it'll proceed
+        acquire_fut.await.unwrap();
     }
 }

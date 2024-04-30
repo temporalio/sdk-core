@@ -73,7 +73,7 @@ where
 {
     pub(crate) fn new<FT, DelayFut>(
         poll_fn: impl Fn() -> FT + Send + Sync + 'static,
-        poll_semaphore: Arc<MeteredPermitDealer<SK>>,
+        permit_dealer: Arc<MeteredPermitDealer<SK>>,
         max_pollers: usize,
         shutdown: CancellationToken,
         num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
@@ -95,7 +95,7 @@ where
             let pf = pf.clone();
             let shutdown = shutdown.clone();
             let ap = active_pollers.clone();
-            let poll_semaphore = poll_semaphore.clone();
+            let permit_dealer = permit_dealer.clone();
             let nph = nph.clone();
             let pre_permit_delay = pre_permit_delay.clone();
             let mut wait_for_start = wait_for_start.resubscribe();
@@ -118,7 +118,7 @@ where
                         }
                     }
                     let permit = tokio::select! {
-                        p = poll_semaphore.acquire_owned() => p,
+                        p = permit_dealer.acquire_owned() => p,
                         _ = shutdown.cancelled() => break,
                     };
                     let permit = if let Ok(p) = permit {
@@ -248,7 +248,7 @@ pub(crate) fn new_workflow_task_buffer(
     client: Arc<dyn WorkerClient>,
     task_queue: TaskQueue,
     concurrent_pollers: usize,
-    semaphore: Arc<MeteredPermitDealer<WorkflowSlotKind>>,
+    permit_dealer: Arc<MeteredPermitDealer<WorkflowSlotKind>>,
     shutdown: CancellationToken,
     num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
 ) -> PollWorkflowTaskBuffer {
@@ -258,7 +258,7 @@ pub(crate) fn new_workflow_task_buffer(
             let task_queue = task_queue.clone();
             async move { client.poll_workflow_task(task_queue).await }
         },
-        semaphore,
+        permit_dealer,
         concurrent_pollers,
         shutdown,
         num_pollers_handler,

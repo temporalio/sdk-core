@@ -382,7 +382,7 @@ mod tests {
             metrics: Default::default(),
         })
         .as_kind::<WorkflowSlotKind>(0, 100, Duration::from_millis(0));
-        let pd = MeteredPermitDealer::new(rbs.clone(), MetricsContext::no_op());
+        let pd = MeteredPermitDealer::new(rbs.clone(), MetricsContext::no_op(), None);
         assert!(rbs.try_reserve_slot(&pd).is_some());
         used.store(90_000, Ordering::Release);
         assert!(rbs.try_reserve_slot(&pd).is_none());
@@ -399,7 +399,7 @@ mod tests {
             metrics: Default::default(),
         })
         .as_kind::<WorkflowSlotKind>(0, 100, Duration::from_millis(0));
-        let pd = MeteredPermitDealer::new(rbs.clone(), MetricsContext::no_op());
+        let pd = MeteredPermitDealer::new(rbs.clone(), MetricsContext::no_op(), None);
         let order = crossbeam_queue::ArrayQueue::new(2);
         let waits_free = async {
             rbs.reserve_slot(&pd).await;
@@ -424,7 +424,7 @@ mod tests {
             metrics: Default::default(),
         })
         .as_kind::<WorkflowSlotKind>(2, 100, Duration::from_millis(0));
-        let pd = MeteredPermitDealer::new(rbs.clone(), MetricsContext::no_op());
+        let pd = MeteredPermitDealer::new(rbs.clone(), MetricsContext::no_op(), None);
         used.store(90_000, Ordering::Release);
         let _p1 = pd.try_acquire_owned().unwrap();
         let _p2 = pd.try_acquire_owned().unwrap();

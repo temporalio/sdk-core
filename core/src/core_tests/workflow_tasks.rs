@@ -29,7 +29,15 @@ use std::{
 };
 use temporal_client::WorkflowOptions;
 use temporal_sdk::{ActivityOptions, CancellableFuture, WfContext};
-use temporal_sdk_core_api::{errors::PollWfError, Worker as WorkerTrait};
+use temporal_sdk_core_api::{
+    errors::PollWfError,
+    telemetry::metrics::TemporalMeter,
+    worker::{
+        SlotKind, SlotReleaseReason, SlotReservationContext, SlotSupplier, SlotSupplierPermit,
+        WorkflowSlotKind,
+    },
+    Worker as WorkerTrait,
+};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{self as ar, activity_resolution, ActivityResolution},
@@ -2857,4 +2865,92 @@ async fn sets_build_id_from_wft_complete() {
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
+}
+
+#[tokio::test]
+async fn slot_provider_cant_hand_out_more_permits_than_cache_size() {
+    let popped_tasks = Arc::new(AtomicUsize::new(0));
+    let ptc = popped_tasks.clone();
+    let mut bunch_of_first_tasks = (1..50).map(move |i| {
+        ptc.fetch_add(1, Ordering::Relaxed);
+        hist_to_poll_resp(
+            &canned_histories::single_timer(&format!("{i}")),
+            format!("wf-{i}"),
+            1.into(),
+        )
+        .resp
+    });
+    let mut mock_client = mock_workflow_client();
+    mock_client
+        .expect_poll_workflow_task()
+        .returning(move |_| Ok(bunch_of_first_tasks.next().unwrap()));
+    mock_client
+        .expect_complete_workflow_task()
+        .returning(|_| Ok(Default::default()));
+
+    struct EndlessSupplier {}
+    #[async_trait::async_trait]
+    impl SlotSupplier for EndlessSupplier {
+        type SlotKind = WorkflowSlotKind;
+        async fn reserve_slot(&self, _: &dyn SlotReservationContext) -> SlotSupplierPermit {
+            SlotSupplierPermit::NoData
+        }
+        fn try_reserve_slot(&self, _: &dyn SlotReservationContext) -> Option<SlotSupplierPermit> {
+            Some(SlotSupplierPermit::NoData)
+        }
+        fn mark_slot_used(&self, _: <Self::SlotKind as SlotKind>::Info<'_>) {}
+        fn release_slot(&self, _: SlotReleaseReason) {}
+        fn available_slots(&self) -> Option<usize> {
+            None
+        }
+        fn attach_metrics(&self, _: TemporalMeter) {}
+    }
+
+    let worker = Worker::new_test(
+        test_worker_cfg()
+            .max_cached_workflows(10_usize)
+            .workflow_task_slot_supplier(Arc::new(EndlessSupplier {}))
+            .max_concurrent_wft_polls(10_usize)
+            .no_remote_activities(true)
+            .build()
+            .unwrap(),
+        mock_client,
+    );
+
+    // Should be able to get at 10 tasks
+    let mut tasks = vec![];
+    for _ in 0..10 {
+        tasks.push(worker.poll_workflow_activation().await.unwrap());
+    }
+    // 11th should hang
+
+    assert_eq!(worker.outstanding_workflow_tasks().await, 10);
+    // assert_eq!(worker.available_wft_permits(), Some(0));
+    // assert_eq!(worker.unused_wft_permits(), Some(0));
+
+    // This one should hang until we complete some tasks since we're at the limit
+    let hung_poll = async {
+        // This should end up getting shut down after the other routine finishes tasks
+        assert_matches!(
+            worker.poll_workflow_activation().await.unwrap_err(),
+            PollWfError::ShutDown
+        );
+    };
+    // Wait for a bit concurrently with above, verify no extra tasks got taken, shutdown
+    let ender = async {
+        time::sleep(Duration::from_millis(300)).await;
+        // initiate shutdown, then complete open tasks
+        worker.initiate_shutdown();
+        for t in tasks {
+            worker
+                .complete_workflow_activation(WorkflowActivationCompletion::empty(t.run_id))
+                .await
+                .unwrap();
+        }
+        worker.shutdown().await;
+    };
+    join!(hung_poll, ender);
+    // We shouldn't have got more than the 10 tasks from the poller -- verifying that the concurrent
+    // polling is not exceeding the task limit
+    assert_eq!(popped_tasks.load(Ordering::Relaxed), 10);
 }

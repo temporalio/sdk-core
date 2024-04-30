@@ -235,12 +235,10 @@ impl WorkerConfigBuilder {
 #[async_trait::async_trait]
 pub trait SlotSupplier {
     type SlotKind: SlotKind;
-    /// Blocks until a slot is available. In languages with explicit cancel mechanisms, this should
-    /// be cancellable and return a boolean indicating whether a slot was actually obtained or not.
-    /// In Rust, the future can simply be dropped if the reservation is no longer desired.
+    /// Block until a slot is available, then return a permit for the slot.
     async fn reserve_slot(&self, ctx: &dyn SlotReservationContext) -> SlotSupplierPermit;
 
-    /// Tries to immediately reserve a slot, returning None if one is not available
+    /// Try to immediately reserve a slot, returning None if one is not available
     fn try_reserve_slot(&self, ctx: &dyn SlotReservationContext) -> Option<SlotSupplierPermit>;
 
     /// Marks a slot as actually now being used. This is separate from reserving one because the
