@@ -190,6 +190,19 @@ impl WorkerConfigBuilder {
                 );
             }
         }
+
+        let max_wft_polls = self
+            .max_concurrent_wft_polls
+            .unwrap_or(MAX_CONCURRENT_WFT_POLLS_DEFAULT);
+
+        if let Some(max_cache) = self.max_cached_workflows {
+            if max_cache > 0 && max_wft_polls > max_cache {
+                return Err(
+                    "`max_concurrent_wft_polls` cannot exceed `max_cached_workflows`".to_owned(),
+                );
+            }
+        }
+
         // if matches!(self.max_concurrent_wft_polls, Some(1))
         //     && self.max_cached_workflows > Some(0)
         //     && self

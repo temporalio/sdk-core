@@ -126,6 +126,7 @@ pub(crate) async fn cache_evictions_wf(command_sink: WfContext) -> WorkflowResul
 async fn workflow_lru_cache_evictions() {
     let wf_type = "workflow_lru_cache_evictions";
     let mut starter = CoreWfStarter::new(wf_type);
+    starter.worker_config.max_concurrent_wft_polls(1_usize);
     starter.no_remote_activities().max_cached_workflows(1);
     let mut worker = starter.worker().await;
     worker.register_wf(wf_type.to_string(), cache_evictions_wf);

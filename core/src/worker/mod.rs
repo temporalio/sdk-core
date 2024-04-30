@@ -267,7 +267,9 @@ impl Worker {
             config.workflow_task_slot_supplier.clone(),
             metrics.with_new_attrs([workflow_worker_type()]),
             if config.max_cached_workflows > 0 {
-                Some(config.max_cached_workflows)
+                // Since we always need to be able to poll the normal task queue as well as the
+                // sticky queue, we need a value of at least 2 here.
+                Some(std::cmp::max(2, config.max_cached_workflows))
             } else {
                 None
             },

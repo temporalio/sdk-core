@@ -664,7 +664,7 @@ async fn update_timer_sequence() {
                 Ok("done")
             },
         );
-        ctx.timer(Duration::from_secs(1)).await;
+        ctx.timer(Duration::from_secs(2)).await;
         Ok(().into())
     });
 
