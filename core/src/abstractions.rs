@@ -224,6 +224,7 @@ pub(crate) struct OwnedMeteredSemPermit<SK: SlotKind> {
     /// See [MeteredPermitDealer::unused_claimants]. If present when dropping, used to decrement the
     /// count.
     unused_claimants: Option<Arc<AtomicUsize>>,
+    #[allow(clippy::type_complexity)] // not really tho, bud
     use_fn: Box<dyn Fn(SK::Info<'_>) + Send + Sync>,
     release_fn: Box<dyn Fn() + Send + Sync>,
 }
@@ -269,13 +270,12 @@ pub(crate) mod tests {
     use crate::worker::slot_supplier::FixedSizeSlotSupplier;
     use temporal_sdk_core_api::worker::WorkflowSlotKind;
 
-    pub fn fixed_size_permit_dealer<SK: SlotKind + Send + Sync + 'static>(
+    pub(crate) fn fixed_size_permit_dealer<SK: SlotKind + Send + Sync + 'static>(
         size: usize,
     ) -> MeteredPermitDealer<SK> {
         MeteredPermitDealer::new(
             Arc::new(FixedSizeSlotSupplier::new(size)),
             MetricsContext::no_op(),
-            |_, _| {},
         )
     }
 
@@ -314,7 +314,6 @@ pub(crate) mod tests {
         let inner = fixed_size_permit_dealer::<WorkflowSlotKind>(2);
         let sem = ClosableMeteredPermitDealer::new_arc(Arc::new(inner));
         sem.close();
-        let perm = sem.try_acquire_owned().unwrap_err();
-        assert_matches!(perm, ());
+        sem.try_acquire_owned().unwrap_err();
     }
 }

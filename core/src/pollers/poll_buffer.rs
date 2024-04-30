@@ -30,8 +30,10 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
+type PollReceiver<T, SK> =
+    Mutex<UnboundedReceiver<pollers::Result<(T, OwnedMeteredSemPermit<SK>)>>>;
 pub(crate) struct LongPollBuffer<T, SK: SlotKind> {
-    buffered_polls: Mutex<UnboundedReceiver<pollers::Result<(T, OwnedMeteredSemPermit<SK>)>>>,
+    buffered_polls: PollReceiver<T, SK>,
     shutdown: CancellationToken,
     join_handles: FuturesUnordered<JoinHandle<()>>,
     /// Pollers won't actually start polling until initialized & value is sent
@@ -240,7 +242,8 @@ impl
     }
 }
 
-pub(crate) type PollWorkflowTaskBuffer = LongPollBuffer<PollWorkflowTaskQueueResponse, WorkflowSlotKind>;
+pub(crate) type PollWorkflowTaskBuffer =
+    LongPollBuffer<PollWorkflowTaskQueueResponse, WorkflowSlotKind>;
 pub(crate) fn new_workflow_task_buffer(
     client: Arc<dyn WorkerClient>,
     task_queue: TaskQueue,
@@ -263,7 +266,8 @@ pub(crate) fn new_workflow_task_buffer(
     )
 }
 
-pub(crate) type PollActivityTaskBuffer = LongPollBuffer<PollActivityTaskQueueResponse, ActivitySlotKind>;
+pub(crate) type PollActivityTaskBuffer =
+    LongPollBuffer<PollActivityTaskQueueResponse, ActivitySlotKind>;
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn new_activity_task_buffer(
     client: Arc<dyn WorkerClient>,

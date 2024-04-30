@@ -127,8 +127,7 @@ where
             // TODO: Just using this for now to make sure metrics get emitted regularly
             self.pid_decision();
             if ctx.num_issued_slots() < self.minimum {
-                let _ = self.last_slot_issued_tx.send(Instant::now());
-                return SlotSupplierPermit::NoData;
+                return self.issue_slot();
             } else {
                 let must_wait_for = self
                     .ramp_throttle
@@ -146,13 +145,14 @@ where
     }
 
     fn try_reserve_slot(&self, ctx: &dyn SlotReservationContext) -> Option<SlotSupplierPermit> {
-        if self.time_since_last_issued() > self.ramp_throttle
-            && ctx.num_issued_slots() < self.max
-            && self.pid_decision()
-            && self.inner.can_reserve()
+        let num_issued = ctx.num_issued_slots();
+        if num_issued < self.minimum
+            || (self.time_since_last_issued() > self.ramp_throttle
+                && num_issued < self.max
+                && self.pid_decision()
+                && self.inner.can_reserve())
         {
-            let _ = self.last_slot_issued_tx.send(Instant::now());
-            Some(SlotSupplierPermit::NoData)
+            Some(self.issue_slot())
         } else {
             None
         }
@@ -165,6 +165,17 @@ where
     fn available_slots(&self) -> Option<usize> {
         None
     }
+
+    fn attach_metrics(&self, metrics: TemporalMeter) {
+        let _ = self.inner.metrics.set(MetricInstruments::new(metrics));
+    }
+}
+
+impl<MI, SK> ResourceBasedSlotsForType<MI, SK>
+where
+    MI: Send + Sync + SystemResourceInfo,
+    SK: Send + SlotKind + Sync,
+{
 }
 
 impl<MI, SK> ResourceBasedSlotsForType<MI, SK>
@@ -197,6 +208,11 @@ where
             inner,
             _slot_kind: PhantomData,
         }
+    }
+
+    fn issue_slot(&self) -> SlotSupplierPermit {
+        let _ = self.last_slot_issued_tx.send(Instant::now());
+        SlotSupplierPermit::NoData
     }
 
     fn time_since_last_issued(&self) -> Duration {
@@ -256,11 +272,6 @@ impl<MI: SystemResourceInfo + Sync + Send> ResourceBasedSlots<MI> {
             max,
             ramp_throttle,
         ))
-    }
-
-    /// Attach metrics to this slots instance
-    pub fn attach_metrics(&self, metrics: TemporalMeter) {
-        let _ = self.metrics.set(MetricInstruments::new(metrics));
     }
 
     fn can_reserve(&self) -> bool {
@@ -331,6 +342,7 @@ impl SystemResourceInfo for RealSysInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{abstractions::MeteredPermitDealer, telemetry::metrics::MetricsContext};
     use std::sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
@@ -355,46 +367,42 @@ mod tests {
             self.used.load(Ordering::Acquire)
         }
 
-        fn used_cpu_percent(&self) -> f32 {
-            todo!()
-        }
-    }
-    struct FakeResCtx {}
-    impl SlotReservationContext for FakeResCtx {
-        fn num_issued_slots(&self) -> usize {
-            0
+        fn used_cpu_percent(&self) -> f64 {
+            0.0
         }
     }
 
     #[test]
     fn mem_workflow_sync() {
         let (fmis, used) = FakeMIS::new();
-        let rbs = ResourceBasedSlots {
+        let rbs = Arc::new(ResourceBasedSlots {
             target_mem_usage: 0.8,
             target_cpu_usage: 1.0,
             sys_info_supplier: fmis,
             metrics: Default::default(),
-        }
-        .into_kind::<WorkflowSlotKind>();
-        assert!(rbs.try_reserve_slot(&FakeResCtx {}).is_some());
+        })
+        .as_kind::<WorkflowSlotKind>(0, 100, Duration::from_millis(0));
+        let pd = MeteredPermitDealer::new(rbs.clone(), MetricsContext::no_op());
+        assert!(rbs.try_reserve_slot(&pd).is_some());
         used.store(90_000, Ordering::Release);
-        assert!(rbs.try_reserve_slot(&FakeResCtx {}).is_none());
+        assert!(rbs.try_reserve_slot(&pd).is_none());
     }
 
     #[tokio::test]
     async fn mem_workflow_async() {
         let (fmis, used) = FakeMIS::new();
         used.store(90_000, Ordering::Release);
-        let rbs = ResourceBasedSlots {
+        let rbs = Arc::new(ResourceBasedSlots {
             target_mem_usage: 0.8,
             target_cpu_usage: 1.0,
             sys_info_supplier: fmis,
             metrics: Default::default(),
-        }
-        .into_kind::<WorkflowSlotKind>();
+        })
+        .as_kind::<WorkflowSlotKind>(0, 100, Duration::from_millis(0));
+        let pd = MeteredPermitDealer::new(rbs.clone(), MetricsContext::no_op());
         let order = crossbeam_queue::ArrayQueue::new(2);
         let waits_free = async {
-            rbs.reserve_slot(&FakeResCtx {}).await;
+            rbs.reserve_slot(&pd).await;
             order.push(2).unwrap();
         };
         let frees = async {
@@ -404,5 +412,22 @@ mod tests {
         tokio::join!(waits_free, frees);
         assert_eq!(order.pop(), Some(1));
         assert_eq!(order.pop(), Some(2));
+    }
+
+    #[test]
+    fn minimum_respected() {
+        let (fmis, used) = FakeMIS::new();
+        let rbs = Arc::new(ResourceBasedSlots {
+            target_mem_usage: 0.8,
+            target_cpu_usage: 1.0,
+            sys_info_supplier: fmis,
+            metrics: Default::default(),
+        })
+        .as_kind::<WorkflowSlotKind>(2, 100, Duration::from_millis(0));
+        let pd = MeteredPermitDealer::new(rbs.clone(), MetricsContext::no_op());
+        used.store(90_000, Ordering::Release);
+        let _p1 = pd.try_acquire_owned().unwrap();
+        let _p2 = pd.try_acquire_owned().unwrap();
+        assert!(pd.try_acquire_owned().is_err());
     }
 }

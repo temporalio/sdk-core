@@ -776,7 +776,7 @@ mod tests {
         a1.set(Arc::new(DummyCustomAttrs(1))).unwrap();
         // Verify all metrics are created. This number will need to get updated any time a metric
         // is added.
-        let num_metrics = 23;
+        let num_metrics = 24;
         #[allow(clippy::needless_range_loop)] // Sorry clippy, this reads easier.
         for metric_num in 1..=num_metrics {
             let hole = assert_matches!(&events[metric_num],

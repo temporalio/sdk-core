@@ -242,12 +242,26 @@ impl Worker {
         task_pollers: TaskPollers,
         telem_instance: Option<&TelemetryInstance>,
     ) -> Self {
-        let metrics = if let Some(ti) = telem_instance {
-            MetricsContext::top_level(config.namespace.clone(), config.task_queue.clone(), ti)
+        let (metrics, meter) = if let Some(ti) = telem_instance {
+            (
+                MetricsContext::top_level(config.namespace.clone(), config.task_queue.clone(), ti),
+                ti.get_metric_meter(),
+            )
         } else {
-            MetricsContext::no_op()
+            (MetricsContext::no_op(), None)
         };
         metrics.worker_registered();
+        if let Some(meter) = meter {
+            config
+                .workflow_task_slot_supplier
+                .attach_metrics(meter.clone());
+            config
+                .activity_task_slot_supplier
+                .attach_metrics(meter.clone());
+            config
+                .local_activity_task_slot_supplier
+                .attach_metrics(meter);
+        }
         let shutdown_token = CancellationToken::new();
         let wft_semaphore = Arc::new(MeteredPermitDealer::new(
             config.workflow_task_slot_supplier.clone(),

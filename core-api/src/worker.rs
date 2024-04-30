@@ -1,4 +1,4 @@
-use crate::errors::WorkflowErrorType;
+use crate::{errors::WorkflowErrorType, telemetry::metrics::TemporalMeter};
 use std::{
     any::Any,
     collections::{HashMap, HashSet},
@@ -33,15 +33,15 @@ pub struct WorkerConfig {
     /// or failures.
     #[builder(default = "0")]
     pub max_cached_workflows: usize,
-    // TODO: DOC
+    /// Set a [SlotSupplier] for workflow tasks.
     #[builder(setter(into = false))]
     pub workflow_task_slot_supplier:
         Arc<dyn SlotSupplier<SlotKind = WorkflowSlotKind> + Send + Sync>,
-    // TODO: DOC
+    /// Set a [SlotSupplier] for activity tasks.
     #[builder(setter(into = false))]
     pub activity_task_slot_supplier:
         Arc<dyn SlotSupplier<SlotKind = ActivitySlotKind> + Send + Sync>,
-    // TODO: DOC
+    /// Set a [SlotSupplier] for local activity tasks.
     #[builder(setter(into = false))]
     pub local_activity_task_slot_supplier:
         Arc<dyn SlotSupplier<SlotKind = LocalActivitySlotKind> + Send + Sync>,
@@ -259,6 +259,10 @@ pub trait SlotSupplier {
     /// If this implementation knows how many slots are available at any moment, it should return
     /// that here.
     fn available_slots(&self) -> Option<usize>;
+
+    /// Core will call this at worker initialization time, allowing the implementation to hook up to
+    /// metrics if any are configured. If not, it will not be called.
+    fn attach_metrics(&self, metrics: TemporalMeter);
 }
 
 pub trait SlotReservationContext: Send + Sync {
@@ -266,6 +270,7 @@ pub trait SlotReservationContext: Send + Sync {
     fn num_issued_slots(&self) -> usize;
 }
 
+// TODO: Make this a struct with an optional field
 pub enum SlotSupplierPermit {
     Data(Box<dyn Any + Send + Sync>),
     NoData,

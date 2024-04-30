@@ -10,9 +10,7 @@ use temporal_sdk_core_protos::{
     coresdk::{workflow_commands::ActivityCancellationType, AsJsonPayloadExt},
     temporal::api::enums::v1::WorkflowIdReusePolicy,
 };
-use temporal_sdk_core_test_utils::{
-    init_integ_telem, workflows::la_problem_workflow, CoreWfStarter,
-};
+use temporal_sdk_core_test_utils::{workflows::la_problem_workflow, CoreWfStarter};
 
 mod fuzzy_workflow;
 
@@ -89,11 +87,6 @@ async fn activity_load() {
 async fn chunky_activities() {
     const WORKFLOWS: usize = 100;
 
-    let telem = init_integ_telem();
-    let metrics = telem
-        .telemetry()
-        .get_metric_meter()
-        .expect("metric meter exists");
     let mut starter = CoreWfStarter::new("chunky_activities");
     starter
         .worker_config
@@ -105,7 +98,6 @@ async fn chunky_activities() {
     //     .max_outstanding_workflow_tasks(25);
     // TODO: Fix /1 or /100 thing
     let resource_slots = Arc::new(ResourceBasedSlots::new(0.7, 0.9));
-    resource_slots.attach_metrics(metrics);
     starter
         .worker_config
         .workflow_task_slot_supplier(resource_slots.as_kind(
@@ -146,7 +138,7 @@ async fn chunky_activities() {
                 let mut mem = vec![0_u8; 1000 * 1024 * 1024];
                 for _ in 1..10 {
                     for i in 0..mem.len() {
-                        mem[i] = mem[i] & mem[mem.len() - 1 - i]
+                        mem[i] &= mem[mem.len() - 1 - i]
                     }
                 }
                 Ok(echo)

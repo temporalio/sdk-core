@@ -9,6 +9,7 @@ mod resource_based;
 mod tracking;
 
 pub use resource_based::{RealSysInfo, ResourceBasedSlots};
+use temporal_sdk_core_api::telemetry::metrics::TemporalMeter;
 
 pub(crate) struct FixedSizeSlotSupplier<SK> {
     sem: Arc<Semaphore>,
@@ -47,6 +48,10 @@ where
 
     fn available_slots(&self) -> Option<usize> {
         Some(self.sem.available_permits())
+    }
+
+    fn attach_metrics(&self, _: TemporalMeter) {
+        // Doesn't need to do anything. Metrics tracking is handled by `MeteredPermitDealer`.
     }
 }
 
