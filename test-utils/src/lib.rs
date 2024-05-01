@@ -333,38 +333,6 @@ impl CoreWfStarter {
         &self.task_queue_name
     }
 
-    pub fn max_cached_workflows(&mut self, num: usize) -> &mut Self {
-        self.worker_config.max_cached_workflows(num);
-        self
-    }
-
-    // TODO: Eliminate these dumb pass-through ones
-    pub fn max_wft(&mut self, max: usize) -> &mut Self {
-        self.worker_config.max_outstanding_workflow_tasks(max);
-        self
-    }
-
-    pub fn max_at(&mut self, max: usize) -> &mut Self {
-        self.worker_config.max_outstanding_activities(max);
-        self
-    }
-
-    pub fn max_local_at(&mut self, max: usize) -> &mut Self {
-        self.worker_config.max_outstanding_local_activities(max);
-        self
-    }
-
-    pub fn max_at_polls(&mut self, max: usize) -> &mut Self {
-        self.worker_config.max_concurrent_at_polls(max);
-
-        self
-    }
-
-    pub fn no_remote_activities(&mut self) -> &mut Self {
-        self.worker_config.no_remote_activities(true);
-        self
-    }
-
     async fn get_or_init(&mut self) -> &InitializedWorker {
         self.initted_worker
             .get_or_init(|| async {

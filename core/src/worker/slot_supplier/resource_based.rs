@@ -13,7 +13,6 @@ use temporal_sdk_core_api::{
     telemetry::metrics::{CoreMeter, GaugeF64, MetricAttributes, TemporalMeter},
     worker::{
         SlotKind, SlotReleaseReason, SlotReservationContext, SlotSupplier, SlotSupplierPermit,
-        WorkflowCacheSizer, WorkflowSlotInfo, WorkflowSlotsInfo,
     },
 };
 use tokio::sync::watch;
@@ -212,7 +211,7 @@ where
 
     fn issue_slot(&self) -> SlotSupplierPermit {
         let _ = self.last_slot_issued_tx.send(Instant::now());
-        SlotSupplierPermit::NoData
+        SlotSupplierPermit::default()
     }
 
     fn time_since_last_issued(&self) -> Duration {
@@ -238,15 +237,6 @@ where
             self.last_metric_emission.store(Instant::now());
         }
         mem_output > 0.25 && cpu_output > 0.05
-    }
-}
-
-impl<MI> WorkflowCacheSizer for ResourceBasedSlots<MI>
-where
-    MI: SystemResourceInfo + Sync + Send,
-{
-    fn can_allow_workflow(&self, _: &WorkflowSlotsInfo, _: &WorkflowSlotInfo) -> bool {
-        self.can_reserve()
     }
 }
 

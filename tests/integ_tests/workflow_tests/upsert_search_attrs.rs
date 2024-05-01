@@ -24,7 +24,7 @@ async fn sends_upsert() {
     let wf_name = "sends_upsert_search_attrs";
     let wf_id = Uuid::new_v4();
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.no_remote_activities();
+    starter.worker_config.no_remote_activities(true);
     let mut worker = starter.worker().await;
     // TODO: this should be supported in server 1.20, remove this condition when CLI is upgraded.
     if env::var(INTEG_TEMPORAL_DEV_SERVER_USED_ENV_VAR).is_ok() {

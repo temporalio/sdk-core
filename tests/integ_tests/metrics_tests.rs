@@ -368,7 +368,7 @@ async fn query_of_closed_workflow_doesnt_tick_terminal_metric(
     let mut starter =
         CoreWfStarter::new_with_runtime("query_of_closed_workflow_doesnt_tick_terminal_metric", rt);
     // Disable cache to ensure replay happens completely
-    starter.max_cached_workflows(0);
+    starter.worker_config.max_cached_workflows(0_usize);
     let worker = starter.get_worker().await;
     let run_id = starter.start_wf().await;
     let task = worker.poll_workflow_activation().await.unwrap();

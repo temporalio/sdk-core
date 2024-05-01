@@ -32,7 +32,7 @@ async fn signal_sender(ctx: WfContext) -> WorkflowResult<()> {
 async fn sends_signal_to_missing_wf() {
     let wf_name = "sends_signal_to_missing_wf";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.no_remote_activities();
+    starter.worker_config.no_remote_activities(true);
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), signal_sender);
 
@@ -71,7 +71,7 @@ async fn signal_with_create_wf_receiver(ctx: WfContext) -> WorkflowResult<()> {
 #[tokio::test]
 async fn sends_signal_to_other_wf() {
     let mut starter = CoreWfStarter::new("sends_signal_to_other_wf");
-    starter.no_remote_activities();
+    starter.worker_config.no_remote_activities(true);
     let mut worker = starter.worker().await;
     worker.register_wf("sender", signal_sender);
     worker.register_wf("receiver", signal_receiver);
@@ -100,7 +100,7 @@ async fn sends_signal_to_other_wf() {
 #[tokio::test]
 async fn sends_signal_with_create_wf() {
     let mut starter = CoreWfStarter::new("sends_signal_with_create_wf");
-    starter.no_remote_activities();
+    starter.worker_config.no_remote_activities(true);
     let mut worker = starter.worker().await;
     worker.register_wf("receiver_signal", signal_with_create_wf_receiver);
 
@@ -146,7 +146,7 @@ async fn signals_child(ctx: WfContext) -> WorkflowResult<()> {
 #[tokio::test]
 async fn sends_signal_to_child() {
     let mut starter = CoreWfStarter::new("sends_signal_to_child");
-    starter.no_remote_activities();
+    starter.worker_config.no_remote_activities(true);
     let mut worker = starter.worker().await;
     worker.register_wf("child_signaler", signals_child);
     worker.register_wf("child_receiver", signal_receiver);

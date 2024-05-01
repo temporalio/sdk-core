@@ -2893,10 +2893,10 @@ async fn slot_provider_cant_hand_out_more_permits_than_cache_size() {
     impl SlotSupplier for EndlessSupplier {
         type SlotKind = WorkflowSlotKind;
         async fn reserve_slot(&self, _: &dyn SlotReservationContext) -> SlotSupplierPermit {
-            SlotSupplierPermit::NoData
+            SlotSupplierPermit::default()
         }
         fn try_reserve_slot(&self, _: &dyn SlotReservationContext) -> Option<SlotSupplierPermit> {
-            Some(SlotSupplierPermit::NoData)
+            Some(SlotSupplierPermit::default())
         }
         fn mark_slot_used(&self, _: <Self::SlotKind as SlotKind>::Info<'_>) {}
         fn release_slot(&self, _: SlotReleaseReason) {}

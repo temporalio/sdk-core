@@ -6,7 +6,6 @@ use temporal_sdk_core_api::worker::{
 use tokio::sync::Semaphore;
 
 mod resource_based;
-mod tracking;
 
 pub use resource_based::{RealSysInfo, ResourceBasedSlots};
 use temporal_sdk_core_api::telemetry::metrics::TemporalMeter;
@@ -33,13 +32,18 @@ where
     type SlotKind = SK;
 
     async fn reserve_slot(&self, _: &dyn SlotReservationContext) -> SlotSupplierPermit {
-        let perm = self.sem.clone().acquire_owned().await.expect("todo");
-        SlotSupplierPermit::Data(Box::new(perm))
+        let perm = self
+            .sem
+            .clone()
+            .acquire_owned()
+            .await
+            .expect("inner semaphore is never closed");
+        SlotSupplierPermit::with_user_data(perm)
     }
 
     fn try_reserve_slot(&self, _: &dyn SlotReservationContext) -> Option<SlotSupplierPermit> {
         let perm = self.sem.clone().try_acquire_owned();
-        perm.ok().map(|p| SlotSupplierPermit::Data(Box::new(p)))
+        perm.ok().map(SlotSupplierPermit::with_user_data)
     }
 
     fn mark_slot_used(&self, _info: SK::Info<'_>) {}

@@ -104,8 +104,8 @@ where
         let supp_c_c = self.supplier.clone();
         let mets = self.metrics_ctx.clone();
         let metric_rec =
-            // When being called from the drop impl, the semaphore permit isn't actually dropped yet,
-            // so account for that. TODO: that should move somehow into fixed impl only
+            // When being called from the drop impl, the permit isn't actually dropped yet, so
+            // account for that with the `add_one` parameter.
             move |add_one: bool| {
                 let extra = usize::from(add_one);
                 let unused = uc_c.load(Ordering::Acquire);
