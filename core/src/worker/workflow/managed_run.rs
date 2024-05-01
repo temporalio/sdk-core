@@ -1,6 +1,7 @@
 use crate::{
     abstractions::dbg_panic,
     protosext::{protocol_messages::IncomingProtocolMessage, WorkflowActivationExt},
+    telemetry::metrics,
     worker::{
         workflow::{
             history_update::HistoryPaginator,
@@ -596,7 +597,9 @@ impl ManagedRun {
         } else {
             ActivationCompleteOutcome::WFTFailedDontReport
         };
-        self.metrics.wf_task_failed();
+        self.metrics
+            .with_new_attrs([metrics::failure_reason(cause.into())])
+            .wf_task_failed();
         self.reply_to_complete(outcome, resp_chan);
         rur
     }

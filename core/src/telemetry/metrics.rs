@@ -1,12 +1,18 @@
 use crate::{abstractions::dbg_panic, telemetry::TelemetryInstance};
 
-use std::{fmt::Debug, iter::Iterator, sync::Arc, time::Duration};
+use std::{
+    fmt::{Debug, Display},
+    iter::Iterator,
+    sync::Arc,
+    time::Duration,
+};
 use temporal_sdk_core_api::telemetry::metrics::{
     BufferAttributes, BufferInstrumentRef, CoreMeter, Counter, Gauge, GaugeF64, Histogram,
     HistogramDuration, HistogramF64, LazyBufferInstrument, MetricAttributes, MetricCallBufferer,
     MetricEvent, MetricKeyValue, MetricKind, MetricParameters, MetricUpdateVal, NewAttributes,
     NoOpCoreMeter,
 };
+use temporal_sdk_core_protos::temporal::api::enums::v1::WorkflowTaskFailedCause;
 
 /// Used to track context associated with metrics, and record/update them
 ///
@@ -354,6 +360,7 @@ const KEY_ACT_TYPE: &str = "activity_type";
 const KEY_POLLER_TYPE: &str = "poller_type";
 const KEY_WORKER_TYPE: &str = "worker_type";
 const KEY_EAGER: &str = "eager";
+const KEY_TASK_FAILURE_TYPE: &str = "failure_reason";
 
 pub(crate) fn workflow_poller() -> MetricKeyValue {
     MetricKeyValue::new(KEY_POLLER_TYPE, "workflow_task")
@@ -384,6 +391,30 @@ pub(crate) fn local_activity_worker_type() -> MetricKeyValue {
 }
 pub(crate) fn eager(is_eager: bool) -> MetricKeyValue {
     MetricKeyValue::new(KEY_EAGER, is_eager)
+}
+pub(crate) enum FailureReason {
+    Nondeterminism,
+    Workflow,
+}
+impl Display for FailureReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let str = match self {
+            FailureReason::Nondeterminism => "NonDeterminismError",
+            FailureReason::Workflow => "WorkflowError",
+        };
+        write!(f, "{}", str)
+    }
+}
+impl From<WorkflowTaskFailedCause> for FailureReason {
+    fn from(v: WorkflowTaskFailedCause) -> Self {
+        match v {
+            WorkflowTaskFailedCause::NonDeterministicError => FailureReason::Nondeterminism,
+            _ => FailureReason::Workflow,
+        }
+    }
+}
+pub(crate) fn failure_reason(reason: FailureReason) -> MetricKeyValue {
+    MetricKeyValue::new(KEY_TASK_FAILURE_TYPE, reason.to_string())
 }
 
 pub(super) const WF_E2E_LATENCY_NAME: &str = "workflow_endtoend_latency";
