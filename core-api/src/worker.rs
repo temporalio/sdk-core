@@ -251,7 +251,7 @@ pub trait SlotSupplier {
 }
 
 pub trait SlotReservationContext: Send + Sync {
-    /// Returns the number of currently in-use slots
+    /// Returns the number of currently outstanding slot permits, whether used or un-used.
     fn num_issued_slots(&self) -> usize;
 }
 

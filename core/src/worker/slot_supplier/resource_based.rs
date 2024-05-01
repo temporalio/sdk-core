@@ -20,7 +20,9 @@ use tokio::sync::watch;
 /// Implements [SlotSupplier] and attempts to maintain certain levels of resource usage when
 /// under load.
 pub struct ResourceBasedSlots<MI> {
+    /// A percentage system-wide memory usage in [0.0, 1.0] to target
     target_mem_usage: f64,
+    /// A percentage system-wide CPU usage in [0.0, 1.0] to target
     target_cpu_usage: f64,
     sys_info_supplier: MI,
     metrics: OnceLock<MetricInstruments>,
@@ -108,7 +110,7 @@ pub trait SystemResourceInfo {
     /// cores pegged
     fn used_cpu_percent(&self) -> f64;
     /// Return system used memory as a float in the range [0.0, 1.0]
-    fn process_used_percent(&self) -> f64 {
+    fn used_mem_percent(&self) -> f64 {
         self.used_mem() as f64 / self.total_mem() as f64
     }
 }
@@ -223,7 +225,7 @@ where
     /// Returns true if the pid controllers think a new slot should be given out
     fn pid_decision(&self) -> bool {
         let mut pids = self.pids.lock();
-        let mem_used_percent = self.inner.sys_info_supplier.process_used_percent();
+        let mem_used_percent = self.inner.sys_info_supplier.used_mem_percent();
         let cpu_used_percent = self.inner.sys_info_supplier.used_cpu_percent();
         let mem_output = pids.mem.next_control_output(mem_used_percent).output;
         let cpu_output = pids.cpu.next_control_output(cpu_used_percent).output;
@@ -265,7 +267,7 @@ impl<MI: SystemResourceInfo + Sync + Send> ResourceBasedSlots<MI> {
     }
 
     fn can_reserve(&self) -> bool {
-        self.sys_info_supplier.process_used_percent() <= self.target_mem_usage
+        self.sys_info_supplier.used_mem_percent() <= self.target_mem_usage
     }
 }
 
