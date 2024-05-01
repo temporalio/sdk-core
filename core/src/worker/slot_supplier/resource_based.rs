@@ -2,7 +2,6 @@ use crossbeam_utils::atomic::AtomicCell;
 use parking_lot::Mutex;
 use std::{
     marker::PhantomData,
-    ops::Sub,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc, OnceLock,
@@ -15,17 +14,18 @@ use temporal_sdk_core_api::{
         SlotKind, SlotReleaseReason, SlotReservationContext, SlotSupplier, SlotSupplierPermit,
     },
 };
-use tokio::sync::watch;
+use tokio::{sync::watch, task::JoinHandle};
 
 /// Implements [SlotSupplier] and attempts to maintain certain levels of resource usage when
 /// under load.
 pub struct ResourceBasedSlots<MI> {
-    /// A percentage system-wide memory usage in [0.0, 1.0] to target
+    /// Stored outside the pid controller to enforce a hard limit where we _definitely_ won't allow
+    /// a new slot if already at the memory limit.
     target_mem_usage: f64,
-    /// A percentage system-wide CPU usage in [0.0, 1.0] to target
-    target_cpu_usage: f64,
     sys_info_supplier: MI,
-    metrics: OnceLock<MetricInstruments>,
+    metrics: OnceLock<JoinHandle<()>>,
+    pids: Mutex<PidControllers>,
+    last_metric_vals: Arc<AtomicCell<LastMetricVals>>,
 }
 /// Wraps [ResourceBasedSlots] for a specific slot type
 pub struct ResourceBasedSlotsForType<MI, SK> {
@@ -38,10 +38,8 @@ pub struct ResourceBasedSlotsForType<MI, SK> {
     /// slots
     ramp_throttle: Duration,
 
-    pids: Arc<Mutex<PidControllers>>,
     last_slot_issued_tx: watch::Sender<Instant>,
     last_slot_issued_rx: watch::Receiver<Instant>,
-    last_metric_emission: AtomicCell<Instant>,
     _slot_kind: PhantomData<SK>,
 }
 struct PidControllers {
@@ -55,17 +53,19 @@ struct MetricInstruments {
     mem_pid_output: Arc<dyn GaugeF64>,
     cpu_pid_output: Arc<dyn GaugeF64>,
 }
+#[derive(Clone, Copy, Default)]
+struct LastMetricVals {
+    mem_output: f64,
+    cpu_output: f64,
+    mem_used_percent: f64,
+    cpu_used_percent: f64,
+}
 
 impl ResourceBasedSlots<RealSysInfo> {
     /// Create an instance attempting to target the provided memory and cpu thresholds as values
     /// between 0 and 1.
     pub fn new(target_mem_usage: f64, target_cpu_usage: f64) -> Self {
-        Self {
-            metrics: OnceLock::new(),
-            target_mem_usage,
-            target_cpu_usage,
-            sys_info_supplier: RealSysInfo::new(),
-        }
+        Self::new_with_sysinfo(target_mem_usage, target_cpu_usage, RealSysInfo::new())
     }
 }
 
@@ -118,15 +118,13 @@ pub trait SystemResourceInfo {
 #[async_trait::async_trait]
 impl<MI, SK> SlotSupplier for ResourceBasedSlotsForType<MI, SK>
 where
-    MI: SystemResourceInfo + Send + Sync,
+    MI: SystemResourceInfo + Send + Sync + 'static,
     SK: SlotKind + Send + Sync,
 {
     type SlotKind = SK;
 
     async fn reserve_slot(&self, ctx: &dyn SlotReservationContext) -> SlotSupplierPermit {
         loop {
-            // TODO: Just using this for now to make sure metrics get emitted regularly
-            self.pid_decision();
             if ctx.num_issued_slots() < self.minimum {
                 return self.issue_slot();
             } else {
@@ -150,7 +148,7 @@ where
         if num_issued < self.minimum
             || (self.time_since_last_issued() > self.ramp_throttle
                 && num_issued < self.max
-                && self.pid_decision()
+                && self.inner.pid_decision()
                 && self.inner.can_reserve())
         {
             Some(self.issue_slot())
@@ -168,7 +166,7 @@ where
     }
 
     fn attach_metrics(&self, metrics: TemporalMeter) {
-        let _ = self.inner.metrics.set(MetricInstruments::new(metrics));
+        self.inner.attach_metrics(metrics);
     }
 }
 
@@ -184,10 +182,6 @@ where
     MI: SystemResourceInfo + Send + Sync,
     SK: SlotKind + Send + Sync,
 {
-    pub fn attach_metrics(&self, metrics: TemporalMeter) {
-        let _ = self.inner.metrics.set(MetricInstruments::new(metrics));
-    }
-
     fn new(
         inner: Arc<ResourceBasedSlots<MI>>,
         minimum: usize,
@@ -199,13 +193,8 @@ where
             minimum,
             max,
             ramp_throttle,
-            pids: Arc::new(Mutex::new(PidControllers::new(
-                inner.target_mem_usage,
-                inner.target_cpu_usage,
-            ))),
             last_slot_issued_tx: tx,
             last_slot_issued_rx: rx,
-            last_metric_emission: AtomicCell::new(Instant::now().sub(Duration::from_secs(1))),
             inner,
             _slot_kind: PhantomData,
         }
@@ -220,25 +209,6 @@ where
         Instant::now()
             .checked_duration_since(*self.last_slot_issued_rx.borrow())
             .unwrap_or_default()
-    }
-
-    /// Returns true if the pid controllers think a new slot should be given out
-    fn pid_decision(&self) -> bool {
-        let mut pids = self.pids.lock();
-        let mem_used_percent = self.inner.sys_info_supplier.used_mem_percent();
-        let cpu_used_percent = self.inner.sys_info_supplier.used_cpu_percent();
-        let mem_output = pids.mem.next_control_output(mem_used_percent).output;
-        let cpu_output = pids.cpu.next_control_output(cpu_used_percent).output;
-        if Instant::now() - self.last_metric_emission.load() > Duration::from_millis(100) {
-            if let Some(m) = self.inner.metrics.get() {
-                m.mem_pid_output.record(mem_output, &m.attribs);
-                m.cpu_pid_output.record(cpu_output, &m.attribs);
-                m.mem_usage.record(mem_used_percent * 100., &m.attribs);
-                m.cpu_usage.record(cpu_used_percent * 100., &m.attribs);
-            }
-            self.last_metric_emission.store(Instant::now());
-        }
-        mem_output > 0.25 && cpu_output > 0.05
     }
 }
 
@@ -266,8 +236,53 @@ impl<MI: SystemResourceInfo + Sync + Send> ResourceBasedSlots<MI> {
         ))
     }
 
+    fn new_with_sysinfo(target_mem_usage: f64, target_cpu_usage: f64, sys_info: MI) -> Self {
+        Self {
+            metrics: OnceLock::new(),
+            target_mem_usage,
+            sys_info_supplier: sys_info,
+            pids: Mutex::new(PidControllers::new(target_mem_usage, target_cpu_usage)),
+            last_metric_vals: Arc::new(AtomicCell::new(Default::default())),
+        }
+    }
+
     fn can_reserve(&self) -> bool {
         self.sys_info_supplier.used_mem_percent() <= self.target_mem_usage
+    }
+
+    /// Returns true if the pid controllers think a new slot should be given out
+    fn pid_decision(&self) -> bool {
+        let mut pids = self.pids.lock();
+        let mem_used_percent = self.sys_info_supplier.used_mem_percent();
+        let cpu_used_percent = self.sys_info_supplier.used_cpu_percent();
+        let mem_output = pids.mem.next_control_output(mem_used_percent).output;
+        let cpu_output = pids.cpu.next_control_output(cpu_used_percent).output;
+        self.last_metric_vals.store(LastMetricVals {
+            mem_output,
+            cpu_output,
+            mem_used_percent,
+            cpu_used_percent,
+        });
+        mem_output > 0.25 && cpu_output > 0.05
+    }
+
+    fn attach_metrics(&self, metrics: TemporalMeter) {
+        // Launch a task to periodically emit metrics
+        self.metrics.get_or_init(move || {
+            let m = MetricInstruments::new(metrics);
+            let last_vals = self.last_metric_vals.clone();
+            tokio::task::spawn(async move {
+                let mut interval = tokio::time::interval(Duration::from_secs(1));
+                loop {
+                    let lv = last_vals.load();
+                    m.mem_pid_output.record(lv.mem_output, &m.attribs);
+                    m.cpu_pid_output.record(lv.cpu_output, &m.attribs);
+                    m.mem_usage.record(lv.mem_used_percent * 100., &m.attribs);
+                    m.cpu_usage.record(lv.cpu_used_percent * 100., &m.attribs);
+                    interval.tick().await;
+                }
+            })
+        });
     }
 }
 
@@ -367,13 +382,8 @@ mod tests {
     #[test]
     fn mem_workflow_sync() {
         let (fmis, used) = FakeMIS::new();
-        let rbs = Arc::new(ResourceBasedSlots {
-            target_mem_usage: 0.8,
-            target_cpu_usage: 1.0,
-            sys_info_supplier: fmis,
-            metrics: Default::default(),
-        })
-        .as_kind::<WorkflowSlotKind>(0, 100, Duration::from_millis(0));
+        let rbs = Arc::new(ResourceBasedSlots::new_with_sysinfo(0.8, 1.0, fmis))
+            .as_kind::<WorkflowSlotKind>(0, 100, Duration::from_millis(0));
         let pd = MeteredPermitDealer::new(rbs.clone(), MetricsContext::no_op(), None);
         assert!(rbs.try_reserve_slot(&pd).is_some());
         used.store(90_000, Ordering::Release);
@@ -384,13 +394,8 @@ mod tests {
     async fn mem_workflow_async() {
         let (fmis, used) = FakeMIS::new();
         used.store(90_000, Ordering::Release);
-        let rbs = Arc::new(ResourceBasedSlots {
-            target_mem_usage: 0.8,
-            target_cpu_usage: 1.0,
-            sys_info_supplier: fmis,
-            metrics: Default::default(),
-        })
-        .as_kind::<WorkflowSlotKind>(0, 100, Duration::from_millis(0));
+        let rbs = Arc::new(ResourceBasedSlots::new_with_sysinfo(0.8, 1.0, fmis))
+            .as_kind::<WorkflowSlotKind>(0, 100, Duration::from_millis(0));
         let pd = MeteredPermitDealer::new(rbs.clone(), MetricsContext::no_op(), None);
         let order = crossbeam_queue::ArrayQueue::new(2);
         let waits_free = async {
@@ -409,13 +414,8 @@ mod tests {
     #[test]
     fn minimum_respected() {
         let (fmis, used) = FakeMIS::new();
-        let rbs = Arc::new(ResourceBasedSlots {
-            target_mem_usage: 0.8,
-            target_cpu_usage: 1.0,
-            sys_info_supplier: fmis,
-            metrics: Default::default(),
-        })
-        .as_kind::<WorkflowSlotKind>(2, 100, Duration::from_millis(0));
+        let rbs = Arc::new(ResourceBasedSlots::new_with_sysinfo(0.8, 1.0, fmis))
+            .as_kind::<WorkflowSlotKind>(2, 100, Duration::from_millis(0));
         let pd = MeteredPermitDealer::new(rbs.clone(), MetricsContext::no_op(), None);
         used.store(90_000, Ordering::Release);
         let _p1 = pd.try_acquire_owned().unwrap();
