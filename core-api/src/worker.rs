@@ -243,7 +243,9 @@ pub trait SlotSupplier {
 
     /// If this implementation knows how many slots are available at any moment, it should return
     /// that here.
-    fn available_slots(&self) -> Option<usize>;
+    fn available_slots(&self) -> Option<usize> {
+        None
+    }
 
     /// Core will call this at worker initialization time, allowing the implementation to hook up to
     /// metrics if any are configured. If not, it will not be called.

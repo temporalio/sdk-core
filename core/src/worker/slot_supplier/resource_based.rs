@@ -137,7 +137,7 @@ where
                 if let Some(p) = self.try_reserve_slot(ctx) {
                     return p;
                 } else {
-                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    tokio::time::sleep(Duration::from_millis(10)).await;
                 }
             }
         }
@@ -160,10 +160,6 @@ where
     fn mark_slot_used(&self, _info: SK::Info<'_>) {}
 
     fn release_slot(&self, _info: SlotReleaseReason) {}
-
-    fn available_slots(&self) -> Option<usize> {
-        None
-    }
 
     fn attach_metrics(&self, metrics: TemporalMeter) {
         self.inner.attach_metrics(metrics);
