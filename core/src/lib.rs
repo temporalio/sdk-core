@@ -125,7 +125,7 @@ pub(crate) fn init_worker_client(
 ) -> RetryClient<Client> {
     let mut client = Client::new(client, config.namespace.clone());
     if let Some(ref id_override) = config.client_identity_override {
-        client.options_mut().identity = id_override.clone();
+        client.options_mut().identity.clone_from(id_override);
     }
     RetryClient::new(client, RetryConfig::default())
 }

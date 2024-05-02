@@ -11,7 +11,7 @@ use std::{
 };
 use temporal_sdk_core_protos::temporal::api::{
     enums::v1::{CommandType, EventType, WorkflowTaskFailedCause},
-    history::v1::{history_event::Attributes::WorkflowTaskFailedEventAttributes, HistoryEvent},
+    history::v1::history_event::Attributes::WorkflowTaskFailedEventAttributes,
 };
 
 fsm! {
@@ -87,17 +87,6 @@ impl WFMachinesAdapter for WorkflowTaskMachine {
                 Ok(vec![MachineResponse::UpdateRunIdOnWorkflowReset { run_id }])
             }
         }
-    }
-
-    fn matches_event(&self, event: &HistoryEvent) -> bool {
-        matches!(
-            event.event_type(),
-            EventType::WorkflowTaskScheduled
-                | EventType::WorkflowTaskStarted
-                | EventType::WorkflowTaskTimedOut
-                | EventType::WorkflowTaskCompleted
-                | EventType::WorkflowTaskFailed
-        )
     }
 }
 

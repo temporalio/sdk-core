@@ -1522,7 +1522,7 @@ impl WorkflowMachines {
                     .unwrap_or_default();
             }
             if attrs.retry_policy.is_none() {
-                attrs.retry_policy = started_info.retry_policy.clone();
+                attrs.retry_policy.clone_from(&started_info.retry_policy);
             }
         }
         attrs
