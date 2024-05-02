@@ -28,7 +28,7 @@ use temporal_sdk_core_protos::{
         history::v1::{
             history_event, ActivityTaskCanceledEventAttributes,
             ActivityTaskCompletedEventAttributes, ActivityTaskFailedEventAttributes,
-            ActivityTaskTimedOutEventAttributes, HistoryEvent,
+            ActivityTaskTimedOutEventAttributes,
         },
     },
 };
@@ -285,19 +285,6 @@ impl WFMachinesAdapter for ActivityMachine {
                 vec![self.create_cancelation_resolve(attrs).into()]
             }
         })
-    }
-
-    fn matches_event(&self, event: &HistoryEvent) -> bool {
-        matches!(
-            event.event_type(),
-            EventType::ActivityTaskScheduled
-                | EventType::ActivityTaskStarted
-                | EventType::ActivityTaskCompleted
-                | EventType::ActivityTaskFailed
-                | EventType::ActivityTaskTimedOut
-                | EventType::ActivityTaskCancelRequested
-                | EventType::ActivityTaskCanceled
-        )
     }
 }
 

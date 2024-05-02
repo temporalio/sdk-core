@@ -598,7 +598,7 @@ impl TestHistoryBuilder {
             },
         )) = &evt.attributes
         {
-            self.original_run_id = original_execution_run_id.clone();
+            self.original_run_id.clone_from(original_execution_run_id);
         };
         self.events.push(evt);
         self.current_event_id

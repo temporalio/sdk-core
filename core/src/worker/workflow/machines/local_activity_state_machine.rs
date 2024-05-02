@@ -34,7 +34,6 @@ use temporal_sdk_core_protos::{
         command::v1::{command, RecordMarkerCommandAttributes},
         enums::v1::{CommandType, EventType, RetryState},
         failure::v1::{failure::FailureInfo, Failure},
-        history::v1::HistoryEvent,
     },
     utilities::TryIntoOrNone,
 };
@@ -798,10 +797,6 @@ impl WFMachinesAdapter for LocalActivityMachine {
                 )])
             }
         }
-    }
-
-    fn matches_event(&self, event: &HistoryEvent) -> bool {
-        event.is_local_activity_marker()
     }
 }
 

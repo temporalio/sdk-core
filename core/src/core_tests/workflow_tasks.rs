@@ -1531,7 +1531,7 @@ async fn failing_wft_doesnt_eat_permit_forever() {
                 variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
             },]
         );
-        run_id = activation.run_id.clone();
+        run_id.clone_from(&activation.run_id);
         worker
             .complete_workflow_activation(WorkflowActivationCompletion::empty(activation.run_id))
             .await

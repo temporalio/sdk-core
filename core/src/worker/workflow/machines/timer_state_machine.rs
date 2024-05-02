@@ -16,7 +16,7 @@ use temporal_sdk_core_protos::{
     temporal::api::{
         command::v1::Command,
         enums::v1::{CommandType, EventType},
-        history::v1::{history_event, HistoryEvent, TimerFiredEventAttributes},
+        history::v1::{history_event, TimerFiredEventAttributes},
     },
 };
 
@@ -232,13 +232,6 @@ impl WFMachinesAdapter for TimerMachine {
             .into()],
             TimerMachineCommand::IssueCancelCmd(c) => vec![MachineResponse::IssueNewCommand(c)],
         })
-    }
-
-    fn matches_event(&self, event: &HistoryEvent) -> bool {
-        matches!(
-            event.event_type(),
-            EventType::TimerStarted | EventType::TimerCanceled | EventType::TimerFired
-        )
     }
 }
 

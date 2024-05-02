@@ -38,7 +38,7 @@ use temporal_sdk_core_protos::{
         history::v1::{
             history_event, ChildWorkflowExecutionCompletedEventAttributes,
             ChildWorkflowExecutionFailedEventAttributes,
-            ChildWorkflowExecutionStartedEventAttributes, HistoryEvent,
+            ChildWorkflowExecutionStartedEventAttributes,
             StartChildWorkflowExecutionFailedEventAttributes,
         },
     },
@@ -283,7 +283,7 @@ impl StartEventRecorded {
         event: ChildWorkflowExecutionStartedEvent,
     ) -> ChildWorkflowMachineTransition<Started> {
         state.started_event_id = event.started_event_id;
-        state.run_id = event.workflow_execution.run_id.clone();
+        state.run_id.clone_from(&event.workflow_execution.run_id);
         ChildWorkflowMachineTransition::commands(vec![ChildWorkflowCommand::Start(
             event.workflow_execution,
         )])
@@ -703,20 +703,6 @@ impl WFMachinesAdapter for ChildWorkflowMachine {
                 resps
             }
         })
-    }
-
-    fn matches_event(&self, event: &HistoryEvent) -> bool {
-        matches!(
-            event.event_type(),
-            EventType::StartChildWorkflowExecutionInitiated
-                | EventType::StartChildWorkflowExecutionFailed
-                | EventType::ChildWorkflowExecutionStarted
-                | EventType::ChildWorkflowExecutionCompleted
-                | EventType::ChildWorkflowExecutionFailed
-                | EventType::ChildWorkflowExecutionTimedOut
-                | EventType::ChildWorkflowExecutionTerminated
-                | EventType::ChildWorkflowExecutionCanceled
-        )
     }
 }
 

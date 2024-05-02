@@ -15,8 +15,8 @@ use temporal_sdk_core_protos::{
     temporal::api::{
         command::v1::{command, Command, UpsertWorkflowSearchAttributesCommandAttributes},
         common::v1::SearchAttributes,
-        enums::v1::{CommandType, EventType},
-        history::v1::{history_event, HistoryEvent},
+        enums::v1::CommandType,
+        history::v1::history_event,
     },
 };
 
@@ -137,14 +137,6 @@ impl WFMachinesAdapter for UpsertSearchAttributesMachine {
             "UpsertWorkflowSearchAttributesMachine does not use commands".to_string(),
         ))
     }
-
-    /// Filters for EventType::UpsertWorkflowSearchAttributes
-    fn matches_event(&self, event: &HistoryEvent) -> bool {
-        matches!(
-            event.event_type(),
-            EventType::UpsertWorkflowSearchAttributes
-        )
-    }
 }
 
 impl Cancellable for UpsertSearchAttributesMachine {}
@@ -214,8 +206,10 @@ mod tests {
             AsJsonPayloadExt,
         },
         temporal::api::{
-            command::v1::command::Attributes, common::v1::Payload,
-            history::v1::UpsertWorkflowSearchAttributesEventAttributes,
+            command::v1::command::Attributes,
+            common::v1::Payload,
+            enums::v1::EventType,
+            history::v1::{HistoryEvent, UpsertWorkflowSearchAttributesEventAttributes},
         },
         DEFAULT_WORKFLOW_TYPE,
     };
@@ -291,7 +285,6 @@ mod tests {
             ),
             ..Default::default()
         };
-        assert!(sm.matches_event(&recorded_history_event));
         let cmd_recorded_sm_event = HistEventData {
             event: recorded_history_event,
             replaying: false,

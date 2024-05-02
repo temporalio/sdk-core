@@ -17,7 +17,6 @@ use temporal_sdk_core_protos::{
         common::v1::Payload,
         enums::v1::{CommandType, EventType},
         failure::v1::Failure,
-        history::v1::HistoryEvent,
         protocol::v1::Message as ProtocolMessage,
         update::v1::{outcome, Acceptance, Outcome, Rejection, Response},
     },
@@ -270,15 +269,6 @@ impl WFMachinesAdapter for UpdateMachine {
                 }),
             )?,
         })
-    }
-
-    fn matches_event(&self, event: &HistoryEvent) -> bool {
-        matches!(
-            event.event_type(),
-            EventType::WorkflowExecutionUpdateAccepted
-                | EventType::WorkflowExecutionUpdateRejected
-                | EventType::WorkflowExecutionUpdateCompleted
-        )
     }
 }
 

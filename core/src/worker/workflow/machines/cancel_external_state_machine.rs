@@ -14,7 +14,7 @@ use temporal_sdk_core_protos::{
         command::v1::{command, Command, RequestCancelExternalWorkflowExecutionCommandAttributes},
         enums::v1::{CancelExternalWorkflowExecutionFailedCause, CommandType, EventType},
         failure::v1::{failure::FailureInfo, ApplicationFailureInfo, Failure},
-        history::v1::{history_event, HistoryEvent},
+        history::v1::history_event,
     },
 };
 
@@ -209,15 +209,6 @@ impl WFMachinesAdapter for CancelExternalMachine {
                 .into()]
             }
         })
-    }
-
-    fn matches_event(&self, event: &HistoryEvent) -> bool {
-        matches!(
-            event.event_type(),
-            EventType::ExternalWorkflowExecutionCancelRequested
-                | EventType::RequestCancelExternalWorkflowExecutionFailed
-                | EventType::RequestCancelExternalWorkflowExecutionInitiated
-        )
     }
 }
 

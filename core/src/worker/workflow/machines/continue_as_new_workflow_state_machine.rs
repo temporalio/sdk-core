@@ -1,5 +1,5 @@
 use super::{
-    Cancellable, EventInfo, HistoryEvent, MachineResponse, NewMachineWithCommand, OnEventWrapper,
+    Cancellable, EventInfo, MachineResponse, NewMachineWithCommand, OnEventWrapper,
     WFMachinesAdapter, WFMachinesError,
 };
 use crate::worker::workflow::machines::HistEventData;
@@ -106,10 +106,6 @@ impl WFMachinesAdapter for ContinueAsNewWorkflowMachine {
         _event_info: Option<EventInfo>,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         Ok(vec![])
-    }
-
-    fn matches_event(&self, event: &HistoryEvent) -> bool {
-        event.event_type() == EventType::WorkflowExecutionContinuedAsNew
     }
 }
 

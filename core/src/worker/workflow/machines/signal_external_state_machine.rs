@@ -19,7 +19,7 @@ use temporal_sdk_core_protos::{
         common::v1::WorkflowExecution as UpstreamWE,
         enums::v1::{CommandType, EventType, SignalExternalWorkflowExecutionFailedCause},
         failure::v1::{failure::FailureInfo, ApplicationFailureInfo, CanceledFailureInfo, Failure},
-        history::v1::{history_event, HistoryEvent},
+        history::v1::history_event,
     },
 };
 
@@ -259,15 +259,6 @@ impl WFMachinesAdapter for SignalExternalMachine {
                 panic!("Cancelled command not expected as part of non-cancel transition")
             }
         })
-    }
-
-    fn matches_event(&self, event: &HistoryEvent) -> bool {
-        matches!(
-            event.event_type(),
-            EventType::ExternalWorkflowExecutionSignaled
-                | EventType::SignalExternalWorkflowExecutionInitiated
-                | EventType::SignalExternalWorkflowExecutionFailed
-        )
     }
 }
 

@@ -10,7 +10,6 @@ use temporal_sdk_core_protos::{
     temporal::api::{
         command::v1::Command,
         enums::v1::{CommandType, EventType},
-        history::v1::HistoryEvent,
     },
 };
 
@@ -103,9 +102,6 @@ impl Created {
     }
 }
 
-#[derive(thiserror::Error, Debug)]
-pub(super) enum CompleteWorkflowMachineError {}
-
 #[derive(Default, Clone)]
 pub(super) struct CompleteWorkflowCommandCreated {}
 
@@ -125,10 +121,6 @@ impl WFMachinesAdapter for CompleteWorkflowMachine {
         _event_info: Option<EventInfo>,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         Ok(vec![])
-    }
-
-    fn matches_event(&self, event: &HistoryEvent) -> bool {
-        event.event_type() == EventType::WorkflowExecutionCompleted
     }
 }
 

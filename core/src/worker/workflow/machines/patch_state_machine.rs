@@ -46,7 +46,6 @@ use temporal_sdk_core_protos::{
         },
         common::v1::SearchAttributes,
         enums::v1::CommandType,
-        history::v1::HistoryEvent,
     },
 };
 
@@ -236,10 +235,6 @@ impl WFMachinesAdapter for PatchMachine {
         _event_info: Option<EventInfo>,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         panic!("Patch machine does not produce commands")
-    }
-
-    fn matches_event(&self, event: &HistoryEvent) -> bool {
-        event.get_patch_marker_details().is_some()
     }
 }
 

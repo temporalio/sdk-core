@@ -20,7 +20,7 @@ pub(super) struct PromServer {
 impl PromServer {
     pub(super) fn new(
         opts: &PrometheusExporterOptions,
-        aggregation: impl AggregationSelector + Send + Sync + 'static,
+        aggregation: impl AggregationSelector + 'static,
     ) -> Result<(Self, PrometheusExporter), anyhow::Error> {
         let registry = Registry::new();
         let exporter = opentelemetry_prometheus::exporter()

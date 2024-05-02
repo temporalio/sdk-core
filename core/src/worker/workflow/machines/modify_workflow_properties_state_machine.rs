@@ -9,7 +9,6 @@ use temporal_sdk_core_protos::{
     temporal::api::{
         command::v1::Command,
         enums::v1::{CommandType, EventType},
-        history::v1::HistoryEvent,
     },
 };
 
@@ -62,10 +61,6 @@ impl WFMachinesAdapter for ModifyWorkflowPropertiesMachine {
         Err(Self::Error::Nondeterminism(
             "ModifyWorkflowProperties does not use state machine commands".to_string(),
         ))
-    }
-
-    fn matches_event(&self, event: &HistoryEvent) -> bool {
-        matches!(event.event_type(), EventType::WorkflowPropertiesModified)
     }
 }
 

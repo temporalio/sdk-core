@@ -204,7 +204,7 @@ impl WfContext {
         mut opts: ActivityOptions,
     ) -> impl CancellableFuture<ActivityResolution> {
         if opts.task_queue.is_empty() {
-            opts.task_queue = self.task_queue.clone()
+            opts.task_queue.clone_from(&self.task_queue);
         }
         let seq = self.seq_nums.write().next_activity_seq();
         let (cmd, unblocker) = CancellableWFCommandFut::new(CancellableID::Activity(seq));
@@ -573,7 +573,8 @@ impl<'a> Future for LATimerBackoffFut<'a> {
                     if let TimerResult::Fired = tr {
                         let mut opts = self.la_opts.clone();
                         opts.attempt = Some(self.next_attempt);
-                        opts.original_schedule_time = self.next_sched_time.clone();
+                        opts.original_schedule_time
+                            .clone_from(&self.next_sched_time);
                         self.current_fut = Box::pin(self.ctx.local_activity_no_timer_retry(opts));
                         Poll::Pending
                     } else {
@@ -608,7 +609,7 @@ impl<'a> Future for LATimerBackoffFut<'a> {
                 );
                 self.timer_fut = Some(Box::pin(timer_f));
                 self.next_attempt = b.attempt;
-                self.next_sched_time = b.original_schedule_time.clone();
+                self.next_sched_time.clone_from(&b.original_schedule_time);
                 return Poll::Pending;
             }
         }

@@ -10,7 +10,6 @@ use temporal_sdk_core_protos::{
     temporal::api::{
         command::v1::Command as ProtoCommand,
         enums::v1::{CommandType, EventType},
-        history::v1::HistoryEvent,
     },
 };
 
@@ -116,10 +115,6 @@ impl WFMachinesAdapter for FailWorkflowMachine {
         _event_info: Option<EventInfo>,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         Ok(vec![])
-    }
-
-    fn matches_event(&self, event: &HistoryEvent) -> bool {
-        event.event_type() == EventType::WorkflowExecutionFailed
     }
 }
 

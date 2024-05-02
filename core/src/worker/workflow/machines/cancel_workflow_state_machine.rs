@@ -1,6 +1,6 @@
 use super::{
-    workflow_machines::MachineResponse, Cancellable, EventInfo, HistoryEvent,
-    NewMachineWithCommand, OnEventWrapper, WFMachinesAdapter, WFMachinesError,
+    workflow_machines::MachineResponse, Cancellable, EventInfo, NewMachineWithCommand,
+    OnEventWrapper, WFMachinesAdapter, WFMachinesError,
 };
 use crate::worker::workflow::machines::HistEventData;
 use rustfsm::{fsm, StateMachine, TransitionResult};
@@ -26,9 +26,6 @@ fsm! {
     CancelWorkflowCommandCreated --(WorkflowExecutionCanceled)
         --> CancelWorkflowCommandRecorded;
 }
-
-#[derive(thiserror::Error, Debug)]
-pub(super) enum CancelWorkflowMachineError {}
 
 #[derive(Debug, derive_more::Display)]
 pub(super) enum CancelWorkflowCommand {}
@@ -104,10 +101,6 @@ impl WFMachinesAdapter for CancelWorkflowMachine {
         _event_info: Option<EventInfo>,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         Ok(vec![])
-    }
-
-    fn matches_event(&self, event: &HistoryEvent) -> bool {
-        event.event_type() == EventType::WorkflowExecutionCanceled
     }
 }
 
