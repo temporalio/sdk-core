@@ -10,9 +10,7 @@ use std::{
 };
 use temporal_sdk_core_api::{
     telemetry::metrics::{CoreMeter, GaugeF64, MetricAttributes, TemporalMeter},
-    worker::{
-        SlotKind, SlotReleaseReason, SlotReservationContext, SlotSupplier, SlotSupplierPermit,
-    },
+    worker::{SlotKind, SlotReservationContext, SlotSupplier, SlotSupplierPermit},
 };
 use tokio::{sync::watch, task::JoinHandle};
 
@@ -159,7 +157,7 @@ where
 
     fn mark_slot_used(&self, _info: SK::Info<'_>) {}
 
-    fn release_slot(&self, _info: SlotReleaseReason) {}
+    fn release_slot(&self) {}
 
     fn attach_metrics(&self, metrics: TemporalMeter) {
         self.inner.attach_metrics(metrics);

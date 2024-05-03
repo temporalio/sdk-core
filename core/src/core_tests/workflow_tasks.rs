@@ -33,8 +33,7 @@ use temporal_sdk_core_api::{
     errors::PollWfError,
     telemetry::metrics::TemporalMeter,
     worker::{
-        SlotKind, SlotReleaseReason, SlotReservationContext, SlotSupplier, SlotSupplierPermit,
-        WorkflowSlotKind,
+        SlotKind, SlotReservationContext, SlotSupplier, SlotSupplierPermit, WorkflowSlotKind,
     },
     Worker as WorkerTrait,
 };
@@ -2899,7 +2898,7 @@ async fn slot_provider_cant_hand_out_more_permits_than_cache_size() {
             Some(SlotSupplierPermit::default())
         }
         fn mark_slot_used(&self, _: <Self::SlotKind as SlotKind>::Info<'_>) {}
-        fn release_slot(&self, _: SlotReleaseReason) {}
+        fn release_slot(&self) {}
         fn available_slots(&self) -> Option<usize> {
             None
         }

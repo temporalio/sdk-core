@@ -239,7 +239,7 @@ pub trait SlotSupplier {
     fn mark_slot_used(&self, info: <Self::SlotKind as SlotKind>::Info<'_>);
 
     /// Frees a slot.
-    fn release_slot(&self, info: SlotReleaseReason);
+    fn release_slot(&self);
 
     /// If this implementation knows how many slots are available at any moment, it should return
     /// that here.
@@ -277,12 +277,6 @@ impl SlotSupplierPermit {
     pub fn user_data_mut<T: Any + Send + Sync>(&mut self) -> Option<&mut T> {
         self.user_data.as_mut().and_then(|b| b.downcast_mut())
     }
-}
-
-pub enum SlotReleaseReason {
-    TaskComplete,
-    NeverUsed,
-    Error, // TODO: Details
 }
 
 pub struct WorkflowSlotInfo<'a> {

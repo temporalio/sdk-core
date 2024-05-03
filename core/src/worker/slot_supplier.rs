@@ -1,7 +1,6 @@
 use std::{marker::PhantomData, sync::Arc};
 use temporal_sdk_core_api::worker::{
-    SlotKind, SlotReleaseReason, SlotReservationContext, SlotSupplier, SlotSupplierPermit,
-    WorkerConfigBuilder,
+    SlotKind, SlotReservationContext, SlotSupplier, SlotSupplierPermit, WorkerConfigBuilder,
 };
 use tokio::sync::Semaphore;
 
@@ -48,7 +47,7 @@ where
 
     fn mark_slot_used(&self, _info: SK::Info<'_>) {}
 
-    fn release_slot(&self, _: SlotReleaseReason) {}
+    fn release_slot(&self) {}
 
     fn available_slots(&self) -> Option<usize> {
         Some(self.sem.available_permits())

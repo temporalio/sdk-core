@@ -12,7 +12,7 @@ use std::{
     },
 };
 use temporal_sdk_core_api::worker::{
-    SlotKind, SlotReleaseReason, SlotReservationContext, SlotSupplier, SlotSupplierPermit,
+    SlotKind, SlotReservationContext, SlotSupplier, SlotSupplierPermit,
 };
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
@@ -125,8 +125,7 @@ where
                 metric_rec(false)
             }),
             release_fn: Box::new(move || {
-                // TODO: Real release reason
-                supp_c_c.release_slot(SlotReleaseReason::TaskComplete);
+                supp_c_c.release_slot();
                 ep_tx_c.send_modify(|ep| *ep -= 1);
                 mrc(true)
             }),
