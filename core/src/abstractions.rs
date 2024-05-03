@@ -112,7 +112,7 @@ where
                 if let Some(avail) = supp.available_slots() {
                     mets.available_task_slots(avail + unused + extra);
                 }
-                mets.task_slots_used((*ep_rx_c.borrow() - unused + extra) as u64);
+                mets.task_slots_used((ep_rx_c.borrow().saturating_sub(unused) + extra) as u64);
             };
         let mrc = metric_rec.clone();
         mrc(false);
