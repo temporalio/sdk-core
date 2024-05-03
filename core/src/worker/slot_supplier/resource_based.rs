@@ -16,6 +16,11 @@ use tokio::{sync::watch, task::JoinHandle};
 
 /// Implements [SlotSupplier] and attempts to maintain certain levels of resource usage when
 /// under load.
+///
+/// It does so by using two PID controllers, one for memory and one for CPU, which are fed the
+/// current usage levels of their respective resource as measurements. The user specifies a target
+/// threshold for each, and slots are handed out if the output of both PID controllers is above some
+/// defined threshold. See [ResourceBasedSlotsOptions] for the default PID controller settings.
 pub struct ResourceBasedSlots<MI> {
     options: ResourceBasedSlotsOptions,
     sys_info_supplier: MI,
