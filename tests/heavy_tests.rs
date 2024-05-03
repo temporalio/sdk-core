@@ -5,7 +5,7 @@ use std::{
 };
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{ActContext, ActivityOptions, WfContext, WorkflowResult};
-use temporal_sdk_core::{ResourceBasedSlots, WorkerConfigSlotSupplierExt};
+use temporal_sdk_core::{ResourceBasedSlots, ResourceBasedTuner, ResourceSlotOptions};
 use temporal_sdk_core_protos::{
     coresdk::{workflow_commands::ActivityCancellationType, AsJsonPayloadExt},
     temporal::api::enums::v1::WorkflowIdReusePolicy,
@@ -91,17 +91,18 @@ async fn chunky_activities_resource_based() {
     let mut starter = CoreWfStarter::new("chunky_activities_resource_based");
     starter
         .worker_config
+        .clear_max_outstanding_opts()
         .max_concurrent_wft_polls(10_usize)
         .max_concurrent_at_polls(10_usize);
-    let resource_slots = Arc::new(ResourceBasedSlots::new(0.7, 0.7));
-    starter
-        .worker_config
-        .workflow_task_slot_supplier(resource_slots.as_kind(
+    let mut tuner = ResourceBasedTuner::new(ResourceBasedSlots::new(0.7, 0.7));
+    tuner
+        .with_workflow_slots_options(ResourceSlotOptions::new(
             25,
             WORKFLOWS,
             Duration::from_millis(0),
         ))
-        .activity_task_slot_supplier(resource_slots.as_kind(5, 1000, Duration::from_millis(50)));
+        .with_activity_slots_options(ResourceSlotOptions::new(5, 1000, Duration::from_millis(50)));
+    starter.worker_config.tuner(Arc::new(tuner));
     let mut worker = starter.worker().await;
 
     let activity_id = "act-1";

@@ -5,7 +5,6 @@ use std::{
 };
 use temporal_client::WorkflowOptions;
 use temporal_sdk::{WfContext, WorkflowResult};
-use temporal_sdk_core::WorkerConfigSlotSupplierExt;
 use temporal_sdk_core_test_utils::CoreWfStarter;
 use tokio::sync::Barrier;
 

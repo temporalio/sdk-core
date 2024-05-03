@@ -10,7 +10,7 @@ use temporal_sdk::{
     interceptors::WorkerInterceptor, ActContext, ActivityCancelledError, CancellableFuture,
     LocalActivityOptions, WfContext, WorkflowResult,
 };
-use temporal_sdk_core::{replay::HistoryForReplay, WorkerConfigSlotSupplierExt};
+use temporal_sdk_core::replay::HistoryForReplay;
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_commands::{workflow_command::Variant, ActivityCancellationType},

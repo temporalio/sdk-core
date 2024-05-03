@@ -1,13 +1,14 @@
 use std::{marker::PhantomData, sync::Arc};
 use temporal_sdk_core_api::worker::{
-    SlotKind, SlotReservationContext, SlotSupplier, SlotSupplierPermit, WorkerConfigBuilder,
+    SlotKind, SlotReservationContext, SlotSupplier, SlotSupplierPermit,
 };
 use tokio::sync::Semaphore;
 
 mod resource_based;
 
-pub use resource_based::{RealSysInfo, ResourceBasedSlots};
-use temporal_sdk_core_api::telemetry::metrics::TemporalMeter;
+pub use resource_based::{
+    RealSysInfo, ResourceBasedSlots, ResourceBasedTuner, ResourceSlotOptions,
+};
 
 pub(crate) struct FixedSizeSlotSupplier<SK> {
     sem: Arc<Semaphore>,
@@ -51,42 +52,5 @@ where
 
     fn available_slots(&self) -> Option<usize> {
         Some(self.sem.available_permits())
-    }
-
-    fn attach_metrics(&self, _: TemporalMeter) {
-        // Doesn't need to do anything. Metrics tracking is handled by `MeteredPermitDealer`.
-    }
-}
-
-/// Extension trait providing backwards compatibility with old fixed-size slot options
-pub trait WorkerConfigSlotSupplierExt {
-    /// Creates a [FixedSizeSlotSupplier] using the provided max and assigns it as the workflow
-    /// task slot supplier
-    fn max_outstanding_workflow_tasks(&mut self, max: usize) -> &mut Self;
-    /// Creates a [FixedSizeSlotSupplier] using the provided max and assigns it as the activity task
-    /// slot supplier
-    fn max_outstanding_activities(&mut self, max: usize) -> &mut Self;
-    /// Creates a [FixedSizeSlotSupplier] using the provided max and assigns it as the local
-    /// activity task slot supplier
-    fn max_outstanding_local_activities(&mut self, max: usize) -> &mut Self;
-}
-
-impl WorkerConfigSlotSupplierExt for WorkerConfigBuilder {
-    fn max_outstanding_workflow_tasks(&mut self, max: usize) -> &mut Self {
-        let fsss = FixedSizeSlotSupplier::new(max);
-        self.workflow_task_slot_supplier(Arc::new(fsss));
-        self
-    }
-
-    fn max_outstanding_activities(&mut self, max: usize) -> &mut Self {
-        let fsss = FixedSizeSlotSupplier::new(max);
-        self.activity_task_slot_supplier(Arc::new(fsss));
-        self
-    }
-
-    fn max_outstanding_local_activities(&mut self, max: usize) -> &mut Self {
-        let fsss = FixedSizeSlotSupplier::new(max);
-        self.local_activity_task_slot_supplier(Arc::new(fsss));
-        self
     }
 }

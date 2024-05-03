@@ -9,7 +9,6 @@ use crate::{
         client::{
             mocks::mock_workflow_client, MockWorkerClient, WorkerClient, WorkflowTaskCompletion,
         },
-        slot_supplier::FixedSizeSlotSupplier,
         TaskPollers,
     },
     TaskToken, Worker, WorkerConfig, WorkerConfigBuilder,
@@ -62,9 +61,6 @@ pub(crate) fn test_worker_cfg() -> WorkerConfigBuilder {
     let mut wcb = WorkerConfigBuilder::default();
     wcb.namespace(NAMESPACE)
         .task_queue(TEST_Q)
-        .workflow_task_slot_supplier(Arc::new(FixedSizeSlotSupplier::new(100)))
-        .activity_task_slot_supplier(Arc::new(FixedSizeSlotSupplier::new(100)))
-        .local_activity_task_slot_supplier(Arc::new(FixedSizeSlotSupplier::new(100)))
         .worker_build_id("test_bin_id")
         .ignore_evicts_on_shutdown(true)
         // Serial polling since it makes mocking much easier.

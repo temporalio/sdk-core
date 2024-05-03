@@ -29,7 +29,7 @@ use std::{
 };
 use temporal_client::{WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{interceptors::WorkerInterceptor, ActivityOptions, WfContext, WorkflowResult};
-use temporal_sdk_core::{replay::HistoryForReplay, CoreRuntime, WorkerConfigSlotSupplierExt};
+use temporal_sdk_core::{replay::HistoryForReplay, CoreRuntime};
 use temporal_sdk_core_api::{
     errors::{PollWfError, WorkflowErrorType},
     Worker,

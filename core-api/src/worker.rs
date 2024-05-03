@@ -33,18 +33,10 @@ pub struct WorkerConfig {
     /// or failures.
     #[builder(default = "0")]
     pub max_cached_workflows: usize,
-    /// Set a [SlotSupplier] for workflow tasks.
-    #[builder(setter(into = false))]
-    pub workflow_task_slot_supplier:
-        Arc<dyn SlotSupplier<SlotKind = WorkflowSlotKind> + Send + Sync>,
-    /// Set a [SlotSupplier] for activity tasks.
-    #[builder(setter(into = false))]
-    pub activity_task_slot_supplier:
-        Arc<dyn SlotSupplier<SlotKind = ActivitySlotKind> + Send + Sync>,
-    /// Set a [SlotSupplier] for local activity tasks.
-    #[builder(setter(into = false))]
-    pub local_activity_task_slot_supplier:
-        Arc<dyn SlotSupplier<SlotKind = LocalActivitySlotKind> + Send + Sync>,
+    /// Set a [WorkerTuner] for this worker. Either this or at least one of the `max_outstanding_*`
+    /// fields must be set.
+    #[builder(setter(into = false, strip_option), default)]
+    pub tuner: Option<Arc<dyn WorkerTuner + Send + Sync>>,
     /// Maximum number of concurrent poll workflow task requests we will perform at a time on this
     /// worker's task queue. See also [WorkerConfig::nonsticky_to_sticky_poll_ratio]. Must be at
     /// least 1.
@@ -137,6 +129,25 @@ pub struct WorkerConfig {
     /// map key).
     #[builder(default)]
     pub workflow_types_to_failure_errors: HashMap<String, HashSet<WorkflowErrorType>>,
+
+    /// The maximum allowed number of workflow tasks that will ever be given to this worker at one
+    /// time. Note that one workflow task may require multiple activations - so the WFT counts as
+    /// "outstanding" until all activations it requires have been completed.
+    ///
+    /// Mutually exclusive with `tuner`
+    #[builder(setter(into, strip_option), default)]
+    pub max_outstanding_workflow_tasks: Option<usize>,
+    /// The maximum number of activity tasks that will ever be given to this worker concurrently
+    ///
+    /// Mutually exclusive with `tuner`
+    #[builder(setter(into, strip_option), default)]
+    pub max_outstanding_activities: Option<usize>,
+    /// The maximum number of local activity tasks that will ever be given to this worker
+    /// concurrently
+    ///
+    /// Mutually exclusive with `tuner`
+    #[builder(setter(into, strip_option), default)]
+    pub max_outstanding_local_activities: Option<usize>,
 }
 
 impl WorkerConfig {
@@ -166,6 +177,14 @@ impl WorkerConfig {
 }
 
 impl WorkerConfigBuilder {
+    /// Unset all `max_outstanding_*` fields
+    pub fn clear_max_outstanding_opts(&mut self) -> &mut Self {
+        self.max_outstanding_workflow_tasks = None;
+        self.max_outstanding_activities = None;
+        self.max_outstanding_local_activities = None;
+        self
+    }
+
     fn validate(&self) -> Result<(), String> {
         if self.max_concurrent_wft_polls == Some(0) {
             return Err("`max_concurrent_wft_polls` must be at least 1".to_owned());
@@ -180,6 +199,14 @@ impl WorkerConfigBuilder {
                     "`max_worker_activities_per_second` must be positive and nonzero".to_owned(),
                 );
             }
+        }
+
+        if self.tuner.is_some()
+            && (self.max_outstanding_workflow_tasks.is_some()
+                || self.max_outstanding_activities.is_some()
+                || self.max_outstanding_local_activities.is_some())
+        {
+            return Err("max_outstanding_* fields are mutually exclusive with `tuner`".to_owned());
         }
 
         let max_wft_polls = self
@@ -211,6 +238,29 @@ impl WorkerConfigBuilder {
         }
         Ok(())
     }
+}
+
+/// This trait allows users to customize the performance characteristics of workers dynamically.
+/// For more, see the docstrings of the traits in the return types of its functions.
+pub trait WorkerTuner {
+    /// Return a [SlotSupplier] for workflow tasks
+    fn workflow_task_slot_supplier(
+        &self,
+    ) -> Arc<dyn SlotSupplier<SlotKind = WorkflowSlotKind> + Send + Sync>;
+
+    /// Return a [SlotSupplier] for activity tasks
+    fn activity_task_slot_supplier(
+        &self,
+    ) -> Arc<dyn SlotSupplier<SlotKind = ActivitySlotKind> + Send + Sync>;
+
+    /// Return a [SlotSupplier] for local activities
+    fn local_activity_slot_supplier(
+        &self,
+    ) -> Arc<dyn SlotSupplier<SlotKind = LocalActivitySlotKind> + Send + Sync>;
+
+    /// Core will call this at worker initialization time, allowing the implementation to hook up to
+    /// metrics if any are configured. If not, it will not be called.
+    fn attach_metrics(&self, metrics: TemporalMeter);
 }
 
 /// Implementing this trait allows users to customize how many tasks of certain kinds the worker
@@ -246,10 +296,6 @@ pub trait SlotSupplier {
     fn available_slots(&self) -> Option<usize> {
         None
     }
-
-    /// Core will call this at worker initialization time, allowing the implementation to hook up to
-    /// metrics if any are configured. If not, it will not be called.
-    fn attach_metrics(&self, metrics: TemporalMeter);
 }
 
 pub trait SlotReservationContext: Send + Sync {

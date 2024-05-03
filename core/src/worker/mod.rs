@@ -2,10 +2,12 @@ mod activities;
 pub(crate) mod client;
 mod slot_provider;
 pub(crate) mod slot_supplier;
+mod tuner;
 mod workflow;
 
-pub use slot_supplier::{RealSysInfo, ResourceBasedSlots, WorkerConfigSlotSupplierExt};
+pub use slot_supplier::{RealSysInfo, ResourceBasedSlots, ResourceBasedTuner, ResourceSlotOptions};
 pub use temporal_sdk_core_api::worker::{WorkerConfig, WorkerConfigBuilder};
+pub use tuner::{TunerBuilder, TunerHolder};
 
 pub(crate) use activities::{
     ExecutingLAId, LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
@@ -250,21 +252,19 @@ impl Worker {
         } else {
             (MetricsContext::no_op(), None)
         };
+        let tuner = config
+            .tuner
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(|| TunerBuilder::from_config(&config).build());
+
         metrics.worker_registered();
         if let Some(meter) = meter {
-            config
-                .workflow_task_slot_supplier
-                .attach_metrics(meter.clone());
-            config
-                .activity_task_slot_supplier
-                .attach_metrics(meter.clone());
-            config
-                .local_activity_task_slot_supplier
-                .attach_metrics(meter);
+            tuner.attach_metrics(meter.clone());
         }
         let shutdown_token = CancellationToken::new();
         let wft_slots = Arc::new(MeteredPermitDealer::new(
-            config.workflow_task_slot_supplier.clone(),
+            tuner.workflow_task_slot_supplier(),
             metrics.with_new_attrs([workflow_worker_type()]),
             if config.max_cached_workflows > 0 {
                 // Since we always need to be able to poll the normal task queue as well as the
@@ -275,7 +275,7 @@ impl Worker {
             },
         ));
         let act_slots = Arc::new(MeteredPermitDealer::new(
-            config.activity_task_slot_supplier.clone(),
+            tuner.activity_task_slot_supplier(),
             metrics.with_new_attrs([activity_worker_type()]),
             None,
         ));
@@ -378,7 +378,7 @@ impl Worker {
 
         let (hb_tx, hb_rx) = unbounded_channel();
         let local_act_mgr = Arc::new(LocalActivityManager::new(
-            config.local_activity_task_slot_supplier.clone(),
+            tuner.local_activity_slot_supplier(),
             config.namespace.clone(),
             hb_tx,
             metrics.with_new_attrs([local_activity_worker_type()]),

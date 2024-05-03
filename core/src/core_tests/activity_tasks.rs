@@ -6,11 +6,8 @@ use crate::{
         single_hist_mock_sg, test_worker_cfg, MockPollCfg, MockWorkerInputs, MocksHolder,
         QueueResponse, ResponseType, WorkerExt, WorkflowCachingPolicy, TEST_Q,
     },
-    worker::{
-        client::mocks::{mock_manual_workflow_client, mock_workflow_client},
-        slot_supplier::FixedSizeSlotSupplier,
-    },
-    ActivityHeartbeat, Worker, WorkerConfigSlotSupplierExt,
+    worker::client::mocks::{mock_manual_workflow_client, mock_workflow_client},
+    ActivityHeartbeat, Worker,
 };
 use futures::FutureExt;
 use itertools::Itertools;
@@ -921,7 +918,7 @@ async fn activity_tasks_from_completion_reserve_slots() {
     let mut mock = build_mock_pollers(mh);
     mock.worker_cfg(|cfg| {
         cfg.max_cached_workflows = 2;
-        cfg.activity_task_slot_supplier = Arc::new(FixedSizeSlotSupplier::new(2));
+        cfg.max_outstanding_activities = Some(2);
     });
     mock.set_act_poller(mock_poller_from_resps(act_tasks));
     let core = Arc::new(mock_worker(mock));

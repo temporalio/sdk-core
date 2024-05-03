@@ -36,7 +36,6 @@ use temporal_sdk_core::{
     replay::ReplayWorkerInput,
     telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter},
     ClientOptions, ClientOptionsBuilder, CoreRuntime, WorkerConfigBuilder,
-    WorkerConfigSlotSupplierExt,
 };
 use temporal_sdk_core_api::{
     errors::{PollActivityError, PollWfError},
@@ -101,9 +100,9 @@ pub fn integ_worker_config(tq: &str) -> WorkerConfigBuilder {
     let mut b = WorkerConfigBuilder::default();
     b.namespace(NAMESPACE)
         .task_queue(tq)
-        .max_outstanding_activities(100)
-        .max_outstanding_local_activities(100)
-        .max_outstanding_workflow_tasks(100)
+        .max_outstanding_activities(100_usize)
+        .max_outstanding_local_activities(100_usize)
+        .max_outstanding_workflow_tasks(100_usize)
         .worker_build_id("test_build_id");
     b
 }

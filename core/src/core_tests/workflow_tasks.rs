@@ -12,9 +12,9 @@ use crate::{
     },
     worker::{
         client::mocks::{mock_manual_workflow_client, mock_workflow_client},
-        slot_supplier::FixedSizeSlotSupplier,
+        TunerBuilder,
     },
-    Worker, WorkerConfigSlotSupplierExt,
+    Worker,
 };
 use futures::{stream, FutureExt};
 use rstest::{fixture, rstest};
@@ -31,7 +31,6 @@ use temporal_client::WorkflowOptions;
 use temporal_sdk::{ActivityOptions, CancellableFuture, WfContext};
 use temporal_sdk_core_api::{
     errors::PollWfError,
-    telemetry::metrics::TemporalMeter,
     worker::{
         SlotKind, SlotReservationContext, SlotSupplier, SlotSupplierPermit, WorkflowSlotKind,
     },
@@ -921,7 +920,7 @@ async fn max_wft_respected() {
     let mh = MockPollCfg::new(hists.into_iter().collect(), true, 0);
     let mut worker = mock_sdk_cfg(mh, |cfg| {
         cfg.max_cached_workflows = total_wfs as usize;
-        cfg.workflow_task_slot_supplier = Arc::new(FixedSizeSlotSupplier::new(1));
+        cfg.max_outstanding_workflow_tasks = Some(1);
     });
     let active_count: &'static _ = Box::leak(Box::new(Semaphore::new(1)));
     worker.register_wf(DEFAULT_WORKFLOW_TYPE, move |ctx: WfContext| async move {
@@ -1516,7 +1515,7 @@ async fn failing_wft_doesnt_eat_permit_forever() {
     let mut mock = build_mock_pollers(mock);
     mock.worker_cfg(|cfg| {
         cfg.max_cached_workflows = 2;
-        cfg.workflow_task_slot_supplier = Arc::new(FixedSizeSlotSupplier::new(2));
+        cfg.max_outstanding_workflow_tasks = Some(2);
     });
     let outstanding_mock_tasks = mock.outstanding_task_map.clone();
     let worker = mock_worker(mock);
@@ -1592,7 +1591,7 @@ async fn cache_miss_will_fetch_history() {
     mock.worker_cfg(|cfg| {
         cfg.max_cached_workflows = 1;
         // Also verifies tying the WFT permit to the fetch request doesn't get us stuck
-        cfg.workflow_task_slot_supplier = Arc::new(FixedSizeSlotSupplier::new(1));
+        cfg.max_outstanding_workflow_tasks = Some(1);
     });
     let worker = mock_worker(mock);
 
@@ -1818,7 +1817,7 @@ async fn poll_faster_than_complete_wont_overflow_cache() {
     let mut mock = build_mock_pollers(mock_cfg);
     mock.worker_cfg(|wc| {
         wc.max_cached_workflows = 3;
-        wc.workflow_task_slot_supplier = Arc::new(FixedSizeSlotSupplier::new(3));
+        wc.max_outstanding_workflow_tasks = Some(3);
     });
     let core = mock_worker(mock);
     // Poll 4 times, completing once, such that max tasks are never exceeded
@@ -2902,13 +2901,16 @@ async fn slot_provider_cant_hand_out_more_permits_than_cache_size() {
         fn available_slots(&self) -> Option<usize> {
             None
         }
-        fn attach_metrics(&self, _: TemporalMeter) {}
     }
 
     let worker = Worker::new_test(
         test_worker_cfg()
             .max_cached_workflows(10_usize)
-            .workflow_task_slot_supplier(Arc::new(EndlessSupplier {}))
+            .tuner(
+                TunerBuilder::default()
+                    .workflow_slot_supplier(Arc::new(EndlessSupplier {}))
+                    .build(),
+            )
             .max_concurrent_wft_polls(10_usize)
             .no_remote_activities(true)
             .build()

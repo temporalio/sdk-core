@@ -1,7 +1,6 @@
 use std::time::Duration;
 use temporal_client::WorkflowOptions;
 use temporal_sdk::{WfContext, WfExitValue, WorkflowResult};
-use temporal_sdk_core::WorkerConfigSlotSupplierExt;
 use temporal_sdk_core_protos::coresdk::workflow_commands::ContinueAsNewWorkflowExecution;
 use temporal_sdk_core_test_utils::CoreWfStarter;
 

@@ -10,9 +10,79 @@ use std::{
 };
 use temporal_sdk_core_api::{
     telemetry::metrics::{CoreMeter, GaugeF64, MetricAttributes, TemporalMeter},
-    worker::{SlotKind, SlotReservationContext, SlotSupplier, SlotSupplierPermit},
+    worker::{
+        ActivitySlotKind, LocalActivitySlotKind, SlotKind, SlotReservationContext, SlotSupplier,
+        SlotSupplierPermit, WorkerTuner, WorkflowSlotKind,
+    },
 };
 use tokio::{sync::watch, task::JoinHandle};
+
+/// Implements [WorkerTuner] and attempts to maintain certain levels of resource usage when
+/// under load.
+///
+/// It does so by using two PID controllers, one for memory and one for CPU, which are fed the
+/// current usage levels of their respective resource as measurements. The user specifies a target
+/// threshold for each, and slots are handed out if the output of both PID controllers is above some
+/// defined threshold. See [ResourceBasedSlotsOptions] for the default PID controller settings.
+pub struct ResourceBasedTuner<MI> {
+    slots: Arc<ResourceBasedSlots<MI>>,
+    wf_opts: Option<ResourceSlotOptions>,
+    act_opts: Option<ResourceSlotOptions>,
+    la_opts: Option<ResourceSlotOptions>,
+}
+
+impl<MI> ResourceBasedTuner<MI> {
+    /// Build a new tuner from a [ResourceBasedSlots] instance
+    pub fn new(resourcer: ResourceBasedSlots<MI>) -> Self {
+        Self {
+            slots: Arc::new(resourcer),
+            wf_opts: None,
+            act_opts: None,
+            la_opts: None,
+        }
+    }
+
+    /// Set workflow slot options
+    pub fn with_workflow_slots_options(&mut self, opts: ResourceSlotOptions) -> &mut Self {
+        self.wf_opts = Some(opts);
+        self
+    }
+
+    /// Set activity slot options
+    pub fn with_activity_slots_options(&mut self, opts: ResourceSlotOptions) -> &mut Self {
+        self.act_opts = Some(opts);
+        self
+    }
+
+    /// Set local activity slot options
+    pub fn with_local_activity_slots_options(&mut self, opts: ResourceSlotOptions) -> &mut Self {
+        self.la_opts = Some(opts);
+        self
+    }
+}
+
+const DEFAULT_WF_SLOT_OPTS: ResourceSlotOptions = ResourceSlotOptions {
+    min_slots: 2,
+    max_slots: 10_000,
+    ramp_throttle: Duration::from_millis(0),
+};
+const DEFAULT_ACT_SLOT_OPTS: ResourceSlotOptions = ResourceSlotOptions {
+    min_slots: 1,
+    max_slots: 10_000,
+    ramp_throttle: Duration::from_millis(50),
+};
+
+/// Options for a specific slot type
+#[derive(Debug, Clone, Copy, derive_more::Constructor)]
+pub struct ResourceSlotOptions {
+    /// Amount of slots of this type that will be issued regardless of any other checks
+    min_slots: usize,
+    /// Maximum amount of slots of this type permitted
+    max_slots: usize,
+    /// Minimum time we will wait (after passing the minimum slots number) between handing out new
+    /// slots
+    ramp_throttle: Duration,
+}
 
 /// Implements [SlotSupplier] and attempts to maintain certain levels of resource usage when
 /// under load.
@@ -32,12 +102,7 @@ pub struct ResourceBasedSlots<MI> {
 pub struct ResourceBasedSlotsForType<MI, SK> {
     inner: Arc<ResourceBasedSlots<MI>>,
 
-    minimum: usize,
-    /// Maximum amount of slots of this type permitted
-    max: usize,
-    /// Minimum time we will wait (after passing the minimum slots number) between handing out new
-    /// slots
-    ramp_throttle: Duration,
+    opts: ResourceSlotOptions,
 
     last_slot_issued_tx: watch::Sender<Instant>,
     last_slot_issued_rx: watch::Receiver<Instant>,
@@ -169,10 +234,11 @@ where
 
     async fn reserve_slot(&self, ctx: &dyn SlotReservationContext) -> SlotSupplierPermit {
         loop {
-            if ctx.num_issued_slots() < self.minimum {
+            if ctx.num_issued_slots() < self.opts.min_slots {
                 return self.issue_slot();
             } else {
                 let must_wait_for = self
+                    .opts
                     .ramp_throttle
                     .saturating_sub(self.time_since_last_issued());
                 if must_wait_for > Duration::from_millis(0) {
@@ -189,9 +255,9 @@ where
 
     fn try_reserve_slot(&self, ctx: &dyn SlotReservationContext) -> Option<SlotSupplierPermit> {
         let num_issued = ctx.num_issued_slots();
-        if num_issued < self.minimum
-            || (self.time_since_last_issued() > self.ramp_throttle
-                && num_issued < self.max
+        if num_issued < self.opts.min_slots
+            || (self.time_since_last_issued() > self.opts.ramp_throttle
+                && num_issued < self.opts.max_slots
                 && self.inner.pid_decision()
                 && self.inner.can_reserve())
         {
@@ -204,10 +270,6 @@ where
     fn mark_slot_used(&self, _info: SK::Info<'_>) {}
 
     fn release_slot(&self) {}
-
-    fn attach_metrics(&self, metrics: TemporalMeter) {
-        self.inner.attach_metrics(metrics);
-    }
 }
 
 impl<MI, SK> ResourceBasedSlotsForType<MI, SK>
@@ -222,17 +284,10 @@ where
     MI: SystemResourceInfo + Send + Sync,
     SK: SlotKind + Send + Sync,
 {
-    fn new(
-        inner: Arc<ResourceBasedSlots<MI>>,
-        minimum: usize,
-        max: usize,
-        ramp_throttle: Duration,
-    ) -> Self {
+    fn new(inner: Arc<ResourceBasedSlots<MI>>, opts: ResourceSlotOptions) -> Self {
         let (tx, rx) = watch::channel(Instant::now());
         Self {
-            minimum,
-            max,
-            ramp_throttle,
+            opts,
             last_slot_issued_tx: tx,
             last_slot_issued_rx: rx,
             inner,
@@ -252,6 +307,33 @@ where
     }
 }
 
+impl<MI: SystemResourceInfo + Sync + Send + 'static> WorkerTuner for ResourceBasedTuner<MI> {
+    fn workflow_task_slot_supplier(
+        &self,
+    ) -> Arc<dyn SlotSupplier<SlotKind = WorkflowSlotKind> + Send + Sync> {
+        let o = self.wf_opts.unwrap_or(DEFAULT_WF_SLOT_OPTS);
+        self.slots.as_kind(o)
+    }
+
+    fn activity_task_slot_supplier(
+        &self,
+    ) -> Arc<dyn SlotSupplier<SlotKind = ActivitySlotKind> + Send + Sync> {
+        let o = self.act_opts.unwrap_or(DEFAULT_ACT_SLOT_OPTS);
+        self.slots.as_kind(o)
+    }
+
+    fn local_activity_slot_supplier(
+        &self,
+    ) -> Arc<dyn SlotSupplier<SlotKind = LocalActivitySlotKind> + Send + Sync> {
+        let o = self.la_opts.unwrap_or(DEFAULT_ACT_SLOT_OPTS);
+        self.slots.as_kind(o)
+    }
+
+    fn attach_metrics(&self, metrics: TemporalMeter) {
+        self.slots.attach_metrics(metrics);
+    }
+}
+
 impl<MI: SystemResourceInfo + Sync + Send> ResourceBasedSlots<MI> {
     /// Create a [ResourceBasedSlotsForType] for this instance which is willing to hand out
     /// `minimum` slots with no checks at all and `max` slots ever. Otherwise the underlying
@@ -264,16 +346,9 @@ impl<MI: SystemResourceInfo + Sync + Send> ResourceBasedSlots<MI> {
     /// resulting in OOM (for example).
     pub fn as_kind<SK: SlotKind + Send + Sync>(
         self: &Arc<Self>,
-        minimum: usize,
-        max: usize,
-        ramp_throttle: Duration,
+        opts: ResourceSlotOptions,
     ) -> Arc<ResourceBasedSlotsForType<MI, SK>> {
-        Arc::new(ResourceBasedSlotsForType::new(
-            self.clone(),
-            minimum,
-            max,
-            ramp_throttle,
-        ))
+        Arc::new(ResourceBasedSlotsForType::new(self.clone(), opts))
     }
 
     fn new_with_sysinfo(options: ResourceBasedSlotsOptions, sys_info: MI) -> Self {
@@ -432,7 +507,11 @@ mod tests {
     fn mem_workflow_sync() {
         let (fmis, used) = FakeMIS::new();
         let rbs = Arc::new(ResourceBasedSlots::new_with_sysinfo(test_options(), fmis))
-            .as_kind::<WorkflowSlotKind>(0, 100, Duration::from_millis(0));
+            .as_kind::<WorkflowSlotKind>(ResourceSlotOptions {
+            min_slots: 0,
+            max_slots: 100,
+            ramp_throttle: Duration::from_millis(0),
+        });
         let pd = MeteredPermitDealer::new(rbs.clone(), MetricsContext::no_op(), None);
         assert!(rbs.try_reserve_slot(&pd).is_some());
         used.store(90_000, Ordering::Release);
@@ -444,7 +523,11 @@ mod tests {
         let (fmis, used) = FakeMIS::new();
         used.store(90_000, Ordering::Release);
         let rbs = Arc::new(ResourceBasedSlots::new_with_sysinfo(test_options(), fmis))
-            .as_kind::<WorkflowSlotKind>(0, 100, Duration::from_millis(0));
+            .as_kind::<WorkflowSlotKind>(ResourceSlotOptions {
+            min_slots: 0,
+            max_slots: 100,
+            ramp_throttle: Duration::from_millis(0),
+        });
         let pd = MeteredPermitDealer::new(rbs.clone(), MetricsContext::no_op(), None);
         let order = crossbeam_queue::ArrayQueue::new(2);
         let waits_free = async {
@@ -464,7 +547,11 @@ mod tests {
     fn minimum_respected() {
         let (fmis, used) = FakeMIS::new();
         let rbs = Arc::new(ResourceBasedSlots::new_with_sysinfo(test_options(), fmis))
-            .as_kind::<WorkflowSlotKind>(2, 100, Duration::from_millis(0));
+            .as_kind::<WorkflowSlotKind>(ResourceSlotOptions {
+            min_slots: 2,
+            max_slots: 100,
+            ramp_throttle: Duration::from_millis(0),
+        });
         let pd = MeteredPermitDealer::new(rbs.clone(), MetricsContext::no_op(), None);
         used.store(90_000, Ordering::Release);
         let _p1 = pd.try_acquire_owned().unwrap();
