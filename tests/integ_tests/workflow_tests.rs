@@ -126,7 +126,11 @@ pub(crate) async fn cache_evictions_wf(command_sink: WfContext) -> WorkflowResul
 async fn workflow_lru_cache_evictions() {
     let wf_type = "workflow_lru_cache_evictions";
     let mut starter = CoreWfStarter::new(wf_type);
-    starter.no_remote_activities().max_cached_workflows(1);
+    starter
+        .worker_config
+        .max_concurrent_wft_polls(1_usize)
+        .no_remote_activities(true)
+        .max_cached_workflows(1_usize);
     let mut worker = starter.worker().await;
     worker.register_wf(wf_type.to_string(), cache_evictions_wf);
 
@@ -170,7 +174,7 @@ async fn shutdown_aborts_actively_blocked_poll() {
     // Begin the poll, and request shutdown from another thread after a small period of time.
     let tcore = core.clone();
     let handle = tokio::spawn(async move {
-        std::thread::sleep(Duration::from_millis(100));
+        tokio::time::sleep(Duration::from_millis(100)).await;
         drain_pollers_and_shutdown(&tcore).await;
     });
     assert_matches!(
@@ -441,9 +445,10 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
     let signal_at_complete = "at-complete";
     let mut wf_starter = CoreWfStarter::new("wft_timeout_doesnt_create_unsolvable_autocomplete");
     wf_starter
+        .worker_config
         // Test needs eviction on and a short timeout
-        .max_cached_workflows(0)
-        .max_wft(1);
+        .max_cached_workflows(0_usize)
+        .max_outstanding_workflow_tasks(1_usize);
     wf_starter.worker_config.max_concurrent_wft_polls(1_usize);
     wf_starter.workflow_options.task_timeout = Some(Duration::from_secs(1));
     let core = wf_starter.get_worker().await;
@@ -559,7 +564,10 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
 async fn slow_completes_with_small_cache() {
     let wf_name = "slow_completes_with_small_cache";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.max_wft(5).max_cached_workflows(5);
+    starter
+        .worker_config
+        .max_outstanding_workflow_tasks(5_usize)
+        .max_cached_workflows(5_usize);
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         for _ in 0..3 {
@@ -747,7 +755,7 @@ async fn nondeterminism_errors_fail_workflow_when_configured_to(
     let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
     let wf_name = "nondeterminism_errors_fail_workflow_when_configured_to";
     let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
-    starter.no_remote_activities();
+    starter.worker_config.no_remote_activities(true);
     let typeset = HashSet::from([WorkflowErrorType::Nondeterminism]);
     if whole_worker {
         starter.worker_config.workflow_failure_errors(typeset);

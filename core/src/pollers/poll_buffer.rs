@@ -1,5 +1,5 @@
 use crate::{
-    abstractions::{dbg_panic, MeteredSemaphore, OwnedMeteredSemPermit},
+    abstractions::{dbg_panic, MeteredPermitDealer, OwnedMeteredSemPermit},
     pollers::{self, Poller},
     worker::client::WorkerClient,
 };
@@ -15,6 +15,7 @@ use std::{
     },
     time::Duration,
 };
+use temporal_sdk_core_api::worker::{ActivitySlotKind, SlotKind, WorkflowSlotKind};
 use temporal_sdk_core_protos::temporal::api::{
     taskqueue::v1::TaskQueue,
     workflowservice::v1::{PollActivityTaskQueueResponse, PollWorkflowTaskQueueResponse},
@@ -29,8 +30,10 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 
-pub(crate) struct LongPollBuffer<T> {
-    buffered_polls: Mutex<UnboundedReceiver<pollers::Result<(T, OwnedMeteredSemPermit)>>>,
+type PollReceiver<T, SK> =
+    Mutex<UnboundedReceiver<pollers::Result<(T, OwnedMeteredSemPermit<SK>)>>>;
+pub(crate) struct LongPollBuffer<T, SK: SlotKind> {
+    buffered_polls: PollReceiver<T, SK>,
     shutdown: CancellationToken,
     join_handles: FuturesUnordered<JoinHandle<()>>,
     /// Pollers won't actually start polling until initialized & value is sent
@@ -63,13 +66,14 @@ where
     }
 }
 
-impl<T> LongPollBuffer<T>
+impl<T, SK> LongPollBuffer<T, SK>
 where
     T: Send + Debug + 'static,
+    SK: SlotKind + 'static,
 {
     pub(crate) fn new<FT, DelayFut>(
         poll_fn: impl Fn() -> FT + Send + Sync + 'static,
-        poll_semaphore: Arc<MeteredSemaphore>,
+        permit_dealer: Arc<MeteredPermitDealer<SK>>,
         max_pollers: usize,
         shutdown: CancellationToken,
         num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
@@ -91,7 +95,7 @@ where
             let pf = pf.clone();
             let shutdown = shutdown.clone();
             let ap = active_pollers.clone();
-            let poll_semaphore = poll_semaphore.clone();
+            let permit_dealer = permit_dealer.clone();
             let nph = nph.clone();
             let pre_permit_delay = pre_permit_delay.clone();
             let mut wait_for_start = wait_for_start.resubscribe();
@@ -114,7 +118,7 @@ where
                         }
                     }
                     let permit = tokio::select! {
-                        p = poll_semaphore.acquire_owned() => p,
+                        p = permit_dealer.acquire_owned() => p,
                         _ = shutdown.cancelled() => break,
                     };
                     let permit = if let Ok(p) = permit {
@@ -143,15 +147,16 @@ where
 }
 
 #[async_trait::async_trait]
-impl<T> Poller<(T, OwnedMeteredSemPermit)> for LongPollBuffer<T>
+impl<T, SK> Poller<(T, OwnedMeteredSemPermit<SK>)> for LongPollBuffer<T, SK>
 where
     T: Send + Sync + Debug + 'static,
+    SK: SlotKind + 'static,
 {
     /// Poll for the next item from this poller
     ///
     /// Returns `None` if the poller has been shut down
     #[instrument(name = "long_poll", level = "trace", skip(self))]
-    async fn poll(&self) -> Option<pollers::Result<(T, OwnedMeteredSemPermit)>> {
+    async fn poll(&self) -> Option<pollers::Result<(T, OwnedMeteredSemPermit<SK>)>> {
         if !self.did_start.fetch_or(true, Ordering::Relaxed) {
             let _ = self.starter.send(());
         }
@@ -168,8 +173,12 @@ where
         self.notify_shutdown();
         while let Some(jh) = self.join_handles.next().await {
             if let Err(e) = jh {
-                if !e.is_cancelled() {
-                    dbg_panic!("Poller task did not terminate cleanly: {:?}", e);
+                if e.is_panic() {
+                    let as_panic = e.into_panic().downcast::<String>();
+                    dbg_panic!(
+                        "Poller task died or did not terminate cleanly: {:?}",
+                        as_panic
+                    );
                 }
             }
         }
@@ -189,10 +198,20 @@ pub(crate) struct WorkflowTaskPoller {
 }
 
 #[async_trait::async_trait]
-impl Poller<(PollWorkflowTaskQueueResponse, OwnedMeteredSemPermit)> for WorkflowTaskPoller {
+impl
+    Poller<(
+        PollWorkflowTaskQueueResponse,
+        OwnedMeteredSemPermit<WorkflowSlotKind>,
+    )> for WorkflowTaskPoller
+{
     async fn poll(
         &self,
-    ) -> Option<pollers::Result<(PollWorkflowTaskQueueResponse, OwnedMeteredSemPermit)>> {
+    ) -> Option<
+        pollers::Result<(
+            PollWorkflowTaskQueueResponse,
+            OwnedMeteredSemPermit<WorkflowSlotKind>,
+        )>,
+    > {
         if let Some(sq) = self.sticky_poller.as_ref() {
             tokio::select! {
                 r = self.normal_poller.poll() => r,
@@ -223,13 +242,13 @@ impl Poller<(PollWorkflowTaskQueueResponse, OwnedMeteredSemPermit)> for Workflow
     }
 }
 
-pub(crate) type PollWorkflowTaskBuffer = LongPollBuffer<PollWorkflowTaskQueueResponse>;
-
+pub(crate) type PollWorkflowTaskBuffer =
+    LongPollBuffer<PollWorkflowTaskQueueResponse, WorkflowSlotKind>;
 pub(crate) fn new_workflow_task_buffer(
     client: Arc<dyn WorkerClient>,
     task_queue: TaskQueue,
     concurrent_pollers: usize,
-    semaphore: Arc<MeteredSemaphore>,
+    permit_dealer: Arc<MeteredPermitDealer<WorkflowSlotKind>>,
     shutdown: CancellationToken,
     num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
 ) -> PollWorkflowTaskBuffer {
@@ -239,7 +258,7 @@ pub(crate) fn new_workflow_task_buffer(
             let task_queue = task_queue.clone();
             async move { client.poll_workflow_task(task_queue).await }
         },
-        semaphore,
+        permit_dealer,
         concurrent_pollers,
         shutdown,
         num_pollers_handler,
@@ -247,14 +266,14 @@ pub(crate) fn new_workflow_task_buffer(
     )
 }
 
-pub(crate) type PollActivityTaskBuffer = LongPollBuffer<PollActivityTaskQueueResponse>;
-
+pub(crate) type PollActivityTaskBuffer =
+    LongPollBuffer<PollActivityTaskQueueResponse, ActivitySlotKind>;
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn new_activity_task_buffer(
     client: Arc<dyn WorkerClient>,
     task_queue: String,
     concurrent_pollers: usize,
-    semaphore: Arc<MeteredSemaphore>,
+    semaphore: Arc<MeteredPermitDealer<ActivitySlotKind>>,
     max_tps: Option<f64>,
     shutdown: CancellationToken,
     num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
@@ -285,19 +304,20 @@ pub(crate) fn new_activity_task_buffer(
 
 #[cfg(test)]
 #[derive(derive_more::Constructor)]
-pub(crate) struct MockPermittedPollBuffer<PT> {
-    sem: Arc<MeteredSemaphore>,
+pub(crate) struct MockPermittedPollBuffer<PT, SK: SlotKind> {
+    sem: Arc<MeteredPermitDealer<SK>>,
     inner: PT,
 }
 
 #[cfg(test)]
 #[async_trait::async_trait]
-impl<T, PT> Poller<(T, OwnedMeteredSemPermit)> for MockPermittedPollBuffer<PT>
+impl<T, PT, SK> Poller<(T, OwnedMeteredSemPermit<SK>)> for MockPermittedPollBuffer<PT, SK>
 where
     T: Send + Sync + 'static,
     PT: Poller<T> + Send + Sync + 'static,
+    SK: SlotKind + 'static,
 {
-    async fn poll(&self) -> Option<pollers::Result<(T, OwnedMeteredSemPermit)>> {
+    async fn poll(&self) -> Option<pollers::Result<(T, OwnedMeteredSemPermit<SK>)>> {
         let p = self
             .sem
             .acquire_owned()
@@ -323,7 +343,8 @@ where
 mod tests {
     use super::*;
     use crate::{
-        telemetry::metrics::MetricsContext, worker::client::mocks::mock_manual_workflow_client,
+        abstractions::tests::fixed_size_permit_dealer,
+        worker::client::mocks::mock_manual_workflow_client,
     };
     use futures::FutureExt;
     use std::time::Duration;
@@ -352,11 +373,7 @@ mod tests {
                 normal_name: "".to_string(),
             },
             1,
-            Arc::new(MeteredSemaphore::new(
-                10,
-                MetricsContext::no_op(),
-                |_, _| {},
-            )),
+            Arc::new(fixed_size_permit_dealer(10)),
             CancellationToken::new(),
             None::<fn(usize)>,
         );

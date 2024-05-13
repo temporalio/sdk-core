@@ -1,9 +1,9 @@
 use assert_matches::assert_matches;
-use std::sync::Arc;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
-use temporal_sdk_core::ephemeral_server::TemporalDevServerConfigBuilder;
-use temporal_sdk_core::{init_worker, ClientOptionsBuilder, WorkerConfigBuilder};
+use temporal_sdk_core::{
+    ephemeral_server::TemporalDevServerConfigBuilder, init_worker, ClientOptionsBuilder,
+};
 use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::coresdk::{
     activity_task::activity_task as act_task,
@@ -14,7 +14,7 @@ use temporal_sdk_core_protos::coresdk::{
 };
 use temporal_sdk_core_test_utils::{
     default_cached_download, drain_pollers_and_shutdown, init_core_and_create_wf, init_integ_telem,
-    schedule_activity_cmd, WorkerTestHelpers,
+    integ_worker_config, schedule_activity_cmd, WorkerTestHelpers,
 };
 use tokio::time::timeout;
 use tracing::info;
@@ -165,10 +165,7 @@ async fn switching_worker_client_changes_poll() {
     // Create a worker only on the first server
     let worker = init_worker(
         init_integ_telem(),
-        WorkerConfigBuilder::default()
-            .namespace("default")
-            .task_queue("my-task-queue")
-            .worker_build_id("test_build_id")
+        integ_worker_config("my-task-queue")
             // We want a cache so we don't get extra remove-job activations
             .max_cached_workflows(100_usize)
             .build()

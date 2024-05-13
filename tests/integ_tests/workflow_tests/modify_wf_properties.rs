@@ -20,7 +20,7 @@ async fn sends_modify_wf_props() {
     let wf_name = "can_upsert_memo";
     let wf_id = Uuid::new_v4();
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.no_remote_activities();
+    starter.worker_config.no_remote_activities(true);
     let mut worker = starter.worker().await;
 
     worker.register_wf(wf_name, memo_upserter);

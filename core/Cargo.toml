@@ -22,10 +22,10 @@ ephemeral-server = ["dep:flate2", "dep:nix", "dep:reqwest", "dep:tar", "dep:zip"
 [dependencies]
 anyhow = "1.0"
 async-trait = "0.1"
-base64 = "0.21"
 console-subscriber = { version = "0.2", optional = true }
 crossbeam-channel = "0.5"
 crossbeam-queue = "0.3"
+crossbeam-utils = "0.8"
 dashmap = "5.5"
 derive_builder = { workspace = true }
 derive_more = { workspace = true }
@@ -48,20 +48,22 @@ opentelemetry_sdk = { version = "0.22", features = ["rt-tokio", "metrics"], opti
 opentelemetry-otlp = { version = "0.15", features = ["tokio", "metrics"], optional = true }
 opentelemetry-prometheus = { version = "0.15", optional = true }
 parking_lot = { version = "0.12", features = ["send_guard"] }
+pid = "4.0"
 pin-project = "1.0"
 prometheus = "0.13"
 prost = { workspace = true }
 prost-types = { version = "0.5", package = "prost-wkt-types" }
 rand = "0.8.3"
-reqwest = { version = "0.11", features = ["json", "stream", "rustls-tls", "tokio-rustls"], default-features = false, optional = true }
+reqwest = { version = "0.11", features = ["json", "stream", "rustls-tls"], default-features = false, optional = true }
 ringbuf = "0.3"
 serde = "1.0"
 serde_json = "1.0"
 siphasher = "1.0"
 slotmap = "1.0"
+sysinfo = "0.30"
 tar = { version = "0.4", optional = true }
 thiserror = "1.0"
-tokio = { version = "1.26", features = ["rt", "rt-multi-thread", "parking_lot", "time", "fs", "process"] }
+tokio = { version = "1.37", features = ["rt", "rt-multi-thread", "parking_lot", "time", "fs", "process"] }
 tokio-util = { version = "0.7", features = ["io", "io-util"] }
 tokio-stream = "0.1"
 tonic = { workspace = true, features = ["tls", "tls-roots"] }
@@ -70,7 +72,6 @@ tracing-subscriber = { version = "0.3", features = ["parking_lot", "env-filter",
 url = "2.2"
 uuid = { version = "1.1", features = ["v4"] }
 zip = { version = "0.6.3", optional = true }
-log = "0.4.20"
 
 # 1st party local deps
 [dependencies.temporal-sdk-core-api]

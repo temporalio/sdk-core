@@ -9,7 +9,7 @@ pub(crate) use local_activities::{
 
 use crate::{
     abstractions::{
-        ClosableMeteredSemaphore, MeteredSemaphore, OwnedMeteredSemPermit,
+        ClosableMeteredPermitDealer, MeteredPermitDealer, OwnedMeteredSemPermit,
         TrackedOwnedMeteredSemPermit, UsedMeteredSemPermit,
     },
     pollers::BoxedActPoller,
@@ -39,6 +39,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
+use temporal_sdk_core_api::worker::{ActivitySlotInfo, ActivitySlotKind};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{self as ar, activity_execution_result as aer},
@@ -111,10 +112,13 @@ struct RemoteInFlightActInfo {
     /// Used to reset the local heartbeat timeout every time we record a heartbeat
     timeout_resetter: Option<Arc<Notify>>,
     /// The permit from the max concurrent semaphore
-    _permit: UsedMeteredSemPermit,
+    _permit: UsedMeteredSemPermit<ActivitySlotKind>,
 }
 impl RemoteInFlightActInfo {
-    fn new(poll_resp: &PollActivityTaskQueueResponse, permit: UsedMeteredSemPermit) -> Self {
+    fn new(
+        poll_resp: &PollActivityTaskQueueResponse,
+        permit: UsedMeteredSemPermit<ActivitySlotKind>,
+    ) -> Self {
         let wec = poll_resp.workflow_execution.clone().unwrap_or_default();
         Self {
             base: InFlightActInfo {
@@ -146,8 +150,8 @@ pub(crate) struct WorkerActivityTasks {
     outstanding_activity_tasks: OutstandingActMap,
     /// Ensures we don't exceed this worker's maximum concurrent activity limit for activities. This
     /// semaphore is used to limit eager activities but shares the same underlying
-    /// [MeteredSemaphore] that is used to limit the concurrency for non-eager activities.
-    eager_activities_semaphore: Arc<ClosableMeteredSemaphore>,
+    /// [MeteredPermitDealer] that is used to limit the concurrency for non-eager activities.
+    eager_activities_semaphore: Arc<ClosableMeteredPermitDealer<ActivitySlotKind>>,
     /// Holds activity tasks we have received in direct response to workflow task completion (a.k.a
     /// eager activities). Tasks received in this stream hold a "tracked" permit that is issued by
     /// the `eager_activities_semaphore`.
@@ -176,7 +180,7 @@ enum ActivityTaskSource {
 impl WorkerActivityTasks {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
-        semaphore: Arc<MeteredSemaphore>,
+        semaphore: Arc<MeteredPermitDealer<ActivitySlotKind>>,
         poller: BoxedActPoller,
         client: Arc<dyn WorkerClient>,
         metrics: MetricsContext,
@@ -190,7 +194,7 @@ impl WorkerActivityTasks {
         let server_poller_stream =
             new_activity_task_poller(poller, metrics.clone(), shutdown_initiated_token.clone());
         let (eager_activities_tx, eager_activities_rx) = unbounded_channel();
-        let eager_activities_semaphore = ClosableMeteredSemaphore::new_arc(semaphore);
+        let eager_activities_semaphore = ClosableMeteredPermitDealer::new_arc(semaphore);
 
         let start_tasks_stream_complete = CancellationToken::new();
         let starts_stream = Self::merge_start_task_sources(
@@ -241,7 +245,7 @@ impl WorkerActivityTasks {
     fn merge_start_task_sources(
         non_poll_tasks_rx: UnboundedReceiver<TrackedPermittedTqResp>,
         poller_stream: impl Stream<Item = Result<PermittedTqResp, tonic::Status>>,
-        eager_activities_semaphore: Arc<ClosableMeteredSemaphore>,
+        eager_activities_semaphore: Arc<ClosableMeteredPermitDealer<ActivitySlotKind>>,
         on_complete_token: CancellationToken,
     ) -> impl Stream<Item = Result<(PermittedTqResp, bool), PollActivityError>> {
         let non_poll_stream = stream::unfold(
@@ -444,7 +448,7 @@ impl WorkerActivityTasks {
     }
 
     #[cfg(test)]
-    pub(crate) fn remaining_activity_capacity(&self) -> usize {
+    pub(crate) fn remaining_activity_capacity(&self) -> Option<usize> {
         self.eager_activities_semaphore.unused_permits()
     }
 }
@@ -512,11 +516,13 @@ where
                     }
                     ActivityTaskSource::PendingStart(res) => {
                         Some(res.map(|(task, is_eager)| {
+                            let mut activity_type_name = "";
                             if let Some(ref act_type) = task.resp.activity_type {
+                                activity_type_name = act_type.name.as_str();
                                 if let Some(ref wf_type) = task.resp.workflow_type {
                                     self.metrics
                                         .with_new_attrs([
-                                            activity_type(act_type.name.clone()),
+                                            activity_type(activity_type_name.to_owned()),
                                             workflow_type(wf_type.name.clone()),
                                             eager(is_eager),
                                         ])
@@ -533,9 +539,13 @@ where
 
                             let tt: TaskToken = task.resp.task_token.clone().into();
                             let outstanding_entry = self.outstanding_tasks.entry(tt.clone());
-                            let mut outstanding_info = outstanding_entry.insert(
-                                RemoteInFlightActInfo::new(&task.resp, task.permit.into_used()),
-                            );
+                            let mut outstanding_info =
+                                outstanding_entry.insert(RemoteInFlightActInfo::new(
+                                    &task.resp,
+                                    task.permit.into_used(ActivitySlotInfo {
+                                        activity_type: activity_type_name,
+                                    }),
+                                ));
                             // If we have already waited the grace period and issued cancels,
                             // this will have been set true, indicating anything that happened
                             // to be buffered/in-flight/etc should get an immediate cancel. This
@@ -641,14 +651,14 @@ where
 /// Provides facilities for the workflow side of things to interact with the activity manager.
 /// Allows for the handling of activities returned by WFT completions.
 pub(crate) struct ActivitiesFromWFTsHandle {
-    sem: Arc<ClosableMeteredSemaphore>,
+    sem: Arc<ClosableMeteredPermitDealer<ActivitySlotKind>>,
     tx: UnboundedSender<TrackedPermittedTqResp>,
 }
 
 impl ActivitiesFromWFTsHandle {
     /// Returns a handle that can be used to reserve an activity slot. EX: When requesting eager
     /// dispatch of an activity to this worker upon workflow task completion
-    pub(crate) fn reserve_slot(&self) -> Option<TrackedOwnedMeteredSemPermit> {
+    pub(crate) fn reserve_slot(&self) -> Option<TrackedOwnedMeteredSemPermit<ActivitySlotKind>> {
         // TODO: check if rate limit is not exceeded and count this reservation towards the rate limit
         self.sem.try_acquire_owned().ok()
     }
@@ -666,13 +676,13 @@ impl ActivitiesFromWFTsHandle {
 
 #[derive(Debug)]
 pub(crate) struct PermittedTqResp {
-    pub(crate) permit: OwnedMeteredSemPermit,
+    pub(crate) permit: OwnedMeteredSemPermit<ActivitySlotKind>,
     pub(crate) resp: PollActivityTaskQueueResponse,
 }
 
 #[derive(Debug)]
 pub(crate) struct TrackedPermittedTqResp {
-    pub(crate) permit: TrackedOwnedMeteredSemPermit,
+    pub(crate) permit: TrackedOwnedMeteredSemPermit<ActivitySlotKind>,
     pub(crate) resp: PollActivityTaskQueueResponse,
 }
 
@@ -697,7 +707,8 @@ fn worker_shutdown_failure() -> Failure {
 mod tests {
     use super::*;
     use crate::{
-        pollers::new_activity_task_buffer, prost_dur, worker::client::mocks::mock_workflow_client,
+        abstractions::tests::fixed_size_permit_dealer, pollers::new_activity_task_buffer,
+        prost_dur, worker::client::mocks::mock_workflow_client,
     };
     use temporal_sdk_core_protos::coresdk::activity_result::ActivityExecutionResult;
 
@@ -729,11 +740,7 @@ mod tests {
             .times(2)
             .returning(|_, _| Ok(Default::default()));
         let mock_client = Arc::new(mock_client);
-        let sem = Arc::new(MeteredSemaphore::new(
-            10,
-            MetricsContext::no_op(),
-            MetricsContext::available_task_slots,
-        ));
+        let sem = Arc::new(fixed_size_permit_dealer(10));
         let shutdown_token = CancellationToken::new();
         let ap = new_activity_task_buffer(
             mock_client.clone(),
@@ -822,11 +829,7 @@ mod tests {
                 })
             });
         let mock_client = Arc::new(mock_client);
-        let sem = Arc::new(MeteredSemaphore::new(
-            1, // Just one task at a time
-            MetricsContext::no_op(),
-            MetricsContext::available_task_slots,
-        ));
+        let sem = Arc::new(fixed_size_permit_dealer(1));
         let shutdown_token = CancellationToken::new();
         let ap = new_activity_task_buffer(
             mock_client.clone(),
@@ -897,11 +900,7 @@ mod tests {
             .times(2)
             .returning(|_, _| Ok(Default::default()));
         let mock_client = Arc::new(mock_client);
-        let sem = Arc::new(MeteredSemaphore::new(
-            1, // Just one task at a time
-            MetricsContext::no_op(),
-            MetricsContext::available_task_slots,
-        ));
+        let sem = Arc::new(fixed_size_permit_dealer(1));
         let shutdown_token = CancellationToken::new();
         let ap = new_activity_task_buffer(
             mock_client.clone(),

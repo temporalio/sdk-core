@@ -3,27 +3,38 @@
 //! This enables latency optimizations such as Eager Workflow Start.
 
 use crate::{
-    abstractions::{MeteredSemaphore, OwnedMeteredSemPermit},
+    abstractions::{MeteredPermitDealer, OwnedMeteredSemPermit},
     protosext::ValidPollWFTQResponse,
     worker::workflow::wft_poller::validate_wft,
 };
 
 use std::sync::Arc;
 use temporal_client::{Slot as SlotTrait, SlotProvider as SlotProviderTrait};
+use temporal_sdk_core_api::worker::WorkflowSlotKind;
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse;
 use tokio::sync::mpsc::UnboundedSender;
 use tonic::Status;
 
-type WFTStreamSender =
-    UnboundedSender<Result<(ValidPollWFTQResponse, OwnedMeteredSemPermit), Status>>;
+type WFTStreamSender = UnboundedSender<
+    Result<
+        (
+            ValidPollWFTQResponse,
+            OwnedMeteredSemPermit<WorkflowSlotKind>,
+        ),
+        Status,
+    >,
+>;
 
 struct Slot {
-    permit: OwnedMeteredSemPermit,
+    permit: OwnedMeteredSemPermit<WorkflowSlotKind>,
     external_wft_tx: WFTStreamSender,
 }
 
 impl Slot {
-    fn new(permit: OwnedMeteredSemPermit, external_wft_tx: WFTStreamSender) -> Self {
+    fn new(
+        permit: OwnedMeteredSemPermit<WorkflowSlotKind>,
+        external_wft_tx: WFTStreamSender,
+    ) -> Self {
         Self {
             permit,
             external_wft_tx,
@@ -47,7 +58,7 @@ impl SlotTrait for Slot {
 pub(super) struct SlotProvider {
     namespace: String,
     task_queue: String,
-    wft_semaphore: Arc<MeteredSemaphore>,
+    wft_semaphore: Arc<MeteredPermitDealer<WorkflowSlotKind>>,
     external_wft_tx: WFTStreamSender,
 }
 
@@ -55,7 +66,7 @@ impl SlotProvider {
     pub(super) fn new(
         namespace: String,
         task_queue: String,
-        wft_semaphore: Arc<MeteredSemaphore>,
+        wft_semaphore: Arc<MeteredPermitDealer<WorkflowSlotKind>>,
         external_wft_tx: WFTStreamSender,
     ) -> Self {
         Self {
@@ -86,6 +97,7 @@ impl SlotProviderTrait for SlotProvider {
 mod tests {
     use super::*;
 
+    use crate::abstractions::tests::fixed_size_permit_dealer;
     use temporal_sdk_core_protos::temporal::api::{
         common::v1::{WorkflowExecution, WorkflowType},
         history::v1::History,
@@ -106,11 +118,7 @@ mod tests {
 
     #[tokio::test]
     async fn slot_propagates_through_channel() {
-        let wft_semaphore = Arc::new(MeteredSemaphore::new(
-            2,
-            crate::MetricsContext::no_op(),
-            |_, _| {},
-        ));
+        let wft_semaphore = Arc::new(fixed_size_permit_dealer(2));
         let (external_wft_tx, mut external_wft_rx) = unbounded_channel();
 
         let provider = SlotProvider::new(
@@ -133,11 +141,7 @@ mod tests {
         let (external_wft_tx, mut external_wft_rx) = unbounded_channel();
         {
             let external_wft_tx = external_wft_tx;
-            let wft_semaphore = Arc::new(MeteredSemaphore::new(
-                2,
-                crate::MetricsContext::no_op(),
-                |_, _| {},
-            ));
+            let wft_semaphore = Arc::new(fixed_size_permit_dealer(2));
             let provider = SlotProvider::new(
                 "my_namespace".to_string(),
                 "my_queue".to_string(),
@@ -151,11 +155,7 @@ mod tests {
 
     #[tokio::test]
     async fn unused_slots_reclaimed() {
-        let wft_semaphore = Arc::new(MeteredSemaphore::new(
-            2,
-            crate::MetricsContext::no_op(),
-            |_, _| {},
-        ));
+        let wft_semaphore = Arc::new(fixed_size_permit_dealer(2));
         {
             let wft_semaphore = wft_semaphore.clone();
             let (external_wft_tx, _) = unbounded_channel();
@@ -167,9 +167,9 @@ mod tests {
             );
             let slot = provider.try_reserve_wft_slot();
             assert!(slot.is_some());
-            assert_eq!(wft_semaphore.available_permits(), 1);
+            assert_eq!(wft_semaphore.available_permits(), Some(1));
             // drop slot without using it
         }
-        assert_eq!(wft_semaphore.available_permits(), 2);
+        assert_eq!(wft_semaphore.available_permits(), Some(2));
     }
 }

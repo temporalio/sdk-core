@@ -97,7 +97,7 @@ async fn client_create_namespace() {
     );
 
     let register_options = RegisterNamespaceOptions::builder()
-        .namespace("test-create-namespace")
+        .namespace(uuid::Uuid::new_v4().to_string())
         .description("it's alive")
         .build()
         .unwrap();

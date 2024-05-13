@@ -12,8 +12,10 @@ use tokio::sync::Barrier;
 async fn timer_workflow_not_sticky() {
     let wf_name = "timer_wf_not_sticky";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.no_remote_activities();
-    starter.max_cached_workflows(0);
+    starter
+        .worker_config
+        .no_remote_activities(true)
+        .max_cached_workflows(0_usize);
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), timer_wf);
 
@@ -40,7 +42,7 @@ async fn timer_workflow_timeout_on_sticky() {
     // on a not-sticky queue
     let wf_name = "timer_workflow_timeout_on_sticky";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.no_remote_activities();
+    starter.worker_config.no_remote_activities(true);
     starter.workflow_options.task_timeout = Some(Duration::from_secs(2));
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), timer_timeout_wf);
@@ -56,9 +58,10 @@ async fn cache_miss_ok() {
     let wf_name = "cache_miss_ok";
     let mut starter = CoreWfStarter::new(wf_name);
     starter
-        .no_remote_activities()
-        .max_wft(2)
-        .max_cached_workflows(0);
+        .worker_config
+        .no_remote_activities(true)
+        .max_outstanding_workflow_tasks(2_usize)
+        .max_cached_workflows(0_usize);
     starter.worker_config.max_concurrent_wft_polls(1_usize);
     let mut worker = starter.worker().await;
 

@@ -16,7 +16,7 @@ pub(crate) use history_update::HistoryUpdate;
 
 use crate::{
     abstractions::{
-        dbg_panic, take_cell::TakeCell, MeteredSemaphore, TrackedOwnedMeteredSemPermit,
+        dbg_panic, take_cell::TakeCell, MeteredPermitDealer, TrackedOwnedMeteredSemPermit,
         UsedMeteredSemPermit,
     },
     internal_flags::InternalFlags,
@@ -58,7 +58,7 @@ use std::{
 };
 use temporal_sdk_core_api::{
     errors::{CompleteWfError, PollWfError},
-    worker::WorkerConfig,
+    worker::{ActivitySlotKind, WorkerConfig, WorkflowSlotKind},
 };
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -122,7 +122,7 @@ pub(crate) struct Workflows {
     /// If set, can be used to reserve activity task slots for eager-return of new activity tasks.
     activity_tasks_handle: Option<ActivitiesFromWFTsHandle>,
     /// Ensures we stay at or below this worker's maximum concurrent workflow task limit
-    wft_semaphore: Arc<MeteredSemaphore>,
+    wft_semaphore: Arc<MeteredPermitDealer<WorkflowSlotKind>>,
     local_act_mgr: Arc<LocalActivityManager>,
     ever_polled: AtomicBool,
 }
@@ -150,7 +150,7 @@ impl Workflows {
         basics: WorkflowBasics,
         sticky_attrs: Option<StickyExecutionAttributes>,
         client: Arc<dyn WorkerClient>,
-        wft_semaphore: Arc<MeteredSemaphore>,
+        wft_semaphore: Arc<MeteredPermitDealer<WorkflowSlotKind>>,
         wft_stream: impl Stream<Item = WFTStreamIn> + Send + 'static,
         local_activity_request_sink: impl LocalActivityRequestSink,
         local_act_mgr: Arc<LocalActivityManager>,
@@ -510,11 +510,11 @@ impl Workflows {
         async move { rx.await.ok() }
     }
 
-    pub(super) fn available_wft_permits(&self) -> usize {
+    pub(super) fn available_wft_permits(&self) -> Option<usize> {
         self.wft_semaphore.available_permits()
     }
     #[cfg(test)]
-    pub(super) fn unused_wft_permits(&self) -> usize {
+    pub(super) fn unused_wft_permits(&self) -> Option<usize> {
         self.wft_semaphore.unused_permits()
     }
 
@@ -613,7 +613,7 @@ impl Workflows {
     /// Process eagerly returned activities from WFT completion
     fn handle_eager_activities(
         &self,
-        reserved_act_permits: Vec<TrackedOwnedMeteredSemPermit>,
+        reserved_act_permits: Vec<TrackedOwnedMeteredSemPermit<ActivitySlotKind>>,
         eager_acts: Vec<PollActivityTaskQueueResponse>,
     ) {
         if let Some(at_handle) = self.activity_tasks_handle.as_ref() {
@@ -657,7 +657,7 @@ impl Workflows {
     fn reserve_activity_slots_for_outgoing_commands(
         &self,
         commands: &mut [Command],
-    ) -> Vec<TrackedOwnedMeteredSemPermit> {
+    ) -> Vec<TrackedOwnedMeteredSemPermit<ActivitySlotKind>> {
         let mut reserved = vec![];
         for cmd in commands {
             if let Some(Attributes::ScheduleActivityTaskCommandAttributes(attrs)) =
@@ -757,7 +757,7 @@ enum ActivationOrAuto {
 #[debug(fmt = "PermittedWft({work:?})")]
 pub(crate) struct PermittedWFT {
     work: PreparedWFT,
-    permit: UsedMeteredSemPermit,
+    permit: UsedMeteredSemPermit<WorkflowSlotKind>,
     paginator: HistoryPaginator,
 }
 /// A WFT without a permit
@@ -803,7 +803,7 @@ struct OutstandingTask {
     start_time: Instant,
     /// The WFT permit owned by this task, ensures we don't exceed max concurrent WFT, and makes
     /// sure the permit is automatically freed when we delete the task.
-    permit: UsedMeteredSemPermit,
+    permit: UsedMeteredSemPermit<WorkflowSlotKind>,
 }
 
 impl OutstandingTask {

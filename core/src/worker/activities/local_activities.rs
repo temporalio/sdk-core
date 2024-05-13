@@ -1,5 +1,5 @@
 use crate::{
-    abstractions::{dbg_panic, MeteredSemaphore, OwnedMeteredSemPermit, UsedMeteredSemPermit},
+    abstractions::{dbg_panic, MeteredPermitDealer, OwnedMeteredSemPermit, UsedMeteredSemPermit},
     protosext::ValidScheduleLA,
     retry_logic::RetryPolicyExt,
     worker::workflow::HeartbeatTimeoutMsg,
@@ -12,9 +12,11 @@ use std::{
     collections::{hash_map::Entry, HashMap},
     fmt::{Debug, Formatter},
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
     time::{Duration, Instant, SystemTime},
 };
+use temporal_sdk_core_api::worker::{LocalActivitySlotInfo, LocalActivitySlotKind, SlotSupplier};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{Cancellation, Failure as ActFail, Success},
@@ -51,7 +53,7 @@ struct LocalInFlightActInfo {
     la_info: NewLocalAct,
     dispatch_time: Instant,
     attempt: u32,
-    _permit: UsedMeteredSemPermit,
+    _permit: UsedMeteredSemPermit<LocalActivitySlotKind>,
 }
 
 #[derive(Debug, Clone)]
@@ -203,7 +205,7 @@ impl LAMData {
 
 impl LocalActivityManager {
     pub(crate) fn new(
-        max_concurrent: usize,
+        slot_supplier: Arc<dyn SlotSupplier<SlotKind = LocalActivitySlotKind> + Send + Sync>,
         namespace: String,
         heartbeat_timeout_tx: UnboundedSender<HeartbeatTimeoutMsg>,
         metrics_context: MetricsContext,
@@ -211,11 +213,7 @@ impl LocalActivityManager {
         let (act_req_tx, act_req_rx) = unbounded_channel();
         let (cancels_req_tx, cancels_req_rx) = unbounded_channel();
         let shutdown_complete_tok = CancellationToken::new();
-        let semaphore = MeteredSemaphore::new(
-            max_concurrent,
-            metrics_context,
-            MetricsContext::available_task_slots,
-        );
+        let semaphore = MeteredPermitDealer::new(slot_supplier, metrics_context, None);
         Self {
             namespace,
             rcvs: tokio::sync::Mutex::new(RcvChans::new(
@@ -240,13 +238,11 @@ impl LocalActivityManager {
 
     #[cfg(test)]
     fn test(max_concurrent: usize) -> Self {
+        use crate::worker::tuner::FixedSizeSlotSupplier;
+
+        let ss = Arc::new(FixedSizeSlotSupplier::new(max_concurrent));
         let (hb_tx, _hb_rx) = unbounded_channel();
-        Self::new(
-            max_concurrent,
-            "fake_ns".to_string(),
-            hb_tx,
-            MetricsContext::no_op(),
-        )
+        Self::new(ss, "fake_ns".to_string(), hb_tx, MetricsContext::no_op())
     }
 
     #[cfg(test)]
@@ -476,7 +472,9 @@ impl LocalActivityManager {
                 la_info: la_info_for_in_flight_map,
                 dispatch_time: Instant::now(),
                 attempt,
-                _permit: permit.into_used(),
+                _permit: permit.into_used(LocalActivitySlotInfo {
+                    activity_type: new_la.workflow_type.as_str(),
+                }),
             },
         );
 
@@ -792,7 +790,7 @@ enum CancelOrTimeout {
 
 #[allow(clippy::large_enum_variant)]
 enum NewOrCancel {
-    New(NewOrRetry, OwnedMeteredSemPermit),
+    New(NewOrRetry, OwnedMeteredSemPermit<LocalActivitySlotKind>),
     Cancel(CancelOrTimeout),
 }
 
@@ -805,7 +803,7 @@ struct RcvChans {
 impl RcvChans {
     fn new(
         new_reqs: UnboundedReceiver<NewOrRetry>,
-        new_sem: MeteredSemaphore,
+        new_sem: MeteredPermitDealer<LocalActivitySlotKind>,
         cancels: UnboundedReceiver<CancelOrTimeout>,
         shutdown_completed: CancellationToken,
     ) -> Self {

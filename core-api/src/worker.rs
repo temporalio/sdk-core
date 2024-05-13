@@ -1,14 +1,15 @@
-use crate::errors::WorkflowErrorType;
+use crate::{errors::WorkflowErrorType, telemetry::metrics::TemporalMeter};
 use std::{
+    any::Any,
     collections::{HashMap, HashSet},
+    sync::Arc,
     time::Duration,
 };
 
-const MAX_OUTSTANDING_WFT_DEFAULT: usize = 100;
 const MAX_CONCURRENT_WFT_POLLS_DEFAULT: usize = 5;
 
 /// Defines per-worker configuration options
-#[derive(Debug, Clone, derive_builder::Builder)]
+#[derive(Clone, derive_builder::Builder)]
 #[builder(setter(into), build_fn(validate = "Self::validate"))]
 #[non_exhaustive]
 pub struct WorkerConfig {
@@ -32,20 +33,10 @@ pub struct WorkerConfig {
     /// or failures.
     #[builder(default = "0")]
     pub max_cached_workflows: usize,
-    /// The maximum allowed number of workflow tasks that will ever be given to this worker at one
-    /// time. Note that one workflow task may require multiple activations - so the WFT counts as
-    /// "outstanding" until all activations it requires have been completed.
-    ///
-    /// Cannot be larger than `max_cached_workflows`.
-    #[builder(default = "MAX_OUTSTANDING_WFT_DEFAULT")]
-    pub max_outstanding_workflow_tasks: usize,
-    /// The maximum number of activity tasks that will ever be given to this worker concurrently
-    #[builder(default = "100")]
-    pub max_outstanding_activities: usize,
-    /// The maximum number of local activity tasks that will ever be given to this worker
-    /// concurrently
-    #[builder(default = "100")]
-    pub max_outstanding_local_activities: usize,
+    /// Set a [WorkerTuner] for this worker. Either this or at least one of the `max_outstanding_*`
+    /// fields must be set.
+    #[builder(setter(into = false, strip_option), default)]
+    pub tuner: Option<Arc<dyn WorkerTuner + Send + Sync>>,
     /// Maximum number of concurrent poll workflow task requests we will perform at a time on this
     /// worker's task queue. See also [WorkerConfig::nonsticky_to_sticky_poll_ratio]. Must be at
     /// least 1.
@@ -138,6 +129,25 @@ pub struct WorkerConfig {
     /// map key).
     #[builder(default)]
     pub workflow_types_to_failure_errors: HashMap<String, HashSet<WorkflowErrorType>>,
+
+    /// The maximum allowed number of workflow tasks that will ever be given to this worker at one
+    /// time. Note that one workflow task may require multiple activations - so the WFT counts as
+    /// "outstanding" until all activations it requires have been completed.
+    ///
+    /// Mutually exclusive with `tuner`
+    #[builder(setter(into, strip_option), default)]
+    pub max_outstanding_workflow_tasks: Option<usize>,
+    /// The maximum number of activity tasks that will ever be given to this worker concurrently
+    ///
+    /// Mutually exclusive with `tuner`
+    #[builder(setter(into, strip_option), default)]
+    pub max_outstanding_activities: Option<usize>,
+    /// The maximum number of local activity tasks that will ever be given to this worker
+    /// concurrently
+    ///
+    /// Mutually exclusive with `tuner`
+    #[builder(setter(into, strip_option), default)]
+    pub max_outstanding_local_activities: Option<usize>,
 }
 
 impl WorkerConfig {
@@ -167,6 +177,14 @@ impl WorkerConfig {
 }
 
 impl WorkerConfigBuilder {
+    /// Unset all `max_outstanding_*` fields
+    pub fn clear_max_outstanding_opts(&mut self) -> &mut Self {
+        self.max_outstanding_workflow_tasks = None;
+        self.max_outstanding_activities = None;
+        self.max_outstanding_local_activities = None;
+        self
+    }
+
     fn validate(&self) -> Result<(), String> {
         if self.max_concurrent_wft_polls == Some(0) {
             return Err("`max_concurrent_wft_polls` must be at least 1".to_owned());
@@ -174,15 +192,7 @@ impl WorkerConfigBuilder {
         if self.max_concurrent_at_polls == Some(0) {
             return Err("`max_concurrent_at_polls` must be at least 1".to_owned());
         }
-        if self.max_cached_workflows > Some(0)
-            && self.max_outstanding_workflow_tasks > self.max_cached_workflows
-        {
-            return Err(
-                "Maximum concurrent workflow tasks cannot exceed the maximum number of cached \
-                 workflows"
-                    .to_owned(),
-            );
-        }
+
         if let Some(Some(ref x)) = self.max_worker_activities_per_second {
             if !x.is_normal() || x.is_sign_negative() {
                 return Err(
@@ -190,30 +200,28 @@ impl WorkerConfigBuilder {
                 );
             }
         }
-        if matches!(self.max_concurrent_wft_polls, Some(1))
-            && self.max_cached_workflows > Some(0)
-            && self
-                .max_outstanding_workflow_tasks
-                .unwrap_or(MAX_OUTSTANDING_WFT_DEFAULT)
-                <= 1
+
+        if self.tuner.is_some()
+            && (self.max_outstanding_workflow_tasks.is_some()
+                || self.max_outstanding_activities.is_some()
+                || self.max_outstanding_local_activities.is_some())
         {
-            return Err(
-                "`max_outstanding_workflow_tasks` must be at at least 2 when \
-                 `max_cached_workflows` is nonzero"
-                    .to_owned(),
-            );
+            return Err("max_outstanding_* fields are mutually exclusive with `tuner`".to_owned());
         }
-        if self
+
+        let max_wft_polls = self
             .max_concurrent_wft_polls
-            .unwrap_or(MAX_CONCURRENT_WFT_POLLS_DEFAULT)
-            > self
-                .max_outstanding_workflow_tasks
-                .unwrap_or(MAX_OUTSTANDING_WFT_DEFAULT)
-        {
-            return Err(
-                "`max_concurrent_wft_polls` cannot exceed `max_outstanding_workflow_tasks`"
-                    .to_owned(),
-            );
+            .unwrap_or(MAX_CONCURRENT_WFT_POLLS_DEFAULT);
+
+        // It wouldn't make any sense to have more outstanding polls than workflows we can possibly
+        // cache. If we allow this at low values it's possible for sticky pollers to reserve all
+        // available slots, crowding out the normal queue and gumming things up.
+        if let Some(max_cache) = self.max_cached_workflows {
+            if max_cache > 0 && max_wft_polls > max_cache {
+                return Err(
+                    "`max_concurrent_wft_polls` cannot exceed `max_cached_workflows`".to_owned(),
+                );
+            }
         }
 
         if self.use_worker_versioning.unwrap_or_default()
@@ -229,5 +237,134 @@ impl WorkerConfigBuilder {
             );
         }
         Ok(())
+    }
+}
+
+/// This trait allows users to customize the performance characteristics of workers dynamically.
+/// For more, see the docstrings of the traits in the return types of its functions.
+pub trait WorkerTuner {
+    /// Return a [SlotSupplier] for workflow tasks
+    fn workflow_task_slot_supplier(
+        &self,
+    ) -> Arc<dyn SlotSupplier<SlotKind = WorkflowSlotKind> + Send + Sync>;
+
+    /// Return a [SlotSupplier] for activity tasks
+    fn activity_task_slot_supplier(
+        &self,
+    ) -> Arc<dyn SlotSupplier<SlotKind = ActivitySlotKind> + Send + Sync>;
+
+    /// Return a [SlotSupplier] for local activities
+    fn local_activity_slot_supplier(
+        &self,
+    ) -> Arc<dyn SlotSupplier<SlotKind = LocalActivitySlotKind> + Send + Sync>;
+
+    /// Core will call this at worker initialization time, allowing the implementation to hook up to
+    /// metrics if any are configured. If not, it will not be called.
+    fn attach_metrics(&self, metrics: TemporalMeter);
+}
+
+/// Implementing this trait allows users to customize how many tasks of certain kinds the worker
+/// will perform concurrently.
+///
+/// Note that, for implementations on workflow tasks ([WorkflowSlotKind]), workers that have the
+/// workflow cache enabled should be willing to hand out _at least_ two slots, to avoid the worker
+/// becoming stuck only polling on the worker's sticky queue.
+#[async_trait::async_trait]
+pub trait SlotSupplier {
+    type SlotKind: SlotKind;
+    /// Block until a slot is available, then return a permit for the slot.
+    async fn reserve_slot(&self, ctx: &dyn SlotReservationContext) -> SlotSupplierPermit;
+
+    /// Try to immediately reserve a slot, returning None if one is not available
+    fn try_reserve_slot(&self, ctx: &dyn SlotReservationContext) -> Option<SlotSupplierPermit>;
+
+    /// Marks a slot as actually now being used. This is separate from reserving one because the
+    /// pollers need to reserve a slot before they have actually obtained work from server. Once
+    /// that task is obtained (and validated) then the slot can actually be used to work on the
+    /// task.
+    ///
+    /// Users' implementation of this can choose to emit metrics, or otherwise leverage the
+    /// information provided by the `info` parameter to be better able to make future decisions
+    /// about whether a slot should be handed out.
+    fn mark_slot_used(&self, info: <Self::SlotKind as SlotKind>::Info<'_>);
+
+    /// Frees a slot.
+    fn release_slot(&self);
+
+    /// If this implementation knows how many slots are available at any moment, it should return
+    /// that here.
+    fn available_slots(&self) -> Option<usize> {
+        None
+    }
+}
+
+pub trait SlotReservationContext: Send + Sync {
+    /// Returns the number of currently outstanding slot permits, whether used or un-used.
+    fn num_issued_slots(&self) -> usize;
+}
+
+#[derive(Default)]
+pub struct SlotSupplierPermit {
+    user_data: Option<Box<dyn Any + Send + Sync>>,
+}
+impl SlotSupplierPermit {
+    pub fn with_user_data<T: Any + Send + Sync>(user_data: T) -> Self {
+        Self {
+            user_data: Some(Box::new(user_data)),
+        }
+    }
+    /// Attempts to downcast the inner data, if any, into the provided type and returns it.
+    /// Returns none if there is no data or the data is not of the appropriate type.
+    pub fn user_data<T: Any + Send + Sync>(&self) -> Option<&T> {
+        self.user_data.as_ref().and_then(|b| b.downcast_ref())
+    }
+    /// Attempts to downcast the inner data, if any, into the provided type and returns it mutably.
+    /// Returns none if there is no data or the data is not of the appropriate type.
+    pub fn user_data_mut<T: Any + Send + Sync>(&mut self) -> Option<&mut T> {
+        self.user_data.as_mut().and_then(|b| b.downcast_mut())
+    }
+}
+
+pub struct WorkflowSlotInfo<'a> {
+    pub workflow_type: &'a str,
+    // etc...
+}
+
+pub struct ActivitySlotInfo<'a> {
+    pub activity_type: &'a str,
+    // etc...
+}
+pub struct LocalActivitySlotInfo<'a> {
+    pub activity_type: &'a str,
+    // etc...
+}
+
+#[derive(Debug)]
+pub struct WorkflowSlotKind {}
+#[derive(Debug)]
+pub struct ActivitySlotKind {}
+#[derive(Debug)]
+pub struct LocalActivitySlotKind {}
+pub trait SlotKind {
+    type Info<'a>;
+    fn kind_name() -> &'static str;
+}
+impl SlotKind for WorkflowSlotKind {
+    type Info<'a> = WorkflowSlotInfo<'a>;
+
+    fn kind_name() -> &'static str {
+        "workflow"
+    }
+}
+impl SlotKind for ActivitySlotKind {
+    type Info<'a> = ActivitySlotInfo<'a>;
+    fn kind_name() -> &'static str {
+        "activity"
+    }
+}
+impl SlotKind for LocalActivitySlotKind {
+    type Info<'a> = LocalActivitySlotInfo<'a>;
+    fn kind_name() -> &'static str {
+        "local_activity"
     }
 }

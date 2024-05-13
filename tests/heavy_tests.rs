@@ -1,9 +1,14 @@
 use futures::{future::join_all, sink, stream::FuturesUnordered, StreamExt};
-use std::time::{Duration, Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{ActContext, ActivityOptions, WfContext, WorkflowResult};
-use temporal_sdk_core_protos::coresdk::{
-    workflow_commands::ActivityCancellationType, AsJsonPayloadExt,
+use temporal_sdk_core::{ResourceBasedSlots, ResourceBasedTuner, ResourceSlotOptions};
+use temporal_sdk_core_protos::{
+    coresdk::{workflow_commands::ActivityCancellationType, AsJsonPayloadExt},
+    temporal::api::enums::v1::WorkflowIdReusePolicy,
 };
 use temporal_sdk_core_test_utils::{workflows::la_problem_workflow, CoreWfStarter};
 
@@ -15,10 +20,11 @@ async fn activity_load() {
 
     let mut starter = CoreWfStarter::new("activity_load");
     starter
-        .max_wft(CONCURRENCY)
+        .worker_config
+        .max_outstanding_workflow_tasks(CONCURRENCY)
         .max_cached_workflows(CONCURRENCY)
-        .max_at_polls(10)
-        .max_at(CONCURRENCY);
+        .max_concurrent_at_polls(10_usize)
+        .max_outstanding_activities(CONCURRENCY);
     let mut worker = starter.worker().await;
 
     let activity_id = "act-1";
@@ -78,24 +84,111 @@ async fn activity_load() {
     dbg!(running.elapsed());
 }
 
+#[tokio::test]
+async fn chunky_activities_resource_based() {
+    const WORKFLOWS: usize = 100;
+
+    let mut starter = CoreWfStarter::new("chunky_activities_resource_based");
+    starter
+        .worker_config
+        .clear_max_outstanding_opts()
+        .max_concurrent_wft_polls(10_usize)
+        .max_concurrent_at_polls(10_usize);
+    let mut tuner = ResourceBasedTuner::new(ResourceBasedSlots::new(0.7, 0.7));
+    tuner
+        .with_workflow_slots_options(ResourceSlotOptions::new(
+            25,
+            WORKFLOWS,
+            Duration::from_millis(0),
+        ))
+        .with_activity_slots_options(ResourceSlotOptions::new(5, 1000, Duration::from_millis(50)));
+    starter.worker_config.tuner(Arc::new(tuner));
+    let mut worker = starter.worker().await;
+
+    let activity_id = "act-1";
+    let activity_timeout = Duration::from_secs(30);
+
+    let wf_fn = move |ctx: WfContext| {
+        let payload = "yo".as_json_payload().unwrap();
+        async move {
+            let activity = ActivityOptions {
+                activity_id: Some(activity_id.to_string()),
+                activity_type: "test_activity".to_string(),
+                input: payload.clone(),
+                start_to_close_timeout: Some(activity_timeout),
+                ..Default::default()
+            };
+            let res = ctx.activity(activity).await.unwrap_ok_payload();
+            assert_eq!(res.data, payload.data);
+            Ok(().into())
+        }
+    };
+
+    let starting = Instant::now();
+    let wf_type = "chunky_activity_wf";
+    worker.register_wf(wf_type.to_owned(), wf_fn);
+    worker.register_activity(
+        "test_activity",
+        |_ctx: ActContext, echo: String| async move {
+            tokio::task::spawn_blocking(move || {
+                // Allocate a gig and then do some CPU stuff on it
+                let mut mem = vec![0_u8; 1000 * 1024 * 1024];
+                for _ in 1..10 {
+                    for i in 0..mem.len() {
+                        mem[i] &= mem[mem.len() - 1 - i]
+                    }
+                }
+                Ok(echo)
+            })
+            .await?
+        },
+    );
+    join_all((0..WORKFLOWS).map(|i| {
+        let worker = &worker;
+        let wf_id = format!("chunk_activity_{i}");
+        async move {
+            worker
+                .submit_wf(
+                    wf_id,
+                    wf_type.to_owned(),
+                    vec![],
+                    WorkflowOptions {
+                        id_reuse_policy: WorkflowIdReusePolicy::TerminateIfRunning,
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+        }
+    }))
+    .await;
+    dbg!(starting.elapsed());
+
+    let running = Instant::now();
+
+    worker.run_until_done().await.unwrap();
+    dbg!(running.elapsed());
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn workflow_load() {
     const SIGNAME: &str = "signame";
-    let num_workflows = 200;
+    let num_workflows = 500;
     let wf_name = "workflow_load";
     let mut starter = CoreWfStarter::new("workflow_load");
     starter
-        .max_wft(5)
-        .max_cached_workflows(5)
-        .max_at_polls(10)
-        .max_at(100);
+        .worker_config
+        .max_outstanding_workflow_tasks(5_usize)
+        .max_cached_workflows(200_usize)
+        .max_concurrent_at_polls(10_usize)
+        .max_outstanding_activities(100_usize);
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         let sigchan = ctx.make_signal_channel(SIGNAME).map(Ok);
         let drained_fut = sigchan.forward(sink::drain());
 
         let real_stuff = async move {
-            for _ in 0..20 {
+            for _ in 0..5 {
                 ctx.activity(ActivityOptions {
                     activity_type: "echo_activity".to_string(),
                     start_to_close_timeout: Some(Duration::from_secs(5)),
@@ -162,8 +255,10 @@ async fn workflow_load() {
 async fn evict_while_la_running_no_interference() {
     let wf_name = "evict_while_la_running_no_interference";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.max_local_at(20);
-    starter.max_cached_workflows(20);
+    starter
+        .worker_config
+        .max_outstanding_local_activities(20_usize)
+        .max_cached_workflows(20_usize);
     // Though it doesn't make sense to set wft higher than cached workflows, leaving this commented
     // introduces more instability that can be useful in the test.
     // starter.max_wft(20);
@@ -228,9 +323,11 @@ pub async fn many_parallel_timers_longhist(ctx: WfContext) -> WorkflowResult<()>
 async fn can_paginate_long_history() {
     let wf_name = "can_paginate_long_history";
     let mut starter = CoreWfStarter::new(wf_name);
-    starter.no_remote_activities();
-    // Do not use sticky queues so we are forced to paginate once history gets long
-    starter.max_cached_workflows(0);
+    starter
+        .worker_config
+        .no_remote_activities(true)
+        // Do not use sticky queues so we are forced to paginate once history gets long
+        .max_cached_workflows(0_usize);
 
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), many_parallel_timers_longhist);

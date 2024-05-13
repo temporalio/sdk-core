@@ -51,7 +51,7 @@ use temporal_sdk_core_protos::{
         },
     },
 };
-use temporal_sdk_core_test_utils::TestWorker;
+use temporal_sdk_core_test_utils::{TestWorker, NAMESPACE};
 use tokio::sync::{mpsc::unbounded_channel, Notify};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
@@ -59,7 +59,7 @@ pub(crate) const TEST_Q: &str = "q";
 
 pub(crate) fn test_worker_cfg() -> WorkerConfigBuilder {
     let mut wcb = WorkerConfigBuilder::default();
-    wcb.namespace("default")
+    wcb.namespace(NAMESPACE)
         .task_queue(TEST_Q)
         .worker_build_id("test_bin_id")
         .ignore_evicts_on_shutdown(true)

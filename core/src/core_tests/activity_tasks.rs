@@ -7,7 +7,7 @@ use crate::{
         QueueResponse, ResponseType, WorkerExt, WorkflowCachingPolicy, TEST_Q,
     },
     worker::client::mocks::{mock_manual_workflow_client, mock_workflow_client},
-    ActivityHeartbeat, Worker, WorkerConfigBuilder,
+    ActivityHeartbeat, Worker,
 };
 use futures::FutureExt;
 use itertools::Itertools;
@@ -618,11 +618,8 @@ async fn max_tq_acts_set_passed_to_poll_properly() {
             })
         });
 
-    let cfg = WorkerConfigBuilder::default()
-        .namespace("enchi")
-        .task_queue("cat")
+    let cfg = test_worker_cfg()
         .max_concurrent_at_polls(1_usize)
-        .worker_build_id("test_bin_id")
         .max_task_queue_activities_per_second(rate)
         .build()
         .unwrap();
@@ -921,7 +918,7 @@ async fn activity_tasks_from_completion_reserve_slots() {
     let mut mock = build_mock_pollers(mh);
     mock.worker_cfg(|cfg| {
         cfg.max_cached_workflows = 2;
-        cfg.max_outstanding_activities = 2;
+        cfg.max_outstanding_activities = Some(2);
     });
     mock.set_act_poller(mock_poller_from_resps(act_tasks));
     let core = Arc::new(mock_worker(mock));
@@ -1030,13 +1027,7 @@ async fn cant_complete_activity_with_unset_result_payload() {
             })
         });
 
-    let cfg = WorkerConfigBuilder::default()
-        .namespace("enchi")
-        .task_queue("cat")
-        .worker_build_id("enchi_loves_salmon")
-        .build()
-        .unwrap();
-    let worker = Worker::new_test(cfg, mock_client);
+    let worker = Worker::new_test(test_worker_cfg().build().unwrap(), mock_client);
     let t = worker.poll_activity_task().await.unwrap();
     let res = worker
         .complete_activity_task(ActivityTaskCompletion {

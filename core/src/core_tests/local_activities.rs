@@ -187,7 +187,7 @@ async fn local_act_heartbeat(#[case] shutdown_middle: bool) {
     mh.enforce_correct_number_of_polls = false;
     let mut worker = mock_sdk_cfg(mh, |wc| {
         wc.max_cached_workflows = 1;
-        wc.max_outstanding_workflow_tasks = 1;
+        wc.max_outstanding_workflow_tasks = Some(1);
     });
     let core = worker.core_worker.clone();
 
@@ -1084,7 +1084,7 @@ async fn local_act_records_nonfirst_attempts_ok() {
     }));
     let mut worker = mock_sdk_cfg(mh, |wc| {
         wc.max_cached_workflows = 1;
-        wc.max_outstanding_workflow_tasks = 1;
+        wc.max_outstanding_workflow_tasks = Some(1);
     });
 
     worker.register_wf(
