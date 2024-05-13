@@ -288,7 +288,7 @@ pub(crate) use dbg_panic;
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::{advance_fut, worker::slot_supplier::FixedSizeSlotSupplier};
+    use crate::{advance_fut, worker::tuner::FixedSizeSlotSupplier};
     use futures_util::FutureExt;
     use temporal_sdk_core_api::worker::WorkflowSlotKind;
 

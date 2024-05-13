@@ -238,7 +238,7 @@ impl LocalActivityManager {
 
     #[cfg(test)]
     fn test(max_concurrent: usize) -> Self {
-        use crate::worker::slot_supplier::FixedSizeSlotSupplier;
+        use crate::worker::tuner::FixedSizeSlotSupplier;
 
         let ss = Arc::new(FixedSizeSlotSupplier::new(max_concurrent));
         let (hb_tx, _hb_rx) = unbounded_channel();

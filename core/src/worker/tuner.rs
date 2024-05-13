@@ -1,4 +1,11 @@
-use crate::worker::slot_supplier::FixedSizeSlotSupplier;
+mod fixed_size;
+mod resource_based;
+
+pub use fixed_size::FixedSizeSlotSupplier;
+pub use resource_based::{
+    RealSysInfo, ResourceBasedSlots, ResourceBasedTuner, ResourceSlotOptions,
+};
+
 use std::sync::{Arc, OnceLock};
 use temporal_sdk_core_api::{
     telemetry::metrics::TemporalMeter,

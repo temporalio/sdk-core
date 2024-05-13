@@ -1,13 +1,14 @@
 mod activities;
 pub(crate) mod client;
 mod slot_provider;
-pub(crate) mod slot_supplier;
-mod tuner;
+pub(crate) mod tuner;
 mod workflow;
 
-pub use slot_supplier::{RealSysInfo, ResourceBasedSlots, ResourceBasedTuner, ResourceSlotOptions};
 pub use temporal_sdk_core_api::worker::{WorkerConfig, WorkerConfigBuilder};
-pub use tuner::{TunerBuilder, TunerHolder};
+pub use tuner::{
+    FixedSizeSlotSupplier, RealSysInfo, ResourceBasedSlots, ResourceBasedTuner,
+    ResourceSlotOptions, TunerBuilder, TunerHolder,
+};
 
 pub(crate) use activities::{
     ExecutingLAId, LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
