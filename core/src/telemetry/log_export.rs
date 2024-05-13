@@ -1,11 +1,9 @@
 use futures::channel::mpsc::{channel, Receiver, Sender};
 use parking_lot::Mutex;
-use ringbuf::{Consumer, HeapRb, Producer};
+use ringbuf::{consumer::Consumer, producer::Producer, traits::Split, HeapRb};
 use std::{collections::HashMap, fmt, sync::Arc, time::SystemTime};
 use temporal_sdk_core_api::telemetry::{CoreLog, CoreLogConsumer};
 use tracing_subscriber::Layer;
-
-type CoreLogsOut = Consumer<CoreLog, Arc<HeapRb<CoreLog>>>;
 
 #[derive(Debug)]
 struct CoreLogFieldStorage(HashMap<String, serde_json::Value>);
@@ -102,7 +100,7 @@ where
 
 /// Core log consumer implementation backed by a ring buffer.
 pub struct CoreLogBufferedConsumer {
-    logs_in: Mutex<Producer<CoreLog, Arc<HeapRb<CoreLog>>>>,
+    logs_in: Mutex<<HeapRb<CoreLog> as Split>::Prod>,
 }
 
 impl CoreLogBufferedConsumer {
@@ -120,7 +118,7 @@ impl CoreLogBufferedConsumer {
 
 impl CoreLogConsumer for CoreLogBufferedConsumer {
     fn on_log(&self, log: CoreLog) {
-        let _ = self.logs_in.lock().push(log);
+        let _ = self.logs_in.lock().try_push(log);
     }
 }
 
@@ -132,7 +130,7 @@ impl fmt::Debug for CoreLogBufferedConsumer {
 
 /// Buffer of core logs that can be drained.
 pub struct CoreLogBuffer {
-    logs_out: CoreLogsOut,
+    logs_out: <HeapRb<CoreLog> as Split>::Cons,
 }
 
 impl CoreLogBuffer {
@@ -218,11 +216,14 @@ impl<'a> tracing::field::Visit for JsonVisitor<'a> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        telemetry::construct_filter_string, telemetry::CoreLogStreamConsumer, telemetry_init,
+        telemetry::{construct_filter_string, CoreLogStreamConsumer},
+        telemetry_init,
     };
     use futures::stream::StreamExt;
-    use std::fmt;
-    use std::sync::{Arc, Mutex};
+    use std::{
+        fmt,
+        sync::{Arc, Mutex},
+    };
     use temporal_sdk_core_api::telemetry::{
         CoreLog, CoreLogConsumer, CoreTelemetry, Logger, TelemetryOptionsBuilder,
     };
