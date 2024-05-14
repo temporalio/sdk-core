@@ -9,7 +9,7 @@ use temporal_sdk_core_api::telemetry::metrics::{
     CoreMeter, Counter, HistogramDuration, MetricAttributes, MetricKeyValue, MetricParameters,
     TemporalMeter,
 };
-use tonic::{body::BoxBody, transport::Channel};
+use tonic::{body::BoxBody, transport::Channel, Code};
 use tower::Service;
 
 /// Used to track context associated with metrics, and record/update them
@@ -92,11 +92,20 @@ impl MetricsContext {
     }
 
     /// A request to the temporal service failed
-    pub(crate) fn svc_request_failed(&self) {
-        if self.poll_is_long {
-            self.long_svc_request_failed.add(1, &self.kvs);
+    pub(crate) fn svc_request_failed(&self, code: Option<Code>) {
+        let refme: MetricAttributes;
+        let kvs = if let Some(c) = code {
+            refme = self
+                .meter
+                .extend_attributes(self.kvs.clone(), [status_code_kv(c)].into());
+            &refme
         } else {
-            self.svc_request_failed.add(1, &self.kvs);
+            &self.kvs
+        };
+        if self.poll_is_long {
+            self.long_svc_request_failed.add(1, kvs);
+        } else {
+            self.svc_request_failed.add(1, kvs);
         }
     }
 
@@ -113,6 +122,7 @@ impl MetricsContext {
 const KEY_NAMESPACE: &str = "namespace";
 const KEY_SVC_METHOD: &str = "operation";
 const KEY_TASK_QUEUE: &str = "task_queue";
+const KEY_STATUS_CODE: &str = "status_code";
 
 pub(crate) fn namespace_kv(ns: String) -> MetricKeyValue {
     MetricKeyValue::new(KEY_NAMESPACE, ns)
@@ -126,12 +136,40 @@ pub(crate) fn svc_operation(op: String) -> MetricKeyValue {
     MetricKeyValue::new(KEY_SVC_METHOD, op)
 }
 
+pub(crate) fn status_code_kv(code: Code) -> MetricKeyValue {
+    MetricKeyValue::new(KEY_STATUS_CODE, code_as_screaming_snake(&code))
+}
+
+/// This is done to match the way Java sdk labels these codes (and also matches gRPC spec)
+fn code_as_screaming_snake(code: &Code) -> &'static str {
+    match code {
+        Code::Ok => "OK",
+        Code::Cancelled => "CANCELLED",
+        Code::Unknown => "UNKNOWN",
+        Code::InvalidArgument => "INVALID_ARGUMENT",
+        Code::DeadlineExceeded => "DEADLINE_EXCEEDED",
+        Code::NotFound => "NOT_FOUND",
+        Code::AlreadyExists => "ALREADY_EXISTS",
+        Code::PermissionDenied => "PERMISSION_DENIED",
+        Code::ResourceExhausted => "RESOURCE_EXHAUSTED",
+        Code::FailedPrecondition => "FAILED_PRECONDITION",
+        Code::Aborted => "ABORTED",
+        Code::OutOfRange => "OUT_OF_RANGE",
+        Code::Unimplemented => "UNIMPLEMENTED",
+        Code::Internal => "INTERNAL",
+        Code::Unavailable => "UNAVAILABLE",
+        Code::DataLoss => "DATA_LOSS",
+        Code::Unauthenticated => "UNAUTHENTICATED",
+    }
+}
+
 /// Implements metrics functionality for gRPC (really, any http) calls
 #[derive(Debug, Clone)]
 pub struct GrpcMetricSvc {
     pub(crate) inner: Channel,
     // If set to none, metrics are a no-op
     pub(crate) metrics: Option<MetricsContext>,
+    pub(crate) disable_errcode_label: bool,
 }
 
 impl Service<http::Request<BoxBody>> for GrpcMetricSvc {
@@ -167,13 +205,29 @@ impl Service<http::Request<BoxBody>> for GrpcMetricSvc {
                 })
             });
         let callfut = self.inner.call(req);
+        let errcode_label_disabled = self.disable_errcode_label;
         async move {
             let started = Instant::now();
             let res = callfut.await;
             if let Some(metrics) = metrics {
                 metrics.record_svc_req_latency(started.elapsed());
-                if res.is_err() {
-                    metrics.svc_request_failed();
+                if let Ok(ref ok_res) = res {
+                    if let Some(number) = ok_res
+                        .headers()
+                        .get("grpc-status")
+                        .and_then(|s| s.to_str().ok())
+                        .and_then(|s| s.parse::<i32>().ok())
+                    {
+                        let code = Code::from(number);
+                        if code != Code::Ok {
+                            let code = if errcode_label_disabled {
+                                None
+                            } else {
+                                Some(code)
+                            };
+                            metrics.svc_request_failed(code);
+                        }
+                    }
                 }
             }
             res

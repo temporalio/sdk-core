@@ -14,8 +14,10 @@ mod retry;
 mod worker_registry;
 mod workflow_handle;
 
-pub use crate::proxy::HttpConnectProxyOptions;
-pub use crate::retry::{CallType, RetryClient, RETRYABLE_ERROR_CODES};
+pub use crate::{
+    proxy::HttpConnectProxyOptions,
+    retry::{CallType, RetryClient, RETRYABLE_ERROR_CODES},
+};
 pub use raw::{HealthService, OperatorService, TestService, WorkflowService};
 pub use temporal_sdk_core_protos::temporal::api::{
     enums::v1::ArchivalState,
@@ -150,6 +152,10 @@ pub struct ClientOptions {
     /// HTTP CONNECT proxy to use for this client.
     #[builder(default)]
     pub http_connect_proxy: Option<HttpConnectProxyOptions>,
+
+    /// If set true, error code labels will not be included on request failure metrics.
+    #[builder(default)]
+    pub disable_error_code_metric_tags: bool,
 }
 
 /// Configuration options for TLS
@@ -421,6 +427,7 @@ impl ClientOptions {
             .layer_fn(move |channel| GrpcMetricSvc {
                 inner: channel,
                 metrics: metrics_meter.clone().map(MetricsContext::new),
+                disable_errcode_label: self.disable_error_code_metric_tags,
             })
             .service(channel);
         let headers = Arc::new(RwLock::new(ClientHeaders {
