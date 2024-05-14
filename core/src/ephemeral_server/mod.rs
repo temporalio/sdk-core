@@ -505,7 +505,7 @@ async fn download_and_extract(
                 // that requires Seek.
                 if let Some(mut file) = read_zipfile_from_stream(&mut reader)? {
                     // If this is the file we're expecting, extract it
-                    if file.enclosed_name() == Some(&file_to_extract) {
+                    if file.enclosed_name().as_ref() == Some(&file_to_extract) {
                         std::io::copy(&mut file, &mut dest)?;
                         return Ok(());
                     }

@@ -23,8 +23,10 @@ use temporal_sdk_core_protos::{
         ActivityTaskCompletion,
     },
     temporal::api::{
-        enums::v1::WorkflowIdReusePolicy, failure::v1::Failure, query::v1::WorkflowQuery,
-        workflowservice::v1::ListNamespacesRequest,
+        enums::v1::WorkflowIdReusePolicy,
+        failure::v1::Failure,
+        query::v1::WorkflowQuery,
+        workflowservice::v1::{DescribeNamespaceRequest, ListNamespacesRequest},
     },
 };
 use temporal_sdk_core_test_utils::{
@@ -546,4 +548,29 @@ async fn latency_metrics(
         }
         assert!(matching_line.contains("le=\"100\""));
     }
+}
+
+#[tokio::test]
+async fn request_fail_codes() {
+    let (telemopts, addr, _aborter) = prom_metrics(false, false);
+    let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
+    let opts = get_integ_server_options();
+    let mut client = opts
+        .connect(NAMESPACE, rt.telemetry().get_temporal_metric_meter())
+        .await
+        .unwrap();
+
+    // Describe namespace w/ invalid argument (unset namespace field)
+    WorkflowService::describe_namespace(&mut client, DescribeNamespaceRequest::default())
+        .await
+        .unwrap_err();
+
+    let body = get_text(format!("http://{addr}/metrics")).await;
+    let matching_line = body
+        .lines()
+        .find(|l| l.starts_with("temporal_request_failure"))
+        .unwrap();
+    assert!(matching_line.contains("operation=\"DescribeNamespace\""));
+    assert!(matching_line.contains("status_code=\"INVALID_ARGUMENT\""));
+    assert!(matching_line.contains("} 1"));
 }
