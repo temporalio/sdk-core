@@ -34,6 +34,7 @@ option java_outer_classname = "MessageProto";
 option ruby_package = "Temporalio::Api::ErrorDetails::V1";
 option csharp_namespace = "Temporalio.Api.ErrorDetails.V1";
 
+import "google/protobuf/any.proto";
 import "temporal/api/common/v1/message.proto";
 
 import "temporal/api/enums/v1/failed_cause.proto";
@@ -94,6 +95,7 @@ message PermissionDeniedFailure {
 
 message ResourceExhaustedFailure {
     temporal.api.enums.v1.ResourceExhaustedCause cause = 1;
+    temporal.api.enums.v1.ResourceExhaustedScope scope = 2;
 }
 
 message SystemWorkflowFailure {
@@ -110,4 +112,22 @@ message WorkflowNotReadyFailure {
 message NewerBuildExistsFailure {
     // The current default compatible build ID which will receive tasks
     string default_build_id = 1;
+}
+
+message MultiOperationExecutionFailure {
+    // One status for each requested operation from the failed MultiOperation. The failed
+    // operation(s) have the same error details as if it was executed separately. All other operations have the
+    // status code `Aborted` and `MultiOperationExecutionAborted` is added to the details field.
+    repeated OperationStatus statuses = 1;
+
+    // NOTE: `OperationStatus` is modelled after
+    // [`google.rpc.Status`](https://github.com/googleapis/googleapis/blob/master/google/rpc/status.proto).
+    //
+    // (-- api-linter: core::0146::any=disabled
+    //     aip.dev/not-precedent: details are meant to hold arbitrary payloads. --)
+    message OperationStatus {
+        int32 code = 1;
+        string message = 2;
+        repeated google.protobuf.Any details = 3;
+    }
 }

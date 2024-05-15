@@ -103,7 +103,31 @@ message WorkflowExecutionStartedEventAttributes {
     string workflow_id = 28;
     // If this workflow intends to use anything other than the current overall default version for
     // the queue, then we include it here.
+    // Deprecated. use `inherited_build_id` instead
     temporal.api.common.v1.WorkerVersionStamp source_version_stamp = 29;
+    // Completion callbacks attached when this workflow was started.
+    repeated temporal.api.common.v1.Callback completion_callbacks = 30;
+
+    // Contains information about the root workflow execution.
+    // The root workflow execution is defined as follows:
+    // 1. A workflow without parent workflow is its own root workflow.
+    // 2. A workflow that has a parent workflow has the same root workflow as its parent workflow.
+    // Note: workflows continued as new or reseted may or may not have parents, check examples below.
+    //
+    // Examples:
+    //   Scenario 1: Workflow W1 starts child workflow W2, and W2 starts child workflow W3.
+    //     - The root workflow of all three workflows is W1.
+    //   Scenario 2: Workflow W1 starts child workflow W2, and W2 continued as new W3.
+    //     - The root workflow of all three workflows is W1.
+    //   Scenario 3: Workflow W1 continued as new W2.
+    //     - The root workflow of W1 is W1 and the root workflow of W2 is W2.
+    //   Scenario 4: Workflow W1 starts child workflow W2, and W2 is reseted, creating W3
+    //     - The root workflow of all three workflows is W1.
+    //   Scenario 5: Workflow W1 is reseted, creating W2.
+    //     - The root workflow of W1 is W1 and the root workflow of W2 is W2.
+    temporal.api.common.v1.WorkflowExecution root_workflow_execution = 31;
+    // When present, this execution is assigned to the build ID of its parent or previous execution.
+    string inherited_build_id = 32;
 }
 
 message WorkflowExecutionCompletedEventAttributes {
@@ -156,9 +180,9 @@ message WorkflowExecutionContinuedAsNewEventAttributes {
     temporal.api.common.v1.Header header = 12;
     temporal.api.common.v1.Memo memo = 13;
     temporal.api.common.v1.SearchAttributes search_attributes = 14;
-    // If this is set, the workflow executing this command wishes to continue as new using a version
-    // compatible with the version that this workflow most recently ran on.
-    bool use_compatible_version = 15;
+    // If this is set, the new execution inherits the Build ID of the current execution. Otherwise,
+    // the assignment rules will be used to independently assign a Build ID to the new execution.
+    bool inherit_build_id = 15;
 
     // workflow_execution_timeout is omitted as it shouldn't be overridden from within a workflow.
 }
@@ -189,6 +213,11 @@ message WorkflowTaskStartedEventAttributes {
     // continue-as-new regardless of the suggestion. Note that history event count is
     // just the event id of this event, so we don't include it explicitly here.
     int64 history_size_bytes = 5;
+    // Version info of the worker to whom this task was dispatched.
+    temporal.api.common.v1.WorkerVersionStamp worker_version = 6;
+    // Used by server internally to properly reapply build ID redirects to an execution
+    // when rebuilding it from events.
+    int64 build_id_redirect_counter = 7;
 }
 
 message WorkflowTaskCompletedEventAttributes {
@@ -203,6 +232,7 @@ message WorkflowTaskCompletedEventAttributes {
     // Version info of the worker who processed this workflow task. If present, the `build_id` field
     // within is also used as `binary_checksum`, which may be omitted in that case (it may also be
     // populated to preserve compatibility).
+    // Deprecated. Use the info inside the corresponding WorkflowTaskStartedEvent
     temporal.api.common.v1.WorkerVersionStamp worker_version = 5;
     // Data the SDK wishes to record for itself, but server need not interpret, and does not
     // directly impact workflow state.
@@ -242,6 +272,7 @@ message WorkflowTaskFailedEventAttributes {
     // Version info of the worker who processed this workflow task. If present, the `build_id` field
     // within is also used as `binary_checksum`, which may be omitted in that case (it may also be
     // populated to preserve compatibility).
+    // Deprecated. Use the info inside the corresponding WorkflowTaskStartedEvent
     temporal.api.common.v1.WorkerVersionStamp worker_version = 10;
 }
 
@@ -283,10 +314,9 @@ message ActivityTaskScheduledEventAttributes {
     // configuration. Retries will happen up to `schedule_to_close_timeout`. To disable retries set
     // retry_policy.maximum_attempts to 1.
     temporal.api.common.v1.RetryPolicy retry_policy = 12;
-    // If this is set, the workflow executing this command wishes to start the activity using
-    // a version compatible with the version that this workflow most recently ran on, if such
-    // behavior is possible.
-    bool use_compatible_version = 13;
+    // If this is set, the activity would be assigned to the Build ID of the workflow. Otherwise,
+    // Assignment rules of the activity's Task Queue will be used to determine the Build ID.
+    bool use_workflow_build_id = 13;
 }
 
 message ActivityTaskStartedEventAttributes {
@@ -301,6 +331,11 @@ message ActivityTaskStartedEventAttributes {
     // Will be set to the most recent failure details, if this task has previously failed and then
     // been retried.
     temporal.api.failure.v1.Failure last_failure = 5;
+    // Version info of the worker to whom this task was dispatched.
+    temporal.api.common.v1.WorkerVersionStamp worker_version = 6;
+    // Used by server internally to properly reapply build ID redirects to an execution
+    // when rebuilding it from events.
+    int64 build_id_redirect_counter = 7;
 }
 
 message ActivityTaskCompletedEventAttributes {
@@ -313,6 +348,7 @@ message ActivityTaskCompletedEventAttributes {
     // id of the worker that completed this task
     string identity = 4;
     // Version info of the worker who processed this workflow task.
+    // Deprecated. Use the info inside the corresponding ActivityTaskStartedEvent
     temporal.api.common.v1.WorkerVersionStamp worker_version = 5;
 }
 
@@ -327,6 +363,7 @@ message ActivityTaskFailedEventAttributes {
     string identity = 4;
     temporal.api.enums.v1.RetryState retry_state = 5;
     // Version info of the worker who processed this workflow task.
+    // Deprecated. Use the info inside the corresponding ActivityTaskStartedEvent
     temporal.api.common.v1.WorkerVersionStamp worker_version = 6;
 }
 
@@ -361,6 +398,7 @@ message ActivityTaskCanceledEventAttributes {
     // id of the worker who canceled this activity
     string identity = 5;
     // Version info of the worker who processed this workflow task.
+    // Deprecated. Use the info inside the corresponding ActivityTaskStartedEvent
     temporal.api.common.v1.WorkerVersionStamp worker_version = 6;
 }
 
@@ -581,10 +619,9 @@ message StartChildWorkflowExecutionInitiatedEventAttributes {
     temporal.api.common.v1.Header header = 15;
     temporal.api.common.v1.Memo memo = 16;
     temporal.api.common.v1.SearchAttributes search_attributes = 17;
-    // If this is set, the workflow executing this command wishes to start the child workflow using
-    // a version compatible with the version that this workflow most recently ran on, if such
-    // behavior is possible.
-    bool use_compatible_version = 19;
+    // If this is set, the child workflow inherits the Build ID of the parent. Otherwise, the assignment
+    // rules of the child's Task Queue will be used to independently assign a Build ID to it.
+    bool inherit_build_id = 19;
 }
 
 message StartChildWorkflowExecutionFailedEventAttributes {
@@ -750,11 +787,93 @@ message WorkflowExecutionUpdateRejectedEventAttributes {
     temporal.api.failure.v1.Failure failure = 5;
 }
 
-message WorkflowExecutionUpdateRequestedEventAttributes {
+message WorkflowExecutionUpdateAdmittedEventAttributes {
     // The update request associated with this event.
     temporal.api.update.v1.Request request = 1;
-    // A record of why this event was written to history.
-    temporal.api.enums.v1.UpdateRequestedEventOrigin origin = 2;
+    // An explanation of why this event was written to history.
+    temporal.api.enums.v1.UpdateAdmittedEventOrigin origin = 2;
+}
+
+// Event marking that an operation was scheduled by a workflow via the ScheduleNexusOperation command.
+message NexusOperationScheduledEventAttributes {
+    // Endpoint name, must exist in the endpoint registry.
+    string endpoint = 1;
+    // Service name.
+    string service = 2;
+    // Operation name.
+    string operation = 3;
+    // Input for the operation. The server converts this into Nexus request content and the appropriate content headers
+    // internally when sending the StartOperation request. On the handler side, if it is also backed by Temporal, the
+    // content is transformed back to the original Payload stored in this event.
+    temporal.api.common.v1.Payload input = 4;
+    // Schedule-to-close timeout for this operation.
+    // Indicates how long the caller is willing to wait for operation completion.
+    // Calls are retried internally by the server.
+    // (-- api-linter: core::0140::prepositions=disabled
+    //     aip.dev/not-precedent: "to" is used to indicate interval. --)
+    google.protobuf.Duration schedule_to_close_timeout = 5;
+    // Header to attach to the Nexus request. Note these headers are not the same as Temporal headers on internal
+    // activities and child workflows, these are transmitted to Nexus operations that may be external and are not
+    // traditional payloads.
+    map<string, string> nexus_header = 6;
+    // The `WORKFLOW_TASK_COMPLETED` event that the corresponding ScheduleNexusOperation command was reported with.
+    int64 workflow_task_completed_event_id = 7;
+    // A unique ID generated by the history service upon creation of this event.
+    // The ID will be transmitted with all nexus StartOperation requests and is used as an idempotentency key.
+    string request_id = 8;
+}
+
+// Event marking an asynchronous operation was started by the responding Nexus handler.
+// If the operation completes synchronously, this event is not generated.
+// In rare situations, such as request timeouts, the service may fail to record the actual start time and will fabricate
+// this event upon receiving the operation completion via callback.
+message NexusOperationStartedEventAttributes {
+    // The ID of the `NEXUS_OPERATION_SCHEDULED` event this task corresponds to.
+    int64 scheduled_event_id = 1;
+    // The operation ID returned by the Nexus handler in the response to the StartOperation request.
+    // This ID is used when canceling the operation.
+    string operation_id = 3;
+}
+
+// Nexus operation completed successfully.
+message NexusOperationCompletedEventAttributes {
+    // The ID of the `NEXUS_OPERATION_SCHEDULED` event. Uniquely identifies this operation.
+    int64 scheduled_event_id = 1;
+    // Serialized result of the Nexus operation. The response of the Nexus handler.
+    // Delivered either via a completion callback or as a response to a synchronous operation.
+    temporal.api.common.v1.Payload result = 2;
+}
+
+// Nexus operation failed.
+message NexusOperationFailedEventAttributes {
+    // The ID of the `NEXUS_OPERATION_SCHEDULED` event. Uniquely identifies this operation.
+    int64 scheduled_event_id = 1;
+    // Failure details. A NexusOperationFailureInfo wrapping an ApplicationFailureInfo.
+    temporal.api.failure.v1.Failure failure = 2;
+}
+
+// Nexus operation timed out.
+message NexusOperationTimedOutEventAttributes {
+    // The ID of the `NEXUS_OPERATION_SCHEDULED` event. Uniquely identifies this operation.
+    int64 scheduled_event_id = 1;
+    // Failure details. A NexusOperationFailureInfo wrapping a CanceledFailureInfo.
+    temporal.api.failure.v1.Failure failure = 2;
+}
+
+// Nexus operation completed as canceled. May or may not have been due to a cancellation request by the workflow.
+message NexusOperationCanceledEventAttributes {
+    // The ID of the `NEXUS_OPERATION_SCHEDULED` event. Uniquely identifies this operation.
+    int64 scheduled_event_id = 1;
+    // Cancellation details.
+    temporal.api.failure.v1.Failure failure = 2;
+}
+
+message NexusOperationCancelRequestedEventAttributes {
+    // The id of the `NEXUS_OPERATION_SCHEDULED` event this cancel request corresponds to.
+    int64 scheduled_event_id = 1;
+    // The `WORKFLOW_TASK_COMPLETED` event that the corresponding RequestCancelNexusOperation command was reported
+    // with.
+    int64 workflow_task_completed_event_id = 2;
 }
 
 // History events are the method by which Temporal SDKs advance (or recreate) workflow state.
@@ -821,7 +940,14 @@ message HistoryEvent {
         WorkflowPropertiesModifiedExternallyEventAttributes workflow_properties_modified_externally_event_attributes = 49;
         ActivityPropertiesModifiedExternallyEventAttributes activity_properties_modified_externally_event_attributes = 50;
         WorkflowPropertiesModifiedEventAttributes workflow_properties_modified_event_attributes = 51;
-        WorkflowExecutionUpdateRequestedEventAttributes workflow_execution_update_requested_event_attributes = 52;
+        WorkflowExecutionUpdateAdmittedEventAttributes workflow_execution_update_admitted_event_attributes = 52;
+        NexusOperationScheduledEventAttributes nexus_operation_scheduled_event_attributes = 53;
+        NexusOperationStartedEventAttributes nexus_operation_started_event_attributes = 54;
+        NexusOperationCompletedEventAttributes nexus_operation_completed_event_attributes = 55;
+        NexusOperationFailedEventAttributes nexus_operation_failed_event_attributes = 56;
+        NexusOperationCanceledEventAttributes nexus_operation_canceled_event_attributes = 57;
+        NexusOperationTimedOutEventAttributes nexus_operation_timed_out_event_attributes = 58;
+        NexusOperationCancelRequestedEventAttributes nexus_operation_cancel_requested_event_attributes = 59;
     }
 }
 

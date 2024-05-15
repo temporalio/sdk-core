@@ -81,10 +81,9 @@ message ScheduleActivityTaskCommandAttributes {
     // Request to start the activity directly bypassing matching service and worker polling
     // The slot for executing the activity should be reserved when setting this field to true.
     bool request_eager_execution = 12;
-    // If this is set, the workflow executing this command wishes to start the activity using
-    // a version compatible with the version that this workflow most recently ran on, if such
-    // behavior is possible.
-    bool use_compatible_version = 13;
+    // If this is set, the activity would be assigned to the Build ID of the workflow. Otherwise,
+    // Assignment rules of the activity's Task Queue will be used to determine the Build ID.
+    bool use_workflow_build_id = 13;
 }
 
 message RequestCancelActivityTaskCommandAttributes {
@@ -193,9 +192,9 @@ message ContinueAsNewWorkflowExecutionCommandAttributes {
     temporal.api.common.v1.Header header = 12;
     temporal.api.common.v1.Memo memo = 13;
     temporal.api.common.v1.SearchAttributes search_attributes = 14;
-    // If this is set, the workflow executing this command wishes to continue as new using a version
-    // compatible with the version that this workflow most recently ran on.
-    bool use_compatible_version = 15;
+    // If this is set, the new execution inherits the Build ID of the current execution. Otherwise,
+    // the assignment rules will be used to independently assign a Build ID to the new execution.
+    bool inherit_build_id = 15;
 
     // `workflow_execution_timeout` is omitted as it shouldn't be overridden from within a workflow.
 }
@@ -223,15 +222,47 @@ message StartChildWorkflowExecutionCommandAttributes {
     temporal.api.common.v1.Header header = 14;
     temporal.api.common.v1.Memo memo = 15;
     temporal.api.common.v1.SearchAttributes search_attributes = 16;
-    // If this is set, the workflow executing this command wishes to start the child workflow using
-    // a version compatible with the version that this workflow most recently ran on, if such
-    // behavior is possible.
-    bool use_compatible_version = 17;
+    // If this is set, the child workflow inherits the Build ID of the parent. Otherwise, the assignment
+    // rules of the child's Task Queue will be used to independently assign a Build ID to it.
+    bool inherit_build_id = 17;
 }
 
 message ProtocolMessageCommandAttributes {
     // The message ID of the message to which this command is a pointer.
     string message_id = 1;
+}
+
+message ScheduleNexusOperationCommandAttributes {
+    // Endpoint name, must exist in the endpoint registry or this command will fail.
+    string endpoint = 1;
+    // Service name.
+    string service = 2;
+    // Operation name.
+    string operation = 3;
+    // Input for the operation. The server converts this into Nexus request content and the appropriate content headers
+    // internally when sending the StartOperation request. On the handler side, if it is also backed by Temporal, the
+    // content is transformed back to the original Payload sent in this command.
+    temporal.api.common.v1.Payload input = 4;
+    // Schedule-to-close timeout for this operation.
+    // Indicates how long the caller is willing to wait for operation completion.
+    // Calls are retried internally by the server.
+    // (-- api-linter: core::0140::prepositions=disabled
+    //     aip.dev/not-precedent: "to" is used to indicate interval. --)
+    google.protobuf.Duration schedule_to_close_timeout = 5;
+
+    // Header to attach to the Nexus request.
+    // Users are responsible for encrypting sensitive data in this header as it is stored in workflow history and
+    // transmitted to external services as-is.
+    // This is useful for propagating tracing information.
+    // Note these headers are not the same as Temporal headers on internal activities and child workflows, these are
+    // transmitted to Nexus operations that may be external and are not traditional payloads.
+    map<string, string> nexus_header = 6;
+}
+
+message RequestCancelNexusOperationCommandAttributes {
+    // The `NEXUS_OPERATION_SCHEDULED` event ID (a unique identifier) for the operation to be canceled.
+    // The operation may ignore cancellation and end up with any completion state.
+    int64 scheduled_event_id = 1;
 }
 
 message Command {
@@ -253,5 +284,8 @@ message Command {
         ProtocolMessageCommandAttributes protocol_message_command_attributes = 15;
         // 16 is available for use - it was used as part of a prototype that never made it into a release
         ModifyWorkflowPropertiesCommandAttributes modify_workflow_properties_command_attributes = 17;
+
+        ScheduleNexusOperationCommandAttributes schedule_nexus_operation_command_attributes = 18;
+        RequestCancelNexusOperationCommandAttributes request_cancel_nexus_operation_command_attributes = 19;
     }
 }

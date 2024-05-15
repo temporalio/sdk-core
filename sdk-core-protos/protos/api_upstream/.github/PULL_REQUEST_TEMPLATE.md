@@ -9,3 +9,6 @@
 <!-- Are there any breaking changes on binary or code level? -->
 **Breaking changes**
 
+
+<!-- If this breaks the Server, please provide the Server PR to merge right after this PR was merged. -->
+**Server PR**

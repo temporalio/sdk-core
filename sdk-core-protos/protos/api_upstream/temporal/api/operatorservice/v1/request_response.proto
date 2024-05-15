@@ -32,6 +32,8 @@ option ruby_package = "Temporalio::Api::OperatorService::V1";
 option csharp_namespace = "Temporalio.Api.OperatorService.V1";
 
 import "temporal/api/enums/v1/common.proto";
+import "temporal/api/nexus/v1/message.proto";
+import "google/protobuf/duration.proto";
 
 // (-- Search Attribute --)
 
@@ -66,14 +68,13 @@ message ListSearchAttributesResponse {
     map<string, string> storage_schema = 3;
 }
 
-// (-- api-linter: core::0135::request-unknown-fields=disabled
-//     aip.dev/not-precedent: DeleteNamespace RPC doesn't follow Google API format. --)
-// (-- api-linter: core::0135::request-name-required=disabled
-//     aip.dev/not-precedent: DeleteNamespace RPC doesn't follow Google API format. --)
 message DeleteNamespaceRequest {
     // Only one of namespace or namespace_id must be specified to identify namespace.
     string namespace = 1;
     string namespace_id = 2;
+    // If provided, the deletion of namespace info will be delayed for the given duration (0 means no delay).
+    // If not provided, the default delay configured in the cluster will be used.
+    google.protobuf.Duration namespace_delete_delay = 3;
 }
 
 message DeleteNamespaceResponse {
@@ -82,10 +83,13 @@ message DeleteNamespaceResponse {
 }
 
 message AddOrUpdateRemoteClusterRequest {
-    // Frontend Address is a cross cluster accessible address.
+    // Frontend Address is a cross cluster accessible address for gRPC traffic. This field is required.
     string frontend_address = 1;
     // Flag to enable / disable the cross cluster connection.
     bool enable_remote_cluster_connection = 2;
+    // Frontend HTTP Address is a cross cluster accessible address for HTTP traffic. This field is optional. If not provided
+    //  on update, the existing HTTP address will be removed.
+    string frontend_http_address = 3;
 }
 
 message AddOrUpdateRemoteClusterResponse {
@@ -115,12 +119,75 @@ message ClusterMetadata {
     string cluster_name = 1;
     // Id of the cluster.
     string cluster_id = 2;
-    // Cluster accessible address.
+    // gRPC address.
     string address = 3;
+    // HTTP address, if one exists.
+    string http_address = 7;
     // A unique failover version across all connected clusters.
     int64 initial_failover_version = 4;
     // History service shard number.
     int32 history_shard_count = 5;
     // A flag to indicate if a connection is active.
     bool is_connection_enabled = 6;
+}
+
+message GetNexusEndpointRequest {
+    // Server-generated unique endpoint ID.
+    string id = 1;
+}
+
+message GetNexusEndpointResponse {
+    temporal.api.nexus.v1.Endpoint endpoint = 1;
+}
+
+message CreateNexusEndpointRequest {
+    // Endpoint definition to create.
+    temporal.api.nexus.v1.EndpointSpec spec = 1;
+}
+
+message CreateNexusEndpointResponse {
+    // Data post acceptance. Can be used to issue additional updates to this record.
+    temporal.api.nexus.v1.Endpoint endpoint = 1;
+}
+
+message UpdateNexusEndpointRequest {
+    // Server-generated unique endpoint ID.
+    string id = 1;
+    // Data version for this endpoint. Must match current version.
+    int64 version = 2;
+
+    temporal.api.nexus.v1.EndpointSpec spec = 3;
+}
+
+message UpdateNexusEndpointResponse {
+    // Data post acceptance. Can be used to issue additional updates to this record.
+    temporal.api.nexus.v1.Endpoint endpoint = 1;
+}
+
+message DeleteNexusEndpointRequest {
+    // Server-generated unique endpoint ID.
+    string id = 1;
+    // Data version for this endpoint. Must match current version.
+    int64 version = 2;
+}
+
+message DeleteNexusEndpointResponse {
+}
+
+message ListNexusEndpointsRequest {
+    int32 page_size = 1;
+    // To get the next page, pass in `ListNexusEndpointsResponse.next_page_token` from the previous page's
+    // response, the token will be empty if there's no other page.
+    // Note: the last page may be empty if the total number of endpoints registered is a multiple of the page size.
+    bytes next_page_token = 2;
+    // Name of the incoming endpoint to filter on - optional. Specifying this will result in zero or one results.
+    // (-- api-linter: core::203::field-behavior-required=disabled
+    //     aip.dev/not-precedent: Not following linter rules. --)
+    string name = 3;
+}
+
+message ListNexusEndpointsResponse {
+    // Token for getting the next page.
+    bytes next_page_token = 1;
+    repeated temporal.api.nexus.v1.Endpoint endpoints = 2;
 }

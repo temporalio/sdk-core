@@ -243,6 +243,10 @@ message SchedulePolicies {
     // This applies after retry policies: the full chain of retries must fail to
     // trigger a pause here.
     bool pause_on_failure = 3;
+
+    // If true, and the action would start a workflow, a timestamp will not be
+    // appended to the scheduled workflow id.
+    bool keep_original_workflow_id = 4;
 }
 
 message ScheduleAction {

@@ -82,7 +82,6 @@ impl WorkerClientBag {
         if self.default_capabilities().build_id_based_versioning {
             Some(WorkerVersionStamp {
                 build_id: self.worker_build_id.clone(),
-                bundle_id: "".to_string(),
                 use_versioning: self.use_versioning,
             })
         } else {

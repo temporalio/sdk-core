@@ -173,7 +173,7 @@ mod tests {
                 Some(&ApplicationFailureInfo {
                     r#type: "no retry".to_string(),
                     non_retryable: false,
-                    details: None,
+                    ..Default::default()
                 })
             )
             .is_none());
@@ -194,7 +194,7 @@ mod tests {
                 Some(&ApplicationFailureInfo {
                     r#type: "".to_string(),
                     non_retryable: true,
-                    details: None,
+                    ..Default::default()
                 })
             )
             .is_none());

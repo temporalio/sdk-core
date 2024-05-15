@@ -54,6 +54,29 @@ message TaskQueueMetadata {
     google.protobuf.DoubleValue max_tasks_per_second = 1;
 }
 
+// Used for specifying versions the caller is interested in.
+message TaskQueueVersionSelection {
+    // Include specific Build IDs.
+    repeated string build_ids = 1;
+    // Include the unversioned queue.
+    bool unversioned = 2;
+    // Include all active versions. A version is considered active if it has had new
+    // tasks or polls recently.
+    bool all_active = 3;
+}
+
+message TaskQueueVersionInfo {
+    // Task Queue info per Task Type. Key is the numerical value of the temporal.api.enums.v1.TaskQueueType enum.
+    map<int32, TaskQueueTypeInfo> types_info = 1;
+    temporal.api.enums.v1.BuildIdTaskReachability task_reachability = 2;
+}
+
+message TaskQueueTypeInfo {
+    // Unversioned workers (with `useVersioning=false`) are reported in unversioned result even if they set a Build ID.
+    repeated PollerInfo pollers = 1;
+}
+
+// Deprecated. Use `InternalTaskQueueStatus`. This is kept until `DescribeTaskQueue` supports legacy behavior.
 message TaskQueueStatus {
     int64 backlog_count_hint = 1;
     int64 read_level = 2;
@@ -110,4 +133,97 @@ message BuildIdReachability {
     string build_id = 1;
     // Reachability per task queue.
     repeated TaskQueueReachability task_queue_reachability = 2;
+}
+
+message RampByPercentage {
+    // Acceptable range is [0,100).
+    float ramp_percentage = 1;
+}
+
+// These rules assign a Build ID to Unassigned Workflow Executions and
+// Activities.
+//
+// Specifically, assignment rules are applied to the following Executions or
+// Activities when they are scheduled in a Task Queue:
+//    - Generally, any new Workflow Execution, except:
+//      - When A Child Workflow or a Continue-As-New Execution inherits the
+//        Build ID from its parent/previous execution by setting the
+//        `inherit_build_id` flag.
+//      - Workflow Executions started Eagerly are assigned to the Build ID of
+//        the Starter.
+//    - An Activity that is scheduled on a Task Queue different from the one
+//      their Workflow runs on, unless the `use_workflow_build_id` flag is set.
+//
+// In absence of (applicable) redirect rules (`CompatibleBuildIdRedirectRule`s)
+// the task will be dispatched to Workers of the Build ID determined by the
+// assignment rules. Otherwise, the final Build ID will be determined by the
+// redirect rules.
+//
+// When using Worker Versioning, in the steady state, for a given Task Queue,
+// there should typically be exactly one assignment rule to send all Unassigned
+// tasks to the latest Build ID. Existence of at least one such "unconditional"
+// rule at all times is enforce by the system, unless the `force` flag is used
+// by the user when replacing/deleting these rules (for exceptional cases).
+//
+// During a deployment, one or more additional rules can be added to assign a
+// subset of the tasks to a new Build ID based on a "ramp percentage".
+//
+// When there are multiple assignment rules for a Task Queue, the rules are
+// evaluated in order, starting from index 0. The first applicable rule will be
+// applied and the rest will be ignored.
+//
+// In the event that no assignment rule is applicable on a task (or the Task
+// Queue is simply not versioned), the tasks will be sent to unversioned
+// workers, if available. Otherwise, they remain Unassigned, and will be
+// retried for assignment, or dispatch to unversioned workers, at a later time
+// depending on the availability of workers.
+message BuildIdAssignmentRule {
+    string target_build_id = 1;
+
+    // If a ramp is provided, this rule will be applied only to a sample of
+    // tasks according to the provided percentage.
+    // This option can be used only on "terminal" Build IDs (the ones not used
+    // as source in any redirect rules).
+    oneof ramp {
+        // This ramp is useful for gradual Blue/Green deployments (and similar)
+        // where you want to send a certain portion of the traffic to the target
+        // Build ID.
+        RampByPercentage percentage_ramp = 3;
+    }
+}
+
+// These rules apply to tasks assigned to a particular Build ID
+// (`source_build_id`) to redirect them to another *compatible* Build ID
+// (`target_build_id`).
+//
+// It is user's responsibility to ensure that the target Build ID is compatible
+// with the source Build ID (e.g. by using the Patching API).
+//
+// Most deployments are not expected to need these rules, however following
+// situations can greatly benefit from redirects:
+//  - Need to move long-running Workflow Executions from an old Build ID to a
+//    newer one.
+//  - Need to hotfix some broken or stuck Workflow Executions.
+//
+// In steady state, redirect rules are beneficial when dealing with old
+// Executions ran on now-decommissioned Build IDs:
+//  - To redirecting the Workflow Queries to the current (compatible) Build ID.
+//  - To be able to Reset an old Execution so it can run on the current
+//    (compatible) Build ID.
+//
+// Redirect rules can be chained, but only the last rule in the chain can have
+// a ramp.
+message CompatibleBuildIdRedirectRule {
+    string source_build_id = 1;
+    string target_build_id = 2;
+}
+
+message TimestampedBuildIdAssignmentRule {
+    BuildIdAssignmentRule rule = 1;
+    google.protobuf.Timestamp create_time = 2;
+}
+
+message TimestampedCompatibleBuildIdRedirectRule {
+    CompatibleBuildIdRedirectRule rule = 1;
+    google.protobuf.Timestamp create_time = 2;
 }
