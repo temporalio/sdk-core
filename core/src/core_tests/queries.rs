@@ -893,8 +893,9 @@ async fn build_id_set_properly_on_query_on_first_task() {
     core.drain_pollers_and_shutdown().await;
 }
 
+#[rstest::rstest]
 #[tokio::test]
-async fn queries_arent_lost_in_buffer_void() {
+async fn queries_arent_lost_in_buffer_void(#[values(false, true)] buffered_because_cache: bool) {
     let wfid = "fake_wf_id";
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
@@ -902,7 +903,24 @@ async fn queries_arent_lost_in_buffer_void() {
     t.add_we_signaled("sig", vec![]);
     t.add_full_wf_task();
     t.add_workflow_execution_completed();
-    let tasks = [
+
+    let mut tasks = if buffered_because_cache {
+        // A history for another wf which will occupy the only cache slot initially
+        let mut t1 = TestHistoryBuilder::default();
+        t1.add_by_type(EventType::WorkflowExecutionStarted);
+        t1.add_full_wf_task();
+        t1.add_workflow_execution_completed();
+
+        vec![hist_to_poll_resp(
+            &t1,
+            "cache_occupier".to_owned(),
+            1.into(),
+        )]
+    } else {
+        vec![]
+    };
+
+    tasks.extend([
         hist_to_poll_resp(&t, wfid.to_owned(), 1.into()),
         {
             let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), 1.into());
@@ -923,8 +941,7 @@ async fn queries_arent_lost_in_buffer_void() {
             pr
         },
         hist_to_poll_resp(&t, wfid.to_owned(), 2.into()),
-    ]
-    .map(|r| r.resp);
+    ]);
 
     let mut mock = mock_workflow_client();
     mock.expect_complete_workflow_task()
@@ -932,9 +949,29 @@ async fn queries_arent_lost_in_buffer_void() {
     mock.expect_respond_legacy_query()
         .times(2)
         .returning(|_, _| Ok(Default::default()));
-    let mut mock = MocksHolder::from_wft_stream(mock, stream::iter(tasks));
+    let mut mock =
+        MocksHolder::from_wft_stream(mock, stream::iter(tasks.into_iter().map(|r| r.resp)));
     mock.worker_cfg(|wc| wc.max_cached_workflows = 1);
     let core = mock_worker(mock);
+
+    if buffered_because_cache {
+        // Poll for and complete the occupying workflow
+        let task = core.poll_workflow_activation().await.unwrap();
+        core.complete_execution(&task.run_id).await;
+        // Get the cache removal task
+        let task = core.poll_workflow_activation().await.unwrap();
+        assert_matches!(
+            task.jobs.as_slice(),
+            [WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
+            }]
+        );
+        // Wait a beat to ensure the other task(s) have a chance to be buffered
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        core.complete_workflow_activation(WorkflowActivationCompletion::empty(task.run_id))
+            .await
+            .unwrap();
+    }
 
     let task = core.poll_workflow_activation().await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::empty(task.run_id))
