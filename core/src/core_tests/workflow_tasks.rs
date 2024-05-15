@@ -2752,13 +2752,13 @@ async fn use_compatible_version_flag(
             let can_cmd = c.commands.pop().unwrap().attributes.unwrap();
             match can_cmd {
                 Attributes::ContinueAsNewWorkflowExecutionCommandAttributes(a) => {
-                    assert_eq!(a.use_compatible_version, compat_flag_expected);
+                    assert_eq!(a.inherit_build_id, compat_flag_expected);
                 }
                 Attributes::ScheduleActivityTaskCommandAttributes(a) => {
-                    assert_eq!(a.use_compatible_version, compat_flag_expected);
+                    assert_eq!(a.use_workflow_build_id, compat_flag_expected);
                 }
                 Attributes::StartChildWorkflowExecutionCommandAttributes(a) => {
-                    assert_eq!(a.use_compatible_version, compat_flag_expected);
+                    assert_eq!(a.inherit_build_id, compat_flag_expected);
                 }
                 _ => panic!("invalid attributes type"),
             }

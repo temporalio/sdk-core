@@ -31,7 +31,7 @@ option java_outer_classname = "WorkflowMetadataProto";
 option ruby_package = "Temporalio::Api::Sdk::V1";
 option csharp_namespace = "Temporalio.Api.Sdk.V1";
 
-// The name of the query to retrieve this information is `__temporal_getWorkflowMetadata`.
+// The name of the query to retrieve this information is `__temporal_workflow_metadata`.
 message WorkflowMetadata {
   // Metadata provided at declaration or creation time.
   WorkflowDefinition definition = 1;
@@ -62,5 +62,5 @@ message WorkflowInteractionDefinition {
   // An optional interaction description provided by the application.
   // By convention, external tools may interpret its first part,
   // i.e., ending with a line break, as a summary of the description.
-  string description = 2; 
+  string description = 2;
 }

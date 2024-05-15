@@ -45,6 +45,18 @@ message NamespaceInfo {
     // A key-value map for any customized purpose.
     map<string, string> data = 5;
     string id = 6;
+    // All capabilities the namespace supports.
+    Capabilities capabilities = 7;
+
+    // Namespace capability details. Should contain what features are enabled in a namespace.
+    message Capabilities {
+        // True if the namespace supports eager workflow start.
+        bool eager_workflow_start = 1;
+        // True if the namespace supports sync update
+        bool sync_update = 2;
+        // True if the namespace supports async update
+        bool async_update = 3;
+    }
 
     // Whether scheduled workflows are supported on this namespace. This is only needed
     // temporarily while the feature is experimental, so we can give it a high tag.

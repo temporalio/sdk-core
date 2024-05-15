@@ -687,7 +687,7 @@ fn worker_shutdown_failure() -> Failure {
             ApplicationFailureInfo {
                 r#type: "WorkerShutdown".to_string(),
                 non_retryable: false,
-                details: None,
+                ..Default::default()
             },
         )),
     }

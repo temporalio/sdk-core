@@ -167,8 +167,23 @@ enum EventType {
     EVENT_TYPE_ACTIVITY_PROPERTIES_MODIFIED_EXTERNALLY = 45;
     // Workflow properties modified by user workflow code
     EVENT_TYPE_WORKFLOW_PROPERTIES_MODIFIED = 46;
-    // An update was requested. Note that not all update requests result in this
-    // event. See UpdateRequestedEventOrigin for situations in which this event
+    // An update was admitted. Note that not all admitted updates result in this
+    // event. See UpdateAdmittedEventOrigin for situations in which this event
     // is created.
-    EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_REQUESTED = 47;
+    EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_ADMITTED = 47;
+
+    // A Nexus operation was scheduled using a ScheduleNexusOperation command.
+    EVENT_TYPE_NEXUS_OPERATION_SCHEDULED = 48;
+    // An asynchronous Nexus operation was started by a Nexus handler.
+    EVENT_TYPE_NEXUS_OPERATION_STARTED = 49;
+    // A Nexus operation completed successfully.
+    EVENT_TYPE_NEXUS_OPERATION_COMPLETED = 50;
+    // A Nexus operation failed.
+    EVENT_TYPE_NEXUS_OPERATION_FAILED = 51;
+    // A Nexus operation completed as canceled.
+    EVENT_TYPE_NEXUS_OPERATION_CANCELED = 52;
+    // A Nexus operation timed out.
+    EVENT_TYPE_NEXUS_OPERATION_TIMED_OUT = 53;
+    // A Nexus operation was requested to be canceled using a RequestCancelNexusOperation command.
+    EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUESTED = 54;
 }

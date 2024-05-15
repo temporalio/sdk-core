@@ -90,6 +90,17 @@ enum WorkflowTaskFailedCause {
     WORKFLOW_TASK_FAILED_CAUSE_BAD_UPDATE_WORKFLOW_EXECUTION_MESSAGE = 30;
     // Similar to WORKFLOW_TASK_FAILED_CAUSE_UNHANDLED_COMMAND, but for updates.
     WORKFLOW_TASK_FAILED_CAUSE_UNHANDLED_UPDATE = 31;
+
+    // A workflow task completed with an invalid ScheduleNexusOperation command.
+    WORKFLOW_TASK_FAILED_CAUSE_BAD_SCHEDULE_NEXUS_OPERATION_ATTRIBUTES = 32;
+    // A workflow task completed requesting to schedule a Nexus Operation exceeding the server configured limit.
+    WORKFLOW_TASK_FAILED_CAUSE_PENDING_NEXUS_OPERATIONS_LIMIT_EXCEEDED = 33;
+    // A workflow task completed with an invalid RequestCancelNexusOperation command.
+    WORKFLOW_TASK_FAILED_CAUSE_BAD_REQUEST_CANCEL_NEXUS_OPERATION_ATTRIBUTES = 34;
+    // A workflow task completed requesting a feature that's disabled on the server (either system wide or - typically -
+    // for the workflow's namespace).
+    // Check the workflow task failure message for more information.
+    WORKFLOW_TASK_FAILED_CAUSE_FEATURE_DISABLED = 35;
 }
 
 enum StartChildWorkflowExecutionFailedCause {
@@ -127,3 +138,12 @@ enum ResourceExhaustedCause {
     // Caller exceeds action per second limit.
     RESOURCE_EXHAUSTED_CAUSE_APS_LIMIT = 6;
 }
+
+enum ResourceExhaustedScope {
+    RESOURCE_EXHAUSTED_SCOPE_UNSPECIFIED = 0;
+    // Exhausted resource is a system-level resource.
+    RESOURCE_EXHAUSTED_SCOPE_NAMESPACE = 1;
+    // Exhausted resource is a namespace-level resource.
+    RESOURCE_EXHAUSTED_SCOPE_SYSTEM = 2;
+}
+
