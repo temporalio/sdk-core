@@ -22,8 +22,10 @@ use tracing::{Level, Span};
 /// See [WFStream::build] for more
 pub(super) struct WFStream {
     runs: RunCache,
-    /// Buffered polls for new runs which need a cache slot to open up before we can handle them
-    buffered_polls_need_cache_slot: VecDeque<PermittedWFT>,
+    /// Buffered polls for new runs which need a cache slot to open up before we can handle them.
+    /// The inner list is possibly multiple buffered tasks for one run, which can happen if there
+    /// is a backlog of queries.
+    buffered_polls_need_cache_slot: VecDeque<Vec<PermittedWFT>>,
     /// Is filled with runs that we decided need to have their history fetched during state
     /// manipulation. Must be drained after handling each input.
     runs_needing_fetching: VecDeque<HistoryFetchReq>,
@@ -341,25 +343,34 @@ impl WFStream {
                 debug!(run_id=%run_id, "Evicting run");
                 self.runs.remove(run_id);
             }
-            let maybe_ready_wft =
-                maybe_buffered
-                    .get_next_wft()
-                    .or(wft_from_complete)
-                    .or_else(|| {
-                        // Attempt to apply a buffered poll for some *other* run, if we didn't have a
-                        // wft from complete or a buffered poll for *this* run and we evicted
-                        if should_evict {
-                            self.buffered_polls_need_cache_slot.pop_front()
-                        } else {
-                            None
-                        }
-                    });
-            if let Some(wft) = maybe_ready_wft {
-                res = self.instantiate_or_update(wft);
+            let maybe_ready_wft = maybe_buffered
+                .get_next_wft()
+                .or(wft_from_complete)
+                .map(|x| vec![x])
+                .or_else(|| {
+                    // Attempt to apply a buffered poll for some *other* run, if we didn't have a
+                    // wft from complete or a buffered poll for *this* run and we evicted
+                    if should_evict {
+                        self.buffered_polls_need_cache_slot.pop_front()
+                    } else {
+                        None
+                    }
+                });
+            let mut maybe_wfts = maybe_ready_wft.unwrap_or_default();
+            if let Some(first_wft) = maybe_wfts.pop() {
+                res = self.instantiate_or_update(first_wft);
                 // We accept that there might be query tasks remaining in the buffer if we evicted
                 // and re-instantiated here. It's likely those tasks are now invalidated anyway.
                 if maybe_buffered.has_tasks() && should_evict {
                     warn!("There were leftover buffered tasks when evicting run");
+                }
+            }
+            // If there happened to be more than one buffered WFT for this run, move them into the
+            // now-instantiated run's buffer.
+            for wft in maybe_wfts {
+                let should_be_nothing = self.instantiate_or_update(wft);
+                if should_be_nothing.is_some() {
+                    dbg_panic!("Extra buffered run should not have produced an activation");
                 }
             }
         }
@@ -459,16 +470,15 @@ impl WFStream {
 
     fn buffer_resp_on_full_cache(&mut self, work: PermittedWFT) {
         debug!(run_id=%work.work.execution.run_id, "Buffering WFT because cache is full");
-        // If there's already a buffered poll for the run, replace it.
-        if let Some(rh) = self
-            .buffered_polls_need_cache_slot
-            .iter_mut()
-            .find(|w| w.work.execution.run_id == work.work.execution.run_id)
-        {
-            *rh = work;
+        // If there's already a buffered poll for the run, add to it.
+        if let Some(rh) = self.buffered_polls_need_cache_slot.iter_mut().find(|w| {
+            w.first()
+                .is_some_and(|ww| ww.work.execution.run_id == work.work.execution.run_id)
+        }) {
+            rh.push(work);
         } else {
-            // Otherwise push it to the back
-            self.buffered_polls_need_cache_slot.push_back(work);
+            //  Otherwise push it to the back
+            self.buffered_polls_need_cache_slot.push_back(vec![work]);
         }
     }
 
