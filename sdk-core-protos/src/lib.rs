@@ -1249,6 +1249,13 @@ pub mod coresdk {
                         v.started_event_id
                     )?;
                 }
+                Some(FailureInfo::NexusOperationExecutionFailureInfo(v)) => {
+                    write!(
+                        f,
+                        "Nexus Operation Failure: scheduled_event_id: {}",
+                        v.scheduled_event_id
+                    )?;
+                }
             }
             write!(f, ")")
         }
@@ -1523,7 +1530,7 @@ pub mod temporal {
 
                 pub fn schedule_activity_cmd_to_api(
                     s: workflow_commands::ScheduleActivity,
-                    use_compatible_version: bool,
+                    use_workflow_build_id: bool,
                 ) -> command::Attributes {
                     command::Attributes::ScheduleActivityTaskCommandAttributes(
                         ScheduleActivityTaskCommandAttributes {
@@ -1540,14 +1547,14 @@ pub mod temporal {
                             heartbeat_timeout: s.heartbeat_timeout,
                             retry_policy: s.retry_policy.map(Into::into),
                             request_eager_execution: !s.do_not_eagerly_execute,
-                            use_compatible_version,
+                            use_workflow_build_id,
                         },
                     )
                 }
 
                 pub fn start_child_workflow_cmd_to_api(
                     s: workflow_commands::StartChildWorkflowExecution,
-                    use_compatible_version: bool,
+                    inherit_build_id: bool,
                 ) -> command::Attributes {
                     command::Attributes::StartChildWorkflowExecutionCommandAttributes(
                         StartChildWorkflowExecutionCommandAttributes {
@@ -1569,7 +1576,7 @@ pub mod temporal {
                             retry_policy: s.retry_policy.map(Into::into),
                             cron_schedule: s.cron_schedule.clone(),
                             parent_close_policy: s.parent_close_policy,
-                            use_compatible_version,
+                            inherit_build_id,
                         },
                     )
                 }
@@ -1596,7 +1603,7 @@ pub mod temporal {
 
                 pub fn continue_as_new_cmd_to_api(
                     c: workflow_commands::ContinueAsNewWorkflowExecution,
-                    use_compatible_version: bool,
+                    inherit_build_id: bool,
                 ) -> command::Attributes {
                     command::Attributes::ContinueAsNewWorkflowExecutionCommandAttributes(
                         ContinueAsNewWorkflowExecutionCommandAttributes {
@@ -1621,7 +1628,7 @@ pub mod temporal {
                             } else {
                                 Some(c.search_attributes.into())
                             },
-                            use_compatible_version,
+                            inherit_build_id,
                             ..Default::default()
                         },
                     )
@@ -1962,13 +1969,20 @@ pub mod temporal {
                             Attributes::SignalExternalWorkflowExecutionFailedEventAttributes(_) => {EventType::SignalExternalWorkflowExecutionFailed}
                             Attributes::ExternalWorkflowExecutionSignaledEventAttributes(_) => {EventType::ExternalWorkflowExecutionSignaled}
                             Attributes::UpsertWorkflowSearchAttributesEventAttributes(_) => {EventType::UpsertWorkflowSearchAttributes}
+                            Attributes::WorkflowExecutionUpdateAdmittedEventAttributes(_) => {EventType::WorkflowExecutionUpdateAdmitted}
                             Attributes::WorkflowExecutionUpdateRejectedEventAttributes(_) => {EventType::WorkflowExecutionUpdateRejected}
                             Attributes::WorkflowExecutionUpdateAcceptedEventAttributes(_) => {EventType::WorkflowExecutionUpdateAccepted}
                             Attributes::WorkflowExecutionUpdateCompletedEventAttributes(_) => {EventType::WorkflowExecutionUpdateCompleted}
-                            Attributes::WorkflowExecutionUpdateRequestedEventAttributes(_) => {EventType::WorkflowExecutionUpdateRequested}
                             Attributes::WorkflowPropertiesModifiedExternallyEventAttributes(_) => {EventType::WorkflowPropertiesModifiedExternally}
                             Attributes::ActivityPropertiesModifiedExternallyEventAttributes(_) => {EventType::ActivityPropertiesModifiedExternally}
                             Attributes::WorkflowPropertiesModifiedEventAttributes(_) => {EventType::WorkflowPropertiesModified}
+                            Attributes::NexusOperationScheduledEventAttributes(_) => {EventType::NexusOperationScheduled}
+                            Attributes::NexusOperationStartedEventAttributes(_) => {EventType::NexusOperationStarted}
+                            Attributes::NexusOperationCompletedEventAttributes(_) => {EventType::NexusOperationCompleted}
+                            Attributes::NexusOperationFailedEventAttributes(_) => {EventType::NexusOperationFailed}
+                            Attributes::NexusOperationCanceledEventAttributes(_) => {EventType::NexusOperationCanceled}
+                            Attributes::NexusOperationTimedOutEventAttributes(_) => {EventType::NexusOperationTimedOut}
+                            Attributes::NexusOperationCancelRequestedEventAttributes(_) => {EventType::NexusOperationCancelRequested}
                         }
                     }
                 }
@@ -2061,6 +2075,11 @@ pub mod temporal {
         pub mod workflow {
             pub mod v1 {
                 tonic::include_proto!("temporal.api.workflow.v1");
+            }
+        }
+        pub mod nexus {
+            pub mod v1 {
+                tonic::include_proto!("temporal.api.nexus.v1");
             }
         }
         pub mod workflowservice {

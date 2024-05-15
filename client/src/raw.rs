@@ -968,6 +968,63 @@ proxier! {
             r.extensions_mut().insert(labels);
         }
     );
+    (
+        execute_multi_operation,
+        ExecuteMultiOperationRequest,
+        ExecuteMultiOperationResponse,
+        |r| {
+            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        get_worker_versioning_rules,
+        GetWorkerVersioningRulesRequest,
+        GetWorkerVersioningRulesResponse,
+        |r| {
+            let mut labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            labels.task_q_str(&r.get_ref().task_queue);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        update_worker_versioning_rules,
+        UpdateWorkerVersioningRulesRequest,
+        UpdateWorkerVersioningRulesResponse,
+        |r| {
+            let mut labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            labels.task_q_str(&r.get_ref().task_queue);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        poll_nexus_task_queue,
+        PollNexusTaskQueueRequest,
+        PollNexusTaskQueueResponse,
+        |r| {
+            let mut labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            labels.task_q(r.get_ref().task_queue.clone());
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        respond_nexus_task_completed,
+        RespondNexusTaskCompletedRequest,
+        RespondNexusTaskCompletedResponse,
+        |r| {
+            let mut labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        respond_nexus_task_failed,
+        RespondNexusTaskFailedRequest,
+        RespondNexusTaskFailedResponse,
+        |r| {
+            let mut labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            r.extensions_mut().insert(labels);
+        }
+    );
 }
 
 proxier! {
@@ -984,6 +1041,11 @@ proxier! {
     (add_or_update_remote_cluster, AddOrUpdateRemoteClusterRequest, AddOrUpdateRemoteClusterResponse);
     (remove_remote_cluster, RemoveRemoteClusterRequest, RemoveRemoteClusterResponse);
     (list_clusters, ListClustersRequest, ListClustersResponse);
+    (get_nexus_endpoint, GetNexusEndpointRequest, GetNexusEndpointResponse);
+    (create_nexus_endpoint, CreateNexusEndpointRequest, CreateNexusEndpointResponse);
+    (update_nexus_endpoint, UpdateNexusEndpointRequest, UpdateNexusEndpointResponse);
+    (delete_nexus_endpoint, DeleteNexusEndpointRequest, DeleteNexusEndpointResponse);
+    (list_nexus_endpoints, ListNexusEndpointsRequest, ListNexusEndpointsResponse);
 }
 
 proxier! {
