@@ -781,7 +781,7 @@ impl WorkflowMachines {
             };
         }
         if event.event_type() == EventType::Unspecified
-            || event.event_type() == EventType::WorkflowExecutionUpdateRequested
+            || event.event_type() == EventType::WorkflowExecutionUpdateAdmitted
             || event.attributes.is_none()
         {
             return if !event.worker_may_ignore {
