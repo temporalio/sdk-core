@@ -56,6 +56,7 @@ import "temporal/api/update/v1/message.proto";
 import "temporal/api/version/v1/message.proto";
 import "temporal/api/batch/v1/message.proto";
 import "temporal/api/sdk/v1/task_complete_metadata.proto";
+import "temporal/api/nexus/v1/message.proto";
 
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
@@ -109,10 +110,6 @@ message DescribeNamespaceResponse {
     repeated temporal.api.replication.v1.FailoverStatus failover_history = 6;
 }
 
-// (-- api-linter: core::0134::request-mask-required=disabled
-//     aip.dev/not-precedent: UpdateNamespace RPC doesn't follow Google API format. --)
-// (-- api-linter: core::0134::request-resource-required=disabled
-//     aip.dev/not-precedent: UpdateNamespace RPC doesn't follow Google API format. --)
 message UpdateNamespaceRequest {
     string namespace = 1;
     temporal.api.namespace.v1.UpdateNamespaceInfo update_info = 2;
@@ -159,8 +156,16 @@ message StartWorkflowExecutionRequest {
     string identity = 9;
     // A unique identifier for this start request. Typically UUIDv4.
     string request_id = 10;
-    // Default: WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE.
+    // Defines whether to allow re-using the workflow id from a previously *closed* workflow.
+    // The default policy is WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE.
+    //
+    // See `workflow_id_conflict_policy` for handling a workflow id duplication with a *running* workflow.
     temporal.api.enums.v1.WorkflowIdReusePolicy workflow_id_reuse_policy = 11;
+    // Defines how to resolve a workflow id conflict with a *running* workflow.
+    // The default policy is WORKFLOW_ID_CONFLICT_POLICY_FAIL.
+    //
+    // See `workflow_id_reuse_policy` for handling a workflow id duplication with a *closed* workflow.
+    temporal.api.enums.v1.WorkflowIdConflictPolicy workflow_id_conflict_policy = 22;
     // The retry policy for the workflow. Will never exceed `workflow_execution_timeout`.
     temporal.api.common.v1.RetryPolicy retry_policy = 12;
     // See https://docs.temporal.io/docs/content/what-is-a-temporal-cron-job/
@@ -183,10 +188,17 @@ message StartWorkflowExecutionRequest {
     // If the workflow gets a signal before the delay, a workflow task will be dispatched and the rest
     // of the delay will be ignored.
     google.protobuf.Duration workflow_start_delay = 20;
+    // Callbacks to be called by the server when this workflow reaches a terminal state.
+    // If the workflow continues-as-new, these callbacks will be carried over to the new execution.
+    // Callback addresses must be whitelisted in the server's dynamic configuration.
+    repeated temporal.api.common.v1.Callback completion_callbacks = 21;
 }
 
 message StartWorkflowExecutionResponse {
+    // The run id of the workflow that was started - or used (via WorkflowIdConflictPolicy USE_EXISTING).
     string run_id = 1;
+    // If true, a new workflow was started.
+    bool started = 3;
     // When `request_eager_execution` is set on the `StartWorkflowExecutionRequest`, the server - if supported - will
     // return the first workflow task to be eagerly executed.
     // The caller is expected to have a worker available to process the task.
@@ -631,14 +643,24 @@ message SignalWithStartWorkflowExecutionRequest {
     string identity = 9;
     // Used to de-dupe signal w/ start requests
     string request_id = 10;
+    // Defines whether to allow re-using the workflow id from a previously *closed* workflow.
+    // The default policy is WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE.
+    //
+    // See `workflow_id_reuse_policy` for handling a workflow id duplication with a *running* workflow.
     temporal.api.enums.v1.WorkflowIdReusePolicy workflow_id_reuse_policy = 11;
+    // Defines how to resolve a workflow id conflict with a *running* workflow.
+    // The default policy is WORKFLOW_ID_CONFLICT_POLICY_USE_EXISTING.
+    // Note that WORKFLOW_ID_CONFLICT_POLICY_FAIL is an invalid option.
+    //
+    // See `workflow_id_reuse_policy` for handling a workflow id duplication with a *closed* workflow.
+    temporal.api.enums.v1.WorkflowIdConflictPolicy workflow_id_conflict_policy = 22;
     // The workflow author-defined name of the signal to send to the workflow
     string signal_name = 12;
     // Serialized value(s) to provide with the signal
     temporal.api.common.v1.Payloads signal_input = 13;
     // Deprecated
     string control = 14;
-    // Retry policy for the workflow Default: WORKFLOW_ID_REUSE_POLICY_ALLOW_DUPLICATE.
+    // Retry policy for the workflow
     temporal.api.common.v1.RetryPolicy retry_policy = 15;
     // See https://docs.temporal.io/docs/content/what-is-a-temporal-cron-job/
     string cron_schedule = 16;
@@ -657,7 +679,10 @@ message SignalWithStartWorkflowExecutionRequest {
 }
 
 message SignalWithStartWorkflowExecutionResponse {
+    // The run id of the workflow that was started - or just signaled, if it was already running.
     string run_id = 1;
+    // If true, a new workflow was started.
+    bool started = 2;
 }
 
 message ResetWorkflowExecutionRequest {
@@ -670,7 +695,7 @@ message ResetWorkflowExecutionRequest {
     // Used to de-dupe reset requests
     string request_id = 5;
     // Event types to be reapplied (deprecated)
-    // Default: RESET_REAPPLY_TYPE_ALL_ELIGIBLE
+    // Default: RESET_REAPPLY_TYPE_SIGNAL
     temporal.api.enums.v1.ResetReapplyType reset_reapply_type = 6;
     // Event types not to be reapplied
     repeated temporal.api.enums.v1.ResetReapplyExcludeType reset_reapply_exclude_types = 7;
@@ -697,10 +722,6 @@ message TerminateWorkflowExecutionRequest {
 message TerminateWorkflowExecutionResponse {
 }
 
-// (-- api-linter: core::0135::request-unknown-fields=disabled
-//     aip.dev/not-precedent: DeleteNamespace RPC doesn't follow Google API format. --)
-// (-- api-linter: core::0135::request-name-required=disabled
-//     aip.dev/not-precedent: DeleteNamespace RPC doesn't follow Google API format. --)
 message DeleteWorkflowExecutionRequest {
     string namespace = 1;
     // Workflow Execution to delete. If run_id is not specified, the latest one is used.
@@ -854,19 +875,52 @@ message DescribeWorkflowExecutionResponse {
     repeated temporal.api.workflow.v1.PendingActivityInfo pending_activities = 3;
     repeated temporal.api.workflow.v1.PendingChildExecutionInfo pending_children = 4;
     temporal.api.workflow.v1.PendingWorkflowTaskInfo pending_workflow_task = 5;
+    repeated temporal.api.workflow.v1.CallbackInfo callbacks = 6;
+    repeated temporal.api.workflow.v1.PendingNexusOperationInfo pending_nexus_operations = 7;
 }
 
+// (-- api-linter: core::0203::optional=disabled
+//     aip.dev/not-precedent: field_behavior annotation not available in our gogo fork --)
 message DescribeTaskQueueRequest {
     string namespace = 1;
+    // Sticky queues are not supported in `ENHANCED` mode.
     temporal.api.taskqueue.v1.TaskQueue task_queue = 2;
+    // Deprecated. Use `ENHANCED` mode with `task_queue_types`. Ignored in `ENHANCED` mode.
     // If unspecified (TASK_QUEUE_TYPE_UNSPECIFIED), then default value (TASK_QUEUE_TYPE_WORKFLOW) will be used.
     temporal.api.enums.v1.TaskQueueType task_queue_type = 3;
+    // Deprecated. Ignored in `ENHANCED` mode.
     bool include_task_queue_status = 4;
+
+    // All options except `task_queue_type` and `include_task_queue_status` are only available in the `ENHANCED` mode.
+    temporal.api.enums.v1.DescribeTaskQueueMode api_mode = 5;
+
+    // Optional. If not provided, the result for the default Build ID will be returned. The default Build ID is the one
+    // mentioned in the first unconditional Assignment Rule. If there is no default Build ID, the result for the
+    // unversioned queue will be returned.
+    // (-- api-linter: core::0140::prepositions --)
+    temporal.api.taskqueue.v1.TaskQueueVersionSelection versions = 6;
+
+    // Task queue types to report info about. If not specified, all types are considered.
+    repeated temporal.api.enums.v1.TaskQueueType task_queue_types = 7;
+    // Report backlog info for the requested task queue types and versions
+    // bool report_backlog_info = 8;
+    // Report list of pollers for requested task queue types and versions
+    bool report_pollers = 9;
+    // Report task reachability for the requested versions and all task types (task reachability is not reported
+    // per task type).
+    bool report_task_reachability = 10;
 }
 
 message DescribeTaskQueueResponse {
+    // Deprecated. Use `versions_info.types_info.pollers` with `ENHANCED` mode instead.
+    // Not set in `ENHANCED` mode.
     repeated temporal.api.taskqueue.v1.PollerInfo pollers = 1;
+    // Deprecated. Not set in `ENHANCED` mode.
     temporal.api.taskqueue.v1.TaskQueueStatus task_queue_status = 2;
+
+    // This map contains Task Queue information for each Build ID. Empty string as key value means unversioned.
+    // Only set in `ENHANCED` mode.
+    map<string, temporal.api.taskqueue.v1.TaskQueueVersionInfo> versions_info = 3;
 }
 
 message GetClusterInfoRequest {
@@ -948,12 +1002,6 @@ message ListTaskQueuePartitionsResponse {
     repeated temporal.api.taskqueue.v1.TaskQueuePartitionMetadata workflow_task_queue_partitions = 2;
 }
 
-// (-- api-linter: core::0133::request-parent-required=disabled
-//     aip.dev/not-precedent: CreateSchedule doesn't follow Google API format --)
-// (-- api-linter: core::0133::request-unknown-fields=disabled
-//     aip.dev/not-precedent: CreateSchedule doesn't follow Google API format --)
-// (-- api-linter: core::0133::request-resource-behavior=disabled
-//     aip.dev/not-precedent: field_behavior annotation not available in our gogo fork --)
 // (-- api-linter: core::0203::optional=disabled
 //     aip.dev/not-precedent: field_behavior annotation not available in our gogo fork --)
 message CreateScheduleRequest {
@@ -1006,8 +1054,6 @@ message DescribeScheduleResponse {
     bytes conflict_token = 5;
 }
 
-// (-- api-linter: core::0134::request-mask-required=disabled
-//     aip.dev/not-precedent: UpdateSchedule doesn't follow Google API format --)
 message UpdateScheduleRequest {
     // The namespace of the schedule to update.
     string namespace = 1;
@@ -1025,6 +1071,12 @@ message UpdateScheduleRequest {
     string identity = 5;
     // A unique identifier for this update request for idempotence. Typically UUIDv4.
     string request_id = 6;
+    // Schedule search attributes to be updated.
+    // Do not set this field if you do not want to update the search attributes.
+    // A non-null empty object will set the search attributes to an empty map.
+    // Note: you cannot only update the search attributes with `UpdateScheduleRequest`,
+    // you must also set the `schedule` field; otherwise, it will unset the schedule.
+    temporal.api.common.v1.SearchAttributes search_attributes = 7;
 }
 
 message UpdateScheduleResponse {
@@ -1059,10 +1111,6 @@ message ListScheduleMatchingTimesResponse {
     repeated google.protobuf.Timestamp start_time = 1;
 }
 
-// (-- api-linter: core::0135::request-name-required=disabled
-//     aip.dev/not-precedent: DeleteSchedule doesn't follow Google API format --)
-// (-- api-linter: core::0135::request-unknown-fields=disabled
-//     aip.dev/not-precedent: DeleteSchedule doesn't follow Google API format --)
 message DeleteScheduleRequest {
     // The namespace of the schedule to delete.
     string namespace = 1;
@@ -1082,6 +1130,8 @@ message ListSchedulesRequest {
     int32 maximum_page_size = 2;
     // Token to get the next page of results.
     bytes next_page_token = 3;
+    // Query to filter schedules.
+    string query = 4;
 }
 
 message ListSchedulesResponse {
@@ -1089,10 +1139,6 @@ message ListSchedulesResponse {
     bytes next_page_token = 2;
 }
 
-// (-- api-linter: core::0134::request-mask-required=disabled
-//     aip.dev/not-precedent: UpdateWorkerBuildIdCompatibilityRequest doesn't follow Google API format --)
-// (-- api-linter: core::0134::request-resource-required=disabled
-//     aip.dev/not-precedent: UpdateWorkerBuildIdCompatibilityRequest RPC doesn't follow Google API format. --)
 message UpdateWorkerBuildIdCompatibilityRequest {
     message AddNewCompatibleVersion {
         // A new id to be added to an existing compatible set.
@@ -1153,8 +1199,6 @@ message UpdateWorkerBuildIdCompatibilityResponse {
     reserved "version_set_id";
 }
 
-// (-- api-linter: core::0134::request-resource-required=disabled
-//     aip.dev/not-precedent: GetWorkerBuildIdCompatibilityRequest RPC doesn't follow Google API format. --)
 message GetWorkerBuildIdCompatibilityRequest {
     string namespace = 1;
     // Must be set, the task queue to interrogate about worker id compatibility.
@@ -1172,6 +1216,127 @@ message GetWorkerBuildIdCompatibilityResponse {
     repeated temporal.api.taskqueue.v1.CompatibleVersionSet major_version_sets = 1;
 }
 
+// (-- api-linter: core::0134::request-mask-required=disabled
+//     aip.dev/not-precedent: UpdateNamespace RPC doesn't follow Google API format. --)
+// (-- api-linter: core::0134::request-resource-required=disabled
+//     aip.dev/not-precedent: GetWorkerBuildIdCompatibilityRequest RPC doesn't follow Google API format. --)
+message UpdateWorkerVersioningRulesRequest {
+    // Inserts the rule to the list of assignment rules for this Task Queue.
+    // The rules are evaluated in order, starting from index 0. The first
+    // applicable rule will be applied and the rest will be ignored.
+    message InsertBuildIdAssignmentRule {
+        // Use this option to insert the rule in a particular index. By
+        // default, the new rule is inserted at the beginning of the list
+        // (index 0). If the given index is too larger the rule will be
+        // inserted at the end of the list.
+        int32 rule_index = 1;
+        temporal.api.taskqueue.v1.BuildIdAssignmentRule rule = 2;
+    }
+
+    // Replaces the assignment rule at a given index.
+    message ReplaceBuildIdAssignmentRule {
+        int32 rule_index = 1;
+        temporal.api.taskqueue.v1.BuildIdAssignmentRule rule = 2;
+
+        // By default presence of one unconditional rule is enforced, otherwise
+        // the replace operation will be rejected. Set `force` to true to
+        // bypass this validation. An unconditional assignment rule:
+        //   - Has no hint filter
+        //   - Has no ramp
+        bool force = 3;
+    }
+
+    message DeleteBuildIdAssignmentRule {
+        int32 rule_index = 1;
+
+        // By default presence of one unconditional rule is enforced, otherwise
+        // the delete operation will be rejected. Set `force` to true to
+        // bypass this validation. An unconditional assignment rule:
+        //   - Has no hint filter
+        //   - Has no ramp
+        bool force = 2;
+    }
+
+    // Adds the rule to the list of redirect rules for this Task Queue. There
+    // can be at most one redirect rule for each distinct Source Build ID.
+    message AddCompatibleBuildIdRedirectRule {
+        temporal.api.taskqueue.v1.CompatibleBuildIdRedirectRule rule = 1;
+    }
+
+    // Replaces the routing rule with the given source Build ID.
+    message ReplaceCompatibleBuildIdRedirectRule {
+        temporal.api.taskqueue.v1.CompatibleBuildIdRedirectRule rule = 1;
+    }
+
+    message DeleteCompatibleBuildIdRedirectRule {
+        string source_build_id = 1;
+    }
+
+    // This command is intended to be used to complete the rollout of a Build
+    // ID and cleanup unnecessary rules possibly created during a gradual
+    // rollout. Specifically, this command will make the following changes
+    // atomically:
+    //  1. Adds an assignment rule (with full ramp) for the target Build ID at
+    //     the end of the list.
+    //  2. Removes all previously added assignment rules to the given target
+    //     Build ID (if any).
+    //  3. Removes any fully-ramped assignment rule for other Build IDs.
+    message CommitBuildId {
+        string target_build_id = 1;
+
+        // To prevent committing invalid Build IDs, we reject the request if no
+        // pollers has been seen recently for this Build ID. Use the `force`
+        // option to disable this validation.
+        bool force = 2;
+    }
+
+    string namespace = 1;
+    string task_queue = 2;
+
+    // A valid conflict_token can be taken from the previous
+    // ListWorkerVersioningRulesResponse or UpdateWorkerVersioningRulesResponse.
+    // An invalid token will cause this request to fail, ensuring that if the rules
+    // for this Task Queue have been modified between the previous and current
+    // operation, the request will fail instead of causing an unpredictable mutation.
+    bytes conflict_token = 3;
+
+    oneof operation {
+        InsertBuildIdAssignmentRule insert_assignment_rule = 4;
+        ReplaceBuildIdAssignmentRule replace_assignment_rule = 5;
+        DeleteBuildIdAssignmentRule delete_assignment_rule = 6;
+        AddCompatibleBuildIdRedirectRule add_compatible_redirect_rule = 7;
+        ReplaceCompatibleBuildIdRedirectRule replace_compatible_redirect_rule = 8;
+        DeleteCompatibleBuildIdRedirectRule delete_compatible_redirect_rule = 9;
+        CommitBuildId commit_build_id = 10;
+    }
+}
+
+message UpdateWorkerVersioningRulesResponse {
+    repeated temporal.api.taskqueue.v1.TimestampedBuildIdAssignmentRule assignment_rules = 1;
+    repeated temporal.api.taskqueue.v1.TimestampedCompatibleBuildIdRedirectRule compatible_redirect_rules = 2;
+
+    // This value can be passed back to UpdateWorkerVersioningRulesRequest to
+    // ensure that the rules were not modified between the two updates, which
+    // could lead to lost updates and other confusion.
+    bytes conflict_token = 3;
+}
+
+message GetWorkerVersioningRulesRequest {
+    string namespace = 1;
+    string task_queue = 2;
+}
+
+message GetWorkerVersioningRulesResponse {
+    repeated temporal.api.taskqueue.v1.TimestampedBuildIdAssignmentRule assignment_rules = 1;
+    repeated temporal.api.taskqueue.v1.TimestampedCompatibleBuildIdRedirectRule compatible_redirect_rules = 2;
+
+    // This value can be passed back to UpdateWorkerVersioningRulesRequest to
+    // ensure that the rules were not modified between this List and the Update,
+    // which could lead to lost updates and other confusion.
+    bytes conflict_token = 3;
+}
+
+// Deprecated. Use `DescribeTaskQueue`.
 message GetWorkerTaskReachabilityRequest {
     string namespace = 1;
     // Build ids to retrieve reachability for. An empty string will be interpreted as an unversioned worker.
@@ -1196,6 +1361,7 @@ message GetWorkerTaskReachabilityRequest {
     temporal.api.enums.v1.TaskReachability reachability = 4;
 }
 
+// Deprecated. Use `DescribeTaskQueue`.
 message GetWorkerTaskReachabilityResponse {
     // Task reachability, broken down by build id and then task queue.
     // When requesting a large number of task queues or all task queues associated with the given build ids in a
@@ -1380,4 +1546,83 @@ message PollWorkflowExecutionUpdateResponse {
     temporal.api.enums.v1.UpdateWorkflowExecutionLifecycleStage stage = 2;
     // Sufficient information to address this update.
     temporal.api.update.v1.UpdateRef update_ref = 3;
+}
+
+message PollNexusTaskQueueRequest {
+    string namespace = 1;
+    // The identity of the client who initiated this request.
+    string identity = 2;
+    temporal.api.taskqueue.v1.TaskQueue task_queue = 3;
+    // Information about this worker's build identifier and if it is choosing to use the versioning
+    // feature. See the `WorkerVersionCapabilities` docstring for more.
+    temporal.api.common.v1.WorkerVersionCapabilities worker_version_capabilities = 4;
+}
+
+message PollNexusTaskQueueResponse {
+    // An opaque unique identifier for this task for correlating a completion request the embedded request.
+    bytes task_token = 1;
+    // Embedded request as translated from the incoming frontend request.
+    temporal.api.nexus.v1.Request request = 2;
+}
+
+message RespondNexusTaskCompletedRequest {
+    string namespace = 1;
+    // The identity of the client who initiated this request.
+    string identity = 2;
+    // A unique identifier for this task as received via a poll response.
+    bytes task_token = 3;
+    // Embedded response to be translated into a frontend response.
+    temporal.api.nexus.v1.Response response = 4;
+}
+
+message RespondNexusTaskCompletedResponse {
+}
+
+message RespondNexusTaskFailedRequest {
+    string namespace = 1;
+    // The identity of the client who initiated this request.
+    string identity = 2;
+    // A unique identifier for this task.
+    bytes task_token = 3;
+    // The error the handler failed with.
+    temporal.api.nexus.v1.HandlerError error = 4;
+}
+
+message RespondNexusTaskFailedResponse {
+}
+
+message ExecuteMultiOperationRequest {
+    string namespace = 1;
+
+    // List of operations to execute within a single workflow.
+    //
+    // Preconditions:
+    // - The list of operations must not be empty.
+    // - The workflow ids must match across operations.
+    // - The only valid list of operations at this time is [StartWorkflow, UpdateWorkflow], in this order.
+    //
+    // Note that additional operation-specific restrictions have to be considered.
+    repeated Operation operations = 2;
+
+    message Operation {
+        oneof operation {
+            // Additional restrictions:
+            // - setting `cron_schedule` is invalid
+            // - setting `request_eager_execution` is invalid
+            StartWorkflowExecutionRequest start_workflow = 1;
+
+            UpdateWorkflowExecutionRequest update_workflow = 2;
+        }
+    }
+}
+
+message ExecuteMultiOperationResponse {
+    repeated Response responses = 1;
+
+    message Response {
+        oneof response {
+            StartWorkflowExecutionResponse start_workflow = 1;
+            UpdateWorkflowExecutionResponse update_workflow = 2;
+        }
+    }
 }

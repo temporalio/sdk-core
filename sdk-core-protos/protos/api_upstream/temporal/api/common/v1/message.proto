@@ -127,13 +127,12 @@ message WorkerVersionStamp {
     // An opaque whole-worker identifier. Replaces the deprecated `binary_checksum` field when this
     // message is included in requests which previously used that.
     string build_id = 1;
-    // Set if the worker used a dynamically loadable bundle to process
-    // the task. The bundle could be a WASM blob, JS bundle, etc.
-    string bundle_id = 2;
 
     // If set, the worker is opting in to worker versioning. Otherwise, this is used only as a
     // marker for workflow reset points and the BuildIDs search attribute.
     bool use_versioning = 3;
+
+    // Later, may include bundle id that could be used for WASM and/or JS dynamically loadable bundles.
 }
 
 // Identifies the version(s) that a worker is compatible with when polling or identifying itself,
@@ -171,10 +170,29 @@ message ResetOptions {
         string build_id = 4;
     }
 
-    // History event reapply options.
+    // Event types to be reapplied (deprecated)
+    // Default: RESET_REAPPLY_TYPE_SIGNAL
     temporal.api.enums.v1.ResetReapplyType reset_reapply_type = 10;
 
     // If true, limit the reset to only within the current run. (Applies to build_id targets and
     // possibly others in the future.)
     bool current_run_only = 11;
+
+    // Event types not to be reapplied
+    repeated temporal.api.enums.v1.ResetReapplyExcludeType reset_reapply_exclude_types = 12;
+}
+
+// Callback to attach to various events in the system, e.g. workflow run completion.
+message Callback {
+    message Nexus {
+        // Callback URL.
+        string url = 1;
+        // Header to attach to callback request.
+        map<string, string> header = 2;
+    }
+
+    reserved 1; // For a generic callback mechanism to be added later.
+    oneof variant {
+        Nexus nexus = 2;
+    }
 }

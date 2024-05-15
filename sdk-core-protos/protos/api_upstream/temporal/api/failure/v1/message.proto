@@ -34,10 +34,19 @@ option csharp_namespace = "Temporalio.Api.Failure.V1";
 import "temporal/api/common/v1/message.proto";
 import "temporal/api/enums/v1/workflow.proto";
 
+import "google/protobuf/duration.proto";
+
 message ApplicationFailureInfo {
     string type = 1;
     bool non_retryable = 2;
     temporal.api.common.v1.Payloads details = 3;
+    // next_retry_delay can be used by the client to override the activity
+    // retry interval calculated by the retry policy. Retry attempts will
+    // still be subject to the maximum retries limit and total time limit
+    // defined by the policy.
+    // ATTENTION: this value will be ignored if set for failures produced by
+    // the workflow.
+    google.protobuf.Duration next_retry_delay = 4;
 }
 
 message TimeoutFailureInfo {
@@ -78,6 +87,19 @@ message ChildWorkflowExecutionFailureInfo {
     temporal.api.enums.v1.RetryState retry_state = 6;
 }
 
+message NexusOperationFailureInfo {
+    // The NexusOperationScheduled event ID.
+    int64 scheduled_event_id = 1;
+    // Endpoint name.
+    string endpoint = 2;
+    // Service name.
+    string service = 3;
+    // Operation name.
+    string operation = 4;
+    // Operation ID - may be empty if the operation completed synchronously.
+    string operation_id = 5;
+}
+
 message Failure {
     string message = 1;
     // The source this Failure originated in, e.g. TypeScriptSDK / JavaSDK
@@ -110,5 +132,8 @@ message Failure {
         ResetWorkflowFailureInfo reset_workflow_failure_info = 10;
         ActivityFailureInfo activity_failure_info = 11;
         ChildWorkflowExecutionFailureInfo child_workflow_execution_failure_info = 12;
+        NexusOperationFailureInfo nexus_operation_execution_failure_info = 13;
     }
 }
+
+message MultiOperationExecutionAborted {}
