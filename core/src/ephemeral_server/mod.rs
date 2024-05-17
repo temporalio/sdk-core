@@ -7,6 +7,7 @@ use futures::StreamExt;
 use serde::Deserialize;
 use std::{
     fs::OpenOptions,
+    io,
     path::{Path, PathBuf},
 };
 use temporal_client::ClientOptionsBuilder;
@@ -70,7 +71,10 @@ impl TemporalDevServerConfig {
             .await?;
 
         // Get free port if not already given
-        let port = self.port.unwrap_or_else(|| get_free_port(&self.ip));
+        let port = match self.port {
+            Some(p) => p,
+            None => get_free_port(&self.ip)?,
+        };
 
         // Build arg set
         let mut args = vec![
@@ -148,7 +152,10 @@ impl TestServerConfig {
             .await?;
 
         // Get free port if not already given
-        let port = self.port.unwrap_or_else(|| get_free_port("0.0.0.0"));
+        let port = match self.port {
+            Some(p) => p,
+            None => get_free_port("0.0.0.0")?,
+        };
 
         // Build arg set
         let mut args = vec![port.to_string()];
@@ -387,10 +394,9 @@ impl EphemeralExe {
 /// already appropriate in this regard; on that platform, `SO_REUSEADDR` has a
 /// different meaning and should not be set (setting it may have unpredictable
 /// consequences).
-#[allow(clippy::let_and_return)]
-fn get_free_port(bind_ip: &str) -> u16 {
-    let listen = std::net::TcpListener::bind((bind_ip, 0)).unwrap();
-    let port = listen.local_addr().unwrap().port();
+fn get_free_port(bind_ip: &str) -> io::Result<u16> {
+    let listen = std::net::TcpListener::bind((bind_ip, 0))?;
+    let addr = listen.local_addr()?;
 
     // On Linux and some BSD variants, ephemeral ports are randomized, and may
     // consequently repeat within a short time frame after the listenning end
@@ -410,16 +416,16 @@ fn get_free_port(bind_ip: &str) -> u16 {
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         // Establish a connection to the bind_ip:port
-        let _stream = std::net::TcpStream::connect((bind_ip, port)).unwrap();
+        let _stream = std::net::TcpStream::connect(addr)?;
 
         // Accept the connection from the listening side
-        let (socket, _addr) = listen.accept().unwrap();
+        let (socket, _addr) = listen.accept()?;
 
         // Explicitly drop the socket to close the connection from the listening side first
         std::mem::drop(socket);
     }
 
-    port
+    Ok(addr.port())
 }
 
 /// Returns false if we successfully waited for another download to complete, or
@@ -570,7 +576,7 @@ mod tests {
         let mut port_set = HashSet::new();
 
         for _ in 0..2000 {
-            let port = get_free_port(host);
+            let port = get_free_port(host).unwrap();
             assert!(
                 !port_set.contains(&port),
                 "Port {port} has been assigned more than once"
@@ -586,7 +592,7 @@ mod tests {
         let host = "127.0.0.1";
 
         for _ in 0..500 {
-            let port = get_free_port(host);
+            let port = get_free_port(host).unwrap();
             try_listen_and_dial_on(host, port).expect("Failed to bind to port");
         }
     }
