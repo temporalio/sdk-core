@@ -1,3 +1,5 @@
+use futures::stream;
+use futures::TryStreamExt;
 use std::time::{SystemTime, UNIX_EPOCH};
 use temporal_client::{ClientOptionsBuilder, TestService, WorkflowService};
 use temporal_sdk_core::ephemeral_server::{
@@ -50,6 +52,33 @@ async fn temporal_cli_shutdown_port_reuse() {
     let mut server = config.start_server().await.unwrap();
     assert_ephemeral_server(&server).await;
     server.shutdown().await.unwrap();
+}
+
+// This test will fail on Linux until https://github.com/temporalio/cli/pull/564
+// gets released (presumably in 0.12.1). To test locally, build CLI manually
+// and use that specific binary instead:
+// ```
+//   .exe(EphemeralExe::ExistingPath(
+//       "/usr/local/bin/temporal".to_string(),
+//   ))
+// ```
+#[tokio::test]
+#[ignore]
+async fn temporal_cli_concurrent_starts() -> Result<(), Box<dyn std::error::Error>> {
+    stream::iter((0..80).map(|_| {
+        TemporalDevServerConfigBuilder::default()
+            .exe(default_cached_download())
+            .build()
+            .map_err(anyhow::Error::from)
+    }))
+    .try_for_each_concurrent(8, |config| async move {
+        let mut server = config.start_server().await?;
+        server.shutdown().await?;
+        Ok(())
+    })
+    .await?;
+
+    Ok(())
 }
 
 #[tokio::test]

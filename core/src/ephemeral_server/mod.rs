@@ -372,14 +372,54 @@ impl EphemeralExe {
     }
 }
 
+/// Returns a TCP port that is available to listen on for the given local host.
+///
+/// This works by binding a new TCP socket on port 0, which requests the OS to
+/// allocate a free port. There is no strict guarantee that the port will remain
+/// available after this function returns, but it should be safe to assume that
+/// a given port will not be allocated again to any process on this machine
+/// within a few seconds.
+///
+/// On Unix-based systems, binding to the port returned by this function
+/// requires setting the `SO_REUSEADDR` socket option (Rust already does that by
+/// default, but other languages may not); otherwise, the OS may fail with a
+/// message such as "address already in use". Windows default behavior is
+/// already appropriate in this regard; on that platform, `SO_REUSEADDR` has a
+/// different meaning and should not be set (setting it may have unpredictable
+/// consequences).
+#[allow(clippy::let_and_return)]
 fn get_free_port(bind_ip: &str) -> u16 {
-    // Can just ask OS to give us a port then close socket. OS's don't give that
-    // port back to anyone else anytime soon.
-    std::net::TcpListener::bind(format!("{bind_ip}:0"))
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
+    let listen = std::net::TcpListener::bind((bind_ip, 0)).unwrap();
+    let port = listen.local_addr().unwrap().port();
+
+    // On Linux and some BSD variants, ephemeral ports are randomized, and may
+    // consequently repeat within a short time frame after the listenning end
+    // has been closed. To avoid this, we make a connection to the port, then
+    // close that connection from the server's side (this is very important),
+    // which puts the connection in TIME_WAIT state for some time (by default,
+    // 60s on Linux). While it remains in that state, the OS will not reallocate
+    // that port number for bind(:0) syscalls, yet we are not prevented from
+    // explicitly binding to it (thanks to SO_REUSEADDR).
+    //
+    // On macOS and Windows, the above technique is not necessary, as the OS
+    // allocates ephemeral ports sequentially, meaning a port number will only
+    // be reused after the entire range has been exhausted. Quite the opposite,
+    // given that these OSes use a significantly smaller range for ephemeral
+    // ports, making an extra connection just to reserve a port might actually
+    // be harmful (by hastening ephemeral port exhaustion).
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        // Establish a connection to the bind_ip:port
+        let _stream = std::net::TcpStream::connect((bind_ip, port)).unwrap();
+
+        // Accept the connection from the listening side
+        let (socket, _addr) = listen.accept().unwrap();
+
+        // Explicitly drop the socket to close the connection from the listening side first
+        std::mem::drop(socket);
+    }
+
+    port
 }
 
 /// Returns false if we successfully waited for another download to complete, or
@@ -516,4 +556,51 @@ async fn download_and_extract(
         }
     })
     .await?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::get_free_port;
+    use std::collections::HashSet;
+    use std::net::{TcpListener, TcpStream};
+
+    #[test]
+    fn get_free_port_no_double() {
+        let host = "127.0.0.1";
+        let mut port_set = HashSet::new();
+
+        for _ in 0..2000 {
+            let port = get_free_port(host);
+            assert!(
+                !port_set.contains(&port),
+                "Port {port} has been assigned more than once"
+            );
+
+            // Add port to the set
+            port_set.insert(port);
+        }
+    }
+
+    #[test]
+    fn get_free_port_can_bind_immediately() {
+        let host = "127.0.0.1";
+
+        for _ in 0..500 {
+            let port = get_free_port(host);
+            try_listen_and_dial_on(host, port).expect("Failed to bind to port");
+        }
+    }
+
+    fn try_listen_and_dial_on(host: &str, port: u16) -> std::io::Result<()> {
+        let listener = TcpListener::bind((host, port))?;
+        let _stream = TcpStream::connect((host, port))?;
+
+        // Accept the connection from the listening side
+        let (socket, _addr) = listener.accept()?;
+
+        // Explicitly drop the socket to close the connection from the listening side first
+        std::mem::drop(socket);
+
+        Ok(())
+    }
 }
