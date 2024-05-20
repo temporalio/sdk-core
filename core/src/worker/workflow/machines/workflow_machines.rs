@@ -646,6 +646,7 @@ impl WorkflowMachines {
                     // Use the message now.
                     self.protocol_msgs.push(msg);
                 }
+                do_handle_event = false;
             }
 
             // Process any messages that should be processed before the event we're about to handle
@@ -790,10 +791,7 @@ impl WorkflowMachines {
                 Ok(EventHandlingOutcome::Normal)
             };
         }
-        if event.event_type() == EventType::Unspecified
-            || event.event_type() == EventType::WorkflowExecutionUpdateAdmitted
-            || event.attributes.is_none()
-        {
+        if event.event_type() == EventType::Unspecified || event.attributes.is_none() {
             return if !event.worker_may_ignore {
                 Err(WFMachinesError::Fatal(format!(
                     "Event type is unspecified! This history is invalid. Event detail: {event:?}"
