@@ -128,7 +128,7 @@ async fn reapplied_updates_due_to_reset() {
     print_history(workflow_id.to_string(), None, client.as_ref()).await;
     print_history(
         workflow_id.to_string(),
-        Some(reset_response.run_id),
+        Some(reset_response.run_id.clone()),
         client.as_ref(),
     )
     .await;

@@ -964,7 +964,7 @@ pub trait WorkflowClientTrait {
         run_id: Option<String>,
     ) -> Result<TerminateWorkflowExecutionResponse>;
 
-    /// Reset a currently executing workflow
+    /// Reset a workflow
     async fn reset_workflow_execution(
         &self,
         workflow_id: String,
