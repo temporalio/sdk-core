@@ -20,7 +20,8 @@ use opentelemetry_sdk::{
         data::Temporality,
         new_view,
         reader::{AggregationSelector, DefaultAggregationSelector, TemporalitySelector},
-        Aggregation, Instrument, InstrumentKind, MeterProviderBuilder, PeriodicReader, View,
+        Aggregation, Instrument, InstrumentKind, MeterProviderBuilder, PeriodicReader,
+        SdkMeterProvider, View,
     },
     runtime, AttributeSet, Resource,
 };
@@ -178,6 +179,7 @@ pub fn build_otlp_metric_exporter(
     Ok::<_, anyhow::Error>(CoreOtelMeter {
         meter: mp.meter(TELEM_SERVICE_NAME),
         use_seconds_for_durations: opts.use_seconds_for_durations,
+        _mp: mp,
     })
 }
 
@@ -208,6 +210,7 @@ pub fn start_prometheus_metric_exporter(
         meter: Arc::new(CoreOtelMeter {
             meter: meter_provider.meter(TELEM_SERVICE_NAME),
             use_seconds_for_durations: opts.use_seconds_for_durations,
+            _mp: meter_provider,
         }),
         bound_addr,
         abort_handle: handle.abort_handle(),
@@ -218,6 +221,9 @@ pub fn start_prometheus_metric_exporter(
 pub struct CoreOtelMeter {
     meter: Meter,
     use_seconds_for_durations: bool,
+    // we have to hold on to the provider otherwise otel automatically shuts it down on drop
+    // for whatever crazy reason
+    _mp: SdkMeterProvider,
 }
 
 impl CoreMeter for CoreOtelMeter {
