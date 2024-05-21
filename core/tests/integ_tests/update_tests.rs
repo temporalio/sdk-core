@@ -6,7 +6,7 @@ use std::{
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     time::Duration,
 };
-use temporal_client::WorkflowClientTrait;
+use temporal_client::{Client, RetryClient, WorkflowClientTrait};
 use temporal_sdk::{ActContext, ActivityOptions, LocalActivityOptions, UpdateContext, WfContext};
 use temporal_sdk_core::replay::HistoryForReplay;
 use temporal_sdk_core_api::Worker;
@@ -34,17 +34,59 @@ use temporal_sdk_core_test_utils::{
 };
 use tokio::{join, sync::Barrier};
 
+#[derive(Clone, Copy)]
+enum FailUpdate {
+    Yes,
+    No,
+}
+
+#[derive(Clone, Copy)]
+enum CompleteWorkflow {
+    Yes,
+    No,
+}
+
 #[rstest::rstest]
 #[tokio::test]
 #[ignore]
-async fn update_workflow(#[values(true, false)] will_fail: bool) {
+async fn update_workflow(#[values(FailUpdate::Yes, FailUpdate::No)] will_fail: FailUpdate) {
     let mut starter = init_core_and_create_wf("update_workflow").await;
     let core = starter.get_worker().await;
     let client = starter.get_client().await;
-    let workflow_id = starter.get_task_queue().to_string();
-
+    let workflow_id = starter.get_task_queue();
     let update_id = "some_update";
-    // Task is completed with no commands
+    _send_and_handle_update(
+        workflow_id,
+        update_id,
+        will_fail,
+        CompleteWorkflow::Yes,
+        core.as_ref(),
+        client.as_ref(),
+    )
+    .await;
+
+    // Make sure replay works
+    let history = client
+        .get_workflow_execution_history(workflow_id.to_string(), None, vec![])
+        .await
+        .unwrap()
+        .history
+        .unwrap();
+    let with_id = HistoryForReplay::new(history, workflow_id.to_string());
+    let replay_worker = init_core_replay_preloaded(&workflow_id, [with_id]);
+    _handle_update(will_fail, CompleteWorkflow::Yes, replay_worker.as_ref()).await;
+}
+
+// Start a workflow, send an update, accept the update, complete the update, complete the workflow.
+async fn _send_and_handle_update(
+    workflow_id: &str,
+    update_id: &str,
+    fail_update: bool,
+    complete_workflow: CompleteWorkflow,
+    core: &dyn Worker,
+    client: &RetryClient<Client>,
+) -> String {
+    // Complete first task with no commands
     let res = core.poll_workflow_activation().await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::empty(res.run_id.clone()))
         .await
@@ -66,29 +108,27 @@ async fn update_workflow(#[values(true, false)] will_fail: bool) {
             .unwrap()
     };
 
-    let processing_task = _do_update_workflow(will_fail, core.as_ref());
+    // Accept update, complete update and complete workflow
+    let processing_task = _handle_update(fail_update, complete_workflow, core);
     let (ur, _) = join!(update_task, processing_task);
 
     let v = ur.outcome.unwrap().value.unwrap();
-    if will_fail {
-        assert_matches!(v, update::v1::outcome::Value::Failure(_));
-    } else {
-        assert_matches!(v, update::v1::outcome::Value::Success(_));
+    match fail_update {
+        FailUpdate::Yes => assert_matches!(v, update::v1::outcome::Value::Failure(_)),
+        FailUpdate::No => assert_matches!(v, update::v1::outcome::Value::Success(_)),
     }
-
-    // Make sure replay works
-    let history = client
-        .get_workflow_execution_history(workflow_id.clone(), None, vec![])
-        .await
-        .unwrap()
-        .history
-        .unwrap();
-    let with_id = HistoryForReplay::new(history, workflow_id.clone());
-    let replay_worker = init_core_replay_preloaded(&workflow_id, [with_id]);
-    _do_update_workflow(will_fail, replay_worker.as_ref()).await;
+    res.run_id
 }
 
-async fn _do_update_workflow(will_fail: bool, core: &dyn Worker) {
+// Accept and then complete update. If `FailUpdate::Yes` then complete the update as a failure; if
+// `CompleteWorkflow::Yes` then additionally complete the workflow. Timers are created when further
+// activations are required (i.e., on accepting-but-not-completing the update, and on completing the
+// update if not also completing the workflow).
+async fn _handle_update(
+    fail_update: FailUpdate,
+    complete_workflow: CompleteWorkflow,
+    core: &dyn Worker,
+) {
     let res = core.poll_workflow_activation().await.unwrap();
     // On replay, the first activation has update & start workflow, but on first execution, it does
     // not - can happen if update is waiting on some condition.
@@ -112,18 +152,17 @@ async fn _do_update_workflow(will_fail: bool, core: &dyn Worker) {
     .await
     .unwrap();
 
-    let response = if will_fail {
-        UpdateResponse {
+    let response = match fail_update {
+        FailUpdate::Yes => UpdateResponse {
             protocol_instance_id: pid.to_string(),
             response: Some(update_response::Response::Rejected(
                 "uh oh spaghettios!".into(),
             )),
-        }
-    } else {
-        UpdateResponse {
+        },
+        FailUpdate::No => UpdateResponse {
             protocol_instance_id: pid.to_string(),
             response: Some(update_response::Response::Completed("done!".into())),
-        }
+        },
     };
     let res = core.poll_workflow_activation().await.unwrap();
     // Timer fires
@@ -131,7 +170,10 @@ async fn _do_update_workflow(will_fail: bool, core: &dyn Worker) {
         res.run_id,
         vec![
             response.into(),
-            CompleteWorkflowExecution { result: None }.into(),
+            match complete_workflow {
+                CompleteWorkflow::Yes => CompleteWorkflowExecution { result: None }.into(),
+                CompleteWorkflow::No => start_timer_cmd(1, Duration::from_millis(1)),
+            },
         ],
     ))
     .await
