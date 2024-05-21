@@ -6,7 +6,7 @@ use crate::{
 use itertools::Itertools;
 use prost::EncodeError;
 use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
-use std::{convert::TryFrom, mem};
+use std::convert::TryFrom;
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::DoUpdate,
@@ -18,6 +18,7 @@ use temporal_sdk_core_protos::{
         enums::v1::{CommandType, EventType},
         failure::v1::Failure,
         protocol::v1::Message as ProtocolMessage,
+        update,
         update::v1::{outcome, Acceptance, Outcome, Rejection, Response},
     },
     utilities::pack_any,
@@ -59,9 +60,9 @@ fsm! {
 #[derive(Debug, derive_more::Display)]
 pub(super) enum UpdateMachineCommand {
     #[display(fmt = "Accept")]
-    Accept,
+    Accept(update::v1::Request),
     #[display(fmt = "Reject")]
-    Reject(Failure),
+    Reject(update::v1::Request, Failure),
     #[display(fmt = "Complete")]
     Complete(Payload),
     #[display(fmt = "Fail")]
@@ -73,7 +74,7 @@ pub(super) struct SharedState {
     message_id: String,
     instance_id: String,
     event_seq_id: i64,
-    request: UpdateRequest,
+    meta: update::v1::Meta,
 }
 
 impl UpdateMachine {
@@ -81,27 +82,31 @@ impl UpdateMachine {
         message_id: String,
         instance_id: String,
         event_seq_id: i64,
-        mut request: UpdateRequest,
+        request: UpdateRequest,
         replaying: bool,
     ) -> NewMachineWithResponse {
-        let me = Self::from_parts(
-            RequestInitiated {}.into(),
-            SharedState {
-                message_id,
-                instance_id: instance_id.clone(),
-                event_seq_id,
-                request: request.clone(),
-            },
-        );
+        let meta = request.meta().clone();
         let do_update = DoUpdate {
-            id: mem::replace(&mut request.meta.update_id, "".to_string()),
-            protocol_instance_id: instance_id,
-            name: request.name,
-            input: request.input,
-            headers: request.headers,
-            meta: Some(request.meta),
+            id: meta.update_id.clone(),
+            protocol_instance_id: instance_id.clone(),
+            name: request.name().to_string(),
+            input: request.input(),
+            headers: request.headers(),
+            meta: Some(meta.clone()),
             run_validator: !replaying,
         };
+        let me = Self::from_parts(
+            RequestInitiated {
+                original_request: request.original,
+            }
+            .into(),
+            SharedState {
+                message_id,
+                instance_id,
+                event_seq_id,
+                meta,
+            },
+        );
         NewMachineWithResponse {
             machine: me.into(),
             response: MachineResponse::PushWFJob(do_update.into()),
@@ -116,7 +121,7 @@ impl UpdateMachine {
             None => {
                 return Err(WFMachinesError::Fatal(format!(
                     "Update response for update {} had an empty result, this is a lang layer bug.",
-                    &self.shared_state.request.meta.update_id
+                    &self.shared_state.meta.update_id
                 )))
             }
             Some(update_response::Response::Accepted(_)) => {
@@ -132,7 +137,7 @@ impl UpdateMachine {
         .map_err(|e| match e {
             MachineError::InvalidTransition => WFMachinesError::Nondeterminism(format!(
                 "Invalid transition while handling update response (id {}) in state {}",
-                &self.shared_state.request.meta.update_id,
+                &self.shared_state.meta.update_id,
                 self.state(),
             )),
             MachineError::Underlying(e) => e,
@@ -231,29 +236,29 @@ impl WFMachinesAdapter for UpdateMachine {
         _event_info: Option<EventInfo>,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         Ok(match my_command {
-            UpdateMachineCommand::Accept => self.build_command_msg(
+            UpdateMachineCommand::Accept(orig) => self.build_command_msg(
                 format!("{}/accept", self.shared_state.message_id),
                 UpdateMsg::Accept(Acceptance {
                     accepted_request_message_id: self.shared_state.message_id.clone(),
                     accepted_request_sequencing_event_id: self.shared_state.event_seq_id,
-                    ..Default::default()
+                    accepted_request: Some(orig),
                 }),
             )?,
-            UpdateMachineCommand::Reject(fail) => {
+            UpdateMachineCommand::Reject(orig, fail) => {
                 vec![self.build_msg(
                     format!("{}/reject", self.shared_state.message_id),
                     UpdateMsg::Reject(Rejection {
                         rejected_request_message_id: self.shared_state.message_id.clone(),
                         rejected_request_sequencing_event_id: self.shared_state.event_seq_id,
+                        rejected_request: Some(orig),
                         failure: Some(fail),
-                        ..Default::default()
                     }),
                 )?]
             }
             UpdateMachineCommand::Complete(p) => self.build_command_msg(
                 format!("{}/complete", self.shared_state.message_id),
                 UpdateMsg::Response(Response {
-                    meta: Some(self.shared_state.request.meta.clone()),
+                    meta: Some(self.shared_state.meta.clone()),
                     outcome: Some(Outcome {
                         value: Some(outcome::Value::Success(p.into())),
                     }),
@@ -262,7 +267,7 @@ impl WFMachinesAdapter for UpdateMachine {
             UpdateMachineCommand::Fail(f) => self.build_command_msg(
                 format!("{}/complete", self.shared_state.message_id),
                 UpdateMsg::Response(Response {
-                    meta: Some(self.shared_state.request.meta.clone()),
+                    meta: Some(self.shared_state.meta.clone()),
                     outcome: Some(Outcome {
                         value: Some(outcome::Value::Failure(f)),
                     }),
@@ -284,13 +289,18 @@ impl TryFrom<CommandType> for UpdateMachineEvents {
 }
 
 #[derive(Default, Clone)]
-pub(super) struct RequestInitiated {}
+pub(super) struct RequestInitiated {
+    original_request: update::v1::Request,
+}
 impl RequestInitiated {
     fn on_accept(self) -> UpdateMachineTransition<Accepted> {
-        UpdateMachineTransition::commands([UpdateMachineCommand::Accept])
+        UpdateMachineTransition::commands([UpdateMachineCommand::Accept(self.original_request)])
     }
     fn on_reject(self, fail: Failure) -> UpdateMachineTransition<Rejected> {
-        UpdateMachineTransition::commands([UpdateMachineCommand::Reject(fail)])
+        UpdateMachineTransition::commands([UpdateMachineCommand::Reject(
+            self.original_request,
+            fail,
+        )])
     }
 }
 
