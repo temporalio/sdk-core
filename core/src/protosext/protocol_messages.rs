@@ -66,27 +66,59 @@ impl TryFrom<Option<prost_types::Any>> for IncomingProtocolMessageBody {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct UpdateRequest {
-    pub(crate) name: String,
-    pub(crate) headers: HashMap<String, Payload>,
-    pub(crate) input: Vec<Payload>,
-    pub(crate) meta: update::v1::Meta,
+    pub(crate) original: update::v1::Request,
+}
+
+impl UpdateRequest {
+    pub(crate) fn name(&self) -> &str {
+        &self
+            .original
+            .input
+            .as_ref()
+            .expect("Update request's `input` field must be populated")
+            .name
+    }
+
+    pub(crate) fn headers(&self) -> HashMap<String, Payload> {
+        self.original
+            .input
+            .as_ref()
+            .expect("Update request's `input` field must be populated")
+            .header
+            .clone()
+            .map(Into::into)
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn input(&self) -> Vec<Payload> {
+        self.original
+            .input
+            .as_ref()
+            .expect("Update request's `input` field must be populated")
+            .args
+            .clone()
+            .map(|ps| ps.payloads)
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn meta(&self) -> &update::v1::Meta {
+        self.original
+            .meta
+            .as_ref()
+            .expect("Update request's `meta` field must be populated")
+    }
 }
 
 impl TryFrom<update::v1::Request> for UpdateRequest {
     type Error = anyhow::Error;
 
     fn try_from(r: update::v1::Request) -> Result<Self, Self::Error> {
-        let inp = r
-            .input
-            .ok_or_else(|| anyhow!("Update request's `input` field must be populated"))?;
-        let meta = r
-            .meta
-            .ok_or_else(|| anyhow!("Update request's `meta` field must be populated"))?;
-        Ok(UpdateRequest {
-            name: inp.name,
-            headers: inp.header.map(Into::into).unwrap_or_default(),
-            input: inp.args.map(|ps| ps.payloads).unwrap_or_default(),
-            meta,
-        })
+        if r.input.is_none() {
+            return Err(anyhow!("Update request's `input` field must be populated"));
+        }
+        if r.meta.is_none() {
+            return Err(anyhow!("Update request's `meta` field must be populated"));
+        }
+        Ok(UpdateRequest { original: r })
     }
 }
