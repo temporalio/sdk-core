@@ -17,6 +17,9 @@ mod workflow_handle;
 pub use crate::proxy::HttpConnectProxyOptions;
 pub use crate::retry::{CallType, RetryClient, RETRYABLE_ERROR_CODES};
 pub use raw::{HealthService, OperatorService, TestService, WorkflowService};
+use temporal_sdk_core_protos::temporal::api::enums::v1::{
+    ResetReapplyExcludeType, ResetReapplyType,
+};
 pub use temporal_sdk_core_protos::temporal::api::{
     enums::v1::ArchivalState,
     filter::v1::{StartTimeFilter, StatusFilter, WorkflowExecutionFilter, WorkflowTypeFilter},
@@ -961,6 +964,15 @@ pub trait WorkflowClientTrait {
         run_id: Option<String>,
     ) -> Result<TerminateWorkflowExecutionResponse>;
 
+    /// Reset a currently executing workflow
+    async fn reset_workflow_execution(
+        &self,
+        workflow_id: String,
+        run_id: String,
+        workflow_task_finish_event_id: i64,
+        reset_reapply_exclude_types: Vec<ResetReapplyExcludeType>,
+    ) -> Result<ResetWorkflowExecutionResponse>;
+
     /// Register a new namespace
     async fn register_namespace(
         &self,
@@ -1391,6 +1403,35 @@ impl WorkflowClientTrait for Client {
                 details: None,
                 identity: self.inner.options.identity.clone(),
                 first_execution_run_id: "".to_string(),
+            },
+        )
+        .await?
+        .into_inner())
+    }
+
+    async fn reset_workflow_execution(
+        &self,
+        workflow_id: String,
+        run_id: String,
+        workflow_task_finish_event_id: i64,
+        reset_reapply_exclude_types: Vec<ResetReapplyExcludeType>,
+    ) -> Result<ResetWorkflowExecutionResponse> {
+        Ok(WorkflowService::reset_workflow_execution(
+            &mut self.inner.client.clone(),
+            ResetWorkflowExecutionRequest {
+                namespace: self.namespace().to_string(),
+                workflow_execution: Some(WorkflowExecution {
+                    workflow_id,
+                    run_id,
+                }),
+                workflow_task_finish_event_id,
+                reset_reapply_type: ResetReapplyType::AllEligible as i32,
+                reset_reapply_exclude_types: reset_reapply_exclude_types
+                    .into_iter()
+                    .map(|t| t as i32)
+                    .collect(),
+                request_id: Uuid::new_v4().to_string(),
+                ..Default::default()
             },
         )
         .await?

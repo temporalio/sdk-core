@@ -9,6 +9,7 @@ use temporal_sdk_core_protos::{
     coresdk::workflow_commands::QueryResult,
     temporal::api::{
         common::v1::{Payload, Payloads},
+        enums::v1::ResetReapplyExcludeType,
         failure::v1::Failure,
         query::v1::WorkflowQuery,
         update,
@@ -441,6 +442,23 @@ where
             terminate_workflow_execution,
             workflow_id.clone(),
             run_id.clone()
+        )
+    }
+
+    async fn reset_workflow_execution(
+        &self,
+        workflow_id: String,
+        run_id: String,
+        workflow_task_finish_event_id: i64,
+        reset_reapply_exclude_types: Vec<ResetReapplyExcludeType>,
+    ) -> Result<ResetWorkflowExecutionResponse> {
+        retry_call!(
+            self,
+            reset_workflow_execution,
+            workflow_id.clone(),
+            run_id.clone(),
+            workflow_task_finish_event_id,
+            reset_reapply_exclude_types.clone()
         )
     }
 

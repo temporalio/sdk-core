@@ -77,11 +77,68 @@ async fn update_workflow(#[values(FailUpdate::Yes, FailUpdate::No)] will_fail: F
     _handle_update(will_fail, CompleteWorkflow::Yes, replay_worker.as_ref()).await;
 }
 
+#[rstest::rstest]
+#[tokio::test]
+#[ignore]
+async fn reapplied_updates_due_to_reset() {
+    let mut starter = init_core_and_create_wf("update_workflow").await;
+    let core = starter.get_worker().await;
+    let client = starter.get_client().await;
+    let workflow_id = starter.get_task_queue();
+    let pre_reset_run_id = _send_and_handle_update(
+        workflow_id,
+        "first-update",
+        FailUpdate::No,
+        CompleteWorkflow::Yes,
+        core.as_ref(),
+        client.as_ref(),
+    )
+    .await;
+
+    print_history(workflow_id.to_string(), None, client.as_ref()).await;
+
+    // Reset to before the update was accepted
+    let workflow_task_finish_event_id = 4;
+    let reset_response = client
+        .reset_workflow_execution(
+            workflow_id.to_string(),
+            pre_reset_run_id.to_string(),
+            workflow_task_finish_event_id,
+            vec![],
+        )
+        .await
+        .unwrap();
+
+    // Accept and complete the reapplied update
+    _handle_update(FailUpdate::No, CompleteWorkflow::No, core.as_ref()).await;
+
+    // Send a second update and complete the workflow
+    let post_reset_run_id = _send_and_handle_update(
+        workflow_id,
+        "second-update",
+        FailUpdate::No,
+        CompleteWorkflow::Yes,
+        core.as_ref(),
+        client.as_ref(),
+    )
+    .await;
+
+    assert_eq!(post_reset_run_id, reset_response.run_id);
+
+    print_history(workflow_id.to_string(), None, client.as_ref()).await;
+    print_history(
+        workflow_id.to_string(),
+        Some(reset_response.run_id),
+        client.as_ref(),
+    )
+    .await;
+}
+
 // Start a workflow, send an update, accept the update, complete the update, complete the workflow.
 async fn _send_and_handle_update(
     workflow_id: &str,
     update_id: &str,
-    fail_update: bool,
+    fail_update: FailUpdate,
     complete_workflow: CompleteWorkflow,
     core: &dyn Worker,
     client: &RetryClient<Client>,
@@ -957,4 +1014,19 @@ async fn worker_restarted_in_middle_of_update() {
         .fetch_history_and_replay(wf_id, run_id, worker.inner_mut())
         .await
         .unwrap();
+}
+
+#[allow(dead_code)]
+async fn print_history(workflow_id: String, run_id: Option<String>, client: &RetryClient<Client>) {
+    let history = client
+        .get_workflow_execution_history(workflow_id, run_id, vec![])
+        .await
+        .unwrap()
+        .history
+        .unwrap();
+    println!("--");
+    for e in history.events {
+        print!("{} {}\n", e.event_id, e.event_type().as_str_name());
+    }
+    println!("\n\n");
 }
