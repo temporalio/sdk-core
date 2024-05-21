@@ -14,7 +14,7 @@ use temporal_sdk_core_protos::{
         enums::v1::EventType,
         protocol::v1::{message, Message},
         update,
-        update::v1::Acceptance,
+        update::v1::{Acceptance, Rejection},
         workflowservice::v1::RespondWorkflowTaskCompletedResponse,
     },
     utilities::pack_any,
@@ -83,9 +83,9 @@ async fn replay_with_empty_first_task() {
     .unwrap();
 }
 
+#[rstest::rstest]
 #[tokio::test]
-async fn initial_request_sent_back() {
-    crate::telemetry::test_telem_console();
+async fn initial_request_sent_back(#[values(false, true)] reject: bool) {
     let wfid = "fakeid";
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
@@ -122,13 +122,15 @@ async fn initial_request_sent_back() {
         .expect_complete_workflow_task()
         .times(1)
         .returning(move |mut resp| {
-            let accept_msg = resp.messages.pop().unwrap();
-            let acceptance = accept_msg
-                .body
-                .unwrap()
-                .unpack_as(Acceptance::default())
-                .unwrap();
-            assert_eq!(acceptance.accepted_request.unwrap(), upd_req_body);
+            let msg = resp.messages.pop().unwrap();
+            let orig_req = if reject {
+                let acceptance = msg.body.unwrap().unpack_as(Rejection::default()).unwrap();
+                acceptance.rejected_request.unwrap()
+            } else {
+                let acceptance = msg.body.unwrap().unpack_as(Acceptance::default()).unwrap();
+                acceptance.accepted_request.unwrap()
+            };
+            assert_eq!(orig_req, upd_req_body);
             Ok(RespondWorkflowTaskCompletedResponse::default())
         });
     let mh = MockPollCfg::from_resp_batches(wfid, t, [poll_resp], mock_client);
@@ -137,11 +139,16 @@ async fn initial_request_sent_back() {
     let core = mock_worker(mock);
 
     let task = core.poll_workflow_activation().await.unwrap();
+    let resp = if reject {
+        Response::Rejected(Default::default())
+    } else {
+        Response::Accepted(())
+    };
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
         task.run_id,
         UpdateResponse {
             protocol_instance_id: update_id.to_string(),
-            response: Some(Response::Accepted(())),
+            response: Some(resp),
         }
         .into(),
     ))
