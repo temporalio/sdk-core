@@ -14,12 +14,6 @@ pub enum PollWfError {
     /// errors, so lang should consider this fatal.
     #[error("Unhandled grpc error when workflow polling: {0:?}")]
     TonicError(#[from] tonic::Status),
-    // TODO: Remove this
-    /// Unhandled error when completing a workflow during a poll -- this can happen when there is no
-    /// work for lang to perform, but the server sent us a workflow task (EX: An activity completed
-    /// even though we already cancelled it)
-    #[error("Unhandled error when auto-completing workflow task: {0:?}")]
-    AutocompleteError(#[from] CompleteWfError),
 }
 
 /// Errors thrown by [crate::Worker::poll_activity_task]

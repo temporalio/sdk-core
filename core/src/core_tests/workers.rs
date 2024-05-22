@@ -263,7 +263,6 @@ async fn worker_does_not_panic_on_retry_exhaustion_of_nonfatal_net_err() {
 
 #[tokio::test]
 async fn worker_can_shutdown_after_never_polling_ok() {
-    crate::telemetry::test_telem_console();
     let mut mock = mock_workflow_client();
     mock.expect_poll_activity_task()
         .returning(|_, _| Err(tonic::Status::permission_denied("you shall not pass")));
@@ -281,12 +280,10 @@ async fn worker_can_shutdown_after_never_polling_ok() {
     loop {
         // Must continue polling until both poll types return shutdown.
         let res = core.poll_workflow_activation().await.unwrap_err();
-        dbg!(&res);
         if !matches!(res, PollWfError::ShutDown) {
             continue;
         }
         let res = core.poll_activity_task().await.unwrap_err();
-        dbg!(&res);
         if !matches!(res, PollActivityError::ShutDown) {
             continue;
         }
