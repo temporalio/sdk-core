@@ -276,7 +276,6 @@ async fn worker_can_shutdown_after_never_polling_ok() {
         mock,
     );
 
-    // TODO: Make sure to try without activity call too
     loop {
         // Must continue polling until both poll types return shutdown.
         let res = core.poll_workflow_activation().await.unwrap_err();
