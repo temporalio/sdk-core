@@ -567,12 +567,18 @@ impl Worker {
             }
         };
 
-        tokio::select! {
+        let r = tokio::select! {
             biased;
 
             r = local_activities_poll => r,
             r = act_mgr_poll => r,
+        };
+        // Since we consider network errors (at this level) fatal, we want to start shutdown if one
+        // is encountered
+        if matches!(r, Err(PollActivityError::TonicError(_))) {
+            self.initiate_shutdown();
         }
+        r
     }
 
     /// Attempt to record an activity heartbeat
