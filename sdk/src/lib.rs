@@ -94,7 +94,10 @@ use temporal_sdk_core_protos::{
         workflow_completion::WorkflowActivationCompletion,
         ActivityTaskCompletion, AsJsonPayloadExt, FromJsonPayloadExt,
     },
-    temporal::api::{common::v1::Payload, failure::v1::Failure},
+    temporal::api::{
+        common::v1::Payload,
+        failure::v1::{failure, Failure},
+    },
     TaskToken,
 };
 use tokio::{
@@ -498,11 +501,20 @@ impl ActivityHalf {
                             ActivityExecutionResult::will_complete_async()
                         }
                         Ok(Err(err)) => match err {
-                            ActivityError::Retryable { source, .. } => {
-                                ActivityExecutionResult::fail(
-                                    Failure::application_failure_from_error(source, false),
-                                )
-                            }
+                            ActivityError::Retryable {
+                                source,
+                                explicit_delay,
+                            } => ActivityExecutionResult::fail({
+                                let mut f = Failure::application_failure_from_error(source, false);
+                                if let Some(d) = explicit_delay {
+                                    if let Some(failure::FailureInfo::ApplicationFailureInfo(fi)) =
+                                        f.failure_info.as_mut()
+                                    {
+                                        fi.next_retry_delay = d.try_into().ok();
+                                    }
+                                }
+                                f
+                            }),
                             ActivityError::Cancelled { details } => {
                                 ActivityExecutionResult::cancel_from_details(details)
                             }

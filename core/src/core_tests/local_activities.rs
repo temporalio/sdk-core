@@ -17,7 +17,7 @@ use std::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
-    time::{Duration, SystemTime},
+    time::{Duration, Instant, SystemTime},
 };
 use temporal_client::WorkflowOptions;
 use temporal_sdk::{
@@ -1401,50 +1401,54 @@ async fn local_act_retry_explicit_delay() {
     let mh = MockPollCfg::from_resp_batches(wf_id, t, [1], mock);
     let mut worker = mock_sdk(mh);
 
-    // worker.register_wf(
-    //     DEFAULT_WORKFLOW_TYPE.to_owned(),
-    //     move |ctx: WfContext| async move {
-    //         let la_res = ctx
-    //             .local_activity(LocalActivityOptions {
-    //                 activity_type: "echo".to_string(),
-    //                 input: "hi".as_json_payload().expect("serializes fine"),
-    //                 retry_policy: RetryPolicy {
-    //                     initial_interval: Some(prost_dur!(from_millis(50))),
-    //                     backoff_coefficient: 1.2,
-    //                     maximum_interval: None,
-    //                     maximum_attempts: 5,
-    //                     non_retryable_error_types: vec![],
-    //                 },
-    //                 ..Default::default()
-    //             })
-    //             .await;
-    //         if eventually_pass {
-    //             assert!(la_res.completed_ok())
-    //         } else {
-    //             assert!(la_res.failed())
-    //         }
-    //         Ok(().into())
-    //     },
-    // );
-    // let attempts: &'static _ = Box::leak(Box::new(AtomicUsize::new(0)));
-    // worker.register_activity("echo", move |_ctx: ActContext, _: String| async move {
-    //     // Succeed on 3rd attempt (which is ==2 since fetch_add returns prev val)
-    //     if 2 == attempts.fetch_add(1, Ordering::Relaxed) && eventually_pass {
-    //         Ok(())
-    //     } else {
-    //         Err(anyhow!("Oh no I failed!"))
-    //     }
-    // });
-    // worker
-    //     .submit_wf(
-    //         wf_id.to_owned(),
-    //         DEFAULT_WORKFLOW_TYPE.to_owned(),
-    //         vec![],
-    //         WorkflowOptions::default(),
-    //     )
-    //     .await
-    //     .unwrap();
-    // worker.run_until_done().await.unwrap();
-    // let expected_attempts = if eventually_pass { 3 } else { 5 };
-    // assert_eq!(expected_attempts, attempts.load(Ordering::Relaxed));
+    worker.register_wf(
+        DEFAULT_WORKFLOW_TYPE.to_owned(),
+        move |ctx: WfContext| async move {
+            let la_res = ctx
+                .local_activity(LocalActivityOptions {
+                    activity_type: "echo".to_string(),
+                    input: "hi".as_json_payload().expect("serializes fine"),
+                    retry_policy: RetryPolicy {
+                        initial_interval: Some(prost_dur!(from_millis(50))),
+                        backoff_coefficient: 1.0,
+                        maximum_attempts: 5,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                })
+                .await;
+            assert!(la_res.completed_ok());
+            Ok(().into())
+        },
+    );
+    let attempts: &'static _ = Box::leak(Box::new(AtomicUsize::new(0)));
+    worker.register_activity("echo", move |_ctx: ActContext, _: String| async move {
+        // Succeed on 3rd attempt (which is ==2 since fetch_add returns prev val)
+        let last_attempt = attempts.fetch_add(1, Ordering::Relaxed);
+        if 0 == last_attempt {
+            Err(ActivityError::Retryable {
+                source: anyhow!("Explicit backoff error"),
+                explicit_delay: Some(Duration::from_millis(300)),
+            })
+        } else if 2 == last_attempt {
+            Ok(())
+        } else {
+            Err(anyhow!("Oh no I failed!").into())
+        }
+    });
+    worker
+        .submit_wf(
+            wf_id.to_owned(),
+            DEFAULT_WORKFLOW_TYPE.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+    let start = Instant::now();
+    worker.run_until_done().await.unwrap();
+    let expected_attempts = 3;
+    assert_eq!(expected_attempts, attempts.load(Ordering::Relaxed));
+    // There will be one 300ms backoff and one 50s backoff, so things should take at least that long
+    assert!(start.elapsed() > Duration::from_millis(350));
 }
