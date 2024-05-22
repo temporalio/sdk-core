@@ -265,13 +265,32 @@ async fn worker_does_not_panic_on_retry_exhaustion_of_nonfatal_net_err() {
 async fn worker_can_shutdown_after_never_polling_ok() {
     crate::telemetry::test_telem_console();
     let mut mock = mock_workflow_client();
+    mock.expect_poll_activity_task()
+        .returning(|_, _| Err(tonic::Status::permission_denied("you shall not pass")));
     mock.expect_poll_workflow_task()
         .returning(|_| Err(tonic::Status::permission_denied("you shall not pass")));
-    let core = worker::Worker::new_test(test_worker_cfg().build().unwrap(), mock);
+    let core = worker::Worker::new_test(
+        test_worker_cfg()
+            .max_concurrent_at_polls(1_usize)
+            .build()
+            .unwrap(),
+        mock,
+    );
 
-    // Will be the error
-    let res = core.poll_workflow_activation().await;
-    dbg!(res);
-    core.shutdown().await;
-    core.finalize_shutdown().await;
+    // TODO: Make sure to try without activity call too
+    loop {
+        // Must continue polling until both poll types return shutdown.
+        let res = core.poll_workflow_activation().await.unwrap_err();
+        dbg!(&res);
+        if !matches!(res, PollWfError::ShutDown) {
+            continue;
+        }
+        let res = core.poll_activity_task().await.unwrap_err();
+        dbg!(&res);
+        if !matches!(res, PollActivityError::ShutDown) {
+            continue;
+        }
+        core.finalize_shutdown().await;
+        break;
+    }
 }

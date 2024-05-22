@@ -617,7 +617,7 @@ impl Worker {
         // In the event workflows are shutdown, begin shutdown of everything else, since that's
         // about to happen anyway. Tell the local activity manager that, so that it can know to
         // cancel any remaining outstanding LAs and shutdown.
-        if matches!(r, Err(PollWfError::ShutDown)) {
+        if matches!(r, Err(_)) {
             // This is covering the situation where WFT pollers dying is the reason for shutdown
             self.initiate_shutdown();
             self.local_act_mgr.workflows_have_shutdown();

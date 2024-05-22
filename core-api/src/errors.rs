@@ -6,14 +6,15 @@ use temporal_sdk_core_protos::coresdk::activity_result::ActivityExecutionResult;
 #[derive(thiserror::Error, Debug)]
 pub enum PollWfError {
     /// [crate::Worker::shutdown] was called, and there are no more replay tasks to be handled. Lang
-    /// must call [crate::Worker::complete_workflow_activation] for any remaining tasks, and then may
-    /// exit.
+    /// must call [crate::Worker::complete_workflow_activation] for any remaining tasks, and then
+    /// may exit.
     #[error("Core is shut down and there are no more workflow replay tasks")]
     ShutDown,
     /// Unhandled error when calling the temporal server. Core will attempt to retry any non-fatal
     /// errors, so lang should consider this fatal.
     #[error("Unhandled grpc error when workflow polling: {0:?}")]
     TonicError(#[from] tonic::Status),
+    // TODO: Remove this
     /// Unhandled error when completing a workflow during a poll -- this can happen when there is no
     /// work for lang to perform, but the server sent us a workflow task (EX: An activity completed
     /// even though we already cancelled it)
