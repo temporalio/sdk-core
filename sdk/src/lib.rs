@@ -519,7 +519,7 @@ impl ActivityHalf {
                                 ActivityExecutionResult::cancel_from_details(details)
                             }
                             ActivityError::NonRetryable(nre) => ActivityExecutionResult::fail(
-                                Failure::application_failure_from_error(nre.into(), true),
+                                Failure::application_failure_from_error(nre, true),
                             ),
                         },
                     };
@@ -812,36 +812,43 @@ pub struct ActivityFunction {
     act_func: BoxActFn,
 }
 
-#[derive(Debug, thiserror::Error)]
+/// Returned as errors from activity functions
+#[derive(Debug)]
 pub enum ActivityError {
     /// This error can be returned from activities to allow the explicit configuration of certain
     /// error properties. It's also the default error type that arbitrary errors will be converted
     /// into.
-    #[error("Activity error {:?}", .source)]
     Retryable {
+        /// The underlying error
         source: anyhow::Error,
+        /// If specified, the next retry (if there is one) will occur after this delay
         explicit_delay: Option<Duration>,
     },
     /// Return this error to indicate your activity is cancelling
-    #[error("Activity cancelled")]
-    Cancelled { details: Option<Payload> },
+    Cancelled {
+        /// Some data to save as the cancellation reason
+        details: Option<Payload>,
+    },
     /// Return this error to indicate that your activity non-retryable
     /// this is a transparent wrapper around anyhow Error so essentially any type of error
     /// could be used here.
-    #[error(transparent)]
     NonRetryable(anyhow::Error),
 }
 
-impl From<anyhow::Error> for ActivityError {
-    fn from(source: anyhow::Error) -> Self {
+impl<E> From<E> for ActivityError
+where
+    E: Into<anyhow::Error>,
+{
+    fn from(source: E) -> Self {
         Self::Retryable {
-            source,
+            source: source.into(),
             explicit_delay: None,
         }
     }
 }
 
 impl ActivityError {
+    /// Construct a cancelled error without details
     pub fn cancelled() -> Self {
         Self::Cancelled { details: None }
     }

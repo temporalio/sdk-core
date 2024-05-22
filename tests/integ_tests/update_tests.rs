@@ -1,4 +1,4 @@
-use anyhow::{anyhow, bail};
+use anyhow::anyhow;
 use assert_matches::assert_matches;
 use futures_util::{future, future::join_all, StreamExt};
 use once_cell::sync::Lazy;
@@ -843,7 +843,7 @@ async fn worker_restarted_in_middle_of_update() {
         BARR.wait().await;
         if !ACT_RAN.fetch_or(true, Ordering::Relaxed) {
             // On first run fail the task so we'll get retried on the new worker
-            bail!("Fail first time");
+            return Err(anyhow!("Fail first time").into());
         }
         Ok(echo_me)
     });

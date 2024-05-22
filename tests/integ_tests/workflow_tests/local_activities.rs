@@ -7,7 +7,7 @@ use std::{
 };
 use temporal_client::WorkflowOptions;
 use temporal_sdk::{
-    interceptors::WorkerInterceptor, ActContext, ActivityCancelledError, CancellableFuture,
+    interceptors::WorkerInterceptor, ActContext, ActivityError, CancellableFuture,
     LocalActivityOptions, WfContext, WorkflowResult,
 };
 use temporal_sdk_core::replay::HistoryForReplay;
@@ -172,7 +172,7 @@ async fn local_act_retry_timer_backoff() {
         Ok(().into())
     });
     worker.register_activity("echo", |_: ActContext, _: String| async {
-        Result::<(), _>::Err(anyhow!("Oh no I failed!"))
+        Result::<(), _>::Err(anyhow!("Oh no I failed!").into())
     });
 
     let run_id = worker
@@ -223,7 +223,7 @@ async fn cancel_immediate(#[case] cancel_type: ActivityCancellationType) {
             tokio::select! {
                 _ = tokio::time::sleep(Duration::from_secs(10)) => {},
                 _ = ctx.cancelled() => {
-                    return Err(anyhow!(ActivityCancelledError::default()))
+                    return Err(ActivityError::cancelled())
                 }
                 _ = manual_cancel_act.cancelled() => {}
             }
@@ -326,22 +326,22 @@ async fn cancel_after_act_starts(
         async move {
             if cancel_on_backoff.is_some() {
                 if ctx.is_cancelled() {
-                    return Err(anyhow!(ActivityCancelledError::default()));
+                    return Err(ActivityError::cancelled());
                 }
                 // Just fail constantly so we get stuck on the backoff timer
-                return Err(anyhow!("Oh no I failed!"));
+                return Err(anyhow!("Oh no I failed!").into());
             } else {
                 tokio::select! {
                     _ = tokio::time::sleep(Duration::from_secs(100)) => {},
                     _ = ctx.cancelled() => {
-                        return Err(anyhow!(ActivityCancelledError::default()))
+                        return Err(ActivityError::cancelled())
                     }
                     _ = manual_cancel_act.cancelled() => {
                         return Ok(())
                     }
                 }
             }
-            Err(anyhow!("Oh no I failed!"))
+            Err(anyhow!("Oh no I failed!").into())
         }
     });
 
@@ -405,7 +405,7 @@ async fn x_to_close_timeout(#[case] is_schedule: bool) {
         tokio::select! {
             _ = tokio::time::sleep(Duration::from_secs(100)) => {},
             _ = ctx.cancelled() => {
-                return Err(anyhow!(ActivityCancelledError::default()))
+                return Err(ActivityError::cancelled())
             }
         };
         Ok(())
@@ -452,7 +452,7 @@ async fn schedule_to_close_timeout_across_timer_backoff(#[case] cached: bool) {
     let num_attempts: &'static _ = Box::leak(Box::new(AtomicU8::new(0)));
     worker.register_activity("echo", move |_: ActContext, _: String| async {
         num_attempts.fetch_add(1, Ordering::Relaxed);
-        Result::<(), _>::Err(anyhow!("Oh no I failed!"))
+        Result::<(), _>::Err(anyhow!("Oh no I failed!").into())
     });
 
     starter.start_with_worker(wf_name, &mut worker).await;
@@ -528,7 +528,7 @@ async fn timer_backoff_concurrent_with_non_timer_backoff() {
         Ok(().into())
     });
     worker.register_activity("echo", |_: ActContext, _: String| async {
-        Result::<(), _>::Err(anyhow!("Oh no I failed!"))
+        Result::<(), _>::Err(anyhow!("Oh no I failed!").into())
     });
 
     starter.start_with_worker(wf_name, &mut worker).await;

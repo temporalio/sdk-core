@@ -1,5 +1,5 @@
-use temporal_sdk::ActContext;
+use temporal_sdk::{ActContext, ActivityError};
 
-pub(crate) async fn echo(_ctx: ActContext, e: String) -> anyhow::Result<String> {
+pub(crate) async fn echo(_ctx: ActContext, e: String) -> Result<String, ActivityError> {
     Ok(e)
 }
