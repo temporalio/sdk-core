@@ -223,9 +223,11 @@ impl Workflows {
                                         .expect("Activation processor channel not dropped");
                                 }
                             }
-                            Err(e) => activation_tx
-                                .send(Err(e))
-                                .expect("Activation processor channel not dropped"),
+                            Err(e) => {
+                                let _ = activation_tx.send(Err(e)).inspect_err(|e| {
+                                    error!(activation=?e.0, "Activation processor channel dropped");
+                                });
+                            }
                         }
                     }
                 });
