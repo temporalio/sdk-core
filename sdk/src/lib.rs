@@ -72,6 +72,7 @@ use std::{
     future::Future,
     panic::AssertUnwindSafe,
     sync::Arc,
+    time::Duration,
 };
 use temporal_client::ClientOptionsBuilder;
 use temporal_sdk_core::Url;
@@ -93,7 +94,10 @@ use temporal_sdk_core_protos::{
         workflow_completion::WorkflowActivationCompletion,
         ActivityTaskCompletion, AsJsonPayloadExt, FromJsonPayloadExt,
     },
-    temporal::api::{common::v1::Payload, failure::v1::Failure},
+    temporal::api::{
+        common::v1::Payload,
+        failure::v1::{failure, Failure},
+    },
     TaskToken,
 };
 use tokio::{
@@ -496,18 +500,27 @@ impl ActivityHalf {
                         Ok(Ok(ActExitValue::WillCompleteAsync)) => {
                             ActivityExecutionResult::will_complete_async()
                         }
-                        Ok(Err(err)) => match err.downcast::<ActivityCancelledError>() {
-                            Ok(ce) => ActivityExecutionResult::cancel_from_details(ce.details),
-                            Err(other_err) => {
-                                match other_err.downcast::<NonRetryableActivityError>() {
-                                    Ok(nre) => ActivityExecutionResult::fail(
-                                        Failure::application_failure_from_error(nre.into(), true),
-                                    ),
-                                    Err(other_err) => ActivityExecutionResult::fail(
-                                        Failure::application_failure_from_error(other_err, false),
-                                    ),
+                        Ok(Err(err)) => match err {
+                            ActivityError::Retryable {
+                                source,
+                                explicit_delay,
+                            } => ActivityExecutionResult::fail({
+                                let mut f = Failure::application_failure_from_error(source, false);
+                                if let Some(d) = explicit_delay {
+                                    if let Some(failure::FailureInfo::ApplicationFailureInfo(fi)) =
+                                        f.failure_info.as_mut()
+                                    {
+                                        fi.next_retry_delay = d.try_into().ok();
+                                    }
                                 }
+                                f
+                            }),
+                            ActivityError::Cancelled { details } => {
+                                ActivityExecutionResult::cancel_from_details(details)
                             }
+                            ActivityError::NonRetryable(nre) => ActivityExecutionResult::fail(
+                                Failure::application_failure_from_error(nre, true),
+                            ),
                         },
                     };
                     worker
@@ -788,7 +801,7 @@ impl<T: AsJsonPayloadExt> From<T> for ActExitValue<T> {
 }
 
 type BoxActFn = Arc<
-    dyn Fn(ActContext, Payload) -> BoxFuture<'static, Result<ActExitValue<Payload>, anyhow::Error>>
+    dyn Fn(ActContext, Payload) -> BoxFuture<'static, Result<ActExitValue<Payload>, ActivityError>>
         + Send
         + Sync,
 >;
@@ -799,35 +812,47 @@ pub struct ActivityFunction {
     act_func: BoxActFn,
 }
 
-/// Return this error to indicate your activity is cancelling
-#[derive(Debug, Default)]
-pub struct ActivityCancelledError {
-    details: Option<Payload>,
+/// Returned as errors from activity functions
+#[derive(Debug)]
+pub enum ActivityError {
+    /// This error can be returned from activities to allow the explicit configuration of certain
+    /// error properties. It's also the default error type that arbitrary errors will be converted
+    /// into.
+    Retryable {
+        /// The underlying error
+        source: anyhow::Error,
+        /// If specified, the next retry (if there is one) will occur after this delay
+        explicit_delay: Option<Duration>,
+    },
+    /// Return this error to indicate your activity is cancelling
+    Cancelled {
+        /// Some data to save as the cancellation reason
+        details: Option<Payload>,
+    },
+    /// Return this error to indicate that your activity non-retryable
+    /// this is a transparent wrapper around anyhow Error so essentially any type of error
+    /// could be used here.
+    NonRetryable(anyhow::Error),
 }
-impl ActivityCancelledError {
-    /// Include some details as part of concluding the activity as cancelled
-    pub fn with_details(payload: Payload) -> Self {
-        Self {
-            details: Some(payload),
+
+impl<E> From<E> for ActivityError
+where
+    E: Into<anyhow::Error>,
+{
+    fn from(source: E) -> Self {
+        Self::Retryable {
+            source: source.into(),
+            explicit_delay: None,
         }
     }
 }
-impl std::error::Error for ActivityCancelledError {}
-impl Display for ActivityCancelledError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Activity cancelled")
+
+impl ActivityError {
+    /// Construct a cancelled error without details
+    pub fn cancelled() -> Self {
+        Self::Cancelled { details: None }
     }
 }
-
-/// Return this error to indicate that your activity non-retryable
-/// this is a transparent wrapper around anyhow Error so essentially any type of error
-/// could be used here.
-///
-/// In your activity function. Return something along the lines of:
-/// `Err(NonRetryableActivityError(anyhow::anyhow!("This should *not* be retried")).into())`
-#[derive(Debug, thiserror::Error)]
-#[error(transparent)]
-pub struct NonRetryableActivityError(pub anyhow::Error);
 
 /// Closures / functions which can be turned into activity functions implement this trait
 pub trait IntoActivityFunc<Args, Res, Out> {
@@ -839,7 +864,7 @@ impl<A, Rf, R, O, F> IntoActivityFunc<A, Rf, O> for F
 where
     F: (Fn(ActContext, A) -> Rf) + Sync + Send + 'static,
     A: FromJsonPayloadExt + Send,
-    Rf: Future<Output = Result<R, anyhow::Error>> + Send + 'static,
+    Rf: Future<Output = Result<R, ActivityError>> + Send + 'static,
     R: Into<ActExitValue<O>>,
     O: AsJsonPayloadExt,
 {
@@ -847,20 +872,23 @@ where
         let wrapper = move |ctx: ActContext, input: Payload| {
             // Some minor gymnastics are required to avoid needing to clone the function
             match A::from_json_payload(&input) {
-                Ok(deser) => (self)(ctx, deser)
+                Ok(deser) => self(ctx, deser)
                     .map(|r| {
                         r.and_then(|r| {
                             let exit_val: ActExitValue<O> = r.into();
-                            Ok(match exit_val {
-                                ActExitValue::WillCompleteAsync => ActExitValue::WillCompleteAsync,
-                                ActExitValue::Normal(x) => {
-                                    ActExitValue::Normal(x.as_json_payload()?)
+                            match exit_val {
+                                ActExitValue::WillCompleteAsync => {
+                                    Ok(ActExitValue::WillCompleteAsync)
                                 }
-                            })
+                                ActExitValue::Normal(x) => match x.as_json_payload() {
+                                    Ok(v) => Ok(ActExitValue::Normal(v)),
+                                    Err(e) => Err(ActivityError::NonRetryable(e)),
+                                },
+                            }
                         })
                     })
                     .boxed(),
-                Err(e) => async move { Err(e.into()) }.boxed(),
+                Err(e) => async move { Err(ActivityError::NonRetryable(e.into())) }.boxed(),
             }
         };
         Arc::new(wrapper)

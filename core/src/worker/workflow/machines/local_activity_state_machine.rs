@@ -882,7 +882,7 @@ mod tests {
         time::Duration,
     };
     use temporal_sdk::{
-        ActContext, ActivityCancelledError, CancellableFuture, LocalActivityOptions, WfContext,
+        ActContext, ActivityError, CancellableFuture, LocalActivityOptions, WfContext,
         WorkflowResult,
     };
     use temporal_sdk_core_protos::{
@@ -988,7 +988,7 @@ mod tests {
                 if completes_ok {
                     Ok("hi")
                 } else {
-                    Err(anyhow!("Oh no I failed!"))
+                    Err(anyhow!("Oh no I failed!").into())
                 }
             },
         );
@@ -1450,7 +1450,7 @@ mod tests {
                     ctx.cancelled().await;
                 }
                 allow_cancel_barr_clone.cancelled().await;
-                Result::<(), _>::Err(anyhow!(ActivityCancelledError::default()))
+                Result::<(), _>::Err(ActivityError::cancelled())
             }
         });
         worker.run().await.unwrap();

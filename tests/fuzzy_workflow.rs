@@ -2,7 +2,9 @@ use futures_util::{sink, stream::FuturesUnordered, FutureExt, StreamExt};
 use rand::{prelude::Distribution, rngs::SmallRng, Rng, SeedableRng};
 use std::{future, time::Duration};
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
-use temporal_sdk::{ActContext, ActivityOptions, LocalActivityOptions, WfContext, WorkflowResult};
+use temporal_sdk::{
+    ActContext, ActivityError, ActivityOptions, LocalActivityOptions, WfContext, WorkflowResult,
+};
 use temporal_sdk_core_protos::coresdk::{AsJsonPayloadExt, FromJsonPayloadExt, IntoPayloadsExt};
 use temporal_sdk_core_test_utils::CoreWfStarter;
 use tokio_util::sync::CancellationToken;
@@ -28,7 +30,7 @@ impl Distribution<FuzzyWfAction> for FuzzyWfActionSampler {
     }
 }
 
-async fn echo(_ctx: ActContext, echo_me: String) -> Result<String, anyhow::Error> {
+async fn echo(_ctx: ActContext, echo_me: String) -> Result<String, ActivityError> {
     Ok(echo_me)
 }
 

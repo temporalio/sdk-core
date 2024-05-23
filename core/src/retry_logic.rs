@@ -46,6 +46,11 @@ impl RetryPolicyExt for RetryPolicy {
             }
         }
 
+        if let Some(explicit_delay) = application_failure.and_then(|af| af.next_retry_delay.clone())
+        {
+            return explicit_delay.try_into().ok();
+        }
+
         let converted_interval = self
             .initial_interval
             .clone()
@@ -198,5 +203,23 @@ mod tests {
                 })
             )
             .is_none());
+    }
+
+    #[test]
+    fn explicit_delay_is_used() {
+        let rp = RetryPolicy {
+            initial_interval: Some(prost_dur!(from_secs(1))),
+            backoff_coefficient: 2.0,
+            maximum_attempts: 2,
+            ..Default::default()
+        };
+        let afi = &ApplicationFailureInfo {
+            r#type: "".to_string(),
+            next_retry_delay: Some(prost_dur!(from_secs(50))),
+            ..Default::default()
+        };
+        let res = rp.should_retry(1, Some(afi)).unwrap();
+        assert_eq!(res.as_millis(), 50_000);
+        assert!(rp.should_retry(2, Some(afi)).is_none());
     }
 }

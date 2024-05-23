@@ -17,12 +17,11 @@ use std::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
-    time::{Duration, SystemTime},
+    time::{Duration, Instant, SystemTime},
 };
 use temporal_client::WorkflowOptions;
 use temporal_sdk::{
-    ActContext, ActivityCancelledError, LocalActivityOptions, WfContext, WorkflowFunction,
-    WorkflowResult,
+    ActContext, ActivityError, LocalActivityOptions, WfContext, WorkflowFunction, WorkflowResult,
 };
 use temporal_sdk_core_api::{
     errors::{PollActivityError, PollWfError},
@@ -49,7 +48,7 @@ use temporal_sdk_core_test_utils::{
 };
 use tokio::{join, select, sync::Barrier};
 
-async fn echo(_ctx: ActContext, e: String) -> anyhow::Result<String> {
+async fn echo(_ctx: ActContext, e: String) -> Result<String, ActivityError> {
     Ok(e)
 }
 
@@ -279,7 +278,7 @@ async fn local_act_fail_and_retry(#[case] eventually_pass: bool) {
         if 2 == attempts.fetch_add(1, Ordering::Relaxed) && eventually_pass {
             Ok(())
         } else {
-            Err(anyhow!("Oh no I failed!"))
+            Err(anyhow!("Oh no I failed!").into())
         }
     });
     worker
@@ -356,7 +355,7 @@ async fn local_act_retry_long_backoff_uses_timer() {
     worker.register_activity(
         DEFAULT_ACTIVITY_TYPE,
         move |_ctx: ActContext, _: String| async move {
-            Result::<(), _>::Err(anyhow!("Oh no I failed!"))
+            Result::<(), _>::Err(anyhow!("Oh no I failed!").into())
         },
     );
     worker
@@ -928,7 +927,7 @@ async fn start_to_close_timeout_allows_retries(#[values(true, false)] la_complet
                     _ = tokio::time::sleep(Duration::from_millis(100)) => (),
                     _ = ctx.cancelled() => {
                         cancels.fetch_add(1, Ordering::AcqRel);
-                        return Err(anyhow!(ActivityCancelledError::default()));
+                        return Err(ActivityError::cancelled());
                     }
                 }
             }
@@ -991,7 +990,7 @@ async fn wft_failure_cancels_running_las() {
             if res.is_err() {
                 panic!("Activity must be cancelled!!!!");
             }
-            Result::<(), _>::Err(ActivityCancelledError::default().into())
+            Result::<(), _>::Err(ActivityError::cancelled())
         },
     );
     worker
@@ -1107,7 +1106,7 @@ async fn local_act_records_nonfirst_attempts_ok() {
         },
     );
     worker.register_activity("echo", move |_ctx: ActContext, _: String| async move {
-        Result::<(), _>::Err(anyhow!("I fail"))
+        Result::<(), _>::Err(anyhow!("I fail").into())
     });
     worker
         .submit_wf(
@@ -1389,4 +1388,67 @@ async fn local_activity_after_wf_complete_is_discarded() {
 
     join!(wf_poller, at_poller);
     core.drain_pollers_and_shutdown().await;
+}
+
+#[tokio::test]
+async fn local_act_retry_explicit_delay() {
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_workflow_task_scheduled_and_started();
+
+    let wf_id = "fakeid";
+    let mock = mock_workflow_client();
+    let mh = MockPollCfg::from_resp_batches(wf_id, t, [1], mock);
+    let mut worker = mock_sdk(mh);
+
+    worker.register_wf(
+        DEFAULT_WORKFLOW_TYPE.to_owned(),
+        move |ctx: WfContext| async move {
+            let la_res = ctx
+                .local_activity(LocalActivityOptions {
+                    activity_type: "echo".to_string(),
+                    input: "hi".as_json_payload().expect("serializes fine"),
+                    retry_policy: RetryPolicy {
+                        initial_interval: Some(prost_dur!(from_millis(50))),
+                        backoff_coefficient: 1.0,
+                        maximum_attempts: 5,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                })
+                .await;
+            assert!(la_res.completed_ok());
+            Ok(().into())
+        },
+    );
+    let attempts: &'static _ = Box::leak(Box::new(AtomicUsize::new(0)));
+    worker.register_activity("echo", move |_ctx: ActContext, _: String| async move {
+        // Succeed on 3rd attempt (which is ==2 since fetch_add returns prev val)
+        let last_attempt = attempts.fetch_add(1, Ordering::Relaxed);
+        if 0 == last_attempt {
+            Err(ActivityError::Retryable {
+                source: anyhow!("Explicit backoff error"),
+                explicit_delay: Some(Duration::from_millis(300)),
+            })
+        } else if 2 == last_attempt {
+            Ok(())
+        } else {
+            Err(anyhow!("Oh no I failed!").into())
+        }
+    });
+    worker
+        .submit_wf(
+            wf_id.to_owned(),
+            DEFAULT_WORKFLOW_TYPE.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+    let start = Instant::now();
+    worker.run_until_done().await.unwrap();
+    let expected_attempts = 3;
+    assert_eq!(expected_attempts, attempts.load(Ordering::Relaxed));
+    // There will be one 300ms backoff and one 50s backoff, so things should take at least that long
+    assert!(start.elapsed() > Duration::from_millis(350));
 }

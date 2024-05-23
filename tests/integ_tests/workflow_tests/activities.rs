@@ -8,8 +8,8 @@ use std::{
 };
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowExecutionResult, WorkflowOptions};
 use temporal_sdk::{
-    ActContext, ActExitValue, ActivityCancelledError, ActivityOptions, CancellableFuture,
-    WfContext, WorkflowResult,
+    ActContext, ActExitValue, ActivityError, ActivityOptions, CancellableFuture, WfContext,
+    WorkflowResult,
 };
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -946,7 +946,7 @@ async fn graceful_shutdown() {
         // just wait to be cancelled
         ctx.cancelled().await;
         ACTS_DONE.add_permits(1);
-        Result::<(), _>::Err(ActivityCancelledError::default().into())
+        Result::<(), _>::Err(ActivityError::cancelled())
     });
 
     worker
