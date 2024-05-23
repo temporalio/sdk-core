@@ -73,7 +73,7 @@ pub(crate) fn test_worker_cfg() -> WorkerConfigBuilder {
 #[allow(clippy::large_enum_variant)] // Test only code, whatever.
 pub(crate) enum ResponseType {
     ToTaskNum(usize),
-    /// Returns just the history after the WFT completed of the provided task number - 1, through to
+    /// Returns just the history from the WFT completed of the provided task number - 1, through to
     /// the next WFT started. Simulating the incremental history for just the provided task number
     #[from(ignore)]
     OneTask(usize),

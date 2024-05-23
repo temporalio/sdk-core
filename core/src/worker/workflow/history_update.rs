@@ -65,6 +65,12 @@ impl Debug for HistoryUpdate {
     }
 }
 
+impl HistoryUpdate {
+    pub(crate) fn get_events(&self) -> &[HistoryEvent] {
+        &self.events
+    }
+}
+
 #[derive(Debug)]
 pub(crate) enum NextWFT {
     ReplayOver,
