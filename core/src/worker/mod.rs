@@ -567,12 +567,18 @@ impl Worker {
             }
         };
 
-        tokio::select! {
+        let r = tokio::select! {
             biased;
 
             r = local_activities_poll => r,
             r = act_mgr_poll => r,
+        };
+        // Since we consider network errors (at this level) fatal, we want to start shutdown if one
+        // is encountered
+        if matches!(r, Err(PollActivityError::TonicError(_))) {
+            self.initiate_shutdown();
         }
+        r
     }
 
     /// Attempt to record an activity heartbeat
@@ -614,13 +620,15 @@ impl Worker {
     #[instrument(skip(self), fields(run_id, workflow_id, task_queue=%self.config.task_queue))]
     pub(crate) async fn next_workflow_activation(&self) -> Result<WorkflowActivation, PollWfError> {
         let r = self.workflows.next_workflow_activation().await;
-        // In the event workflows are shutdown, begin shutdown of everything else, since that's
-        // about to happen anyway. Tell the local activity manager that, so that it can know to
-        // cancel any remaining outstanding LAs and shutdown.
-        if matches!(r, Err(PollWfError::ShutDown)) {
+        // In the event workflows are shutdown or erroring, begin shutdown of everything else. Once
+        // they are shut down, tell the local activity manager that, so that it can know to cancel
+        // any remaining outstanding LAs and shutdown.
+        if let Err(ref e) = r {
             // This is covering the situation where WFT pollers dying is the reason for shutdown
             self.initiate_shutdown();
-            self.local_act_mgr.workflows_have_shutdown();
+            if matches!(e, PollWfError::ShutDown) {
+                self.local_act_mgr.workflows_have_shutdown();
+            }
         }
         r
     }

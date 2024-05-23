@@ -223,9 +223,11 @@ impl Workflows {
                                         .expect("Activation processor channel not dropped");
                                 }
                             }
-                            Err(e) => activation_tx
-                                .send(Err(e))
-                                .expect("Activation processor channel not dropped"),
+                            Err(e) => {
+                                let _ = activation_tx.send(Err(e)).inspect_err(|e| {
+                                    error!(activation=?e.0, "Activation processor channel dropped");
+                                });
+                            }
                         }
                     }
                 });
@@ -267,33 +269,41 @@ impl Workflows {
                     break Ok(act);
                 }
                 ActivationOrAuto::Autocomplete { run_id } => {
-                    self.activation_completed(
-                        WorkflowActivationCompletion {
-                            run_id,
-                            status: Some(
-                                workflow_completion::Success::from_variants(vec![]).into(),
-                            ),
-                        },
-                        true,
-                        // We need to say a type, but the type is irrelevant, so imagine some
-                        // boxed function we'll never call.
-                        Option::<Box<dyn Fn(PostActivateHookData) + Send>>::None,
-                    )
-                    .await?;
+                    if let Err(e) = self
+                        .activation_completed(
+                            WorkflowActivationCompletion {
+                                run_id,
+                                status: Some(
+                                    workflow_completion::Success::from_variants(vec![]).into(),
+                                ),
+                            },
+                            true,
+                            // We need to say a type, but the type is irrelevant, so imagine some
+                            // boxed function we'll never call.
+                            Option::<Box<dyn Fn(PostActivateHookData) + Send>>::None,
+                        )
+                        .await
+                    {
+                        error!(error=?e, "Error while auto-completing workflow task");
+                    }
                 }
                 ActivationOrAuto::AutoFail {
                     run_id,
                     machines_err,
                 } => {
-                    self.activation_completed(
-                        WorkflowActivationCompletion {
-                            run_id,
-                            status: Some(machines_err.as_failure().into()),
-                        },
-                        true,
-                        Option::<Box<dyn Fn(PostActivateHookData) + Send>>::None,
-                    )
-                    .await?;
+                    if let Err(e) = self
+                        .activation_completed(
+                            WorkflowActivationCompletion {
+                                run_id,
+                                status: Some(machines_err.as_failure().into()),
+                            },
+                            true,
+                            Option::<Box<dyn Fn(PostActivateHookData) + Send>>::None,
+                        )
+                        .await
+                    {
+                        error!(error=?e, "Error while auto-failing workflow task");
+                    }
                 }
             }
         }
