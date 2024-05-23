@@ -222,7 +222,7 @@ pub(crate) struct MockWorkerInputs {
 
 impl Default for MockWorkerInputs {
     fn default() -> Self {
-        Self::new(stream::empty().boxed())
+        Self::new(stream::pending().boxed())
     }
 }
 

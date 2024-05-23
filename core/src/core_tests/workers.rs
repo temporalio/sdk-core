@@ -1,9 +1,10 @@
 use crate::{
     prost_dur,
     test_help::{
-        build_fake_worker, build_mock_pollers, canned_histories, mock_worker, MockPollCfg,
-        MockWorkerInputs, MocksHolder, ResponseType, WorkerExt,
+        build_fake_worker, build_mock_pollers, canned_histories, mock_worker, test_worker_cfg,
+        MockPollCfg, MockWorkerInputs, MocksHolder, ResponseType, WorkerExt,
     },
+    worker,
     worker::client::mocks::mock_workflow_client,
     PollActivityError, PollWfError,
 };
@@ -258,4 +259,39 @@ async fn worker_does_not_panic_on_retry_exhaustion_of_nonfatal_net_err() {
         res.jobs[0].variant,
         Some(workflow_activation_job::Variant::RemoveFromCache(_))
     );
+}
+
+#[rstest::rstest]
+#[tokio::test]
+async fn worker_can_shutdown_after_never_polling_ok(#[values(true, false)] poll_workflow: bool) {
+    let mut mock = mock_workflow_client();
+    mock.expect_poll_activity_task()
+        .returning(|_, _| Err(tonic::Status::permission_denied("you shall not pass")));
+    if poll_workflow {
+        mock.expect_poll_workflow_task()
+            .returning(|_| Err(tonic::Status::permission_denied("you shall not pass")));
+    }
+    let core = worker::Worker::new_test(
+        test_worker_cfg()
+            .max_concurrent_at_polls(1_usize)
+            .build()
+            .unwrap(),
+        mock,
+    );
+
+    loop {
+        // Must continue polling until polls return shutdown.
+        if poll_workflow {
+            let res = core.poll_workflow_activation().await.unwrap_err();
+            if !matches!(res, PollWfError::ShutDown) {
+                continue;
+            }
+        }
+        let res = core.poll_activity_task().await.unwrap_err();
+        if !matches!(res, PollActivityError::ShutDown) {
+            continue;
+        }
+        core.finalize_shutdown().await;
+        break;
+    }
 }

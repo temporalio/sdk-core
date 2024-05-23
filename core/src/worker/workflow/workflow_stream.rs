@@ -165,7 +165,6 @@ impl WFStream {
                         None
                     }
                     WFStreamInput::PollerError(e) => {
-                        warn!("WFT poller errored, shutting down");
                         return Err(PollWfError::TonicError(e));
                     }
                 };
