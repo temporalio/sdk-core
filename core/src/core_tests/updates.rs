@@ -1,5 +1,8 @@
 use crate::{
-    test_help::{build_mock_pollers, hist_to_poll_resp, mock_worker, MockPollCfg, ResponseType},
+    test_help::{
+        build_mock_pollers, hist_to_poll_resp, mock_worker, MockPollCfg, PollWFTRespExt,
+        ResponseType,
+    },
     worker::client::mocks::mock_workflow_client,
 };
 use temporal_sdk_core_api::Worker;
@@ -14,12 +17,9 @@ use temporal_sdk_core_protos::{
     temporal::api::{
         common::v1::Payload,
         enums::v1::EventType,
-        protocol::v1::{message, Message},
-        update,
         update::v1::{Acceptance, Rejection},
         workflowservice::v1::RespondWorkflowTaskCompletedResponse,
     },
-    utilities::pack_any,
     TestHistoryBuilder, DEFAULT_ACTIVITY_TYPE,
 };
 use temporal_sdk_core_test_utils::WorkerTestHelpers;
@@ -96,29 +96,7 @@ async fn initial_request_sent_back(#[values(false, true)] reject: bool) {
 
     let update_id = "upd-1";
     let mut poll_resp = hist_to_poll_resp(&t, wfid, ResponseType::AllHistory);
-    let upd_req_body = update::v1::Request {
-        meta: Some(update::v1::Meta {
-            update_id: update_id.to_string(),
-            identity: "bro".to_string(),
-        }),
-        input: Some(update::v1::Input {
-            header: None,
-            name: "updayte".to_string(),
-            args: None,
-        }),
-    };
-    poll_resp.messages.push(Message {
-        id: "upd-req-1".to_string(),
-        protocol_instance_id: update_id.to_string(),
-        body: Some(
-            pack_any(
-                "type.googleapis.com/temporal.api.update.v1.Request".to_string(),
-                &upd_req_body,
-            )
-            .unwrap(),
-        ),
-        sequencing_id: Some(message::SequencingId::EventId(1)),
-    });
+    let upd_req_body = poll_resp.add_update_request(update_id, 1);
 
     let mut mock_client = mock_workflow_client();
     mock_client
@@ -176,29 +154,7 @@ async fn speculative_wft_with_command_event() {
 
     let update_id = "upd-1";
     let mut speculative_task = hist_to_poll_resp(&spec_task_hist, wfid, ResponseType::OneTask(2));
-    let upd_req_body = update::v1::Request {
-        meta: Some(update::v1::Meta {
-            update_id: update_id.to_string(),
-            identity: "bro".to_string(),
-        }),
-        input: Some(update::v1::Input {
-            header: None,
-            name: "updayte".to_string(),
-            args: None,
-        }),
-    };
-    speculative_task.messages.push(Message {
-        id: "upd-req-1".to_string(),
-        protocol_instance_id: update_id.to_string(),
-        body: Some(
-            pack_any(
-                "type.googleapis.com/temporal.api.update.v1.Request".to_string(),
-                &upd_req_body,
-            )
-            .unwrap(),
-        ),
-        sequencing_id: Some(message::SequencingId::EventId(1)),
-    });
+    speculative_task.add_update_request(update_id, 1);
     // Verify the speculative task contains the activity scheduled event
     assert_eq!(
         speculative_task.history.as_ref().unwrap().events[1].event_type,

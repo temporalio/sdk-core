@@ -45,11 +45,15 @@ use temporal_sdk_core_protos::{
         common::v1::WorkflowExecution,
         enums::v1::WorkflowTaskFailedCause,
         failure::v1::Failure,
+        protocol,
+        protocol::v1::message,
+        update,
         workflowservice::v1::{
             PollActivityTaskQueueResponse, PollWorkflowTaskQueueResponse,
             RespondWorkflowTaskCompletedResponse,
         },
     },
+    utilities::pack_any,
 };
 use temporal_sdk_core_test_utils::{TestWorker, NAMESPACE};
 use tokio::sync::{mpsc::unbounded_channel, Notify};
@@ -751,6 +755,49 @@ where
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.resp.fmt(f)
+    }
+}
+
+pub(crate) trait PollWFTRespExt {
+    /// Add an update request to the poll response, using the update name "update_fn" and no args.
+    /// Returns the inner request body.
+    fn add_update_request(
+        &mut self,
+        update_id: impl ToString,
+        after_event_id: i64,
+    ) -> update::v1::Request;
+}
+
+impl PollWFTRespExt for PollWorkflowTaskQueueResponse {
+    fn add_update_request(
+        &mut self,
+        update_id: impl ToString,
+        after_event_id: i64,
+    ) -> update::v1::Request {
+        let upd_req_body = update::v1::Request {
+            meta: Some(update::v1::Meta {
+                update_id: update_id.to_string(),
+                identity: "agent_id".to_string(),
+            }),
+            input: Some(update::v1::Input {
+                header: None,
+                name: "update_fn".to_string(),
+                args: None,
+            }),
+        };
+        self.messages.push(protocol::v1::Message {
+            id: format!("update-{}", update_id.to_string()),
+            protocol_instance_id: update_id.to_string(),
+            body: Some(
+                pack_any(
+                    "type.googleapis.com/temporal.api.update.v1.Request".to_string(),
+                    &upd_req_body,
+                )
+                .unwrap(),
+            ),
+            sequencing_id: Some(message::SequencingId::EventId(after_event_id)),
+        });
+        upd_req_body
     }
 }
 
