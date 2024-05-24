@@ -512,7 +512,7 @@ impl OutstandingWFTMap {
 
     fn release_token(&self, token: &TaskToken) {
         self.map.write().remove_by_right(token);
-        self.waker.notify_one();
+        self.waker.notify_waiters();
     }
 
     pub(crate) fn release_run(&self, run_id: &str) {
