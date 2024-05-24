@@ -1,25 +1,28 @@
 use crate::{
-    test_help::{build_mock_pollers, hist_to_poll_resp, mock_worker, MockPollCfg, ResponseType},
+    test_help::{
+        build_mock_pollers, hist_to_poll_resp, mock_worker, MockPollCfg, PollWFTRespExt,
+        ResponseType,
+    },
     worker::client::mocks::mock_workflow_client,
 };
 use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::{workflow_activation_job, WorkflowActivationJob},
-        workflow_commands::{update_response::Response, CompleteWorkflowExecution, UpdateResponse},
+        workflow_commands::{
+            update_response::Response, CompleteWorkflowExecution, ScheduleActivity, UpdateResponse,
+        },
         workflow_completion::WorkflowActivationCompletion,
     },
     temporal::api::{
         common::v1::Payload,
         enums::v1::EventType,
-        protocol::v1::{message, Message},
-        update,
         update::v1::{Acceptance, Rejection},
         workflowservice::v1::RespondWorkflowTaskCompletedResponse,
     },
-    utilities::pack_any,
-    TestHistoryBuilder,
+    TestHistoryBuilder, DEFAULT_ACTIVITY_TYPE,
 };
+use temporal_sdk_core_test_utils::WorkerTestHelpers;
 
 #[tokio::test]
 async fn replay_with_empty_first_task() {
@@ -93,29 +96,7 @@ async fn initial_request_sent_back(#[values(false, true)] reject: bool) {
 
     let update_id = "upd-1";
     let mut poll_resp = hist_to_poll_resp(&t, wfid, ResponseType::AllHistory);
-    let upd_req_body = update::v1::Request {
-        meta: Some(update::v1::Meta {
-            update_id: update_id.to_string(),
-            identity: "bro".to_string(),
-        }),
-        input: Some(update::v1::Input {
-            header: None,
-            name: "updayte".to_string(),
-            args: None,
-        }),
-    };
-    poll_resp.messages.push(Message {
-        id: "upd-req-1".to_string(),
-        protocol_instance_id: update_id.to_string(),
-        body: Some(
-            pack_any(
-                "type.googleapis.com/temporal.api.update.v1.Request".to_string(),
-                &upd_req_body,
-            )
-            .unwrap(),
-        ),
-        sequencing_id: Some(message::SequencingId::EventId(1)),
-    });
+    let upd_req_body = poll_resp.add_update_request(update_id, 1);
 
     let mut mock_client = mock_workflow_client();
     mock_client
@@ -154,4 +135,97 @@ async fn initial_request_sent_back(#[values(false, true)] reject: bool) {
     ))
     .await
     .unwrap();
+}
+
+#[tokio::test]
+async fn speculative_wft_with_command_event() {
+    let wfid = "fakeid";
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    t.add_activity_task_scheduled("act1");
+
+    let mut spec_task_hist = t.clone();
+    spec_task_hist.add_workflow_task_scheduled_and_started();
+
+    let mut real_hist = t.clone();
+    real_hist.add_we_signaled("hi", vec![]);
+    real_hist.add_workflow_task_scheduled_and_started();
+
+    let update_id = "upd-1";
+    let mut speculative_task = hist_to_poll_resp(&spec_task_hist, wfid, ResponseType::OneTask(2));
+    speculative_task.add_update_request(update_id, 1);
+    // Verify the speculative task contains the activity scheduled event
+    assert_eq!(
+        speculative_task.history.as_ref().unwrap().events[1].event_type,
+        EventType::ActivityTaskScheduled as i32
+    );
+
+    let mock_client = mock_workflow_client();
+    let mut mh = MockPollCfg::from_resp_batches(
+        wfid,
+        real_hist,
+        [
+            ResponseType::ToTaskNum(1),
+            speculative_task.into(),
+            ResponseType::OneTask(3),
+        ],
+        mock_client,
+    );
+    let mut completes = 0;
+    mh.completion_mock_fn = Some(Box::new(move |_| {
+        completes += 1;
+        let mut r = RespondWorkflowTaskCompletedResponse::default();
+        if completes == 2 {
+            // The second response (the update rejection) needs to indicate that the last started
+            // wft ID should be reset.
+            r.reset_history_event_id = 3;
+        }
+        Ok(r)
+    }));
+    let mut mock = build_mock_pollers(mh);
+    mock.worker_cfg(|wc| wc.max_cached_workflows = 1);
+    let core = mock_worker(mock);
+
+    let task = core.poll_workflow_activation().await.unwrap();
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+        task.run_id,
+        ScheduleActivity {
+            activity_id: "act1".to_string(),
+            activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
+            ..Default::default()
+        }
+        .into(),
+    ))
+    .await
+    .unwrap();
+
+    // Receive the task containing and reject the update
+    let task = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        task.jobs.as_slice(),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::DoUpdate(_)),
+        }]
+    );
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+        task.run_id,
+        UpdateResponse {
+            protocol_instance_id: update_id.to_string(),
+            response: Some(Response::Rejected(Default::default())),
+        }
+        .into(),
+    ))
+    .await
+    .unwrap();
+
+    // Now we'll get another task with the "real" history containing the signal
+    let task = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        task.jobs.as_slice(),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::SignalWorkflow(_)),
+        }]
+    );
+    core.complete_execution(&task.run_id).await;
 }

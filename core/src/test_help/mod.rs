@@ -45,11 +45,15 @@ use temporal_sdk_core_protos::{
         common::v1::WorkflowExecution,
         enums::v1::WorkflowTaskFailedCause,
         failure::v1::Failure,
+        protocol,
+        protocol::v1::message,
+        update,
         workflowservice::v1::{
             PollActivityTaskQueueResponse, PollWorkflowTaskQueueResponse,
             RespondWorkflowTaskCompletedResponse,
         },
     },
+    utilities::pack_any,
 };
 use temporal_sdk_core_test_utils::{TestWorker, NAMESPACE};
 use tokio::sync::{mpsc::unbounded_channel, Notify};
@@ -73,7 +77,7 @@ pub(crate) fn test_worker_cfg() -> WorkerConfigBuilder {
 #[allow(clippy::large_enum_variant)] // Test only code, whatever.
 pub(crate) enum ResponseType {
     ToTaskNum(usize),
-    /// Returns just the history after the WFT completed of the provided task number - 1, through to
+    /// Returns just the history from the WFT completed of the provided task number - 1, through to
     /// the next WFT started. Simulating the incremental history for just the provided task number
     #[from(ignore)]
     OneTask(usize),
@@ -378,6 +382,9 @@ pub(crate) fn single_hist_mock_sg(
     build_mock_pollers(mh)
 }
 
+type WFTCompeltionMockFn = dyn FnMut(&WorkflowTaskCompletion) -> Result<RespondWorkflowTaskCompletedResponse, tonic::Status>
+    + Send;
+
 #[allow(clippy::type_complexity)]
 pub(crate) struct MockPollCfg {
     pub(crate) hists: Vec<FakeWfResponses>,
@@ -388,7 +395,7 @@ pub(crate) struct MockPollCfg {
     /// All calls to fail WFTs must match this predicate
     pub(crate) expect_fail_wft_matcher:
         Box<dyn Fn(&TaskToken, &WorkflowTaskFailedCause, &Option<Failure>) -> bool + Send>,
-    pub(crate) completion_asserts: Option<Box<dyn FnMut(&WorkflowTaskCompletion) + Send>>,
+    pub(crate) completion_mock_fn: Option<Box<WFTCompeltionMockFn>>,
     pub(crate) num_expected_completions: Option<TimesRange>,
     /// If being used with the Rust SDK, this is set true. It ensures pollers will not error out
     /// early with no work, since we cannot know the exact number of times polling will happen.
@@ -410,7 +417,7 @@ impl MockPollCfg {
             num_expected_legacy_query_resps: 0,
             mock_client: mock_workflow_client(),
             expect_fail_wft_matcher: Box::new(|_, _, _| true),
-            completion_asserts: None,
+            completion_mock_fn: None,
             num_expected_completions: None,
             using_rust_sdk: false,
             make_poll_stream_interminable: false,
@@ -448,7 +455,7 @@ impl MockPollCfg {
             num_expected_legacy_query_resps: 0,
             mock_client,
             expect_fail_wft_matcher: Box::new(|_, _, _| true),
-            completion_asserts: None,
+            completion_mock_fn: None,
             num_expected_completions: None,
             using_rust_sdk: false,
             make_poll_stream_interminable: false,
@@ -460,7 +467,7 @@ impl MockPollCfg {
         builder_fn: impl FnOnce(CompletionAssertsBuilder<'_>),
     ) {
         let builder = CompletionAssertsBuilder {
-            dest: &mut self.completion_asserts,
+            dest: &mut self.completion_mock_fn,
             assertions: Default::default(),
         };
         builder_fn(builder);
@@ -469,7 +476,7 @@ impl MockPollCfg {
 
 #[allow(clippy::type_complexity)]
 pub(crate) struct CompletionAssertsBuilder<'a> {
-    dest: &'a mut Option<Box<dyn FnMut(&WorkflowTaskCompletion) + Send>>,
+    dest: &'a mut Option<Box<WFTCompeltionMockFn>>,
     assertions: VecDeque<Box<dyn FnOnce(&WorkflowTaskCompletion) + Send>>,
 }
 
@@ -488,8 +495,9 @@ impl Drop for CompletionAssertsBuilder<'_> {
         let mut asserts = std::mem::take(&mut self.assertions);
         *self.dest = Some(Box::new(move |wtc| {
             if let Some(fun) = asserts.pop_front() {
-                fun(wtc)
+                fun(wtc);
             }
+            Ok(Default::default())
         }));
     }
 }
@@ -665,16 +673,18 @@ pub(crate) fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder {
     let expect_completes = cfg.mock_client.expect_complete_workflow_task();
     if let Some(range) = cfg.num_expected_completions {
         expect_completes.times(range);
-    } else if cfg.completion_asserts.is_some() {
+    } else if cfg.completion_mock_fn.is_some() {
         expect_completes.times(1..);
     }
     expect_completes.returning(move |comp| {
-        if let Some(ass) = cfg.completion_asserts.as_mut() {
+        let r = if let Some(ass) = cfg.completion_mock_fn.as_mut() {
             // tee hee
             ass(&comp)
-        }
+        } else {
+            Ok(RespondWorkflowTaskCompletedResponse::default())
+        };
         outstanding.release_token(&comp.task_token);
-        Ok(RespondWorkflowTaskCompletedResponse::default())
+        r
     });
     let outstanding = outstanding_wf_task_tokens.clone();
     cfg.mock_client
@@ -745,6 +755,49 @@ where
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.resp.fmt(f)
+    }
+}
+
+pub(crate) trait PollWFTRespExt {
+    /// Add an update request to the poll response, using the update name "update_fn" and no args.
+    /// Returns the inner request body.
+    fn add_update_request(
+        &mut self,
+        update_id: impl ToString,
+        after_event_id: i64,
+    ) -> update::v1::Request;
+}
+
+impl PollWFTRespExt for PollWorkflowTaskQueueResponse {
+    fn add_update_request(
+        &mut self,
+        update_id: impl ToString,
+        after_event_id: i64,
+    ) -> update::v1::Request {
+        let upd_req_body = update::v1::Request {
+            meta: Some(update::v1::Meta {
+                update_id: update_id.to_string(),
+                identity: "agent_id".to_string(),
+            }),
+            input: Some(update::v1::Input {
+                header: None,
+                name: "update_fn".to_string(),
+                args: None,
+            }),
+        };
+        self.messages.push(protocol::v1::Message {
+            id: format!("update-{}", update_id.to_string()),
+            protocol_instance_id: update_id.to_string(),
+            body: Some(
+                pack_any(
+                    "type.googleapis.com/temporal.api.update.v1.Request".to_string(),
+                    &upd_req_body,
+                )
+                .unwrap(),
+            ),
+            sequencing_id: Some(message::SequencingId::EventId(after_event_id)),
+        });
+        upd_req_body
     }
 }
 

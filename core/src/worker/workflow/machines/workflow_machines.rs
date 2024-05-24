@@ -474,17 +474,19 @@ impl WorkflowMachines {
     pub(crate) fn reset_last_started_id(&mut self, id: i64) {
         debug!("Resetting back to event id {} due to speculative WFT", id);
         self.current_started_event_id = id;
-        // This is pretty nasty to just + 1 like this, but, we know WFT complete always follows
-        // WFT started, which the id given to us to reset to must be, and we need to avoid
-        // re-applying the WFT Completed event, so we make sure to consider that processed
-        self.last_processed_event = id + 1;
+        // We must reset the last event we "processed" to be after the last WFT we really completed
+        // + any command events (since the SDK "processed" those when it emitted the commands). This
+        // is also equal to what we just processed in the speculative task, minus two, since we
+        // would've just handled the most recent WFT started event, and we need to drop that & the
+        // schedule event just before it.
+        self.last_processed_event -= 2;
         // Then, we have to drop any state machines (which should only be one workflow task machine)
         // we may have created when servicing the speculative task.
         // Remove when https://github.com/rust-lang/rust/issues/59618 is stable
         let remove_these: Vec<_> = self
             .machines_by_event_id
             .iter()
-            .filter(|(mid, _)| **mid > id)
+            .filter(|(mid, _)| **mid > self.last_processed_event)
             .map(|(mid, mkey)| (*mid, *mkey))
             .collect();
         for (mid, mkey) in remove_these {

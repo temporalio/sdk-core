@@ -339,7 +339,7 @@ mod tests {
         );
         // Ensure the upsert command has an empty map when not using the patched command
         if !with_patched_cmd {
-            mp.completion_asserts = Some(Box::new(|wftc| {
+            mp.completion_mock_fn = Some(Box::new(|wftc| {
                 let cmd_attrs = wftc
                     .commands
                     .first()
@@ -349,11 +349,12 @@ mod tests {
                     cmd_attrs,
                     Attributes::CompleteWorkflowExecutionCommandAttributes(_)
                 ) {
-                    return;
+                    return Ok(Default::default());
                 }
                 assert_matches!(cmd_attrs,
                     Attributes::UpsertWorkflowSearchAttributesCommandAttributes(attrs)
                     if attrs.search_attributes.clone().unwrap_or_default().indexed_fields.is_empty());
+                Ok(Default::default())
             }));
         }
         let mut mock = build_mock_pollers(mp);

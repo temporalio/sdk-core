@@ -1075,11 +1075,12 @@ async fn local_act_records_nonfirst_attempts_ok() {
     let mut mh = MockPollCfg::from_resp_batches(wf_id, t, [1, 2, 3], mock);
     let nonfirst_counts = Arc::new(SegQueue::new());
     let nfc_c = nonfirst_counts.clone();
-    mh.completion_asserts = Some(Box::new(move |c| {
+    mh.completion_mock_fn = Some(Box::new(move |c| {
         nfc_c.push(
             c.metering_metadata
                 .nonfirst_local_activity_execution_attempts,
         );
+        Ok(Default::default())
     }));
     let mut worker = mock_sdk_cfg(mh, |wc| {
         wc.max_cached_workflows = 1;

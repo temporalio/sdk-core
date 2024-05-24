@@ -1920,7 +1920,7 @@ pub mod temporal {
                             f,
                             "HistoryEvent(id: {}, {:?})",
                             self.event_id,
-                            EventType::try_from(self.event_type)
+                            EventType::try_from(self.event_type).unwrap_or_default()
                         )
                     }
                 }

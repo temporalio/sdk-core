@@ -167,7 +167,7 @@ async fn new_queries(#[values(1, 3)] num_queries: usize) {
     let mut mock_client = mock_workflow_client();
     mock_client.expect_respond_legacy_query().times(0);
     let mut mh = MockPollCfg::from_resp_batches(wfid, t, tasks, mock_workflow_client());
-    mh.completion_asserts = Some(Box::new(move |c| {
+    mh.completion_mock_fn = Some(Box::new(move |c| {
         // If the completion is the one ending the workflow, make sure it includes the query resps
         if c.commands[0].command_type() == CommandType::CompleteWorkflowExecution {
             assert_eq!(c.query_responses.len(), num_queries);
@@ -176,6 +176,7 @@ async fn new_queries(#[values(1, 3)] num_queries: usize) {
         } else {
             panic!("Unexpected command in response")
         }
+        Ok(Default::default())
     }));
     let mut mock = build_mock_pollers(mh);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 10);

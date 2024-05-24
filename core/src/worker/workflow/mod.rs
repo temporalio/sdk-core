@@ -40,6 +40,7 @@ use crate::{
 use anyhow::anyhow;
 use futures::{stream::BoxStream, Stream, StreamExt};
 use futures_util::{future::abortable, stream};
+use itertools::Itertools;
 use prost_types::TimestampError;
 use std::{
     cell::RefCell,
@@ -802,6 +803,18 @@ impl PreparedWFT {
     fn is_query_only(&self) -> bool {
         let no_new_history = self.update.wft_started_id == 0;
         no_new_history && self.legacy_query.is_some()
+    }
+
+    /// Useful for showing detailed info on incoming WFTs
+    #[allow(dead_code)]
+    fn print_details(&self) -> String {
+        format!(
+            "WFT events: [{}], messages: {:?}, legacy_query: {:?}, queries: {:?}",
+            self.update.get_events().iter().format(", "),
+            &self.messages,
+            &self.legacy_query,
+            &self.query_requests
+        )
     }
 }
 
