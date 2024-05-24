@@ -3,7 +3,10 @@ pub mod telemetry;
 pub mod worker;
 
 use crate::{
-    errors::{CompleteActivityError, CompleteWfError, PollActivityError, PollWfError},
+    errors::{
+        CompleteActivityError, CompleteWfError, PollActivityError, PollWfError,
+        WorkerValidationError,
+    },
     worker::WorkerConfig,
 };
 use temporal_sdk_core_protos::coresdk::{
@@ -16,6 +19,11 @@ use temporal_sdk_core_protos::coresdk::{
 /// and is bound to a specific task queue.
 #[async_trait::async_trait]
 pub trait Worker: Send + Sync {
+    /// Validate that the worker can properly connect to server, plus any other validation that
+    /// needs to be done asynchronously. Lang SDKs should call this function once before calling
+    /// any others.
+    async fn validate(&self) -> Result<(), WorkerValidationError>;
+
     /// Ask the worker for some work, returning a [WorkflowActivation]. It is then the language
     /// SDK's responsibility to call the appropriate workflow code with the provided inputs. Blocks
     /// indefinitely until such work is available or [Worker::shutdown] is called.

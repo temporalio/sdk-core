@@ -2,6 +2,17 @@
 
 use temporal_sdk_core_protos::coresdk::activity_result::ActivityExecutionResult;
 
+/// Errors thrown by [crate::Worker::validate]
+#[derive(thiserror::Error, Debug)]
+pub enum WorkerValidationError {
+    /// The namespace provided to the worker does not exist on the server.
+    #[error("Namespace {namespace} was not found or otherwise could not be described: {source:?}")]
+    NamespaceDescribeError {
+        source: tonic::Status,
+        namespace: String,
+    },
+}
+
 /// Errors thrown by [crate::Worker::poll_workflow_activation]
 #[derive(thiserror::Error, Debug)]
 pub enum PollWfError {

@@ -16,6 +16,7 @@ mod integ_tests {
     mod queries_tests;
     mod update_tests;
     mod visibility_tests;
+    mod worker_tests;
     mod workflow_tests;
 
     use std::str::FromStr;

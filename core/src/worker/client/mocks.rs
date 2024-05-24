@@ -115,12 +115,13 @@ mockall::mock! {
         ) -> impl Future<Output = Result<RespondQueryTaskCompletedResponse>> + Send + 'b
             where 'a: 'b, Self: 'b;
 
+        fn describe_namespace<'a, 'b>(&self) ->
+          impl Future<Output = Result<DescribeNamespaceResponse>> + Send + 'b
+          where 'a: 'b, Self: 'b;
+
         fn replace_client(&self, new_client: RetryClient<Client>);
-
-        fn capabilities(&self) -> Option<get_system_info_response::Capabilities>;
-
+        fn capabilities(&self) -> Option<Capabilities>;
         fn workers(&self) -> Arc<SlotManager>;
-
         fn is_mock(&self) -> bool;
     }
 }
