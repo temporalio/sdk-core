@@ -2387,8 +2387,9 @@ async fn lang_internal_flags() {
         [ResponseType::ToTaskNum(2), ResponseType::AllHistory],
         mock_workflow_client(),
     );
-    mh.completion_asserts = Some(Box::new(|c| {
+    mh.completion_mock_fn = Some(Box::new(|c| {
         assert_matches!(c.sdk_metadata.lang_used_flags.as_slice(), &[2]);
+        Ok(Default::default())
     }));
     let mut mock = build_mock_pollers(mh);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 1);
@@ -2424,7 +2425,7 @@ async fn core_internal_flags() {
         [ResponseType::ToTaskNum(1)],
         mock_workflow_client(),
     );
-    mh.completion_asserts = Some(Box::new(move |c| {
+    mh.completion_mock_fn = Some(Box::new(move |c| {
         assert_eq!(
             c.sdk_metadata
                 .core_used_flags
@@ -2435,6 +2436,7 @@ async fn core_internal_flags() {
                 .map(|f| f as u32)
                 .collect()
         );
+        Ok(Default::default())
     }));
     let mut mock = build_mock_pollers(mh);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 1);
@@ -2458,9 +2460,10 @@ async fn post_terminal_commands_are_discarded() {
         [ResponseType::ToTaskNum(1), ResponseType::AllHistory],
         mock_workflow_client(),
     );
-    mh.completion_asserts = Some(Box::new(|c| {
+    mh.completion_mock_fn = Some(Box::new(|c| {
         // Only the complete execution command should actually be sent
         assert_eq!(c.commands.len(), 1);
+        Ok(Default::default())
     }));
     let mut mock = build_mock_pollers(mh);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 1);

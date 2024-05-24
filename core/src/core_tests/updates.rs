@@ -161,7 +161,6 @@ async fn initial_request_sent_back(#[values(false, true)] reject: bool) {
 
 #[tokio::test]
 async fn speculative_wft_with_command_event() {
-    crate::telemetry::test_telem_console();
     let wfid = "fakeid";
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
@@ -207,7 +206,7 @@ async fn speculative_wft_with_command_event() {
     );
 
     let mock_client = mock_workflow_client();
-    let mh = MockPollCfg::from_resp_batches(
+    let mut mh = MockPollCfg::from_resp_batches(
         wfid,
         real_hist,
         [
@@ -217,6 +216,17 @@ async fn speculative_wft_with_command_event() {
         ],
         mock_client,
     );
+    let mut completes = 0;
+    mh.completion_mock_fn = Some(Box::new(move |_| {
+        completes += 1;
+        let mut r = RespondWorkflowTaskCompletedResponse::default();
+        if completes == 2 {
+            // The second response (the update rejection) needs to indicate that the last started
+            // wft ID should be reset.
+            r.reset_history_event_id = 3;
+        }
+        Ok(r)
+    }));
     let mut mock = build_mock_pollers(mh);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 1);
     let core = mock_worker(mock);
