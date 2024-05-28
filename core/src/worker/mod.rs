@@ -16,8 +16,6 @@ pub(crate) use activities::{
 };
 pub(crate) use workflow::{wft_poller::new_wft_poller, LEGACY_QUERY_ID};
 
-use temporal_client::{ConfiguredClient, TemporalServiceClientWithMetrics, WorkerKey};
-
 use crate::{
     abstractions::{dbg_panic, MeteredPermitDealer},
     errors::CompleteWfError,
@@ -51,6 +49,7 @@ use std::{
         Arc,
     },
 };
+use temporal_client::{ConfiguredClient, TemporalServiceClientWithMetrics, WorkerKey};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::activity_execution_result,
@@ -70,6 +69,7 @@ use tokio::sync::mpsc::unbounded_channel;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
 
+use temporal_sdk_core_api::errors::WorkerValidationError;
 #[cfg(test)]
 use {
     crate::{
@@ -83,7 +83,7 @@ use {
 /// A worker polls on a certain task queue
 pub struct Worker {
     config: WorkerConfig,
-    wf_client: Arc<dyn WorkerClient>,
+    client: Arc<dyn WorkerClient>,
     /// Registration key to enable eager workflow start for this worker
     worker_key: Mutex<Option<WorkerKey>>,
     /// Manages all workflows and WFT processing
@@ -105,6 +105,11 @@ pub struct Worker {
 
 #[async_trait::async_trait]
 impl WorkerTrait for Worker {
+    async fn validate(&self) -> Result<(), WorkerValidationError> {
+        self.verify_namespace_exists().await?;
+        Ok(())
+    }
+
     async fn poll_workflow_activation(&self) -> Result<WorkflowActivation, PollWfError> {
         self.next_workflow_activation().await
     }
@@ -174,7 +179,7 @@ impl WorkerTrait for Worker {
         self.shutdown_token.cancel();
         // First, disable Eager Workflow Start
         if let Some(key) = *self.worker_key.lock() {
-            self.wf_client.workers().unregister(key);
+            self.client.workers().unregister(key);
         }
         // Second, we want to stop polling of both activity and workflow tasks
         if let Some(atm) = self.at_task_mgr.as_ref() {
@@ -226,11 +231,11 @@ impl Worker {
     pub fn replace_client(&self, new_client: ConfiguredClient<TemporalServiceClientWithMetrics>) {
         // Unregister worker from current client, register in new client at the end
         let mut worker_key = self.worker_key.lock();
-        let slot_provider = (*worker_key).and_then(|k| self.wf_client.workers().unregister(k));
-        self.wf_client
+        let slot_provider = (*worker_key).and_then(|k| self.client.workers().unregister(k));
+        self.client
             .replace_client(super::init_worker_client(&self.config, new_client));
-        *worker_key = slot_provider
-            .and_then(|slot_provider| self.wf_client.workers().register(slot_provider));
+        *worker_key =
+            slot_provider.and_then(|slot_provider| self.client.workers().register(slot_provider));
     }
 
     #[cfg(test)]
@@ -410,7 +415,7 @@ impl Worker {
         let worker_key = Mutex::new(client.workers().register(Box::new(provider)));
         Self {
             worker_key,
-            wf_client: client.clone(),
+            client: client.clone(),
             workflows: Workflows::new(
                 build_wf_basics(
                     config.clone(),
@@ -607,7 +612,7 @@ impl Worker {
         }
 
         if let Some(atm) = &self.at_task_mgr {
-            atm.complete(task_token, status, &*self.wf_client).await;
+            atm.complete(task_token, status, &*self.client).await;
         } else {
             error!(
                 "Tried to complete activity {} on a worker that does not have an activity manager",
@@ -696,6 +701,16 @@ impl Worker {
 
     fn notify_local_result(&self, run_id: &str, res: LocalResolution) {
         self.workflows.notify_of_local_result(run_id, res);
+    }
+
+    async fn verify_namespace_exists(&self) -> Result<(), WorkerValidationError> {
+        if let Err(e) = self.client.describe_namespace().await {
+            return Err(WorkerValidationError::NamespaceDescribeError {
+                source: e,
+                namespace: self.config.namespace.clone(),
+            });
+        }
+        Ok(())
     }
 }
 

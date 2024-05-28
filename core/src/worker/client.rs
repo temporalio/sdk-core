@@ -3,7 +3,7 @@
 pub(crate) mod mocks;
 use parking_lot::RwLock;
 use std::sync::Arc;
-use temporal_client::{Client, RetryClient, SlotManager, WorkflowService};
+use temporal_client::{Client, Namespace, RetryClient, SlotManager, WorkflowService};
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::QueryResult,
     temporal::api::{
@@ -145,9 +145,10 @@ pub(crate) trait WorkerClient: Sync + Send {
         task_token: TaskToken,
         query_result: QueryResult,
     ) -> Result<RespondQueryTaskCompletedResponse>;
+    async fn describe_namespace(&self) -> Result<DescribeNamespaceResponse>;
 
     fn replace_client(&self, new_client: RetryClient<Client>);
-    fn capabilities(&self) -> Option<get_system_info_response::Capabilities>;
+    fn capabilities(&self) -> Option<Capabilities>;
     fn workers(&self) -> Arc<SlotManager>;
     fn is_mock(&self) -> bool;
 }
@@ -373,6 +374,14 @@ impl WorkerClient for WorkerClientBag {
             })
             .await?
             .into_inner())
+    }
+
+    async fn describe_namespace(&self) -> Result<DescribeNamespaceResponse> {
+        temporal_client::WorkflowClientTrait::describe_namespace(
+            &self.cloned_client(),
+            Namespace::Name(self.namespace.clone()),
+        )
+        .await
     }
 
     fn replace_client(&self, new_client: RetryClient<Client>) {

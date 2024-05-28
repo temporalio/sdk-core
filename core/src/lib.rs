@@ -51,6 +51,7 @@ use crate::{
     },
     worker::client::WorkerClientBag,
 };
+use anyhow::bail;
 use futures::Stream;
 use std::sync::Arc;
 use temporal_client::{ConfiguredClient, TemporalServiceClientWithMetrics};
@@ -82,7 +83,10 @@ where
 {
     let client = init_worker_client(&worker_config, *client.into().into_inner());
     if client.namespace() != worker_config.namespace {
-        panic!("Passed in client is not bound to the same namespace as the worker");
+        bail!("Passed in client is not bound to the same namespace as the worker");
+    }
+    if client.namespace() == "" {
+        bail!("Namespace cannot be empty");
     }
     let client_ident = client.get_options().identity.clone();
     let sticky_q = sticky_q_name_for_worker(&client_ident, &worker_config);
