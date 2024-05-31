@@ -17,15 +17,16 @@ use temporal_sdk_core_protos::{
             remove_from_cache::EvictionReason, workflow_activation_job, WorkflowActivationJob,
         },
         workflow_commands::{
-            update_response, CompleteWorkflowExecution, ScheduleLocalActivity, UpdateResponse,
+            update_response, workflow_command, CompleteWorkflowExecution, ScheduleLocalActivity,
+            UpdateResponse,
         },
         workflow_completion::WorkflowActivationCompletion,
         ActivityTaskCompletion, AsJsonPayloadExt, IntoPayloadsExt,
     },
     temporal::api::{
         enums::v1::{EventType, UpdateWorkflowExecutionLifecycleStage},
-        update,
-        update::v1::WaitPolicy,
+        history::v1::History,
+        update::{self, v1::WaitPolicy},
     },
 };
 use temporal_sdk_core_test_utils::{
@@ -139,18 +140,12 @@ async fn reapplied_updates_due_to_reset() {
         .history
         .unwrap();
     let with_id = HistoryForReplay::new(history, workflow_id.to_string());
-    let replay_worker = init_core_replay_preloaded(&workflow_id, [with_id]);
-    // We now recapitulate the commands that the worker generated on first execution above.
 
-    // First, we handled an update and completed the workflow.
-    _handle_update(
-        FailUpdate::No,
-        CompleteWorkflow::Yes,
-        replay_worker.as_ref(),
-    )
-    .await;
-    // Next the client reset the workflow to before the update was accepted.
-    // Then we handled the reapplied update, but without completing the workflow.
+    let replay_worker = init_core_replay_preloaded(&workflow_id, [with_id]);
+    // We now recapitulate the actions that the worker took on first execution above, pretending
+    // that we always followed the post-reset history.
+
+    // First, we handled the post-reset reapplied update and did not complete the workflow.
     _handle_update(FailUpdate::No, CompleteWorkflow::No, replay_worker.as_ref()).await;
     // Then the client sent a second update; we handled it and completed the workflow.
     _handle_update(
@@ -255,18 +250,14 @@ async fn _handle_update(
     };
     let res = core.poll_workflow_activation().await.unwrap();
     // Timer fires
-    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        res.run_id,
-        vec![
-            response.into(),
-            match complete_workflow {
-                CompleteWorkflow::Yes => CompleteWorkflowExecution { result: None }.into(),
-                CompleteWorkflow::No => start_timer_cmd(1, Duration::from_millis(1)),
-            },
-        ],
-    ))
-    .await
-    .unwrap();
+    let mut cmds: Vec<workflow_command::Variant> = vec![response.into()];
+    match complete_workflow {
+        CompleteWorkflow::Yes => cmds.push(CompleteWorkflowExecution { result: None }.into()),
+        CompleteWorkflow::No => cmds.push(start_timer_cmd(1, Duration::from_millis(1))),
+    };
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(res.run_id, cmds))
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
