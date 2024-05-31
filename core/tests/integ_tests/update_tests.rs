@@ -17,15 +17,13 @@ use temporal_sdk_core_protos::{
             remove_from_cache::EvictionReason, workflow_activation_job, WorkflowActivationJob,
         },
         workflow_commands::{
-            update_response, workflow_command, CompleteWorkflowExecution, ScheduleLocalActivity,
-            UpdateResponse,
+            update_response, CompleteWorkflowExecution, ScheduleLocalActivity, UpdateResponse,
         },
         workflow_completion::WorkflowActivationCompletion,
         ActivityTaskCompletion, AsJsonPayloadExt, IntoPayloadsExt,
     },
     temporal::api::{
         enums::v1::{EventType, UpdateWorkflowExecutionLifecycleStage},
-        history::v1::History,
         update::{self, v1::WaitPolicy},
     },
 };
@@ -96,8 +94,6 @@ async fn reapplied_updates_due_to_reset() {
     )
     .await;
 
-    fetch_and_print_history(workflow_id.to_string(), None, client.as_ref()).await;
-
     // Reset to before the update was accepted
     let workflow_task_finish_event_id = 4;
     let reset_response = client
@@ -126,14 +122,6 @@ async fn reapplied_updates_due_to_reset() {
 
     assert_eq!(post_reset_run_id, reset_response.run_id);
 
-    fetch_and_print_history(workflow_id.to_string(), None, client.as_ref()).await;
-    fetch_and_print_history(
-        workflow_id.to_string(),
-        Some(reset_response.run_id.clone()),
-        client.as_ref(),
-    )
-    .await;
-
     // Make sure replay works
     let history = client
         .get_workflow_execution_history(workflow_id.to_string(), Some(post_reset_run_id), vec![])
@@ -146,7 +134,6 @@ async fn reapplied_updates_due_to_reset() {
     let replay_worker = init_core_replay_preloaded(&workflow_id, [with_id]);
     // We now recapitulate the actions that the worker took on first execution above, pretending
     // that we always followed the post-reset history.
-
     // First, we handled the post-reset reapplied update and did not complete the workflow.
     _handle_update(FailUpdate::No, CompleteWorkflow::No, replay_worker.as_ref()).await;
     // Then the client sent a second update; we handled it and completed the workflow.
@@ -154,14 +141,6 @@ async fn reapplied_updates_due_to_reset() {
         FailUpdate::No,
         CompleteWorkflow::Yes,
         replay_worker.as_ref(),
-    )
-    .await;
-
-    fetch_and_print_history(workflow_id.to_string(), None, client.as_ref()).await;
-    fetch_and_print_history(
-        workflow_id.to_string(),
-        Some(reset_response.run_id.clone()),
-        client.as_ref(),
     )
     .await;
 }
@@ -176,8 +155,8 @@ async fn _send_and_handle_update(
     client: &RetryClient<Client>,
 ) -> String {
     // Complete first task with no commands
-    let res = core.poll_workflow_activation().await.unwrap();
-    core.complete_workflow_activation(WorkflowActivationCompletion::empty(res.run_id.clone()))
+    let act = core.poll_workflow_activation().await.unwrap();
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(act.run_id.clone()))
         .await
         .unwrap();
 
@@ -186,7 +165,7 @@ async fn _send_and_handle_update(
         client
             .update_workflow_execution(
                 workflow_id.to_string(),
-                res.run_id.to_string(),
+                act.run_id.to_string(),
                 update_id.to_string(),
                 WaitPolicy {
                     lifecycle_stage: UpdateWorkflowExecutionLifecycleStage::Completed as i32,
@@ -206,7 +185,7 @@ async fn _send_and_handle_update(
         FailUpdate::Yes => assert_matches!(v, update::v1::outcome::Value::Failure(_)),
         FailUpdate::No => assert_matches!(v, update::v1::outcome::Value::Success(_)),
     }
-    res.run_id
+    act.run_id
 }
 
 // Accept and then complete update. If `FailUpdate::Yes` then complete the update as a failure; if
@@ -218,17 +197,17 @@ async fn _handle_update(
     complete_workflow: CompleteWorkflow,
     core: &dyn Worker,
 ) {
-    let res = core.poll_workflow_activation().await.unwrap();
+    let act = core.poll_workflow_activation().await.unwrap();
     // On replay, the first activation has update & start workflow, but on first execution, it does
     // not - can happen if update is waiting on some condition.
     let pid = assert_matches!(
-        &res.jobs[0],
+        &act.jobs[0],
         WorkflowActivationJob {
             variant: Some(workflow_activation_job::Variant::DoUpdate(d)),
         } => &d.protocol_instance_id
     );
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        res.run_id,
+        act.run_id,
         vec![
             UpdateResponse {
                 protocol_instance_id: pid.to_string(),
@@ -241,7 +220,9 @@ async fn _handle_update(
     .await
     .unwrap();
 
-    let response = match fail_update {
+    // Timer fires
+    let act = core.poll_workflow_activation().await.unwrap();
+    let update_response = match fail_update {
         FailUpdate::Yes => UpdateResponse {
             protocol_instance_id: pid.to_string(),
             response: Some(update_response::Response::Rejected(
@@ -253,16 +234,18 @@ async fn _handle_update(
             response: Some(update_response::Response::Completed("done!".into())),
         },
     };
-    let res = core.poll_workflow_activation().await.unwrap();
-    // Timer fires
-    let mut cmds: Vec<workflow_command::Variant> = vec![response.into()];
-    match complete_workflow {
-        CompleteWorkflow::Yes => cmds.push(CompleteWorkflowExecution { result: None }.into()),
-        CompleteWorkflow::No => cmds.push(start_timer_cmd(1, Duration::from_millis(1))),
-    };
-    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(res.run_id, cmds))
-        .await
-        .unwrap();
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
+        act.run_id,
+        vec![
+            update_response.into(),
+            match complete_workflow {
+                CompleteWorkflow::Yes => CompleteWorkflowExecution { result: None }.into(),
+                CompleteWorkflow::No => start_timer_cmd(1, Duration::from_millis(1)),
+            },
+        ],
+    ))
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -1042,28 +1025,4 @@ async fn worker_restarted_in_middle_of_update() {
         .fetch_history_and_replay(wf_id, run_id, worker.inner_mut())
         .await
         .unwrap();
-}
-
-#[allow(dead_code)]
-async fn fetch_and_print_history(
-    workflow_id: String,
-    run_id: Option<String>,
-    client: &RetryClient<Client>,
-) {
-    let history = client
-        .get_workflow_execution_history(workflow_id, run_id, vec![])
-        .await
-        .unwrap()
-        .history
-        .unwrap();
-    print_history(&history);
-}
-
-#[allow(dead_code)]
-fn print_history(history: &History) {
-    println!("--");
-    for e in &history.events {
-        print!("{} {}\n", e.event_id, e.event_type().as_str_name());
-    }
-    println!("\n\n");
 }
