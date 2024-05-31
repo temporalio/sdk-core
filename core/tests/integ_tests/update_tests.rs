@@ -95,7 +95,7 @@ async fn reapplied_updates_due_to_reset() {
     )
     .await;
 
-    print_history(workflow_id.to_string(), None, client.as_ref()).await;
+    fetch_and_print_history(workflow_id.to_string(), None, client.as_ref()).await;
 
     // Reset to before the update was accepted
     let workflow_task_finish_event_id = 4;
@@ -125,8 +125,8 @@ async fn reapplied_updates_due_to_reset() {
 
     assert_eq!(post_reset_run_id, reset_response.run_id);
 
-    print_history(workflow_id.to_string(), None, client.as_ref()).await;
-    print_history(
+    fetch_and_print_history(workflow_id.to_string(), None, client.as_ref()).await;
+    fetch_and_print_history(
         workflow_id.to_string(),
         Some(reset_response.run_id.clone()),
         client.as_ref(),
@@ -162,8 +162,8 @@ async fn reapplied_updates_due_to_reset() {
     )
     .await;
 
-    print_history(workflow_id.to_string(), None, client.as_ref()).await;
-    print_history(
+    fetch_and_print_history(workflow_id.to_string(), None, client.as_ref()).await;
+    fetch_and_print_history(
         workflow_id.to_string(),
         Some(reset_response.run_id.clone()),
         client.as_ref(),
@@ -1054,15 +1054,24 @@ async fn worker_restarted_in_middle_of_update() {
 }
 
 #[allow(dead_code)]
-async fn print_history(workflow_id: String, run_id: Option<String>, client: &RetryClient<Client>) {
+async fn fetch_and_print_history(
+    workflow_id: String,
+    run_id: Option<String>,
+    client: &RetryClient<Client>,
+) {
     let history = client
         .get_workflow_execution_history(workflow_id, run_id, vec![])
         .await
         .unwrap()
         .history
         .unwrap();
+    print_history(&history);
+}
+
+#[allow(dead_code)]
+fn print_history(history: &History) {
     println!("--");
-    for e in history.events {
+    for e in &history.events {
         print!("{} {}\n", e.event_id, e.event_type().as_str_name());
     }
     println!("\n\n");
