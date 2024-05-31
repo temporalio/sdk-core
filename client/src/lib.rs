@@ -1416,8 +1416,9 @@ impl WorkflowClientTrait for Client {
         workflow_task_finish_event_id: i64,
         reset_reapply_exclude_types: Vec<ResetReapplyExcludeType>,
     ) -> Result<ResetWorkflowExecutionResponse> {
+        let c = &mut self.inner.client.clone();
         Ok(WorkflowService::reset_workflow_execution(
-            &mut self.inner.client.clone(),
+            c,
             ResetWorkflowExecutionRequest {
                 namespace: self.namespace().to_string(),
                 workflow_execution: Some(WorkflowExecution {

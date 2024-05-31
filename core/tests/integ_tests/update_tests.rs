@@ -6,7 +6,9 @@ use std::{
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     time::Duration,
 };
-use temporal_client::{Client, RetryClient, WorkflowClientTrait};
+use temporal_client::{
+    Client, RetryClient, TemporalServiceClient, WorkflowClientTrait, WorkflowService,
+};
 use temporal_sdk::{ActContext, ActivityOptions, LocalActivityOptions, UpdateContext, WfContext};
 use temporal_sdk_core::replay::HistoryForReplay;
 use temporal_sdk_core_api::Worker;
@@ -23,8 +25,10 @@ use temporal_sdk_core_protos::{
         ActivityTaskCompletion, AsJsonPayloadExt, IntoPayloadsExt,
     },
     temporal::api::{
-        enums::v1::{EventType, UpdateWorkflowExecutionLifecycleStage},
+        common::v1::WorkflowExecution,
+        enums::v1::{EventType, ResetReapplyType, UpdateWorkflowExecutionLifecycleStage},
         update::{self, v1::WaitPolicy},
+        workflowservice::v1::ResetWorkflowExecutionRequest,
     },
 };
 use temporal_sdk_core_test_utils::{
@@ -96,6 +100,26 @@ async fn reapplied_updates_due_to_reset() {
 
     // Reset to before the update was accepted
     let workflow_task_finish_event_id = 4;
+    // Make sure replay works
+
+    let mut wf_service_client = client.get_client_mut().raw_client();
+    let resp = WorkflowService::reset_workflow_execution(
+        &mut wf_service_client.into(),
+        ResetWorkflowExecutionRequest {
+            namespace: client.namespace().into(),
+            workflow_execution: Some(WorkflowExecution {
+                workflow_id: workflow_id.into(),
+                run_id: pre_reset_run_id,
+            }),
+            workflow_task_finish_event_id,
+            reset_reapply_type: ResetReapplyType::AllEligible as i32,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap()
+    .into_inner();
+
     let reset_response = client
         .reset_workflow_execution(
             workflow_id.to_string(),
