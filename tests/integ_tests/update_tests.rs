@@ -3,10 +3,13 @@ use assert_matches::assert_matches;
 use futures_util::{future, future::join_all, StreamExt};
 use once_cell::sync::Lazy;
 use std::{
-    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+    sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc,
+    },
     time::Duration,
 };
-use temporal_client::{Client, RetryClient, WorkflowClientTrait};
+use temporal_client::{Client, RetryClient, WorkflowClientTrait, WorkflowService};
 use temporal_sdk::{ActContext, ActivityOptions, LocalActivityOptions, UpdateContext, WfContext};
 use temporal_sdk_core::replay::HistoryForReplay;
 use temporal_sdk_core_api::Worker;
@@ -23,8 +26,10 @@ use temporal_sdk_core_protos::{
         ActivityTaskCompletion, AsJsonPayloadExt, IntoPayloadsExt,
     },
     temporal::api::{
-        enums::v1::{EventType, UpdateWorkflowExecutionLifecycleStage},
+        common::v1::WorkflowExecution,
+        enums::v1::{EventType, ResetReapplyType, UpdateWorkflowExecutionLifecycleStage},
         update::{self, v1::WaitPolicy},
+        workflowservice::v1::ResetWorkflowExecutionRequest,
     },
 };
 use temporal_sdk_core_test_utils::{
@@ -32,6 +37,7 @@ use temporal_sdk_core_test_utils::{
     WorkerTestHelpers,
 };
 use tokio::{join, sync::Barrier};
+use uuid::Uuid;
 
 #[derive(Clone, Copy)]
 enum FailUpdate {
@@ -94,15 +100,25 @@ async fn reapplied_updates_due_to_reset() {
 
     // Reset to before the update was accepted
     let workflow_task_finish_event_id = 4;
-    let reset_response = client
-        .reset_workflow_execution(
-            workflow_id.to_string(),
-            pre_reset_run_id.to_string(),
+
+    let mut client_mut = client.clone();
+    let reset_response = WorkflowService::reset_workflow_execution(
+        Arc::make_mut(&mut client_mut),
+        ResetWorkflowExecutionRequest {
+            namespace: client.namespace().into(),
+            workflow_execution: Some(WorkflowExecution {
+                workflow_id: workflow_id.into(),
+                run_id: pre_reset_run_id.clone(),
+            }),
             workflow_task_finish_event_id,
-            vec![],
-        )
-        .await
-        .unwrap();
+            reset_reapply_type: ResetReapplyType::AllEligible as i32,
+            request_id: Uuid::new_v4().to_string(),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap()
+    .into_inner();
 
     // Accept and complete the reapplied update
     _handle_update(FailUpdate::No, CompleteWorkflow::No, core.as_ref()).await;
