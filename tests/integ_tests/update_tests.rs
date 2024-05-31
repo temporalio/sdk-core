@@ -59,7 +59,7 @@ async fn update_workflow(#[values(FailUpdate::Yes, FailUpdate::No)] will_fail: F
     let client = starter.get_client().await;
     let workflow_id = starter.get_task_queue();
     let update_id = "some_update";
-    _send_and_handle_update(
+    send_and_handle_update(
         workflow_id,
         update_id,
         will_fail,
@@ -78,7 +78,7 @@ async fn update_workflow(#[values(FailUpdate::Yes, FailUpdate::No)] will_fail: F
         .unwrap();
     let with_id = HistoryForReplay::new(history, workflow_id.to_string());
     let replay_worker = init_core_replay_preloaded(&workflow_id, [with_id]);
-    _handle_update(will_fail, CompleteWorkflow::Yes, replay_worker.as_ref()).await;
+    handle_update(will_fail, CompleteWorkflow::Yes, replay_worker.as_ref()).await;
 }
 
 #[rstest::rstest]
@@ -88,7 +88,7 @@ async fn reapplied_updates_due_to_reset() {
     let core = starter.get_worker().await;
     let client = starter.get_client().await;
     let workflow_id = starter.get_task_queue();
-    let pre_reset_run_id = _send_and_handle_update(
+    let pre_reset_run_id = send_and_handle_update(
         workflow_id,
         "first-update",
         FailUpdate::No,
@@ -121,10 +121,10 @@ async fn reapplied_updates_due_to_reset() {
     .into_inner();
 
     // Accept and complete the reapplied update
-    _handle_update(FailUpdate::No, CompleteWorkflow::No, core.as_ref()).await;
+    handle_update(FailUpdate::No, CompleteWorkflow::No, core.as_ref()).await;
 
     // Send a second update and complete the workflow
-    let post_reset_run_id = _send_and_handle_update(
+    let post_reset_run_id = send_and_handle_update(
         workflow_id,
         "second-update",
         FailUpdate::No,
@@ -149,9 +149,9 @@ async fn reapplied_updates_due_to_reset() {
     // We now recapitulate the actions that the worker took on first execution above, pretending
     // that we always followed the post-reset history.
     // First, we handled the post-reset reapplied update and did not complete the workflow.
-    _handle_update(FailUpdate::No, CompleteWorkflow::No, replay_worker.as_ref()).await;
+    handle_update(FailUpdate::No, CompleteWorkflow::No, replay_worker.as_ref()).await;
     // Then the client sent a second update; we handled it and completed the workflow.
-    _handle_update(
+    handle_update(
         FailUpdate::No,
         CompleteWorkflow::Yes,
         replay_worker.as_ref(),
@@ -160,7 +160,7 @@ async fn reapplied_updates_due_to_reset() {
 }
 
 // Start a workflow, send an update, accept the update, complete the update, complete the workflow.
-async fn _send_and_handle_update(
+async fn send_and_handle_update(
     workflow_id: &str,
     update_id: &str,
     fail_update: FailUpdate,
@@ -191,7 +191,7 @@ async fn _send_and_handle_update(
     };
 
     // Accept update, complete update and complete workflow
-    let processing_task = _handle_update(fail_update, complete_workflow, core);
+    let processing_task = handle_update(fail_update, complete_workflow, core);
     let (ur, _) = join!(update_task, processing_task);
 
     let v = ur.outcome.unwrap().value.unwrap();
@@ -202,8 +202,11 @@ async fn _send_and_handle_update(
     act.run_id
 }
 
-// Accept and then complete update.
-async fn _handle_update(
+// Accept and then complete update. If `FailUpdate::Yes` then complete the update as a failure; if
+// `CompleteWorkflow::Yes` then additionally complete the workflow. Timers are created when further
+// activations are required (i.e., on accepting-but-not-completing the update, and on completing the
+// update if not also completing the workflow).
+async fn handle_update(
     fail_update: FailUpdate,
     complete_workflow: CompleteWorkflow,
     core: &dyn Worker,
