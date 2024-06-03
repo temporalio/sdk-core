@@ -3,7 +3,8 @@ mod resource_based;
 
 pub use fixed_size::FixedSizeSlotSupplier;
 pub use resource_based::{
-    RealSysInfo, ResourceBasedSlots, ResourceBasedTuner, ResourceSlotOptions,
+    RealSysInfo, ResourceBasedSlots, ResourceBasedSlotsOptions, ResourceBasedSlotsOptionsBuilder,
+    ResourceBasedTuner, ResourceSlotOptions,
 };
 
 use std::sync::{Arc, OnceLock};

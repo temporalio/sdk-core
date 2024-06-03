@@ -108,6 +108,7 @@ pub struct ResourceBasedSlotsForType<MI, SK> {
     last_slot_issued_rx: watch::Receiver<Instant>,
     _slot_kind: PhantomData<SK>,
 }
+/// Allows for the full customization of the PID options for a resource based tuner
 #[derive(Clone, Debug, derive_builder::Builder)]
 #[non_exhaustive]
 pub struct ResourceBasedSlotsOptions {
@@ -116,20 +117,26 @@ pub struct ResourceBasedSlotsOptions {
     /// A value in the range [0.0, 1.0] representing the target CPU usage.
     target_cpu_usage: f64,
 
+    /// See [pid::Pid::p]
     #[builder(default = "5.0")]
     pub mem_p_gain: f64,
+    /// See [pid::Pid::i]
     #[builder(default = "0.0")]
     pub mem_i_gain: f64,
+    /// See [pid::Pid::d]
     #[builder(default = "1.0")]
     pub mem_d_gain: f64,
     /// If the mem PID controller outputs a value higher than this, we say the mem half of things
     /// will allow a slot
     #[builder(default = "0.25")]
     pub mem_output_threshold: f64,
+    /// See [pid::Pid::d]
     #[builder(default = "5.0")]
     pub cpu_p_gain: f64,
+    /// See [pid::Pid::i]
     #[builder(default = "0.0")]
     pub cpu_i_gain: f64,
+    /// See [pid::Pid::d]
     #[builder(default = "1.0")]
     pub cpu_d_gain: f64,
     /// If the CPU PID controller outputs a value higher than this, we say the CPU half of things
