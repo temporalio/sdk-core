@@ -6,8 +6,9 @@ mod workflow;
 
 pub use temporal_sdk_core_api::worker::{WorkerConfig, WorkerConfigBuilder};
 pub use tuner::{
-    FixedSizeSlotSupplier, RealSysInfo, ResourceBasedSlots, ResourceBasedTuner,
-    ResourceSlotOptions, TunerBuilder, TunerHolder,
+    FixedSizeSlotSupplier, RealSysInfo, ResourceBasedSlots, ResourceBasedSlotsOptions,
+    ResourceBasedSlotsOptionsBuilder, ResourceBasedTuner, ResourceSlotOptions, TunerBuilder,
+    TunerHolder,
 };
 
 pub(crate) use activities::{
