@@ -706,10 +706,14 @@ impl Worker {
 
     async fn verify_namespace_exists(&self) -> Result<(), WorkerValidationError> {
         if let Err(e) = self.client.describe_namespace().await {
-            return Err(WorkerValidationError::NamespaceDescribeError {
-                source: e,
-                namespace: self.config.namespace.clone(),
-            });
+            // Ignore if unimplemented since we wouldn't want to fail against an old server, for
+            // example.
+            if e.code() != tonic::Code::Unimplemented {
+                return Err(WorkerValidationError::NamespaceDescribeError {
+                    source: e,
+                    namespace: self.config.namespace.clone(),
+                });
+            }
         }
         Ok(())
     }
