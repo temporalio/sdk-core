@@ -2913,11 +2913,11 @@ async fn slot_provider_cant_hand_out_more_permits_than_cache_size() {
     let worker = Worker::new_test(
         test_worker_cfg()
             .max_cached_workflows(10_usize)
-            .tuner(
+            .tuner(Arc::new(
                 TunerBuilder::default()
                     .workflow_slot_supplier(Arc::new(EndlessSupplier {}))
                     .build(),
-            )
+            ))
             .max_concurrent_wft_polls(10_usize)
             .no_remote_activities(true)
             .build()

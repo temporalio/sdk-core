@@ -25,17 +25,36 @@ use tokio::{sync::watch, task::JoinHandle};
 /// threshold for each, and slots are handed out if the output of both PID controllers is above some
 /// defined threshold. See [ResourceBasedSlotsOptions] for the default PID controller settings.
 pub struct ResourceBasedTuner<MI> {
-    slots: Arc<ResourceBasedSlots<MI>>,
+    slots: Arc<ResourceController<MI>>,
     wf_opts: Option<ResourceSlotOptions>,
     act_opts: Option<ResourceSlotOptions>,
     la_opts: Option<ResourceSlotOptions>,
 }
 
+impl ResourceBasedTuner<RealSysInfo> {
+    /// Create an instance attempting to target the provided memory and cpu thresholds as values
+    /// between 0 and 1.
+    pub fn new(target_mem_usage: f64, target_cpu_usage: f64) -> Self {
+        let opts = ResourceBasedSlotsOptionsBuilder::default()
+            .target_mem_usage(target_mem_usage)
+            .target_cpu_usage(target_cpu_usage)
+            .build()
+            .expect("default resource based slot options can't fail to build");
+        let controller = ResourceController::new_with_sysinfo(opts, RealSysInfo::new());
+        Self::new_from_controller(controller)
+    }
+
+    /// Create an instance using the fully configurable set of PID controller options
+    pub fn new_from_options(options: ResourceBasedSlotsOptions) -> Self {
+        let controller = ResourceController::new_with_sysinfo(options, RealSysInfo::new());
+        Self::new_from_controller(controller)
+    }
+}
+
 impl<MI> ResourceBasedTuner<MI> {
-    /// Build a new tuner from a [ResourceBasedSlots] instance
-    pub fn new(resourcer: ResourceBasedSlots<MI>) -> Self {
+    fn new_from_controller(controller: ResourceController<MI>) -> Self {
         Self {
-            slots: Arc::new(resourcer),
+            slots: Arc::new(controller),
             wf_opts: None,
             act_opts: None,
             la_opts: None,
@@ -84,23 +103,22 @@ pub struct ResourceSlotOptions {
     ramp_throttle: Duration,
 }
 
-/// Implements [SlotSupplier] and attempts to maintain certain levels of resource usage when
-/// under load.
-///
-/// It does so by using two PID controllers, one for memory and one for CPU, which are fed the
-/// current usage levels of their respective resource as measurements. The user specifies a target
-/// threshold for each, and slots are handed out if the output of both PID controllers is above some
-/// defined threshold. See [ResourceBasedSlotsOptions] for the default PID controller settings.
-pub struct ResourceBasedSlots<MI> {
+struct ResourceController<MI> {
     options: ResourceBasedSlotsOptions,
     sys_info_supplier: MI,
     metrics: OnceLock<JoinHandle<()>>,
     pids: Mutex<PidControllers>,
     last_metric_vals: Arc<AtomicCell<LastMetricVals>>,
 }
-/// Wraps [ResourceBasedSlots] for a specific slot type
-pub struct ResourceBasedSlotsForType<MI, SK> {
-    inner: Arc<ResourceBasedSlots<MI>>,
+/// Implements [SlotSupplier] and attempts to maintain certain levels of resource usage when under
+/// load.
+///
+/// It does so by using two PID controllers, one for memory and one for CPU, which are fed the
+/// current usage levels of their respective resource as measurements. The user specifies a target
+/// threshold for each, and slots are handed out if the output of both PID controllers is above some
+/// defined threshold. See [ResourceBasedSlotsOptions] for the default PID controller settings.
+pub(crate) struct ResourceBasedSlotsForType<MI, SK> {
+    inner: Arc<ResourceController<MI>>,
 
     opts: ResourceSlotOptions,
 
@@ -113,9 +131,9 @@ pub struct ResourceBasedSlotsForType<MI, SK> {
 #[non_exhaustive]
 pub struct ResourceBasedSlotsOptions {
     /// A value in the range [0.0, 1.0] representing the target memory usage.
-    target_mem_usage: f64,
+    pub target_mem_usage: f64,
     /// A value in the range [0.0, 1.0] representing the target CPU usage.
-    target_cpu_usage: f64,
+    pub target_cpu_usage: f64,
 
     /// See [pid::Pid::p]
     #[builder(default = "5.0")]
@@ -161,24 +179,6 @@ struct LastMetricVals {
     cpu_output: f64,
     mem_used_percent: f64,
     cpu_used_percent: f64,
-}
-
-impl ResourceBasedSlots<RealSysInfo> {
-    /// Create an instance attempting to target the provided memory and cpu thresholds as values
-    /// between 0 and 1.
-    pub fn new(target_mem_usage: f64, target_cpu_usage: f64) -> Self {
-        let opts = ResourceBasedSlotsOptionsBuilder::default()
-            .target_mem_usage(target_mem_usage)
-            .target_cpu_usage(target_cpu_usage)
-            .build()
-            .expect("default resource based slot options can't fail to build");
-        Self::new_with_sysinfo(opts, RealSysInfo::new())
-    }
-
-    /// Create an instance using the fully configurable set of PID controller options
-    pub fn new_from_options(options: ResourceBasedSlotsOptions) -> Self {
-        Self::new_with_sysinfo(options, RealSysInfo::new())
-    }
 }
 
 impl PidControllers {
@@ -281,17 +281,10 @@ where
 
 impl<MI, SK> ResourceBasedSlotsForType<MI, SK>
 where
-    MI: Send + Sync + SystemResourceInfo,
-    SK: Send + SlotKind + Sync,
-{
-}
-
-impl<MI, SK> ResourceBasedSlotsForType<MI, SK>
-where
     MI: SystemResourceInfo + Send + Sync,
     SK: SlotKind + Send + Sync,
 {
-    fn new(inner: Arc<ResourceBasedSlots<MI>>, opts: ResourceSlotOptions) -> Self {
+    fn new(inner: Arc<ResourceController<MI>>, opts: ResourceSlotOptions) -> Self {
         let (tx, rx) = watch::channel(Instant::now());
         Self {
             opts,
@@ -341,7 +334,7 @@ impl<MI: SystemResourceInfo + Sync + Send + 'static> WorkerTuner for ResourceBas
     }
 }
 
-impl<MI: SystemResourceInfo + Sync + Send> ResourceBasedSlots<MI> {
+impl<MI: SystemResourceInfo + Sync + Send> ResourceController<MI> {
     /// Create a [ResourceBasedSlotsForType] for this instance which is willing to hand out
     /// `minimum` slots with no checks at all and `max` slots ever. Otherwise the underlying
     /// mem/cpu targets will attempt to be matched while under load.
@@ -351,7 +344,7 @@ impl<MI: SystemResourceInfo + Sync + Send> ResourceBasedSlots<MI> {
     /// where activities might use a lot of resources, because otherwise the implementation may
     /// hand out many slots quickly before resource usage has a chance to be reflected, possibly
     /// resulting in OOM (for example).
-    pub fn as_kind<SK: SlotKind + Send + Sync>(
+    pub(crate) fn as_kind<SK: SlotKind + Send + Sync>(
         self: &Arc<Self>,
         opts: ResourceSlotOptions,
     ) -> Arc<ResourceBasedSlotsForType<MI, SK>> {
@@ -513,7 +506,7 @@ mod tests {
     #[test]
     fn mem_workflow_sync() {
         let (fmis, used) = FakeMIS::new();
-        let rbs = Arc::new(ResourceBasedSlots::new_with_sysinfo(test_options(), fmis))
+        let rbs = Arc::new(ResourceController::new_with_sysinfo(test_options(), fmis))
             .as_kind::<WorkflowSlotKind>(ResourceSlotOptions {
             min_slots: 0,
             max_slots: 100,
@@ -529,7 +522,7 @@ mod tests {
     async fn mem_workflow_async() {
         let (fmis, used) = FakeMIS::new();
         used.store(90_000, Ordering::Release);
-        let rbs = Arc::new(ResourceBasedSlots::new_with_sysinfo(test_options(), fmis))
+        let rbs = Arc::new(ResourceController::new_with_sysinfo(test_options(), fmis))
             .as_kind::<WorkflowSlotKind>(ResourceSlotOptions {
             min_slots: 0,
             max_slots: 100,
@@ -553,7 +546,7 @@ mod tests {
     #[test]
     fn minimum_respected() {
         let (fmis, used) = FakeMIS::new();
-        let rbs = Arc::new(ResourceBasedSlots::new_with_sysinfo(test_options(), fmis))
+        let rbs = Arc::new(ResourceController::new_with_sysinfo(test_options(), fmis))
             .as_kind::<WorkflowSlotKind>(ResourceSlotOptions {
             min_slots: 2,
             max_slots: 100,

@@ -5,7 +5,7 @@ use std::{
 };
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{ActContext, ActivityOptions, WfContext, WorkflowResult};
-use temporal_sdk_core::{ResourceBasedSlots, ResourceBasedTuner, ResourceSlotOptions};
+use temporal_sdk_core::{ResourceBasedTuner, ResourceSlotOptions};
 use temporal_sdk_core_protos::{
     coresdk::{workflow_commands::ActivityCancellationType, AsJsonPayloadExt},
     temporal::api::enums::v1::WorkflowIdReusePolicy,
@@ -94,7 +94,7 @@ async fn chunky_activities_resource_based() {
         .clear_max_outstanding_opts()
         .max_concurrent_wft_polls(10_usize)
         .max_concurrent_at_polls(10_usize);
-    let mut tuner = ResourceBasedTuner::new(ResourceBasedSlots::new(0.7, 0.7));
+    let mut tuner = ResourceBasedTuner::new(0.7, 0.7);
     tuner
         .with_workflow_slots_options(ResourceSlotOptions::new(
             25,
