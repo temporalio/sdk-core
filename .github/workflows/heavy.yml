@@ -15,19 +15,14 @@ jobs:
     timeout-minutes: 20
     runs-on: ubuntu-latest-16-cores
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
         with:
           submodules: recursive
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
+      - uses: dtolnay/rust-toolchain@stable
       - name: Install protoc
-        uses: arduino/setup-protoc@v1
+        uses: arduino/setup-protoc@v3
         with:
-          version: '3.x'
+          # TODO: Upgrade proto once https://github.com/arduino/setup-protoc/issues/99 is fixed
+          version: '23.x'
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - uses: actions-rs/cargo@v1
-        with:
-          command: integ-test
-          args: -c "--release" -t heavy_tests -- --test-threads 1
+      - run: cargo integ-test -c "--release" -t heavy_tests -- --test-threads 1
