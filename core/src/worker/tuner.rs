@@ -3,8 +3,8 @@ mod resource_based;
 
 pub use fixed_size::FixedSizeSlotSupplier;
 pub use resource_based::{
-    RealSysInfo, ResourceBasedSlots, ResourceBasedSlotsOptions, ResourceBasedSlotsOptionsBuilder,
-    ResourceBasedTuner, ResourceSlotOptions,
+    RealSysInfo, ResourceBasedSlotsOptions, ResourceBasedSlotsOptionsBuilder, ResourceBasedTuner,
+    ResourceSlotOptions,
 };
 
 use std::sync::{Arc, OnceLock};
@@ -22,6 +22,125 @@ pub struct TunerHolder {
     act_supplier: Arc<dyn SlotSupplier<SlotKind = ActivitySlotKind> + Send + Sync>,
     la_supplier: Arc<dyn SlotSupplier<SlotKind = LocalActivitySlotKind> + Send + Sync>,
     metrics: OnceLock<TemporalMeter>,
+}
+
+/// Can be used to construct a [TunerHolder] without needing to manually construct each
+/// [SlotSupplier]. Useful for lang bridges to allow more easily passing through user options.
+#[derive(Clone, Debug, derive_builder::Builder)]
+#[builder(build_fn(validate = "Self::validate"))]
+#[non_exhaustive]
+pub struct TunerHolderOptions {
+    /// Options for workflow slots
+    #[builder(default, setter(strip_option))]
+    pub workflow_slot_options: Option<SlotSupplierOptions>,
+    /// Options for activity slots
+    #[builder(default, setter(strip_option))]
+    pub activity_slot_options: Option<SlotSupplierOptions>,
+    /// Options for local activity slots
+    #[builder(default, setter(strip_option))]
+    pub local_activity_slot_options: Option<SlotSupplierOptions>,
+    /// Options that will apply to all resource based slot suppliers. Must be set if any slot
+    /// options are [SlotSupplierOptions::ResourceBased]
+    #[builder(default, setter(strip_option))]
+    pub resource_based_options: Option<ResourceBasedSlotsOptions>,
+}
+
+impl TunerHolderOptions {
+    /// Create a [TunerHolder] from these options
+    pub fn build_tuner_holder(self) -> Result<TunerHolder, anyhow::Error> {
+        let mut builder = TunerBuilder::default();
+        // safety note: unwraps here are OK since the builder validator guarantees options for
+        // a resource based tuner are present if any supplier is resource based
+        let mut rb_tuner = self
+            .resource_based_options
+            .map(ResourceBasedTuner::new_from_options);
+        match self.workflow_slot_options {
+            Some(SlotSupplierOptions::FixedSize { slots }) => {
+                builder.workflow_slot_supplier(Arc::new(FixedSizeSlotSupplier::new(slots)));
+            }
+            Some(SlotSupplierOptions::ResourceBased(rso)) => {
+                builder.workflow_slot_supplier(
+                    rb_tuner
+                        .as_mut()
+                        .unwrap()
+                        .with_workflow_slots_options(rso)
+                        .workflow_task_slot_supplier(),
+                );
+            }
+            None => {}
+        }
+        match self.activity_slot_options {
+            Some(SlotSupplierOptions::FixedSize { slots }) => {
+                builder.activity_slot_supplier(Arc::new(FixedSizeSlotSupplier::new(slots)));
+            }
+            Some(SlotSupplierOptions::ResourceBased(rso)) => {
+                builder.activity_slot_supplier(
+                    rb_tuner
+                        .as_mut()
+                        .unwrap()
+                        .with_activity_slots_options(rso)
+                        .activity_task_slot_supplier(),
+                );
+            }
+            None => {}
+        }
+        match self.local_activity_slot_options {
+            Some(SlotSupplierOptions::FixedSize { slots }) => {
+                builder.local_activity_slot_supplier(Arc::new(FixedSizeSlotSupplier::new(slots)));
+            }
+            Some(SlotSupplierOptions::ResourceBased(rso)) => {
+                builder.local_activity_slot_supplier(
+                    rb_tuner
+                        .as_mut()
+                        .unwrap()
+                        .with_local_activity_slots_options(rso)
+                        .local_activity_slot_supplier(),
+                );
+            }
+            None => {}
+        }
+        Ok(builder.build())
+    }
+}
+
+/// Options for known kinds of slot suppliers
+#[derive(Clone, Debug)]
+pub enum SlotSupplierOptions {
+    /// Options for a [FixedSizeSlotSupplier]
+    FixedSize {
+        /// The number of slots the fixed supplier will have
+        slots: usize,
+    },
+    /// Options for a [ResourceBasedSlots]
+    ResourceBased(ResourceSlotOptions),
+}
+
+impl TunerHolderOptionsBuilder {
+    /// Create a [TunerHolder] from this builder
+    pub fn build_tuner_holder(self) -> Result<TunerHolder, anyhow::Error> {
+        let s = self.build()?;
+        s.build_tuner_holder()
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        if matches!(
+            self.workflow_slot_options,
+            Some(Some(SlotSupplierOptions::ResourceBased(_)))
+        ) || matches!(
+            self.activity_slot_options,
+            Some(Some(SlotSupplierOptions::ResourceBased(_)))
+        ) || matches!(
+            self.local_activity_slot_options,
+            Some(Some(SlotSupplierOptions::ResourceBased(_)))
+        ) && matches!(self.resource_based_options, None | Some(None))
+        {
+            return Err(
+                "`resource_based_options` must be set if any slot options are ResourceBased"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
 }
 
 /// Can be used to construct a `TunerHolder` from individual slot suppliers. Any supplier which is
@@ -79,8 +198,8 @@ impl TunerBuilder {
     }
 
     /// Build a [WorkerTuner] from the configured slot suppliers
-    pub fn build(&mut self) -> Arc<dyn WorkerTuner + Send + Sync> {
-        Arc::new(TunerHolder {
+    pub fn build(&mut self) -> TunerHolder {
+        TunerHolder {
             wft_supplier: self
                 .workflow_slot_supplier
                 .clone()
@@ -94,7 +213,7 @@ impl TunerBuilder {
                 .clone()
                 .unwrap_or_else(|| Arc::new(FixedSizeSlotSupplier::new(100))),
             metrics: OnceLock::new(),
-        })
+        }
     }
 }
 

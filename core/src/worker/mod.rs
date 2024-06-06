@@ -6,9 +6,9 @@ mod workflow;
 
 pub use temporal_sdk_core_api::worker::{WorkerConfig, WorkerConfigBuilder};
 pub use tuner::{
-    FixedSizeSlotSupplier, RealSysInfo, ResourceBasedSlots, ResourceBasedSlotsOptions,
-    ResourceBasedSlotsOptionsBuilder, ResourceBasedTuner, ResourceSlotOptions, TunerBuilder,
-    TunerHolder,
+    FixedSizeSlotSupplier, RealSysInfo, ResourceBasedSlotsOptions,
+    ResourceBasedSlotsOptionsBuilder, ResourceBasedTuner, ResourceSlotOptions, SlotSupplierOptions,
+    TunerBuilder, TunerHolder, TunerHolderOptions, TunerHolderOptionsBuilder,
 };
 
 pub(crate) use activities::{
@@ -263,7 +263,7 @@ impl Worker {
             .tuner
             .as_ref()
             .cloned()
-            .unwrap_or_else(|| TunerBuilder::from_config(&config).build());
+            .unwrap_or_else(|| Arc::new(TunerBuilder::from_config(&config).build()));
 
         metrics.worker_registered();
         if let Some(meter) = meter {
