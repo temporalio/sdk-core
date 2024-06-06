@@ -123,7 +123,7 @@ impl TunerHolderOptionsBuilder {
     }
 
     fn validate(&self) -> Result<(), String> {
-        if matches!(
+        let any_is_resource_based = matches!(
             self.workflow_slot_options,
             Some(Some(SlotSupplierOptions::ResourceBased(_)))
         ) || matches!(
@@ -132,8 +132,8 @@ impl TunerHolderOptionsBuilder {
         ) || matches!(
             self.local_activity_slot_options,
             Some(Some(SlotSupplierOptions::ResourceBased(_)))
-        ) && matches!(self.resource_based_options, None | Some(None))
-        {
+        );
+        if any_is_resource_based && matches!(self.resource_based_options, None | Some(None)) {
             return Err(
                 "`resource_based_options` must be set if any slot options are ResourceBased"
                     .to_string(),
