@@ -146,16 +146,26 @@ where
             throttle_backoff: throttle_cfg.into_exp_backoff(throttle_clock),
         }
     }
-    const fn should_log_retry_warning(&self, cur_attempt: usize) -> bool {
+
+    fn maybe_log_retry(&self, cur_attempt: usize, err: &tonic::Status) {
+        let mut do_log = false;
         // Warn on more than 5 retries for unlimited retrying
         if self.max_retries == 0 && cur_attempt > 5 {
-            return true;
+            do_log = true;
         }
         // Warn if the attempts are more than 50% of max retries
         if self.max_retries > 0 && cur_attempt * 2 >= self.max_retries {
-            return true;
+            do_log = true;
         }
-        false
+
+        if do_log {
+            // Error if unlimited retries have been going on for a while
+            if self.max_retries == 0 && cur_attempt > 15 {
+                error!(error=?err, "gRPC call {} retried {} times", self.call_name, cur_attempt);
+            } else {
+                warn!(error=?err, "gRPC call {} retried {} times", self.call_name, cur_attempt);
+            }
+        }
     }
 }
 #[doc(hidden)]
@@ -194,8 +204,8 @@ where
         if RETRYABLE_ERROR_CODES.contains(&e.code()) || long_poll_allowed {
             if current_attempt == 1 {
                 debug!(error=?e, "gRPC call {} failed on first attempt", self.call_name);
-            } else if self.should_log_retry_warning(current_attempt) {
-                warn!(error=?e, "gRPC call {} retried {} times", self.call_name, current_attempt);
+            } else {
+                self.maybe_log_retry(current_attempt, &e);
             }
 
             match self.backoff.next_backoff() {
