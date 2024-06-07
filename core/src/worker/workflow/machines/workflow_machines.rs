@@ -550,35 +550,31 @@ impl WorkflowMachines {
         let num_events_to_process = events.len();
 
         // Process any WFT completed events in the next sequence, as well as peek ahead to the
-        // subsequent one to properly apply flags & any other data.
+        // subsequent one to properly apply flags & any other data. Macro used to avoid self
+        // double-borrow.
+        macro_rules! apply_wft_complete_data {
+            ($me:expr, $wtc:expr) => {{
+                (*$me.observed_internal_flags)
+                    .borrow_mut()
+                    .add_from_complete($wtc);
+                if let Some(bid) = $wtc.worker_version.as_ref().map(|wv| &wv.build_id) {
+                    $me.current_wft_build_id = Some(bid.to_string());
+                }
+            }};
+        }
         let mut peeked_events = events.iter().peekable();
         while let Some(event) = peeked_events.next() {
             if let Some(history_event::Attributes::WorkflowTaskCompletedEventAttributes(ref wtc)) =
                 event.attributes
             {
-                // We update the internal flags before applying the current task
-                (*self.observed_internal_flags)
-                    .borrow_mut()
-                    .add_from_complete(wtc);
-                // Save this tasks' Build ID if it had one
-                if let Some(bid) = wtc.worker_version.as_ref().map(|wv| &wv.build_id) {
-                    self.current_wft_build_id = Some(bid.to_string());
-                }
+                apply_wft_complete_data!(self, wtc);
             }
             if peeked_events.peek().is_none() {
-                if let Some(next_complete) = self
+                if let Some(wtc) = self
                     .last_history_from_server
                     .peek_next_wft_completed(event.event_id)
                 {
-                    // We update the internal flags before applying the current task
-                    (*self.observed_internal_flags)
-                        .borrow_mut()
-                        .add_from_complete(next_complete);
-                    // Save this tasks' Build ID if it had one
-                    if let Some(bid) = next_complete.worker_version.as_ref().map(|wv| &wv.build_id)
-                    {
-                        self.current_wft_build_id = Some(bid.to_string());
-                    }
+                    apply_wft_complete_data!(self, wtc);
                 }
             }
         }
