@@ -528,28 +528,6 @@ impl WorkflowMachines {
             return Ok(0);
         }
 
-        fn get_processable_messages(
-            me: &mut WorkflowMachines,
-            for_event_id: i64,
-        ) -> Vec<IncomingProtocolMessage> {
-            // Another thing to replace when `drain_filter` exists
-            let mut ret = vec![];
-            me.protocol_msgs = std::mem::take(&mut me.protocol_msgs)
-                .into_iter()
-                .filter_map(|x| {
-                    if x.processable_after_event_id()
-                        .is_some_and(|eid| eid <= for_event_id)
-                    {
-                        ret.push(x);
-                        None
-                    } else {
-                        Some(x)
-                    }
-                })
-                .collect();
-            ret
-        }
-
         let last_handled_wft_started_id = self.current_started_event_id;
         let (events, has_final_event) = match self
             .last_history_from_server
@@ -650,7 +628,22 @@ impl WorkflowMachines {
             }
 
             // Process any messages that should be processed before the event we're about to handle
-            let processable_msgs = get_processable_messages(self, eid - 1);
+            let for_event_id = eid - 1;
+            // Another thing to replace when `drain_filter` exists
+            let mut processable_msgs = vec![];
+            self.protocol_msgs = std::mem::take(&mut self.protocol_msgs)
+                .into_iter()
+                .filter_map(|x| {
+                    if x.processable_after_event_id()
+                        .is_some_and(|eid| eid <= for_event_id)
+                    {
+                        processable_msgs.push(x);
+                        None
+                    } else {
+                        Some(x)
+                    }
+                })
+                .collect();
             for msg in processable_msgs {
                 self.handle_protocol_message(msg)?;
             }
