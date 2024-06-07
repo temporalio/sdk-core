@@ -238,7 +238,7 @@ impl WorkflowMachines {
     pub(crate) fn new(basics: RunBasics, driven_wf: DrivenWorkflow) -> Self {
         let replaying = basics.history.previous_wft_started_id > 0;
         let mut observed_internal_flags = InternalFlags::new(basics.capabilities);
-        // Peek ahead to determine used patches in the first WFT.
+        // Peek ahead to determine used flags in the first WFT.
         if let Some(attrs) = basics.history.peek_next_wft_completed(0) {
             observed_internal_flags.add_from_complete(attrs);
         };
@@ -550,21 +550,6 @@ impl WorkflowMachines {
             ret
         }
 
-        // Peek to the next WFT complete and update ourselves with data we might need in it.
-        if let Some(next_complete) = self
-            .last_history_from_server
-            .peek_next_wft_completed(self.last_processed_event)
-        {
-            // We update the internal flags before applying the current task
-            (*self.observed_internal_flags)
-                .borrow_mut()
-                .add_from_complete(next_complete);
-            // Save this tasks' Build ID if it had one
-            if let Some(bid) = next_complete.worker_version.as_ref().map(|wv| &wv.build_id) {
-                self.current_wft_build_id = Some(bid.to_string());
-            }
-        }
-
         let last_handled_wft_started_id = self.current_started_event_id;
         let (events, has_final_event) = match self
             .last_history_from_server
@@ -586,7 +571,41 @@ impl WorkflowMachines {
         };
         let num_events_to_process = events.len();
 
-        // We're caught up on reply if there are no new events to process
+        // Process any WFT completed events in the next sequence, as well as peek ahead to the
+        // subsequent one to properly apply flags & any other data.
+        let mut peeked_events = events.iter().peekable();
+        while let Some(event) = peeked_events.next() {
+            if let Some(history_event::Attributes::WorkflowTaskCompletedEventAttributes(ref wtc)) =
+                event.attributes
+            {
+                // We update the internal flags before applying the current task
+                (*self.observed_internal_flags)
+                    .borrow_mut()
+                    .add_from_complete(wtc);
+                // Save this tasks' Build ID if it had one
+                if let Some(bid) = wtc.worker_version.as_ref().map(|wv| &wv.build_id) {
+                    self.current_wft_build_id = Some(bid.to_string());
+                }
+            }
+            if peeked_events.peek().is_none() {
+                if let Some(next_complete) = self
+                    .last_history_from_server
+                    .peek_next_wft_completed(event.event_id)
+                {
+                    // We update the internal flags before applying the current task
+                    (*self.observed_internal_flags)
+                        .borrow_mut()
+                        .add_from_complete(next_complete);
+                    // Save this tasks' Build ID if it had one
+                    if let Some(bid) = next_complete.worker_version.as_ref().map(|wv| &wv.build_id)
+                    {
+                        self.current_wft_build_id = Some(bid.to_string());
+                    }
+                }
+            }
+        }
+
+        // We're caught up on replay if there are no new events to process
         if events.is_empty() {
             self.replaying = false;
         }

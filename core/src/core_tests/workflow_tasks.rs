@@ -2900,7 +2900,7 @@ async fn sets_build_id_from_wft_complete() {
     });
     let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
     t.add_timer_fired(timer_started_event_id, "2".to_string());
-    t.add_full_wf_task();
+    t.add_workflow_task_scheduled_and_started();
 
     let mock = mock_workflow_client();
     let mut worker = mock_sdk_cfg(
@@ -2913,12 +2913,13 @@ async fn sets_build_id_from_wft_complete() {
 
     worker.register_wf(DEFAULT_WORKFLOW_TYPE, |ctx: WfContext| async move {
         // First task, it should be empty, since replaying and nothing in first WFT completed
-        ctx.timer(Duration::from_secs(1)).await;
         assert_eq!(ctx.current_build_id(), None);
         ctx.timer(Duration::from_secs(1)).await;
         assert_eq!(ctx.current_build_id(), Some("enchi-cat".to_string()));
         ctx.timer(Duration::from_secs(1)).await;
         // Not replaying at this point, so we should see the worker's build id
+        assert_eq!(ctx.current_build_id(), Some("fierce-predator".to_string()));
+        ctx.timer(Duration::from_secs(1)).await;
         assert_eq!(ctx.current_build_id(), Some("fierce-predator".to_string()));
         Ok(().into())
     });
