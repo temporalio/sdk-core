@@ -53,6 +53,7 @@ mod workflow_future;
 
 pub use activity_context::ActContext;
 pub use temporal_client::Namespace;
+use tracing::{field, Instrument, Span};
 pub use workflow_context::{
     ActivityOptions, CancellableFuture, ChildWorkflow, ChildWorkflowOptions, LocalActivityOptions,
     PendingChildWorkflow, Signal, SignalData, SignalWorkflowOptions, StartedChildWorkflow,
@@ -409,6 +410,7 @@ impl WorkflowHalf {
             let (wff, activations) = wf_function.start_workflow(
                 common.worker.get_config().namespace.clone(),
                 common.task_queue.clone(),
+                workflow_type,
                 // NOTE: Don't clone args if this gets ported to be a non-test rust worker
                 sw.arguments.clone(),
                 completions_tx.clone(),
@@ -474,6 +476,14 @@ impl ActivityHalf {
                         )
                     })?
                     .clone();
+                let span = info_span!(
+                    "RunActivity",
+                    "otel.name" = format!("RunActivity:{}", start.activity_type),
+                    "otel.kind" = "server",
+                    "temporalActivityID" = start.activity_id,
+                    "temporalWorkflowID" = field::Empty,
+                    "temporalRunID" = field::Empty,
+                );
                 let ct = CancellationToken::new();
                 let task_token = activity.task_token;
                 self.task_tokens_to_cancels
@@ -487,10 +497,18 @@ impl ActivityHalf {
                     task_token.clone(),
                     start,
                 );
+
                 tokio::spawn(async move {
-                    let output = AssertUnwindSafe((act_fn.act_func)(ctx, arg))
-                        .catch_unwind()
-                        .await;
+                    let act_fut = async move {
+                        if let Some(info) = &ctx.get_info().workflow_execution {
+                            Span::current()
+                                .record("temporalWorkflowID", &info.workflow_id)
+                                .record("temporalRunID", &info.run_id);
+                        }
+                        (act_fn.act_func)(ctx, arg).await
+                    }
+                    .instrument(span);
+                    let output = AssertUnwindSafe(act_fut).catch_unwind().await;
                     let result = match output {
                         Err(e) => ActivityExecutionResult::fail(Failure::application_failure(
                             format!("Activity function panicked: {}", panic_formatter(e)),
