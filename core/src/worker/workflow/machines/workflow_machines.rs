@@ -238,7 +238,7 @@ impl WorkflowMachines {
     pub(crate) fn new(basics: RunBasics, driven_wf: DrivenWorkflow) -> Self {
         let replaying = basics.history.previous_wft_started_id > 0;
         let mut observed_internal_flags = InternalFlags::new(basics.capabilities);
-        // Peek ahead to determine used patches in the first WFT.
+        // Peek ahead to determine used flags in the first WFT.
         if let Some(attrs) = basics.history.peek_next_wft_completed(0) {
             observed_internal_flags.add_from_complete(attrs);
         };
@@ -528,43 +528,6 @@ impl WorkflowMachines {
             return Ok(0);
         }
 
-        fn get_processable_messages(
-            me: &mut WorkflowMachines,
-            for_event_id: i64,
-        ) -> Vec<IncomingProtocolMessage> {
-            // Another thing to replace when `drain_filter` exists
-            let mut ret = vec![];
-            me.protocol_msgs = std::mem::take(&mut me.protocol_msgs)
-                .into_iter()
-                .filter_map(|x| {
-                    if x.processable_after_event_id()
-                        .is_some_and(|eid| eid <= for_event_id)
-                    {
-                        ret.push(x);
-                        None
-                    } else {
-                        Some(x)
-                    }
-                })
-                .collect();
-            ret
-        }
-
-        // Peek to the next WFT complete and update ourselves with data we might need in it.
-        if let Some(next_complete) = self
-            .last_history_from_server
-            .peek_next_wft_completed(self.last_processed_event)
-        {
-            // We update the internal flags before applying the current task
-            (*self.observed_internal_flags)
-                .borrow_mut()
-                .add_from_complete(next_complete);
-            // Save this tasks' Build ID if it had one
-            if let Some(bid) = next_complete.worker_version.as_ref().map(|wv| &wv.build_id) {
-                self.current_wft_build_id = Some(bid.to_string());
-            }
-        }
-
         let last_handled_wft_started_id = self.current_started_event_id;
         let (events, has_final_event) = match self
             .last_history_from_server
@@ -586,7 +549,37 @@ impl WorkflowMachines {
         };
         let num_events_to_process = events.len();
 
-        // We're caught up on reply if there are no new events to process
+        // Process any WFT completed events in the next sequence, as well as peek ahead to the
+        // subsequent one to properly apply flags & any other data. Macro used to avoid self
+        // double-borrow.
+        macro_rules! apply_wft_complete_data {
+            ($me:expr, $wtc:expr) => {{
+                (*$me.observed_internal_flags)
+                    .borrow_mut()
+                    .add_from_complete($wtc);
+                if let Some(bid) = $wtc.worker_version.as_ref().map(|wv| &wv.build_id) {
+                    $me.current_wft_build_id = Some(bid.to_string());
+                }
+            }};
+        }
+        let mut peeked_events = events.iter().peekable();
+        while let Some(event) = peeked_events.next() {
+            if let Some(history_event::Attributes::WorkflowTaskCompletedEventAttributes(ref wtc)) =
+                event.attributes
+            {
+                apply_wft_complete_data!(self, wtc);
+            }
+            if peeked_events.peek().is_none() {
+                if let Some(wtc) = self
+                    .last_history_from_server
+                    .peek_next_wft_completed(event.event_id)
+                {
+                    apply_wft_complete_data!(self, wtc);
+                }
+            }
+        }
+
+        // We're caught up on replay if there are no new events to process
         if events.is_empty() {
             self.replaying = false;
         }
@@ -631,7 +624,22 @@ impl WorkflowMachines {
             }
 
             // Process any messages that should be processed before the event we're about to handle
-            let processable_msgs = get_processable_messages(self, eid - 1);
+            let for_event_id = eid - 1;
+            // Another thing to replace when `drain_filter` exists
+            let mut processable_msgs = vec![];
+            self.protocol_msgs = std::mem::take(&mut self.protocol_msgs)
+                .into_iter()
+                .filter_map(|x| {
+                    if x.processable_after_event_id()
+                        .is_some_and(|eid| eid <= for_event_id)
+                    {
+                        processable_msgs.push(x);
+                        None
+                    } else {
+                        Some(x)
+                    }
+                })
+                .collect();
             for msg in processable_msgs {
                 self.handle_protocol_message(msg)?;
             }

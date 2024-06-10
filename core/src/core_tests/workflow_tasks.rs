@@ -45,9 +45,10 @@ use temporal_sdk_core_protos::{
             StartWorkflow, UpdateRandomSeed, WorkflowActivationJob,
         },
         workflow_commands::{
-            ActivityCancellationType, CancelTimer, CompleteWorkflowExecution,
-            ContinueAsNewWorkflowExecution, FailWorkflowExecution, RequestCancelActivity,
-            ScheduleActivity, SetPatchMarker, StartChildWorkflowExecution,
+            update_response::Response, ActivityCancellationType, CancelTimer,
+            CompleteWorkflowExecution, ContinueAsNewWorkflowExecution, FailWorkflowExecution,
+            RequestCancelActivity, ScheduleActivity, SetPatchMarker, StartChildWorkflowExecution,
+            UpdateResponse,
         },
         workflow_completion::WorkflowActivationCompletion,
     },
@@ -2412,6 +2413,62 @@ async fn lang_internal_flags() {
     core.shutdown().await;
 }
 
+#[tokio::test]
+async fn lang_internal_flag_with_update() {
+    crate::telemetry::test_telem_console();
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    t.set_flags_first_wft(&[1, 2], &[]);
+    t.add_full_wf_task();
+    t.set_flags_last_wft(&[], &[1]);
+    let updid = t.add_update_accepted("upd1", "upd");
+    t.add_update_completed(updid);
+    t.add_workflow_execution_completed();
+
+    let mh = MockPollCfg::from_resp_batches(
+        "fake_wf_id",
+        t,
+        [ResponseType::AllHistory],
+        mock_workflow_client(),
+    );
+    let mut mock = build_mock_pollers(mh);
+    mock.worker_cfg(|wc| wc.max_cached_workflows = 1);
+    let core = mock_worker(mock);
+
+    let act = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        act.jobs.as_slice(),
+        [
+            WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::DoUpdate(_)),
+            },
+            WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::StartWorkflow(_)),
+            },
+        ]
+    );
+    assert_matches!(act.available_internal_flags.as_slice(), [1]);
+    let mut completion = WorkflowActivationCompletion::from_cmds(
+        act.run_id,
+        vec![
+            UpdateResponse {
+                protocol_instance_id: "upd1".to_string(),
+                response: Some(Response::Accepted(())),
+            }
+            .into(),
+            UpdateResponse {
+                protocol_instance_id: "upd1".to_string(),
+                response: Some(Response::Completed(Default::default())),
+            }
+            .into(),
+            CompleteWorkflowExecution { result: None }.into(),
+        ],
+    );
+    completion.add_internal_flags(1);
+    core.complete_workflow_activation(completion).await.unwrap();
+}
+
 // Verify we send all core internal flags on the first non-replay WFT
 #[tokio::test]
 async fn core_internal_flags() {
@@ -2843,7 +2900,7 @@ async fn sets_build_id_from_wft_complete() {
     });
     let timer_started_event_id = t.add_by_type(EventType::TimerStarted);
     t.add_timer_fired(timer_started_event_id, "2".to_string());
-    t.add_full_wf_task();
+    t.add_workflow_task_scheduled_and_started();
 
     let mock = mock_workflow_client();
     let mut worker = mock_sdk_cfg(
@@ -2856,12 +2913,13 @@ async fn sets_build_id_from_wft_complete() {
 
     worker.register_wf(DEFAULT_WORKFLOW_TYPE, |ctx: WfContext| async move {
         // First task, it should be empty, since replaying and nothing in first WFT completed
-        ctx.timer(Duration::from_secs(1)).await;
         assert_eq!(ctx.current_build_id(), None);
         ctx.timer(Duration::from_secs(1)).await;
         assert_eq!(ctx.current_build_id(), Some("enchi-cat".to_string()));
         ctx.timer(Duration::from_secs(1)).await;
         // Not replaying at this point, so we should see the worker's build id
+        assert_eq!(ctx.current_build_id(), Some("fierce-predator".to_string()));
+        ctx.timer(Duration::from_secs(1)).await;
         assert_eq!(ctx.current_build_id(), Some("fierce-predator".to_string()));
         Ok(().into())
     });
