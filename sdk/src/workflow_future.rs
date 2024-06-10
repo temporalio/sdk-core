@@ -38,6 +38,7 @@ use tokio::sync::{
     mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
     oneshot, watch,
 };
+use tracing::Instrument;
 
 impl WorkflowFunction {
     /// Start a workflow function, returning a future that will resolve when the workflow does,
@@ -47,6 +48,7 @@ impl WorkflowFunction {
         &self,
         namespace: String,
         task_queue: String,
+        workflow_type: &str,
         args: Vec<Payload>,
         outgoing_completions: UnboundedSender<WorkflowActivationCompletion>,
     ) -> (
@@ -56,15 +58,19 @@ impl WorkflowFunction {
         let (cancel_tx, cancel_rx) = watch::channel(false);
         let (wf_context, cmd_receiver) = WfContext::new(namespace, task_queue, args, cancel_rx);
         let (tx, incoming_activations) = unbounded_channel();
+        let span = info_span!(
+            "RunWorkflow",
+            "otel.name" = format!("RunWorkflow:{}", workflow_type),
+            "otel.kind" = "server"
+        );
+        let inner_fut = (self.wf_func)(wf_context.clone()).instrument(span);
         (
             WorkflowFuture {
-                wf_ctx: wf_context.clone(),
+                wf_ctx: wf_context,
                 // We need to mark the workflow future as unconstrained, otherwise Tokio will impose
                 // an artificial limit on how many commands we can unblock in one poll round.
                 // TODO: Now we *need* deadlock detection or we could hose the whole system
-                inner: tokio::task::unconstrained((self.wf_func)(wf_context))
-                    .fuse()
-                    .boxed(),
+                inner: tokio::task::unconstrained(inner_fut).fuse().boxed(),
                 incoming_commands: cmd_receiver,
                 outgoing_completions,
                 incoming_activations,
