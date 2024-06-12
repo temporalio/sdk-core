@@ -37,6 +37,7 @@ pub(super) fn cancel_workflow(attribs: CancelWorkflowExecution) -> NewMachineWit
     let command = Command {
         command_type: CommandType::CancelWorkflowExecution as i32,
         attributes: Some(attribs.into()),
+        user_metadata: Default::default(),
     };
     NewMachineWithCommand {
         command,

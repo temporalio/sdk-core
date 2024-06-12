@@ -31,6 +31,7 @@ pub(super) fn modify_workflow_properties(
     let cmd = Command {
         command_type: CommandType::ModifyWorkflowProperties as i32,
         attributes: Some(lang_cmd.into()),
+        user_metadata: Default::default(),
     };
     NewMachineWithCommand {
         command: cmd,

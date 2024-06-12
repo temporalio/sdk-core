@@ -56,6 +56,7 @@ import "temporal/api/update/v1/message.proto";
 import "temporal/api/version/v1/message.proto";
 import "temporal/api/batch/v1/message.proto";
 import "temporal/api/sdk/v1/task_complete_metadata.proto";
+import "temporal/api/sdk/v1/user_metadata.proto";
 import "temporal/api/nexus/v1/message.proto";
 
 import "google/protobuf/duration.proto";
@@ -192,6 +193,10 @@ message StartWorkflowExecutionRequest {
     // If the workflow continues-as-new, these callbacks will be carried over to the new execution.
     // Callback addresses must be whitelisted in the server's dynamic configuration.
     repeated temporal.api.common.v1.Callback completion_callbacks = 21;
+    // Metadata on the workflow if it is started. This is carried over to the WorkflowExecutionInfo
+    // for use by user interfaces to display the fixed as-of-start summary and details of the
+    // workflow.
+    temporal.api.sdk.v1.UserMetadata user_metadata = 23;
 }
 
 message StartWorkflowExecutionResponse {
@@ -273,8 +278,16 @@ message PollWorkflowTaskQueueResponse {
     int64 started_event_id = 5;
     // Starting at 1, the number of attempts to complete this task by any worker.
     int32 attempt = 6;
-    // A hint that there are more tasks already present in this task queue. Can be used to
-    // prioritize draining a sticky queue before polling from a normal queue.
+    // A hint that there are more tasks already present in this task queue 
+    // partition. Can be used to prioritize draining a sticky queue.
+    //
+    // Specifically, the returned number is the number of tasks remaining in
+    // the in-memory buffer for this partition, which is currently capped at
+    // 1000. Because sticky queues only have one partition, this number is 
+    // more useful when draining them. Normal queues, typically having more than one 
+    // partition, will return a number representing only some portion of the 
+    // overall backlog. Subsequent RPCs may not hit the same partition as 
+    // this call.
     int64 backlog_count_hint = 7;
     // The history for this workflow, which will either be complete or partial. Partial histories
     // are sent to workers who have signaled that they are using a sticky queue when completing
@@ -676,6 +689,10 @@ message SignalWithStartWorkflowExecutionRequest {
     google.protobuf.Duration workflow_start_delay = 20;
     // Indicates that a new workflow task should not be generated when this signal is received.
     bool skip_generate_workflow_task = 21;
+    // Metadata on the workflow if it is started. This is carried over to the WorkflowExecutionInfo
+    // for use by user interfaces to display the fixed as-of-start summary and details of the
+    // workflow.
+    temporal.api.sdk.v1.UserMetadata user_metadata = 23;
 }
 
 message SignalWithStartWorkflowExecutionResponse {
@@ -902,8 +919,8 @@ message DescribeTaskQueueRequest {
 
     // Task queue types to report info about. If not specified, all types are considered.
     repeated temporal.api.enums.v1.TaskQueueType task_queue_types = 7;
-    // Report backlog info for the requested task queue types and versions
-    // bool report_backlog_info = 8;
+    // Report stats for the requested task queue types and versions
+    bool report_stats = 8;
     // Report list of pollers for requested task queue types and versions
     bool report_pollers = 9;
     // Report task reachability for the requested versions and all task types (task reachability is not reported

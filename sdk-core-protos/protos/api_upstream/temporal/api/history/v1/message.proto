@@ -44,6 +44,7 @@ import "temporal/api/taskqueue/v1/message.proto";
 import "temporal/api/update/v1/message.proto";
 import "temporal/api/workflow/v1/message.proto";
 import "temporal/api/sdk/v1/task_complete_metadata.proto";
+import "temporal/api/sdk/v1/user_metadata.proto";
 
 // Always the first event in workflow history
 message WorkflowExecutionStartedEventAttributes {
@@ -892,6 +893,15 @@ message HistoryEvent {
     // type which it does not understand, it must error unless this is true. If it is true, it's
     // acceptable for the event type and/or attributes to be uninterpretable.
     bool worker_may_ignore = 300;
+    // Metadata on the event. This is often carried over from commands and client calls. Most events
+    // won't have this information, and how this information is used is dependent upon the interface
+    // that reads it.
+    //
+    // Current well-known uses:
+    //  * workflow_execution_started_event_attributes - summary and details from start workflow.
+    //  * timer_started_event_attributes - summary represents an identifier for the timer for use by
+    //    user interfaces.
+    temporal.api.sdk.v1.UserMetadata user_metadata = 301;
     // The event details. The type must match that in `event_type`.
     oneof attributes {
         WorkflowExecutionStartedEventAttributes workflow_execution_started_event_attributes = 6;

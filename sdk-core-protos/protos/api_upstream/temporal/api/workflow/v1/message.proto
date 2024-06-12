@@ -40,6 +40,7 @@ import "temporal/api/enums/v1/workflow.proto";
 import "temporal/api/common/v1/message.proto";
 import "temporal/api/failure/v1/message.proto";
 import "temporal/api/taskqueue/v1/message.proto";
+import "temporal/api/sdk/v1/user_metadata.proto";
 
 message WorkflowExecutionInfo {
     temporal.api.common.v1.WorkflowExecution execution = 1;
@@ -97,6 +98,8 @@ message WorkflowExecutionConfig {
     google.protobuf.Duration workflow_execution_timeout = 2;
     google.protobuf.Duration workflow_run_timeout = 3;
     google.protobuf.Duration default_workflow_task_timeout = 4;
+    // User metadata provided on start workflow.
+    temporal.api.sdk.v1.UserMetadata user_metadata = 5;
 }
 
 message PendingActivityInfo {
@@ -197,6 +200,10 @@ message NewWorkflowExecutionInfo {
     temporal.api.common.v1.Memo memo = 11;
     temporal.api.common.v1.SearchAttributes search_attributes = 12;
     temporal.api.common.v1.Header header = 13;
+    // Metadata on the workflow if it is started. This is carried over to the WorkflowExecutionConfig
+    // for use by user interfaces to display the fixed as-of-start summary and details of the
+    // workflow.
+    temporal.api.sdk.v1.UserMetadata user_metadata = 14;
 }
 
 // CallbackInfo contains the state of an attached workflow callback.

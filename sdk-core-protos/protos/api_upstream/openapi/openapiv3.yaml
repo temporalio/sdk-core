@@ -6,7 +6,7 @@ info:
   title: ""
   version: 0.0.1
 paths:
-  /api/v1/cluster-info:
+  /cluster-info:
     get:
       tags:
         - WorkflowService
@@ -25,7 +25,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces:
+  /namespaces:
     get:
       tags:
         - WorkflowService
@@ -93,7 +93,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}:
+  /namespaces/{namespace}:
     get:
       tags:
         - WorkflowService
@@ -122,7 +122,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/activities/cancel:
+  /namespaces/{namespace}/activities/cancel:
     post:
       tags:
         - WorkflowService
@@ -158,7 +158,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/activities/cancel-by-id:
+  /namespaces/{namespace}/activities/cancel-by-id:
     post:
       tags:
         - WorkflowService
@@ -195,7 +195,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/activities/complete:
+  /namespaces/{namespace}/activities/complete:
     post:
       tags:
         - WorkflowService
@@ -232,7 +232,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/activities/complete-by-id:
+  /namespaces/{namespace}/activities/complete-by-id:
     post:
       tags:
         - WorkflowService
@@ -269,7 +269,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/activities/fail:
+  /namespaces/{namespace}/activities/fail:
     post:
       tags:
         - WorkflowService
@@ -305,7 +305,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/activities/fail-by-id:
+  /namespaces/{namespace}/activities/fail-by-id:
     post:
       tags:
         - WorkflowService
@@ -342,7 +342,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/activities/heartbeat:
+  /namespaces/{namespace}/activities/heartbeat:
     post:
       tags:
         - WorkflowService
@@ -379,7 +379,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/activities/heartbeat-by-id:
+  /namespaces/{namespace}/activities/heartbeat-by-id:
     post:
       tags:
         - WorkflowService
@@ -416,7 +416,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/archived-workflows:
+  /namespaces/{namespace}/archived-workflows:
     get:
       tags:
         - WorkflowService
@@ -455,7 +455,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/batch-operations:
+  /namespaces/{namespace}/batch-operations:
     get:
       tags:
         - WorkflowService
@@ -493,7 +493,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/batch-operations/{jobId}:
+  /namespaces/{namespace}/batch-operations/{jobId}:
     get:
       tags:
         - WorkflowService
@@ -562,7 +562,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/batch-operations/{jobId}/stop:
+  /namespaces/{namespace}/batch-operations/{jobId}/stop:
     post:
       tags:
         - WorkflowService
@@ -600,7 +600,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/schedules:
+  /namespaces/{namespace}/schedules:
     get:
       tags:
         - WorkflowService
@@ -643,7 +643,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/schedules/{scheduleId}:
+  /namespaces/{namespace}/schedules/{scheduleId}:
     get:
       tags:
         - WorkflowService
@@ -748,7 +748,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/schedules/{scheduleId}/matching-times:
+  /namespaces/{namespace}/schedules/{scheduleId}/matching-times:
     get:
       tags:
         - WorkflowService
@@ -791,7 +791,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/schedules/{scheduleId}/patch:
+  /namespaces/{namespace}/schedules/{scheduleId}/patch:
     post:
       tags:
         - WorkflowService
@@ -829,7 +829,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/schedules/{scheduleId}/update:
+  /namespaces/{namespace}/schedules/{scheduleId}/update:
     post:
       tags:
         - WorkflowService
@@ -867,7 +867,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/search-attributes:
+  /namespaces/{namespace}/search-attributes:
     get:
       tags:
         - OperatorService
@@ -892,7 +892,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/task-queues/{taskQueue}/worker-build-id-compatibility:
+  /namespaces/{namespace}/task-queues/{taskQueue}/worker-build-id-compatibility:
     get:
       tags:
         - WorkflowService
@@ -933,7 +933,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/task-queues/{taskQueue}/worker-versioning-rules:
+  /namespaces/{namespace}/task-queues/{taskQueue}/worker-versioning-rules:
     get:
       tags:
         - WorkflowService
@@ -965,7 +965,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/task-queues/{task_queue.name}:
+  /namespaces/{namespace}/task-queues/{task_queue.name}:
     get:
       tags:
         - WorkflowService
@@ -1066,12 +1066,14 @@ paths:
                 - TASK_QUEUE_TYPE_NEXUS
               type: string
               format: enum
+        - name: reportStats
+          in: query
+          description: Report stats for the requested task queue types and versions
+          schema:
+            type: boolean
         - name: reportPollers
           in: query
-          description: |-
-            Report backlog info for the requested task queue types and versions
-             bool report_backlog_info = 8;
-             Report list of pollers for requested task queue types and versions
+          description: Report list of pollers for requested task queue types and versions
           schema:
             type: boolean
         - name: reportTaskReachability
@@ -1094,7 +1096,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/update:
+  /namespaces/{namespace}/update:
     post:
       tags:
         - WorkflowService
@@ -1127,7 +1129,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/worker-task-reachability:
+  /namespaces/{namespace}/worker-task-reachability:
     get:
       tags:
         - WorkflowService
@@ -1207,7 +1209,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/workflow-count:
+  /namespaces/{namespace}/workflow-count:
     get:
       tags:
         - WorkflowService
@@ -1236,7 +1238,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/workflows:
+  /namespaces/{namespace}/workflows:
     get:
       tags:
         - WorkflowService
@@ -1275,7 +1277,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/workflows/execute-multi-operation:
+  /namespaces/{namespace}/workflows/execute-multi-operation:
     post:
       tags:
         - WorkflowService
@@ -1315,7 +1317,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/workflows/{execution.workflow_id}:
+  /namespaces/{namespace}/workflows/{execution.workflow_id}:
     get:
       tags:
         - WorkflowService
@@ -1353,7 +1355,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/workflows/{execution.workflow_id}/history:
+  /namespaces/{namespace}/workflows/{execution.workflow_id}/history:
     get:
       tags:
         - WorkflowService
@@ -1429,7 +1431,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/workflows/{execution.workflow_id}/history-reverse:
+  /namespaces/{namespace}/workflows/{execution.workflow_id}/history-reverse:
     get:
       tags:
         - WorkflowService
@@ -1477,7 +1479,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/workflows/{execution.workflow_id}/query/{query.query_type}:
+  /namespaces/{namespace}/workflows/{execution.workflow_id}/query/{query.query_type}:
     post:
       tags:
         - WorkflowService
@@ -1518,7 +1520,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/workflows/{workflowId}:
+  /namespaces/{namespace}/workflows/{workflowId}:
     post:
       tags:
         - WorkflowService
@@ -1559,7 +1561,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/workflows/{workflowId}/signal-with-start/{signalName}:
+  /namespaces/{namespace}/workflows/{workflowId}/signal-with-start/{signalName}:
     post:
       tags:
         - WorkflowService
@@ -1613,7 +1615,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/workflows/{workflow_execution.workflow_id}/cancel:
+  /namespaces/{namespace}/workflows/{workflow_execution.workflow_id}/cancel:
     post:
       tags:
         - WorkflowService
@@ -1655,7 +1657,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/workflows/{workflow_execution.workflow_id}/reset:
+  /namespaces/{namespace}/workflows/{workflow_execution.workflow_id}/reset:
     post:
       tags:
         - WorkflowService
@@ -1695,7 +1697,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/workflows/{workflow_execution.workflow_id}/signal/{signalName}:
+  /namespaces/{namespace}/workflows/{workflow_execution.workflow_id}/signal/{signalName}:
     post:
       tags:
         - WorkflowService
@@ -1741,7 +1743,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/workflows/{workflow_execution.workflow_id}/terminate:
+  /namespaces/{namespace}/workflows/{workflow_execution.workflow_id}/terminate:
     post:
       tags:
         - WorkflowService
@@ -1780,7 +1782,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/workflows/{workflow_execution.workflow_id}/update/{request.input.name}:
+  /namespaces/{namespace}/workflows/{workflow_execution.workflow_id}/update/{request.input.name}:
     post:
       tags:
         - WorkflowService
@@ -1822,7 +1824,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/nexus/endpoints:
+  /nexus/endpoints:
     get:
       tags:
         - OperatorService
@@ -1895,7 +1897,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/nexus/endpoints/{id}:
+  /nexus/endpoints/{id}:
     get:
       tags:
         - OperatorService
@@ -1951,7 +1953,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/nexus/endpoints/{id}/update:
+  /nexus/endpoints/{id}/update:
     post:
       tags:
         - OperatorService
@@ -1988,7 +1990,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/system-info:
+  /system-info:
     get:
       tags:
         - WorkflowService
@@ -2466,29 +2468,31 @@ components:
              where you want to send a certain portion of the traffic to the target
              Build ID.
       description: |-
-        These rules assign a Build ID to Unassigned Workflow Executions and
-         Activities.
+        Assignment rules are applied to *new* Workflow and Activity executions at
+         schedule time to assign them to a Build ID.
 
-         Specifically, assignment rules are applied to the following Executions or
-         Activities when they are scheduled in a Task Queue:
-            - Generally, any new Workflow Execution, except:
-              - When A Child Workflow or a Continue-As-New Execution inherits the
-                Build ID from its parent/previous execution by setting the
-                `inherit_build_id` flag.
-              - Workflow Executions started Eagerly are assigned to the Build ID of
-                the Starter.
-            - An Activity that is scheduled on a Task Queue different from the one
-              their Workflow runs on, unless the `use_workflow_build_id` flag is set.
+         Assignment rules will not be used in the following cases:
+            - Child Workflows or Continue-As-New Executions who inherit their
+              parent/previous Workflow's assigned Build ID (by setting the
+              `inherit_build_id` flag - default behavior in SDKs when the same Task Queue
+              is used.)
+            - An Activity that inherits the assigned Build ID of its Workflow (by
+              setting the `use_workflow_build_id` flag - default behavior in SDKs
+              when the same Task Queue is used.)
 
          In absence of (applicable) redirect rules (`CompatibleBuildIdRedirectRule`s)
          the task will be dispatched to Workers of the Build ID determined by the
-         assignment rules. Otherwise, the final Build ID will be determined by the
-         redirect rules.
+         assignment rules (or inherited). Otherwise, the final Build ID will be
+         determined by the redirect rules.
 
-         When using Worker Versioning, in the steady state, for a given Task Queue,
-         there should typically be exactly one assignment rule to send all Unassigned
-         tasks to the latest Build ID. Existence of at least one such "unconditional"
-         rule at all times is enforce by the system, unless the `force` flag is used
+         Once a Workflow completes its first Workflow Task in a particular Build ID it
+         stays in that Build ID regardless of changes to assignment rules. Redirect
+         rules can be used to move the workflow to another compatible Build ID.
+
+         When using Worker Versioning on a Task Queue, in the steady state,
+         there should typically be a single assignment rule to send all new executions
+         to the latest Build ID. Existence of at least one such "unconditional"
+         rule at all times is enforces by the system, unless the `force` flag is used
          by the user when replacing/deleting these rules (for exceptional cases).
 
          During a deployment, one or more additional rules can be added to assign a
@@ -2499,10 +2503,8 @@ components:
          applied and the rest will be ignored.
 
          In the event that no assignment rule is applicable on a task (or the Task
-         Queue is simply not versioned), the tasks will be sent to unversioned
-         workers, if available. Otherwise, they remain Unassigned, and will be
-         retried for assignment, or dispatch to unversioned workers, at a later time
-         depending on the availability of workers.
+         Queue is simply not versioned), the tasks will be dispatched to an
+         unversioned Worker.
     BuildIdReachability:
       type: object
       properties:
@@ -2825,6 +2827,11 @@ components:
           type: string
         targetBuildId:
           type: string
+          description: |-
+            Target Build ID must be compatible with the Source Build ID; that is it
+             must be able to process event histories made by the Source Build ID by
+             using [Patching](https://docs.temporal.io/workflows#patching) or other
+             means.
       description: |-
         These rules apply to tasks assigned to a particular Build ID
          (`source_build_id`) to redirect them to another *compatible* Build ID
@@ -2845,8 +2852,7 @@ components:
           - To be able to Reset an old Execution so it can run on the current
             (compatible) Build ID.
 
-         Redirect rules can be chained, but only the last rule in the chain can have
-         a ramp.
+         Redirect rules can be chained.
     CompatibleVersionSet:
       type: object
       properties:
@@ -3145,12 +3151,8 @@ components:
           description: |-
             Endpoint name, unique for this cluster. Must match `[a-zA-Z_][a-zA-Z0-9_]*`.
              Renaming an endpoint breaks all workflow callers that reference this endpoint, causing operations to fail.
-        description:
-          allOf:
-            - $ref: '#/components/schemas/Payload'
-          description: |-
-            Markdown description serialized as a single JSON string.
-             If the Payload is encrypted, the UI and CLI may decrypt with the configured codec server endpoint.
+        metadata:
+          $ref: '#/components/schemas/UserMetadata'
         target:
           allOf:
             - $ref: '#/components/schemas/EndpointTarget'
@@ -3576,6 +3578,18 @@ components:
              information in any way that the SDK need be concerned with. If an SDK encounters an event
              type which it does not understand, it must error unless this is true. If it is true, it's
              acceptable for the event type and/or attributes to be uninterpretable.
+        userMetadata:
+          allOf:
+            - $ref: '#/components/schemas/UserMetadata'
+          description: |-
+            Metadata on the event. This is often carried over from commands and client calls. Most events
+             won't have this information, and how this information is used is dependent upon the interface
+             that reads it.
+
+             Current well-known uses:
+              * workflow_execution_started_event_attributes - summary and details from start workflow.
+              * timer_started_event_attributes - summary represents an identifier for the timer for use by
+                user interfaces.
         workflowExecutionStartedEventAttributes:
           $ref: '#/components/schemas/WorkflowExecutionStartedEventAttributes'
         workflowExecutionCompletedEventAttributes:
@@ -4051,6 +4065,13 @@ components:
           $ref: '#/components/schemas/SearchAttributes'
         header:
           $ref: '#/components/schemas/Header'
+        userMetadata:
+          allOf:
+            - $ref: '#/components/schemas/UserMetadata'
+          description: |-
+            Metadata on the workflow if it is started. This is carried over to the WorkflowExecutionConfig
+             for use by user interfaces to display the fixed as-of-start summary and details of the
+             workflow.
       description: |-
         NewWorkflowExecutionInfo is a shared message that encapsulates all the
          required arguments to starting a workflow in different contexts.
@@ -4451,9 +4472,7 @@ components:
           format: int32
         backlogCountHint:
           type: string
-          description: |-
-            A hint that there are more tasks already present in this task queue. Can be used to
-             prioritize draining a sticky queue before polling from a normal queue.
+          description: "A hint that there are more tasks already present in this task queue \n partition. Can be used to prioritize draining a sticky queue.\n\n Specifically, the returned number is the number of tasks remaining in\n the in-memory buffer for this partition, which is currently capped at\n 1000. Because sticky queues only have one partition, this number is \n more useful when draining them. Normal queues, typically having more than one \n partition, will return a number representing only some portion of the \n overall backlog. Subsequent RPCs may not hit the same partition as \n this call."
         history:
           allOf:
             - $ref: '#/components/schemas/History'
@@ -5642,6 +5661,13 @@ components:
         skipGenerateWorkflowTask:
           type: boolean
           description: Indicates that a new workflow task should not be generated when this signal is received.
+        userMetadata:
+          allOf:
+            - $ref: '#/components/schemas/UserMetadata'
+          description: |-
+            Metadata on the workflow if it is started. This is carried over to the WorkflowExecutionInfo
+             for use by user interfaces to display the fixed as-of-start summary and details of the
+             workflow.
     SignalWithStartWorkflowExecutionResponse:
       type: object
       properties:
@@ -5939,6 +5965,13 @@ components:
             Callbacks to be called by the server when this workflow reaches a terminal state.
              If the workflow continues-as-new, these callbacks will be carried over to the new execution.
              Callback addresses must be whitelisted in the server's dynamic configuration.
+        userMetadata:
+          allOf:
+            - $ref: '#/components/schemas/UserMetadata'
+          description: |-
+            Metadata on the workflow if it is started. This is carried over to the WorkflowExecutionInfo
+             for use by user interfaces to display the fixed as-of-start summary and details of the
+             workflow.
     StartWorkflowExecutionResponse:
       type: object
       properties:
@@ -6090,6 +6123,34 @@ components:
              See the TaskReachability docstring for information about each enum variant.
              If reachability is empty, this worker is considered unreachable in this task queue.
       description: Reachability of tasks for a worker on a single task queue.
+    TaskQueueStats:
+      type: object
+      properties:
+        approximateBacklogCount:
+          type: string
+          description: |-
+            The approximate number of tasks backlogged in this task queue. May count expired tasks but eventually converges
+             to the right value.
+        approximateBacklogAge:
+          pattern: ^-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,9})?s$
+          type: string
+          description: Approximate age of the oldest task in the backlog based on the create timestamp of the task at the head of the queue.
+        tasksAddRate:
+          type: number
+          description: |-
+            Approximate tasks per second added to the task queue based on activity within a fixed window. This includes both backlogged and
+             sync-matched tasks.
+          format: float
+        tasksDispatchRate:
+          type: number
+          description: |-
+            Approximate tasks per second dispatched to workers based on activity within a fixed window. This includes both backlogged and
+             sync-matched tasks.
+          format: float
+      description: |-
+        For workflow task queues, we only report the normal queue stats, not sticky queues. This means the stats
+         reported here do not count all workflow tasks. However, because the tasks queued in sticky queues only remain
+         valid for a few seconds, the inaccuracy becomes less significant as the backlog age grows.
     TaskQueueStatus:
       type: object
       properties:
@@ -6113,6 +6174,8 @@ components:
           items:
             $ref: '#/components/schemas/PollerInfo'
           description: Unversioned workers (with `useVersioning=false`) are reported in unversioned result even if they set a Build ID.
+        stats:
+          $ref: '#/components/schemas/TaskQueueStats'
     TaskQueueVersionInfo:
       type: object
       properties:
@@ -6128,6 +6191,16 @@ components:
             - BUILD_ID_TASK_REACHABILITY_CLOSED_WORKFLOWS_ONLY
             - BUILD_ID_TASK_REACHABILITY_UNREACHABLE
           type: string
+          description: |-
+            Task Reachability is eventually consistent; there may be a delay until it converges to the most
+             accurate value but it is designed in a way to take the more conservative side until it converges.
+             For example REACHABLE is more conservative than CLOSED_WORKFLOWS_ONLY.
+
+             Note: future activities who inherit their workflow's Build ID but not its Task Queue will not be
+             accounted for reachability as server cannot know if they'll happen as they do not use
+             assignment rules of their Task Queue. Same goes for Child Workflows or Continue-As-New Workflows
+             who inherit the parent/previous workflow's Build ID but not its Task Queue. In those cases, make
+             sure to query reachability for the parent/previous workflow's Task Queue as well.
           format: enum
     TerminateWorkflowExecutionRequest:
       type: object
@@ -6444,6 +6517,25 @@ components:
           description: The `WORKFLOW_TASK_COMPLETED` event which this command was reported with
         searchAttributes:
           $ref: '#/components/schemas/SearchAttributes'
+    UserMetadata:
+      type: object
+      properties:
+        summary:
+          allOf:
+            - $ref: '#/components/schemas/Payload'
+          description: |-
+            Short-form text that provides a summary. This payload should be a "json/plain"-encoded payload
+             that is a single JSON string for use in user interfaces. User interface formatting may not
+             apply to this text when used in "title" situations. The payload data section is limited to 400
+             bytes by default.
+        details:
+          allOf:
+            - $ref: '#/components/schemas/Payload'
+          description: |-
+            Long-form text that provides details. This payload should be a "json/plain"-encoded payload
+             that is a single JSON string for use in user interfaces. User interface formatting may apply to
+             this text in common use. The payload data section is limited to 20000 bytes by default.
+      description: Information a user can set, often for use by user interfaces.
     VersionInfo:
       type: object
       properties:
@@ -6569,6 +6661,10 @@ components:
         defaultWorkflowTaskTimeout:
           pattern: ^-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,9})?s$
           type: string
+        userMetadata:
+          allOf:
+            - $ref: '#/components/schemas/UserMetadata'
+          description: User metadata provided on start workflow.
     WorkflowExecutionContinuedAsNewEventAttributes:
       type: object
       properties:

@@ -137,6 +137,8 @@ enum ResourceExhaustedCause {
     RESOURCE_EXHAUSTED_CAUSE_BUSY_WORKFLOW = 5;
     // Caller exceeds action per second limit.
     RESOURCE_EXHAUSTED_CAUSE_APS_LIMIT = 6;
+    // Persistence storage limit exceeded.
+    RESOURCE_EXHAUSTED_CAUSE_PERSISTENCE_STORAGE_LIMIT = 7;
 }
 
 enum ResourceExhaustedScope {

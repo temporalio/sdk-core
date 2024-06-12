@@ -38,6 +38,7 @@ import "temporal/api/enums/v1/command_type.proto";
 import "temporal/api/common/v1/message.proto";
 import "temporal/api/failure/v1/message.proto";
 import "temporal/api/taskqueue/v1/message.proto";
+import "temporal/api/sdk/v1/user_metadata.proto";
 
 message ScheduleActivityTaskCommandAttributes {
     string activity_id = 1;
@@ -267,6 +268,18 @@ message RequestCancelNexusOperationCommandAttributes {
 
 message Command {
     temporal.api.enums.v1.CommandType command_type = 1;
+    // Metadata on the command. This is sometimes carried over to the history event if one is
+    // created as a result of the command. Most commands won't have this information, and how this
+    // information is used is dependent upon the interface that reads it.
+    //
+    // Current well-known uses:
+    //  * start_child_workflow_execution_command_attributes - populates
+    //    temporal.api.workflow.v1.WorkflowExecutionInfo.user_metadata where the summary and details
+    //    are used by user interfaces to show fixed as-of-start workflow summary and details.
+    //  * start_timer_command_attributes - populates temporal.api.history.v1.HistoryEvent for timer
+    //    started where the summary is used to identify the timer.
+    temporal.api.sdk.v1.UserMetadata user_metadata = 301;
+    // The command details. The type must match that in `command_type`.
     oneof attributes {
         ScheduleActivityTaskCommandAttributes schedule_activity_task_command_attributes = 2;
         StartTimerCommandAttributes start_timer_command_attributes = 3;

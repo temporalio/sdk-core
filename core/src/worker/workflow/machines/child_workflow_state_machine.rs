@@ -457,6 +457,7 @@ impl ChildWorkflowMachine {
                 attribs,
                 use_compatible_version,
             )),
+            user_metadata: Default::default(),
         };
         NewMachineWithCommand {
             command: cmd,
