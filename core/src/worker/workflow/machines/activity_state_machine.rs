@@ -134,6 +134,7 @@ impl ActivityMachine {
                 s.shared_state().attrs.clone(),
                 use_compatible_version,
             )),
+            user_metadata: Default::default(),
         };
         NewMachineWithCommand {
             command,
@@ -687,6 +688,7 @@ where
                 },
             ),
         ),
+        user_metadata: Default::default(),
     };
     ActivityMachineTransition::ok(
         vec![ActivityMachineCommand::RequestCancellation(cmd)],

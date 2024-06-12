@@ -40,6 +40,7 @@ pub(super) fn continue_as_new(
     let command = Command {
         command_type: CommandType::ContinueAsNewWorkflowExecution as i32,
         attributes: Some(continue_as_new_cmd_to_api(attribs, use_compatible_version)),
+        user_metadata: Default::default(),
     };
     NewMachineWithCommand {
         command,

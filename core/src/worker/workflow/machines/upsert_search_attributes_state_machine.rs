@@ -86,6 +86,7 @@ fn create_new(sa_map: SearchAttributes) -> NewMachineWithCommand {
                 },
             ),
         ),
+        user_metadata: Default::default(),
     };
     NewMachineWithCommand {
         command: cmd,

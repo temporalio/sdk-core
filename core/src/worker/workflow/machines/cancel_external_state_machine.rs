@@ -78,6 +78,7 @@ pub(super) fn new_external_cancel(
     let cmd = Command {
         command_type: CommandType::RequestCancelExternalWorkflowExecution as i32,
         attributes: Some(cmd_attrs),
+        user_metadata: Default::default(),
     };
     NewMachineWithCommand {
         command: cmd,

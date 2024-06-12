@@ -97,6 +97,7 @@ impl Created {
         let cmd = Command {
             command_type: CommandType::CompleteWorkflowExecution as i32,
             attributes: Some(self.attribs.into()),
+            user_metadata: Default::default(),
         };
         TransitionResult::commands(vec![CompleteWFCommand::AddCommand(cmd)])
     }

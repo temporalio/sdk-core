@@ -112,6 +112,7 @@ pub(super) fn new_external_signal(
     let cmd = Command {
         command_type: CommandType::SignalExternalWorkflowExecution as i32,
         attributes: Some(cmd_attrs),
+        user_metadata: Default::default(),
     };
     Ok(NewMachineWithCommand {
         command: cmd,

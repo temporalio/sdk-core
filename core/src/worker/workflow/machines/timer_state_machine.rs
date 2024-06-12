@@ -79,6 +79,7 @@ impl TimerMachine {
         let cmd = Command {
             command_type: CommandType::StartTimer as i32,
             attributes: Some(s.shared_state().attrs.clone().into()),
+            user_metadata: Default::default(),
         };
         (s, cmd)
     }
@@ -210,6 +211,7 @@ impl StartCommandRecorded {
         let cmd = Command {
             command_type: CommandType::CancelTimer as i32,
             attributes: Some(CancelTimer { seq: dat.attrs.seq }.into()),
+            user_metadata: Default::default(),
         };
         TransitionResult::ok(
             vec![TimerMachineCommand::IssueCancelCmd(cmd)],

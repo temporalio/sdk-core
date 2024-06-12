@@ -64,6 +64,7 @@ impl Created {
         let cmd = ProtoCommand {
             command_type: CommandType::FailWorkflowExecution as i32,
             attributes: Some(self.attribs.into()),
+            user_metadata: Default::default(),
         };
         TransitionResult::commands(vec![FailWFCommand::AddCommand(cmd)])
     }

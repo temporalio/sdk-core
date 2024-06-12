@@ -114,6 +114,7 @@ pub(super) fn has_change<'a>(
             }
             .into(),
         ),
+        user_metadata: Default::default(),
     };
     let mut machine = PatchMachine::from_parts(initial_state, shared_state);
 
