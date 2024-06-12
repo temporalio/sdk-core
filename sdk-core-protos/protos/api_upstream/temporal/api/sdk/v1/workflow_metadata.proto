@@ -35,6 +35,9 @@ option csharp_namespace = "Temporalio.Api.Sdk.V1";
 message WorkflowMetadata {
   // Metadata provided at declaration or creation time.
   WorkflowDefinition definition = 1;
+  // Current long-form details of the workflow's state. This is used by user interfaces to show
+  // long-form text. This text may be formatted by the user interface.
+  string current_details = 2;
 }
 
 // (-- api-linter: core::0203::optional=disabled --)
@@ -42,13 +45,9 @@ message WorkflowDefinition {
   // A name scoped by the task queue that maps to this workflow definition.
   // If missing, this workflow is a dynamic workflow.
   string type = 1;
-  // An optional workflow description provided by the application.
-  // By convention, external tools may interpret its first part,
-  // i.e., ending with a line break, as a summary of the description.
-  string description = 2;
-  repeated WorkflowInteractionDefinition query_definitions = 3;
-  repeated WorkflowInteractionDefinition signal_definitions = 4;
-  repeated WorkflowInteractionDefinition update_definitions = 5;
+  repeated WorkflowInteractionDefinition query_definitions = 2;
+  repeated WorkflowInteractionDefinition signal_definitions = 3;
+  repeated WorkflowInteractionDefinition update_definitions = 4;
 }
 
 // (-- api-linter: core::0123::resource-annotation=disabled

@@ -31,6 +31,7 @@ option csharp_namespace = "Temporalio.Api.Nexus.V1";
 
 import "google/protobuf/timestamp.proto";
 import "temporal/api/common/v1/message.proto";
+import "temporal/api/sdk/v1/user_metadata.proto";
 
 // A general purpose failure message.
 // See: https://github.com/nexus-rpc/api/blob/main/SPEC.md#failure
@@ -160,9 +161,8 @@ message EndpointSpec {
     // Endpoint name, unique for this cluster. Must match `[a-zA-Z_][a-zA-Z0-9_]*`.
     // Renaming an endpoint breaks all workflow callers that reference this endpoint, causing operations to fail.
     string name = 1;
-    // Markdown description serialized as a single JSON string.
-    // If the Payload is encrypted, the UI and CLI may decrypt with the configured codec server endpoint.
-    temporal.api.common.v1.Payload description = 2;
+
+    temporal.api.sdk.v1.UserMetadata metadata = 2;
 
     // Target to route requests to.
     EndpointTarget target = 3;

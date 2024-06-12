@@ -58,7 +58,7 @@ service OperatorService {
     // ListSearchAttributes returns comprehensive information about search attributes.
     rpc ListSearchAttributes (ListSearchAttributesRequest) returns (ListSearchAttributesResponse) {
         option (google.api.http) = {
-            get: "/api/v1/namespaces/{namespace}/search-attributes",
+            get: "/namespaces/{namespace}/search-attributes",
         };
     }
 
@@ -81,7 +81,7 @@ service OperatorService {
     // Get a registered Nexus endpoint by ID. The returned version can be used for optimistic updates.
     rpc GetNexusEndpoint(GetNexusEndpointRequest) returns (GetNexusEndpointResponse) {
         option (google.api.http) = {
-            get: "/api/v1/nexus/endpoints/{id}"
+            get: "/nexus/endpoints/{id}"
         };
     }
 
@@ -90,7 +90,7 @@ service OperatorService {
     // Returns the created endpoint with its initial version. You may use this version for subsequent updates.
     rpc CreateNexusEndpoint(CreateNexusEndpointRequest) returns (CreateNexusEndpointResponse) {
         option (google.api.http) = {
-            post: "/api/v1/nexus/endpoints"
+            post: "/nexus/endpoints"
             body: "*"
         };
     }
@@ -102,7 +102,7 @@ service OperatorService {
     // need to increment the version yourself. The server will increment the version for you after each update.
     rpc UpdateNexusEndpoint(UpdateNexusEndpointRequest) returns (UpdateNexusEndpointResponse) {
         option (google.api.http) = {
-            post: "/api/v1/nexus/endpoints/{id}/update"
+            post: "/nexus/endpoints/{id}/update"
             body: "*"
         };
     }
@@ -110,7 +110,7 @@ service OperatorService {
     // Delete an incoming Nexus service by ID.
     rpc DeleteNexusEndpoint(DeleteNexusEndpointRequest) returns (DeleteNexusEndpointResponse) {
         option (google.api.http) = {
-            delete: "/api/v1/nexus/endpoints/{id}"
+            delete: "/nexus/endpoints/{id}"
         };
     }
 
@@ -120,7 +120,7 @@ service OperatorService {
     // earlier than the previous page's last endpoint's ID may be missed.
     rpc ListNexusEndpoints(ListNexusEndpointsRequest) returns (ListNexusEndpointsResponse) {
         option (google.api.http) = {
-            get: "/api/v1/nexus/endpoints"
+            get: "/nexus/endpoints"
         };
     }
 }

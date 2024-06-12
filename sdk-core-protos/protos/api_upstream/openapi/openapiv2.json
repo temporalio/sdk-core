@@ -19,7 +19,7 @@
     "application/json"
   ],
   "paths": {
-    "/api/v1/cluster-info": {
+    "/cluster-info": {
       "get": {
         "summary": "GetClusterInfo returns information about temporal cluster",
         "operationId": "GetClusterInfo",
@@ -42,7 +42,7 @@
         ]
       }
     },
-    "/api/v1/namespaces": {
+    "/namespaces": {
       "get": {
         "summary": "ListNamespaces returns the information and configuration for all namespaces.",
         "operationId": "ListNamespaces",
@@ -120,7 +120,7 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}": {
+    "/namespaces/{namespace}": {
       "get": {
         "summary": "DescribeNamespace returns the information and configuration for a registered namespace.",
         "operationId": "DescribeNamespace",
@@ -157,7 +157,7 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}/activities/cancel": {
+    "/namespaces/{namespace}/activities/cancel": {
       "post": {
         "summary": "RespondActivityTaskFailed is called by workers when processing an activity task fails.",
         "description": "This results in a new `ACTIVITY_TASK_CANCELED` event being written to the workflow history\nand a new workflow task created for the workflow. Fails with `NotFound` if the task token is\nno longer valid due to activity timeout, already being completed, or never having existed.",
@@ -197,7 +197,7 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}/activities/cancel-by-id": {
+    "/namespaces/{namespace}/activities/cancel-by-id": {
       "post": {
         "summary": "See `RecordActivityTaskCanceled`. This version allows clients to record failures by\nnamespace/workflow id/activity id instead of task token.",
         "operationId": "RespondActivityTaskCanceledById",
@@ -237,7 +237,7 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}/activities/complete": {
+    "/namespaces/{namespace}/activities/complete": {
       "post": {
         "summary": "RespondActivityTaskCompleted is called by workers when they successfully complete an activity\ntask.",
         "description": "This results in a new `ACTIVITY_TASK_COMPLETED` event being written to the workflow history\nand a new workflow task created for the workflow. Fails with `NotFound` if the task token is\nno longer valid due to activity timeout, already being completed, or never having existed.",
@@ -277,7 +277,7 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}/activities/complete-by-id": {
+    "/namespaces/{namespace}/activities/complete-by-id": {
       "post": {
         "summary": "See `RecordActivityTaskCompleted`. This version allows clients to record completions by\nnamespace/workflow id/activity id instead of task token.",
         "operationId": "RespondActivityTaskCompletedById",
@@ -317,7 +317,7 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}/activities/fail": {
+    "/namespaces/{namespace}/activities/fail": {
       "post": {
         "summary": "RespondActivityTaskFailed is called by workers when processing an activity task fails.",
         "description": "This results in a new `ACTIVITY_TASK_FAILED` event being written to the workflow history and\na new workflow task created for the workflow. Fails with `NotFound` if the task token is no\nlonger valid due to activity timeout, already being completed, or never having existed.",
@@ -357,7 +357,7 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}/activities/fail-by-id": {
+    "/namespaces/{namespace}/activities/fail-by-id": {
       "post": {
         "summary": "See `RecordActivityTaskFailed`. This version allows clients to record failures by\nnamespace/workflow id/activity id instead of task token.",
         "operationId": "RespondActivityTaskFailedById",
@@ -397,7 +397,7 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}/activities/heartbeat": {
+    "/namespaces/{namespace}/activities/heartbeat": {
       "post": {
         "summary": "RecordActivityTaskHeartbeat is optionally called by workers while they execute activities.",
         "description": "If worker fails to heartbeat within the `heartbeat_timeout` interval for the activity task,\nthen it will be marked as timed out and an `ACTIVITY_TASK_TIMED_OUT` event will be written to\nthe workflow history. Calling `RecordActivityTaskHeartbeat` will fail with `NotFound` in\nsuch situations, in that event, the SDK should request cancellation of the activity.",
@@ -437,7 +437,7 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}/activities/heartbeat-by-id": {
+    "/namespaces/{namespace}/activities/heartbeat-by-id": {
       "post": {
         "summary": "See `RecordActivityTaskHeartbeat`. This version allows clients to record heartbeats by\nnamespace/workflow id/activity id instead of task token.",
         "operationId": "RecordActivityTaskHeartbeatById",
@@ -477,7 +477,7 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}/archived-workflows": {
+    "/namespaces/{namespace}/archived-workflows": {
       "get": {
         "summary": "ListArchivedWorkflowExecutions is a visibility API to list archived workflow executions in a specific namespace.",
         "operationId": "ListArchivedWorkflowExecutions",
@@ -528,7 +528,7 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}/batch-operations": {
+    "/namespaces/{namespace}/batch-operations": {
       "get": {
         "summary": "ListBatchOperations returns a list of batch operations",
         "operationId": "ListBatchOperations",
@@ -576,7 +576,7 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}/batch-operations/{jobId}": {
+    "/namespaces/{namespace}/batch-operations/{jobId}": {
       "get": {
         "summary": "DescribeBatchOperation returns the information about a batch operation",
         "operationId": "DescribeBatchOperation",
@@ -660,7 +660,7 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}/batch-operations/{jobId}/stop": {
+    "/namespaces/{namespace}/batch-operations/{jobId}/stop": {
       "post": {
         "summary": "StopBatchOperation stops a batch operation",
         "operationId": "StopBatchOperation",
@@ -707,7 +707,7 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}/schedules": {
+    "/namespaces/{namespace}/schedules": {
       "get": {
         "summary": "List all schedules in a namespace.",
         "operationId": "ListSchedules",
@@ -762,7 +762,7 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}/schedules/{scheduleId}": {
+    "/namespaces/{namespace}/schedules/{scheduleId}": {
       "get": {
         "summary": "Returns the schedule description and current state of an existing schedule.",
         "operationId": "DescribeSchedule",
@@ -890,7 +890,7 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}/schedules/{scheduleId}/matching-times": {
+    "/namespaces/{namespace}/schedules/{scheduleId}/matching-times": {
       "get": {
         "summary": "Lists matching times within a range.",
         "operationId": "ListScheduleMatchingTimes",
@@ -944,7 +944,7 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}/schedules/{scheduleId}/patch": {
+    "/namespaces/{namespace}/schedules/{scheduleId}/patch": {
       "post": {
         "summary": "Makes a specific change to a schedule or triggers an immediate action.",
         "operationId": "PatchSchedule",
@@ -991,7 +991,7 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}/schedules/{scheduleId}/update": {
+    "/namespaces/{namespace}/schedules/{scheduleId}/update": {
       "post": {
         "summary": "Changes the configuration or state of an existing schedule.",
         "operationId": "UpdateSchedule",
@@ -1038,7 +1038,7 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}/search-attributes": {
+    "/namespaces/{namespace}/search-attributes": {
       "get": {
         "summary": "ListSearchAttributes returns comprehensive information about search attributes.",
         "operationId": "ListSearchAttributes",
@@ -1069,7 +1069,7 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}/task-queues/{taskQueue.name}": {
+    "/namespaces/{namespace}/task-queues/{taskQueue.name}": {
       "get": {
         "summary": "DescribeTaskQueue returns the following information about the target task queue, broken down by Build ID:\n  - List of pollers\n  - Workflow Reachability status\n  - Backlog info for Workflow and/or Activity tasks",
         "operationId": "DescribeTaskQueue",
@@ -1196,8 +1196,15 @@
             "collectionFormat": "multi"
           },
           {
+            "name": "reportStats",
+            "description": "Report stats for the requested task queue types and versions",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          },
+          {
             "name": "reportPollers",
-            "description": "Report backlog info for the requested task queue types and versions\nbool report_backlog_info = 8;\nReport list of pollers for requested task queue types and versions",
+            "description": "Report list of pollers for requested task queue types and versions",
             "in": "query",
             "required": false,
             "type": "boolean"
@@ -1215,7 +1222,7 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}/task-queues/{taskQueue}/worker-build-id-compatibility": {
+    "/namespaces/{namespace}/task-queues/{taskQueue}/worker-build-id-compatibility": {
       "get": {
         "summary": "Deprecated. Use `GetWorkerVersioningRules`.\nFetches the worker build id versioning sets for a task queue.",
         "operationId": "GetWorkerBuildIdCompatibility",
@@ -1261,7 +1268,7 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}/task-queues/{taskQueue}/worker-versioning-rules": {
+    "/namespaces/{namespace}/task-queues/{taskQueue}/worker-versioning-rules": {
       "get": {
         "summary": "Fetches the Build ID assignment and redirect rules for a Task Queue.\nWARNING: Worker Versioning is not yet stable and the API and behavior may change incompatibly.",
         "operationId": "GetWorkerVersioningRules",
@@ -1298,7 +1305,7 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}/update": {
+    "/namespaces/{namespace}/update": {
       "post": {
         "summary": "UpdateNamespace is used to update the information and configuration of a registered\nnamespace.",
         "operationId": "UpdateNamespace",
@@ -1337,7 +1344,7 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}/worker-task-reachability": {
+    "/namespaces/{namespace}/worker-task-reachability": {
       "get": {
         "summary": "Deprecated. Use `DescribeTaskQueue`.",
         "description": "Fetches task reachability to determine whether a worker may be retired.\nThe request may specify task queues to query for or let the server fetch all task queues mapped to the given\nbuild IDs.\n\nWhen requesting a large number of task queues or all task queues associated with the given build ids in a\nnamespace, all task queues will be listed in the response but some of them may not contain reachability\ninformation due to a server enforced limit. When reaching the limit, task queues that reachability information\ncould not be retrieved for will be marked with a single TASK_REACHABILITY_UNSPECIFIED entry. The caller may issue\nanother call to get the reachability for those task queues.\n\nOpen source users can adjust this limit by setting the server's dynamic config value for\n`limit.reachabilityTaskQueueScan` with the caveat that this call can strain the visibility store.",
@@ -1406,7 +1413,7 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}/workflow-count": {
+    "/namespaces/{namespace}/workflow-count": {
       "get": {
         "summary": "CountWorkflowExecutions is a visibility API to count of workflow executions in a specific namespace.",
         "operationId": "CountWorkflowExecutions",
@@ -1443,7 +1450,7 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}/workflows": {
+    "/namespaces/{namespace}/workflows": {
       "get": {
         "summary": "ListWorkflowExecutions is a visibility API to list workflow executions in a specific namespace.",
         "operationId": "ListWorkflowExecutions",
@@ -1494,7 +1501,7 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}/workflows/execute-multi-operation": {
+    "/namespaces/{namespace}/workflows/execute-multi-operation": {
       "post": {
         "summary": "ExecuteMultiOperation executes multiple operations within a single workflow.",
         "description": "Operations are started atomically, meaning if *any* operation fails to be started, none are,\nand the request fails. Upon start, the API returns only when *all* operations have a response.\n\nUpon failure, it returns `MultiOperationExecutionFailure` where the status code\nequals the status code of the *first* operation that failed to be started.\n\nNOTE: Experimental API.",
@@ -1534,7 +1541,7 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}/workflows/{execution.workflowId}": {
+    "/namespaces/{namespace}/workflows/{execution.workflowId}": {
       "get": {
         "summary": "DescribeWorkflowExecution returns information about the specified workflow execution.",
         "operationId": "DescribeWorkflowExecution",
@@ -1577,7 +1584,7 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}/workflows/{execution.workflowId}/history": {
+    "/namespaces/{namespace}/workflows/{execution.workflowId}/history": {
       "get": {
         "summary": "GetWorkflowExecutionHistory returns the history of specified workflow execution. Fails with\n`NotFound` if the specified workflow execution is unknown to the service.",
         "operationId": "GetWorkflowExecutionHistory",
@@ -1661,7 +1668,7 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}/workflows/{execution.workflowId}/history-reverse": {
+    "/namespaces/{namespace}/workflows/{execution.workflowId}/history-reverse": {
       "get": {
         "summary": "GetWorkflowExecutionHistoryReverse returns the history of specified workflow execution in reverse \norder (starting from last event). Fails with`NotFound` if the specified workflow execution is \nunknown to the service.",
         "operationId": "GetWorkflowExecutionHistoryReverse",
@@ -1718,7 +1725,7 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}/workflows/{execution.workflowId}/query/{query.queryType}": {
+    "/namespaces/{namespace}/workflows/{execution.workflowId}/query/{query.queryType}": {
       "post": {
         "summary": "QueryWorkflow requests a query be executed for a specified workflow execution.",
         "operationId": "QueryWorkflow",
@@ -1770,7 +1777,7 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}/workflows/{workflowExecution.workflowId}/cancel": {
+    "/namespaces/{namespace}/workflows/{workflowExecution.workflowId}/cancel": {
       "post": {
         "summary": "RequestCancelWorkflowExecution is called by workers when they want to request cancellation of\na workflow execution.",
         "description": "This results in a new `WORKFLOW_EXECUTION_CANCEL_REQUESTED` event being written to the\nworkflow history and a new workflow task created for the workflow. It returns success if the requested\nworkflow is already closed. It fails with 'NotFound' if the requested workflow doesn't exist.",
@@ -1816,7 +1823,7 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}/workflows/{workflowExecution.workflowId}/reset": {
+    "/namespaces/{namespace}/workflows/{workflowExecution.workflowId}/reset": {
       "post": {
         "summary": "ResetWorkflowExecution will reset an existing workflow execution to a specified\n`WORKFLOW_TASK_COMPLETED` event (exclusive). It will immediately terminate the current\nexecution instance.\nTODO: Does exclusive here mean *just* the completed event, or also WFT started? Otherwise the task is doomed to time out?",
         "operationId": "ResetWorkflowExecution",
@@ -1861,7 +1868,7 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}/workflows/{workflowExecution.workflowId}/signal/{signalName}": {
+    "/namespaces/{namespace}/workflows/{workflowExecution.workflowId}/signal/{signalName}": {
       "post": {
         "summary": "SignalWorkflowExecution is used to send a signal to a running workflow execution.",
         "description": "This results in a `WORKFLOW_EXECUTION_SIGNALED` event recorded in the history and a workflow\ntask being created for the execution.",
@@ -1914,7 +1921,7 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}/workflows/{workflowExecution.workflowId}/terminate": {
+    "/namespaces/{namespace}/workflows/{workflowExecution.workflowId}/terminate": {
       "post": {
         "summary": "TerminateWorkflowExecution terminates an existing workflow execution by recording a\n`WORKFLOW_EXECUTION_TERMINATED` event in the history and immediately terminating the\nexecution instance.",
         "operationId": "TerminateWorkflowExecution",
@@ -1959,7 +1966,7 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}/workflows/{workflowExecution.workflowId}/update/{request.input.name}": {
+    "/namespaces/{namespace}/workflows/{workflowExecution.workflowId}/update/{request.input.name}": {
       "post": {
         "summary": "Invokes the specified update function on user workflow code.",
         "operationId": "UpdateWorkflowExecution",
@@ -2012,7 +2019,7 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}/workflows/{workflowId}": {
+    "/namespaces/{namespace}/workflows/{workflowId}": {
       "post": {
         "summary": "StartWorkflowExecution starts a new workflow execution.",
         "description": "It will create the execution with a `WORKFLOW_EXECUTION_STARTED` event in its history and\nalso schedule the first workflow task. Returns `WorkflowExecutionAlreadyStarted`, if an\ninstance already exists with same workflow id.",
@@ -2058,7 +2065,7 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}/workflows/{workflowId}/signal-with-start/{signalName}": {
+    "/namespaces/{namespace}/workflows/{workflowId}/signal-with-start/{signalName}": {
       "post": {
         "summary": "SignalWithStartWorkflowExecution is used to ensure a signal is sent to a workflow, even if\nit isn't yet started.",
         "description": "If the workflow is running, a `WORKFLOW_EXECUTION_SIGNALED` event is recorded in the history\nand a workflow task is generated.\n\nIf the workflow is not running or not found, then the workflow is created with\n`WORKFLOW_EXECUTION_STARTED` and `WORKFLOW_EXECUTION_SIGNALED` events in its history, and a\nworkflow task is generated.",
@@ -2111,7 +2118,7 @@
         ]
       }
     },
-    "/api/v1/nexus/endpoints": {
+    "/nexus/endpoints": {
       "get": {
         "summary": "List all Nexus endpoints for the cluster, sorted by ID in ascending order. Set page_token in the request to the\nnext_page_token field of the previous response to get the next page of results. An empty next_page_token\nindicates that there are no more results. During pagination, a newly added service with an ID lexicographically\nearlier than the previous page's last endpoint's ID may be missed.",
         "operationId": "ListNexusEndpoints",
@@ -2189,7 +2196,7 @@
         ]
       }
     },
-    "/api/v1/nexus/endpoints/{id}": {
+    "/nexus/endpoints/{id}": {
       "get": {
         "summary": "Get a registered Nexus endpoint by ID. The returned version can be used for optimistic updates.",
         "operationId": "GetNexusEndpoint",
@@ -2259,7 +2266,7 @@
         ]
       }
     },
-    "/api/v1/nexus/endpoints/{id}/update": {
+    "/nexus/endpoints/{id}/update": {
       "post": {
         "summary": "Optimistically update a Nexus endpoint based on provided version as obtained via the `GetNexusEndpoint` or\n`ListNexusEndpointResponse` APIs. This will fail with a status of FAILED_PRECONDITION if the version does not\nmatch.\nReturns the updated endpoint with its updated version. You may use this version for subsequent updates. You don't\nneed to increment the version yourself. The server will increment the version for you after each update.",
         "operationId": "UpdateNexusEndpoint",
@@ -2299,7 +2306,7 @@
         ]
       }
     },
-    "/api/v1/system-info": {
+    "/system-info": {
       "get": {
         "summary": "GetSystemInfo returns information about the system.",
         "operationId": "GetSystemInfo",
@@ -2970,6 +2977,10 @@
         "skipGenerateWorkflowTask": {
           "type": "boolean",
           "description": "Indicates that a new workflow task should not be generated when this signal is received."
+        },
+        "userMetadata": {
+          "$ref": "#/definitions/v1UserMetadata",
+          "description": "Metadata on the workflow if it is started. This is carried over to the WorkflowExecutionInfo\nfor use by user interfaces to display the fixed as-of-start summary and details of the\nworkflow."
         }
       }
     },
@@ -3132,6 +3143,10 @@
             "$ref": "#/definitions/v1Callback"
           },
           "description": "Callbacks to be called by the server when this workflow reaches a terminal state.\nIf the workflow continues-as-new, these callbacks will be carried over to the new execution.\nCallback addresses must be whitelisted in the server's dynamic configuration."
+        },
+        "userMetadata": {
+          "$ref": "#/definitions/v1UserMetadata",
+          "description": "Metadata on the workflow if it is started. This is carried over to the WorkflowExecutionInfo\nfor use by user interfaces to display the fixed as-of-start summary and details of the\nworkflow."
         }
       }
     },
@@ -3901,7 +3916,7 @@
           "description": "This ramp is useful for gradual Blue/Green deployments (and similar)\nwhere you want to send a certain portion of the traffic to the target\nBuild ID."
         }
       },
-      "description": "These rules assign a Build ID to Unassigned Workflow Executions and\nActivities.\n\nSpecifically, assignment rules are applied to the following Executions or\nActivities when they are scheduled in a Task Queue:\n   - Generally, any new Workflow Execution, except:\n     - When A Child Workflow or a Continue-As-New Execution inherits the\n       Build ID from its parent/previous execution by setting the\n       `inherit_build_id` flag.\n     - Workflow Executions started Eagerly are assigned to the Build ID of\n       the Starter.\n   - An Activity that is scheduled on a Task Queue different from the one\n     their Workflow runs on, unless the `use_workflow_build_id` flag is set.\n\nIn absence of (applicable) redirect rules (`CompatibleBuildIdRedirectRule`s)\nthe task will be dispatched to Workers of the Build ID determined by the\nassignment rules. Otherwise, the final Build ID will be determined by the\nredirect rules.\n\nWhen using Worker Versioning, in the steady state, for a given Task Queue,\nthere should typically be exactly one assignment rule to send all Unassigned\ntasks to the latest Build ID. Existence of at least one such \"unconditional\"\nrule at all times is enforce by the system, unless the `force` flag is used\nby the user when replacing/deleting these rules (for exceptional cases).\n\nDuring a deployment, one or more additional rules can be added to assign a\nsubset of the tasks to a new Build ID based on a \"ramp percentage\".\n\nWhen there are multiple assignment rules for a Task Queue, the rules are\nevaluated in order, starting from index 0. The first applicable rule will be\napplied and the rest will be ignored.\n\nIn the event that no assignment rule is applicable on a task (or the Task\nQueue is simply not versioned), the tasks will be sent to unversioned\nworkers, if available. Otherwise, they remain Unassigned, and will be\nretried for assignment, or dispatch to unversioned workers, at a later time\ndepending on the availability of workers."
+      "description": "Assignment rules are applied to *new* Workflow and Activity executions at\nschedule time to assign them to a Build ID.\n\nAssignment rules will not be used in the following cases:\n   - Child Workflows or Continue-As-New Executions who inherit their\n     parent/previous Workflow's assigned Build ID (by setting the\n     `inherit_build_id` flag - default behavior in SDKs when the same Task Queue\n     is used.)\n   - An Activity that inherits the assigned Build ID of its Workflow (by\n     setting the `use_workflow_build_id` flag - default behavior in SDKs\n     when the same Task Queue is used.)\n\nIn absence of (applicable) redirect rules (`CompatibleBuildIdRedirectRule`s)\nthe task will be dispatched to Workers of the Build ID determined by the\nassignment rules (or inherited). Otherwise, the final Build ID will be\ndetermined by the redirect rules.\n\nOnce a Workflow completes its first Workflow Task in a particular Build ID it\nstays in that Build ID regardless of changes to assignment rules. Redirect\nrules can be used to move the workflow to another compatible Build ID.\n\nWhen using Worker Versioning on a Task Queue, in the steady state,\nthere should typically be a single assignment rule to send all new executions\nto the latest Build ID. Existence of at least one such \"unconditional\"\nrule at all times is enforces by the system, unless the `force` flag is used\nby the user when replacing/deleting these rules (for exceptional cases).\n\nDuring a deployment, one or more additional rules can be added to assign a\nsubset of the tasks to a new Build ID based on a \"ramp percentage\".\n\nWhen there are multiple assignment rules for a Task Queue, the rules are\nevaluated in order, starting from index 0. The first applicable rule will be\napplied and the rest will be ignored.\n\nIn the event that no assignment rule is applicable on a task (or the Task\nQueue is simply not versioned), the tasks will be dispatched to an\nunversioned Worker."
     },
     "v1BuildIdReachability": {
       "type": "object",
@@ -3930,7 +3945,7 @@
         "BUILD_ID_TASK_REACHABILITY_UNREACHABLE"
       ],
       "default": "BUILD_ID_TASK_REACHABILITY_UNSPECIFIED",
-      "description": "Specifies which category of tasks may reach a versioned worker of a certain Build ID.\nNote: future activities who inherit their workflow's Build ID but not its Task Queue will not be\naccounted for reachability as server cannot not know if they'll happen as they do not use\nassignment rules of their Task Queue. Same goes for Child Workflows or Continue-As-New Workflows\nwho inherit the parent/previous workflow's Build ID but not its Task Queue. In those cases, make\nsure to query reachability for the parent/previous workflow's Task Queue as well.\n\n - BUILD_ID_TASK_REACHABILITY_UNSPECIFIED: Task reachability is not reported\n - BUILD_ID_TASK_REACHABILITY_REACHABLE: Build ID may be used by new workflows or activities (base on versioning rules), or there are\nopen workflows or backlogged activities assigned to it.\n - BUILD_ID_TASK_REACHABILITY_CLOSED_WORKFLOWS_ONLY: Build ID does not have open workflows and is not reachable by new workflows,\nbut MAY have closed workflows within the namespace retention period.\nNot applicable to activity-only task queues.\n - BUILD_ID_TASK_REACHABILITY_UNREACHABLE: Build ID is not used for new executions, nor it has been used by any existing execution\nwithin the retention period."
+      "description": "Specifies which category of tasks may reach a versioned worker of a certain Build ID.\n\nTask Reachability is eventually consistent; there may be a delay until it converges to the most\naccurate value but it is designed in a way to take the more conservative side until it converges.\nFor example REACHABLE is more conservative than CLOSED_WORKFLOWS_ONLY.\n\nNote: future activities who inherit their workflow's Build ID but not its Task Queue will not be\naccounted for reachability as server cannot know if they'll happen as they do not use\nassignment rules of their Task Queue. Same goes for Child Workflows or Continue-As-New Workflows\nwho inherit the parent/previous workflow's Build ID but not its Task Queue. In those cases, make\nsure to query reachability for the parent/previous workflow's Task Queue as well.\n\n - BUILD_ID_TASK_REACHABILITY_UNSPECIFIED: Task reachability is not reported\n - BUILD_ID_TASK_REACHABILITY_REACHABLE: Build ID may be used by new workflows or activities (base on versioning rules), or there MAY\nbe open workflows or backlogged activities assigned to it.\n - BUILD_ID_TASK_REACHABILITY_CLOSED_WORKFLOWS_ONLY: Build ID does not have open workflows and is not reachable by new workflows,\nbut MAY have closed workflows within the namespace retention period.\nNot applicable to activity-only task queues.\n - BUILD_ID_TASK_REACHABILITY_UNREACHABLE: Build ID is not used for new executions, nor it has been used by any existing execution\nwithin the retention period."
     },
     "v1CalendarSpec": {
       "type": "object",
@@ -4344,6 +4359,10 @@
         "commandType": {
           "$ref": "#/definitions/v1CommandType"
         },
+        "userMetadata": {
+          "$ref": "#/definitions/v1UserMetadata",
+          "description": "Metadata on the command. This is sometimes carried over to the history event if one is\ncreated as a result of the command. Most commands won't have this information, and how this\ninformation is used is dependent upon the interface that reads it.\n\nCurrent well-known uses:\n * start_child_workflow_execution_command_attributes - populates\n   temporal.api.workflow.v1.WorkflowExecutionInfo.user_metadata where the summary and details\n   are used by user interfaces to show fixed as-of-start workflow summary and details.\n * start_timer_command_attributes - populates temporal.api.history.v1.HistoryEvent for timer\n   started where the summary is used to identify the timer."
+        },
         "scheduleActivityTaskCommandAttributes": {
           "$ref": "#/definitions/v1ScheduleActivityTaskCommandAttributes"
         },
@@ -4430,10 +4449,11 @@
           "type": "string"
         },
         "targetBuildId": {
-          "type": "string"
+          "type": "string",
+          "description": "Target Build ID must be compatible with the Source Build ID; that is it\nmust be able to process event histories made by the Source Build ID by\nusing [Patching](https://docs.temporal.io/workflows#patching) or other\nmeans."
         }
       },
-      "description": "These rules apply to tasks assigned to a particular Build ID\n(`source_build_id`) to redirect them to another *compatible* Build ID\n(`target_build_id`).\n\nIt is user's responsibility to ensure that the target Build ID is compatible\nwith the source Build ID (e.g. by using the Patching API).\n\nMost deployments are not expected to need these rules, however following\nsituations can greatly benefit from redirects:\n - Need to move long-running Workflow Executions from an old Build ID to a\n   newer one.\n - Need to hotfix some broken or stuck Workflow Executions.\n\nIn steady state, redirect rules are beneficial when dealing with old\nExecutions ran on now-decommissioned Build IDs:\n - To redirecting the Workflow Queries to the current (compatible) Build ID.\n - To be able to Reset an old Execution so it can run on the current\n   (compatible) Build ID.\n\nRedirect rules can be chained, but only the last rule in the chain can have\na ramp."
+      "description": "These rules apply to tasks assigned to a particular Build ID\n(`source_build_id`) to redirect them to another *compatible* Build ID\n(`target_build_id`).\n\nIt is user's responsibility to ensure that the target Build ID is compatible\nwith the source Build ID (e.g. by using the Patching API).\n\nMost deployments are not expected to need these rules, however following\nsituations can greatly benefit from redirects:\n - Need to move long-running Workflow Executions from an old Build ID to a\n   newer one.\n - Need to hotfix some broken or stuck Workflow Executions.\n\nIn steady state, redirect rules are beneficial when dealing with old\nExecutions ran on now-decommissioned Build IDs:\n - To redirecting the Workflow Queries to the current (compatible) Build ID.\n - To be able to Reset an old Execution so it can run on the current\n   (compatible) Build ID.\n\nRedirect rules can be chained."
     },
     "v1CompatibleVersionSet": {
       "type": "object",
@@ -4832,9 +4852,8 @@
           "type": "string",
           "description": "Endpoint name, unique for this cluster. Must match `[a-zA-Z_][a-zA-Z0-9_]*`.\nRenaming an endpoint breaks all workflow callers that reference this endpoint, causing operations to fail."
         },
-        "description": {
-          "$ref": "#/definitions/v1Payload",
-          "description": "Markdown description serialized as a single JSON string.\nIf the Payload is encrypted, the UI and CLI may decrypt with the configured codec server endpoint."
+        "metadata": {
+          "$ref": "#/definitions/v1UserMetadata"
         },
         "target": {
           "$ref": "#/definitions/v1EndpointTarget",
@@ -5273,6 +5292,10 @@
         "workerMayIgnore": {
           "type": "boolean",
           "description": "Set to true when the SDK may ignore the event as it does not impact workflow state or\ninformation in any way that the SDK need be concerned with. If an SDK encounters an event\ntype which it does not understand, it must error unless this is true. If it is true, it's\nacceptable for the event type and/or attributes to be uninterpretable."
+        },
+        "userMetadata": {
+          "$ref": "#/definitions/v1UserMetadata",
+          "description": "Metadata on the event. This is often carried over from commands and client calls. Most events\nwon't have this information, and how this information is used is dependent upon the interface\nthat reads it.\n\nCurrent well-known uses:\n * workflow_execution_started_event_attributes - summary and details from start workflow.\n * timer_started_event_attributes - summary represents an identifier for the timer for use by\n   user interfaces."
         },
         "workflowExecutionStartedEventAttributes": {
           "$ref": "#/definitions/v1WorkflowExecutionStartedEventAttributes"
@@ -5964,6 +5987,10 @@
         },
         "header": {
           "$ref": "#/definitions/v1Header"
+        },
+        "userMetadata": {
+          "$ref": "#/definitions/v1UserMetadata",
+          "description": "Metadata on the workflow if it is started. This is carried over to the WorkflowExecutionConfig\nfor use by user interfaces to display the fixed as-of-start summary and details of the\nworkflow."
         }
       },
       "description": "NewWorkflowExecutionInfo is a shared message that encapsulates all the\nrequired arguments to starting a workflow in different contexts."
@@ -6548,7 +6575,7 @@
         "backlogCountHint": {
           "type": "string",
           "format": "int64",
-          "description": "A hint that there are more tasks already present in this task queue. Can be used to\nprioritize draining a sticky queue before polling from a normal queue."
+          "description": "A hint that there are more tasks already present in this task queue \npartition. Can be used to prioritize draining a sticky queue.\n\nSpecifically, the returned number is the number of tasks remaining in\nthe in-memory buffer for this partition, which is currently capped at\n1000. Because sticky queues only have one partition, this number is \nmore useful when draining them. Normal queues, typically having more than one \npartition, will return a number representing only some portion of the \noverall backlog. Subsequent RPCs may not hit the same partition as \nthis call."
         },
         "history": {
           "$ref": "#/definitions/v1History",
@@ -8103,6 +8130,10 @@
             "$ref": "#/definitions/v1Callback"
           },
           "description": "Callbacks to be called by the server when this workflow reaches a terminal state.\nIf the workflow continues-as-new, these callbacks will be carried over to the new execution.\nCallback addresses must be whitelisted in the server's dynamic configuration."
+        },
+        "userMetadata": {
+          "$ref": "#/definitions/v1UserMetadata",
+          "description": "Metadata on the workflow if it is started. This is carried over to the WorkflowExecutionInfo\nfor use by user interfaces to display the fixed as-of-start summary and details of the\nworkflow."
         }
       }
     },
@@ -8290,6 +8321,31 @@
       },
       "description": "Reachability of tasks for a worker on a single task queue."
     },
+    "v1TaskQueueStats": {
+      "type": "object",
+      "properties": {
+        "approximateBacklogCount": {
+          "type": "string",
+          "format": "int64",
+          "description": "The approximate number of tasks backlogged in this task queue. May count expired tasks but eventually converges\nto the right value."
+        },
+        "approximateBacklogAge": {
+          "type": "string",
+          "description": "Approximate age of the oldest task in the backlog based on the create timestamp of the task at the head of the queue."
+        },
+        "tasksAddRate": {
+          "type": "number",
+          "format": "float",
+          "description": "Approximate tasks per second added to the task queue based on activity within a fixed window. This includes both backlogged and\nsync-matched tasks."
+        },
+        "tasksDispatchRate": {
+          "type": "number",
+          "format": "float",
+          "description": "Approximate tasks per second dispatched to workers based on activity within a fixed window. This includes both backlogged and\nsync-matched tasks."
+        }
+      },
+      "description": "For workflow task queues, we only report the normal queue stats, not sticky queues. This means the stats\nreported here do not count all workflow tasks. However, because the tasks queued in sticky queues only remain\nvalid for a few seconds, the inaccuracy becomes less significant as the backlog age grows."
+    },
     "v1TaskQueueStatus": {
       "type": "object",
       "properties": {
@@ -8336,6 +8392,9 @@
             "$ref": "#/definitions/v1PollerInfo"
           },
           "description": "Unversioned workers (with `useVersioning=false`) are reported in unversioned result even if they set a Build ID."
+        },
+        "stats": {
+          "$ref": "#/definitions/v1TaskQueueStats"
         }
       }
     },
@@ -8350,7 +8409,8 @@
           "description": "Task Queue info per Task Type. Key is the numerical value of the temporal.api.enums.v1.TaskQueueType enum."
         },
         "taskReachability": {
-          "$ref": "#/definitions/v1BuildIdTaskReachability"
+          "$ref": "#/definitions/v1BuildIdTaskReachability",
+          "description": "Task Reachability is eventually consistent; there may be a delay until it converges to the most\naccurate value but it is designed in a way to take the more conservative side until it converges.\nFor example REACHABLE is more conservative than CLOSED_WORKFLOWS_ONLY.\n\nNote: future activities who inherit their workflow's Build ID but not its Task Queue will not be\naccounted for reachability as server cannot know if they'll happen as they do not use\nassignment rules of their Task Queue. Same goes for Child Workflows or Continue-As-New Workflows\nwho inherit the parent/previous workflow's Build ID but not its Task Queue. In those cases, make\nsure to query reachability for the parent/previous workflow's Task Queue as well."
         }
       }
     },
@@ -8692,6 +8752,20 @@
         }
       }
     },
+    "v1UserMetadata": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "$ref": "#/definitions/v1Payload",
+          "description": "Short-form text that provides a summary. This payload should be a \"json/plain\"-encoded payload\nthat is a single JSON string for use in user interfaces. User interface formatting may not\napply to this text when used in \"title\" situations. The payload data section is limited to 400\nbytes by default."
+        },
+        "details": {
+          "$ref": "#/definitions/v1Payload",
+          "description": "Long-form text that provides details. This payload should be a \"json/plain\"-encoded payload\nthat is a single JSON string for use in user interfaces. User interface formatting may apply to\nthis text in common use. The payload data section is limited to 20000 bytes by default."
+        }
+      },
+      "description": "Information a user can set, often for use by user interfaces."
+    },
     "v1VersionInfo": {
       "type": "object",
       "properties": {
@@ -8834,6 +8908,10 @@
         },
         "defaultWorkflowTaskTimeout": {
           "type": "string"
+        },
+        "userMetadata": {
+          "$ref": "#/definitions/v1UserMetadata",
+          "description": "User metadata provided on start workflow."
         }
       }
     },
