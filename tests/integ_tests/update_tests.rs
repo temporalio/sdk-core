@@ -33,8 +33,8 @@ use temporal_sdk_core_protos::{
     },
 };
 use temporal_sdk_core_test_utils::{
-    init_core_and_create_wf, init_core_replay_preloaded, start_timer_cmd, CoreWfStarter,
-    WorkerTestHelpers,
+    drain_pollers_and_shutdown, init_core_and_create_wf, init_core_replay_preloaded,
+    start_timer_cmd, CoreWfStarter, WorkerTestHelpers,
 };
 use tokio::{join, sync::Barrier};
 use uuid::Uuid;
@@ -158,8 +158,13 @@ async fn reapplied_updates_due_to_reset() {
     )
     .await;
 
-    // There is an activation containing a RemoveFromCache job left unhandled
-    replay_worker.poll_workflow_activation().await.unwrap();
+    // This is a replay worker and there is a remaining activation containing a RemoveFromCache job.
+    let act = replay_worker.poll_workflow_activation().await.unwrap();
+    replay_worker
+        .complete_workflow_activation(WorkflowActivationCompletion::empty(act.run_id))
+        .await
+        .unwrap();
+    drain_pollers_and_shutdown(&replay_worker).await;
 }
 
 // Start a workflow, send an update, accept the update, complete the update, complete the workflow.
