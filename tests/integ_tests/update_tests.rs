@@ -77,7 +77,7 @@ async fn update_workflow(#[values(FailUpdate::Yes, FailUpdate::No)] will_fail: F
         .history
         .unwrap();
     let with_id = HistoryForReplay::new(history, workflow_id.to_string());
-    let replay_worker = init_core_replay_preloaded(&workflow_id, [with_id]);
+    let replay_worker = init_core_replay_preloaded(workflow_id, [with_id]);
     handle_update(will_fail, CompleteWorkflow::Yes, replay_worker.as_ref()).await;
 }
 
@@ -145,7 +145,7 @@ async fn reapplied_updates_due_to_reset() {
         .unwrap();
     let with_id = HistoryForReplay::new(history, workflow_id.to_string());
 
-    let replay_worker = init_core_replay_preloaded(&workflow_id, [with_id]);
+    let replay_worker = init_core_replay_preloaded(workflow_id, [with_id]);
     // We now recapitulate the actions that the worker took on first execution above, pretending
     // that we always followed the post-reset history.
     // First, we handled the post-reset reapplied update and did not complete the workflow.
