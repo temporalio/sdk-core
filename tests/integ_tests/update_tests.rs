@@ -157,6 +157,9 @@ async fn reapplied_updates_due_to_reset() {
         replay_worker.as_ref(),
     )
     .await;
+
+    // There is an activation containing a RemoveFromCache job left unhandled
+    replay_worker.poll_workflow_activation().await.unwrap();
 }
 
 // Start a workflow, send an update, accept the update, complete the update, complete the workflow.
