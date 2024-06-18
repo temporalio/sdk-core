@@ -1,0 +1,173 @@
+syntax = "proto3";
+
+package temporal.api.cloud.identity.v1;
+
+option go_package = "go.temporal.io/api/cloud/identity/v1;identity";
+option java_package = "io.temporal.api.cloud.identity.v1";
+option java_multiple_files = true;
+option java_outer_classname = "MessageProto";
+option ruby_package = "Temporalio::Api::Cloud::Identity::V1";
+option csharp_namespace = "Temporalio.Api.Cloud.Identity.V1";
+
+import "google/protobuf/timestamp.proto";
+
+message AccountAccess {
+    // The role on the account, should be one of [admin, developer, read]
+    // admin - gives full access the account, including users and namespaces
+    // developer - gives access to create namespaces on the account
+    // read - gives read only access to the account
+    string role = 1;
+}
+
+message NamespaceAccess {
+    // The permission to the namespace, should be one of [admin, write, read]
+    // admin - gives full access to the namespace, including assigning namespace access to other users
+    // write - gives write access to the namespace configuration and workflows within the namespace
+    // read - gives read only access to the namespace configuration and workflows within the namespace
+    string permission = 1;
+}
+
+message Access {
+    // The account access
+    AccountAccess account_access = 1;
+    // The map of namespace accesses
+    // The key is the namespace name and the value is the access to the namespace
+    map<string, NamespaceAccess> namespace_accesses = 2;
+}
+
+message UserSpec {
+    // The email address associated to the user
+    string email = 1;
+    // The access to assigned to the user
+    Access access = 2;
+}
+
+message Invitation {
+    // The date and time when the user was created
+    google.protobuf.Timestamp created_time = 1;
+    // The date and time when the invitation expires or has expired
+    google.protobuf.Timestamp expired_time = 2;
+}
+
+message User {
+    // The id of the user
+    string id = 1;
+    // The current version of the user specification
+    // The next update operation will have to include this version
+    string resource_version = 2;
+    // The user specification
+    UserSpec spec = 3;
+    // The current state of the user
+    string state = 4;
+    // The id of the async operation that is creating/updating/deleting the user, if any
+    string async_operation_id = 5;
+    // The details of the open invitation sent to the user, if any
+    Invitation invitation = 6;
+    // The date and time when the user was created
+    google.protobuf.Timestamp created_time = 7;
+    // The date and time when the user was last modified
+    // Will not be set if the user has never been modified
+    google.protobuf.Timestamp last_modified_time = 8;
+}
+
+message UserGroupSpec {
+    // The name of the group as defined in the customer's IdP (e.g. Google group name in Google Workspace)
+    // The name is immutable. Once set, it cannot be changed
+    string name = 1;
+    // The access assigned to the group
+    Access access = 2;
+}
+
+message UserGroup {
+    // The id of the group
+    string id = 1;
+    // The current version of the group specification
+    // The next update operation will have to include this version
+    string resource_version = 2;
+    // The group specification
+    UserGroupSpec spec = 3;
+    // The current state of the group
+    string state = 4;
+    // The id of the async operation that is creating/updating/deleting the group, if any
+    string async_operation_id = 5;
+    // The date and time when the group was created
+    google.protobuf.Timestamp created_time = 6;
+    // The date and time when the group was last modified
+    // Will not be set if the group has never been modified
+    google.protobuf.Timestamp last_modified_time = 7;
+}
+
+message ServiceAccount {
+    // The id of the service account.
+    string id = 1;
+    // The current version of the service account specification.
+    // The next update operation will have to include this version.
+    string resource_version = 2;
+    // The service account specification.
+    ServiceAccountSpec spec = 3;
+    // The current state of the service account.
+    // Possible values: activating, activationfailed, active, updating, updatefailed, deleting, deletefailed, deleted, suspending, suspendfailed, suspended.
+    // For any failed state, reach out to Temporal Cloud support for remediation.
+    string state = 4;
+    // The id of the async operation that is creating/updating/deleting the service account, if any.
+    string async_operation_id = 5;
+    // The date and time when the service account was created.
+    google.protobuf.Timestamp created_time = 6;
+    // The date and time when the service account was last modified
+    // Will not be set if the service account has never been modified.
+    google.protobuf.Timestamp last_modified_time = 7;
+}
+
+message ServiceAccountSpec {
+    // The name associated with the service account.
+    // The name is mutable, but must be unique across all your active service accounts.
+    string name = 1;
+    // The access assigned to the service account.
+    // The access is mutable.
+    Access access = 2;
+    // The description associated with the service account - optional.
+    // The description is mutable.
+    string description = 3;
+}
+
+
+message ApiKey {
+    // The id of the API Key.
+    string id = 1;
+    // The current version of the API key specification.
+    // The next update operation will have to include this version.
+    string resource_version = 2;
+    // The API key specification.
+    ApiKeySpec spec = 3;
+    // The current state of the API key.
+    // Possible values: activating, activationfailed, active, updating, updatefailed, deleting, deletefailed, deleted, suspending, suspendfailed, suspended.
+    // For any failed state, reach out to Temporal Cloud support for remediation.
+    string state = 4;
+    // The id of the async operation that is creating/updating/deleting the API key, if any.
+    string async_operation_id = 5;
+    // The date and time when the API key was created.
+    google.protobuf.Timestamp created_time = 6;
+    // The date and time when the API key was last modified.
+    // Will not be set if the API key has never been modified.
+    google.protobuf.Timestamp last_modified_time = 7;
+}
+
+message ApiKeySpec {
+    // The id of the owner to create the API key for.
+    // The owner id is immutable. Once set during creation, it cannot be changed.
+    // The owner id is the id of the user when the owner type is 'user'.
+    // The owner id is the id of the service account when the owner type is 'service-account'.
+    string owner_id = 1;
+    // The type of the owner to create the API key for.
+    // The owner type is immutable. Once set during creation, it cannot be changed.
+    // Possible values: user, service-account.
+    string owner_type = 2;
+    // The display name of the API key.
+    string display_name = 3;
+    // The description of the API key.
+    string description = 4;
+    // The expiry time of the API key.
+    google.protobuf.Timestamp expiry_time = 5;
+    // True if the API key is disabled.
+    bool disabled = 6;
+}
