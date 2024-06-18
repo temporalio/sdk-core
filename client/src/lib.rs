@@ -18,7 +18,7 @@ pub use crate::{
     proxy::HttpConnectProxyOptions,
     retry::{CallType, RetryClient, RETRYABLE_ERROR_CODES},
 };
-pub use raw::{HealthService, OperatorService, TestService, WorkflowService};
+pub use raw::{CloudService, HealthService, OperatorService, TestService, WorkflowService};
 pub use temporal_sdk_core_protos::temporal::api::{
     enums::v1::ArchivalState,
     filter::v1::{StartTimeFilter, StatusFilter, WorkflowExecutionFilter, WorkflowTypeFilter},
@@ -56,6 +56,7 @@ use temporal_sdk_core_protos::{
     coresdk::{workflow_commands::QueryResult, IntoPayloadsExt},
     grpc::health::v1::health_client::HealthClient,
     temporal::api::{
+        cloud::cloudservice::v1::cloud_service_client::CloudServiceClient,
         common::v1::{Header, Payload, Payloads, RetryPolicy, WorkflowExecution, WorkflowType},
         enums::v1::{TaskQueueKind, WorkflowIdReusePolicy},
         failure::v1::Failure,
@@ -542,6 +543,7 @@ pub struct TemporalServiceClient<T> {
     svc: T,
     workflow_svc_client: OnceCell<WorkflowServiceClient<T>>,
     operator_svc_client: OnceCell<OperatorServiceClient<T>>,
+    cloud_svc_client: OnceCell<CloudServiceClient<T>>,
     test_svc_client: OnceCell<TestServiceClient<T>>,
     health_svc_client: OnceCell<HealthClient<T>>,
 }
@@ -571,6 +573,7 @@ where
             svc,
             workflow_svc_client: OnceCell::new(),
             operator_svc_client: OnceCell::new(),
+            cloud_svc_client: OnceCell::new(),
             test_svc_client: OnceCell::new(),
             health_svc_client: OnceCell::new(),
         }
@@ -586,6 +589,13 @@ where
     pub fn operator_svc(&self) -> &OperatorServiceClient<T> {
         self.operator_svc_client.get_or_init(|| {
             OperatorServiceClient::new(self.svc.clone())
+                .max_decoding_message_size(get_decode_max_size())
+        })
+    }
+    /// Get the underlying cloud service client
+    pub fn cloud_svc(&self) -> &CloudServiceClient<T> {
+        self.cloud_svc_client.get_or_init(|| {
+            CloudServiceClient::new(self.svc.clone())
                 .max_decoding_message_size(get_decode_max_size())
         })
     }
@@ -611,6 +621,11 @@ where
     pub fn operator_svc_mut(&mut self) -> &mut OperatorServiceClient<T> {
         let _ = self.operator_svc();
         self.operator_svc_client.get_mut().unwrap()
+    }
+    /// Get the underlying cloud service client mutably
+    pub fn cloud_svc_mut(&mut self) -> &mut CloudServiceClient<T> {
+        let _ = self.cloud_svc();
+        self.cloud_svc_client.get_mut().unwrap()
     }
     /// Get the underlying test service client mutably
     pub fn test_svc_mut(&mut self) -> &mut TestServiceClient<T> {

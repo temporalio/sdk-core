@@ -15,6 +15,8 @@ use temporal_sdk_core_api::telemetry::metrics::MetricKeyValue;
 use temporal_sdk_core_protos::{
     grpc::health::v1::{health_client::HealthClient, *},
     temporal::api::{
+        cloud::cloudservice::v1 as cloudreq,
+        cloud::cloudservice::v1::cloud_service_client::CloudServiceClient,
         operatorservice::v1::{operator_service_client::OperatorServiceClient, *},
         taskqueue::v1::TaskQueue,
         testservice::v1::{test_service_client::TestServiceClient, *},
@@ -44,6 +46,12 @@ pub(super) mod sealed {
 
         /// Return a mutable ref to the operator service client instance
         fn operator_client_mut(&mut self) -> &mut OperatorServiceClient<Self::SvcType>;
+
+        /// Return a ref to the cloud service client instance
+        fn cloud_client(&self) -> &CloudServiceClient<Self::SvcType>;
+
+        /// Return a mutable ref to the cloud service client instance
+        fn cloud_client_mut(&mut self) -> &mut CloudServiceClient<Self::SvcType>;
 
         /// Return a ref to the test service client instance
         fn test_client(&self) -> &TestServiceClient<Self::SvcType>;
@@ -98,6 +106,14 @@ where
 
     fn operator_client_mut(&mut self) -> &mut OperatorServiceClient<Self::SvcType> {
         self.get_client_mut().operator_client_mut()
+    }
+
+    fn cloud_client(&self) -> &CloudServiceClient<Self::SvcType> {
+        self.get_client().cloud_client()
+    }
+
+    fn cloud_client_mut(&mut self) -> &mut CloudServiceClient<Self::SvcType> {
+        self.get_client_mut().cloud_client_mut()
     }
 
     fn test_client(&self) -> &TestServiceClient<Self::SvcType> {
@@ -167,6 +183,14 @@ where
         self.operator_svc_mut()
     }
 
+    fn cloud_client(&self) -> &CloudServiceClient<Self::SvcType> {
+        self.cloud_svc()
+    }
+
+    fn cloud_client_mut(&mut self) -> &mut CloudServiceClient<Self::SvcType> {
+        self.cloud_svc_mut()
+    }
+
     fn test_client(&self) -> &TestServiceClient<Self::SvcType> {
         self.test_svc()
     }
@@ -214,6 +238,14 @@ where
         self.client.operator_client_mut()
     }
 
+    fn cloud_client(&self) -> &CloudServiceClient<Self::SvcType> {
+        self.client.cloud_client()
+    }
+
+    fn cloud_client_mut(&mut self) -> &mut CloudServiceClient<Self::SvcType> {
+        self.client.cloud_client_mut()
+    }
+
     fn test_client(&self) -> &TestServiceClient<Self::SvcType> {
         self.client.test_client()
     }
@@ -252,6 +284,14 @@ impl RawClientLike for Client {
 
     fn operator_client_mut(&mut self) -> &mut OperatorServiceClient<Self::SvcType> {
         self.inner.operator_client_mut()
+    }
+
+    fn cloud_client(&self) -> &CloudServiceClient<Self::SvcType> {
+        self.inner.cloud_client()
+    }
+
+    fn cloud_client_mut(&mut self) -> &mut CloudServiceClient<Self::SvcType> {
+        self.inner.cloud_client_mut()
     }
 
     fn test_client(&self) -> &TestServiceClient<Self::SvcType> {
@@ -330,6 +370,16 @@ where
 {
 }
 impl<RC, T> OperatorService for RC
+where
+    RC: RawClientLike<SvcType = T>,
+    T: GrpcService<BoxBody> + Send + Clone + 'static,
+    T::ResponseBody: tonic::codegen::Body<Data = tonic::codegen::Bytes> + Send + 'static,
+    T::Error: Into<tonic::codegen::StdError>,
+    T::Future: Send,
+    <T::ResponseBody as tonic::codegen::Body>::Error: Into<tonic::codegen::StdError> + Send,
+{
+}
+impl<RC, T> CloudService for RC
 where
     RC: RawClientLike<SvcType = T>,
     T: GrpcService<BoxBody> + Send + Clone + 'static,
@@ -1049,6 +1099,43 @@ proxier! {
 }
 
 proxier! {
+    CloudService; ALL_IMPLEMENTED_CLOUD_SERVICE_RPCS; CloudServiceClient; cloud_client_mut;
+    (get_users, cloudreq::GetUsersRequest, cloudreq::GetUsersResponse);
+    (get_user, cloudreq::GetUserRequest, cloudreq::GetUserResponse);
+    (create_user, cloudreq::CreateUserRequest, cloudreq::CreateUserResponse);
+    (update_user, cloudreq::UpdateUserRequest, cloudreq::UpdateUserResponse);
+    (delete_user, cloudreq::DeleteUserRequest, cloudreq::DeleteUserResponse);
+    (set_user_namespace_access, cloudreq::SetUserNamespaceAccessRequest, cloudreq::SetUserNamespaceAccessResponse);
+    (get_async_operation, cloudreq::GetAsyncOperationRequest, cloudreq::GetAsyncOperationResponse);
+    (create_namespace, cloudreq::CreateNamespaceRequest, cloudreq::CreateNamespaceResponse);
+    (get_namespaces, cloudreq::GetNamespacesRequest, cloudreq::GetNamespacesResponse);
+    (get_namespace, cloudreq::GetNamespaceRequest, cloudreq::GetNamespaceResponse);
+    (update_namespace, cloudreq::UpdateNamespaceRequest, cloudreq::UpdateNamespaceResponse);
+    (rename_custom_search_attribute, cloudreq::RenameCustomSearchAttributeRequest, cloudreq::RenameCustomSearchAttributeResponse);
+    (delete_namespace, cloudreq::DeleteNamespaceRequest, cloudreq::DeleteNamespaceResponse);
+    (failover_namespace_region, cloudreq::FailoverNamespaceRegionRequest, cloudreq::FailoverNamespaceRegionResponse);
+    (add_namespace_region, cloudreq::AddNamespaceRegionRequest, cloudreq::AddNamespaceRegionResponse);
+    (get_regions, cloudreq::GetRegionsRequest, cloudreq::GetRegionsResponse);
+    (get_region, cloudreq::GetRegionRequest, cloudreq::GetRegionResponse);
+    (get_api_keys, cloudreq::GetApiKeysRequest, cloudreq::GetApiKeysResponse);
+    (get_api_key, cloudreq::GetApiKeyRequest, cloudreq::GetApiKeyResponse);
+    (create_api_key, cloudreq::CreateApiKeyRequest, cloudreq::CreateApiKeyResponse);
+    (update_api_key, cloudreq::UpdateApiKeyRequest, cloudreq::UpdateApiKeyResponse);
+    (delete_api_key, cloudreq::DeleteApiKeyRequest, cloudreq::DeleteApiKeyResponse);
+    (get_user_groups, cloudreq::GetUserGroupsRequest, cloudreq::GetUserGroupsResponse);
+    (get_user_group, cloudreq::GetUserGroupRequest, cloudreq::GetUserGroupResponse);
+    (create_user_group, cloudreq::CreateUserGroupRequest, cloudreq::CreateUserGroupResponse);
+    (update_user_group, cloudreq::UpdateUserGroupRequest, cloudreq::UpdateUserGroupResponse);
+    (delete_user_group, cloudreq::DeleteUserGroupRequest, cloudreq::DeleteUserGroupResponse);
+    (set_user_group_namespace_access, cloudreq::SetUserGroupNamespaceAccessRequest, cloudreq::SetUserGroupNamespaceAccessResponse);
+    (create_service_account, cloudreq::CreateServiceAccountRequest, cloudreq::CreateServiceAccountResponse);
+    (get_service_account, cloudreq::GetServiceAccountRequest, cloudreq::GetServiceAccountResponse);
+    (get_service_accounts, cloudreq::GetServiceAccountsRequest, cloudreq::GetServiceAccountsResponse);
+    (update_service_account, cloudreq::UpdateServiceAccountRequest, cloudreq::UpdateServiceAccountResponse);
+    (delete_service_account, cloudreq::DeleteServiceAccountRequest, cloudreq::DeleteServiceAccountResponse);
+}
+
+proxier! {
     TestService; ALL_IMPLEMENTED_TEST_SERVICE_RPCS; TestServiceClient; test_client_mut;
     (lock_time_skipping, LockTimeSkippingRequest, LockTimeSkippingResponse);
     (unlock_time_skipping, UnlockTimeSkippingRequest, UnlockTimeSkippingResponse);
@@ -1091,19 +1178,36 @@ mod tests {
             .unwrap();
 
         // Operator svc method
-        let del_ns_req = DeleteNamespaceRequest::default();
+        let op_del_ns_req = DeleteNamespaceRequest::default();
         let fact = |c: &mut RetryClient<_>, req| {
             let mut c = c.operator_client_mut().clone();
             async move { c.delete_namespace(req).await }.boxed()
         };
         retry_client
-            .call("whatever", fact, Request::new(del_ns_req.clone()))
+            .call("whatever", fact, Request::new(op_del_ns_req.clone()))
+            .await
+            .unwrap();
+
+        // Cloud svc method
+        let cloud_del_ns_req = cloudreq::DeleteNamespaceRequest::default();
+        let fact = |c: &mut RetryClient<_>, req| {
+            let mut c = c.cloud_client_mut().clone();
+            async move { c.delete_namespace(req).await }.boxed()
+        };
+        retry_client
+            .call("whatever", fact, Request::new(cloud_del_ns_req.clone()))
             .await
             .unwrap();
 
         // Verify calling through traits works
         retry_client.list_namespaces(list_ns_req).await.unwrap();
-        retry_client.delete_namespace(del_ns_req).await.unwrap();
+        // Have to disambiguate operator and cloud service
+        OperatorService::delete_namespace(&mut retry_client, op_del_ns_req)
+            .await
+            .unwrap();
+        CloudService::delete_namespace(&mut retry_client, cloud_del_ns_req)
+            .await
+            .unwrap();
         retry_client.get_current_time(()).await.unwrap();
         retry_client
             .check(HealthCheckRequest::default())
@@ -1141,6 +1245,13 @@ mod tests {
         let proto_def =
             include_str!("../../sdk-core-protos/protos/api_upstream/temporal/api/operatorservice/v1/service.proto");
         verify_methods(proto_def, ALL_IMPLEMENTED_OPERATOR_SERVICE_RPCS);
+    }
+
+    #[test]
+    fn verify_all_cloud_service_methods_implemented() {
+        let proto_def =
+            include_str!("../../sdk-core-protos/protos/api_cloud_upstream/temporal/api/cloud/cloudservice/v1/service.proto");
+        verify_methods(proto_def, ALL_IMPLEMENTED_CLOUD_SERVICE_RPCS);
     }
 
     #[test]

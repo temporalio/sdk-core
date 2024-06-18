@@ -90,6 +90,8 @@ is a subtree. To update it, use:
 `git pull --squash --rebase=false -s subtree ssh://git@github.com/temporalio/api.git master --allow-unrelated-histories`
 
 Do not question why this git command is the way it is. It is not our place to interpret git's ways.
+This same approach can be taken for updating `sdk-core-protos/protos/api_cloud_upstream` from the
+`api-cloud` repo.
 
 The java testserver protos are also pulled from the sdk-java repo, but since we only need a
 subdirectory of that repo, we just copy the files with read-tree:
