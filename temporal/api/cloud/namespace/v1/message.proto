@@ -1,0 +1,164 @@
+syntax = "proto3";
+
+package temporal.api.cloud.namespace.v1;
+
+option go_package = "go.temporal.io/api/cloud/namespace/v1;namespace";
+option java_package = "io.temporal.api.cloud.namespace.v1";
+option java_multiple_files = true;
+option java_outer_classname = "MessageProto";
+option ruby_package = "Temporalio::Api::Cloud::Namespace::V1";
+option csharp_namespace = "Temporalio.Api.Cloud.Namespace.V1";
+
+import "google/protobuf/timestamp.proto";
+
+message CertificateFilterSpec {
+    // The common_name in the certificate.
+    // Optional, default is empty.
+    string common_name = 1;
+    // The organization in the certificate.
+    // Optional, default is empty.
+    string organization = 2;
+    // The organizational_unit in the certificate.
+    // Optional, default is empty.
+    string organizational_unit = 3;
+    // The subject_alternative_name in the certificate.
+    // Optional, default is empty.
+    string subject_alternative_name = 4;
+}
+
+message MtlsAuthSpec {
+    // The base64 encoded ca cert(s) in PEM format that the clients can use for authentication and authorization.
+    // This must only be one value, but the CA can have a chain.
+    //
+    // (-- api-linter: core::0140::base64=disabled --)
+    string accepted_client_ca = 1;
+    // Certificate filters which, if specified, only allow connections from client certificates whose distinguished name properties match at least one of the filters.
+    // This allows limiting access to specific end-entity certificates.
+    // Optional, default is empty.
+    repeated CertificateFilterSpec certificate_filters = 2;
+    // Flag to enable mTLS auth (default: disabled).
+    // Note: disabling mTLS auth will cause existing mTLS connections to fail.
+    // temporal:versioning:min_version=2024-05-13-00
+    bool enabled = 3;
+}
+
+message ApiKeyAuthSpec {
+    // Flag to enable API key auth (default: disabled).
+    // Note: disabling API key auth will cause existing API key connections to fail.
+    bool enabled = 1;
+}
+
+message CodecServerSpec {
+    // The codec server endpoint.
+    string endpoint = 1;
+    // Whether to pass the user access token with your endpoint.
+    bool pass_access_token = 2;
+    // Whether to include cross-origin credentials.
+    bool include_cross_origin_credentials = 3;
+}
+
+message NamespaceSpec {
+    // The name to use for the namespace.
+    // This will create a namespace that's available at '<name>.<account>.tmprl.cloud:7233'.
+    // The name is immutable. Once set, it cannot be changed.
+    string name = 1;
+    // The ids of the regions where the namespace should be available.
+    // The GetRegions API can be used to get the list of valid region ids.
+    // Specifying more than one region makes the namespace "global", which is currently a preview only feature with restricted access.
+    // Please reach out to Temporal support for more information on global namespaces.
+    // When provisioned the global namespace will be active on the first region in the list and passive on the rest.
+    // Number of supported regions is 2.
+    // The regions is immutable. Once set, it cannot be changed.
+    // Example: ["aws-us-west-2"].
+    repeated string regions = 2;
+    // The number of days the workflows data will be retained for.
+    // Changes to the retention period may impact your storage costs.
+    // Any changes to the retention period will be applied to all new running workflows.
+    int32 retention_days = 3;
+    // The mTLS auth configuration for the namespace.
+    // If unspecified, mTLS will be disabled.
+    MtlsAuthSpec mtls_auth = 4;
+    // The API key auth configuration for the namespace.
+    // If unspecified, API keys will be disabled.
+    // temporal:versioning:min_version=2024-05-13-00
+    ApiKeyAuthSpec api_key_auth = 7;
+    // The custom search attributes to use for the namespace.
+    // The name of the attribute is the key and the type is the value.
+    // Supported attribute types: text, keyword, int, double, bool, datetime, keyword_list.
+    // NOTE: currently deleting a search attribute is not supported.
+    // Optional, default is empty.
+    map<string, string> custom_search_attributes = 5;
+    // Codec server spec used by UI to decode payloads for all users interacting with this namespace.
+    // Optional, default is unset.
+    CodecServerSpec codec_server = 6;
+}
+
+message Endpoints {
+    // The web UI address.
+    string web_address = 1;
+    // The gRPC address for mTLS client connections (may be empty if mTLS is disabled).
+    string mtls_grpc_address = 2;
+    // The gRPC address for API key client connections (may be empty if API keys are disabled).
+    string grpc_address = 3;
+}
+
+message Limits {
+    // The number of actions per second (APS) that is currently allowed for the namespace.
+    // The namespace may be throttled if its APS exceeds the limit.
+    int32 actions_per_second_limit = 1;
+}
+
+message AWSPrivateLinkInfo {
+    // The list of principal arns that are allowed to access the namespace on the private link.
+    repeated string allowed_principal_arns = 1;
+    // The list of vpc endpoint service names that are associated with the namespace.
+    repeated string vpc_endpoint_service_names = 2;
+}
+
+
+message PrivateConnectivity {
+    // The id of the region where the private connectivity applies.
+    string region = 1;
+    // The AWS PrivateLink info.
+    // This will only be set for an aws region.
+    AWSPrivateLinkInfo aws_private_link = 2;
+}
+
+message Namespace {
+    // The namespace identifier.
+    string namespace = 1;
+    // The current version of the namespace specification.
+    // The next update operation will have to include this version.
+    string resource_version = 2;
+    // The namespace specification.
+    NamespaceSpec spec = 3;
+    // The current state of the namespace.
+    string state = 4;
+    // The id of the async operation that is creating/updating/deleting the namespace, if any.
+    string async_operation_id = 5;
+    // The endpoints for the namespace.
+    Endpoints endpoints = 6;
+    // The currently active region for the namespace.
+    string active_region = 7;
+    // The limits set on the namespace currently.
+    Limits limits = 8;
+    // The private connectivities for the namespace, if any.
+    repeated PrivateConnectivity private_connectivities = 9;
+    // The date and time when the namespace was created.
+    google.protobuf.Timestamp created_time = 10;
+    // The date and time when the namespace was last modified.
+    // Will not be set if the namespace has never been modified.
+    google.protobuf.Timestamp last_modified_time = 11;
+    // The status of each region where the namespace is available.
+    // The id of the region is the key and the status is the value of the map.
+    map<string, NamespaceRegionStatus> region_status = 12;
+}
+
+message NamespaceRegionStatus {
+    // The current state of the namespace region.
+    // Possible values: adding, active, passive, removing, failed.
+    // For any failed state, reach out to Temporal Cloud support for remediation.
+    string state = 1;
+    // The id of the async operation that is making changes to where the namespace is available, if any.
+    string async_operation_id = 2;
+}
