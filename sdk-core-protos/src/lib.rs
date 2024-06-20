@@ -1653,6 +1653,33 @@ pub mod temporal {
                 }
             }
         }
+        pub mod cloud {
+            pub mod cloudservice {
+                pub mod v1 {
+                    tonic::include_proto!("temporal.api.cloud.cloudservice.v1");
+                }
+            }
+            pub mod identity {
+                pub mod v1 {
+                    tonic::include_proto!("temporal.api.cloud.identity.v1");
+                }
+            }
+            pub mod namespace {
+                pub mod v1 {
+                    tonic::include_proto!("temporal.api.cloud.namespace.v1");
+                }
+            }
+            pub mod operation {
+                pub mod v1 {
+                    tonic::include_proto!("temporal.api.cloud.operation.v1");
+                }
+            }
+            pub mod region {
+                pub mod v1 {
+                    tonic::include_proto!("temporal.api.cloud.region.v1");
+                }
+            }
+        }
         pub mod common {
             pub mod v1 {
                 use crate::{ENCODING_PAYLOAD_KEY, JSON_ENCODING_VAL};
