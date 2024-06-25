@@ -330,18 +330,11 @@ impl GaugeF64 for MemoryGauge<f64> {
     }
 }
 
-fn default_resource_kvs() -> &'static [KeyValue] {
-    use once_cell::sync::OnceCell;
-
-    static INSTANCE: OnceCell<[KeyValue; 1]> = OnceCell::new();
-    INSTANCE.get_or_init(|| [KeyValue::new("service.name", TELEM_SERVICE_NAME)])
-}
-
 fn default_resource(override_values: &HashMap<String, String>) -> Resource {
     let override_kvs = override_values
         .iter()
         .map(|(k, v)| KeyValue::new(k.clone(), v.clone()));
-    Resource::new(default_resource_kvs().iter().cloned()).merge(&Resource::new(override_kvs))
+    Resource::default().merge(&Resource::new(override_kvs))
 }
 
 #[derive(Clone)]
