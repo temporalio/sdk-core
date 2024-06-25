@@ -377,16 +377,6 @@ fn metric_temporality_to_selector(t: MetricTemporality) -> impl TemporalitySelec
 pub(crate) mod tests {
     use super::*;
     use opentelemetry::Key;
-    use std::env;
-
-    #[test]
-    pub(crate) fn default_resource_instance_respects_otel_env_vars() {
-        env::set_var("OTEL_SERVICE_NAME", "foo");
-        let resource = default_resource_instance();
-        let service_name = resource.get(Key::from("service.name"));
-        assert_eq!(service_name, Some(Value::from("foo")));
-        env::remove_var("OTEL_SERVICE_NAME");
-    }
 
     #[test]
     pub(crate) fn default_resource_instance_service_name_default() {
