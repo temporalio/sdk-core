@@ -12,7 +12,7 @@ use crate::{abstractions::dbg_panic, telemetry::metrics::DEFAULT_S_BUCKETS};
 use opentelemetry::{
     self,
     metrics::{Meter, MeterProvider as MeterProviderT, Unit},
-    KeyValue,
+    Key, KeyValue, Value,
 };
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::{
@@ -330,18 +330,31 @@ impl GaugeF64 for MemoryGauge<f64> {
     }
 }
 
-fn default_resource_kvs() -> &'static [KeyValue] {
+fn default_resource_instance() -> &'static Resource {
     use once_cell::sync::OnceCell;
 
-    static INSTANCE: OnceCell<[KeyValue; 1]> = OnceCell::new();
-    INSTANCE.get_or_init(|| [KeyValue::new("service.name", TELEM_SERVICE_NAME)])
+    static INSTANCE: OnceCell<Resource> = OnceCell::new();
+    INSTANCE.get_or_init(|| {
+        let resource = Resource::default();
+        if resource.get(Key::from("service.name")) == Some(Value::from("unknown_service")) {
+            // otel spec recommends to leave service.name as unknown_service but we want to
+            // maintain backwards compatability with existing library behaviour
+            return resource.merge(&Resource::new([KeyValue::new(
+                "service.name",
+                TELEM_SERVICE_NAME,
+            )]));
+        }
+        resource
+    })
 }
 
 fn default_resource(override_values: &HashMap<String, String>) -> Resource {
     let override_kvs = override_values
         .iter()
         .map(|(k, v)| KeyValue::new(k.clone(), v.clone()));
-    Resource::new(default_resource_kvs().iter().cloned()).merge(&Resource::new(override_kvs))
+    default_resource_instance()
+        .clone()
+        .merge(&Resource::new(override_kvs))
 }
 
 #[derive(Clone)]
@@ -357,5 +370,18 @@ fn metric_temporality_to_selector(t: MetricTemporality) -> impl TemporalitySelec
     match t {
         MetricTemporality::Cumulative => ConstantTemporality(Temporality::Cumulative),
         MetricTemporality::Delta => ConstantTemporality(Temporality::Delta),
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+    use opentelemetry::Key;
+
+    #[test]
+    pub(crate) fn default_resource_instance_service_name_default() {
+        let resource = default_resource_instance();
+        let service_name = resource.get(Key::from("service.name"));
+        assert_eq!(service_name, Some(Value::from(TELEM_SERVICE_NAME)));
     }
 }
