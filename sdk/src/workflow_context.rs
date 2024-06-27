@@ -59,52 +59,6 @@ pub struct WfContext {
     seq_nums: Arc<RwLock<WfCtxProtectedDat>>,
 }
 
-struct WfCtxProtectedDat {
-    next_timer_sequence_number: u32,
-    next_activity_sequence_number: u32,
-    next_child_workflow_sequence_number: u32,
-    next_cancel_external_wf_sequence_number: u32,
-    next_signal_external_wf_sequence_number: u32,
-}
-
-impl WfCtxProtectedDat {
-    fn next_timer_seq(&mut self) -> u32 {
-        let seq = self.next_timer_sequence_number;
-        self.next_timer_sequence_number += 1;
-        seq
-    }
-    fn next_activity_seq(&mut self) -> u32 {
-        let seq = self.next_activity_sequence_number;
-        self.next_activity_sequence_number += 1;
-        seq
-    }
-    fn next_child_workflow_seq(&mut self) -> u32 {
-        let seq = self.next_child_workflow_sequence_number;
-        self.next_child_workflow_sequence_number += 1;
-        seq
-    }
-    fn next_cancel_external_wf_seq(&mut self) -> u32 {
-        let seq = self.next_cancel_external_wf_sequence_number;
-        self.next_cancel_external_wf_sequence_number += 1;
-        seq
-    }
-    fn next_signal_external_wf_seq(&mut self) -> u32 {
-        let seq = self.next_signal_external_wf_sequence_number;
-        self.next_signal_external_wf_sequence_number += 1;
-        seq
-    }
-}
-
-#[derive(Clone, Debug, Default)]
-pub(crate) struct WfContextSharedData {
-    /// Maps change ids -> resolved status
-    pub(crate) changes: HashMap<String, bool>,
-    pub(crate) is_replaying: bool,
-    pub(crate) wf_time: Option<SystemTime>,
-    pub(crate) history_length: u32,
-    pub(crate) current_build_id: Option<String>,
-}
-
 // TODO: Dataconverter type interface to replace Payloads here. Possibly just use serde
 //    traits.
 impl WfContext {
@@ -141,6 +95,11 @@ impl WfContext {
     /// Return the namespace the workflow is executing in
     pub fn namespace(&self) -> &str {
         &self.namespace
+    }
+
+    /// Return the task queue the workflow is executing in
+    pub fn task_queue(&self) -> &str {
+        &self.task_queue
     }
 
     /// Get the arguments provided to the workflow upon execution start
@@ -407,6 +366,52 @@ impl WfContext {
     fn send(&self, c: RustWfCmd) {
         self.chan.send(c).unwrap();
     }
+}
+
+struct WfCtxProtectedDat {
+    next_timer_sequence_number: u32,
+    next_activity_sequence_number: u32,
+    next_child_workflow_sequence_number: u32,
+    next_cancel_external_wf_sequence_number: u32,
+    next_signal_external_wf_sequence_number: u32,
+}
+
+impl WfCtxProtectedDat {
+    fn next_timer_seq(&mut self) -> u32 {
+        let seq = self.next_timer_sequence_number;
+        self.next_timer_sequence_number += 1;
+        seq
+    }
+    fn next_activity_seq(&mut self) -> u32 {
+        let seq = self.next_activity_sequence_number;
+        self.next_activity_sequence_number += 1;
+        seq
+    }
+    fn next_child_workflow_seq(&mut self) -> u32 {
+        let seq = self.next_child_workflow_sequence_number;
+        self.next_child_workflow_sequence_number += 1;
+        seq
+    }
+    fn next_cancel_external_wf_seq(&mut self) -> u32 {
+        let seq = self.next_cancel_external_wf_sequence_number;
+        self.next_cancel_external_wf_sequence_number += 1;
+        seq
+    }
+    fn next_signal_external_wf_seq(&mut self) -> u32 {
+        let seq = self.next_signal_external_wf_sequence_number;
+        self.next_signal_external_wf_sequence_number += 1;
+        seq
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct WfContextSharedData {
+    /// Maps change ids -> resolved status
+    pub(crate) changes: HashMap<String, bool>,
+    pub(crate) is_replaying: bool,
+    pub(crate) wf_time: Option<SystemTime>,
+    pub(crate) history_length: u32,
+    pub(crate) current_build_id: Option<String>,
 }
 
 /// Helper Wrapper that can drain the channel into a Vec<SignalData> in a blocking way.  Useful
