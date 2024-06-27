@@ -440,7 +440,6 @@ pub mod coresdk {
                 workflow_activation::remove_from_cache::EvictionReason, FromPayloadsExt,
             },
             temporal::api::{
-                common::v1::Header,
                 enums::v1::WorkflowTaskFailedCause,
                 history::v1::{
                     WorkflowExecutionCancelRequestedEventAttributes,
@@ -451,10 +450,7 @@ pub mod coresdk {
             },
         };
         use prost_wkt_types::Timestamp;
-        use std::{
-            collections::HashMap,
-            fmt::{Display, Formatter},
-        };
+        use std::fmt::{Display, Formatter};
 
         tonic::include_proto!("coresdk.workflow_activation");
 
@@ -647,10 +643,7 @@ pub mod coresdk {
                 workflow_id,
                 arguments: Vec::from_payloads(attrs.input),
                 randomness_seed,
-                headers: match attrs.header {
-                    None => HashMap::new(),
-                    Some(Header { fields }) => fields,
-                },
+                headers: attrs.header.unwrap_or_default().fields,
                 identity: attrs.identity,
                 parent_workflow_info: attrs.parent_workflow_execution.map(|pe| {
                     NamespacedWorkflowExecution {
