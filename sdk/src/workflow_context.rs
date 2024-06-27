@@ -97,6 +97,11 @@ impl WfContext {
         &self.namespace
     }
 
+    /// Return the task queue the workflow is executing in
+    pub fn task_queue(&self) -> &str {
+        &self.task_queue
+    }
+
     /// Get the arguments provided to the workflow upon execution start
     pub fn get_args(&self) -> &[Payload] {
         self.args.as_slice()
