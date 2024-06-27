@@ -179,7 +179,9 @@ pub struct ChildWorkflowOptions {
     /// Type of workflow to schedule
     pub workflow_type: String,
     /// Task queue to schedule the workflow in
-    pub task_queue: String,
+    ///
+    /// If `None`, use the same task queue as the parent workflow.
+    pub task_queue: Option<String>,
     /// Input to send the child Workflow
     pub input: Vec<Payload>,
     /// Cancellation strategy for the child workflow
@@ -197,7 +199,7 @@ impl IntoWorkflowCommand for ChildWorkflowOptions {
             seq,
             workflow_id: self.workflow_id,
             workflow_type: self.workflow_type,
-            task_queue: self.task_queue,
+            task_queue: self.task_queue.unwrap_or_default(),
             input: self.input,
             cancellation_type: self.cancel_type as i32,
             workflow_id_reuse_policy: self.options.id_reuse_policy as i32,
