@@ -29,7 +29,7 @@ async fn activity_load() {
 
     let activity_id = "act-1";
     let activity_timeout = Duration::from_secs(8);
-    let task_queue = starter.get_task_queue().to_owned();
+    let task_queue = Some(starter.get_task_queue().to_owned());
 
     let wf_fn = move |ctx: WfContext| {
         let task_queue = task_queue.clone();

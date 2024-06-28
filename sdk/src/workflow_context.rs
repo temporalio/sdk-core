@@ -162,8 +162,8 @@ impl WfContext {
         &self,
         mut opts: ActivityOptions,
     ) -> impl CancellableFuture<ActivityResolution> {
-        if opts.task_queue.is_empty() {
-            opts.task_queue.clone_from(&self.task_queue);
+        if opts.task_queue.is_none() {
+            opts.task_queue = Some(self.task_queue.clone());
         }
         let seq = self.seq_nums.write().next_activity_seq();
         let (cmd, unblocker) = CancellableWFCommandFut::new(CancellableID::Activity(seq));
