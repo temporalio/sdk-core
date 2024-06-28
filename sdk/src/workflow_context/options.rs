@@ -38,7 +38,9 @@ pub struct ActivityOptions {
     /// Input to the activity
     pub input: Payload,
     /// Task queue to schedule the activity in
-    pub task_queue: String,
+    ///
+    /// If `None`, use the same task queue as the parent workflow.
+    pub task_queue: Option<String>,
     /// Time that the Activity Task can stay in the Task Queue before it is picked up by a Worker.
     /// Do not specify this timeout unless using host specific Task Queues for Activity Tasks are
     /// being used for routing.
@@ -78,7 +80,7 @@ impl IntoWorkflowCommand for ActivityOptions {
                 Some(aid) => aid,
             },
             activity_type: self.activity_type,
-            task_queue: self.task_queue,
+            task_queue: self.task_queue.unwrap_or_default(),
             schedule_to_close_timeout: self
                 .schedule_to_close_timeout
                 .and_then(|d| d.try_into().ok()),
