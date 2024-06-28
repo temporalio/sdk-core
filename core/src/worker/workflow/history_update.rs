@@ -5,7 +5,7 @@ use crate::{
         workflow::{CacheMissFetchReq, PermittedWFT, PreparedWFT},
     },
 };
-use futures::{future::BoxFuture, FutureExt, Stream};
+use futures::{future::BoxFuture, FutureExt, Stream, TryFutureExt};
 use itertools::Itertools;
 use once_cell::sync::Lazy;
 use std::{
@@ -408,7 +408,10 @@ impl Stream for StreamingHistoryPaginator {
             // SAFETY: This is safe because the inner paginator cannot be dropped before the future,
             //   and the future won't be moved from out of this struct.
             this.open_history_request.set(Some(unsafe {
-                transmute(HistoryPaginator::get_next_page(this.inner).boxed())
+                transmute::<
+                    BoxFuture<'_, Result<(), tonic::Status>>,
+                    BoxFuture<'static, Result<(), tonic::Status>>,
+                >(this.inner.get_next_page().map_ok(|_| ()).boxed())
             }));
         }
         let history_req = this.open_history_request.as_mut().as_pin_mut().unwrap();
