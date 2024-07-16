@@ -371,10 +371,7 @@ impl Worker {
                 let wfs = wft_stream.then(move |s| {
                     let wft_semaphore = wft_semaphore.clone();
                     async move {
-                        let permit = wft_semaphore
-                            .acquire_owned()
-                            .await
-                            .expect("Mock WFT stream should not see closed semaphore");
+                        let permit = wft_semaphore.acquire_owned().await;
                         s.map(|s| (s, permit))
                     }
                 });

@@ -121,11 +121,6 @@ where
                         p = permit_dealer.acquire_owned() => p,
                         _ = shutdown.cancelled() => break,
                     };
-                    let permit = if let Ok(p) = permit {
-                        p
-                    } else {
-                        break;
-                    };
                     let _active_guard = ActiveCounter::new(ap.as_ref(), nph);
                     let r = tokio::select! {
                         r = pf() => r,
@@ -318,11 +313,7 @@ where
     SK: SlotKind + 'static,
 {
     async fn poll(&self) -> Option<pollers::Result<(T, OwnedMeteredSemPermit<SK>)>> {
-        let p = self
-            .sem
-            .acquire_owned()
-            .await
-            .expect("Semaphore in poller not closed!");
+        let p = self.sem.acquire_owned().await;
         self.inner.poll().await.map(|r| r.map(|r| (r, p)))
     }
 
