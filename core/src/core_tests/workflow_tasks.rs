@@ -45,7 +45,7 @@ use temporal_sdk_core_protos::{
             StartWorkflow, UpdateRandomSeed, WorkflowActivationJob,
         },
         workflow_commands::{
-            update_response::Response, ActivityCancellationType, CancelTimer,
+            update_response::Response, workflow_command, ActivityCancellationType, CancelTimer,
             CompleteWorkflowExecution, ContinueAsNewWorkflowExecution, FailWorkflowExecution,
             RequestCancelActivity, ScheduleActivity, SetPatchMarker, StartChildWorkflowExecution,
             UpdateResponse,
@@ -56,7 +56,7 @@ use temporal_sdk_core_protos::{
     temporal::api::{
         command::v1::command::Attributes,
         common::v1::{Payload, RetryPolicy, WorkerVersionStamp},
-        enums::v1::{EventType, WorkflowTaskFailedCause},
+        enums::v1::{CommandType, EventType, WorkflowTaskFailedCause},
         failure::v1::Failure,
         history::v1::{
             history_event, TimerFiredEventAttributes,
@@ -2503,11 +2503,73 @@ async fn core_internal_flags() {
     core.shutdown().await;
 }
 
+// A post-terminal command is retained, and placed before the terminal command.
 #[tokio::test]
-async fn post_terminal_commands_are_discarded() {
+async fn post_terminal_commands_are_retained_when_not_replaying() {
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
+    t.add_timer_started("1".to_string());
+    t.add_workflow_execution_completed();
+
+    let commands_sent_by_lang = vec![
+        CompleteWorkflowExecution { result: None }.into(),
+        start_timer_cmd(1, Duration::from_secs(1)),
+    ];
+    let expected_command_types_emitted = vec![
+        CommandType::StartTimer,
+        CommandType::CompleteWorkflowExecution,
+    ];
+    _simulate_completion_from_lang_and_assert_commands_emitted_by_core(
+        commands_sent_by_lang,
+        expected_command_types_emitted,
+        t,
+    )
+    .await
+}
+
+async fn _simulate_completion_from_lang_and_assert_commands_emitted_by_core(
+    commands_sent_by_lang: Vec<workflow_command::Variant>,
+    expected_command_types: Vec<CommandType>,
+    t: TestHistoryBuilder,
+) {
+    let mut mh = MockPollCfg::from_resp_batches(
+        "fake_wf_id",
+        t,
+        [ResponseType::ToTaskNum(1), ResponseType::AllHistory],
+        mock_workflow_client(),
+    );
+    mh.completion_mock_fn = Some(Box::new(move |c| {
+        let command_types: Vec<_> = c.commands.iter().map(|c| c.command_type()).collect();
+        assert_eq!(command_types, expected_command_types);
+        Ok(Default::default())
+    }));
+    let mut mock = build_mock_pollers(mh);
+    mock.worker_cfg(|wc| wc.max_cached_workflows = 1);
+    let core = mock_worker(mock);
+
+    let act = core.poll_workflow_activation().await.unwrap();
+
+    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
+        act.run_id,
+        commands_sent_by_lang,
+    ))
+    .await
+    .unwrap();
+
+    // This just ensures applying the complete history w/ the completion command works, though
+    // there's no activation.
+    let act = core.poll_workflow_activation().await;
+    assert_matches!(act.unwrap_err(), PollWfError::ShutDown);
+    core.shutdown().await;
+}
+
+#[tokio::test]
+async fn move_terminal_commands_flag_test_1() {
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    t.add_timer_started("1".to_string());
     t.add_workflow_execution_completed();
 
     let mut mh = MockPollCfg::from_resp_batches(
@@ -2517,8 +2579,9 @@ async fn post_terminal_commands_are_discarded() {
         mock_workflow_client(),
     );
     mh.completion_mock_fn = Some(Box::new(|c| {
-        // Only the complete execution command should actually be sent
-        assert_eq!(c.commands.len(), 1);
+        // The start timer and complete execution commands should be sent, in
+        // that order.
+        assert_eq!(c.commands.len(), 2);
         Ok(Default::default())
     }));
     let mut mock = build_mock_pollers(mh);
