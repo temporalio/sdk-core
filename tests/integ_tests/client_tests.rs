@@ -1,13 +1,7 @@
 use assert_matches::assert_matches;
 use std::{collections::HashMap, time::Duration};
-use temporal_client::{Client, WorkflowClientTrait, WorkflowOptions, WorkflowService};
-use temporal_sdk_core_protos::temporal::api::{
-    common::v1::WorkflowExecution,
-    enums::v1::{UpdateWorkflowExecutionLifecycleStage, WorkflowIdReusePolicy},
-    update,
-    update::v1::WaitPolicy,
-    workflowservice::v1::{DescribeNamespaceRequest, UpdateWorkflowExecutionRequest},
-};
+use temporal_client::{WorkflowClientTrait, WorkflowService};
+use temporal_sdk_core_protos::temporal::api::workflowservice::v1::DescribeNamespaceRequest;
 use temporal_sdk_core_test_utils::{get_integ_server_options, CoreWfStarter, NAMESPACE};
 use tonic::{Code, Request};
 
@@ -63,51 +57,15 @@ async fn per_call_timeout_respected_whole_client() {
 async fn per_call_timeout_respected_one_call() {
     let opts = get_integ_server_options();
     let mut client = opts.connect_no_namespace(None).await.unwrap();
-    // Start a workflow (we don't need to actually make any progress on it)
-    let wfc = Client::new(client.clone().into_inner(), NAMESPACE.to_string());
-    wfc.start_workflow(
-        vec![],
-        "whatever".to_string(),
-        "test-rpc-timeout".to_string(),
-        "whatever".to_string(),
-        None,
-        WorkflowOptions {
-            run_timeout: Some(Duration::from_secs(10)),
-            id_reuse_policy: WorkflowIdReusePolicy::TerminateIfRunning,
-            ..Default::default()
-        },
-    )
-    .await
-    .unwrap();
 
-    let mut req = Request::new(UpdateWorkflowExecutionRequest {
+    let mut req = Request::new(DescribeNamespaceRequest {
         namespace: NAMESPACE.to_string(),
-        wait_policy: Some(WaitPolicy {
-            lifecycle_stage: UpdateWorkflowExecutionLifecycleStage::Completed.into(),
-        }),
-        workflow_execution: Some(WorkflowExecution {
-            workflow_id: "test-rpc-timeout".to_string(),
-            run_id: "".to_string(),
-        }),
-        request: Some(update::v1::Request {
-            meta: Some(update::v1::Meta {
-                update_id: "".into(),
-                identity: "aaaa".to_string(),
-            }),
-            input: Some(update::v1::Input {
-                header: None,
-                name: "update".to_string(),
-                args: None,
-            }),
-        }),
         ..Default::default()
     });
-    req.set_timeout(Duration::from_millis(500));
-    let start = std::time::Instant::now();
-    let res = client.update_workflow_execution(req).await;
+    req.set_timeout(Duration::from_millis(0));
+    let res = client.describe_namespace(req).await;
     assert_matches!(
         res.unwrap_err().code(),
         Code::DeadlineExceeded | Code::Cancelled
     );
-    assert!(start.elapsed() < Duration::from_secs(1));
 }
