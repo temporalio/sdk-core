@@ -17,6 +17,7 @@ use crate::{
     Worker,
 };
 use futures::{stream, FutureExt};
+use mockall::TimesRange;
 use rstest::{fixture, rstest};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
@@ -2503,9 +2504,11 @@ async fn core_internal_flags() {
     core.shutdown().await;
 }
 
-// A post-terminal command is retained, and placed before the terminal command.
 #[tokio::test]
 async fn post_terminal_commands_are_retained_when_not_replaying() {
+    // History contains a non-terminal command (N) followed by the terminal
+    // command (T). The test establishes that, when lang completes an activation
+    // with [T, N], core emits commands [N, T].
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
@@ -2516,34 +2519,92 @@ async fn post_terminal_commands_are_retained_when_not_replaying() {
         CompleteWorkflowExecution { result: None }.into(),
         start_timer_cmd(1, Duration::from_secs(1)),
     ];
-    let expected_command_types_emitted = vec![
+    let expected_command_types_emitted = Some(vec![
         CommandType::StartTimer,
         CommandType::CompleteWorkflowExecution,
-    ];
-    _simulate_completion_from_lang_and_assert_commands_emitted_by_core(
+    ]);
+    _do_post_terminal_commands_test(
         commands_sent_by_lang,
+        [ResponseType::ToTaskNum(1), ResponseType::AllHistory],
         expected_command_types_emitted,
         t,
     )
     .await
 }
 
-async fn _simulate_completion_from_lang_and_assert_commands_emitted_by_core(
+#[tokio::test]
+async fn post_terminal_commands_are_retained_when_replaying_and_flag_set() {
+    // History contains a non-terminal command (N) followed by the terminal
+    // command (T), with the MoveTerminalCommands flag set in the last WFT The
+    // test establishes that, when core replays this history, it is consistent
+    // with lang completing an activation with [T, N].
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    t.add_timer_started("1".to_string());
+    t.add_workflow_execution_completed();
+    t.set_flags_last_wft(&[CoreInternalFlags::MoveTerminalCommands as u32], &[]);
+
+    let commands_sent_by_lang = vec![
+        CompleteWorkflowExecution { result: None }.into(),
+        start_timer_cmd(1, Duration::from_secs(1)),
+    ];
+    let expected_command_types_emitted = None;
+
+    _do_post_terminal_commands_test(
+        commands_sent_by_lang,
+        [ResponseType::AllHistory],
+        expected_command_types_emitted,
+        t,
+    )
+    .await
+}
+
+#[tokio::test]
+async fn post_terminal_commands_are_not_retained_when_replaying_and_flag_not_set() {
+    // History contains the terminal command (T) preceded immediately by
+    // WFTCompleted, i.e. without any intervening non-terminal command (N), and
+    // the MoveTerminalCommands flag is not set. The test establishes that when
+    // core replays this history, it is consistent with lang completing an
+    // activation with [T, N].
+    let mut t = TestHistoryBuilder::default();
+    t.add_by_type(EventType::WorkflowExecutionStarted);
+    t.add_full_wf_task();
+    t.add_workflow_execution_completed();
+
+    let commands_sent_by_lang = vec![
+        CompleteWorkflowExecution { result: None }.into(),
+        start_timer_cmd(1, Duration::from_secs(1)),
+    ];
+    let expected_command_types_emitted = None;
+
+    _do_post_terminal_commands_test(
+        commands_sent_by_lang,
+        [ResponseType::AllHistory],
+        expected_command_types_emitted,
+        t,
+    )
+    .await
+}
+
+async fn _do_post_terminal_commands_test(
     commands_sent_by_lang: Vec<workflow_command::Variant>,
-    expected_command_types: Vec<CommandType>,
+    response_types: impl IntoIterator<Item = impl Into<ResponseType>>,
+    expected_command_types: Option<Vec<CommandType>>,
     t: TestHistoryBuilder,
 ) {
-    let mut mh = MockPollCfg::from_resp_batches(
-        "fake_wf_id",
-        t,
-        [ResponseType::ToTaskNum(1), ResponseType::AllHistory],
-        mock_workflow_client(),
-    );
-    mh.completion_mock_fn = Some(Box::new(move |c| {
-        let command_types: Vec<_> = c.commands.iter().map(|c| c.command_type()).collect();
-        assert_eq!(command_types, expected_command_types);
-        Ok(Default::default())
-    }));
+    let mut mh =
+        MockPollCfg::from_resp_batches("fake_wf_id", t, response_types, mock_workflow_client());
+    if let Some(expected_command_types) = expected_command_types {
+        mh.num_expected_completions = Some(TimesRange::from(1));
+        mh.completion_mock_fn = Some(Box::new(move |c| {
+            let command_types: Vec<_> = c.commands.iter().map(|c| c.command_type()).collect();
+            assert_eq!(command_types, expected_command_types);
+            Ok(Default::default())
+        }));
+    } else {
+        mh.num_expected_completions = Some(TimesRange::from(0));
+    }
     let mut mock = build_mock_pollers(mh);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 1);
     let core = mock_worker(mock);
@@ -2557,53 +2618,8 @@ async fn _simulate_completion_from_lang_and_assert_commands_emitted_by_core(
     .await
     .unwrap();
 
-    // This just ensures applying the complete history w/ the completion command works, though
-    // there's no activation.
     let act = core.poll_workflow_activation().await;
     assert_matches!(act.unwrap_err(), PollWfError::ShutDown);
-    core.shutdown().await;
-}
-
-#[tokio::test]
-async fn move_terminal_commands_flag_test_1() {
-    let mut t = TestHistoryBuilder::default();
-    t.add_by_type(EventType::WorkflowExecutionStarted);
-    t.add_full_wf_task();
-    t.add_timer_started("1".to_string());
-    t.add_workflow_execution_completed();
-
-    let mut mh = MockPollCfg::from_resp_batches(
-        "fake_wf_id",
-        t,
-        [ResponseType::ToTaskNum(1), ResponseType::AllHistory],
-        mock_workflow_client(),
-    );
-    mh.completion_mock_fn = Some(Box::new(|c| {
-        // The start timer and complete execution commands should be sent, in
-        // that order.
-        assert_eq!(c.commands.len(), 2);
-        Ok(Default::default())
-    }));
-    let mut mock = build_mock_pollers(mh);
-    mock.worker_cfg(|wc| wc.max_cached_workflows = 1);
-    let core = mock_worker(mock);
-
-    let act = core.poll_workflow_activation().await.unwrap();
-    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        act.run_id,
-        vec![
-            CompleteWorkflowExecution { result: None }.into(),
-            start_timer_cmd(1, Duration::from_secs(1)),
-        ],
-    ))
-    .await
-    .unwrap();
-
-    // This just ensures applying the complete history w/ the completion command works, though
-    // there's no activation.
-    let act = core.poll_workflow_activation().await;
-    assert_matches!(act.unwrap_err(), PollWfError::ShutDown);
-
     core.shutdown().await;
 }
 
