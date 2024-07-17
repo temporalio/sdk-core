@@ -1196,11 +1196,11 @@ impl ManagedRun {
 // placed at the end. Return new command sequence and query commands. Note that
 // multiple coroutines may have generated a terminal command, leading to
 // multiple terminal commands in the input to this function.
-fn preprocess_command_sequence(mut commands: Vec<WFCommand>) -> (Vec<WFCommand>, Vec<QueryResult>) {
+fn preprocess_command_sequence(commands: Vec<WFCommand>) -> (Vec<WFCommand>, Vec<QueryResult>) {
     let mut query_results = vec![];
     let mut terminals = vec![];
 
-    commands = std::mem::take(&mut commands)
+    let mut commands: Vec<_> = commands
         .into_iter()
         .filter_map(|c| {
             if let WFCommand::QueryResponse(qr) = c {
@@ -1221,12 +1221,12 @@ fn preprocess_command_sequence(mut commands: Vec<WFCommand>) -> (Vec<WFCommand>,
 }
 
 fn preprocess_command_sequence_old_behavior(
-    mut commands: Vec<WFCommand>,
+    commands: Vec<WFCommand>,
 ) -> (Vec<WFCommand>, Vec<QueryResult>) {
     let mut query_results = vec![];
     let mut seen_terminal = false;
 
-    commands = std::mem::take(&mut commands)
+    let commands: Vec<_> = commands
         .into_iter()
         .filter_map(|c| {
             if let WFCommand::QueryResponse(qr) = c {
