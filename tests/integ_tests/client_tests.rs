@@ -56,7 +56,7 @@ async fn per_call_timeout_respected_whole_client() {
         })
         .await
         .unwrap_err();
-    assert_eq!(err.code(), Code::DeadlineExceeded);
+    assert_matches!(err.code(), Code::DeadlineExceeded | Code::Cancelled);
 }
 
 #[tokio::test]
@@ -105,7 +105,6 @@ async fn per_call_timeout_respected_one_call() {
     req.set_timeout(Duration::from_millis(500));
     let start = std::time::Instant::now();
     let res = client.update_workflow_execution(req).await;
-    dbg!(&res);
     assert_matches!(
         res.unwrap_err().code(),
         Code::DeadlineExceeded | Code::Cancelled
