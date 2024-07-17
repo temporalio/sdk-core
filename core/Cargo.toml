@@ -22,11 +22,11 @@ ephemeral-server = ["dep:flate2", "dep:reqwest", "dep:tar", "dep:zip"]
 [dependencies]
 anyhow = "1.0"
 async-trait = "0.1"
-console-subscriber = { version = "0.2", optional = true }
+console-subscriber = { version = "0.3", optional = true }
 crossbeam-channel = "0.5"
 crossbeam-queue = "0.3"
 crossbeam-utils = "0.8"
-dashmap = "5.5"
+dashmap = "6.0"
 derive_builder = { workspace = true }
 derive_more = { workspace = true }
 enum_dispatch = "0.3"
@@ -92,7 +92,7 @@ assert_matches = "1.4"
 bimap = "0.6.1"
 clap = { version = "4.0", features = ["derive"] }
 criterion = "0.5"
-rstest = "0.19.0"
+rstest = "0.21"
 sysinfo = "0.30"
 temporal-sdk-core-test-utils = { path = "../test-utils" }
 temporal-sdk = { path = "../sdk" }

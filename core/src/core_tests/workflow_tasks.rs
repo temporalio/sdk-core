@@ -2415,7 +2415,6 @@ async fn lang_internal_flags() {
 
 #[tokio::test]
 async fn lang_internal_flag_with_update() {
-    crate::telemetry::test_telem_console();
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();

@@ -811,10 +811,7 @@ impl RcvChans {
         let new_stream = UnboundedReceiverStream::new(new_reqs)
             // Get a permit for each new activity request
             .zip(stream::unfold(new_sem, |new_sem| async move {
-                let permit = new_sem
-                    .acquire_owned()
-                    .await
-                    .expect("Local activity semaphore is never closed");
+                let permit = new_sem.acquire_owned().await;
                 Some((permit, new_sem))
             }))
             .map(|(req, permit)| NewOrCancel::New(req, permit));

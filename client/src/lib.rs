@@ -1622,6 +1622,7 @@ impl<T> WfClientExt for T where T: WfHandleClient + Clone + Sized {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tonic::metadata::Ascii;
 
     #[test]
     fn applies_headers() {
@@ -1682,6 +1683,16 @@ mod tests {
         let req = interceptor.call(tonic::Request::new(())).unwrap();
         assert!(!req.metadata().contains_key("my-meta-key"));
         assert!(!req.metadata().contains_key("authorization"));
+
+        // Timeout header not overriden
+        let mut req = tonic::Request::new(());
+        req.metadata_mut()
+            .insert("grpc-timeout", "1S".parse().unwrap());
+        let req = interceptor.call(req).unwrap();
+        assert_eq!(
+            req.metadata().get("grpc-timeout").unwrap(),
+            "1S".parse::<MetadataValue<Ascii>>().unwrap()
+        );
     }
 
     #[test]

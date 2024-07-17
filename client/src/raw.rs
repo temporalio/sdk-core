@@ -15,8 +15,7 @@ use temporal_sdk_core_api::telemetry::metrics::MetricKeyValue;
 use temporal_sdk_core_protos::{
     grpc::health::v1::{health_client::HealthClient, *},
     temporal::api::{
-        cloud::cloudservice::v1 as cloudreq,
-        cloud::cloudservice::v1::cloud_service_client::CloudServiceClient,
+        cloud::cloudservice::{v1 as cloudreq, v1::cloud_service_client::CloudServiceClient},
         operatorservice::v1::{operator_service_client::OperatorServiceClient, *},
         taskqueue::v1::TaskQueue,
         testservice::v1::{test_service_client::TestServiceClient, *},
@@ -568,6 +567,9 @@ proxier! {
         |r| {
             let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             r.extensions_mut().insert(labels);
+            if r.get_ref().wait_new_event {
+                r.set_timeout(LONG_POLL_TIMEOUT);
+            }
         }
     );
     (
@@ -971,6 +973,7 @@ proxier! {
         |r| {
             let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             r.extensions_mut().insert(labels);
+            r.set_timeout(LONG_POLL_TIMEOUT);
         }
     );
     (
@@ -980,6 +983,7 @@ proxier! {
         |r| {
             let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             r.extensions_mut().insert(labels);
+            r.set_timeout(LONG_POLL_TIMEOUT);
         }
     );
     (

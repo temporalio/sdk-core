@@ -66,7 +66,7 @@ where
             .map(|ap| ap + self.unused_claimants.load(Ordering::Acquire))
     }
 
-    pub(crate) async fn acquire_owned(&self) -> Result<OwnedMeteredSemPermit<SK>, ()> {
+    pub(crate) async fn acquire_owned(&self) -> OwnedMeteredSemPermit<SK> {
         if let Some(max) = self.max_permits {
             self.extant_permits
                 .1
@@ -76,7 +76,7 @@ where
                 .expect("Extant permit channel is never closed");
         }
         let res = self.supplier.reserve_slot(self).await;
-        Ok(self.build_owned(res))
+        self.build_owned(res)
     }
 
     pub(crate) fn try_acquire_owned(&self) -> Result<OwnedMeteredSemPermit<SK>, ()> {
@@ -351,6 +351,6 @@ pub(crate) mod tests {
         advance_fut!(acquire_fut);
         drop(perm);
         // Now it'll proceed
-        acquire_fut.await.unwrap();
+        acquire_fut.await;
     }
 }
