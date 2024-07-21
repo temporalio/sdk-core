@@ -14,7 +14,7 @@ use super::{
 };
 use crate::{
     abstractions::dbg_panic,
-    internal_flags::InternalFlags,
+    internal_flags::{CoreInternalFlags, InternalFlags},
     protosext::{
         protocol_messages::{IncomingProtocolMessage, IncomingProtocolMessageBody},
         CompleteLocalActivityData, HistoryEventExt, ValidScheduleLA,
@@ -468,6 +468,12 @@ impl WorkflowMachines {
         (*self.observed_internal_flags)
             .borrow_mut()
             .add_lang_used(flags);
+    }
+
+    pub(crate) fn try_use_flag(&self, flag: CoreInternalFlags, should_record: bool) -> bool {
+        self.observed_internal_flags
+            .borrow_mut()
+            .try_use(flag, should_record)
     }
 
     /// Undo a speculative workflow task by resetting to a certain WFT Started ID. This can happen

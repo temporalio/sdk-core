@@ -14,7 +14,7 @@ use temporal_sdk_core_protos::temporal::api::{
 /// This enumeration contains internal flags that may result in incompatible history changes with
 /// older workflows, or other breaking changes.
 ///
-/// When a flag has existed long enough the version it was introduced in is no longer supported, it
+/// When a flag has existed long enough that the version it was introduced in is no longer supported, it
 /// may be removed from the enum. *Importantly*, all variants must be given explicit values, such
 /// that removing older variants does not create any change in existing values. Removed flag
 /// variants must be reserved forever (a-la protobuf), and should be called out in a comment.
@@ -27,6 +27,15 @@ pub(crate) enum CoreInternalFlags {
     /// Introduced automatically upserting search attributes for each patched call, and
     /// nondeterminism checks for upserts.
     UpsertSearchAttributeOnPatch = 2,
+    /// Prior to this flag, we truncated commands received from lang at the
+    /// first terminal (i.e. workflow-terminating) command. With this flag, we
+    /// reorder commands such that all non-terminal commands come first,
+    /// followed by the first terminal command, if any (it's possible that
+    /// multiple workflow coroutines generated a terminal command). This has the
+    /// consequence that all non-terminal commands are sent to the server, even
+    /// if in the sequence delivered by lang they came after a terminal command.
+    /// See https://github.com/temporalio/features/issues/481.
+    MoveTerminalCommands = 3,
     /// We received a value higher than this code can understand.
     TooHigh = u32::MAX,
 }
@@ -82,7 +91,7 @@ impl InternalFlags {
     /// Returns true if this flag may currently be used. If `should_record` is true, always returns
     /// true and records the flag as being used, for taking later via
     /// [Self::gather_for_wft_complete].
-    pub(crate) fn try_use(&mut self, core_patch: CoreInternalFlags, should_record: bool) -> bool {
+    pub(crate) fn try_use(&mut self, flag: CoreInternalFlags, should_record: bool) -> bool {
         match self {
             Self::Enabled {
                 core,
@@ -90,10 +99,10 @@ impl InternalFlags {
                 ..
             } => {
                 if should_record {
-                    core_since_last_complete.insert(core_patch);
+                    core_since_last_complete.insert(flag);
                     true
                 } else {
-                    core.contains(&core_patch)
+                    core.contains(&flag)
                 }
             }
             // If the server does not support the metadata field, we must assume we can never use
@@ -114,9 +123,9 @@ impl InternalFlags {
         }
     }
 
-    /// Wipes the recorded flags used during the current WFT and returns a partially filled
-    /// sdk metadata message that can be combined with any existing data before sending the WFT
-    /// complete
+    /// Return a partially filled sdk metadata message containing core and lang flags added since
+    /// the last WFT complete. The returned value can be combined with other data before sending the
+    /// WFT complete.
     pub(crate) fn gather_for_wft_complete(&mut self) -> WorkflowTaskCompletedMetadata {
         match self {
             Self::Enabled {
@@ -161,6 +170,7 @@ impl CoreInternalFlags {
         match v {
             1 => Self::IdAndTypeDeterminismChecks,
             2 => Self::UpsertSearchAttributeOnPatch,
+            3 => Self::MoveTerminalCommands,
             _ => Self::TooHigh,
         }
     }

@@ -382,7 +382,7 @@ pub(crate) fn single_hist_mock_sg(
     build_mock_pollers(mh)
 }
 
-type WFTCompeltionMockFn = dyn FnMut(&WorkflowTaskCompletion) -> Result<RespondWorkflowTaskCompletedResponse, tonic::Status>
+type WFTCompletionMockFn = dyn FnMut(&WorkflowTaskCompletion) -> Result<RespondWorkflowTaskCompletedResponse, tonic::Status>
     + Send;
 
 #[allow(clippy::type_complexity)]
@@ -395,7 +395,7 @@ pub(crate) struct MockPollCfg {
     /// All calls to fail WFTs must match this predicate
     pub(crate) expect_fail_wft_matcher:
         Box<dyn Fn(&TaskToken, &WorkflowTaskFailedCause, &Option<Failure>) -> bool + Send>,
-    pub(crate) completion_mock_fn: Option<Box<WFTCompeltionMockFn>>,
+    pub(crate) completion_mock_fn: Option<Box<WFTCompletionMockFn>>,
     pub(crate) num_expected_completions: Option<TimesRange>,
     /// If being used with the Rust SDK, this is set true. It ensures pollers will not error out
     /// early with no work, since we cannot know the exact number of times polling will happen.
@@ -476,7 +476,7 @@ impl MockPollCfg {
 
 #[allow(clippy::type_complexity)]
 pub(crate) struct CompletionAssertsBuilder<'a> {
-    dest: &'a mut Option<Box<WFTCompeltionMockFn>>,
+    dest: &'a mut Option<Box<WFTCompletionMockFn>>,
     assertions: VecDeque<Box<dyn FnOnce(&WorkflowTaskCompletion) + Send>>,
 }
 

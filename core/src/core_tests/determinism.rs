@@ -125,7 +125,7 @@ async fn activity_id_or_type_change_is_nondeterministic(
 ) {
     let wf_id = "fakeid";
     let wf_type = DEFAULT_WORKFLOW_TYPE;
-    let mut t = if local_act {
+    let mut t: TestHistoryBuilder = if local_act {
         canned_histories::single_local_activity("1")
     } else {
         canned_histories::single_activity("1")

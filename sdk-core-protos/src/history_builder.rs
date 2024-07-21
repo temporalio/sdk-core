@@ -243,6 +243,14 @@ impl TestHistoryBuilder {
         self.build_and_push_event(EventType::WorkflowTaskFailed, attrs.into());
     }
 
+    pub fn add_timer_started(&mut self, timer_id: String) {
+        self.add(TimerStartedEventAttributes {
+            timer_id,
+            workflow_task_completed_event_id: self.previous_task_completed_id,
+            ..Default::default()
+        });
+    }
+
     pub fn add_timer_fired(&mut self, timer_started_evt_id: i64, timer_id: String) {
         self.add(TimerFiredEventAttributes {
             started_event_id: timer_started_evt_id,

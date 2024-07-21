@@ -1043,7 +1043,7 @@ fn validate_completion(
     match completion.status {
         Some(workflow_activation_completion::Status::Successful(success)) => {
             // Convert to wf commands
-            let mut commands = success
+            let commands = success
                 .commands
                 .into_iter()
                 .map(|c| c.try_into())
@@ -1068,16 +1068,6 @@ fn validate_completion(
                     ),
                     run_id: completion.run_id,
                 });
-            }
-
-            // Any non-query-response commands after a terminal command should be ignored
-            if let Some(term_cmd_pos) = commands.iter().position(|c| c.is_terminal()) {
-                // Query responses are just fine, so keep them.
-                let queries = commands
-                    .split_off(term_cmd_pos + 1)
-                    .into_iter()
-                    .filter(|c| matches!(c, WFCommand::QueryResponse(_)));
-                commands.extend(queries);
             }
 
             Ok(ValidatedCompletion::Success {
