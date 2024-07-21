@@ -2549,15 +2549,9 @@ async fn post_terminal_commands_are_retained_when_replaying_and_flag_set() {
         CompleteWorkflowExecution { result: None }.into(),
         start_timer_cmd(1, Duration::from_secs(1)),
     ];
-    let expected_command_types_emitted = None;
 
-    _do_post_terminal_commands_test(
-        commands_sent_by_lang,
-        [ResponseType::AllHistory],
-        expected_command_types_emitted,
-        t,
-    )
-    .await
+    _do_post_terminal_commands_test(commands_sent_by_lang, [ResponseType::AllHistory], None, t)
+        .await
 }
 
 #[tokio::test]
@@ -2576,15 +2570,9 @@ async fn post_terminal_commands_are_not_retained_when_replaying_and_flag_not_set
         CompleteWorkflowExecution { result: None }.into(),
         start_timer_cmd(1, Duration::from_secs(1)),
     ];
-    let expected_command_types_emitted = None;
 
-    _do_post_terminal_commands_test(
-        commands_sent_by_lang,
-        [ResponseType::AllHistory],
-        expected_command_types_emitted,
-        t,
-    )
-    .await
+    _do_post_terminal_commands_test(commands_sent_by_lang, [ResponseType::AllHistory], None, t)
+        .await
 }
 
 async fn _do_post_terminal_commands_test(
