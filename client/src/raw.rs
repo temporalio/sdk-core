@@ -567,7 +567,7 @@ proxier! {
         |r| {
             let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             r.extensions_mut().insert(labels);
-            if r.get_ref().wait_new_event {
+            if r.get_ref().wait_new_event && !r.metadata().contains_key("grpc-timeout") {
                 r.set_timeout(LONG_POLL_TIMEOUT);
             }
         }
