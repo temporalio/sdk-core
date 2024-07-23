@@ -157,6 +157,10 @@ pub struct ClientOptions {
     /// If set true, error code labels will not be included on request failure metrics.
     #[builder(default)]
     pub disable_error_code_metric_tags: bool,
+
+    /// If set true, get_system_info will not be called upon connection
+    #[builder(default)]
+    pub skip_get_system_info: bool,
 }
 
 /// Configuration options for TLS
@@ -448,18 +452,20 @@ impl ClientOptions {
             capabilities: None,
             workers: Arc::new(SlotManager::new()),
         };
-        match client
-            .get_system_info(GetSystemInfoRequest::default())
-            .await
-        {
-            Ok(sysinfo) => {
-                client.capabilities = sysinfo.into_inner().capabilities;
-            }
-            Err(status) => match status.code() {
-                Code::Unimplemented => {}
-                _ => return Err(ClientInitError::SystemInfoCallError(status)),
-            },
-        };
+        if !self.skip_get_system_info {
+            match client
+                .get_system_info(GetSystemInfoRequest::default())
+                .await
+            {
+                Ok(sysinfo) => {
+                    client.capabilities = sysinfo.into_inner().capabilities;
+                }
+                Err(status) => match status.code() {
+                    Code::Unimplemented => {}
+                    _ => return Err(ClientInitError::SystemInfoCallError(status)),
+                },
+            };
+        }
         Ok(RetryClient::new(client, self.retry_config.clone()))
     }
 
@@ -529,9 +535,7 @@ impl Interceptor for ServiceCallInterceptor {
             );
         }
         self.headers.read().apply_to_metadata(metadata);
-        if !metadata.contains_key("grpc-timeout") {
-            request.set_timeout(OTHER_CALL_TIMEOUT);
-        }
+        request.set_default_timeout(OTHER_CALL_TIMEOUT);
 
         Ok(request)
     }
@@ -1618,6 +1622,18 @@ pub trait WfClientExt: WfHandleClient + Sized + Clone {
 }
 
 impl<T> WfClientExt for T where T: WfHandleClient + Clone + Sized {}
+
+trait RequestExt {
+    /// Set a timeout for a request if one is not already specified in the metadata
+    fn set_default_timeout(&mut self, duration: Duration);
+}
+impl<T> RequestExt for tonic::Request<T> {
+    fn set_default_timeout(&mut self, duration: Duration) {
+        if !self.metadata().contains_key("grpc-timeout") {
+            self.set_timeout(duration)
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
