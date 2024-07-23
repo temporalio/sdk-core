@@ -6,8 +6,8 @@ use crate::{
     metrics::{namespace_kv, task_queue_kv},
     raw::sealed::RawClientLike,
     worker_registry::{Slot, SlotManager},
-    Client, ConfiguredClient, InterceptedMetricsSvc, RetryClient, TemporalServiceClient,
-    LONG_POLL_TIMEOUT,
+    Client, ConfiguredClient, InterceptedMetricsSvc, RequestExt, RetryClient,
+    TemporalServiceClient, LONG_POLL_TIMEOUT,
 };
 use futures::{future::BoxFuture, FutureExt, TryFutureExt};
 use std::sync::Arc;
@@ -567,8 +567,8 @@ proxier! {
         |r| {
             let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             r.extensions_mut().insert(labels);
-            if r.get_ref().wait_new_event && !r.metadata().contains_key("grpc-timeout") {
-                r.set_timeout(LONG_POLL_TIMEOUT);
+            if r.get_ref().wait_new_event {
+                r.set_default_timeout(LONG_POLL_TIMEOUT);
             }
         }
     );
@@ -589,7 +589,7 @@ proxier! {
             let mut labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             labels.task_q(r.get_ref().task_queue.clone());
             r.extensions_mut().insert(labels);
-            r.set_timeout(LONG_POLL_TIMEOUT);
+            r.set_default_timeout(LONG_POLL_TIMEOUT);
         }
     );
     (
@@ -618,7 +618,7 @@ proxier! {
             let mut labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             labels.task_q(r.get_ref().task_queue.clone());
             r.extensions_mut().insert(labels);
-            r.set_timeout(LONG_POLL_TIMEOUT);
+            r.set_default_timeout(LONG_POLL_TIMEOUT);
         }
     );
     (
@@ -973,9 +973,7 @@ proxier! {
         |r| {
             let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             r.extensions_mut().insert(labels);
-            if !r.metadata().contains_key("grpc-timeout")  {
-                r.set_timeout(LONG_POLL_TIMEOUT);
-            }
+            r.set_default_timeout(LONG_POLL_TIMEOUT);
         }
     );
     (
@@ -985,9 +983,7 @@ proxier! {
         |r| {
             let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
             r.extensions_mut().insert(labels);
-            if !r.metadata().contains_key("grpc-timeout")  {
-                r.set_timeout(LONG_POLL_TIMEOUT);
-            }
+            r.set_default_timeout(LONG_POLL_TIMEOUT);
         }
     );
     (

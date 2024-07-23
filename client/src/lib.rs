@@ -529,9 +529,7 @@ impl Interceptor for ServiceCallInterceptor {
             );
         }
         self.headers.read().apply_to_metadata(metadata);
-        if !metadata.contains_key("grpc-timeout") {
-            request.set_timeout(OTHER_CALL_TIMEOUT);
-        }
+        request.set_default_timeout(OTHER_CALL_TIMEOUT);
 
         Ok(request)
     }
@@ -1618,6 +1616,18 @@ pub trait WfClientExt: WfHandleClient + Sized + Clone {
 }
 
 impl<T> WfClientExt for T where T: WfHandleClient + Clone + Sized {}
+
+trait RequestExt {
+    /// Set a timeout for a request if one is not already specified in the metadata
+    fn set_default_timeout(&mut self, duration: Duration);
+}
+impl<T> RequestExt for tonic::Request<T> {
+    fn set_default_timeout(&mut self, duration: Duration) {
+        if !self.metadata().contains_key("grpc-timeout") {
+            self.set_timeout(duration)
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
