@@ -41,7 +41,7 @@ impl DrivenWorkflow {
     ) {
         debug!(run_id = %attribs.original_execution_run_id, "Driven WF start");
         let started_info = WorkflowStartedInfo {
-            workflow_task_timeout: attribs.workflow_task_timeout.clone().try_into_or_none(),
+            workflow_task_timeout: attribs.workflow_task_timeout.try_into_or_none(),
             memo: attribs.memo.clone(),
             search_attrs: attribs.search_attributes.clone(),
             retry_policy: attribs.retry_policy.clone(),

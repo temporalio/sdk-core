@@ -25,7 +25,7 @@ pub(crate) static DEFAULT_TEST_CAPABILITIES: &Capabilities = &Capabilities {
 pub(crate) fn mock_workflow_client() -> MockWorkerClient {
     let mut r = MockWorkerClient::new();
     r.expect_capabilities()
-        .returning(|| Some(DEFAULT_TEST_CAPABILITIES.clone()));
+        .returning(|| Some(*DEFAULT_TEST_CAPABILITIES));
     r.expect_workers()
         .returning(|| DEFAULT_WORKERS_REGISTRY.clone());
     r.expect_is_mock().returning(|| true);
@@ -36,7 +36,7 @@ pub(crate) fn mock_workflow_client() -> MockWorkerClient {
 pub(crate) fn mock_manual_workflow_client() -> MockManualWorkerClient {
     let mut r = MockManualWorkerClient::new();
     r.expect_capabilities()
-        .returning(|| Some(DEFAULT_TEST_CAPABILITIES.clone()));
+        .returning(|| Some(*DEFAULT_TEST_CAPABILITIES));
     r.expect_workers()
         .returning(|| DEFAULT_WORKERS_REGISTRY.clone());
     r.expect_is_mock().returning(|| true);

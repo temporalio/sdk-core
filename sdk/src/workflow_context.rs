@@ -607,7 +607,6 @@ impl<'a> Future for LATimerBackoffFut<'a> {
 
                 let timer_f = self.ctx.timer(
                     b.backoff_duration
-                        .clone()
                         .expect("Duration is set")
                         .try_into()
                         .expect("duration converts ok"),

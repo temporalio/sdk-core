@@ -11,7 +11,7 @@ use super::{
 use crate::{abstractions::dbg_panic, telemetry::metrics::DEFAULT_S_BUCKETS};
 use opentelemetry::{
     self,
-    metrics::{Meter, MeterProvider as MeterProviderT, Unit},
+    metrics::{Meter, MeterProvider as MeterProviderT},
     Key, KeyValue, Value,
 };
 use opentelemetry_otlp::WithExportConfig;
@@ -20,10 +20,10 @@ use opentelemetry_sdk::{
         data::Temporality,
         new_view,
         reader::{AggregationSelector, DefaultAggregationSelector, TemporalitySelector},
-        Aggregation, Instrument, InstrumentKind, MeterProviderBuilder, PeriodicReader,
-        SdkMeterProvider, View,
+        Aggregation, AttributeSet, Instrument, InstrumentKind, MeterProviderBuilder,
+        PeriodicReader, SdkMeterProvider, View,
     },
-    runtime, AttributeSet, Resource,
+    runtime, Resource,
 };
 use parking_lot::RwLock;
 use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
@@ -117,7 +117,7 @@ macro_rules! impl_memory_gauge {
             fn new(params: MetricParameters, meter: &Meter) -> Self {
                 let gauge = meter
                     .$gauge_fn(params.name)
-                    .with_unit(Unit::new(params.unit))
+                    .with_unit(params.unit)
                     .with_description(params.description)
                     .init();
                 let map = Arc::new(RwLock::new(HashMap::<AttributeSet, $ty>::new()));
@@ -251,7 +251,7 @@ impl CoreMeter for CoreOtelMeter {
         Arc::new(
             self.meter
                 .u64_counter(params.name)
-                .with_unit(Unit::new(params.unit))
+                .with_unit(params.unit)
                 .with_description(params.description)
                 .init(),
         )
@@ -261,7 +261,7 @@ impl CoreMeter for CoreOtelMeter {
         Arc::new(
             self.meter
                 .u64_histogram(params.name)
-                .with_unit(Unit::new(params.unit))
+                .with_unit(params.unit)
                 .with_description(params.description)
                 .init(),
         )
@@ -271,7 +271,7 @@ impl CoreMeter for CoreOtelMeter {
         Arc::new(
             self.meter
                 .f64_histogram(params.name)
-                .with_unit(Unit::new(params.unit))
+                .with_unit(params.unit)
                 .with_description(params.description)
                 .init(),
         )

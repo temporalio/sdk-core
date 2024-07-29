@@ -674,7 +674,7 @@ impl WFMachinesAdapter for LocalActivityMachine {
                         status: Some(
                             DoBackoff {
                                 attempt: attempt + 1,
-                                backoff_duration: Some(b.clone()),
+                                backoff_duration: Some(*b),
                                 original_schedule_time: original_schedule_time.map(Into::into),
                             }
                             .into(),

@@ -173,7 +173,7 @@ pub struct GrpcMetricSvc {
 }
 
 impl Service<http::Request<BoxBody>> for GrpcMetricSvc {
-    type Response = http::Response<tonic::transport::Body>;
+    type Response = http::Response<BoxBody>;
     type Error = tonic::transport::Error;
     type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
 

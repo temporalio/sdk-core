@@ -1,12 +1,17 @@
 use base64::prelude::*;
-use hyper::header;
-use std::future::Future;
-use std::pin::Pin;
-use std::task::Context;
-use std::task::Poll;
+use http_body_util::Empty;
+use hyper::{body::Bytes, header};
+use hyper_util::{
+    client::legacy::Client,
+    rt::{TokioExecutor, TokioIo},
+};
+use std::{
+    future::Future,
+    pin::Pin,
+    task::{Context, Poll},
+};
 use tokio::net::TcpStream;
-use tonic::transport::Channel;
-use tonic::transport::Endpoint;
+use tonic::transport::{Channel, Endpoint};
 use tower::{service_fn, Service};
 
 /// Options for HTTP CONNECT proxy.
@@ -43,12 +48,12 @@ impl HttpConnectProxyOptions {
             let creds = BASE64_STANDARD.encode(format!("{}:{}", user, pass));
             req_build = req_build.header(header::PROXY_AUTHORIZATION, format!("Basic {}", creds));
         }
-        let req = req_build.body(hyper::Body::empty())?;
+        let req = req_build.body(Empty::<Bytes>::new())?;
 
         // We have to create a client with a specific connector because Hyper is
         // not letting us change the HTTP/2 authority
-        let client =
-            hyper::Client::builder().build(OverrideAddrConnector(self.target_addr.clone()));
+        let client = Client::builder(TokioExecutor::new())
+            .build(OverrideAddrConnector(self.target_addr.clone()));
 
         // Send request
         let res = client.request(req).await?;
@@ -67,7 +72,7 @@ impl HttpConnectProxyOptions {
 struct OverrideAddrConnector(String);
 
 impl Service<hyper::Uri> for OverrideAddrConnector {
-    type Response = TcpStream;
+    type Response = TokioIo<TcpStream>;
 
     type Error = anyhow::Error;
 
@@ -79,7 +84,7 @@ impl Service<hyper::Uri> for OverrideAddrConnector {
 
     fn call(&mut self, _uri: hyper::Uri) -> Self::Future {
         let target_addr = self.0.clone();
-        let fut = async move { Ok(TcpStream::connect(target_addr).await?) };
+        let fut = async move { Ok(TokioIo::new(TcpStream::connect(target_addr).await?)) };
         Box::pin(fut)
     }
 }

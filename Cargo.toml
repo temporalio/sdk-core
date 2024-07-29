@@ -10,11 +10,11 @@ license-file = "LICENSE.txt"
 derive_builder = "0.20"
 derive_more = { version = "0.99", default-features = false, features = ["constructor", "display", "from", "into"] }
 once_cell = "1.16"
-tonic = "0.11"
-tonic-build = "0.11"
-opentelemetry = { version = "0.23", features = ["metrics"] }
-prost = "0.12"
-prost-types = "0.12"
+tonic = "0.12"
+tonic-build = "0.12"
+opentelemetry = { version = "0.24", features = ["metrics"] }
+prost = "0.13"
+prost-types = "0.13"
 
 [workspace.lints.rust]
 unreachable_pub = "warn"

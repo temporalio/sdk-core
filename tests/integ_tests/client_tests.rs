@@ -86,7 +86,7 @@ async fn per_call_timeout_respected_one_call() {
 struct GenericService {
     timeouts_tx: UnboundedSender<String>,
 }
-impl Service<tonic::codegen::http::Request<tonic::transport::Body>> for GenericService {
+impl Service<tonic::codegen::http::Request<BoxBody>> for GenericService {
     type Response = tonic::codegen::http::Response<BoxBody>;
     type Error = Infallible;
     type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
@@ -95,7 +95,7 @@ impl Service<tonic::codegen::http::Request<tonic::transport::Body>> for GenericS
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, req: tonic::codegen::http::Request<tonic::transport::Body>) -> Self::Future {
+    fn call(&mut self, req: tonic::codegen::http::Request<BoxBody>) -> Self::Future {
         self.timeouts_tx
             .send(
                 String::from_utf8_lossy(req.headers().get("grpc-timeout").unwrap().as_bytes())

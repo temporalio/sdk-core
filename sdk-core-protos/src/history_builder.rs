@@ -521,7 +521,6 @@ impl TestHistoryBuilder {
     pub fn wft_start_time(&self) -> Timestamp {
         self.events[(self.workflow_task_scheduled_event_id + 1) as usize]
             .event_time
-            .clone()
             .unwrap()
     }
 
