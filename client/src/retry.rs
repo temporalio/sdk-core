@@ -481,7 +481,7 @@ where
             list_open_workflow_executions,
             maximum_page_size,
             next_page_token.clone(),
-            start_time_filter.clone(),
+            start_time_filter,
             filters.clone()
         )
     }
@@ -498,7 +498,7 @@ where
             list_closed_workflow_executions,
             maximum_page_size,
             next_page_token.clone(),
-            start_time_filter.clone(),
+            start_time_filter,
             filters.clone()
         )
     }
@@ -551,7 +551,7 @@ where
             workflow_id.clone(),
             run_id.clone(),
             name.clone(),
-            wait_policy.clone(),
+            wait_policy,
             args.clone()
         )
     }

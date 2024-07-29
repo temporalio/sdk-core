@@ -403,7 +403,6 @@ impl ValidScheduleLA {
         let retry_policy = v.retry_policy.unwrap_or_default();
         let local_retry_threshold = v
             .local_retry_threshold
-            .clone()
             .try_into_or_none()
             .unwrap_or_else(|| Duration::from_secs(60));
         let cancellation_type = ActivityCancellationType::try_from(v.cancellation_type)

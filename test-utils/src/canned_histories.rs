@@ -1312,7 +1312,7 @@ pub fn two_local_activities_one_wft(parallel: bool) -> TestHistoryBuilder {
     t.add_full_wf_task();
     let mut start_time = t.wft_start_time();
     start_time.seconds += 1;
-    t.add_local_activity_result_marker_with_time(1, "1", b"hi".into(), start_time.clone());
+    t.add_local_activity_result_marker_with_time(1, "1", b"hi".into(), start_time);
     if !parallel {
         start_time.seconds += 1;
     }
