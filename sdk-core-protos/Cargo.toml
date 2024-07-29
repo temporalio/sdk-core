@@ -12,14 +12,15 @@ categories = ["development-tools"]
 
 [features]
 history_builders = ["uuid", "rand"]
+serde_serialize = []
 
 [dependencies]
 anyhow = "1.0"
 base64 = "0.22"
 derive_more = { workspace = true }
 prost = { workspace = true }
-prost-wkt = "0.5"
-prost-wkt-types = "0.5"
+prost-wkt = "0.6"
+prost-wkt-types = "0.6"
 rand = { version = "0.8", optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

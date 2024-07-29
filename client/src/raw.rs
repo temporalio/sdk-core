@@ -333,7 +333,7 @@ fn req_cloner<T: Clone>(cloneme: &Request<T>) -> Request<T> {
     new_req
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(super) struct AttachMetricLabels {
     pub(super) labels: Vec<MetricKeyValue>,
 }

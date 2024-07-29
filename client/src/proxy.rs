@@ -1,5 +1,8 @@
 use base64::prelude::*;
+use http_body_util::Empty;
+use hyper::body::Bytes;
 use hyper::header;
+use hyper_util::{client::legacy::Client, rt::TokioExecutor};
 use std::future::Future;
 use std::pin::Pin;
 use std::task::Context;
@@ -43,12 +46,13 @@ impl HttpConnectProxyOptions {
             let creds = BASE64_STANDARD.encode(format!("{}:{}", user, pass));
             req_build = req_build.header(header::PROXY_AUTHORIZATION, format!("Basic {}", creds));
         }
-        let req = req_build.body(hyper::Body::empty())?;
+        let req = req_build.body(Empty::<Bytes>::new())?;
 
         // We have to create a client with a specific connector because Hyper is
         // not letting us change the HTTP/2 authority
-        let client =
-            hyper::Client::builder().build(OverrideAddrConnector(self.target_addr.clone()));
+        // let client = hyper::Client::builder().build(OverrideAddrConnector(self.target_addr.clone()));
+
+        let client = Client::builder(TokioExecutor::new()).build_http();
 
         // Send request
         let res = client.request(req).await?;

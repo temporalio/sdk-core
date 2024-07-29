@@ -18,7 +18,7 @@ crossbeam-channel = "0.5"
 derive_more = { workspace = true }
 futures = "0.3"
 parking_lot = { version = "0.12", features = ["send_guard"] }
-prost-types = { version = "0.5", package = "prost-wkt-types" }
+prost-types = { version = "0.6", package = "prost-wkt-types" }
 serde = "1.0"
 tokio = { version = "1.26", features = ["rt", "rt-multi-thread", "parking_lot", "time", "fs"] }
 tokio-util = { version = "0.7" }
