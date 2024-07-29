@@ -2,11 +2,13 @@ use base64::prelude::*;
 use http_body_util::Empty;
 use hyper::body::Bytes;
 use hyper::header;
+use hyper_util::client::legacy::connect::{Connected, Connection};
 use hyper_util::{client::legacy::Client, rt::TokioExecutor};
 use std::future::Future;
 use std::pin::Pin;
 use std::task::Context;
 use std::task::Poll;
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
 use tonic::transport::Channel;
 use tonic::transport::Endpoint;
@@ -50,9 +52,8 @@ impl HttpConnectProxyOptions {
 
         // We have to create a client with a specific connector because Hyper is
         // not letting us change the HTTP/2 authority
-        // let client = hyper::Client::builder().build(OverrideAddrConnector(self.target_addr.clone()));
-
-        let client = Client::builder(TokioExecutor::new()).build_http();
+        let client = Client::builder(TokioExecutor::new())
+            .build(OverrideAddrConnector(self.target_addr.clone()));
 
         // Send request
         let res = client.request(req).await?;
@@ -71,7 +72,7 @@ impl HttpConnectProxyOptions {
 struct OverrideAddrConnector(String);
 
 impl Service<hyper::Uri> for OverrideAddrConnector {
-    type Response = TcpStream;
+    type Response = HyperStream;
 
     type Error = anyhow::Error;
 
@@ -83,7 +84,50 @@ impl Service<hyper::Uri> for OverrideAddrConnector {
 
     fn call(&mut self, _uri: hyper::Uri) -> Self::Future {
         let target_addr = self.0.clone();
-        let fut = async move { Ok(TcpStream::connect(target_addr).await?) };
+        let fut = async move { Ok(HyperStream(TcpStream::connect(target_addr).await?)) };
         Box::pin(fut)
+    }
+}
+
+struct HyperStream(pub TcpStream);
+
+impl hyper::rt::Write for HyperStream {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        Pin::new(&mut self.0).poll_write(cx, buf)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.0).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.0).poll_shutdown(cx)
+    }
+}
+
+impl hyper::rt::Read for HyperStream {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        mut buf: hyper::rt::ReadBufCursor<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        unsafe {
+            let mut read_slice = ReadBuf::new({
+                let buffer = buf.as_mut();
+                buffer.as_mut_ptr().write_bytes(0, buffer.len());
+                std::slice::from_raw_parts_mut(buffer.as_mut_ptr() as *mut u8, buffer.len())
+            });
+            Pin::new(&mut self.0).poll_read(cx, &mut read_slice)
+        }
+    }
+}
+
+impl Connection for HyperStream {
+    fn connected(&self) -> Connected {
+        Connected::new()
     }
 }
