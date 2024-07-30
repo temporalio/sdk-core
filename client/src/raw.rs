@@ -7,7 +7,7 @@ use crate::{
     raw::sealed::RawClientLike,
     worker_registry::{Slot, SlotManager},
     Client, ConfiguredClient, InterceptedMetricsSvc, RequestExt, RetryClient,
-    TemporalServiceClient, LONG_POLL_TIMEOUT,
+    TemporalServiceClient, LONG_POLL_TIMEOUT, TEMPORAL_NAMESPACE_HEADER_KEY,
 };
 use futures::{future::BoxFuture, FutureExt, TryFutureExt};
 use std::sync::Arc;
@@ -23,7 +23,10 @@ use temporal_sdk_core_protos::{
     },
 };
 use tonic::{
-    body::BoxBody, client::GrpcService, metadata::KeyAndValueRef, Request, Response, Status,
+    body::BoxBody,
+    client::GrpcService,
+    metadata::{AsciiMetadataValue, KeyAndValueRef},
+    Request, Response, Status,
 };
 
 pub(super) mod sealed {
@@ -473,6 +476,21 @@ macro_rules! proxier {
     };
 }
 
+macro_rules! namespaced_request {
+    ($req:ident) => {{
+        let ns_str = $req.get_ref().namespace.clone();
+        // Attach namespace header
+        $req.metadata_mut().insert(
+            TEMPORAL_NAMESPACE_HEADER_KEY,
+            ns_str
+                .parse()
+                .unwrap_or_else(|_| AsciiMetadataValue::from_static("")),
+        );
+        // Init metric labels
+        AttachMetricLabels::namespace(ns_str)
+    }};
+}
+
 // Nice little trick to avoid the callsite asking to type the closure parameter
 fn type_closure_arg<T, R>(arg: T, f: impl FnOnce(T) -> R) -> R {
     f(arg)
@@ -489,7 +507,7 @@ proxier! {
         RegisterNamespaceRequest,
         RegisterNamespaceResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -498,7 +516,7 @@ proxier! {
         DescribeNamespaceRequest,
         DescribeNamespaceResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -512,7 +530,7 @@ proxier! {
         UpdateNamespaceRequest,
         UpdateNamespaceResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -521,7 +539,7 @@ proxier! {
         DeprecateNamespaceRequest,
         DeprecateNamespaceResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -531,7 +549,7 @@ proxier! {
         StartWorkflowExecutionResponse,
         |r, workers| {
             let mut slot: Option<Box<dyn Slot + Send>> = None;
-            let mut labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let mut labels = namespaced_request!(r);
             labels.task_q(r.get_ref().task_queue.clone());
             r.extensions_mut().insert(labels);
             let req_mut = r.get_mut();
@@ -565,7 +583,7 @@ proxier! {
         GetWorkflowExecutionHistoryRequest,
         GetWorkflowExecutionHistoryResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
             if r.get_ref().wait_new_event {
                 r.set_default_timeout(LONG_POLL_TIMEOUT);
@@ -577,7 +595,7 @@ proxier! {
         GetWorkflowExecutionHistoryReverseRequest,
         GetWorkflowExecutionHistoryReverseResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -586,7 +604,7 @@ proxier! {
         PollWorkflowTaskQueueRequest,
         PollWorkflowTaskQueueResponse,
         |r| {
-            let mut labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let mut labels = namespaced_request!(r);
             labels.task_q(r.get_ref().task_queue.clone());
             r.extensions_mut().insert(labels);
             r.set_default_timeout(LONG_POLL_TIMEOUT);
@@ -597,7 +615,7 @@ proxier! {
         RespondWorkflowTaskCompletedRequest,
         RespondWorkflowTaskCompletedResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -606,7 +624,7 @@ proxier! {
         RespondWorkflowTaskFailedRequest,
         RespondWorkflowTaskFailedResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -615,7 +633,7 @@ proxier! {
         PollActivityTaskQueueRequest,
         PollActivityTaskQueueResponse,
         |r| {
-            let mut labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let mut labels = namespaced_request!(r);
             labels.task_q(r.get_ref().task_queue.clone());
             r.extensions_mut().insert(labels);
             r.set_default_timeout(LONG_POLL_TIMEOUT);
@@ -626,7 +644,7 @@ proxier! {
         RecordActivityTaskHeartbeatRequest,
         RecordActivityTaskHeartbeatResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -635,7 +653,7 @@ proxier! {
         RecordActivityTaskHeartbeatByIdRequest,
         RecordActivityTaskHeartbeatByIdResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -644,7 +662,7 @@ proxier! {
         RespondActivityTaskCompletedRequest,
         RespondActivityTaskCompletedResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -653,7 +671,7 @@ proxier! {
         RespondActivityTaskCompletedByIdRequest,
         RespondActivityTaskCompletedByIdResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -663,7 +681,7 @@ proxier! {
         RespondActivityTaskFailedRequest,
         RespondActivityTaskFailedResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -672,7 +690,7 @@ proxier! {
         RespondActivityTaskFailedByIdRequest,
         RespondActivityTaskFailedByIdResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -681,7 +699,7 @@ proxier! {
         RespondActivityTaskCanceledRequest,
         RespondActivityTaskCanceledResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -690,7 +708,7 @@ proxier! {
         RespondActivityTaskCanceledByIdRequest,
         RespondActivityTaskCanceledByIdResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -699,7 +717,7 @@ proxier! {
         RequestCancelWorkflowExecutionRequest,
         RequestCancelWorkflowExecutionResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -708,7 +726,7 @@ proxier! {
         SignalWorkflowExecutionRequest,
         SignalWorkflowExecutionResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -717,7 +735,7 @@ proxier! {
         SignalWithStartWorkflowExecutionRequest,
         SignalWithStartWorkflowExecutionResponse,
         |r| {
-            let mut labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let mut labels = namespaced_request!(r);
             labels.task_q(r.get_ref().task_queue.clone());
             r.extensions_mut().insert(labels);
         }
@@ -727,7 +745,7 @@ proxier! {
         ResetWorkflowExecutionRequest,
         ResetWorkflowExecutionResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -736,7 +754,7 @@ proxier! {
         TerminateWorkflowExecutionRequest,
         TerminateWorkflowExecutionResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -745,7 +763,7 @@ proxier! {
         DeleteWorkflowExecutionRequest,
         DeleteWorkflowExecutionResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -754,7 +772,7 @@ proxier! {
         ListOpenWorkflowExecutionsRequest,
         ListOpenWorkflowExecutionsResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -763,7 +781,7 @@ proxier! {
         ListClosedWorkflowExecutionsRequest,
         ListClosedWorkflowExecutionsResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -772,7 +790,7 @@ proxier! {
         ListWorkflowExecutionsRequest,
         ListWorkflowExecutionsResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -781,7 +799,7 @@ proxier! {
         ListArchivedWorkflowExecutionsRequest,
         ListArchivedWorkflowExecutionsResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -790,7 +808,7 @@ proxier! {
         ScanWorkflowExecutionsRequest,
         ScanWorkflowExecutionsResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -799,7 +817,7 @@ proxier! {
         CountWorkflowExecutionsRequest,
         CountWorkflowExecutionsResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -813,7 +831,7 @@ proxier! {
         RespondQueryTaskCompletedRequest,
         RespondQueryTaskCompletedResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -822,7 +840,7 @@ proxier! {
         ResetStickyTaskQueueRequest,
         ResetStickyTaskQueueResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -831,7 +849,7 @@ proxier! {
         QueryWorkflowRequest,
         QueryWorkflowResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -840,7 +858,7 @@ proxier! {
         DescribeWorkflowExecutionRequest,
         DescribeWorkflowExecutionResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -849,7 +867,7 @@ proxier! {
         DescribeTaskQueueRequest,
         DescribeTaskQueueResponse,
         |r| {
-            let mut labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let mut labels = namespaced_request!(r);
             labels.task_q(r.get_ref().task_queue.clone());
             r.extensions_mut().insert(labels);
         }
@@ -869,7 +887,7 @@ proxier! {
         ListTaskQueuePartitionsRequest,
         ListTaskQueuePartitionsResponse,
         |r| {
-            let mut labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let mut labels = namespaced_request!(r);
             labels.task_q(r.get_ref().task_queue.clone());
             r.extensions_mut().insert(labels);
         }
@@ -879,7 +897,7 @@ proxier! {
         CreateScheduleRequest,
         CreateScheduleResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -888,7 +906,7 @@ proxier! {
         DescribeScheduleRequest,
         DescribeScheduleResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -897,7 +915,7 @@ proxier! {
         UpdateScheduleRequest,
         UpdateScheduleResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -906,7 +924,7 @@ proxier! {
         PatchScheduleRequest,
         PatchScheduleResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -915,7 +933,7 @@ proxier! {
         ListScheduleMatchingTimesRequest,
         ListScheduleMatchingTimesResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -924,7 +942,7 @@ proxier! {
         DeleteScheduleRequest,
         DeleteScheduleResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -933,7 +951,7 @@ proxier! {
         ListSchedulesRequest,
         ListSchedulesResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -942,7 +960,7 @@ proxier! {
         UpdateWorkerBuildIdCompatibilityRequest,
         UpdateWorkerBuildIdCompatibilityResponse,
         |r| {
-            let mut labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let mut labels = namespaced_request!(r);
             labels.task_q_str(r.get_ref().task_queue.clone());
             r.extensions_mut().insert(labels);
         }
@@ -952,7 +970,7 @@ proxier! {
         GetWorkerBuildIdCompatibilityRequest,
         GetWorkerBuildIdCompatibilityResponse,
         |r| {
-            let mut labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let mut labels = namespaced_request!(r);
             labels.task_q_str(r.get_ref().task_queue.clone());
             r.extensions_mut().insert(labels);
         }
@@ -962,7 +980,7 @@ proxier! {
         GetWorkerTaskReachabilityRequest,
         GetWorkerTaskReachabilityResponse,
         |r| {
-            let mut labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let mut labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -971,7 +989,7 @@ proxier! {
         UpdateWorkflowExecutionRequest,
         UpdateWorkflowExecutionResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
             r.set_default_timeout(LONG_POLL_TIMEOUT);
         }
@@ -981,7 +999,7 @@ proxier! {
         PollWorkflowExecutionUpdateRequest,
         PollWorkflowExecutionUpdateResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
             r.set_default_timeout(LONG_POLL_TIMEOUT);
         }
@@ -991,7 +1009,7 @@ proxier! {
         StartBatchOperationRequest,
         StartBatchOperationResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -1000,7 +1018,7 @@ proxier! {
         StopBatchOperationRequest,
         StopBatchOperationResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -1009,7 +1027,7 @@ proxier! {
         DescribeBatchOperationRequest,
         DescribeBatchOperationResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -1018,7 +1036,7 @@ proxier! {
         ListBatchOperationsRequest,
         ListBatchOperationsResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -1027,7 +1045,7 @@ proxier! {
         ExecuteMultiOperationRequest,
         ExecuteMultiOperationResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -1036,7 +1054,7 @@ proxier! {
         GetWorkerVersioningRulesRequest,
         GetWorkerVersioningRulesResponse,
         |r| {
-            let mut labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let mut labels = namespaced_request!(r);
             labels.task_q_str(&r.get_ref().task_queue);
             r.extensions_mut().insert(labels);
         }
@@ -1046,7 +1064,7 @@ proxier! {
         UpdateWorkerVersioningRulesRequest,
         UpdateWorkerVersioningRulesResponse,
         |r| {
-            let mut labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let mut labels = namespaced_request!(r);
             labels.task_q_str(&r.get_ref().task_queue);
             r.extensions_mut().insert(labels);
         }
@@ -1056,7 +1074,7 @@ proxier! {
         PollNexusTaskQueueRequest,
         PollNexusTaskQueueResponse,
         |r| {
-            let mut labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let mut labels = namespaced_request!(r);
             labels.task_q(r.get_ref().task_queue.clone());
             r.extensions_mut().insert(labels);
         }
@@ -1066,7 +1084,7 @@ proxier! {
         RespondNexusTaskCompletedRequest,
         RespondNexusTaskCompletedResponse,
         |r| {
-            let mut labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -1075,7 +1093,7 @@ proxier! {
         RespondNexusTaskFailedRequest,
         RespondNexusTaskFailedResponse,
         |r| {
-            let mut labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -1088,7 +1106,7 @@ proxier! {
     (list_search_attributes, ListSearchAttributesRequest, ListSearchAttributesResponse);
     (delete_namespace, DeleteNamespaceRequest, DeleteNamespaceResponse,
         |r| {
-            let labels = AttachMetricLabels::namespace(r.get_ref().namespace.clone());
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
@@ -1113,10 +1131,25 @@ proxier! {
     (get_async_operation, cloudreq::GetAsyncOperationRequest, cloudreq::GetAsyncOperationResponse);
     (create_namespace, cloudreq::CreateNamespaceRequest, cloudreq::CreateNamespaceResponse);
     (get_namespaces, cloudreq::GetNamespacesRequest, cloudreq::GetNamespacesResponse);
-    (get_namespace, cloudreq::GetNamespaceRequest, cloudreq::GetNamespaceResponse);
-    (update_namespace, cloudreq::UpdateNamespaceRequest, cloudreq::UpdateNamespaceResponse);
+    (get_namespace, cloudreq::GetNamespaceRequest, cloudreq::GetNamespaceResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (update_namespace, cloudreq::UpdateNamespaceRequest, cloudreq::UpdateNamespaceResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
     (rename_custom_search_attribute, cloudreq::RenameCustomSearchAttributeRequest, cloudreq::RenameCustomSearchAttributeResponse);
-    (delete_namespace, cloudreq::DeleteNamespaceRequest, cloudreq::DeleteNamespaceResponse);
+    (delete_namespace, cloudreq::DeleteNamespaceRequest, cloudreq::DeleteNamespaceResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
     (failover_namespace_region, cloudreq::FailoverNamespaceRegionRequest, cloudreq::FailoverNamespaceRegionResponse);
     (add_namespace_region, cloudreq::AddNamespaceRegionRequest, cloudreq::AddNamespaceRegionResponse);
     (get_regions, cloudreq::GetRegionsRequest, cloudreq::GetRegionsResponse);
