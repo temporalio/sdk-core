@@ -22,7 +22,7 @@ ephemeral-server = ["dep:flate2", "dep:reqwest", "dep:tar", "dep:zip"]
 [dependencies]
 anyhow = "1.0"
 async-trait = "0.1"
-console-subscriber = { version = "0.3", optional = true }
+console-subscriber = { version = "0.4", optional = true }
 crossbeam-channel = "0.5"
 crossbeam-queue = "0.3"
 crossbeam-utils = "0.8"
@@ -43,15 +43,15 @@ lru = "0.12"
 mockall = "0.12"
 once_cell = { workspace = true }
 opentelemetry = { workspace = true, features = ["metrics"], optional = true }
-opentelemetry_sdk = { version = "0.23", features = ["rt-tokio", "metrics"], optional = true }
-opentelemetry-otlp = { version = "0.16", features = ["tokio", "metrics"], optional = true }
-opentelemetry-prometheus = { version = "0.16", optional = true }
+opentelemetry_sdk = { version = "0.24", features = ["rt-tokio", "metrics"], optional = true }
+opentelemetry-otlp = { version = "0.17", features = ["tokio", "metrics"], optional = true }
+opentelemetry-prometheus = { version = "0.17", optional = true }
 parking_lot = { version = "0.12", features = ["send_guard"] }
 pid = "4.0"
 pin-project = "1.0"
 prometheus = "0.13"
 prost = { workspace = true }
-prost-types = { version = "0.5", package = "prost-wkt-types" }
+prost-types = { version = "0.6", package = "prost-wkt-types" }
 rand = "0.8.3"
 reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls"], default-features = false, optional = true }
 ringbuf = "0.4"

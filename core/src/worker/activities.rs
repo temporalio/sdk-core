@@ -128,7 +128,7 @@ impl RemoteInFlightActInfo {
                 workflow_run_id: wec.run_id,
                 start_time: Instant::now(),
             },
-            heartbeat_timeout: poll_resp.heartbeat_timeout.clone(),
+            heartbeat_timeout: poll_resp.heartbeat_timeout,
             issued_cancel_to_lang: None,
             known_not_found: false,
             local_timeouts_task: None,
@@ -417,7 +417,6 @@ impl WorkerActivityTasks {
             .ok_or(ActivityHeartbeatError::UnknownActivity)?;
         let heartbeat_timeout: Duration = at_info
             .heartbeat_timeout
-            .clone()
             // We treat None as 0 (even though heartbeat_timeout is never set to None by the server)
             .unwrap_or_default()
             .try_into()
@@ -565,8 +564,8 @@ where
                                 let local_timeout_buffer = self.local_timeout_buffer;
                                 static HEARTBEAT_TYPE: &str = "heartbeat";
                                 let timeout_at = [
-                                    (HEARTBEAT_TYPE, task.resp.heartbeat_timeout.clone()),
-                                    ("start_to_close", task.resp.start_to_close_timeout.clone()),
+                                    (HEARTBEAT_TYPE, task.resp.heartbeat_timeout),
+                                    ("start_to_close", task.resp.start_to_close_timeout),
                                 ]
                                 .into_iter()
                                 .filter_map(|(k, d)| {

@@ -98,7 +98,7 @@ impl TryFrom<HistEventData> for WorkflowTaskMachineEvents {
         Ok(match e.event_type() {
             EventType::WorkflowTaskScheduled => Self::WorkflowTaskScheduled,
             EventType::WorkflowTaskStarted => Self::WorkflowTaskStarted({
-                let time = if let Some(time) = e.event_time.clone() {
+                let time = if let Some(time) = e.event_time {
                     match time.try_into() {
                         Ok(t) => t,
                         Err(_) => {

@@ -46,14 +46,12 @@ impl RetryPolicyExt for RetryPolicy {
             }
         }
 
-        if let Some(explicit_delay) = application_failure.and_then(|af| af.next_retry_delay.clone())
-        {
+        if let Some(explicit_delay) = application_failure.and_then(|af| af.next_retry_delay) {
             return explicit_delay.try_into().ok();
         }
 
         let converted_interval = self
             .initial_interval
-            .clone()
             .try_into_or_none()
             .or(Some(Duration::from_secs(1)));
         if attempt_number == 1 {
@@ -68,7 +66,6 @@ impl RetryPolicyExt for RetryPolicy {
         if let Some(interval) = converted_interval {
             let max_iv = self
                 .maximum_interval
-                .clone()
                 .try_into_or_none()
                 .unwrap_or_else(|| interval.saturating_mul(100));
             let mul_factor = coeff.powi(attempt_number as i32 - 1);

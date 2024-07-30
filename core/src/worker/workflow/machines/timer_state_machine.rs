@@ -78,7 +78,7 @@ impl TimerMachine {
             .expect("Scheduling timers doesn't fail");
         let cmd = Command {
             command_type: CommandType::StartTimer as i32,
-            attributes: Some(s.shared_state().attrs.clone().into()),
+            attributes: Some(s.shared_state().attrs.into()),
             user_metadata: Default::default(),
         };
         (s, cmd)

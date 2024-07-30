@@ -419,7 +419,7 @@ impl Worker {
                     config.clone(),
                     metrics,
                     shutdown_token.child_token(),
-                    client.capabilities().clone().unwrap_or_default(),
+                    client.capabilities().unwrap_or_default(),
                 ),
                 sticky_queue_name.map(|sq| StickyExecutionAttributes {
                     worker_task_queue: Some(TaskQueue {

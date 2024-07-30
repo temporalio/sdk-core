@@ -188,10 +188,9 @@ fn calculate_deadline(
         ) => {
             let scheduled: SystemTime = maybe_convert_timestamp(scheduled)?;
             let started: SystemTime = maybe_convert_timestamp(started)?;
-            let start_to_close_timeout: StdDuration =
-                start_to_close_timeout.clone().try_into().ok()?;
+            let start_to_close_timeout: StdDuration = (*start_to_close_timeout).try_into().ok()?;
             let schedule_to_close_timeout: StdDuration =
-                schedule_to_close_timeout.clone().try_into().ok()?;
+                (*schedule_to_close_timeout).try_into().ok()?;
 
             let start_to_close_deadline: SystemTime =
                 started.checked_add(start_to_close_timeout)?;
@@ -215,7 +214,7 @@ fn calculate_deadline(
 /// Helper function lifted from prost_types::Timestamp implementation to prevent double cloning in
 /// error construction
 fn maybe_convert_timestamp(timestamp: &Timestamp) -> Option<SystemTime> {
-    let mut timestamp = timestamp.clone();
+    let mut timestamp = *timestamp;
     timestamp.normalize();
 
     let system_time = if timestamp.seconds >= 0 {

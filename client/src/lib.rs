@@ -85,6 +85,7 @@ use uuid::Uuid;
 
 static CLIENT_NAME_HEADER_KEY: &str = "client-name";
 static CLIENT_VERSION_HEADER_KEY: &str = "client-version";
+static TEMPORAL_NAMESPACE_HEADER_KEY: &str = "temporal-namespace";
 /// These must match the gRPC method names, not the snake case versions that exist in the Rust code.
 static LONG_POLL_METHOD_NAMES: [&str; 3] = [
     "PollWorkflowTaskQueue",

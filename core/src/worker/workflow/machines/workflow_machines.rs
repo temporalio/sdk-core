@@ -934,7 +934,7 @@ impl WorkflowMachines {
                     attrs,
                 )) = event_dat.event.attributes
                 {
-                    if let Some(st) = event_dat.event.event_time.clone() {
+                    if let Some(st) = event_dat.event.event_time {
                         let as_systime: SystemTime = st.try_into()?;
                         self.workflow_start_time = Some(as_systime);
                         // Set the workflow time to be the event time of the first event, so that
