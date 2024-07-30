@@ -482,9 +482,10 @@ macro_rules! namespaced_request {
         // Attach namespace header
         $req.metadata_mut().insert(
             TEMPORAL_NAMESPACE_HEADER_KEY,
-            ns_str
-                .parse()
-                .unwrap_or_else(|_| AsciiMetadataValue::from_static("")),
+            ns_str.parse().unwrap_or_else(|e| {
+                warn!("Unable to parse namespace for header: {e:?}");
+                AsciiMetadataValue::from_static("")
+            }),
         );
         // Init metric labels
         AttachMetricLabels::namespace(ns_str)
