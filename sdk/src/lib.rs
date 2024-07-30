@@ -403,9 +403,10 @@ impl WorkflowHalf {
         }) {
             let workflow_type = &sw.workflow_type;
             let wf_fns_borrow = self.workflow_fns.borrow();
-            let wf_function = wf_fns_borrow
-                .get(workflow_type)
-                .ok_or_else(|| anyhow!("Workflow type {workflow_type} not found"))?;
+            let Some(wf_function) = wf_fns_borrow.get(workflow_type) else {
+                warn!("Workflow type {workflow_type} not found");
+                return Ok(None);
+            };
 
             let (wff, activations) = wf_function.start_workflow(
                 common.worker.get_config().namespace.clone(),
