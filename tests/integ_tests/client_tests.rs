@@ -3,11 +3,14 @@ use futures_util::{future::BoxFuture, FutureExt};
 use std::{
     collections::HashMap,
     convert::Infallible,
+    env,
     task::{Context, Poll},
     time::Duration,
 };
 use temporal_client::{Namespace, RetryConfig, WorkflowClientTrait, WorkflowService};
-use temporal_sdk_core_protos::temporal::api::workflowservice::v1::DescribeNamespaceRequest;
+use temporal_sdk_core_protos::temporal::api::{
+    cloud::cloudservice::v1::GetNamespaceRequest, workflowservice::v1::DescribeNamespaceRequest,
+};
 use temporal_sdk_core_test_utils::{get_integ_server_options, CoreWfStarter, NAMESPACE};
 use tokio::{
     net::TcpListener,
@@ -16,6 +19,7 @@ use tokio::{
 use tonic::{
     body::BoxBody, codegen::Service, server::NamedService, transport::Server, Code, Request,
 };
+use tracing::info;
 
 #[tokio::test]
 async fn can_use_retry_client() {
@@ -224,4 +228,37 @@ async fn namespace_header_attached_to_relevant_calls() {
     // Shutdown the server
     shutdown_tx.send(()).unwrap();
     server_handle.await.unwrap();
+}
+
+#[tokio::test]
+async fn cloud_ops_test() {
+    let api_key = match env::var("TEMPORAL_CLIENT_CLOUD_API_KEY") {
+        Ok(k) => k,
+        Err(_) => {
+            // skip test
+            info!("Skipped cloud operations client test");
+            return;
+        }
+    };
+    let api_version =
+        env::var("TEMPORAL_CLIENT_CLOUD_API_VERSION").expect("version env var must exist");
+    let namespace =
+        env::var("TEMPORAL_CLIENT_CLOUD_NAMESPACE").expect("namespace env var must exist");
+    let mut opts = get_integ_server_options();
+    opts.target_url = "saas-api.tmprl.cloud:443".parse().unwrap();
+    opts.api_key = Some(api_key);
+    opts.headers = Some({
+        let mut hm = HashMap::new();
+        hm.insert("temporal-cloud-api-version".to_string(), api_version);
+        hm
+    });
+    let mut client = opts.connect_no_namespace(None).await.unwrap().into_inner();
+    let cloud_client = client.cloud_svc_mut();
+    let res = cloud_client
+        .get_namespace(GetNamespaceRequest {
+            namespace: namespace.clone(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(res.into_inner().namespace.unwrap().namespace, namespace);
 }
