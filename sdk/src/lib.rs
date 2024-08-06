@@ -454,6 +454,24 @@ impl WorkflowHalf {
                 .send(activation)
                 .expect("Workflow should exist if we're sending it an activation");
         } else {
+            // When we failed to start a workflow, we never inserted it into the cache.
+            // But core sends us a `RemoveFromCache` job when we mark the StartWorkflow workflow activation
+            // as a failure, which we need to complete.
+            // Other SDKs add the workflow to the cache even when the workflow type is unknown/not found.
+            // To circumvent this, we simply mark any RemoveFromCache job for workflows that are not in the cache as complete.
+            if activation.jobs.len() == 1
+                && matches!(
+                    activation.jobs.first().map(|j| &j.variant),
+                    Some(Some(Variant::RemoveFromCache(_)))
+                )
+            {
+                completions_tx
+                    .send(WorkflowActivationCompletion::from_cmds(run_id, vec![]))
+                    .expect("Completion channel intact");
+                return Ok(None);
+            }
+
+            // In all other cases, we want to panic as the runtime could be in an inconsistent state at this point.
             bail!(
                 "Got activation {:?} for unknown workflow {}",
                 activation,
