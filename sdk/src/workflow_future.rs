@@ -145,7 +145,11 @@ impl WorkflowFuture {
     fn fail_wft(&self, run_id: String, fail: Error) {
         warn!("Workflow task failed for {}: {}", run_id, fail);
         self.outgoing_completions
-            .send(WorkflowActivationCompletion::fail(run_id, fail.into()))
+            .send(WorkflowActivationCompletion::fail(
+                run_id,
+                fail.into(),
+                None,
+            ))
             .expect("Completion channel intact");
     }
 
@@ -443,6 +447,7 @@ impl WorkflowFuture {
                             message: errmsg,
                             ..Default::default()
                         },
+                        None,
                     ))
                     .expect("Completion channel intact");
                 // Loop back up because we're about to get evicted

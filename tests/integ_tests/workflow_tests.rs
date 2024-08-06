@@ -222,6 +222,7 @@ async fn fail_wf_task(#[values(true, false)] replay: bool) {
     core.complete_workflow_activation(WorkflowActivationCompletion::fail(
         task.run_id,
         Failure::application_failure("I did an oopsie".to_string(), false),
+        None,
     ))
     .await
     .unwrap();

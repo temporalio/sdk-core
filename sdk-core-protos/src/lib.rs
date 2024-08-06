@@ -950,13 +950,17 @@ pub mod coresdk {
             }
         }
 
-        pub fn fail(run_id: impl Into<String>, failure: Failure) -> Self {
+        pub fn fail(
+            run_id: impl Into<String>,
+            failure: Failure,
+            cause: Option<WorkflowTaskFailedCause>,
+        ) -> Self {
             Self {
                 run_id: run_id.into(),
                 status: Some(workflow_activation_completion::Status::Failed(
                     workflow_completion::Failure {
                         failure: Some(failure),
-                        force_cause: WorkflowTaskFailedCause::Unspecified as i32,
+                        force_cause: cause.unwrap_or(WorkflowTaskFailedCause::Unspecified) as i32,
                     },
                 )),
             }
