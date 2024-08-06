@@ -97,6 +97,7 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::{
         common::v1::Payload,
+        enums::v1::WorkflowTaskFailedCause,
         failure::v1::{failure, Failure},
     },
     TaskToken,
@@ -405,6 +406,14 @@ impl WorkflowHalf {
             let wf_fns_borrow = self.workflow_fns.borrow();
             let Some(wf_function) = wf_fns_borrow.get(workflow_type) else {
                 warn!("Workflow type {workflow_type} not found");
+
+                completions_tx
+                    .send(WorkflowActivationCompletion::fail(
+                        run_id,
+                        format!("Workflow type {workflow_type} not found").into(),
+                        Some(WorkflowTaskFailedCause::WorkflowWorkerUnhandledFailure),
+                    ))
+                    .expect("Completion channel intact");
                 return Ok(None);
             };
 
