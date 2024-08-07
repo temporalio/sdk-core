@@ -907,7 +907,6 @@ mod test {
         let cmds = s.cancel().unwrap();
         // We should always be notifying lang that the activity got cancelled, even if it's
         // abandoned and we aren't telling server
-        // MachineResponse::PushWFJob()
         assert_matches!(
             cmds.as_slice(),
             [MachineResponse::PushWFJob(OutgoingJob {
