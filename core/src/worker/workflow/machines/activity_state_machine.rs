@@ -407,7 +407,7 @@ impl ScheduleCommandCreated {
 
     pub(super) fn on_abandoned(self, dat: &mut SharedState) -> ActivityMachineTransition<Canceled> {
         dat.cancelled_before_sent = true;
-        ActivityMachineTransition::default()
+        notify_lang_activity_cancelled(None)
     }
 }
 
@@ -806,7 +806,7 @@ mod test {
         internal_flags::InternalFlags,
         replay::TestHistoryBuilder,
         test_help::{build_fake_sdk, MockPollCfg, ResponseType},
-        worker::workflow::machines::Machines,
+        worker::workflow::{machines::Machines, OutgoingJob},
     };
     use std::{cell::RefCell, mem::discriminant, rc::Rc};
     use temporal_sdk::{ActivityOptions, CancellableFuture, WfContext, WorkflowFunction};
@@ -905,7 +905,21 @@ mod test {
             panic!("Wrong machine type");
         };
         let cmds = s.cancel().unwrap();
-        assert_eq!(cmds.len(), 0);
+        // We should always be notifying lang that the activity got cancelled, even if it's
+        // abandoned and we aren't telling server
+        // MachineResponse::PushWFJob()
+        assert_matches!(
+            cmds.as_slice(),
+            [MachineResponse::PushWFJob(OutgoingJob {
+                variant: workflow_activation_job::Variant::ResolveActivity(ResolveActivity {
+                    result: Some(ActivityResolution {
+                        status: Some(activity_resolution::Status::Cancelled(_))
+                    }),
+                    ..
+                }),
+                ..
+            })]
+        );
         let curstate = s.state();
         assert!(matches!(curstate, &ActivityMachineState::Canceled(_)));
     }
