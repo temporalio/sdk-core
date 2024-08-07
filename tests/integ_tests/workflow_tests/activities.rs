@@ -788,6 +788,50 @@ async fn activity_cancelled_after_heartbeat_times_out() {
 }
 
 #[tokio::test]
+async fn one_activity_abandon_cancelled_before_started() {
+    let wf_name = "one_activity_abandon_cancelled_before_started";
+    let mut starter = CoreWfStarter::new(wf_name);
+    let mut worker = starter.worker().await;
+    let client = starter.get_client().await;
+    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+        let act_fut = ctx.activity(ActivityOptions {
+            activity_type: "echo_activity".to_string(),
+            start_to_close_timeout: Some(Duration::from_secs(5)),
+            input: "hi!".as_json_payload().expect("serializes fine"),
+            cancellation_type: ActivityCancellationType::Abandon,
+            ..Default::default()
+        });
+        act_fut.cancel(&ctx);
+        act_fut.await;
+        Ok(().into())
+    });
+    worker.register_activity(
+        "echo_activity",
+        |_ctx: ActContext, echo_me: String| async move {
+            sleep(Duration::from_secs(2)).await;
+            Ok(echo_me)
+        },
+    );
+
+    let run_id = worker
+        .submit_wf(
+            wf_name.to_owned(),
+            wf_name.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+    let handle = client.get_untyped_workflow_handle(wf_name, run_id);
+    let res = handle
+        .get_workflow_result(Default::default())
+        .await
+        .unwrap();
+    assert_matches!(res, WorkflowExecutionResult::Succeeded(_));
+}
+
+#[tokio::test]
 async fn one_activity_abandon_cancelled_after_complete() {
     let wf_name = "one_activity_abandon_cancelled_after_complete";
     let mut starter = CoreWfStarter::new(wf_name);
