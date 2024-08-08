@@ -272,6 +272,7 @@ async fn legacy_query_failure_on_wft_failure() {
             message: "Ahh i broke".to_string(),
             ..Default::default()
         },
+        None,
     ))
     .await
     .unwrap();

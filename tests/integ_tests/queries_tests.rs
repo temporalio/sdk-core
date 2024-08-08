@@ -288,6 +288,7 @@ async fn fail_legacy_query() {
                 message: query_err.to_string(),
                 ..Default::default()
             },
+            None,
         ))
         .await
         .unwrap();

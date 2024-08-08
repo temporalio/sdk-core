@@ -376,6 +376,7 @@ async fn query_of_closed_workflow_doesnt_tick_terminal_metric(
         .complete_workflow_activation(WorkflowActivationCompletion::fail(
             task.run_id,
             "whatever".into(),
+            None,
         ))
         .await
         .unwrap();
