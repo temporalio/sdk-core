@@ -342,17 +342,17 @@ impl SharedState {
 #[derive(Debug, derive_more::Display)]
 pub(super) enum LocalActivityCommand {
     RequestActivityExecution(ValidScheduleLA),
-    #[display(fmt = "Resolved")]
+    #[display("Resolved")]
     Resolved(ResolveDat),
     /// The fake marker is used to avoid special casing marker recorded event handling.
     /// If we didn't have the fake marker, there would be no "outgoing command" to match
     /// against the event. This way there is, but the command never will be issued to
     /// server because it is understood to be meaningless.
-    #[display(fmt = "FakeMarker")]
+    #[display("FakeMarker")]
     FakeMarker,
     /// Indicate we want to cancel an LA that is currently executing, or look up if we have
     /// processed a marker with resolution data since the machine was constructed.
-    #[display(fmt = "Cancel")]
+    #[display("Cancel")]
     RequestCancel,
 }
 

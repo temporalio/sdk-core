@@ -53,8 +53,8 @@ impl SlotTrait for Slot {
     }
 }
 
-#[derive(derive_more::DebugCustom)]
-#[debug(fmt = "SlotProvider {{ namespace:{namespace}, task_queue: {task_queue} }}")]
+#[derive(derive_more::Debug)]
+#[debug("SlotProvider {{ namespace:{namespace}, task_queue: {task_queue} }}")]
 pub(super) struct SlotProvider {
     namespace: String,
     task_queue: String,

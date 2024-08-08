@@ -236,7 +236,7 @@ trait WFMachinesAdapter: StateMachine {
 /// Wraps a history event with extra relevant data that a machine might care about while the event
 /// is being applied to it.
 #[derive(Debug, derive_more::Display)]
-#[display(fmt = "{event}")]
+#[display("{event}")]
 struct HistEventData {
     event: HistoryEvent,
     /// Is the current workflow task under replay or not during application of this event?

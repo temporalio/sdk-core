@@ -52,9 +52,9 @@ pub(super) type RunUpdateAct = Option<ActivationOrAuto>;
 
 /// Manages access to a specific workflow run. Everything inside is entirely synchronous and should
 /// remain that way.
-#[derive(derive_more::DebugCustom)]
+#[derive(derive_more::Debug)]
 #[debug(
-    fmt = "ManagedRun {{ wft: {:?}, activation: {:?}, task_buffer: {:?} \
+    "ManagedRun {{ wft: {:?}, activation: {:?}, task_buffer: {:?} \
            trying_to_evict: {} }}",
     wft,
     activation,
@@ -1456,8 +1456,8 @@ enum ActOrFulfill {
     FulfillableComplete(Option<FulfillableActivationComplete>),
 }
 
-#[derive(derive_more::DebugCustom)]
-#[debug(fmt = "RunUpdateErr({source:?})")]
+#[derive(derive_more::Debug)]
+#[debug("RunUpdateErr({source:?})")]
 struct RunUpdateErr {
     source: WFMachinesError,
     complete_resp_chan: Option<oneshot::Sender<ActivationCompleteResult>>,

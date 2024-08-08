@@ -59,13 +59,13 @@ fsm! {
 
 #[derive(Debug, derive_more::Display)]
 pub(super) enum UpdateMachineCommand {
-    #[display(fmt = "Accept")]
+    #[display("Accept")]
     Accept(update::v1::Request),
-    #[display(fmt = "Reject")]
+    #[display("Reject")]
     Reject(update::v1::Request, Failure),
-    #[display(fmt = "Complete")]
+    #[display("Complete")]
     Complete(Payload),
-    #[display(fmt = "Fail")]
+    #[display("Fail")]
     Fail(Failure),
 }
 
