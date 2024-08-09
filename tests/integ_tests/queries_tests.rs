@@ -484,3 +484,68 @@ async fn queries_handled_before_next_wft() {
     join!(join_all(query_futs), complete_fut);
     drain_pollers_and_shutdown(&core).await;
 }
+
+#[tokio::test]
+async fn query_should_not_be_sent_if_wft_about_to_fail() {
+    let mut starter =
+        init_core_and_create_wf("query_should_not_be_sent_if_wft_about_to_fail").await;
+    let core = starter.get_worker().await;
+    let workflow_id = starter.get_task_queue().to_string();
+    let client = starter.get_client().await;
+    for _ in 1..=3 {
+        // query straight away
+        let query_fut = client.query_workflow_execution(
+            workflow_id.to_string(),
+            "".to_string(),
+            WorkflowQuery {
+                query_type: "myquery".to_string(),
+                ..Default::default()
+            },
+        );
+        // Poll for the task and respond with a task failure
+        let poll_and_fail_fut = async {
+            let task = core.poll_workflow_activation().await.unwrap();
+            if matches!(
+                task.jobs.as_slice(),
+                [WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::RemoveFromCache(_))
+                }]
+            ) {
+                core.complete_workflow_activation(WorkflowActivationCompletion::empty(task.run_id))
+                    .await
+                    .unwrap();
+                return;
+            }
+            assert_matches!(
+                task.jobs.as_slice(),
+                [WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::StartWorkflow(_)),
+                }]
+            );
+            core.complete_workflow_activation(WorkflowActivationCompletion::fail(
+                task.run_id,
+                Failure {
+                    message: "oh no".to_string(),
+                    ..Default::default()
+                },
+                None,
+            ))
+            .await
+            .unwrap();
+            let task = core.poll_workflow_activation().await.unwrap();
+            // Should *not* get a query here
+            dbg!(&task);
+            core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+                task.run_id,
+                QueryResult {
+                    query_id: "myquery".to_string(),
+                    variant: Some(QuerySuccess::default().into()),
+                }
+                .into(),
+            ))
+            .await
+            .unwrap();
+        };
+        join!(query_fut, poll_and_fail_fut);
+    }
+}
