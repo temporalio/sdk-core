@@ -692,17 +692,19 @@ async fn workflow_update_random_seed_on_workflow_reset() {
                 },
                 vec![start_timer_cmd(timer_1_id, Duration::from_secs(1))],
             ),
+            // The random seed update should always be the first job
             gen_assert_and_reply(
                 &|res| {
                     assert_matches!(
                         res.jobs.as_slice(),
                         [WorkflowActivationJob {
-                            variant: Some(workflow_activation_job::Variant::FireTimer(_),),
-                        },
-                        WorkflowActivationJob {
                             variant: Some(workflow_activation_job::Variant::UpdateRandomSeed(
                                 UpdateRandomSeed{randomness_seed})),
-                        }] => {
+                        },
+                            WorkflowActivationJob {
+                            variant: Some(workflow_activation_job::Variant::FireTimer(_),),
+                        },
+                        ] => {
                             assert_ne!(randomness_seed_from_start.load(Ordering::SeqCst),
                                       *randomness_seed);
                         }

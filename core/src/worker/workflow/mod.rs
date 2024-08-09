@@ -1331,7 +1331,7 @@ impl LocalActivityRequestSink for LAReqSink {
 /// activations must uphold.
 ///
 /// ## Ordering
-/// `patches -> signals/updates -> other -> queries -> evictions`
+/// `patches/random-seed-updates -> signals/updates -> other -> queries -> evictions`
 ///
 /// ## Invariants:
 /// * Queries always go in their own activation
@@ -1364,6 +1364,7 @@ fn prepare_to_ship_activation(wfa: &mut WorkflowActivation) {
         fn variant_ordinal(v: &workflow_activation_job::Variant) -> u8 {
             match v {
                 workflow_activation_job::Variant::NotifyHasPatch(_) => 1,
+                workflow_activation_job::Variant::UpdateRandomSeed(_) => 1,
                 workflow_activation_job::Variant::SignalWorkflow(_) => 2,
                 workflow_activation_job::Variant::DoUpdate(_) => 2,
                 // In principle we should never actually need to sort these with the others, since
@@ -1419,6 +1420,11 @@ mod tests {
                     )),
                 },
                 WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::UpdateRandomSeed(
+                        Default::default(),
+                    )),
+                },
+                WorkflowActivationJob {
                     variant: Some(workflow_activation_job::Variant::SignalWorkflow(
                         SignalWorkflow {
                             signal_name: "2".to_string(),
@@ -1439,6 +1445,7 @@ mod tests {
             variants.as_slice(),
             &[
                 workflow_activation_job::Variant::NotifyHasPatch(_),
+                workflow_activation_job::Variant::UpdateRandomSeed(_),
                 workflow_activation_job::Variant::SignalWorkflow(ref s1),
                 workflow_activation_job::Variant::DoUpdate(_),
                 workflow_activation_job::Variant::SignalWorkflow(ref s2),
