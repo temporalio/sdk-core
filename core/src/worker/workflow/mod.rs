@@ -722,10 +722,7 @@ impl Workflows {
 /// Returned when a cache miss happens and we need to fetch history from the beginning to
 /// replay a run
 #[derive(Debug, derive_more::Display)]
-#[display(
-    fmt = "CacheMissFetchReq(run_id: {})",
-    "original_wft.work.execution.run_id"
-)]
+#[display("CacheMissFetchReq(run_id: {})", "original_wft.work.execution.run_id")]
 #[must_use]
 struct CacheMissFetchReq {
     original_wft: PermittedWFT,
@@ -751,11 +748,11 @@ enum ActivationOrAuto {
     /// This type should only be filled with an empty activation which is ready to have queries
     /// inserted into the joblist
     ReadyForQueries(WorkflowActivation),
-    #[display(fmt = "Autocomplete(run_id={run_id})")]
+    #[display("Autocomplete(run_id={run_id})")]
     Autocomplete {
         run_id: String,
     },
-    #[display(fmt = "AutoFail(run_id={run_id})")]
+    #[display("AutoFail(run_id={run_id})")]
     AutoFail {
         run_id: String,
         machines_err: WFMachinesError,
@@ -764,8 +761,8 @@ enum ActivationOrAuto {
 
 /// A WFT which is considered to be using a slot for metrics purposes and being or about to be
 /// applied to workflow state.
-#[derive(derive_more::DebugCustom)]
-#[debug(fmt = "PermittedWft({work:?})")]
+#[derive(derive_more::Debug)]
+#[debug("PermittedWft({work:?})")]
 pub(crate) struct PermittedWFT {
     work: PreparedWFT,
     permit: UsedMeteredSemPermit<WorkflowSlotKind>,
@@ -1247,7 +1244,7 @@ struct WorkflowStartedInfo {
 
 /// Wraps outgoing activation job protos with some internal details core might care about
 #[derive(Debug, derive_more::Display)]
-#[display(fmt = "{variant}")]
+#[display("{variant}")]
 struct OutgoingJob {
     variant: workflow_activation_job::Variant,
     /// Since LA resolutions are not distinguished from non-LA resolutions as far as lang is

@@ -40,7 +40,7 @@ hyper = { version = "1.2", optional = true }
 hyper-util = { version = "0.1", features = ["server", "http1", "http2", "tokio"], optional = true }
 itertools = "0.13"
 lru = "0.12"
-mockall = "0.12"
+mockall = "0.13"
 once_cell = { workspace = true }
 opentelemetry = { workspace = true, features = ["metrics"], optional = true }
 opentelemetry_sdk = { version = "0.24", features = ["rt-tokio", "metrics"], optional = true }
@@ -59,7 +59,7 @@ serde = "1.0"
 serde_json = "1.0"
 siphasher = "1.0"
 slotmap = "1.0"
-sysinfo = "0.30"
+sysinfo = { version = "0.31", default-features = false, features = ["system"] }
 tar = { version = "0.4", optional = true }
 thiserror = "1.0"
 tokio = { version = "1.37", features = ["rt", "rt-multi-thread", "parking_lot", "time", "fs", "process"] }
@@ -92,8 +92,7 @@ assert_matches = "1.4"
 bimap = "0.6.1"
 clap = { version = "4.0", features = ["derive"] }
 criterion = "0.5"
-rstest = "0.21"
-sysinfo = "0.30"
+rstest = "0.22"
 temporal-sdk-core-test-utils = { path = "../test-utils" }
 temporal-sdk = { path = "../sdk" }
 tokio-stream = { version = "0.1", features = ["net"] }

@@ -440,7 +440,7 @@ impl RealSysInfo {
         lock.refresh_memory();
         lock.refresh_cpu_usage();
         let mem = lock.used_memory();
-        let cpu = lock.global_cpu_info().cpu_usage() as f64 / 100.;
+        let cpu = lock.global_cpu_usage() as f64 / 100.;
         self.cur_mem_usage.store(mem, Ordering::Release);
         self.cur_cpu_usage.store(cpu.to_bits(), Ordering::Release);
         self.last_refresh.store(Instant::now());

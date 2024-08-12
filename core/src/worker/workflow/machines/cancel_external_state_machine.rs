@@ -51,7 +51,7 @@ pub(super) struct SharedState {
 pub(super) enum CancelExternalCommand {
     /// The target workflow has been notified of the cancel
     Requested,
-    #[display(fmt = "Failed")]
+    #[display("Failed")]
     Failed(CancelExternalWorkflowExecutionFailedCause),
 }
 

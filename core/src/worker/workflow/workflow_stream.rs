@@ -571,8 +571,8 @@ enum WFStreamInput {
 }
 
 /// A non-poller-received input to the [WFStream]
-#[derive(derive_more::DebugCustom)]
-#[debug(fmt = "LocalInput {{ {input:?} }}")]
+#[derive(derive_more::Debug)]
+#[debug("LocalInput {{ {input:?} }}")]
 pub(super) struct LocalInput {
     pub(super) input: LocalInputs,
     pub(super) span: Span,
