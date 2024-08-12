@@ -90,13 +90,13 @@ fsm! {
 
 #[derive(Debug, derive_more::Display)]
 pub(super) enum ActivityMachineCommand {
-    #[display(fmt = "Complete")]
+    #[display("Complete")]
     Complete(Option<Payloads>),
-    #[display(fmt = "Fail")]
+    #[display("Fail")]
     Fail(Failure),
-    #[display(fmt = "Cancel")]
+    #[display("Cancel")]
     Cancel(Option<ActivityTaskCanceledEventAttributes>),
-    #[display(fmt = "RequestCancellation")]
+    #[display("RequestCancellation")]
     RequestCancellation(Command),
 }
 

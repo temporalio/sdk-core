@@ -105,19 +105,19 @@ pub(super) struct ChildWorkflowExecutionStartedEvent {
 
 #[derive(Debug, derive_more::Display)]
 pub(super) enum ChildWorkflowCommand {
-    #[display(fmt = "Start")]
+    #[display("Start")]
     Start(WorkflowExecution),
-    #[display(fmt = "Complete")]
+    #[display("Complete")]
     Complete(Option<Payloads>),
-    #[display(fmt = "Fail")]
+    #[display("Fail")]
     Fail(Failure),
-    #[display(fmt = "Cancel")]
+    #[display("Cancel")]
     Cancel,
-    #[display(fmt = "StartFail")]
+    #[display("StartFail")]
     StartFail(StartChildWorkflowExecutionFailedCause),
-    #[display(fmt = "StartCancel")]
+    #[display("StartCancel")]
     StartCancel(Failure),
-    #[display(fmt = "CancelAfterStarted")]
+    #[display("CancelAfterStarted")]
     IssueCancelAfterStarted { reason: String },
 }
 

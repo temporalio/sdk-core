@@ -78,8 +78,8 @@ pub(crate) enum NextWFT {
     NeedFetch,
 }
 
-#[derive(derive_more::DebugCustom)]
-#[debug(fmt = "HistoryPaginator(run_id: {run_id})")]
+#[derive(derive_more::Debug)]
+#[debug("HistoryPaginator(run_id: {run_id})")]
 pub(crate) struct HistoryPaginator {
     pub(crate) wf_id: String,
     pub(crate) run_id: String,
