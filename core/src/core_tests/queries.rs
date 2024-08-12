@@ -307,17 +307,16 @@ async fn query_failure_because_nondeterminism(#[values(true, false)] legacy: boo
         pr
     }];
     let mut mock = MockPollCfg::from_resp_batches(wfid, t, tasks, mock_workflow_client());
-    if legacy {
-        mock.num_expected_legacy_query_resps = 1;
-    } else {
-        mock.num_expected_fails = 1;
-    }
+    mock.num_expected_fails = 1;
     let mut mock = build_mock_pollers(mock);
-    mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
+    mock.worker_cfg(|wc| {
+        wc.max_cached_workflows = 10;
+        wc.ignore_evicts_on_shutdown = false;
+    });
     let core = mock_worker(mock);
 
     let task = core.poll_workflow_activation().await.unwrap();
-    // Nondeterminism, should result in WFT/query being failed
+    // Nondeterminism, should result in WFT being failed
     core.complete_workflow_activation(WorkflowActivationCompletion::empty(task.run_id))
         .await
         .unwrap();

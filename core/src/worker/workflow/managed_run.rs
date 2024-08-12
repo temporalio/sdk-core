@@ -562,6 +562,7 @@ impl ManagedRun {
                 reason,
                 EvictionReason::Unspecified | EvictionReason::PaginationOrHistoryFetch
             );
+
         let (should_report, rur) = if is_no_report_query_fail {
             (false, None)
         } else {
@@ -580,6 +581,7 @@ impl ManagedRun {
             let rur = evict_req_outcome.into_run_update_resp();
             (should_report, rur)
         };
+
         let outcome = if self.pending_work_is_legacy_query() {
             if is_no_report_query_fail {
                 ActivationCompleteOutcome::WFTFailedDontReport
@@ -617,6 +619,7 @@ impl ManagedRun {
         } else {
             ActivationCompleteOutcome::WFTFailedDontReport
         };
+
         self.metrics
             .with_new_attrs([metrics::failure_reason(cause.into())])
             .wf_task_failed();
@@ -870,6 +873,17 @@ impl ManagedRun {
 
         if !self.activation_is_eviction() && self.trying_to_evict.is_none() {
             debug!(run_id=%info.run_id, reason=%info.message, "Eviction requested");
+            // If we've requested an eviction because of failure related reasons then we want to
+            // delete any pending queries, since handling them no longer makes sense. Evictions
+            // because the cache is full should get a chance to finish processing properly.
+            if !matches!(info.reason, EvictionReason::CacheFull) {
+                if let Some(wft) = self.wft.as_mut() {
+                    wft.pending_queries.clear();
+                    // We don't reply to legacy queries, because after we fail the task they
+                    // are likely to get retired in the next one, and may pass.
+                }
+            }
+
             self.trying_to_evict = Some(info);
             EvictionRequestResult::EvictionRequested(attempts, self.check_more_activations())
         } else {
