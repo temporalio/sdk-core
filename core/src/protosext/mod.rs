@@ -109,6 +109,9 @@ impl TryFrom<PollWorkflowTaskQueueResponse> for ValidPollWFTQResponse {
                 messages,
                 ..
             } => {
+                if task_token.is_empty() {
+                    return Err(anyhow!("missing task token"));
+                }
                 let query_requests = queries
                     .into_iter()
                     .map(|(id, q)| query_to_job(id, q))
