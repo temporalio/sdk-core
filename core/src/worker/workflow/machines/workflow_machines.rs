@@ -1152,6 +1152,7 @@ impl WorkflowMachines {
                         );
                     }
                     ProtoCmdAttrs::UpsertWorkflowSearchAttributesCommandAttributes(attrs) => {
+                        // TODO: Update here
                         self.add_cmd_to_wf_task(
                             upsert_search_attrs_internal(attrs),
                             CommandIdKind::NeverResolves,
