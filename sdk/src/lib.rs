@@ -253,7 +253,7 @@ impl Worker {
                         let wf_half = &*wf_half;
                         async move {
                             join_handle.await??;
-                            info!(run_id=%run_id, "Removing workflow from cache");
+                            debug!(run_id=%run_id, "Removing workflow from cache");
                             wf_half.workflows.borrow_mut().remove(&run_id);
                             Ok(())
                         }
