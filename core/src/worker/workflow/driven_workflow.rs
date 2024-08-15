@@ -3,10 +3,13 @@ use crate::{
     worker::workflow::{OutgoingJob, WFCommand, WorkflowStartedInfo},
 };
 use prost_types::Timestamp;
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::{
+    collections::HashMap,
+    sync::mpsc::{self, Receiver, Sender},
+};
 use temporal_sdk_core_protos::{
     coresdk::workflow_activation::{start_workflow_from_attribs, WorkflowActivationJob},
-    temporal::api::history::v1::WorkflowExecutionStartedEventAttributes,
+    temporal::api::{common::v1::Payload, history::v1::WorkflowExecutionStartedEventAttributes},
     utilities::TryIntoOrNone,
 };
 
@@ -14,6 +17,7 @@ use temporal_sdk_core_protos::{
 /// command responses pulled out.
 pub(crate) struct DrivenWorkflow {
     started_attrs: Option<WorkflowStartedInfo>,
+    search_attribute_modifications: HashMap<String, Payload>,
     incoming_commands: Receiver<Vec<WFCommand>>,
     /// Outgoing activation jobs that need to be sent to the lang sdk
     outgoing_wf_activation_jobs: Vec<OutgoingJob>,
@@ -25,6 +29,7 @@ impl DrivenWorkflow {
         (
             Self {
                 started_attrs: None,
+                search_attribute_modifications: Default::default(),
                 incoming_commands: rx,
                 outgoing_wf_activation_jobs: vec![],
             },
@@ -84,5 +89,26 @@ impl DrivenWorkflow {
         let in_cmds = in_cmds.unwrap_or_else(|_| vec![WFCommand::NoCommandsFromLang]);
         debug!(in_cmds = %in_cmds.display(), "wf bridge iteration fetch");
         in_cmds
+    }
+
+    /// Lang sent us an SA upsert command - use it to update our current view of search attributes.
+    pub(crate) fn search_attributes_update(&mut self, update: HashMap<String, Payload>) {
+        self.search_attribute_modifications.extend(update);
+    }
+
+    /// Return a view of the "current" state of search attributes. IE: The initial attributes
+    /// plus any changes during the lifetime of the workflow.
+    pub(crate) fn get_current_search_attributes(&self) -> HashMap<String, Payload> {
+        let mut retme = self
+            .started_attrs
+            .as_ref()
+            .and_then(|si| si.search_attrs.as_ref().map(|sa| sa.indexed_fields.clone()))
+            .unwrap_or_default();
+        retme.extend(
+            self.search_attribute_modifications
+                .iter()
+                .map(|(a, b)| (a.clone(), b.clone())),
+        );
+        retme
     }
 }

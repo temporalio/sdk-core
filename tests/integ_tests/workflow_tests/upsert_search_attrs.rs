@@ -1,6 +1,10 @@
-use std::{collections::HashMap, env};
-use temporal_client::{WorkflowClientTrait, WorkflowOptions};
-use temporal_sdk::{WfContext, WorkflowResult};
+use assert_matches::assert_matches;
+use std::{collections::HashMap, env, time::Duration};
+use temporal_client::{
+    GetWorkflowResultOpts, WfClientExt, WorkflowClientTrait, WorkflowExecutionResult,
+    WorkflowOptions,
+};
+use temporal_sdk::{WfContext, WfExitValue, WorkflowResult};
 use temporal_sdk_core_protos::coresdk::{AsJsonPayloadExt, FromJsonPayloadExt};
 use temporal_sdk_core_test_utils::{CoreWfStarter, INTEG_TEMPORAL_DEV_SERVER_USED_ENV_VAR};
 use tracing::warn;
@@ -12,11 +16,24 @@ static TXT_ATTR: &str = "CustomTextField";
 static INT_ATTR: &str = "CustomIntField";
 
 async fn search_attr_updater(ctx: WfContext) -> WorkflowResult<()> {
+    let mut int_val = ctx
+        .search_attributes()
+        .indexed_fields
+        .get(INT_ATTR)
+        .cloned()
+        .unwrap_or_default();
+    let orig_val = int_val.data[0];
+    int_val.data[0] += 1;
     ctx.upsert_search_attributes([
-        (TXT_ATTR.to_string(), "goodbye".as_json_payload().unwrap()),
-        (INT_ATTR.to_string(), 98.as_json_payload().unwrap()),
+        (TXT_ATTR.to_string(), "goodbye".as_json_payload()?),
+        (INT_ATTR.to_string(), int_val),
     ]);
-    Ok(().into())
+    // 49 is ascii 1
+    if orig_val == 49 {
+        Ok(WfExitValue::ContinueAsNew(Box::default()))
+    } else {
+        Ok(().into())
+    }
 }
 
 #[tokio::test]
@@ -33,7 +50,7 @@ async fn sends_upsert() {
     }
 
     worker.register_wf(wf_name, search_attr_updater);
-    let run_id = worker
+    worker
         .submit_wf(
             wf_id.to_string(),
             wf_name,
@@ -43,6 +60,7 @@ async fn sends_upsert() {
                     (TXT_ATTR.to_string(), "hello".as_json_payload().unwrap()),
                     (INT_ATTR.to_string(), 1.as_json_payload().unwrap()),
                 ])),
+                execution_timeout: Some(Duration::from_secs(4)),
                 ..Default::default()
             },
         )
@@ -50,10 +68,9 @@ async fn sends_upsert() {
         .unwrap();
     worker.run_until_done().await.unwrap();
 
-    let search_attrs = starter
-        .get_client()
-        .await
-        .describe_workflow_execution(wf_id.to_string(), Some(run_id))
+    let client = starter.get_client().await;
+    let search_attrs = client
+        .describe_workflow_execution(wf_id.to_string(), None)
         .await
         .unwrap()
         .workflow_execution_info
@@ -70,5 +87,11 @@ async fn sends_upsert() {
         "goodbye",
         String::from_json_payload(txt_attr_payload).unwrap()
     );
-    assert_eq!(98, usize::from_json_payload(int_attr_payload).unwrap());
+    assert_eq!(3, usize::from_json_payload(int_attr_payload).unwrap());
+    let handle = client.get_untyped_workflow_handle(wf_id.to_string(), "");
+    let res = handle
+        .get_workflow_result(GetWorkflowResultOpts::default())
+        .await
+        .unwrap();
+    assert_matches!(res, WorkflowExecutionResult::Succeeded(_));
 }

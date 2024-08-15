@@ -176,7 +176,8 @@ impl WorkflowFuture {
         if let Some(v) = variant {
             match v {
                 Variant::StartWorkflow(_) => {
-                    // TODO: Can assign randomness seed whenever needed
+                    // Don't do anything in here. Start workflow is looked at earlier, before
+                    // jobs are handled, and may have information taken out of it to avoid clones.
                 }
                 Variant::FireTimer(FireTimer { seq }) => {
                     self.unblock(UnblockEvent::Timer(seq, TimerResult::Fired))?
@@ -311,7 +312,7 @@ impl Future for WorkflowFuture {
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         'activations: loop {
             // WF must always receive an activation first before responding with commands
-            let activation = match self.incoming_activations.poll_recv(cx) {
+            let mut activation = match self.incoming_activations.poll_recv(cx) {
                 Poll::Ready(a) => match a {
                     Some(act) => act,
                     None => {
@@ -339,6 +340,18 @@ impl Future for WorkflowFuture {
 
             let mut die_of_eviction_when_done = false;
             let mut activation_cmds = vec![];
+            // Assign initial state from start workflow job
+            if let Some(start_info) = activation.jobs.iter_mut().find_map(|j| {
+                if let Some(Variant::StartWorkflow(s)) = j.variant.as_mut() {
+                    Some(s)
+                } else {
+                    None
+                }
+            }) {
+                // TODO: Can assign randomness seed whenever needed
+                self.wf_ctx.shared.write().search_attributes =
+                    start_info.search_attributes.take().unwrap_or_default();
+            };
             // Lame hack to avoid hitting "unregistered" update handlers in a situation where
             // the history has no commands until an update is accepted. Will go away w/ SDK redesign
             if activation
