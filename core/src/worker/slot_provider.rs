@@ -108,6 +108,7 @@ mod tests {
     // make validate_wft() happy
     fn new_validatable_response() -> PollWorkflowTaskQueueResponse {
         PollWorkflowTaskQueueResponse {
+            task_token: vec![1, 3, 3, 7],
             workflow_execution_task_queue: Some(TaskQueue::default()),
             workflow_execution: Some(WorkflowExecution::default()),
             workflow_type: Some(WorkflowType::default()),
@@ -130,7 +131,7 @@ mod tests {
 
         let slot = provider
             .try_reserve_wft_slot()
-            .expect("failed to reserver slot");
+            .expect("failed to reserve slot");
         let p = slot.schedule_wft(new_validatable_response());
         assert!(p.is_ok());
         assert!(external_wft_rx.recv().await.is_some());
