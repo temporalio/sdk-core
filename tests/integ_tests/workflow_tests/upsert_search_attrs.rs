@@ -5,9 +5,7 @@ use temporal_client::{
     WorkflowOptions,
 };
 use temporal_sdk::{WfContext, WfExitValue, WorkflowResult};
-use temporal_sdk_core_protos::coresdk::{
-    workflow_commands::ContinueAsNewWorkflowExecution, AsJsonPayloadExt, FromJsonPayloadExt,
-};
+use temporal_sdk_core_protos::coresdk::{AsJsonPayloadExt, FromJsonPayloadExt};
 use temporal_sdk_core_test_utils::{CoreWfStarter, INTEG_TEMPORAL_DEV_SERVER_USED_ENV_VAR};
 use tracing::warn;
 use uuid::Uuid;
@@ -24,19 +22,15 @@ async fn search_attr_updater(ctx: WfContext) -> WorkflowResult<()> {
         .get(INT_ATTR)
         .cloned()
         .unwrap_or_default();
-    dbg!(&int_val);
     let orig_val = int_val.data[0];
     int_val.data[0] += 1;
     ctx.upsert_search_attributes([
         (TXT_ATTR.to_string(), "goodbye".as_json_payload()?),
         (INT_ATTR.to_string(), int_val),
     ]);
-    dbg!(orig_val);
     // 49 is ascii 1
     if orig_val == 49 {
-        Ok(WfExitValue::ContinueAsNew(Box::new(
-            ContinueAsNewWorkflowExecution::default(),
-        )))
+        Ok(WfExitValue::ContinueAsNew(Box::default()))
     } else {
         Ok(().into())
     }
@@ -93,7 +87,7 @@ async fn sends_upsert() {
         "goodbye",
         String::from_json_payload(txt_attr_payload).unwrap()
     );
-    assert_eq!(2, usize::from_json_payload(int_attr_payload).unwrap());
+    assert_eq!(3, usize::from_json_payload(int_attr_payload).unwrap());
     let handle = client.get_untyped_workflow_handle(wf_id.to_string(), "");
     let res = handle
         .get_workflow_result(GetWorkflowResultOpts::default())

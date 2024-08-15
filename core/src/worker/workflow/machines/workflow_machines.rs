@@ -1152,7 +1152,9 @@ impl WorkflowMachines {
                         );
                     }
                     ProtoCmdAttrs::UpsertWorkflowSearchAttributesCommandAttributes(attrs) => {
-                        // TODO: Update here
+                        // We explicitly do not update the workflows current SAs here since
+                        // core-generated upserts aren't meant to be modified or used within
+                        // workflows by users (but rather, just for them to search with).
                         self.add_cmd_to_wf_task(
                             upsert_search_attrs_internal(attrs),
                             CommandIdKind::NeverResolves,
@@ -1263,6 +1265,8 @@ impl WorkflowMachines {
                     self.add_cmd_to_wf_task(new_timer(attrs), CommandID::Timer(seq).into());
                 }
                 WFCommand::UpsertSearchAttributes(attrs) => {
+                    self.drive_me
+                        .search_attributes_update(attrs.search_attributes.clone());
                     self.add_cmd_to_wf_task(
                         upsert_search_attrs(
                             attrs,
@@ -1539,16 +1543,12 @@ impl WorkflowMachines {
                     .map(Into::into)
                     .unwrap_or_default();
             }
-            if attrs.search_attributes.is_empty() {
-                attrs.search_attributes = started_info
-                    .search_attrs
-                    .clone()
-                    .map(Into::into)
-                    .unwrap_or_default();
-            }
             if attrs.retry_policy.is_none() {
                 attrs.retry_policy.clone_from(&started_info.retry_policy);
             }
+        }
+        if attrs.search_attributes.is_empty() {
+            attrs.search_attributes = self.drive_me.get_current_search_attributes();
         }
         attrs
     }

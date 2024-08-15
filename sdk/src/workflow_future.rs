@@ -350,7 +350,7 @@ impl Future for WorkflowFuture {
             }) {
                 // TODO: Can assign randomness seed whenever needed
                 self.wf_ctx.shared.write().search_attributes =
-                    dbg!(start_info.search_attributes.take().unwrap_or_default());
+                    start_info.search_attributes.take().unwrap_or_default();
             };
             // Lame hack to avoid hitting "unregistered" update handlers in a situation where
             // the history has no commands until an update is accepted. Will go away w/ SDK redesign
@@ -365,7 +365,6 @@ impl Future for WorkflowFuture {
                     )
                 })
             {
-                dbg!("Polling first time");
                 // Poll the workflow future once to get things registered
                 if self.poll_wf_future(cx, &run_id, &mut activation_cmds)? {
                     continue;
