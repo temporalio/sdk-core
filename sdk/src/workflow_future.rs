@@ -201,7 +201,9 @@ impl WorkflowFuture {
                     seq,
                     Box::new(result.context("Child Workflow execution must have a result")?),
                 ))?,
-                Variant::UpdateRandomSeed(_) => (),
+                Variant::UpdateRandomSeed(rs) => {
+                    self.wf_ctx.shared.write().random_seed = rs.randomness_seed;
+                }
                 Variant::QueryWorkflow(q) => {
                     error!(
                         "Queries are not implemented in the Rust SDK. Got query '{}'",
@@ -348,9 +350,9 @@ impl Future for WorkflowFuture {
                     None
                 }
             }) {
-                // TODO: Can assign randomness seed whenever needed
-                self.wf_ctx.shared.write().search_attributes =
-                    start_info.search_attributes.take().unwrap_or_default();
+                let mut wlock = self.wf_ctx.shared.write();
+                wlock.random_seed = start_info.randomness_seed;
+                wlock.search_attributes = start_info.search_attributes.take().unwrap_or_default();
             };
             // Lame hack to avoid hitting "unregistered" update handlers in a situation where
             // the history has no commands until an update is accepted. Will go away w/ SDK redesign

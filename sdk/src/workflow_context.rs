@@ -129,6 +129,11 @@ impl WfContext {
         RwLockReadGuard::map(self.shared.read(), |s| &s.search_attributes)
     }
 
+    /// Return the workflow's randomness seed
+    pub fn random_seed(&self) -> u64 {
+        self.shared.read().random_seed
+    }
+
     /// A future that resolves if/when the workflow is cancelled
     pub async fn cancelled(&self) {
         if *self.am_cancelled.borrow() {
@@ -419,6 +424,7 @@ pub(crate) struct WfContextSharedData {
     pub(crate) history_length: u32,
     pub(crate) current_build_id: Option<String>,
     pub(crate) search_attributes: SearchAttributes,
+    pub(crate) random_seed: u64,
 }
 
 /// Helper Wrapper that can drain the channel into a Vec<SignalData> in a blocking way.  Useful
