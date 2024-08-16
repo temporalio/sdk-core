@@ -2641,14 +2641,13 @@ async fn jobs_are_in_appropriate_order() {
     let core = mock_worker(mock);
 
     let act = core.poll_workflow_activation().await.unwrap();
-    // Patch notifications always come first
     assert_matches!(
         act.jobs[0].variant.as_ref().unwrap(),
-        workflow_activation_job::Variant::NotifyHasPatch(_)
+        workflow_activation_job::Variant::InitializeWorkflow(_)
     );
     assert_matches!(
         act.jobs[1].variant.as_ref().unwrap(),
-        workflow_activation_job::Variant::InitializeWorkflow(_)
+        workflow_activation_job::Variant::NotifyHasPatch(_)
     );
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         act.run_id,
