@@ -78,10 +78,9 @@ async fn update_workflow(#[values(FailUpdate::Yes, FailUpdate::No)] will_fail: F
         .unwrap();
     let with_id = HistoryForReplay::new(history, workflow_id.to_string());
     let replay_worker = init_core_replay_preloaded(workflow_id, [with_id]);
-    handle_update(will_fail, CompleteWorkflow::Yes, replay_worker.as_ref()).await;
+    handle_update(will_fail, CompleteWorkflow::Yes, replay_worker.as_ref(), 1).await;
 }
 
-#[rstest::rstest]
 #[tokio::test]
 async fn reapplied_updates_due_to_reset() {
     let mut starter = init_core_and_create_wf("update_workflow").await;
@@ -121,7 +120,9 @@ async fn reapplied_updates_due_to_reset() {
     .into_inner();
 
     // Accept and complete the reapplied update
-    handle_update(FailUpdate::No, CompleteWorkflow::No, core.as_ref()).await;
+    // Index here is 2 because there will be start workflow & update random seed (from the reset)
+    // first.
+    handle_update(FailUpdate::No, CompleteWorkflow::No, core.as_ref(), 2).await;
 
     // Send a second update and complete the workflow
     let post_reset_run_id = send_and_handle_update(
@@ -149,12 +150,19 @@ async fn reapplied_updates_due_to_reset() {
     // We now recapitulate the actions that the worker took on first execution above, pretending
     // that we always followed the post-reset history.
     // First, we handled the post-reset reapplied update and did not complete the workflow.
-    handle_update(FailUpdate::No, CompleteWorkflow::No, replay_worker.as_ref()).await;
+    handle_update(
+        FailUpdate::No,
+        CompleteWorkflow::No,
+        replay_worker.as_ref(),
+        2,
+    )
+    .await;
     // Then the client sent a second update; we handled it and completed the workflow.
     handle_update(
         FailUpdate::No,
         CompleteWorkflow::Yes,
         replay_worker.as_ref(),
+        0,
     )
     .await;
 
@@ -199,7 +207,7 @@ async fn send_and_handle_update(
     };
 
     // Accept update, complete update and complete workflow
-    let processing_task = handle_update(fail_update, complete_workflow, core);
+    let processing_task = handle_update(fail_update, complete_workflow, core, 0);
     let (ur, _) = join!(update_task, processing_task);
 
     let v = ur.outcome.unwrap().value.unwrap();
@@ -218,12 +226,11 @@ async fn handle_update(
     fail_update: FailUpdate,
     complete_workflow: CompleteWorkflow,
     core: &dyn Worker,
+    update_job_index: usize,
 ) {
     let act = core.poll_workflow_activation().await.unwrap();
-    // On replay, the first activation has update & start workflow, but on first execution, it does
-    // not - can happen if update is waiting on some condition.
     let pid = assert_matches!(
-        &act.jobs[0],
+        &act.jobs[update_job_index],
         WorkflowActivationJob {
             variant: Some(workflow_activation_job::Variant::DoUpdate(d)),
         } => &d.protocol_instance_id

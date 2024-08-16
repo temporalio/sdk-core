@@ -23,7 +23,7 @@ import "temporal/sdk/core/common/common.proto";
 // ## Job ordering guarantees and semantics
 //
 // Core will, by default, order jobs within the activation as follows:
-// `patches -> signals/updates -> other -> queries -> evictions`
+// `patches/random-seed-updates -> signals/updates -> other -> queries -> evictions`
 //
 // This is because:
 // * Patches are expected to apply to the entire activation
