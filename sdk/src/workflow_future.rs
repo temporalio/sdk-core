@@ -175,8 +175,8 @@ impl WorkflowFuture {
     ) -> Result<bool, Error> {
         if let Some(v) = variant {
             match v {
-                Variant::StartWorkflow(_) => {
-                    // Don't do anything in here. Start workflow is looked at earlier, before
+                Variant::InitializeWorkflow(_) => {
+                    // Don't do anything in here. Init workflow is looked at earlier, before
                     // jobs are handled, and may have information taken out of it to avoid clones.
                 }
                 Variant::FireTimer(FireTimer { seq }) => {
@@ -201,7 +201,9 @@ impl WorkflowFuture {
                     seq,
                     Box::new(result.context("Child Workflow execution must have a result")?),
                 ))?,
-                Variant::UpdateRandomSeed(_) => (),
+                Variant::UpdateRandomSeed(rs) => {
+                    self.wf_ctx.shared.write().random_seed = rs.randomness_seed;
+                }
                 Variant::QueryWorkflow(q) => {
                     error!(
                         "Queries are not implemented in the Rust SDK. Got query '{}'",
@@ -342,26 +344,26 @@ impl Future for WorkflowFuture {
             let mut activation_cmds = vec![];
             // Assign initial state from start workflow job
             if let Some(start_info) = activation.jobs.iter_mut().find_map(|j| {
-                if let Some(Variant::StartWorkflow(s)) = j.variant.as_mut() {
+                if let Some(Variant::InitializeWorkflow(s)) = j.variant.as_mut() {
                     Some(s)
                 } else {
                     None
                 }
             }) {
-                // TODO: Can assign randomness seed whenever needed
-                self.wf_ctx.shared.write().search_attributes =
-                    start_info.search_attributes.take().unwrap_or_default();
+                let mut wlock = self.wf_ctx.shared.write();
+                wlock.random_seed = start_info.randomness_seed;
+                wlock.search_attributes = start_info.search_attributes.take().unwrap_or_default();
             };
             // Lame hack to avoid hitting "unregistered" update handlers in a situation where
             // the history has no commands until an update is accepted. Will go away w/ SDK redesign
             if activation
                 .jobs
                 .iter()
-                .any(|j| matches!(j.variant, Some(Variant::StartWorkflow(_))))
+                .any(|j| matches!(j.variant, Some(Variant::InitializeWorkflow(_))))
                 && activation.jobs.iter().all(|j| {
                     matches!(
                         j.variant,
-                        Some(Variant::StartWorkflow(_) | Variant::DoUpdate(_))
+                        Some(Variant::InitializeWorkflow(_) | Variant::DoUpdate(_))
                     )
                 })
             {
