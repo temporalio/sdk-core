@@ -75,9 +75,9 @@ async fn main() -> Result<(), anyhow::Error> {
                     "--dynamic-config-value".to_string(),
                     "system.enableEagerWorkflowStart=true".to_string(),
                     "--search-attribute".to_string(),
-                    format!("{SEARCH_ATTR_TXT}=''"),
+                    format!("{SEARCH_ATTR_TXT}=Text"),
                     "--search-attribute".to_string(),
-                    format!("{SEARCH_ATTR_INT}=0"),
+                    format!("{SEARCH_ATTR_INT}=Int"),
                 ])
                 .ui(true)
                 .build()?;
