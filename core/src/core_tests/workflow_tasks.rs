@@ -42,8 +42,8 @@ use temporal_sdk_core_protos::{
         activity_result::{self as ar, activity_resolution, ActivityResolution},
         common::VersioningIntent,
         workflow_activation::{
-            remove_from_cache::EvictionReason, workflow_activation_job, FireTimer, ResolveActivity,
-            StartWorkflow, UpdateRandomSeed, WorkflowActivationJob,
+            remove_from_cache::EvictionReason, workflow_activation_job, FireTimer,
+            InitializeWorkflow, ResolveActivity, UpdateRandomSeed, WorkflowActivationJob,
         },
         workflow_commands::{
             update_response::Response, workflow_command, ActivityCancellationType, CancelTimer,
@@ -683,7 +683,7 @@ async fn workflow_update_random_seed_on_workflow_reset() {
                         res.jobs.as_slice(),
                         [WorkflowActivationJob {
                             variant: Some(workflow_activation_job::Variant::InitializeWorkflow(
-                            StartWorkflow{randomness_seed, ..}
+                            InitializeWorkflow{randomness_seed, ..}
                             )),
                         }] => {
                         randomness_seed_from_start.store(*randomness_seed, Ordering::SeqCst);
