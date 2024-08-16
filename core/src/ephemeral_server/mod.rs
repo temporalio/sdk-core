@@ -46,7 +46,7 @@ pub struct TemporalDevServerConfig {
     /// Log format and level
     #[builder(default = "(\"pretty\".to_owned(), \"warn\".to_owned())")]
     pub log: (String, String),
-    /// Additional arguments to Temporalite.
+    /// Additional arguments to Temporal dev server.
     #[builder(default)]
     pub extra_args: Vec<String>,
 }
@@ -567,8 +567,10 @@ async fn download_and_extract(
 #[cfg(test)]
 mod tests {
     use super::get_free_port;
-    use std::collections::HashSet;
-    use std::net::{TcpListener, TcpStream};
+    use std::{
+        collections::HashSet,
+        net::{TcpListener, TcpStream},
+    };
 
     #[test]
     fn get_free_port_no_double() {
