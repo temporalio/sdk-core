@@ -396,10 +396,10 @@ impl WorkflowHalf {
         let mut res = None;
         let run_id = activation.run_id.clone();
 
-        // If the activation is to start a workflow, create a new workflow driver for it,
+        // If the activation is to init a workflow, create a new workflow driver for it,
         // using the function associated with that workflow id
         if let Some(sw) = activation.jobs.iter().find_map(|j| match j.variant {
-            Some(Variant::StartWorkflow(ref sw)) => Some(sw),
+            Some(Variant::InitializeWorkflow(ref sw)) => Some(sw),
             _ => None,
         }) {
             let workflow_type = &sw.workflow_type;

@@ -58,7 +58,7 @@ async fn timer_then_cancel_req(
         NonSticky,
         &[
             gen_assert_and_reply(
-                &job_assert!(workflow_activation_job::Variant::StartWorkflow(_)),
+                &job_assert!(workflow_activation_job::Variant::InitializeWorkflow(_)),
                 vec![start_timer_cmd(timer_seq, Duration::from_secs(1))],
             ),
             gen_assert_and_reply(
@@ -84,7 +84,7 @@ async fn timer_then_cancel_req_then_timer_then_cancelled() {
         NonSticky,
         &[
             gen_assert_and_reply(
-                &job_assert!(workflow_activation_job::Variant::StartWorkflow(_)),
+                &job_assert!(workflow_activation_job::Variant::InitializeWorkflow(_)),
                 vec![start_timer_cmd(1, Duration::from_secs(1))],
             ),
             gen_assert_and_reply(
@@ -114,7 +114,7 @@ async fn immediate_cancel() {
         NonSticky,
         &[gen_assert_and_reply(
             &job_assert!(
-                workflow_activation_job::Variant::StartWorkflow(_),
+                workflow_activation_job::Variant::InitializeWorkflow(_),
                 workflow_activation_job::Variant::CancelWorkflow(_)
             ),
             vec![CancelWorkflowExecution {}.into()],

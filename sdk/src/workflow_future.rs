@@ -175,8 +175,8 @@ impl WorkflowFuture {
     ) -> Result<bool, Error> {
         if let Some(v) = variant {
             match v {
-                Variant::StartWorkflow(_) => {
-                    // Don't do anything in here. Start workflow is looked at earlier, before
+                Variant::InitializeWorkflow(_) => {
+                    // Don't do anything in here. Init workflow is looked at earlier, before
                     // jobs are handled, and may have information taken out of it to avoid clones.
                 }
                 Variant::FireTimer(FireTimer { seq }) => {
@@ -344,7 +344,7 @@ impl Future for WorkflowFuture {
             let mut activation_cmds = vec![];
             // Assign initial state from start workflow job
             if let Some(start_info) = activation.jobs.iter_mut().find_map(|j| {
-                if let Some(Variant::StartWorkflow(s)) = j.variant.as_mut() {
+                if let Some(Variant::InitializeWorkflow(s)) = j.variant.as_mut() {
                     Some(s)
                 } else {
                     None
@@ -359,11 +359,11 @@ impl Future for WorkflowFuture {
             if activation
                 .jobs
                 .iter()
-                .any(|j| matches!(j.variant, Some(Variant::StartWorkflow(_))))
+                .any(|j| matches!(j.variant, Some(Variant::InitializeWorkflow(_))))
                 && activation.jobs.iter().all(|j| {
                     matches!(
                         j.variant,
-                        Some(Variant::StartWorkflow(_) | Variant::DoUpdate(_))
+                        Some(Variant::InitializeWorkflow(_) | Variant::DoUpdate(_))
                     )
                 })
             {

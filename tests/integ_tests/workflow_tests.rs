@@ -79,7 +79,7 @@ async fn parallel_workflows_same_queue() {
         assert_matches!(
             task.jobs.as_slice(),
             [WorkflowActivationJob {
-                variant: Some(workflow_activation_job::Variant::StartWorkflow(_)),
+                variant: Some(workflow_activation_job::Variant::InitializeWorkflow(_)),
             }]
         );
         worker

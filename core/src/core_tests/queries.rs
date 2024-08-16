@@ -474,7 +474,7 @@ async fn query_cache_miss_causes_page_fetch_dont_reply_wft_too_early(
     assert_matches!(
         task.jobs.as_slice(),
         [WorkflowActivationJob {
-            variant: Some(workflow_activation_job::Variant::StartWorkflow(_)),
+            variant: Some(workflow_activation_job::Variant::InitializeWorkflow(_)),
         }]
     );
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
@@ -696,7 +696,7 @@ async fn new_query_fail() {
     assert_matches!(
         task.jobs[0],
         WorkflowActivationJob {
-            variant: Some(workflow_activation_job::Variant::StartWorkflow(_)),
+            variant: Some(workflow_activation_job::Variant::InitializeWorkflow(_)),
         }
     );
 

@@ -580,7 +580,7 @@ async fn update_speculative_wft() {
         assert_matches!(
             res.jobs.as_slice(),
             [WorkflowActivationJob {
-                variant: Some(workflow_activation_job::Variant::StartWorkflow(_)),
+                variant: Some(workflow_activation_job::Variant::InitializeWorkflow(_)),
             }]
         );
         core.complete_workflow_activation(WorkflowActivationCompletion::empty(res.run_id))

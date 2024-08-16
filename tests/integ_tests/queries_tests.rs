@@ -163,7 +163,7 @@ async fn query_after_execution_complete(#[case] do_evict: bool) {
             if matches!(
                 task.jobs.as_slice(),
                 [WorkflowActivationJob {
-                    variant: Some(workflow_activation_job::Variant::StartWorkflow(_)),
+                    variant: Some(workflow_activation_job::Variant::InitializeWorkflow(_)),
                 }]
             ) {
                 core.complete_timer(&task.run_id, 1, Duration::from_millis(500))
@@ -455,7 +455,7 @@ async fn query_should_not_be_sent_if_wft_about_to_fail() {
         assert_matches!(
             task.jobs.as_slice(),
             [WorkflowActivationJob {
-                variant: Some(workflow_activation_job::Variant::StartWorkflow(_)),
+                variant: Some(workflow_activation_job::Variant::InitializeWorkflow(_)),
             }]
         );
         core.complete_workflow_activation(WorkflowActivationCompletion::fail(
@@ -485,7 +485,7 @@ async fn query_should_not_be_sent_if_wft_about_to_fail() {
         assert_matches!(
             task.jobs.as_slice(),
             [WorkflowActivationJob {
-                variant: Some(workflow_activation_job::Variant::StartWorkflow(_)),
+                variant: Some(workflow_activation_job::Variant::InitializeWorkflow(_)),
             }]
         );
         core.complete_execution(&task.run_id).await;

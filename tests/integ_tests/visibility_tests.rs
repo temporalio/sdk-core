@@ -29,7 +29,7 @@ async fn client_list_open_closed_workflow_executions() {
     assert_matches!(
         task.jobs.as_slice(),
         [WorkflowActivationJob {
-            variant: Some(workflow_activation_job::Variant::StartWorkflow(_)),
+            variant: Some(workflow_activation_job::Variant::InitializeWorkflow(_)),
         }]
     );
 

@@ -1364,7 +1364,7 @@ fn prepare_to_ship_activation(wfa: &mut WorkflowActivation) {
         fn variant_ordinal(v: &workflow_activation_job::Variant) -> u8 {
             match v {
                 workflow_activation_job::Variant::NotifyHasPatch(_) => 0,
-                workflow_activation_job::Variant::StartWorkflow(_) => 1,
+                workflow_activation_job::Variant::InitializeWorkflow(_) => 1,
                 workflow_activation_job::Variant::UpdateRandomSeed(_) => 2,
                 workflow_activation_job::Variant::SignalWorkflow(_) => 3,
                 workflow_activation_job::Variant::DoUpdate(_) => 3,
