@@ -61,8 +61,11 @@ jobs:
           name: state-machine-coverage
           path: machine_coverage/
 
-  fmt:
+  integ-tests:
     name: Integ tests
+    env:
+      TEMPORAL_CLOUD_ADDRESS: https://sdk-ci.a2dd6.tmprl.cloud:7233
+      TEMPORAL_CLOUD_NAMESPACE: sdk-ci.a2dd6
     timeout-minutes: 20
     runs-on: ubuntu-latest
     steps:
@@ -76,5 +79,6 @@ jobs:
           # TODO: Upgrade proto once https://github.com/arduino/setup-protoc/issues/99 is fixed
           version: '23.x'
           repo-token: ${{ secrets.GITHUB_TOKEN }}
+
       - uses: Swatinem/rust-cache@v2
       - run: cargo integ-test
