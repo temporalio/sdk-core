@@ -462,7 +462,7 @@ async fn activity_timeout_no_double_resolve() {
         WorkflowCachingPolicy::NonSticky,
         &[
             gen_assert_and_reply(
-                &job_assert!(workflow_activation_job::Variant::StartWorkflow(_)),
+                &job_assert!(workflow_activation_job::Variant::InitializeWorkflow(_)),
                 vec![ScheduleActivity {
                     seq: activity_id,
                     activity_id: activity_id.to_string(),

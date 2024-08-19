@@ -1331,7 +1331,7 @@ impl LocalActivityRequestSink for LAReqSink {
 /// activations must uphold.
 ///
 /// ## Ordering
-/// `patches -> signals/updates -> other -> queries -> evictions`
+/// `init workflow -> patches -> random-seed-updates -> signals/updates -> other -> queries -> evictions`
 ///
 /// ## Invariants:
 /// * Queries always go in their own activation
@@ -1363,17 +1363,19 @@ fn prepare_to_ship_activation(wfa: &mut WorkflowActivation) {
         }
         fn variant_ordinal(v: &workflow_activation_job::Variant) -> u8 {
             match v {
+                workflow_activation_job::Variant::InitializeWorkflow(_) => 0,
                 workflow_activation_job::Variant::NotifyHasPatch(_) => 1,
-                workflow_activation_job::Variant::SignalWorkflow(_) => 2,
-                workflow_activation_job::Variant::DoUpdate(_) => 2,
+                workflow_activation_job::Variant::UpdateRandomSeed(_) => 2,
+                workflow_activation_job::Variant::SignalWorkflow(_) => 3,
+                workflow_activation_job::Variant::DoUpdate(_) => 3,
                 // In principle we should never actually need to sort these with the others, since
                 // queries always get their own activation, but, maintaining the semantic is
                 // reasonable.
-                workflow_activation_job::Variant::QueryWorkflow(_) => 4,
+                workflow_activation_job::Variant::QueryWorkflow(_) => 5,
                 // Also shouldn't ever end up anywhere but the end by construction, but no harm in
                 // double-checking.
-                workflow_activation_job::Variant::RemoveFromCache(_) => 5,
-                _ => 3,
+                workflow_activation_job::Variant::RemoveFromCache(_) => 6,
+                _ => 4,
             }
         }
         variant_ordinal(j1v).cmp(&variant_ordinal(j2v))
@@ -1419,6 +1421,11 @@ mod tests {
                     )),
                 },
                 WorkflowActivationJob {
+                    variant: Some(workflow_activation_job::Variant::UpdateRandomSeed(
+                        Default::default(),
+                    )),
+                },
+                WorkflowActivationJob {
                     variant: Some(workflow_activation_job::Variant::SignalWorkflow(
                         SignalWorkflow {
                             signal_name: "2".to_string(),
@@ -1439,6 +1446,7 @@ mod tests {
             variants.as_slice(),
             &[
                 workflow_activation_job::Variant::NotifyHasPatch(_),
+                workflow_activation_job::Variant::UpdateRandomSeed(_),
                 workflow_activation_job::Variant::SignalWorkflow(ref s1),
                 workflow_activation_job::Variant::DoUpdate(_),
                 workflow_activation_job::Variant::SignalWorkflow(ref s2),

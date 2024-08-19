@@ -10,7 +10,7 @@ use temporal_sdk_core::ephemeral_server::{
 };
 use temporal_sdk_core_test_utils::{
     default_cached_download, INTEG_SERVER_TARGET_ENV_VAR, INTEG_TEMPORAL_DEV_SERVER_USED_ENV_VAR,
-    INTEG_TEST_SERVER_USED_ENV_VAR,
+    INTEG_TEST_SERVER_USED_ENV_VAR, SEARCH_ATTR_INT, SEARCH_ATTR_TXT,
 };
 use tokio::{self, process::Command};
 
@@ -70,11 +70,16 @@ async fn main() -> Result<(), anyhow::Error> {
         ServerKind::TemporalCLI => {
             let config = TemporalDevServerConfigBuilder::default()
                 .exe(default_cached_download())
-                // TODO: Delete when temporalCLI enables it by default.
                 .extra_args(vec![
+                    // TODO: Delete when temporalCLI enables it by default.
                     "--dynamic-config-value".to_string(),
                     "system.enableEagerWorkflowStart=true".to_string(),
+                    "--search-attribute".to_string(),
+                    format!("{SEARCH_ATTR_TXT}=Text"),
+                    "--search-attribute".to_string(),
+                    format!("{SEARCH_ATTR_INT}=Int"),
                 ])
+                .ui(true)
                 .build()?;
             println!("Using temporal CLI");
             (

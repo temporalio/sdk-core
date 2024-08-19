@@ -73,11 +73,14 @@ pub const INTEG_USE_TLS_ENV_VAR: &str = "TEMPORAL_USE_TLS";
 pub const INTEG_TEMPORAL_DEV_SERVER_USED_ENV_VAR: &str = "INTEG_TEMPORAL_DEV_SERVER_ON";
 /// This env var is set (to any value) if the test server is in use
 pub const INTEG_TEST_SERVER_USED_ENV_VAR: &str = "INTEG_TEST_SERVER_ON";
+pub static SEARCH_ATTR_TXT: &str = "CustomTextField";
+pub static SEARCH_ATTR_INT: &str = "CustomIntField";
 
 /// If set, turn export traces and metrics to the OTel collector at the given URL
 const OTEL_URL_ENV_VAR: &str = "TEMPORAL_INTEG_OTEL_URL";
 /// If set, enable direct scraping of prom metrics on the specified port
 const PROM_ENABLE_ENV_VAR: &str = "TEMPORAL_INTEG_PROM_PORT";
+
 #[macro_export]
 macro_rules! prost_dur {
     ($dur_call:ident $args:tt) => {

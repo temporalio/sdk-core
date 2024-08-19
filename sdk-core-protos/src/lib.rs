@@ -560,8 +560,8 @@ pub mod coresdk {
         impl Display for workflow_activation_job::Variant {
             fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
                 match self {
-                    workflow_activation_job::Variant::StartWorkflow(_) => {
-                        write!(f, "StartWorkflow")
+                    workflow_activation_job::Variant::InitializeWorkflow(_) => {
+                        write!(f, "InitializeWorkflow")
                     }
                     workflow_activation_job::Variant::FireTimer(t) => {
                         write!(f, "FireTimer({})", t.seq)
@@ -662,14 +662,14 @@ pub mod coresdk {
             }
         }
 
-        /// Create a [StartWorkflow] job from corresponding event attributes
+        /// Create a [InitializeWorkflow] job from corresponding event attributes
         pub fn start_workflow_from_attribs(
             attrs: WorkflowExecutionStartedEventAttributes,
             workflow_id: String,
             randomness_seed: u64,
             start_time: Timestamp,
-        ) -> StartWorkflow {
-            StartWorkflow {
+        ) -> InitializeWorkflow {
+            InitializeWorkflow {
                 workflow_type: attrs.workflow_type.map(|wt| wt.name).unwrap_or_default(),
                 workflow_id,
                 arguments: Vec::from_payloads(attrs.input),
