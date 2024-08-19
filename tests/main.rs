@@ -74,11 +74,11 @@ mod integ_tests {
             return;
         };
 
-        let client_cert = dbg!(env::var("TEMPORAL_CLIENT_CERT"))
+        let client_cert = env::var("TEMPORAL_CLIENT_CERT")
             .expect("TEMPORAL_CLIENT_CERT must be set")
             .replace("\\n", "\n")
             .into_bytes();
-        let client_private_key = dbg!(cloud_key.replace("\\n", "\n")).into_bytes();
+        let client_private_key = cloud_key.replace("\\n", "\n").into_bytes();
         let sgo = ClientOptionsBuilder::default()
             .target_url(Url::from_str(&cloud_addr).unwrap())
             .client_name("tls_tester")

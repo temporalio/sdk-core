@@ -66,6 +66,8 @@ jobs:
     env:
       TEMPORAL_CLOUD_ADDRESS: https://sdk-ci.a2dd6.tmprl.cloud:7233
       TEMPORAL_CLOUD_NAMESPACE: sdk-ci.a2dd6
+      TEMPORAL_CLIENT_CERT: ${{ secrets.TEMPORAL_CLIENT_CERT }}
+      TEMPORAL_CLIENT_KEY: ${{ secrets.TEMPORAL_CLIENT_KEY }}
     timeout-minutes: 20
     runs-on: ubuntu-latest
     steps:
