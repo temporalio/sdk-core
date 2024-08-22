@@ -35,7 +35,7 @@ use temporal_sdk_core_api::telemetry::{
     MetricTemporality, OtelCollectorOptions, PrometheusExporterOptions,
 };
 use tokio::task::AbortHandle;
-use tonic::metadata::MetadataMap;
+use tonic::{metadata::MetadataMap, transport::ClientTlsConfig};
 
 /// Chooses appropriate aggregators for our metrics
 #[derive(Debug, Clone)]
@@ -160,8 +160,12 @@ impl<U> MemoryGauge<U> {
 pub fn build_otlp_metric_exporter(
     opts: OtelCollectorOptions,
 ) -> Result<CoreOtelMeter, anyhow::Error> {
-    let exporter = opentelemetry_otlp::TonicExporterBuilder::default()
-        .with_endpoint(opts.url.to_string())
+    let mut exporter =
+        opentelemetry_otlp::TonicExporterBuilder::default().with_endpoint(opts.url.to_string());
+    if opts.url.scheme() == "https" || opts.url.scheme() == "grpcs" {
+        exporter = exporter.with_tls_config(ClientTlsConfig::new().with_native_roots());
+    }
+    let exporter = exporter
         .with_metadata(MetadataMap::from_headers((&opts.headers).try_into()?))
         .build_metrics_exporter(
             Box::new(SDKAggSelector::new(opts.use_seconds_for_durations)),
