@@ -160,15 +160,7 @@ impl CoreTelemetry for TelemetryInstance {
 ///
 /// See [TelemetryOptions] docs for more on configuration.
 pub fn telemetry_init(opts: TelemetryOptions) -> Result<TelemetryInstance, anyhow::Error> {
-    // This is a bit odd, but functional. It's desirable to create a separate tokio runtime for
-    // metrics handling, since tests typically use a single-threaded runtime and initializing
-    // pipeline requires us to know if the runtime is single or multithreaded, we will crash
-    // in one case or the other. There does not seem to be a way to tell from the current runtime
-    // handle if it is single or multithreaded. Additionally, we can isolate metrics work this
-    // way which is nice.
-    // Parts of telem dat ====
     let mut logs_out = None;
-    // =======================
 
     // Tracing subscriber layers =========
     let mut console_pretty_layer = None;

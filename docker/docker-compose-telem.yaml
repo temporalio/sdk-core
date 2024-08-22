@@ -10,9 +10,9 @@ services:
 
   otel-collector:
     image: otel/opentelemetry-collector:latest
-    command: ['--config=/etc/otel-collector-config.yaml']
+    command: [ '--config=/etc/otel-collector-config.yaml' ]
     volumes:
-      - ../../etc/otel-collector-config.yaml:/etc/otel-collector-config.yaml
+      - ../etc/otel-collector-config.yaml:/etc/otel-collector-config.yaml
     ports:
       #      - "1888:1888"   # pprof extension
       # It's useful to be able to manually inspect metrics during dev
@@ -20,7 +20,7 @@ services:
       - '8889:8889' # Prometheus exporter metrics
       #      - "13133:13133" # health_check extension
       - '4317:4317' # OTLP gRPC receiver
-    #      - "55670:55679" # zpages extension
+    #      - "55679:55679" # zpages extension
     depends_on:
       - jaeger
 
@@ -28,6 +28,6 @@ services:
     container_name: prometheus
     image: prom/prometheus:latest
     volumes:
-      - ../../etc/prometheus.yaml:/etc/prometheus/prometheus.yml
+      - ../etc/prometheus.yaml:/etc/prometheus/prometheus.yml
     ports:
       - '9090:9090'
