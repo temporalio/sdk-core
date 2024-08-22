@@ -54,6 +54,7 @@ pub struct OtelCollectorOptions {
     /// export to this same collector.
     pub url: Url,
     /// Optional set of HTTP headers to send to the Collector, e.g for authentication.
+    #[builder(default = "HashMap::new()")]
     pub headers: HashMap<String, String>,
     /// Optionally specify how frequently metrics should be exported. Defaults to 1 second.
     #[builder(default = "Duration::from_secs(1)")]
