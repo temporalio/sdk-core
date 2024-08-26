@@ -551,10 +551,11 @@ mod tests {
 
         let mut aai = ActivationAssertionsInterceptor::default();
         aai.then(move |act| {
-            // replaying cases should immediately get a resolve change activation when marker is present
+            // replaying cases should immediately get a resolve change activation when marker is
+            // present
             if replaying && marker_type != MarkerType::NoMarker {
                 assert_matches!(
-                    &act.jobs[0],
+                    &act.jobs[1],
                      WorkflowActivationJob {
                         variant: Some(workflow_activation_job::Variant::NotifyHasPatch(
                             NotifyHasPatch {

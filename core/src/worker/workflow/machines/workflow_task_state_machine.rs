@@ -44,12 +44,12 @@ impl WorkflowTaskMachine {
 #[derive(Debug, derive_more::Display)]
 pub(super) enum WFTaskMachineCommand {
     /// Issued to (possibly) trigger the event loop
-    #[display(fmt = "WFTaskStartedTrigger")]
+    #[display("WFTaskStartedTrigger")]
     WFTaskStartedTrigger {
         task_started_event_id: i64,
         time: SystemTime,
     },
-    #[display(fmt = "RunIdOnWorkflowResetUpdate({run_id})")]
+    #[display("RunIdOnWorkflowResetUpdate({run_id})")]
     RunIdOnWorkflowResetUpdate { run_id: String },
 }
 

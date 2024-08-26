@@ -23,7 +23,7 @@ import "temporal/sdk/core/common/common.proto";
 // ## Job ordering guarantees and semantics
 //
 // Core will, by default, order jobs within the activation as follows:
-// `patches -> signals/updates -> other -> queries -> evictions`
+// `init-workflow -> patches -> random-seed-updates -> signals/updates -> other -> queries -> evictions`
 //
 // This is because:
 // * Patches are expected to apply to the entire activation
@@ -74,8 +74,8 @@ message WorkflowActivation {
 
 message WorkflowActivationJob {
     oneof variant {
-        // Begin a workflow for the first time
-        StartWorkflow start_workflow = 1;
+        // A workflow is starting, record all of the information from its start event
+        InitializeWorkflow initialize_workflow = 1;
         // A timer has fired, allowing whatever was waiting on it (if anything) to proceed
         FireTimer fire_timer = 2;
         // Workflow was reset. The randomness seed must be updated.
@@ -110,8 +110,8 @@ message WorkflowActivationJob {
     }
 }
 
-// Start a new workflow
-message StartWorkflow {
+// Initialize a new workflow
+message InitializeWorkflow {
     // The identifier the lang-specific sdk uses to execute workflow code
     string workflow_type = 1;
     // The workflow id used on the temporal server

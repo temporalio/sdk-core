@@ -97,6 +97,7 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::{
         common::v1::Payload,
+        enums::v1::WorkflowTaskFailedCause,
         failure::v1::{failure, Failure},
     },
     TaskToken,
@@ -252,7 +253,7 @@ impl Worker {
                         let wf_half = &*wf_half;
                         async move {
                             join_handle.await??;
-                            info!(run_id=%run_id, "Removing workflow from cache");
+                            debug!(run_id=%run_id, "Removing workflow from cache");
                             wf_half.workflows.borrow_mut().remove(&run_id);
                             Ok(())
                         }
@@ -395,17 +396,26 @@ impl WorkflowHalf {
         let mut res = None;
         let run_id = activation.run_id.clone();
 
-        // If the activation is to start a workflow, create a new workflow driver for it,
+        // If the activation is to init a workflow, create a new workflow driver for it,
         // using the function associated with that workflow id
         if let Some(sw) = activation.jobs.iter().find_map(|j| match j.variant {
-            Some(Variant::StartWorkflow(ref sw)) => Some(sw),
+            Some(Variant::InitializeWorkflow(ref sw)) => Some(sw),
             _ => None,
         }) {
             let workflow_type = &sw.workflow_type;
             let wf_fns_borrow = self.workflow_fns.borrow();
-            let wf_function = wf_fns_borrow
-                .get(workflow_type)
-                .ok_or_else(|| anyhow!("Workflow type {workflow_type} not found"))?;
+            let Some(wf_function) = wf_fns_borrow.get(workflow_type) else {
+                warn!("Workflow type {workflow_type} not found");
+
+                completions_tx
+                    .send(WorkflowActivationCompletion::fail(
+                        run_id,
+                        format!("Workflow type {workflow_type} not found").into(),
+                        Some(WorkflowTaskFailedCause::WorkflowWorkerUnhandledFailure),
+                    ))
+                    .expect("Completion channel intact");
+                return Ok(None);
+            };
 
             let (wff, activations) = wf_function.start_workflow(
                 common.worker.get_config().namespace.clone(),
@@ -444,6 +454,24 @@ impl WorkflowHalf {
                 .send(activation)
                 .expect("Workflow should exist if we're sending it an activation");
         } else {
+            // When we failed to start a workflow, we never inserted it into the cache.
+            // But core sends us a `RemoveFromCache` job when we mark the StartWorkflow workflow activation
+            // as a failure, which we need to complete.
+            // Other SDKs add the workflow to the cache even when the workflow type is unknown/not found.
+            // To circumvent this, we simply mark any RemoveFromCache job for workflows that are not in the cache as complete.
+            if activation.jobs.len() == 1
+                && matches!(
+                    activation.jobs.first().map(|j| &j.variant),
+                    Some(Some(Variant::RemoveFromCache(_)))
+                )
+            {
+                completions_tx
+                    .send(WorkflowActivationCompletion::from_cmds(run_id, vec![]))
+                    .expect("Completion channel intact");
+                return Ok(None);
+            }
+
+            // In all other cases, we want to panic as the runtime could be in an inconsistent state at this point.
             bail!(
                 "Got activation {:?} for unknown workflow {}",
                 activation,

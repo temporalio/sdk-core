@@ -60,7 +60,7 @@ pub(super) struct SharedState {
 #[derive(Debug, derive_more::Display)]
 pub(super) enum SignalExternalCommand {
     Signaled,
-    #[display(fmt = "Failed")]
+    #[display("Failed")]
     Failed(SignalExternalWorkflowExecutionFailedCause),
     Cancelled,
 }

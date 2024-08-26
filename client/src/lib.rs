@@ -85,6 +85,7 @@ use uuid::Uuid;
 
 static CLIENT_NAME_HEADER_KEY: &str = "client-name";
 static CLIENT_VERSION_HEADER_KEY: &str = "client-version";
+static TEMPORAL_NAMESPACE_HEADER_KEY: &str = "temporal-namespace";
 /// These must match the gRPC method names, not the snake case versions that exist in the Rust code.
 static LONG_POLL_METHOD_NAMES: [&str; 3] = [
     "PollWorkflowTaskQueue",
@@ -473,7 +474,7 @@ impl ClientOptions {
     /// Passes it through if TLS options not set.
     async fn add_tls_to_channel(&self, mut channel: Endpoint) -> Result<Endpoint, ClientInitError> {
         if let Some(tls_cfg) = &self.tls_cfg {
-            let mut tls = tonic::transport::ClientTlsConfig::new();
+            let mut tls = tonic::transport::ClientTlsConfig::new().with_native_roots();
 
             if let Some(root_cert) = &tls_cfg.server_root_ca_cert {
                 let server_root_ca_cert = Certificate::from_pem(root_cert);

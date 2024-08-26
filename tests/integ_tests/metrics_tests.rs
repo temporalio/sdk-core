@@ -1,11 +1,16 @@
 use assert_matches::assert_matches;
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{env, net::SocketAddr, sync::Arc, time::Duration};
 use temporal_client::{WorkflowClientTrait, WorkflowOptions, WorkflowService};
-use temporal_sdk_core::{init_worker, telemetry::start_prometheus_metric_exporter, CoreRuntime};
+use temporal_sdk_core::{
+    init_worker,
+    telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter},
+    CoreRuntime,
+};
 use temporal_sdk_core_api::{
     telemetry::{
         metrics::{CoreMeter, MetricAttributes, MetricParameters},
-        PrometheusExporterOptionsBuilder, TelemetryOptions,
+        OtelCollectorOptionsBuilder, PrometheusExporterOptionsBuilder, TelemetryOptions,
+        TelemetryOptionsBuilder,
     },
     worker::WorkerConfigBuilder,
     Worker,
@@ -30,9 +35,10 @@ use temporal_sdk_core_protos::{
     },
 };
 use temporal_sdk_core_test_utils::{
-    get_integ_server_options, get_integ_telem_options, CoreWfStarter, NAMESPACE,
+    get_integ_server_options, get_integ_telem_options, CoreWfStarter, NAMESPACE, OTEL_URL_ENV_VAR,
 };
 use tokio::{join, sync::Barrier, task::AbortHandle};
+use url::Url;
 
 static ANY_PORT: &str = "127.0.0.1:0";
 
@@ -376,6 +382,7 @@ async fn query_of_closed_workflow_doesnt_tick_terminal_metric(
         .complete_workflow_activation(WorkflowActivationCompletion::fail(
             task.run_id,
             "whatever".into(),
+            None,
         ))
         .await
         .unwrap();
@@ -573,4 +580,43 @@ async fn request_fail_codes() {
     assert!(matching_line.contains("operation=\"DescribeNamespace\""));
     assert!(matching_line.contains("status_code=\"INVALID_ARGUMENT\""));
     assert!(matching_line.contains("} 1"));
+}
+
+// OTel collector shutdown hangs in a single-threaded Tokio environment. We used to, in the past
+// have a dedicated runtime just for telemetry which was meant to address problems like this.
+// In reality, users are unlikely to run a single-threaded runtime.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn request_fail_codes_otel() {
+    let exporter = if let Some(url) = env::var(OTEL_URL_ENV_VAR)
+        .ok()
+        .map(|x| x.parse::<Url>().unwrap())
+    {
+        let opts = OtelCollectorOptionsBuilder::default()
+            .url(url)
+            .build()
+            .unwrap();
+        build_otlp_metric_exporter(opts).unwrap()
+    } else {
+        // skip
+        return;
+    };
+    let mut telemopts = TelemetryOptionsBuilder::default();
+    let exporter = Arc::new(exporter);
+    telemopts.metrics(exporter as Arc<dyn CoreMeter>);
+
+    let rt = CoreRuntime::new_assume_tokio(telemopts.build().unwrap()).unwrap();
+    let opts = get_integ_server_options();
+    let mut client = opts
+        .connect(NAMESPACE, rt.telemetry().get_temporal_metric_meter())
+        .await
+        .unwrap();
+
+    for _ in 0..10 {
+        // Describe namespace w/ invalid argument (unset namespace field)
+        WorkflowService::describe_namespace(&mut client, DescribeNamespaceRequest::default())
+            .await
+            .unwrap_err();
+
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
 }

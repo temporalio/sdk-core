@@ -436,8 +436,10 @@ pub mod coresdk {
     pub mod workflow_activation {
         use crate::{
             coresdk::{
+                activity_result::{activity_resolution, ActivityResolution},
                 common::NamespacedWorkflowExecution,
-                workflow_activation::remove_from_cache::EvictionReason, FromPayloadsExt,
+                workflow_activation::remove_from_cache::EvictionReason,
+                FromPayloadsExt,
             },
             temporal::api::{
                 enums::v1::WorkflowTaskFailedCause,
@@ -558,8 +560,8 @@ pub mod coresdk {
         impl Display for workflow_activation_job::Variant {
             fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
                 match self {
-                    workflow_activation_job::Variant::StartWorkflow(_) => {
-                        write!(f, "StartWorkflow")
+                    workflow_activation_job::Variant::InitializeWorkflow(_) => {
+                        write!(f, "InitializeWorkflow")
                     }
                     workflow_activation_job::Variant::FireTimer(t) => {
                         write!(f, "FireTimer({})", t.seq)
@@ -577,7 +579,14 @@ pub mod coresdk {
                         write!(f, "SignalWorkflow")
                     }
                     workflow_activation_job::Variant::ResolveActivity(r) => {
-                        write!(f, "ResolveActivity({})", r.seq)
+                        write!(
+                            f,
+                            "ResolveActivity({}, {})",
+                            r.seq,
+                            r.result
+                                .as_ref()
+                                .unwrap_or_else(|| &ActivityResolution { status: None })
+                        )
                     }
                     workflow_activation_job::Variant::NotifyHasPatch(_) => {
                         write!(f, "NotifyHasPatch")
@@ -599,6 +608,28 @@ pub mod coresdk {
                     }
                     workflow_activation_job::Variant::DoUpdate(_) => {
                         write!(f, "DoUpdate")
+                    }
+                }
+            }
+        }
+
+        impl Display for ActivityResolution {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                match self.status {
+                    None => {
+                        write!(f, "None")
+                    }
+                    Some(activity_resolution::Status::Failed(_)) => {
+                        write!(f, "Failed")
+                    }
+                    Some(activity_resolution::Status::Completed(_)) => {
+                        write!(f, "Completed")
+                    }
+                    Some(activity_resolution::Status::Cancelled(_)) => {
+                        write!(f, "Cancelled")
+                    }
+                    Some(activity_resolution::Status::Backoff(_)) => {
+                        write!(f, "Backoff")
                     }
                 }
             }
@@ -631,14 +662,14 @@ pub mod coresdk {
             }
         }
 
-        /// Create a [StartWorkflow] job from corresponding event attributes
+        /// Create a [InitializeWorkflow] job from corresponding event attributes
         pub fn start_workflow_from_attribs(
             attrs: WorkflowExecutionStartedEventAttributes,
             workflow_id: String,
             randomness_seed: u64,
             start_time: Timestamp,
-        ) -> StartWorkflow {
-            StartWorkflow {
+        ) -> InitializeWorkflow {
+            InitializeWorkflow {
                 workflow_type: attrs.workflow_type.map(|wt| wt.name).unwrap_or_default(),
                 workflow_id,
                 arguments: Vec::from_payloads(attrs.input),
@@ -950,13 +981,17 @@ pub mod coresdk {
             }
         }
 
-        pub fn fail(run_id: impl Into<String>, failure: Failure) -> Self {
+        pub fn fail(
+            run_id: impl Into<String>,
+            failure: Failure,
+            cause: Option<WorkflowTaskFailedCause>,
+        ) -> Self {
             Self {
                 run_id: run_id.into(),
                 status: Some(workflow_activation_completion::Status::Failed(
                     workflow_completion::Failure {
                         failure: Some(failure),
-                        force_cause: WorkflowTaskFailedCause::Unspecified as i32,
+                        force_cause: cause.unwrap_or(WorkflowTaskFailedCause::Unspecified) as i32,
                     },
                 )),
             }

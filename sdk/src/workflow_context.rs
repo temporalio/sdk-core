@@ -13,11 +13,12 @@ use crate::{
 };
 use crossbeam_channel::{Receiver, Sender};
 use futures::{task::Context, FutureExt, Stream, StreamExt};
-use parking_lot::RwLock;
+use parking_lot::{RwLock, RwLockReadGuard};
 use std::{
     collections::HashMap,
     future::Future,
     marker::PhantomData,
+    ops::Deref,
     pin::Pin,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -40,7 +41,7 @@ use temporal_sdk_core_protos::{
             SignalExternalWorkflowExecution, StartTimer, UpsertWorkflowSearchAttributes,
         },
     },
-    temporal::api::common::v1::{Memo, Payload},
+    temporal::api::common::v1::{Memo, Payload, SearchAttributes},
 };
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -121,6 +122,16 @@ impl WfContext {
     /// code is being executed for the first time, return this Worker's Build ID if it has one.
     pub fn current_build_id(&self) -> Option<String> {
         self.shared.read().current_build_id.clone()
+    }
+
+    /// Return current values for workflow search attributes
+    pub fn search_attributes(&self) -> impl Deref<Target = SearchAttributes> + '_ {
+        RwLockReadGuard::map(self.shared.read(), |s| &s.search_attributes)
+    }
+
+    /// Return the workflow's randomness seed
+    pub fn random_seed(&self) -> u64 {
+        self.shared.read().random_seed
     }
 
     /// A future that resolves if/when the workflow is cancelled
@@ -412,6 +423,8 @@ pub(crate) struct WfContextSharedData {
     pub(crate) wf_time: Option<SystemTime>,
     pub(crate) history_length: u32,
     pub(crate) current_build_id: Option<String>,
+    pub(crate) search_attributes: SearchAttributes,
+    pub(crate) random_seed: u64,
 }
 
 /// Helper Wrapper that can drain the channel into a Vec<SignalData> in a blocking way.  Useful

@@ -15,8 +15,8 @@ use tower::Service;
 /// Used to track context associated with metrics, and record/update them
 // Possible improvement: make generic over some type tag so that methods are only exposed if the
 // appropriate k/vs have already been set.
-#[derive(Clone, derive_more::DebugCustom)]
-#[debug(fmt = "MetricsContext {{ attribs: {kvs:?}, poll_is_long: {poll_is_long} }}")]
+#[derive(Clone, derive_more::Debug)]
+#[debug("MetricsContext {{ attribs: {kvs:?}, poll_is_long: {poll_is_long} }}")]
 pub(crate) struct MetricsContext {
     meter: Arc<dyn CoreMeter>,
     kvs: MetricAttributes,

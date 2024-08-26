@@ -12,7 +12,7 @@ use temporal_sdk_core_protos::{
     temporal::api::{failure::v1::Failure, query::v1::WorkflowQuery},
 };
 use temporal_sdk_core_test_utils::{
-    drain_pollers_and_shutdown, init_core_and_create_wf, WorkerTestHelpers,
+    drain_pollers_and_shutdown, init_core_and_create_wf, CoreWfStarter, WorkerTestHelpers,
 };
 use tokio::join;
 
@@ -163,7 +163,7 @@ async fn query_after_execution_complete(#[case] do_evict: bool) {
             if matches!(
                 task.jobs.as_slice(),
                 [WorkflowActivationJob {
-                    variant: Some(workflow_activation_job::Variant::StartWorkflow(_)),
+                    variant: Some(workflow_activation_job::Variant::InitializeWorkflow(_)),
                 }]
             ) {
                 core.complete_timer(&task.run_id, 1, Duration::from_millis(500))
@@ -215,30 +215,15 @@ async fn query_after_execution_complete(#[case] do_evict: bool) {
 #[tokio::test]
 async fn fail_legacy_query() {
     let query_err = "oh no broken";
-    let mut starter = init_core_and_create_wf("fail_legacy_query").await;
+    let mut starter = CoreWfStarter::new("fail_legacy_query");
     let core = starter.get_worker().await;
+    starter.workflow_options.task_timeout = Some(Duration::from_secs(1));
+    starter.start_wf().await;
     let workflow_id = starter.get_task_queue().to_string();
     let task = core.poll_workflow_activation().await.unwrap();
-    let t1_resp = vec![
-        StartTimer {
-            seq: 1,
-            start_to_fire_timeout: Some(prost_dur!(from_millis(500))),
-        }
-        .into(),
-        StartTimer {
-            seq: 2,
-            start_to_fire_timeout: Some(prost_dur!(from_secs(3))),
-        }
-        .into(),
-    ];
-    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        task.run_id.clone(),
-        t1_resp.clone(),
-    ))
-    .await
-    .unwrap();
-    tokio::time::sleep(Duration::from_secs(1)).await;
-    // Query after timer should have fired and there should be new WFT
+    // Queries are *always* legacy on closed workflows, so that's the easiest way to ensure that
+    // path is used.
+    core.complete_execution(&task.run_id).await;
     let query_fut = async {
         starter
             .get_client()
@@ -255,62 +240,26 @@ async fn fail_legacy_query() {
             .await
             .unwrap_err()
     };
-    let workflow_completions_future = async {
-        // Give query a beat to get going
-        tokio::time::sleep(Duration::from_millis(400)).await;
-        // This poll *should* have the `queries` field populated, but doesn't, seemingly due to
-        // a server bug. So, complete the WF task of the first timer firing with empty commands
+    let query_responder = async {
         let task = core.poll_workflow_activation().await.unwrap();
-        assert_matches!(
-            task.jobs.as_slice(),
-            [WorkflowActivationJob {
-                variant: Some(workflow_activation_job::Variant::FireTimer(_)),
-            }]
-        );
-        core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-            task.run_id,
-            vec![],
-        ))
-        .await
-        .unwrap();
-        let task = core.poll_workflow_activation().await.unwrap();
-        // Poll again, and we end up getting a `query` field query response
         assert_matches!(
             task.jobs.as_slice(),
             [WorkflowActivationJob {
                 variant: Some(workflow_activation_job::Variant::QueryWorkflow(q)),
             }] => q
         );
-        // Fail this task
         core.complete_workflow_activation(WorkflowActivationCompletion::fail(
             task.run_id,
             Failure {
                 message: query_err.to_string(),
                 ..Default::default()
             },
+            None,
         ))
         .await
         .unwrap();
-        // Finish the workflow (handling cache removal)
-        let task = core.poll_workflow_activation().await.unwrap();
-        core.complete_workflow_activation(WorkflowActivationCompletion::empty(task.run_id))
-            .await
-            .unwrap();
-        let task = core.poll_workflow_activation().await.unwrap();
-        core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-            task.run_id,
-            t1_resp.clone(),
-        ))
-        .await
-        .unwrap();
-        let task = core.poll_workflow_activation().await.unwrap();
-        core.complete_workflow_activation(WorkflowActivationCompletion::empty(task.run_id))
-            .await
-            .unwrap();
-        let task = core.poll_workflow_activation().await.unwrap();
-        core.complete_execution(&task.run_id).await;
     };
-    let (q_resp, _) = join!(query_fut, workflow_completions_future);
+    let (q_resp, _) = join!(query_fut, query_responder);
     // Ensure query response is a failure and has the right message
     assert_eq!(q_resp.message(), query_err);
 }
@@ -482,4 +431,88 @@ async fn queries_handled_before_next_wft() {
     };
     join!(join_all(query_futs), complete_fut);
     drain_pollers_and_shutdown(&core).await;
+}
+
+#[tokio::test]
+async fn query_should_not_be_sent_if_wft_about_to_fail() {
+    let mut starter =
+        init_core_and_create_wf("query_should_not_be_sent_if_wft_about_to_fail").await;
+    let core = starter.get_worker().await;
+    let workflow_id = starter.get_task_queue().to_string();
+    let client = starter.get_client().await;
+    // query straight away
+    let query_fut = client.query_workflow_execution(
+        workflow_id.to_string(),
+        "".to_string(),
+        WorkflowQuery {
+            query_type: "myquery".to_string(),
+            ..Default::default()
+        },
+    );
+    // Poll for the task and respond with a task failure
+    let poll_and_fail_fut = async {
+        let task = core.poll_workflow_activation().await.unwrap();
+        assert_matches!(
+            task.jobs.as_slice(),
+            [WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::InitializeWorkflow(_)),
+            }]
+        );
+        core.complete_workflow_activation(WorkflowActivationCompletion::fail(
+            task.run_id,
+            Failure {
+                message: "oh no".to_string(),
+                ..Default::default()
+            },
+            None,
+        ))
+        .await
+        .unwrap();
+        let task = core.poll_workflow_activation().await.unwrap();
+        // Should *not* get a query here. If the bug wasn't fixed, this job would have a query.
+        assert_matches!(
+            task.jobs.as_slice(),
+            [WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
+            }]
+        );
+        core.complete_workflow_activation(WorkflowActivationCompletion::empty(task.run_id))
+            .await
+            .unwrap();
+
+        // We can still service the query by trying again
+        let task = core.poll_workflow_activation().await.unwrap();
+        assert_matches!(
+            task.jobs.as_slice(),
+            [WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::InitializeWorkflow(_)),
+            }]
+        );
+        core.complete_execution(&task.run_id).await;
+        let task = core.poll_workflow_activation().await.unwrap();
+        let qid = assert_matches!(
+            task.jobs.as_slice(),
+            [WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::QueryWorkflow(q)),
+            }] => &q.query_id
+        );
+        core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+            task.run_id,
+            QueryResult {
+                query_id: qid.to_string(),
+                variant: Some(
+                    QuerySuccess {
+                        response: Some("done".into()),
+                    }
+                    .into(),
+                ),
+            }
+            .into(),
+        ))
+        .await
+        .unwrap();
+    };
+    let (qres, _) = join!(query_fut, poll_and_fail_fut);
+    let qres = qres.unwrap().query_result.unwrap();
+    assert_eq!(qres.payloads[0].data, b"done");
 }

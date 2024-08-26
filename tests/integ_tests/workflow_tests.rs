@@ -79,7 +79,7 @@ async fn parallel_workflows_same_queue() {
         assert_matches!(
             task.jobs.as_slice(),
             [WorkflowActivationJob {
-                variant: Some(workflow_activation_job::Variant::StartWorkflow(_)),
+                variant: Some(workflow_activation_job::Variant::InitializeWorkflow(_)),
             }]
         );
         worker
@@ -222,6 +222,7 @@ async fn fail_wf_task(#[values(true, false)] replay: bool) {
     core.complete_workflow_activation(WorkflowActivationCompletion::fail(
         task.run_id,
         Failure::application_failure("I did an oopsie".to_string(), false),
+        None,
     ))
     .await
     .unwrap();

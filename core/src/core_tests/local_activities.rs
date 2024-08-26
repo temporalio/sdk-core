@@ -636,7 +636,7 @@ async fn la_resolve_during_legacy_query_does_not_combine(#[case] impossible_quer
         assert_matches!(
             task.jobs.as_slice(),
             &[WorkflowActivationJob {
-                variant: Some(workflow_activation_job::Variant::StartWorkflow(_)),
+                variant: Some(workflow_activation_job::Variant::InitializeWorkflow(_)),
             },]
         );
         core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
@@ -1239,7 +1239,7 @@ async fn queries_can_be_received_while_heartbeating() {
     assert_matches!(
         task.jobs.as_slice(),
         &[WorkflowActivationJob {
-            variant: Some(workflow_activation_job::Variant::StartWorkflow(_)),
+            variant: Some(workflow_activation_job::Variant::InitializeWorkflow(_)),
         },]
     );
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(

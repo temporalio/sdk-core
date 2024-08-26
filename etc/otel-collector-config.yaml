@@ -2,16 +2,19 @@ receivers:
   otlp:
     protocols:
       grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
 
 exporters:
   prometheus:
     endpoint: '0.0.0.0:8889'
     namespace: temporal_sdk
+
   logging:
 
-  jaeger:
+  otlp/jaeger:
     endpoint: jaeger:14250
-    insecure: true
 
 processors:
   batch:
@@ -24,13 +27,13 @@ extensions:
     endpoint: :55679
 
 service:
-  extensions: [pprof, zpages, health_check]
+  extensions: [ pprof, zpages, health_check ]
   pipelines:
     traces:
-      receivers: [otlp]
-      processors: [batch]
-      exporters: [logging, jaeger]
+      receivers: [ otlp ]
+      processors: [ batch ]
+      exporters: [ logging, otlp/jaeger ]
     metrics:
-      receivers: [otlp]
-      processors: [batch]
-      exporters: [logging, prometheus]
+      receivers: [ otlp ]
+      processors: [ batch ]
+      exporters: [ logging, prometheus ]

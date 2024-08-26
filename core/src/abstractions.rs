@@ -3,7 +3,6 @@
 pub(crate) mod take_cell;
 
 use crate::MetricsContext;
-use derive_more::DebugCustom;
 use std::{
     fmt::{Debug, Formatter},
     sync::{
@@ -217,9 +216,9 @@ where
 }
 
 /// Tracks an OwnedMeteredSemPermit and calls on_drop when dropped.
-#[derive(DebugCustom)]
+#[derive(derive_more::Debug)]
+#[debug("Tracked({inner:?})")]
 #[clippy::has_significant_drop]
-#[debug(fmt = "Tracked({inner:?})")]
 pub(crate) struct TrackedOwnedMeteredSemPermit<SK: SlotKind> {
     inner: Option<OwnedMeteredSemPermit<SK>>,
     on_drop: Box<dyn Fn() + Send + Sync>,

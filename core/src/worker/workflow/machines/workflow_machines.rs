@@ -163,7 +163,7 @@ pub(crate) struct WorkflowMachines {
 }
 
 #[derive(Debug, derive_more::Display)]
-#[display(fmt = "Cmd&Machine({command})")]
+#[display("Cmd&Machine({command})")]
 struct CommandAndMachine {
     command: MachineAssociatedCommand,
     machine: MachineKey,
@@ -172,7 +172,7 @@ struct CommandAndMachine {
 #[derive(Debug, derive_more::Display)]
 enum MachineAssociatedCommand {
     Real(Box<ProtoCommand>),
-    #[display(fmt = "FakeLocalActivityMarker({_0})")]
+    #[display("FakeLocalActivityMarker({_0})")]
     FakeLocalActivityMarker(u32),
 }
 
@@ -186,7 +186,7 @@ struct ChangeInfo {
 #[must_use]
 #[allow(clippy::large_enum_variant)]
 pub(super) enum MachineResponse {
-    #[display(fmt = "PushWFJob({_0})")]
+    #[display("PushWFJob({_0})")]
     PushWFJob(OutgoingJob),
 
     /// Pushes a new command into the list that will be sent to server once we respond with the
@@ -198,31 +198,31 @@ pub(super) enum MachineResponse {
     /// The machine requests the creation of another *different* machine. This acts as if lang
     /// had replied to the activation with a command, but we use a special set of IDs to avoid
     /// collisions.
-    #[display(fmt = "NewCoreOriginatedCommand({_0:?})")]
+    #[display("NewCoreOriginatedCommand({_0:?})")]
     NewCoreOriginatedCommand(ProtoCmdAttrs),
-    #[display(fmt = "IssueFakeLocalActivityMarker({_0})")]
+    #[display("IssueFakeLocalActivityMarker({_0})")]
     IssueFakeLocalActivityMarker(u32),
-    #[display(fmt = "TriggerWFTaskStarted")]
+    #[display("TriggerWFTaskStarted")]
     TriggerWFTaskStarted {
         task_started_event_id: i64,
         time: SystemTime,
     },
-    #[display(fmt = "UpdateRunIdOnWorkflowReset({run_id})")]
+    #[display("UpdateRunIdOnWorkflowReset({run_id})")]
     UpdateRunIdOnWorkflowReset { run_id: String },
 
     /// Queue a local activity to be processed by the worker
-    #[display(fmt = "QueueLocalActivity")]
+    #[display("QueueLocalActivity")]
     QueueLocalActivity(ValidScheduleLA),
     /// Request cancellation of an executing local activity
-    #[display(fmt = "RequestCancelLocalActivity({_0})")]
+    #[display("RequestCancelLocalActivity({_0})")]
     RequestCancelLocalActivity(u32),
     /// Indicates we are abandoning the indicated LA, so we can remove it from "outstanding" LAs
     /// and we will not try to WFT heartbeat because of it.
-    #[display(fmt = "AbandonLocalActivity({_0:?})")]
+    #[display("AbandonLocalActivity({_0:?})")]
     AbandonLocalActivity(u32),
 
     /// Set the workflow time to the provided time
-    #[display(fmt = "UpdateWFTime({_0:?})")]
+    #[display("UpdateWFTime({_0:?})")]
     UpdateWFTime(Option<SystemTime>),
 }
 
@@ -1152,6 +1152,9 @@ impl WorkflowMachines {
                         );
                     }
                     ProtoCmdAttrs::UpsertWorkflowSearchAttributesCommandAttributes(attrs) => {
+                        // We explicitly do not update the workflows current SAs here since
+                        // core-generated upserts aren't meant to be modified or used within
+                        // workflows by users (but rather, just for them to search with).
                         self.add_cmd_to_wf_task(
                             upsert_search_attrs_internal(attrs),
                             CommandIdKind::NeverResolves,
@@ -1262,6 +1265,8 @@ impl WorkflowMachines {
                     self.add_cmd_to_wf_task(new_timer(attrs), CommandID::Timer(seq).into());
                 }
                 WFCommand::UpsertSearchAttributes(attrs) => {
+                    self.drive_me
+                        .search_attributes_update(attrs.search_attributes.clone());
                     self.add_cmd_to_wf_task(
                         upsert_search_attrs(
                             attrs,
@@ -1538,16 +1543,12 @@ impl WorkflowMachines {
                     .map(Into::into)
                     .unwrap_or_default();
             }
-            if attrs.search_attributes.is_empty() {
-                attrs.search_attributes = started_info
-                    .search_attrs
-                    .clone()
-                    .map(Into::into)
-                    .unwrap_or_default();
-            }
             if attrs.retry_policy.is_none() {
                 attrs.retry_policy.clone_from(&started_info.retry_policy);
             }
+        }
+        if attrs.search_attributes.is_empty() {
+            attrs.search_attributes = self.drive_me.get_current_search_attributes();
         }
         attrs
     }

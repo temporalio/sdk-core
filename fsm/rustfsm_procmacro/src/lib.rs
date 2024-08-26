@@ -340,7 +340,7 @@ impl StateMachineDefinition {
         let state_variants = states.iter().map(|s| {
             let statestr = s.to_string();
             quote! {
-                #[display(fmt=#statestr)]
+                #[display(#statestr)]
                 #s(#s)
             }
         });
@@ -397,7 +397,7 @@ impl StateMachineDefinition {
             .map(|v| {
                 let vname = v.ident.to_string();
                 quote! {
-                    #[display(fmt=#vname)]
+                    #[display(#vname)]
                     #v
                 }
             })
