@@ -5,7 +5,6 @@ pub(crate) mod tuner;
 mod workflow;
 
 pub use temporal_sdk_core_api::worker::{WorkerConfig, WorkerConfigBuilder};
-use temporal_sdk_core_protos::temporal::api::history::v1::History;
 pub use tuner::{
     FixedSizeSlotSupplier, RealSysInfo, ResourceBasedSlotsOptions,
     ResourceBasedSlotsOptionsBuilder, ResourceBasedTuner, ResourceSlotOptions, SlotSupplierOptions,
@@ -42,9 +41,10 @@ use crate::{
 use activities::WorkerActivityTasks;
 use futures_util::{stream, StreamExt};
 use parking_lot::Mutex;
+use prost::Message;
 use slot_provider::SlotProvider;
 use std::{
-    convert::TryInto, fmt::Debug, future, sync::{
+    convert::TryInto, future, sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
     }, time::Duration
@@ -62,6 +62,7 @@ use temporal_sdk_core_protos::{
         enums::v1::TaskQueueKind,
         taskqueue::v1::{StickyExecutionAttributes, TaskQueue},
         workflowservice::v1::get_system_info_response,
+        history::v1::History,
     },
     TaskToken,
 };
@@ -743,12 +744,6 @@ pub(crate) enum TaskPollers {
     },
 }
 
-
-// core debug client
-// ONLY FOR USE WITH BRIDGE DEBUG PORT!!
-// This is a 'client' that allows core to provide a thread to any bridged language that will block until it receives a corresponding DAP message.
-use reqwest;
-use prost::Message;
 struct DebugClient {
     debugger_url: String,
     _client: reqwest::Client
@@ -766,7 +761,7 @@ impl DebugClient {
     async fn get_history(&self) -> Result<History, anyhow::Error> {
         let url = self.debugger_url.clone() + "/history";
         let resp = self._client.get(url)
-            .header("Temporal-Client-Name", "temporal-debug-core")
+            .header("Temporal-Client-Name", "temporal-core")
             .header("Temporal-Client-Version", "test v1")
             .send()
             .await?;
@@ -778,18 +773,21 @@ impl DebugClient {
 
     async fn post_wft_started(&self, event_id: &i64) -> bool {
         let url = self.debugger_url.clone() + "/current-wft-started";
-        let req = self._client.get(url)
+        let resp = self._client.get(url)
             .header("Temporal-Client-Name", "temporal-debug-core")
             .header("Temporal-Client-Version", "test v1")
             .timeout(Duration::from_secs(5))
-            .json(event_id);
+            .json(event_id)
+            .send()
+            .await;
 
-        match req.send().await {
-            Ok(resp) => { resp.status() == reqwest::StatusCode::OK },
+        match resp {
+            Ok(r) => { r.status() == reqwest::StatusCode::OK },
             Err(_) => false
         }
     }
 
+    // debating whether this is necessary at all
     fn content_length(response: &reqwest::Response) -> Result<u64, String> {
         match response.content_length() {
             Some(length) => Ok(length),
@@ -852,7 +850,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_debug_client_DELETE() {
+    async fn test_debug_client_delete() {
         let dc = DebugClient::new("http://127.0.0.1:51563".into());
         dc.get_history().await.unwrap();
     }
