@@ -762,7 +762,7 @@ impl DebugClient {
         let url = self.debugger_url.clone() + "/history";
         let resp = self._client.get(url)
             .header("Temporal-Client-Name", "temporal-core")
-            .header("Temporal-Client-Version", "test v1")
+            .header("Temporal-Client-Version", "0.1.0")
             .send()
             .await?;
 
@@ -775,7 +775,7 @@ impl DebugClient {
         let url = self.debugger_url.clone() + "/current-wft-started";
         let resp = self._client.get(url)
             .header("Temporal-Client-Name", "temporal-debug-core")
-            .header("Temporal-Client-Version", "test v1")
+            .header("Temporal-Client-Version", "0.1.0")
             .timeout(Duration::from_secs(5))
             .json(event_id)
             .send()
