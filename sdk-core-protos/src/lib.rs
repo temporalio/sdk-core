@@ -1750,17 +1750,7 @@ pub mod temporal {
 
                 impl Display for Payload {
                     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-                        if self.data.len() > 64 {
-                            let mut windows = self.data.as_slice().windows(32);
-                            write!(
-                                f,
-                                "[{}..{}]",
-                                BASE64_STANDARD.encode(windows.next().unwrap_or_default()),
-                                BASE64_STANDARD.encode(windows.next_back().unwrap_or_default())
-                            )
-                        } else {
-                            write!(f, "[{}]", BASE64_STANDARD.encode(&self.data))
-                        }
+                        write!(f, "{:?}", self)
                     }
                 }
 
