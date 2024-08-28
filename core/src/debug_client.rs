@@ -3,9 +3,12 @@ use prost::Message;
 use temporal_sdk_core_protos::temporal::api::history::v1::History;
 use std::time::Duration;
 
+const CLIENT_NAME: &str = "temporal-core";
+const CLIENT_VERSION: &str = "0.1.0";
+
 struct DebugClient {
     debugger_url: String,
-    _client: reqwest::Client
+    client: reqwest::Client
 }
 
 impl DebugClient {
@@ -13,15 +16,15 @@ impl DebugClient {
     fn new(url: String) -> DebugClient {
         DebugClient {
             debugger_url: url,
-            _client: reqwest::Client::new(),
+            client: reqwest::Client::new(),
         }
     }
 
     async fn get_history(&self) -> Result<History, anyhow::Error> {
         let url = self.debugger_url.clone() + "/history";
-        let resp = self._client.get(url)
-            .header("Temporal-Client-Name", "temporal-core")
-            .header("Temporal-Client-Version", "0.1.0")
+        let resp = self.client.get(url)
+            .header("Temporal-Client-Name", CLIENT_NAME)
+            .header("Temporal-Client-Version", CLIENT_VERSION)
             .send()
             .await?;
 
@@ -30,20 +33,15 @@ impl DebugClient {
 
     }
 
-    async fn post_wft_started(&self, event_id: &i64) -> bool {
+    async fn post_wft_started(&self, event_id: &i64) -> Result<Response, anyhow::Error> {
         let url = self.debugger_url.clone() + "/current-wft-started";
-        let resp = self._client.get(url)
-            .header("Temporal-Client-Name", "temporal-debug-core")
-            .header("Temporal-Client-Version", "0.1.0")
+        self.client.get(url)
+            .header("Temporal-Client-Name", CLIENT_NAME)
+            .header("Temporal-Client-Version", CLIENT_VERSION)
             .timeout(Duration::from_secs(5))
             .json(event_id)
             .send()
-            .await;
-
-        match resp {
-            Ok(r) => { r.status() == reqwest::StatusCode::OK },
-            Err(_) => false
-        }
+            .await?
     }
 
     // debating whether this is necessary at all
