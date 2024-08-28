@@ -1,9 +1,4 @@
-use std::{
-    env,
-    fs::File,
-    io::{BufRead, BufReader},
-    path::PathBuf,
-};
+use std::{env, path::PathBuf};
 
 static ALWAYS_SERDE: &str = "#[cfg_attr(not(feature = \"serde_serialize\"), \
                                derive(::serde::Serialize, ::serde::Deserialize))]";
@@ -12,6 +7,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-changed=./protos");
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let descriptor_file = out.join("descriptors.bin");
+
+    let mut config = prost_build::Config::default();
+    config.skip_debug(["temporal.api.common.v1.Payload"]);
+
     tonic_build::configure()
         // We don't actually want to build the grpc definitions - we don't need them (for now).
         // Just build the message structs.
@@ -118,7 +117,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "::prost_wkt_types::Value"
         )
         .file_descriptor_set_path(descriptor_file)
-        .compile(
+        .compile_with_config(
+            config,
             &[
                 "./protos/local/temporal/sdk/core/core_interface.proto",
                 "./protos/api_upstream/temporal/api/workflowservice/v1/service.proto",
@@ -135,59 +135,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "./protos/grpc",
             ],
         )?;
-
-    let file_path = out.join("temporal.api.common.v1.rs");
-    post_process_payload_file(file_path)?;
-
-    Ok(())
-}
-
-fn post_process_payload_file(file_path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
-    let file_contents: BufReader<File> = BufReader::new(File::open(file_path.clone())?);
-    let mut new_file_contents = String::new();
-
-    let mut found_payload = false;
-    let mut written = false;
-    for line in file_contents.lines() {
-        let line = line?;
-        if line.contains("pub struct Payload {") {
-            new_file_contents.push_str("#[prost(skip_debug)]\n");
-            found_payload = true;
-        }
-
-        // Write the current line to the new content
-        new_file_contents.push_str(&line);
-        new_file_contents.push('\n');
-
-        if found_payload && line == "}" && !written {
-            let debug_impl = r#"
-impl std::fmt::Debug for Payload {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        if self.data.len() > 64 {
-            let mut windows = self.data.as_slice().windows(32);
-            write!(
-                f,
-                "[{}..{}]",
-                BASE64_STANDARD.encode(windows.next().unwrap_or_default()),
-                BASE64_STANDARD.encode(windows.next_back().unwrap_or_default())
-            )
-        } else {
-            write!(f, "[{}]", BASE64_STANDARD.encode(&self.data))
-        }
-    }
-}
-"#;
-            new_file_contents.push_str(debug_impl);
-            new_file_contents.push('\n');
-
-            written = true;
-        }
-    }
-
-    assert!(found_payload);
-
-    // Replace the original file with the modified content
-    std::fs::write(&file_path, new_file_contents)?;
 
     Ok(())
 }
