@@ -7,7 +7,7 @@ use std::{
 };
 use temporal_client::WorkflowOptions;
 use temporal_sdk::{
-    interceptors::WorkerInterceptor, ActContext, ActivityError, CancellableFuture,
+    interceptors::WorkerInterceptor, ActContext, ActivityError, ActivityOptions, CancellableFuture,
     LocalActivityOptions, WfContext, WorkflowResult,
 };
 use temporal_sdk_core::replay::HistoryForReplay;
@@ -662,4 +662,61 @@ async fn third_weird_la_nondeterminism_repro() {
         Ok(())
     });
     worker.run().await.unwrap();
+}
+
+#[tokio::test]
+async fn la_resolve_same_time_as_other_cancel() {
+    let wf_name = "la_resolve_same_time_as_other_cancel";
+    let mut starter = CoreWfStarter::new(wf_name);
+    let mut worker = starter.worker().await;
+
+    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+        let normal_act = ctx.activity(ActivityOptions {
+            activity_type: "delay".to_string(),
+            input: 3000.as_json_payload().expect("serializes fine"),
+            cancellation_type: ActivityCancellationType::TryCancel,
+            start_to_close_timeout: Some(Duration::from_secs(9000)),
+            ..Default::default()
+        });
+        // Make new task
+        ctx.timer(Duration::from_millis(1)).await;
+
+        // Start LA and cancel the activity at the same time
+        let local_act = ctx.local_activity(LocalActivityOptions {
+            activity_type: "delay".to_string(),
+            input: 100.as_json_payload().expect("serializes fine"),
+            ..Default::default()
+        });
+        normal_act.cancel(&ctx);
+        // Race them, starting a timer if LA completes first
+        tokio::select! {
+            _ = normal_act => {},
+            _ = local_act => {
+                ctx.timer(Duration::from_millis(1)).await;
+            },
+        }
+        Ok(().into())
+    });
+    worker.register_activity("delay", |ctx: ActContext, wait_time: u64| async move {
+        tokio::select! {
+            _ = tokio::time::sleep(Duration::from_millis(wait_time)) => {}
+            _ = ctx.cancelled() => {}
+        }
+        Ok(())
+    });
+
+    let run_id = worker
+        .submit_wf(
+            wf_name.to_owned(),
+            wf_name.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+    starter
+        .fetch_history_and_replay(wf_name, run_id, worker.inner_mut())
+        .await
+        .unwrap();
 }
