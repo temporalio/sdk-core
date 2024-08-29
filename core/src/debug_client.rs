@@ -33,7 +33,7 @@ impl DebugClient {
         Ok(History::decode(bytes)?) // decode_length_delimited() does not work
     }
 
-    async fn post_wft_started(&self, event_id: &i64) -> Result<Response, anyhow::Error> {
+    async fn post_wft_started(&self, event_id: &i64) -> Result<reqwest::Response, anyhow::Error> {
         let url = self.debugger_url.clone() + "/current-wft-started";
         self.client
             .get(url)
