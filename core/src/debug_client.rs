@@ -37,7 +37,8 @@ impl DebugClient {
 
     async fn post_wft_started(&self, event_id: &i64) -> Result<reqwest::Response, anyhow::Error> {
         let url = self.debugger_url.clone() + "/current-wft-started";
-        Ok(self.client
+        Ok(self
+            .client
             .get(url)
             .header("Temporal-Client-Name", CLIENT_NAME)
             .header("Temporal-Client-Version", CLIENT_VERSION)
