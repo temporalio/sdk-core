@@ -12,10 +12,10 @@ extern crate tracing;
 extern crate core;
 
 mod abstractions;
-#[cfg(feature = "ephemeral-server")]
-pub mod ephemeral_server;
 #[cfg(feature = "debug-plugin")]
 pub mod debug_client;
+#[cfg(feature = "ephemeral-server")]
+pub mod ephemeral_server;
 mod internal_flags;
 mod pollers;
 mod protosext;
