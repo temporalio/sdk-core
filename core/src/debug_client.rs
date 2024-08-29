@@ -1,18 +1,17 @@
-use reqwest;
 use prost::Message;
-use temporal_sdk_core_protos::temporal::api::history::v1::History;
+use reqwest;
 use std::time::Duration;
+use temporal_sdk_core_protos::temporal::api::history::v1::History;
 
 const CLIENT_NAME: &str = "temporal-core";
 const CLIENT_VERSION: &str = "0.1.0";
 
 struct DebugClient {
     debugger_url: String,
-    client: reqwest::Client
+    client: reqwest::Client,
 }
 
 impl DebugClient {
-
     fn new(url: String) -> DebugClient {
         DebugClient {
             debugger_url: url,
@@ -22,7 +21,9 @@ impl DebugClient {
 
     async fn get_history(&self) -> Result<History, anyhow::Error> {
         let url = self.debugger_url.clone() + "/history";
-        let resp = self.client.get(url)
+        let resp = self
+            .client
+            .get(url)
             .header("Temporal-Client-Name", CLIENT_NAME)
             .header("Temporal-Client-Version", CLIENT_VERSION)
             .send()
@@ -30,12 +31,12 @@ impl DebugClient {
 
         let bytes = resp.bytes().await?;
         Ok(History::decode(bytes)?) // decode_length_delimited() does not work
-
     }
 
     async fn post_wft_started(&self, event_id: &i64) -> Result<Response, anyhow::Error> {
         let url = self.debugger_url.clone() + "/current-wft-started";
-        self.client.get(url)
+        self.client
+            .get(url)
             .header("Temporal-Client-Name", CLIENT_NAME)
             .header("Temporal-Client-Version", CLIENT_VERSION)
             .timeout(Duration::from_secs(5))

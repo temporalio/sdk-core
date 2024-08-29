@@ -43,10 +43,12 @@ use futures_util::{stream, StreamExt};
 use parking_lot::Mutex;
 use slot_provider::SlotProvider;
 use std::{
-    convert::TryInto, future, sync::{
+    convert::TryInto,
+    future,
+    sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
-    }
+    },
 };
 use temporal_client::{ConfiguredClient, TemporalServiceClientWithMetrics, WorkerKey};
 use temporal_sdk_core_protos::{
