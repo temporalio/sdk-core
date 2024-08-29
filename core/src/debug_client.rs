@@ -1,3 +1,5 @@
+//! This module contains code for an http client that is used for the VSCode debug plugin.
+
 use prost::Message;
 use reqwest;
 use std::time::Duration;
@@ -35,14 +37,14 @@ impl DebugClient {
 
     async fn post_wft_started(&self, event_id: &i64) -> Result<reqwest::Response, anyhow::Error> {
         let url = self.debugger_url.clone() + "/current-wft-started";
-        self.client
+        Ok(self.client
             .get(url)
             .header("Temporal-Client-Name", CLIENT_NAME)
             .header("Temporal-Client-Version", CLIENT_VERSION)
             .timeout(Duration::from_secs(5))
             .json(event_id)
             .send()
-            .await?
+            .await?)
     }
 
     // debating whether this is necessary at all
