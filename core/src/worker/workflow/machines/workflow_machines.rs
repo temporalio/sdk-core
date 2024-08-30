@@ -701,7 +701,16 @@ impl WorkflowMachines {
         }
         let mut delayed_actions = vec![];
         // Scan through to the next WFT, searching for any patch / la markers, so that we can
-        // pre-resolve them.
+        // pre-resolve them. This lookahead is necessary because we need these things to be already
+        // resolved in the same activations they would have been resolved in during initial
+        // execution. For example: If a workflow asks to run an LA and then waits on it, we will
+        // write the completion marker at the end of that WFT (as a command). So, upon replay,
+        // we need to lookahead and see that that LA is in fact resolved, so that we don't decide
+        // to execute it anew when lang says it wants to run it.
+        //
+        // Alternatively, lookahead can seemingly be avoided if we were to consider the commands
+        // that follow a WFT to be _part of_ that wft rather than the next one. That change might
+        // make sense to do, and maybe simplifies things slightly, but is a substantial alteration.
         for e in self
             .last_history_from_server
             .peek_next_wft_sequence(last_handled_wft_started_id)
@@ -1160,9 +1169,11 @@ impl WorkflowMachines {
                             CommandIdKind::NeverResolves,
                         );
                     }
-                    c => return Err(WFMachinesError::Fatal(format!(
+                    c => {
+                        return Err(WFMachinesError::Fatal(format!(
                         "A machine requested to create a new command of an unsupported type: {c:?}"
-                    ))),
+                    )))
+                    }
                 },
                 MachineResponse::IssueFakeLocalActivityMarker(seq) => {
                     self.current_wf_task_commands.push_back(CommandAndMachine {

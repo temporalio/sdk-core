@@ -47,8 +47,13 @@ async fn one_local_activity() {
     worker.register_wf(wf_name.to_owned(), one_local_activity_wf);
     worker.register_activity("echo_activity", echo);
 
-    starter.start_with_worker(wf_name, &mut worker).await;
+    let run_id = starter.start_with_worker(wf_name, &mut worker).await;
     worker.run_until_done().await.unwrap();
+    let tq = starter.get_task_queue().to_string();
+    starter
+        .fetch_history_and_replay(tq, run_id, worker.inner_mut())
+        .await
+        .unwrap();
 }
 
 pub(crate) async fn local_act_concurrent_with_timer_wf(ctx: WfContext) -> WorkflowResult<()> {
@@ -664,16 +669,32 @@ async fn third_weird_la_nondeterminism_repro() {
     worker.run().await.unwrap();
 }
 
+/// This test demonstrates why it's important to send LA resolutions last within a job.
+/// If we were to (during replay) scan ahead, see the marker, and resolve the LA before the
+/// activity cancellation, that would be wrong because, during execution, the LA resolution is
+/// always going to take _longer_ than the instantaneous cancel effect.
+///
+/// This affect applies regardless of how you choose to interleave cancellations and LAs. Ultimately
+/// all cancellations will happen at once (in the order they are submitted) while the LA executions
+/// are queued (because this all happens synchronously in the workflow machines). If you were to
+/// _wait_ on an LA, and then cancel something else, and then run another LA, such that all commands
+/// happened in the same workflow task, it would _still_ be fine to sort LA jobs last _within_ the
+/// 2 activations that would necessarily entail (because, one you wait on the LA result, control
+/// will be yielded and it will take another activation to unblock that LA).
 #[tokio::test]
 async fn la_resolve_same_time_as_other_cancel() {
     let wf_name = "la_resolve_same_time_as_other_cancel";
     let mut starter = CoreWfStarter::new(wf_name);
+    // The activity won't get a chance to receive the cancel so make sure we still exit fast
+    starter
+        .worker_config
+        .graceful_shutdown_period(Duration::from_millis(100));
     let mut worker = starter.worker().await;
 
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         let normal_act = ctx.activity(ActivityOptions {
             activity_type: "delay".to_string(),
-            input: 3000.as_json_payload().expect("serializes fine"),
+            input: 9000.as_json_payload().expect("serializes fine"),
             cancellation_type: ActivityCancellationType::TryCancel,
             start_to_close_timeout: Some(Duration::from_secs(9000)),
             ..Default::default()
@@ -690,6 +711,7 @@ async fn la_resolve_same_time_as_other_cancel() {
         normal_act.cancel(&ctx);
         // Race them, starting a timer if LA completes first
         tokio::select! {
+            biased;
             _ = normal_act => {},
             _ = local_act => {
                 ctx.timer(Duration::from_millis(1)).await;
