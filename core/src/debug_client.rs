@@ -27,7 +27,7 @@ impl DebugClient {
         }
     }
 
-    /// Get the history from the instance of the debug plugin server, then return the protobinary if successful.
+    /// Get the history from the instance of the debug plugin server
     pub async fn get_history(&self) -> Result<History, anyhow::Error> {
         let url = self.debugger_url.clone() + "/history";
         let resp = self
