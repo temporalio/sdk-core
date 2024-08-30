@@ -39,7 +39,7 @@ impl DebugClient {
             .await?;
 
         let bytes = resp.bytes().await?;
-        Ok(History::decode(bytes)?) // decode_length_delimited() does not work
+        Ok(History::decode(bytes)?)
     }
 
     /// Post to current-wft-started to communicate with debug plugin server
