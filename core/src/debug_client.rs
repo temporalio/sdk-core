@@ -14,7 +14,7 @@ pub struct DebugClient {
     /// URL for the local instance of the debugger server
     debugger_url: String,
 
-    /// reqwest::Client to avoid re-creating a client for every request.
+    /// Underlying HTTP client
     client: reqwest::Client,
 }
 
