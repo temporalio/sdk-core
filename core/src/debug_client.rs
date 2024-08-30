@@ -63,10 +63,11 @@ impl DebugClient {
     }
 }
 
-#[ignore]
 #[cfg(test)]
 mod tests {
+    use super::*;
     // this test wont work without a local instance of the debugger running.
+    #[ignore]
     #[tokio::test]
     async fn test_debug_client_delete() {
         let dc = DebugClient::new("http://127.0.0.1:51563".into());
