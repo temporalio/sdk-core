@@ -8,7 +8,7 @@ use temporal_sdk_core_protos::temporal::api::history::v1::History;
 const CLIENT_NAME: &str = "temporal-core";
 const CLIENT_VERSION: &str = "0.1.0";
 
-/// Struct representing the internal debug client
+/// A client for interacting with the VSCode debug plugin
 #[derive(Clone)]
 pub struct DebugClient {
     /// URL for the local instance of the debugger server
