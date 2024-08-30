@@ -449,7 +449,7 @@ impl WorkflowMachines {
         self.drive_me
             .peek_pending_jobs()
             .iter()
-            .any(|v| v.is_la_resolution)
+            .any(|v| v.variant.is_local_activity_resolution())
     }
 
     pub(crate) fn get_metadata_for_wft_complete(&mut self) -> WorkflowTaskCompletedMetadata {
@@ -1160,11 +1160,9 @@ impl WorkflowMachines {
                             CommandIdKind::NeverResolves,
                         );
                     }
-                    c => {
-                        return Err(WFMachinesError::Fatal(format!(
+                    c => return Err(WFMachinesError::Fatal(format!(
                         "A machine requested to create a new command of an unsupported type: {c:?}"
-                    )))
-                    }
+                    ))),
                 },
                 MachineResponse::IssueFakeLocalActivityMarker(seq) => {
                     self.current_wf_task_commands.push_back(CommandAndMachine {
