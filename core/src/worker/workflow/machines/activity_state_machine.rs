@@ -166,6 +166,7 @@ impl ActivityMachine {
                     failure: Some(new_cancel_failure(&self.shared_state, attrs)),
                 })),
             }),
+            is_local: false,
         }
     }
 }
@@ -265,6 +266,7 @@ impl WFMachinesAdapter for ActivityMachine {
                             result: convert_payloads(event_info, result)?,
                         })),
                     }),
+                    is_local: false,
                 }
                 .into()]
             }
@@ -276,6 +278,7 @@ impl WFMachinesAdapter for ActivityMachine {
                             failure: Some(failure),
                         })),
                     }),
+                    is_local: false,
                 }
                 .into()]
             }

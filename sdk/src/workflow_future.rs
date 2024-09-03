@@ -182,7 +182,7 @@ impl WorkflowFuture {
                 Variant::FireTimer(FireTimer { seq }) => {
                     self.unblock(UnblockEvent::Timer(seq, TimerResult::Fired))?
                 }
-                Variant::ResolveActivity(ResolveActivity { seq, result }) => {
+                Variant::ResolveActivity(ResolveActivity { seq, result, .. }) => {
                     self.unblock(UnblockEvent::Activity(
                         seq,
                         Box::new(result.context("Activity must have result")?),

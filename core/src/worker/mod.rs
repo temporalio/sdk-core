@@ -587,16 +587,16 @@ impl Worker {
     /// Attempt to record an activity heartbeat
     pub(crate) fn record_heartbeat(&self, details: ActivityHeartbeat) {
         if let Some(at_mgr) = self.at_task_mgr.as_ref() {
-            let tt = details.task_token.clone();
+            let tt = TaskToken(details.task_token.clone());
             if let Err(e) = at_mgr.record_heartbeat(details) {
-                warn!(task_token = ?tt, details = ?e, "Activity heartbeat failed.");
+                warn!(task_token = %tt, details = ?e, "Activity heartbeat failed.");
             }
         }
     }
 
     #[instrument(skip(self, task_token, status),
-                 fields(task_token=%&task_token, status=%&status,
-                        task_queue=%self.config.task_queue, workflow_id, run_id))]
+        fields(task_token=%&task_token, status=%&status,
+               task_queue=%self.config.task_queue, workflow_id, run_id))]
     pub(crate) async fn complete_activity(
         &self,
         task_token: TaskToken,
@@ -637,8 +637,8 @@ impl Worker {
     }
 
     #[instrument(skip(self, completion),
-                 fields(completion=%&completion, run_id=%completion.run_id, workflow_id,
-                        task_queue=%self.config.task_queue))]
+        fields(completion=%&completion, run_id=%completion.run_id, workflow_id,
+               task_queue=%self.config.task_queue))]
     pub(crate) async fn complete_workflow_activation(
         &self,
         completion: WorkflowActivationCompletion,
