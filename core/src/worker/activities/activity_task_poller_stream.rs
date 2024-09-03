@@ -28,15 +28,15 @@ pub(crate) fn new_activity_task_poller(
                 loop {
                     return match state.poller.poll().await {
                         Some(Ok((resp, permit))) => {
-                            if let Some(reason) = validate_activity_task(&resp) {
-                                warn!("Received invalid activity task ({}): {:?}", reason, &resp);
-                                continue;
-                            }
                             if resp == PollActivityTaskQueueResponse::default() {
                                 // We get the default proto in the event that the long poll times
                                 // out.
                                 debug!("Poll activity task timeout");
                                 state.metrics.act_poll_timeout();
+                                continue;
+                            }
+                            if let Some(reason) = validate_activity_task(&resp) {
+                                warn!("Received invalid activity task ({}): {:?}", reason, &resp);
                                 continue;
                             }
                             Some(Ok(PermittedTqResp { permit, resp }))
