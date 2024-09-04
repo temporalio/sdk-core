@@ -85,7 +85,7 @@ async fn activity_heartbeat() {
                 variant: Some(workflow_activation_job::Variant::ResolveActivity(
                     ResolveActivity {seq, result: Some(ActivityResolution {
                     status: Some(act_res::Status::Completed(activity_result::Success{result: Some(r)})),
-                     ..})}
+                     ..}),..}
                 )),
             },
         ] => {

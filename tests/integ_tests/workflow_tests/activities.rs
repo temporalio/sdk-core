@@ -129,7 +129,7 @@ async fn activity_workflow() {
                       status: Some(
                         act_res::Status::Completed(activity_result::Success{result: Some(r)})),
                         ..
-                    })}
+                    }), ..}
                 )),
             },
         ] => {
@@ -182,7 +182,7 @@ async fn activity_non_retryable_failure() {
                     ResolveActivity {seq, result: Some(ActivityResolution{
                     status: Some(act_res::Status::Failed(activity_result::Failure{
                         failure: Some(f),
-                    }))})}
+                    }))}),..}
                 )),
             },
         ] => {
@@ -249,7 +249,7 @@ async fn activity_non_retryable_failure_with_error() {
                     ResolveActivity {seq, result: Some(ActivityResolution{
                     status: Some(act_res::Status::Failed(activity_result::Failure{
                         failure: Some(f),
-                    }))})}
+                    }))}),..}
                 )),
             },
         ] => {
@@ -328,7 +328,7 @@ async fn activity_retry() {
             WorkflowActivationJob {
                 variant: Some(workflow_activation_job::Variant::ResolveActivity(
                     ResolveActivity {seq, result: Some(ActivityResolution{
-                    status: Some(act_res::Status::Completed(activity_result::Success{result: Some(r)}))})}
+                    status: Some(act_res::Status::Completed(activity_result::Success{result: Some(r)}))}),..}
                 )),
             },
         ] => {
@@ -526,7 +526,7 @@ async fn started_activity_timeout() {
                                 )
                             ),
                             ..
-                        })
+                        }), ..
                     }
                 )),
             },
@@ -714,7 +714,7 @@ async fn async_activity_completion_workflow() {
                 variant: Some(workflow_activation_job::Variant::ResolveActivity(
                     ResolveActivity {seq, result: Some(ActivityResolution {
                     status: Some(act_res::Status::Completed(activity_result::Success{result: Some(r)})),
-                     ..})}
+                     ..}), ..}
                 )),
             },
         ] => {

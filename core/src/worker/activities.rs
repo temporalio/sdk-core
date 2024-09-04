@@ -506,7 +506,7 @@ where
                                 )))
                             }
                         } else {
-                            debug!(task_token = ?next_pc.task_token,
+                            debug!(task_token = %next_pc.task_token,
                                    "Unknown activity task when issuing cancel");
                             // If we can't find the activity here, it's already been completed,
                             // in which case issuing a cancel again is pointless.

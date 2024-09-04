@@ -44,12 +44,10 @@ use itertools::Itertools;
 use prost_types::TimestampError;
 use std::{
     cell::RefCell,
-    cmp::Ordering,
     collections::VecDeque,
     fmt::Debug,
     future::Future,
     mem,
-    mem::discriminant,
     ops::DerefMut,
     rc::Rc,
     result,
@@ -1247,16 +1245,10 @@ struct WorkflowStartedInfo {
 #[display("{variant}")]
 struct OutgoingJob {
     variant: workflow_activation_job::Variant,
-    /// Since LA resolutions are not distinguished from non-LA resolutions as far as lang is
-    /// concerned, but core cares about that sometimes, attach that info here.
-    is_la_resolution: bool,
 }
 impl<WA: Into<workflow_activation_job::Variant>> From<WA> for OutgoingJob {
     fn from(wa: WA) -> Self {
-        Self {
-            variant: wa.into(),
-            is_la_resolution: false,
-        }
+        Self { variant: wa.into() }
     }
 }
 impl From<OutgoingJob> for WorkflowActivationJob {
@@ -1330,8 +1322,17 @@ impl LocalActivityRequestSink for LAReqSink {
 /// Sorts jobs in an activation to be in the order lang expects, and confirms any invariants
 /// activations must uphold.
 ///
-/// ## Ordering
-/// `init workflow -> patches -> random-seed-updates -> signals/updates -> other -> queries -> evictions`
+/// ## Job Ordering
+/// 1. init workflow
+/// 2. patches
+/// 3. random-seed-updates
+/// 4. signals/updates
+/// 5. all others
+/// 6. local activity resolutions
+/// 7. queries
+/// 8. evictions
+///
+/// See the [WorkflowActivation] docstring for more detail
 ///
 /// ## Invariants:
 /// * Queries always go in their own activation
@@ -1358,9 +1359,6 @@ fn prepare_to_ship_activation(wfa: &mut WorkflowActivation) {
         // Unwrapping is fine here since we'll never issue empty variants
         let j1v = j1.variant.as_ref().unwrap();
         let j2v = j2.variant.as_ref().unwrap();
-        if discriminant(j1v) == discriminant(j2v) {
-            return Ordering::Equal;
-        }
         fn variant_ordinal(v: &workflow_activation_job::Variant) -> u8 {
             match v {
                 workflow_activation_job::Variant::InitializeWorkflow(_) => 0,
@@ -1368,18 +1366,19 @@ fn prepare_to_ship_activation(wfa: &mut WorkflowActivation) {
                 workflow_activation_job::Variant::UpdateRandomSeed(_) => 2,
                 workflow_activation_job::Variant::SignalWorkflow(_) => 3,
                 workflow_activation_job::Variant::DoUpdate(_) => 3,
+                workflow_activation_job::Variant::ResolveActivity(ra) if ra.is_local => 5,
                 // In principle we should never actually need to sort these with the others, since
                 // queries always get their own activation, but, maintaining the semantic is
                 // reasonable.
-                workflow_activation_job::Variant::QueryWorkflow(_) => 5,
+                workflow_activation_job::Variant::QueryWorkflow(_) => 6,
                 // Also shouldn't ever end up anywhere but the end by construction, but no harm in
                 // double-checking.
-                workflow_activation_job::Variant::RemoveFromCache(_) => 6,
+                workflow_activation_job::Variant::RemoveFromCache(_) => 7,
                 _ => 4,
             }
         }
         variant_ordinal(j1v).cmp(&variant_ordinal(j2v))
-    })
+    });
 }
 
 #[cfg(test)]
