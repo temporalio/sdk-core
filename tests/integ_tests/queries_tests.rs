@@ -522,7 +522,6 @@ async fn query_should_not_be_sent_if_wft_about_to_fail() {
         .unwrap();
         let task = core.poll_workflow_activation().await.unwrap();
         // Should *not* get a query here. If the bug wasn't fixed, this job would have a query.
-        dbg!(&task);
         assert_matches!(
             task.jobs.as_slice(),
             [WorkflowActivationJob {
@@ -543,7 +542,6 @@ async fn query_should_not_be_sent_if_wft_about_to_fail() {
         );
         core.complete_execution(&task.run_id).await;
         let task = core.poll_workflow_activation().await.unwrap();
-        dbg!(&task);
         let qid = assert_matches!(
             task.jobs.as_slice(),
             [WorkflowActivationJob {
