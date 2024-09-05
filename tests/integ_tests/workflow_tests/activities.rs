@@ -1063,6 +1063,7 @@ async fn activity_can_be_cancelled_by_local_timeout() {
 }
 
 #[tokio::test]
+#[ignore] // Runs forever, used to manually attempt to repro spurious activity completion rpc errs
 async fn long_activity_timeout_repro() {
     let wf_name = "long_activity_timeout_repro";
     let mut starter = CoreWfStarter::new(wf_name);
@@ -1089,10 +1090,9 @@ async fn long_activity_timeout_repro() {
             ctx.timer(Duration::from_secs(60 * 3)).await;
             iter += 1;
             if iter > 5000 {
-                return Ok(WfExitValue::continue_as_new(Default::default()));
+                return Ok(WfExitValue::<()>::continue_as_new(Default::default()));
             }
         }
-        Ok(().into())
     });
     worker.register_activity("echo_activity", echo);
 
