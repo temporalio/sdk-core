@@ -876,11 +876,13 @@ impl ManagedRun {
             // If we've requested an eviction because of failure related reasons then we want to
             // delete any pending queries, since handling them no longer makes sense. Evictions
             // because the cache is full should get a chance to finish processing properly.
-            if !matches!(info.reason, EvictionReason::CacheFull) {
+            if !matches!(info.reason, EvictionReason::CacheFull)
+                // If the wft was just a legacy query, still reply, otherwise we might try to
+                // reply to the task as if it were a task rather than a query.
+                && !self.pending_work_is_legacy_query()
+            {
                 if let Some(wft) = self.wft.as_mut() {
                     wft.pending_queries.clear();
-                    // We don't reply to legacy queries, because after we fail the task they
-                    // are likely to get retired in the next one, and may pass.
                 }
             }
 

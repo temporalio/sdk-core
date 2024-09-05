@@ -307,7 +307,11 @@ async fn query_failure_because_nondeterminism(#[values(true, false)] legacy: boo
         pr
     }];
     let mut mock = MockPollCfg::from_resp_batches(wfid, t, tasks, mock_workflow_client());
-    mock.num_expected_fails = 1;
+    if legacy {
+        mock.num_expected_legacy_query_resps = 1;
+    } else {
+        mock.num_expected_fails = 1;
+    }
     let mut mock = build_mock_pollers(mock);
     mock.worker_cfg(|wc| {
         wc.max_cached_workflows = 10;
