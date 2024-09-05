@@ -9,7 +9,7 @@ use std::{
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowExecutionResult, WorkflowOptions};
 use temporal_sdk::{
     ActContext, ActExitValue, ActivityError, ActivityOptions, CancellableFuture, WfContext,
-    WorkflowResult,
+    WfExitValue, WorkflowResult,
 };
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -52,7 +52,7 @@ pub(crate) async fn one_activity_wf(ctx: WfContext) -> WorkflowResult<()> {
 }
 
 #[tokio::test]
-async fn one_activity() {
+async fn one_activity_only() {
     let wf_name = "one_activity";
     let mut starter = CoreWfStarter::new(wf_name);
     let mut worker = starter.worker().await;
@@ -1060,4 +1060,42 @@ async fn activity_can_be_cancelled_by_local_timeout() {
     starter.start_with_worker(wf_name, &mut worker).await;
     worker.run_until_done().await.unwrap();
     assert!(WAS_CANCELLED.load(Ordering::Relaxed));
+}
+
+#[tokio::test]
+#[ignore] // Runs forever, used to manually attempt to repro spurious activity completion rpc errs
+async fn long_activity_timeout_repro() {
+    let wf_name = "long_activity_timeout_repro";
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter
+        .worker_config
+        .local_timeout_buffer_for_activities(Duration::from_secs(0));
+    let mut worker = starter.worker().await;
+    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+        let mut iter = 1;
+        loop {
+            let res = ctx
+                .activity(ActivityOptions {
+                    activity_type: "echo_activity".to_string(),
+                    start_to_close_timeout: Some(Duration::from_secs(1)),
+                    input: "hi!".as_json_payload().expect("serializes fine"),
+                    retry_policy: Some(RetryPolicy {
+                        maximum_attempts: 1,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                })
+                .await;
+            assert!(res.completed_ok());
+            ctx.timer(Duration::from_secs(60 * 3)).await;
+            iter += 1;
+            if iter > 5000 {
+                return Ok(WfExitValue::<()>::continue_as_new(Default::default()));
+            }
+        }
+    });
+    worker.register_activity("echo_activity", echo);
+
+    starter.start_with_worker(wf_name, &mut worker).await;
+    worker.run_until_done().await.unwrap();
 }
