@@ -1,4 +1,4 @@
-use crate::{InterceptedMetricsSvc, RawClientLike};
+use crate::{InterceptedMetricsSvc, RawClientLike, WorkflowService};
 use anyhow::{anyhow, bail};
 use std::marker::PhantomData;
 use temporal_sdk_core_protos::{
@@ -107,7 +107,6 @@ where
             let server_res = self
                 .client
                 .clone()
-                .workflow_client_mut()
                 .get_workflow_execution_history(GetWorkflowExecutionHistoryRequest {
                     namespace: self.info.namespace.to_string(),
                     execution: Some(WorkflowExecution {

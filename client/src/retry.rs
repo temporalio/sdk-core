@@ -1,6 +1,7 @@
 use crate::{
-    ClientOptions, ListClosedFilters, ListOpenFilters, Namespace, RegisterNamespaceOptions, Result,
-    RetryConfig, SignalWithStartOptions, StartTimeFilter, WorkflowClientTrait, WorkflowOptions,
+    raw::ForceConsiderLongPoll, ClientOptions, ListClosedFilters, ListOpenFilters, Namespace,
+    RegisterNamespaceOptions, Result, RetryConfig, SignalWithStartOptions, StartTimeFilter,
+    WorkflowClientTrait, WorkflowOptions,
 };
 use backoff::{backoff::Backoff, exponential::ExponentialBackoff, Clock, SystemClock};
 use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
@@ -16,7 +17,7 @@ use temporal_sdk_core_protos::{
     },
     TaskToken,
 };
-use tonic::Code;
+use tonic::{Code, Request};
 
 /// List of gRPC error codes that client will retry.
 pub const RETRYABLE_ERROR_CODES: [Code; 7] = [
@@ -71,6 +72,7 @@ impl<SG> RetryClient<SG> {
     /// Wraps a call to the underlying client with retry capability.
     ///
     /// This is the "old" path used by higher-level [WorkflowClientTrait] implementors
+    // TODO: Get rid of this
     pub(crate) async fn call_with_retry<R, F, Fut>(
         &self,
         factory: F,
@@ -80,22 +82,48 @@ impl<SG> RetryClient<SG> {
         F: Fn() -> Fut + Unpin,
         Fut: Future<Output = Result<R>>,
     {
-        let rtc = self.get_retry_config(call_name);
-        let res = Self::make_future_retry(rtc, factory, call_name).await;
+        let info = self.get_call_info::<()>(call_name, None);
+        let res = Self::make_future_retry(info, factory).await;
         Ok(res.map_err(|(e, _attempt)| e)?.0)
     }
 
-    pub(crate) fn get_retry_config(&self, call_name: &'static str) -> RetryConfig {
-        match CallType::from_call_name(call_name) {
-            CallType::Normal => (*self.retry_config).clone(),
-            CallType::LongPoll => RetryConfig::poll_retry_policy(),
+    pub(crate) fn get_call_info<R>(
+        &self,
+        call_name: &'static str,
+        request: Option<&Request<R>>,
+    ) -> CallInfo {
+        let mut call_type = CallType::Normal;
+        let retry_cfg = {
+            match call_name {
+                POLL_WORKFLOW_METH_NAME | POLL_ACTIVITY_METH_NAME => {
+                    call_type = CallType::LongPoll;
+                    RetryConfig::poll_retry_policy()
+                }
+                _ => {
+                    // Really need if let &&
+                    if let Some(r) = request {
+                        if r.extensions().get::<ForceConsiderLongPoll>().is_some() {
+                            call_type = CallType::LongPoll;
+                            RetryConfig::poll_retry_policy()
+                        } else {
+                            (*self.retry_config).clone()
+                        }
+                    } else {
+                        (*self.retry_config).clone()
+                    }
+                }
+            }
+        };
+        CallInfo {
+            call_type,
+            call_name,
+            retry_cfg,
         }
     }
 
     pub(crate) fn make_future_retry<R, F, Fut>(
-        rtc: RetryConfig,
+        info: CallInfo,
         factory: F,
-        call_name: &'static str,
     ) -> FutureRetry<F, TonicErrorHandler<SystemClock>>
     where
         F: FnMut() -> Fut + Unpin,
@@ -103,7 +131,7 @@ impl<SG> RetryClient<SG> {
     {
         FutureRetry::new(
             factory,
-            TonicErrorHandler::new(rtc, RetryConfig::throttle_retry_policy(), call_name),
+            TonicErrorHandler::new(info, RetryConfig::throttle_retry_policy()),
         )
     }
 }
@@ -117,11 +145,10 @@ pub(crate) struct TonicErrorHandler<C: Clock> {
     call_name: &'static str,
 }
 impl TonicErrorHandler<SystemClock> {
-    fn new(cfg: RetryConfig, throttle_cfg: RetryConfig, call_name: &'static str) -> Self {
+    fn new(call_info: CallInfo, throttle_cfg: RetryConfig) -> Self {
         Self::new_with_clock(
-            cfg,
+            call_info,
             throttle_cfg,
-            call_name,
             SystemClock::default(),
             SystemClock::default(),
         )
@@ -132,17 +159,16 @@ where
     C: Clock,
 {
     fn new_with_clock(
-        cfg: RetryConfig,
+        call_info: CallInfo,
         throttle_cfg: RetryConfig,
-        call_name: &'static str,
         clock: C,
         throttle_clock: C,
     ) -> Self {
         Self {
-            max_retries: cfg.max_retries,
-            call_type: CallType::from_call_name(call_name),
-            call_name,
-            backoff: cfg.into_exp_backoff(clock),
+            call_type: call_info.call_type,
+            call_name: call_info.call_name,
+            max_retries: call_info.retry_cfg.max_retries,
+            backoff: call_info.retry_cfg.into_exp_backoff(clock),
             throttle_backoff: throttle_cfg.into_exp_backoff(throttle_clock),
         }
     }
@@ -168,19 +194,19 @@ where
         }
     }
 }
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct CallInfo {
+    call_type: CallType,
+    call_name: &'static str,
+    retry_cfg: RetryConfig,
+}
+
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum CallType {
     Normal,
     LongPoll,
-}
-impl CallType {
-    fn from_call_name(call_name: &str) -> Self {
-        match call_name {
-            POLL_WORKFLOW_METH_NAME | POLL_ACTIVITY_METH_NAME => CallType::LongPoll,
-            _ => CallType::Normal,
-        }
-    }
 }
 
 impl<C> ErrorHandler<tonic::Status> for TonicErrorHandler<C>
@@ -200,6 +226,12 @@ where
         // nothing to do but retry anyway
         let long_poll_allowed =
             is_long_poll && [Code::Cancelled, Code::DeadlineExceeded].contains(&e.code());
+
+        if e.code() == Code::Cancelled {
+            // Sometimes we can get a GOAWAY that, for whatever reason, isn't quite properly handled
+            // by hyper or some other internal, and we want to retry that still
+            warn!("Got cancel: {e:?}, is long poll: {is_long_poll}");
+        }
 
         if RETRYABLE_ERROR_CODES.contains(&e.code()) || long_poll_allowed {
             if current_attempt == 1 {
@@ -746,9 +778,8 @@ mod tests {
         for i in 1..=50 {
             for call in [POLL_WORKFLOW_METH_NAME, POLL_ACTIVITY_METH_NAME] {
                 let mut err_handler = TonicErrorHandler::new(
-                    fake_retry.get_retry_config(call),
-                    fake_retry.get_retry_config(call),
-                    call,
+                    fake_retry.get_call_info::<()>(call, None),
+                    RetryConfig::throttle_retry_policy(),
                 );
                 let result = err_handler.handle(i, Status::new(Code::Unknown, "Ahh"));
                 assert_matches!(result, RetryPolicy::WaitRetry(_));
@@ -763,9 +794,8 @@ mod tests {
         for code in [Code::Cancelled, Code::DeadlineExceeded] {
             for call in [POLL_WORKFLOW_METH_NAME, POLL_ACTIVITY_METH_NAME] {
                 let mut err_handler = TonicErrorHandler::new(
-                    fake_retry.get_retry_config(call),
-                    fake_retry.get_retry_config(call),
-                    call,
+                    fake_retry.get_call_info::<()>(call, None),
+                    RetryConfig::throttle_retry_policy(),
                 );
                 for i in 1..=5 {
                     let result = err_handler.handle(i, Status::new(code, "retryable failure"));
