@@ -631,9 +631,6 @@ impl Cancellable for LocalActivityMachine {
     }
 }
 
-#[derive(Default, Clone)]
-pub(super) struct Abandoned {}
-
 impl WFMachinesAdapter for LocalActivityMachine {
     fn adapt_response(
         &self,

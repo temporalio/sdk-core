@@ -34,7 +34,7 @@ slotmap = "1.0"
 thiserror = "1.0"
 tokio = "1.1"
 tonic = { workspace = true, features = ["tls", "tls-roots"] }
-tower = "0.4"
+tower = { version = "0.5", features = ["util"] }
 tracing = "0.1"
 url = "2.2"
 uuid = { version = "1.1", features = ["v4"] }

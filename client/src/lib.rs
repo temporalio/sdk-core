@@ -206,7 +206,7 @@ impl Default for ClientKeepAliveConfig {
 }
 
 /// Configuration for retrying requests to the server
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct RetryConfig {
     /// initial wait time before the first retry.
     pub initial_interval: Duration,
