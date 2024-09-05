@@ -5,7 +5,7 @@ use crate::{
 };
 use backoff::{backoff::Backoff, exponential::ExponentialBackoff, Clock, SystemClock};
 use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
-use std::{fmt::Debug, future::Future, sync::Arc, time::Duration};
+use std::{error::Error, fmt::Debug, future::Future, sync::Arc, time::Duration};
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::QueryResult,
     temporal::api::{
@@ -143,6 +143,7 @@ pub(crate) struct TonicErrorHandler<C: Clock> {
     max_retries: usize,
     call_type: CallType,
     call_name: &'static str,
+    have_retried_goaway_cancel: bool,
 }
 impl TonicErrorHandler<SystemClock> {
     fn new(call_info: CallInfo, throttle_cfg: RetryConfig) -> Self {
@@ -170,6 +171,7 @@ where
             max_retries: call_info.retry_cfg.max_retries,
             backoff: call_info.retry_cfg.into_exp_backoff(clock),
             throttle_backoff: throttle_cfg.into_exp_backoff(throttle_clock),
+            have_retried_goaway_cancel: false,
         }
     }
 
@@ -227,13 +229,26 @@ where
         let long_poll_allowed =
             is_long_poll && [Code::Cancelled, Code::DeadlineExceeded].contains(&e.code());
 
-        if e.code() == Code::Cancelled {
-            // Sometimes we can get a GOAWAY that, for whatever reason, isn't quite properly handled
-            // by hyper or some other internal, and we want to retry that still
-            warn!("Got cancel: {e:?}, is long poll: {is_long_poll}");
+        // Sometimes we can get a GOAWAY that, for whatever reason, isn't quite properly handled
+        // by hyper or some other internal lib, and we want to retry that still. We'll retry that
+        // at most once. Ideally this bit should be removed eventually if we can repro the upstream
+        // bug and it is fixed.
+        let mut goaway_retry_allowed = false;
+        if !self.have_retried_goaway_cancel && e.code() == Code::Cancelled {
+            if let Some(e) = e
+                .source()
+                .and_then(|e| e.downcast_ref::<tonic::transport::Error>())
+                .and_then(|te| te.source())
+                .and_then(|tec| tec.downcast_ref::<hyper::Error>())
+            {
+                if format!("{e:?}").contains("connection closed") {
+                    goaway_retry_allowed = true;
+                    self.have_retried_goaway_cancel = true;
+                }
+            }
         }
 
-        if RETRYABLE_ERROR_CODES.contains(&e.code()) || long_poll_allowed {
+        if RETRYABLE_ERROR_CODES.contains(&e.code()) || long_poll_allowed || goaway_retry_allowed {
             if current_attempt == 1 {
                 debug!(error=?e, "gRPC call {} failed on first attempt", self.call_name);
             } else {
@@ -662,14 +677,16 @@ mod tests {
             Code::Unimplemented,
         ] {
             for call_name in [POLL_WORKFLOW_METH_NAME, POLL_ACTIVITY_METH_NAME] {
-                let mut err_handler = TonicErrorHandler {
-                    max_retries: TEST_RETRY_CONFIG.max_retries,
-                    call_type: CallType::LongPoll,
-                    call_name,
-                    backoff: TEST_RETRY_CONFIG.into_exp_backoff(FixedClock(Instant::now())),
-                    throttle_backoff: TEST_RETRY_CONFIG
-                        .into_exp_backoff(FixedClock(Instant::now())),
-                };
+                let mut err_handler = TonicErrorHandler::new_with_clock(
+                    CallInfo {
+                        call_type: CallType::LongPoll,
+                        call_name,
+                        retry_cfg: TEST_RETRY_CONFIG,
+                    },
+                    TEST_RETRY_CONFIG,
+                    FixedClock(Instant::now()),
+                    FixedClock(Instant::now()),
+                );
                 let result = err_handler.handle(1, Status::new(code, "Ahh"));
                 assert_matches!(result, RetryPolicy::WaitRetry(_));
                 err_handler.backoff.clock.0 = err_handler
@@ -687,14 +704,16 @@ mod tests {
     async fn long_poll_retryable_errors_never_fatal() {
         for code in RETRYABLE_ERROR_CODES {
             for call_name in [POLL_WORKFLOW_METH_NAME, POLL_ACTIVITY_METH_NAME] {
-                let mut err_handler = TonicErrorHandler {
-                    max_retries: TEST_RETRY_CONFIG.max_retries,
-                    call_type: CallType::LongPoll,
-                    call_name,
-                    backoff: TEST_RETRY_CONFIG.into_exp_backoff(FixedClock(Instant::now())),
-                    throttle_backoff: TEST_RETRY_CONFIG
-                        .into_exp_backoff(FixedClock(Instant::now())),
-                };
+                let mut err_handler = TonicErrorHandler::new_with_clock(
+                    CallInfo {
+                        call_type: CallType::LongPoll,
+                        call_name,
+                        retry_cfg: TEST_RETRY_CONFIG,
+                    },
+                    TEST_RETRY_CONFIG,
+                    FixedClock(Instant::now()),
+                    FixedClock(Instant::now()),
+                );
                 let result = err_handler.handle(1, Status::new(code, "Ahh"));
                 assert_matches!(result, RetryPolicy::WaitRetry(_));
                 err_handler.backoff.clock.0 = err_handler
@@ -737,21 +756,23 @@ mod tests {
 
     #[tokio::test]
     async fn retry_resource_exhausted() {
-        let mut err_handler = TonicErrorHandler {
-            max_retries: TEST_RETRY_CONFIG.max_retries,
-            call_type: CallType::Normal,
-            call_name: POLL_WORKFLOW_METH_NAME,
-            backoff: TEST_RETRY_CONFIG.into_exp_backoff(FixedClock(Instant::now())),
-            throttle_backoff: RetryConfig {
+        let mut err_handler = TonicErrorHandler::new_with_clock(
+            CallInfo {
+                call_type: CallType::LongPoll,
+                call_name: POLL_WORKFLOW_METH_NAME,
+                retry_cfg: TEST_RETRY_CONFIG,
+            },
+            RetryConfig {
                 initial_interval: Duration::from_millis(2),
                 randomization_factor: 0.0,
                 multiplier: 4.0,
                 max_interval: Duration::from_millis(10),
                 max_elapsed_time: None,
                 max_retries: 10,
-            }
-            .into_exp_backoff(FixedClock(Instant::now())),
-        };
+            },
+            FixedClock(Instant::now()),
+            FixedClock(Instant::now()),
+        );
         let result = err_handler.handle(1, Status::new(Code::ResourceExhausted, "leave me alone"));
         match result {
             RetryPolicy::WaitRetry(duration) => assert_eq!(duration, Duration::from_millis(2)),
