@@ -360,9 +360,9 @@ impl AttachMetricLabels {
 }
 
 /// A request extension that, when set, should make the [RetryClient] consider this call to be a
-/// long poll
+/// [super::retry::CallType::UserLongPoll]
 #[derive(Copy, Clone, Debug)]
-pub(super) struct ForceConsiderLongPoll;
+pub(super) struct IsUserLongPoll;
 
 // Blanket impl the trait for all raw-client-like things. Since the trait default-implements
 // everything, there's nothing to actually implement.
@@ -610,7 +610,7 @@ proxier! {
             let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
             if r.get_ref().wait_new_event {
-                r.extensions_mut().insert(ForceConsiderLongPoll);
+                r.extensions_mut().insert(IsUserLongPoll);
             }
             if r.get_ref().wait_new_event {
                 r.set_default_timeout(LONG_POLL_TIMEOUT);
