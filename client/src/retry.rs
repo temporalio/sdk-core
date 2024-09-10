@@ -1,5 +1,5 @@
 use crate::{
-    raw::ForceConsiderLongPoll, ClientOptions, ListClosedFilters, ListOpenFilters, Namespace,
+    raw::IsUserLongPoll, ClientOptions, ListClosedFilters, ListOpenFilters, Namespace,
     RegisterNamespaceOptions, Result, RetryConfig, SignalWithStartOptions, StartTimeFilter,
     WorkflowClientTrait, WorkflowOptions,
 };
@@ -99,21 +99,14 @@ impl<SG> RetryClient<SG> {
                     call_type = CallType::LongPoll;
                     RetryConfig::poll_retry_policy()
                 }
-                _ => {
-                    // Really need if let &&
-                    if let Some(r) = request {
-                        if r.extensions().get::<ForceConsiderLongPoll>().is_some() {
-                            call_type = CallType::LongPoll;
-                            RetryConfig::poll_retry_policy()
-                        } else {
-                            (*self.retry_config).clone()
-                        }
-                    } else {
-                        (*self.retry_config).clone()
-                    }
-                }
+                _ => (*self.retry_config).clone(),
             }
         };
+        if let Some(r) = request.as_ref() {
+            if r.extensions().get::<IsUserLongPoll>().is_some() {
+                call_type = CallType::UserLongPoll;
+            }
+        }
         CallInfo {
             call_type,
             call_name,
@@ -209,6 +202,8 @@ pub(crate) struct CallInfo {
 pub enum CallType {
     Normal,
     LongPoll,
+    // Like a long poll but won't always retry timeouts/cancels
+    UserLongPoll,
 }
 
 impl<C> ErrorHandler<tonic::Status> for TonicErrorHandler<C>

@@ -9,9 +9,12 @@ use std::{
 };
 use temporal_client::{Namespace, RetryConfig, WorkflowClientTrait, WorkflowService};
 use temporal_sdk_core_protos::temporal::api::{
-    cloud::cloudservice::v1::GetNamespaceRequest, workflowservice::v1::DescribeNamespaceRequest,
+    cloud::cloudservice::v1::GetNamespaceRequest,
+    workflowservice::v1::{DescribeNamespaceRequest, GetWorkflowExecutionHistoryRequest},
 };
-use temporal_sdk_core_test_utils::{get_integ_server_options, CoreWfStarter, NAMESPACE};
+use temporal_sdk_core_test_utils::{
+    get_integ_server_options, init_integ_telem, CoreWfStarter, NAMESPACE,
+};
 use tokio::{
     net::TcpListener,
     sync::{mpsc::UnboundedSender, oneshot},
@@ -121,6 +124,7 @@ impl NamedService for GenericService {
 
 #[tokio::test]
 async fn timeouts_respected_one_call_fake_server() {
+    init_integ_telem();
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
     let (header_tx, mut header_rx) = tokio::sync::mpsc::unbounded_channel();
 
@@ -155,8 +159,8 @@ async fn timeouts_respected_one_call_fake_server() {
     let mut client = opts.connect_no_namespace(None).await.unwrap();
 
     macro_rules! call_client {
-        ($client:ident, $trx:ident, $client_fn:ident) => {
-            let mut req = Request::new(Default::default());
+        ($client:ident, $trx:ident, $client_fn:ident, $msg:expr) => {
+            let mut req = Request::new($msg);
             req.set_timeout(Duration::from_millis(100));
             // Response is always error b/c empty body
             let _ = $client.$client_fn(req).await;
@@ -165,9 +169,34 @@ async fn timeouts_respected_one_call_fake_server() {
         };
     }
 
-    call_client!(client, header_rx, get_workflow_execution_history);
-    call_client!(client, header_rx, update_workflow_execution);
-    call_client!(client, header_rx, poll_workflow_execution_update);
+    call_client!(
+        client,
+        header_rx,
+        get_workflow_execution_history,
+        Default::default()
+    );
+    call_client!(
+        client,
+        header_rx,
+        get_workflow_execution_history,
+        GetWorkflowExecutionHistoryRequest {
+            // Ensure these calls when done long-poll style still respect timeout
+            wait_new_event: true,
+            ..Default::default()
+        }
+    );
+    call_client!(
+        client,
+        header_rx,
+        update_workflow_execution,
+        Default::default()
+    );
+    call_client!(
+        client,
+        header_rx,
+        poll_workflow_execution_update,
+        Default::default()
+    );
 
     // Shutdown the server
     shutdown_tx.send(()).unwrap();
