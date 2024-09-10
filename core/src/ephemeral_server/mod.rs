@@ -490,7 +490,7 @@ async fn lazy_download_exe(
             info!("Downloading {} to {}", uri, dest.display());
             download_and_extract(client, uri, file_to_extract, &mut temp_file)
                 .await
-                .map_err(|err| {
+                .inspect_err(|_| {
                     // Failed to download, just remove file
                     if let Err(err) = std::fs::remove_file(temp_dest) {
                         warn!(
@@ -499,7 +499,6 @@ async fn lazy_download_exe(
                             err
                         );
                     }
-                    err
                 })
         }
     }?;

@@ -482,6 +482,12 @@ impl LocalActivityManager {
         );
 
         let (schedule_to_close, start_to_close) = sa.close_timeouts.into_sched_and_start();
+        self.metrics
+            .with_new_attrs([
+                activity_type(sa.activity_type.clone()),
+                workflow_type(new_la.workflow_type.clone()),
+            ])
+            .la_executed();
         Some(NextPendingLAAction::Dispatch(ActivityTask {
             task_token: tt.0,
             variant: Some(activity_task::Variant::Start(Start {

@@ -37,7 +37,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 use temporal_sdk_core_api::worker::{ActivitySlotInfo, ActivitySlotKind};
 use temporal_sdk_core_protos::{
@@ -93,6 +93,7 @@ struct InFlightActInfo {
     /// Only kept for logging reasons
     workflow_run_id: String,
     start_time: Instant,
+    scheduled_time: Option<SystemTime>,
 }
 
 /// Augments [InFlightActInfo] with details specific to remote activities
@@ -127,6 +128,7 @@ impl RemoteInFlightActInfo {
                 workflow_id: wec.workflow_id,
                 workflow_run_id: wec.run_id,
                 start_time: Instant::now(),
+                scheduled_time: poll_resp.scheduled_time.and_then(|i| i.try_into().ok()),
             },
             heartbeat_timeout: poll_resp.heartbeat_timeout,
             issued_cancel_to_lang: None,
@@ -336,10 +338,19 @@ impl WorkerActivityTasks {
                 let _flushing_guard = self.completers_lock.read().await;
                 let maybe_net_err = match status {
                     aer::Status::WillCompleteAsync(_) => None,
-                    aer::Status::Completed(ar::Success { result }) => client
-                        .complete_activity_task(task_token.clone(), result.map(Into::into))
-                        .await
-                        .err(),
+                    aer::Status::Completed(ar::Success { result }) => {
+                        if let Some(sched_time) = act_info
+                            .base
+                            .scheduled_time
+                            .and_then(|st| st.elapsed().ok())
+                        {
+                            act_metrics.act_execution_succeeded(sched_time);
+                        }
+                        client
+                            .complete_activity_task(task_token.clone(), result.map(Into::into))
+                            .await
+                            .err()
+                    }
                     aer::Status::Failed(ar::Failure { failure }) => {
                         act_metrics.act_execution_failed();
                         client

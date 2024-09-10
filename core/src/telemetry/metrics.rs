@@ -183,6 +183,13 @@ impl MetricsContext {
         self.instruments.act_execution_failed.add(1, &self.kvs);
     }
 
+    /// Record end-to-end (sched-to-complete) time for successful activity executions
+    pub(crate) fn act_execution_succeeded(&self, dur: Duration) {
+        self.instruments
+            .act_exec_succeeded_latency
+            .record(dur, &self.kvs);
+    }
+
     /// Record activity task schedule to start time in millis
     pub(crate) fn act_sched_to_start_latency(&self, dur: Duration) {
         self.instruments
