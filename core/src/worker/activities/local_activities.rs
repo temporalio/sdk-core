@@ -2,6 +2,7 @@ use crate::{
     abstractions::{dbg_panic, MeteredPermitDealer, OwnedMeteredSemPermit, UsedMeteredSemPermit},
     protosext::ValidScheduleLA,
     retry_logic::RetryPolicyExt,
+    telemetry::metrics::{activity_type, workflow_type},
     worker::workflow::HeartbeatTimeoutMsg,
     MetricsContext, TaskToken,
 };
@@ -173,6 +174,7 @@ pub(crate) struct LocalActivityManager {
     rcvs: tokio::sync::Mutex<RcvChans>,
     shutdown_complete_tok: CancellationToken,
     dat: Mutex<LAMData>,
+    metrics: MetricsContext,
 }
 
 struct LocalActivityInfo {
@@ -213,7 +215,7 @@ impl LocalActivityManager {
         let (act_req_tx, act_req_rx) = unbounded_channel();
         let (cancels_req_tx, cancels_req_rx) = unbounded_channel();
         let shutdown_complete_tok = CancellationToken::new();
-        let semaphore = MeteredPermitDealer::new(slot_supplier, metrics_context, None);
+        let semaphore = MeteredPermitDealer::new(slot_supplier, metrics_context.clone(), None);
         Self {
             namespace,
             rcvs: tokio::sync::Mutex::new(RcvChans::new(
@@ -233,6 +235,7 @@ impl LocalActivityManager {
                 next_tt_num: 0,
             }),
             workflows_have_shut_down: Default::default(),
+            metrics: metrics_context,
         }
     }
 
@@ -536,6 +539,11 @@ impl LocalActivityManager {
                 }
             }
 
+            let la_metrics = self.metrics.with_new_attrs([
+                activity_type(info.la_info.schedule_cmd.activity_type.clone()),
+                workflow_type(info.la_info.workflow_type.clone()),
+            ]);
+
             enum Outcome {
                 FailurePath { backoff: Option<Duration> },
                 JustReport,
@@ -553,31 +561,48 @@ impl LocalActivityManager {
             }
 
             let mut is_timeout = false;
+            let runtime = info.dispatch_time.elapsed();
+            la_metrics.la_exec_latency(runtime);
             let outcome = match &status {
-                LocalActivityExecutionResult::Failed(fail) => Outcome::FailurePath {
-                    backoff: calc_backoff!(fail),
-                },
-                LocalActivityExecutionResult::TimedOut(fail)
-                    if matches!(status.get_timeout_type(), Some(TimeoutType::StartToClose)) =>
-                {
-                    // Start to close timeouts are retryable, other timeout types aren't.
-                    is_timeout = true;
+                LocalActivityExecutionResult::Failed(fail) => {
+                    la_metrics.la_execution_failed();
                     Outcome::FailurePath {
                         backoff: calc_backoff!(fail),
                     }
                 }
-                LocalActivityExecutionResult::TimedOut(_) => {
+                LocalActivityExecutionResult::TimedOut(fail) => {
+                    la_metrics.la_execution_failed();
                     is_timeout = true;
+                    // Start to close timeouts are retryable, other timeout types aren't.
+                    if matches!(status.get_timeout_type(), Some(TimeoutType::StartToClose)) {
+                        Outcome::FailurePath {
+                            backoff: calc_backoff!(fail),
+                        }
+                    } else {
+                        Outcome::JustReport
+                    }
+                }
+                LocalActivityExecutionResult::Completed(_) => {
+                    if let Some(rt) = info
+                        .la_info
+                        .schedule_cmd
+                        .original_schedule_time
+                        .and_then(|t| t.elapsed().ok())
+                    {
+                        la_metrics.la_exec_succeeded_latency(rt);
+                    }
                     Outcome::JustReport
                 }
-                LocalActivityExecutionResult::Completed(_)
-                | LocalActivityExecutionResult::Cancelled { .. } => Outcome::JustReport,
+                LocalActivityExecutionResult::Cancelled { .. } => {
+                    la_metrics.la_execution_cancelled();
+                    Outcome::JustReport
+                }
             };
 
             let mut resolution = LocalActivityResolution {
                 seq: info.la_info.schedule_cmd.seq,
                 result: status,
-                runtime: info.dispatch_time.elapsed(),
+                runtime,
                 attempt: info.attempt,
                 backoff: None,
                 original_schedule_time: info.la_info.schedule_cmd.original_schedule_time,
