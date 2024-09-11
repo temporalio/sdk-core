@@ -2,7 +2,7 @@ use crate::{
     abstractions::{dbg_panic, MeteredPermitDealer, OwnedMeteredSemPermit, UsedMeteredSemPermit},
     protosext::ValidScheduleLA,
     retry_logic::RetryPolicyExt,
-    telemetry::metrics::{activity_type, workflow_type},
+    telemetry::metrics::{activity_type, local_activity_worker_type, workflow_type},
     worker::workflow::HeartbeatTimeoutMsg,
     MetricsContext, TaskToken,
 };
@@ -174,6 +174,8 @@ pub(crate) struct LocalActivityManager {
     rcvs: tokio::sync::Mutex<RcvChans>,
     shutdown_complete_tok: CancellationToken,
     dat: Mutex<LAMData>,
+    /// Note that these metrics do *not* include the `worker_type` label, as every metric
+    /// emitted here is already specific to local activities via the metric name.
     metrics: MetricsContext,
 }
 
@@ -215,7 +217,11 @@ impl LocalActivityManager {
         let (act_req_tx, act_req_rx) = unbounded_channel();
         let (cancels_req_tx, cancels_req_rx) = unbounded_channel();
         let shutdown_complete_tok = CancellationToken::new();
-        let semaphore = MeteredPermitDealer::new(slot_supplier, metrics_context.clone(), None);
+        let semaphore = MeteredPermitDealer::new(
+            slot_supplier,
+            metrics_context.with_new_attrs([local_activity_worker_type()]),
+            None,
+        );
         Self {
             namespace,
             rcvs: tokio::sync::Mutex::new(RcvChans::new(
@@ -509,9 +515,7 @@ impl LocalActivityManager {
                     .ok(),
                 start_to_close_timeout: start_to_close
                     .or(schedule_to_close)
-                    .unwrap()
-                    .try_into()
-                    .ok(),
+                    .and_then(|t| t.try_into().ok()),
                 heartbeat_timeout: None,
                 retry_policy: Some(sa.retry_policy),
                 is_local: true,
