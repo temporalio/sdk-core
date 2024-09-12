@@ -211,8 +211,9 @@ pub mod coresdk {
 
         impl ActivityResolution {
             /// A helper function for cases when you want to extract an activity's payload if it
-            /// completed successfully or return an error for all other outcomes. It's a safer,
-            /// non-panicking alternative to [`unwrap_ok_payload`][`Self::unwrap_ok_payload`].
+            /// completed successfully or return an error for all other outcomes. It's essentially
+            /// an alternative to [`unwrap_ok_payload`][`Self::unwrap_ok_payload`] that uses neither
+            /// `unwrap()` nor `panic!`.
             pub fn success_payload_or_error(self) -> Result<Option<Payload>, anyhow::Error> {
                 let Some(status) = self.status else {
                     return Err(anyhow!("activity completed without a status"));
