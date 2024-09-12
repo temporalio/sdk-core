@@ -111,6 +111,7 @@ pub mod coresdk {
             temporal::api::enums::v1::TimeoutType,
         };
         use activity_execution_result as aer;
+        use anyhow::anyhow;
         use std::fmt::{Display, Formatter};
 
         impl ActivityExecutionResult {
@@ -209,6 +210,23 @@ pub mod coresdk {
         }
 
         impl ActivityResolution {
+            /// A helper function for cases when you want to extract an activity's payload if it
+            /// completed successfully or return an error for all other outcomes. It's a safer,
+            /// non-panicking alternative to [`unwrap_ok_payload`][`Self::unwrap_ok_payload`].
+            pub fn success_payload_or_error(self) -> Result<Option<Payload>, anyhow::Error> {
+                let Some(status) = self.status else {
+                    return Err(anyhow!("activity completed without a status"));
+                };
+
+                match status {
+                    activity_resolution::Status::Completed(success) => Ok(success.result),
+                    status => Err(anyhow!(
+                        "activity resulted in a non-completed status: {:?}",
+                        status
+                    )),
+                }
+            }
+
             pub fn unwrap_ok_payload(self) -> Payload {
                 match self.status.unwrap() {
                     activity_resolution::Status::Completed(c) => c.result.unwrap(),
