@@ -210,27 +210,21 @@ pub mod coresdk {
         }
 
         impl ActivityResolution {
-            /// Extract an activity's payload if it completed successfully, or return an error for all 
+            /// Extract an activity's payload if it completed successfully, or return an error for all
             /// other outcomes.
             pub fn success_payload_or_error(self) -> Result<Option<Payload>, anyhow::Error> {
                 let Some(status) = self.status else {
-                    return Err(anyhow!("activity completed without a status"));
+                    return Err(anyhow!("Activity completed without a status"));
                 };
 
                 match status {
                     activity_resolution::Status::Completed(success) => Ok(success.result),
-                    status => Err(anyhow!(
-                        "activity resulted in a non-completed status: {:?}",
-                        status
-                    )),
+                    e => Err(anyhow!("Activity was not successful: {e:?}")),
                 }
             }
 
             pub fn unwrap_ok_payload(self) -> Payload {
-                match self.status.unwrap() {
-                    activity_resolution::Status::Completed(c) => c.result.unwrap(),
-                    e => panic!("Activity was not successful: {e:?}"),
-                }
+                self.success_payload_or_error().unwrap().unwrap()
             }
 
             pub fn completed_ok(&self) -> bool {
