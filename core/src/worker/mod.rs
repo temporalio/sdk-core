@@ -26,8 +26,8 @@ use crate::{
     protosext::validate_activity_completion,
     telemetry::{
         metrics::{
-            activity_poller, activity_worker_type, local_activity_worker_type, workflow_poller,
-            workflow_sticky_poller, workflow_worker_type, MetricsContext,
+            activity_poller, activity_worker_type, workflow_poller, workflow_sticky_poller,
+            workflow_worker_type, MetricsContext,
         },
         TelemetryInstance,
     },
@@ -385,7 +385,7 @@ impl Worker {
             tuner.local_activity_slot_supplier(),
             config.namespace.clone(),
             hb_tx,
-            metrics.with_new_attrs([local_activity_worker_type()]),
+            metrics.clone(),
         ));
         let at_task_mgr = act_poller.map(|ap| {
             WorkerActivityTasks::new(

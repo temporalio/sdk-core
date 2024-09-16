@@ -1,6 +1,10 @@
+use anyhow::anyhow;
 use assert_matches::assert_matches;
 use std::{env, net::SocketAddr, sync::Arc, time::Duration};
 use temporal_client::{WorkflowClientTrait, WorkflowOptions, WorkflowService};
+use temporal_sdk::{
+    ActContext, ActivityError, ActivityOptions, CancellableFuture, LocalActivityOptions, WfContext,
+};
 use temporal_sdk_core::{
     init_worker,
     telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter},
@@ -25,9 +29,10 @@ use temporal_sdk_core_protos::{
             ScheduleActivity, ScheduleLocalActivity,
         },
         workflow_completion::WorkflowActivationCompletion,
-        ActivityTaskCompletion,
+        ActivityTaskCompletion, AsJsonPayloadExt,
     },
     temporal::api::{
+        common::v1::RetryPolicy,
         enums::v1::WorkflowIdReusePolicy,
         failure::v1::Failure,
         query::v1::WorkflowQuery,
@@ -619,4 +624,139 @@ async fn request_fail_codes_otel() {
 
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
+}
+
+#[tokio::test]
+async fn activity_metrics() {
+    let (telemopts, addr, _aborter) = prom_metrics(false, false);
+    let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
+    let wf_name = "activity_metrics";
+    let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
+    let task_queue = starter.get_task_queue().to_owned();
+    let mut worker = starter.worker().await;
+
+    worker.register_wf(wf_name.to_string(), |ctx: WfContext| async move {
+        let normal_act_pass = ctx.activity(ActivityOptions {
+            activity_type: "pass_fail_act".to_string(),
+            input: "pass".as_json_payload().expect("serializes fine"),
+            start_to_close_timeout: Some(Duration::from_secs(1)),
+            ..Default::default()
+        });
+        let local_act_pass = ctx.local_activity(LocalActivityOptions {
+            activity_type: "pass_fail_act".to_string(),
+            input: "pass".as_json_payload().expect("serializes fine"),
+            ..Default::default()
+        });
+        let normal_act_fail = ctx.activity(ActivityOptions {
+            activity_type: "pass_fail_act".to_string(),
+            input: "fail".as_json_payload().expect("serializes fine"),
+            start_to_close_timeout: Some(Duration::from_secs(1)),
+            retry_policy: Some(RetryPolicy {
+                maximum_attempts: 1,
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        let local_act_fail = ctx.local_activity(LocalActivityOptions {
+            activity_type: "pass_fail_act".to_string(),
+            input: "fail".as_json_payload().expect("serializes fine"),
+            retry_policy: RetryPolicy {
+                maximum_attempts: 1,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        let local_act_cancel = ctx.local_activity(LocalActivityOptions {
+            activity_type: "pass_fail_act".to_string(),
+            input: "cancel".as_json_payload().expect("serializes fine"),
+            retry_policy: RetryPolicy {
+                maximum_attempts: 1,
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        join!(
+            normal_act_pass,
+            local_act_pass,
+            normal_act_fail,
+            local_act_fail
+        );
+        local_act_cancel.cancel(&ctx);
+        local_act_cancel.await;
+        Ok(().into())
+    });
+    worker.register_activity("pass_fail_act", |ctx: ActContext, i: String| async move {
+        match i.as_str() {
+            "pass" => Ok("pass"),
+            "cancel" => {
+                // TODO: Cancel is taking until shutdown to come through :|
+                ctx.cancelled().await;
+                Err(ActivityError::cancelled())
+            }
+            _ => Err(anyhow!("fail").into()),
+        }
+    });
+
+    worker
+        .submit_wf(
+            wf_name.to_owned(),
+            wf_name.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+
+    let body = get_text(format!("http://{addr}/metrics")).await;
+    assert!(body.contains(&format!(
+        "temporal_activity_execution_failed{{activity_type=\"pass_fail_act\",\
+             namespace=\"{NAMESPACE}\",service_name=\"temporal-core-sdk\",\
+             task_queue=\"{task_queue}\",workflow_type=\"{wf_name}\"}} 1"
+    )));
+    assert!(body.contains(&format!(
+        "temporal_activity_schedule_to_start_latency_count{{\
+             namespace=\"{NAMESPACE}\",service_name=\"temporal-core-sdk\",\
+             task_queue=\"{task_queue}\"}} 2"
+    )));
+    assert!(body.contains(&format!(
+        "temporal_activity_execution_latency_count{{activity_type=\"pass_fail_act\",\
+             namespace=\"{NAMESPACE}\",service_name=\"temporal-core-sdk\",\
+             task_queue=\"{task_queue}\",workflow_type=\"{wf_name}\"}} 2"
+    )));
+    assert!(body.contains(&format!(
+        "temporal_activity_succeed_endtoend_latency_count{{activity_type=\"pass_fail_act\",\
+             namespace=\"{NAMESPACE}\",service_name=\"temporal-core-sdk\",\
+             task_queue=\"{task_queue}\",workflow_type=\"{wf_name}\"}} 1"
+    )));
+
+    assert!(body.contains(&format!(
+        "temporal_local_activity_total{{activity_type=\"pass_fail_act\",namespace=\"{NAMESPACE}\",\
+             service_name=\"temporal-core-sdk\",task_queue=\"{task_queue}\",\
+             workflow_type=\"{wf_name}\"}} 3"
+    )));
+    assert!(body.contains(&format!(
+        "temporal_local_activity_execution_failed{{activity_type=\"pass_fail_act\",\
+             namespace=\"{NAMESPACE}\",service_name=\"temporal-core-sdk\",\
+             task_queue=\"{task_queue}\",\
+             workflow_type=\"{wf_name}\"}} 1"
+    )));
+    assert!(body.contains(&format!(
+        "temporal_local_activity_execution_cancelled{{activity_type=\"pass_fail_act\",\
+             namespace=\"{NAMESPACE}\",service_name=\"temporal-core-sdk\",\
+             task_queue=\"{task_queue}\",\
+             workflow_type=\"{wf_name}\"}} 1"
+    )));
+    assert!(body.contains(&format!(
+        "temporal_local_activity_execution_latency_count{{activity_type=\"pass_fail_act\",\
+             namespace=\"{NAMESPACE}\",service_name=\"temporal-core-sdk\",\
+             task_queue=\"{task_queue}\",\
+             workflow_type=\"{wf_name}\"}} 3"
+    )));
+    assert!(body.contains(&format!(
+        "temporal_local_activity_succeed_endtoend_latency_count{{activity_type=\"pass_fail_act\",\
+             namespace=\"{NAMESPACE}\",service_name=\"temporal-core-sdk\",\
+             task_queue=\"{task_queue}\",\
+             workflow_type=\"{wf_name}\"}} 1"
+    )));
 }

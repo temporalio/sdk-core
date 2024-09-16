@@ -42,6 +42,12 @@ struct Instruments {
     act_execution_failed: Arc<dyn Counter>,
     act_sched_to_start_latency: Arc<dyn HistogramDuration>,
     act_exec_latency: Arc<dyn HistogramDuration>,
+    act_exec_succeeded_latency: Arc<dyn HistogramDuration>,
+    la_execution_cancelled: Arc<dyn Counter>,
+    la_execution_failed: Arc<dyn Counter>,
+    la_exec_latency: Arc<dyn HistogramDuration>,
+    la_exec_succeeded_latency: Arc<dyn HistogramDuration>,
+    la_total: Arc<dyn Counter>,
     worker_registered: Arc<dyn Counter>,
     num_pollers: Arc<dyn Gauge>,
     task_slots_available: Arc<dyn Gauge>,
@@ -177,6 +183,13 @@ impl MetricsContext {
         self.instruments.act_execution_failed.add(1, &self.kvs);
     }
 
+    /// Record end-to-end (sched-to-complete) time for successful activity executions
+    pub(crate) fn act_execution_succeeded(&self, dur: Duration) {
+        self.instruments
+            .act_exec_succeeded_latency
+            .record(dur, &self.kvs);
+    }
+
     /// Record activity task schedule to start time in millis
     pub(crate) fn act_sched_to_start_latency(&self, dur: Duration) {
         self.instruments
@@ -188,6 +201,28 @@ impl MetricsContext {
     /// activity task, to the time lang responded with a completion (failure or success).
     pub(crate) fn act_execution_latency(&self, dur: Duration) {
         self.instruments.act_exec_latency.record(dur, &self.kvs);
+    }
+
+    pub(crate) fn la_execution_cancelled(&self) {
+        self.instruments.la_execution_cancelled.add(1, &self.kvs);
+    }
+
+    pub(crate) fn la_execution_failed(&self) {
+        self.instruments.la_execution_failed.add(1, &self.kvs);
+    }
+
+    pub(crate) fn la_exec_latency(&self, dur: Duration) {
+        self.instruments.la_exec_latency.record(dur, &self.kvs);
+    }
+
+    pub(crate) fn la_exec_succeeded_latency(&self, dur: Duration) {
+        self.instruments
+            .la_exec_succeeded_latency
+            .record(dur, &self.kvs);
+    }
+
+    pub(crate) fn la_executed(&self) {
+        self.instruments.la_total.add(1, &self.kvs);
     }
 
     /// A worker was registered
@@ -315,6 +350,39 @@ impl Instruments {
                 name: ACT_EXEC_LATENCY_NAME.into(),
                 unit: "duration".into(),
                 description: "Histogram of activity execution latencies".into(),
+            }),
+            act_exec_succeeded_latency: meter.histogram_duration(MetricParameters {
+                name: "activity_succeed_endtoend_latency".into(),
+                unit: "duration".into(),
+                description: "Histogram of activity execution latencies for successful activities"
+                    .into(),
+            }),
+            la_execution_cancelled: meter.counter(MetricParameters {
+                name: "local_activity_execution_cancelled".into(),
+                description: "Count of local activity executions that were cancelled".into(),
+                unit: "".into(),
+            }),
+            la_execution_failed: meter.counter(MetricParameters {
+                name: "local_activity_execution_failed".into(),
+                description: "Count of local activity executions that failed".into(),
+                unit: "".into(),
+            }),
+            la_exec_latency: meter.histogram_duration(MetricParameters {
+                name: "local_activity_execution_latency".into(),
+                unit: "duration".into(),
+                description: "Histogram of local activity execution latencies".into(),
+            }),
+            la_exec_succeeded_latency: meter.histogram_duration(MetricParameters {
+                name: "local_activity_succeed_endtoend_latency".into(),
+                unit: "duration".into(),
+                description:
+                    "Histogram of local activity execution latencies for successful local activities"
+                        .into(),
+            }),
+            la_total: meter.counter(MetricParameters {
+                name: "local_activity_total".into(),
+                description: "Count of local activities executed".into(),
+                unit: "".into(),
             }),
             // name kept as worker start for compat with old sdk / what users expect
             worker_registered: meter.counter(MetricParameters {
@@ -807,7 +875,7 @@ mod tests {
         a1.set(Arc::new(DummyCustomAttrs(1))).unwrap();
         // Verify all metrics are created. This number will need to get updated any time a metric
         // is added.
-        let num_metrics = 24;
+        let num_metrics = 30;
         #[allow(clippy::needless_range_loop)] // Sorry clippy, this reads easier.
         for metric_num in 1..=num_metrics {
             let hole = assert_matches!(&events[metric_num],
