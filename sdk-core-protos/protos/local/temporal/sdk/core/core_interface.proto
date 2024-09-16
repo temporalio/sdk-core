@@ -1,7 +1,7 @@
 syntax = "proto3";
 
 package coresdk;
-option ruby_package = "Temporalio::Bridge::Api::CoreInterface";
+option ruby_package = "Temporalio::Internal::Bridge::Api::CoreInterface";
 
 // Note: Intellij will think the Google imports don't work because of the slightly odd nature of
 // the include paths. You can make it work by going to the "Protobuf Support" settings section

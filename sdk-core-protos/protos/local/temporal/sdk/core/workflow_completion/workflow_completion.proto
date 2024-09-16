@@ -1,7 +1,7 @@
 syntax = "proto3";
 
 package coresdk.workflow_completion;
-option ruby_package = "Temporalio::Bridge::Api::WorkflowCompletion";
+option ruby_package = "Temporalio::Internal::Bridge::Api::WorkflowCompletion";
 
 import "temporal/api/failure/v1/message.proto";
 import "temporal/api/enums/v1/failed_cause.proto";
