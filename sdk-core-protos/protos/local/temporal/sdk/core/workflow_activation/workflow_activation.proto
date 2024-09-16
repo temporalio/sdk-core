@@ -5,7 +5,7 @@ syntax = "proto3";
  * lang SDK applies these activation jobs to drive workflows.
  */
 package coresdk.workflow_activation;
-option ruby_package = "Temporalio::Bridge::Api::WorkflowActivation";
+option ruby_package = "Temporalio::Internal::Bridge::Api::WorkflowActivation";
 
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/duration.proto";

@@ -4,7 +4,7 @@ syntax = "proto3";
  * Definitions of the different activity tasks returned from [crate::Core::poll_task].
  */
 package coresdk.activity_task;
-option ruby_package = "Temporalio::Bridge::Api::ActivityTask";
+option ruby_package = "Temporalio::Internal::Bridge::Api::ActivityTask";
 
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";

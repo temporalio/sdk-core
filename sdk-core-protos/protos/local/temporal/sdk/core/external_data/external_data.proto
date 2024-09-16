@@ -1,7 +1,7 @@
 syntax = "proto3";
 
 package coresdk.external_data;
-option ruby_package = "Temporalio::Bridge::Api::ExternalData";
+option ruby_package = "Temporalio::Internal::Bridge::Api::ExternalData";
 
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";

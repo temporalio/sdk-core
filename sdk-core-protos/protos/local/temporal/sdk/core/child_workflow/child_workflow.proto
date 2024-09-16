@@ -1,7 +1,7 @@
 syntax = "proto3";
 
 package coresdk.child_workflow;
-option ruby_package = "Temporalio::Bridge::Api::ChildWorkflow";
+option ruby_package = "Temporalio::Internal::Bridge::Api::ChildWorkflow";
 
 import "temporal/api/common/v1/message.proto";
 import "temporal/api/failure/v1/message.proto";
