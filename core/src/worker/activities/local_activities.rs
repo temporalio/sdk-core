@@ -2,6 +2,7 @@ use crate::{
     abstractions::{dbg_panic, MeteredPermitDealer, OwnedMeteredSemPermit, UsedMeteredSemPermit},
     protosext::ValidScheduleLA,
     retry_logic::RetryPolicyExt,
+    telemetry::metrics::{activity_type, local_activity_worker_type, workflow_type},
     worker::workflow::HeartbeatTimeoutMsg,
     MetricsContext, TaskToken,
 };
@@ -173,6 +174,9 @@ pub(crate) struct LocalActivityManager {
     rcvs: tokio::sync::Mutex<RcvChans>,
     shutdown_complete_tok: CancellationToken,
     dat: Mutex<LAMData>,
+    /// Note that these metrics do *not* include the `worker_type` label, as every metric
+    /// emitted here is already specific to local activities via the metric name.
+    metrics: MetricsContext,
 }
 
 struct LocalActivityInfo {
@@ -213,7 +217,11 @@ impl LocalActivityManager {
         let (act_req_tx, act_req_rx) = unbounded_channel();
         let (cancels_req_tx, cancels_req_rx) = unbounded_channel();
         let shutdown_complete_tok = CancellationToken::new();
-        let semaphore = MeteredPermitDealer::new(slot_supplier, metrics_context, None);
+        let semaphore = MeteredPermitDealer::new(
+            slot_supplier,
+            metrics_context.with_new_attrs([local_activity_worker_type()]),
+            None,
+        );
         Self {
             namespace,
             rcvs: tokio::sync::Mutex::new(RcvChans::new(
@@ -233,6 +241,7 @@ impl LocalActivityManager {
                 next_tt_num: 0,
             }),
             workflows_have_shut_down: Default::default(),
+            metrics: metrics_context,
         }
     }
 
@@ -479,6 +488,12 @@ impl LocalActivityManager {
         );
 
         let (schedule_to_close, start_to_close) = sa.close_timeouts.into_sched_and_start();
+        self.metrics
+            .with_new_attrs([
+                activity_type(sa.activity_type.clone()),
+                workflow_type(new_la.workflow_type.clone()),
+            ])
+            .la_executed();
         Some(NextPendingLAAction::Dispatch(ActivityTask {
             task_token: tt.0,
             variant: Some(activity_task::Variant::Start(Start {
@@ -500,9 +515,7 @@ impl LocalActivityManager {
                     .ok(),
                 start_to_close_timeout: start_to_close
                     .or(schedule_to_close)
-                    .unwrap()
-                    .try_into()
-                    .ok(),
+                    .and_then(|t| t.try_into().ok()),
                 heartbeat_timeout: None,
                 retry_policy: Some(sa.retry_policy),
                 is_local: true,
@@ -536,6 +549,11 @@ impl LocalActivityManager {
                 }
             }
 
+            let la_metrics = self.metrics.with_new_attrs([
+                activity_type(info.la_info.schedule_cmd.activity_type.clone()),
+                workflow_type(info.la_info.workflow_type.clone()),
+            ]);
+
             enum Outcome {
                 FailurePath { backoff: Option<Duration> },
                 JustReport,
@@ -553,31 +571,48 @@ impl LocalActivityManager {
             }
 
             let mut is_timeout = false;
+            let runtime = info.dispatch_time.elapsed();
+            la_metrics.la_exec_latency(runtime);
             let outcome = match &status {
-                LocalActivityExecutionResult::Failed(fail) => Outcome::FailurePath {
-                    backoff: calc_backoff!(fail),
-                },
-                LocalActivityExecutionResult::TimedOut(fail)
-                    if matches!(status.get_timeout_type(), Some(TimeoutType::StartToClose)) =>
-                {
-                    // Start to close timeouts are retryable, other timeout types aren't.
-                    is_timeout = true;
+                LocalActivityExecutionResult::Failed(fail) => {
+                    la_metrics.la_execution_failed();
                     Outcome::FailurePath {
                         backoff: calc_backoff!(fail),
                     }
                 }
-                LocalActivityExecutionResult::TimedOut(_) => {
+                LocalActivityExecutionResult::TimedOut(fail) => {
+                    la_metrics.la_execution_failed();
                     is_timeout = true;
+                    // Start to close timeouts are retryable, other timeout types aren't.
+                    if matches!(status.get_timeout_type(), Some(TimeoutType::StartToClose)) {
+                        Outcome::FailurePath {
+                            backoff: calc_backoff!(fail),
+                        }
+                    } else {
+                        Outcome::JustReport
+                    }
+                }
+                LocalActivityExecutionResult::Completed(_) => {
+                    if let Some(rt) = info
+                        .la_info
+                        .schedule_cmd
+                        .original_schedule_time
+                        .and_then(|t| t.elapsed().ok())
+                    {
+                        la_metrics.la_exec_succeeded_latency(rt);
+                    }
                     Outcome::JustReport
                 }
-                LocalActivityExecutionResult::Completed(_)
-                | LocalActivityExecutionResult::Cancelled { .. } => Outcome::JustReport,
+                LocalActivityExecutionResult::Cancelled { .. } => {
+                    la_metrics.la_execution_cancelled();
+                    Outcome::JustReport
+                }
             };
 
             let mut resolution = LocalActivityResolution {
                 seq: info.la_info.schedule_cmd.seq,
                 result: status,
-                runtime: info.dispatch_time.elapsed(),
+                runtime,
                 attempt: info.attempt,
                 backoff: None,
                 original_schedule_time: info.la_info.schedule_cmd.original_schedule_time,
