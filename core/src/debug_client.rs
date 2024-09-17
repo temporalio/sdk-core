@@ -1,5 +1,7 @@
-//! This module contains code for an http client that is used for the VSCode debug plugin.
+//! Defines an http client that is used for the VSCode debug plugin and any other associated
+//! machinery.
 
+use anyhow::Context;
 use prost::Message;
 use reqwest;
 use std::time::Duration;
@@ -21,13 +23,13 @@ pub struct DebugClient {
 
 impl DebugClient {
     /// Create a new instance of a DebugClient with the specified url.
-    pub fn new(url: String) -> DebugClient {
-        DebugClient {
-            debugger_url: Url::parse(&url).expect(
-                "debugger url malformatted, is process.env.TEMPORAL_DEBUGGER_PLUGIN_URL correct?",
-            ),
+    pub fn new(url: String) -> Result<DebugClient, anyhow::Error> {
+        Ok(DebugClient {
+            debugger_url: Url::parse(&url).context(
+                "debugger url malformed, is the TEMPORAL_DEBUGGER_PLUGIN_URL env var correct?",
+            )?,
             client: reqwest::Client::new(),
-        }
+        })
     }
 
     /// Get the history from the instance of the debug plugin server
