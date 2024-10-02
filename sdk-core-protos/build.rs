@@ -113,7 +113,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "::prost_wkt_types::Value"
         )
         .file_descriptor_set_path(descriptor_file)
-        .compile(
+        .compile_protos(
             &[
                 "./protos/local/temporal/sdk/core/core_interface.proto",
                 "./protos/api_upstream/temporal/api/workflowservice/v1/service.proto",
