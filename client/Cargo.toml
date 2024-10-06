@@ -26,7 +26,6 @@ http = "1.1.0"
 http-body-util = "0.1"
 hyper = { version = "1.4.1" }
 hyper-util = "0.1.6"
-once_cell = { workspace = true }
 opentelemetry = { workspace = true, features = ["metrics"], optional = true }
 parking_lot = "0.12"
 prost-types = { workspace = true }
