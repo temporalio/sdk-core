@@ -154,7 +154,7 @@ pub async fn history_from_proto_binary(path_from_root: &str) -> Result<History, 
     Ok(History::decode(&*bytes)?)
 }
 
-static INTEG_TESTS_RT: once_cell::sync::OnceCell<CoreRuntime> = once_cell::sync::OnceCell::new();
+static INTEG_TESTS_RT: std::sync::OnceLock<CoreRuntime> = std::sync::OnceLock::new();
 pub fn init_integ_telem() -> &'static CoreRuntime {
     INTEG_TESTS_RT.get_or_init(|| {
         let telemetry_options = get_integ_telem_options();

@@ -7,7 +7,7 @@ use crate::{
 };
 use futures::{future::BoxFuture, FutureExt, Stream, TryFutureExt};
 use itertools::Itertools;
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use std::{
     collections::VecDeque,
     fmt::Debug,
@@ -24,9 +24,9 @@ use temporal_sdk_core_protos::temporal::api::{
 };
 use tracing::Instrument;
 
-static EMPTY_FETCH_ERR: Lazy<tonic::Status> =
-    Lazy::new(|| tonic::Status::unknown("Fetched empty history page"));
-static EMPTY_TASK_ERR: Lazy<tonic::Status> = Lazy::new(|| {
+static EMPTY_FETCH_ERR: LazyLock<tonic::Status> =
+    LazyLock::new(|| tonic::Status::unknown("Fetched empty history page"));
+static EMPTY_TASK_ERR: LazyLock<tonic::Status> = LazyLock::new(|| {
     tonic::Status::unknown("Received an empty workflow task with no queries or history")
 });
 

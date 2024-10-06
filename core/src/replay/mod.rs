@@ -10,7 +10,7 @@ use crate::{
     Worker,
 };
 use futures::{FutureExt, Stream, StreamExt};
-use once_cell::sync::OnceCell;
+use std::sync::OnceLock;
 use parking_lot::Mutex;
 use std::{
     pin::Pin,
@@ -179,7 +179,7 @@ impl Stream for HistoryFeederStream {
 pub(crate) struct Historator {
     iter: Pin<Box<dyn Stream<Item = HistoryForReplay> + Send>>,
     allow_stream: UnboundedReceiverStream<String>,
-    worker_closer: Arc<OnceCell<CancellationToken>>,
+    worker_closer: Arc<OnceLock<CancellationToken>>,
     dat: Arc<Mutex<HistoratorDat>>,
     replay_done_tx: UnboundedSender<String>,
 }
@@ -192,7 +192,7 @@ impl Historator {
         Self {
             iter: Box::pin(histories.fuse()),
             allow_stream: UnboundedReceiverStream::new(replay_done_rx),
-            worker_closer: Arc::new(OnceCell::new()),
+            worker_closer: Arc::new(OnceLock::new()),
             dat,
             replay_done_tx,
         }

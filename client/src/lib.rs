@@ -41,7 +41,7 @@ use crate::{
 };
 use backoff::{exponential, ExponentialBackoff, SystemClock};
 use http::{uri::InvalidUri, Uri};
-use once_cell::sync::OnceCell;
+use std::sync::OnceLock;
 use parking_lot::RwLock;
 use std::{
     collections::HashMap,
@@ -546,17 +546,17 @@ impl Interceptor for ServiceCallInterceptor {
 #[derive(Debug, Clone)]
 pub struct TemporalServiceClient<T> {
     svc: T,
-    workflow_svc_client: OnceCell<WorkflowServiceClient<T>>,
-    operator_svc_client: OnceCell<OperatorServiceClient<T>>,
-    cloud_svc_client: OnceCell<CloudServiceClient<T>>,
-    test_svc_client: OnceCell<TestServiceClient<T>>,
-    health_svc_client: OnceCell<HealthClient<T>>,
+    workflow_svc_client: OnceLock<WorkflowServiceClient<T>>,
+    operator_svc_client: OnceLock<OperatorServiceClient<T>>,
+    cloud_svc_client: OnceLock<CloudServiceClient<T>>,
+    test_svc_client: OnceLock<TestServiceClient<T>>,
+    health_svc_client: OnceLock<HealthClient<T>>,
 }
 
 /// We up the limit on incoming messages from server from the 4Mb default to 128Mb. If for
 /// whatever reason this needs to be changed by the user, we support overriding it via env var.
 fn get_decode_max_size() -> usize {
-    static _DECODE_MAX_SIZE: OnceCell<usize> = OnceCell::new();
+    static _DECODE_MAX_SIZE: OnceLock<usize> = OnceLock::new();
     *_DECODE_MAX_SIZE.get_or_init(|| {
         std::env::var("TEMPORAL_MAX_INCOMING_GRPC_BYTES")
             .ok()
@@ -576,11 +576,11 @@ where
     fn new(svc: T) -> Self {
         Self {
             svc,
-            workflow_svc_client: OnceCell::new(),
-            operator_svc_client: OnceCell::new(),
-            cloud_svc_client: OnceCell::new(),
-            test_svc_client: OnceCell::new(),
-            health_svc_client: OnceCell::new(),
+            workflow_svc_client: OnceLock::new(),
+            operator_svc_client: OnceLock::new(),
+            cloud_svc_client: OnceLock::new(),
+            test_svc_client: OnceLock::new(),
+            health_svc_client: OnceLock::new(),
         }
     }
     /// Get the underlying workflow service client
