@@ -14,7 +14,6 @@ categories = ["development-tools"]
 async-trait = "0.1"
 thiserror = "1.0"
 anyhow = "1.0"
-crossbeam-channel = "0.5"
 derive_more = { workspace = true }
 futures = "0.3"
 parking_lot = { version = "0.12", features = ["send_guard"] }
