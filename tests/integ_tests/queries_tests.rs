@@ -1,6 +1,6 @@
 use assert_matches::assert_matches;
-use futures::{prelude::stream::FuturesUnordered, FutureExt, StreamExt};
 use futures_util::future::join_all;
+use futures_util::{stream::FuturesUnordered, FutureExt, StreamExt};
 use std::time::{Duration, Instant};
 use temporal_client::WorkflowClientTrait;
 use temporal_sdk_core_protos::{

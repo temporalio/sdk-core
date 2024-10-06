@@ -9,7 +9,7 @@ use crate::{
     worker::client::mocks::{mock_manual_workflow_client, mock_workflow_client},
     ActivityHeartbeat, Worker,
 };
-use futures::FutureExt;
+use futures_util::FutureExt;
 use itertools::Itertools;
 use std::{
     cell::RefCell,
@@ -674,7 +674,7 @@ async fn no_eager_activities_requested_when_worker_options_disable_remote_activi
     let mut mock_poller = mock_manual_poller();
     mock_poller
         .expect_poll()
-        .returning(|| futures::future::pending().boxed());
+        .returning(|| futures_util::future::pending().boxed());
     mock.set_act_poller(Box::new(mock_poller));
     mock.worker_cfg(|wc| {
         wc.max_cached_workflows = 2;

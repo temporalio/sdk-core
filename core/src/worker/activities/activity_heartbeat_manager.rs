@@ -3,7 +3,7 @@ use crate::{
     worker::{activities::PendingActivityCancel, client::WorkerClient},
     TaskToken,
 };
-use futures::StreamExt;
+use futures_util::StreamExt;
 use std::{
     collections::{hash_map::Entry, HashMap},
     sync::Arc,
@@ -94,7 +94,7 @@ impl ActivityHeartbeatManager {
             // The stream of incoming heartbeats uses unfold to carry state across each item in the
             // stream. The closure checks if, for any given activity, we should heartbeat or not
             // depending on its delay and when we last issued a heartbeat for it.
-            futures::stream::unfold(heartbeat_stream_state, move |mut hb_states| {
+            futures_util::stream::unfold(heartbeat_stream_state, move |mut hb_states| {
                 async move {
                     let hb = tokio::select! {
                         biased;

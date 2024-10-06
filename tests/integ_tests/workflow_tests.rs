@@ -18,7 +18,7 @@ mod upsert_search_attrs;
 
 use crate::integ_tests::{activity_functions::echo, metrics_tests};
 use assert_matches::assert_matches;
-use futures::{channel::mpsc::UnboundedReceiver, future, SinkExt, StreamExt};
+use futures_util::{channel::mpsc::UnboundedReceiver, future, SinkExt, StreamExt};
 use std::{
     collections::{HashMap, HashSet},
     sync::{
@@ -92,7 +92,7 @@ async fn parallel_workflows_same_queue() {
     let handles: Vec<_> = run_ids
         .iter()
         .map(|run_id| {
-            let (tx, rx) = futures::channel::mpsc::unbounded();
+            let (tx, rx) = futures_util::channel::mpsc::unbounded();
             send_chans.insert(run_id.clone(), tx);
             tokio::spawn(wf_task(core.clone(), rx))
         })

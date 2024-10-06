@@ -1,4 +1,4 @@
-use futures::{future::join_all, sink, stream::FuturesUnordered, StreamExt};
+use futures_util::{future::join_all, sink, stream::FuturesUnordered, StreamExt};
 use std::{
     sync::Arc,
     time::{Duration, Instant},

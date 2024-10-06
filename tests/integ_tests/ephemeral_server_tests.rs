@@ -1,5 +1,5 @@
-use futures::stream;
-use futures::TryStreamExt;
+use futures_util::stream;
+use futures_util::TryStreamExt;
 use std::time::{SystemTime, UNIX_EPOCH};
 use temporal_client::{ClientOptionsBuilder, TestService, WorkflowService};
 use temporal_sdk_core::ephemeral_server::{

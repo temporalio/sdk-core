@@ -1,6 +1,6 @@
 use crate::integ_tests::activity_functions::echo;
 use anyhow::anyhow;
-use futures::future::join_all;
+use futures_util::future::join_all;
 use std::{
     sync::atomic::{AtomicU8, Ordering},
     time::Duration,

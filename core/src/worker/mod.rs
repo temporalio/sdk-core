@@ -77,7 +77,7 @@ use {
         pollers::{BoxedPoller, MockPermittedPollBuffer},
         protosext::ValidPollWFTQResponse,
     },
-    futures::stream::BoxStream,
+    futures_util::stream::BoxStream,
     temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse,
 };
 
@@ -750,7 +750,7 @@ mod tests {
     use crate::{
         advance_fut, test_help::test_worker_cfg, worker::client::mocks::mock_workflow_client,
     };
-    use futures::FutureExt;
+    use futures_util::FutureExt;
 
     use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse;
 

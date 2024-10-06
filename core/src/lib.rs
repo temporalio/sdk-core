@@ -54,7 +54,7 @@ use crate::{
     worker::client::WorkerClientBag,
 };
 use anyhow::bail;
-use futures::Stream;
+use futures_util::Stream;
 use std::sync::Arc;
 use temporal_client::{ConfiguredClient, TemporalServiceClientWithMetrics};
 use temporal_sdk_core_api::{

@@ -12,7 +12,7 @@ use crate::{
     Unblockable, UpdateFunctions,
 };
 use crossbeam_channel::{Receiver, Sender};
-use futures::{task::Context, FutureExt, Stream, StreamExt};
+use futures_util::{task::Context, FutureExt, Stream, StreamExt};
 use parking_lot::{RwLock, RwLockReadGuard};
 use std::{
     collections::HashMap,
