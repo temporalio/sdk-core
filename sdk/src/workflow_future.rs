@@ -4,7 +4,7 @@ use crate::{
     WorkflowResult,
 };
 use anyhow::{anyhow, bail, Context as AnyhowContext, Error};
-use crossbeam_channel::Receiver;
+use std::sync::mpsc::Receiver;
 use futures::{future::BoxFuture, FutureExt};
 use std::{
     collections::{hash_map::Entry, HashMap},
