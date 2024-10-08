@@ -7,7 +7,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-changed=./protos");
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let descriptor_file = out.join("descriptors.bin");
-
     tonic_build::configure()
         // We don't actually want to build the grpc definitions - we don't need them (for now).
         // Just build the message structs.
