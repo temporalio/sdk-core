@@ -8,9 +8,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let descriptor_file = out.join("descriptors.bin");
 
-    let mut config = prost_build::Config::default();
-    config.skip_debug(["temporal.api.common.v1.Payload"]);
-
     tonic_build::configure()
         // We don't actually want to build the grpc definitions - we don't need them (for now).
         // Just build the message structs.
@@ -117,6 +114,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "::prost_wkt_types::Value"
         )
         .file_descriptor_set_path(descriptor_file)
+        .skip_debug("temporal.api.common.v1.Payload")
         .compile_protos(
             &[
                 "./protos/local/temporal/sdk/core/core_interface.proto",
