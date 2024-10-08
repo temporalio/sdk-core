@@ -149,12 +149,12 @@ where
         F: FnMut(&mut Self, Request<Req>) -> BoxFuture<'static, Result<Response<Resp>, Status>>,
         F: Send + Sync + Unpin + 'static,
     {
-        let rtc = self.get_retry_config(call_name);
+        let info = self.get_call_info(call_name, Some(&req));
         let fact = || {
             let req_clone = req_cloner(&req);
             callfn(self, req_clone)
         };
-        let res = Self::make_future_retry(rtc, fact, call_name);
+        let res = Self::make_future_retry(info, fact);
         res.map_err(|(e, _attempt)| e).map_ok(|x| x.0).await
     }
 }
@@ -318,7 +318,6 @@ impl RawClientLike for Client {
 }
 
 /// Helper for cloning a tonic request as long as the inner message may be cloned.
-/// We drop extensions, so, lang bridges can't pass those in :shrug:
 fn req_cloner<T: Clone>(cloneme: &Request<T>) -> Request<T> {
     let msg = cloneme.get_ref().clone();
     let mut new_req = Request::new(msg);
@@ -333,6 +332,7 @@ fn req_cloner<T: Clone>(cloneme: &Request<T>) -> Request<T> {
             }
         }
     }
+    *new_req.extensions_mut() = cloneme.extensions().clone();
     new_req
 }
 
@@ -358,6 +358,11 @@ impl AttachMetricLabels {
         self
     }
 }
+
+/// A request extension that, when set, should make the [RetryClient] consider this call to be a
+/// [super::retry::CallType::UserLongPoll]
+#[derive(Copy, Clone, Debug)]
+pub(super) struct IsUserLongPoll;
 
 // Blanket impl the trait for all raw-client-like things. Since the trait default-implements
 // everything, there's nothing to actually implement.
@@ -413,6 +418,15 @@ where
 }
 
 /// Helps re-declare gRPC client methods
+///
+/// There are two forms:
+///
+/// * The first takes a closure that can modify the request. This is only called once, before the
+///   actual rpc call is made, and before determinations are made about the kind of call (long poll
+///   or not) and retry policy.
+/// * The second takes three closures. The first can modify the request like in the first form.
+///   The second can modify the request and return a value, and is called right before every call
+///   (including on retries). The third is called with the response to the call after it resolves.
 macro_rules! proxy {
     ($client_type:tt, $client_meth:ident, $method:ident, $req:ty, $resp:ty $(, $closure:expr)?) => {
         #[doc = concat!("See [", stringify!($client_type), "::", stringify!($method), "]")]
@@ -421,21 +435,26 @@ macro_rules! proxy {
             request: impl tonic::IntoRequest<$req>,
         ) -> BoxFuture<Result<tonic::Response<$resp>, tonic::Status>> {
             #[allow(unused_mut)]
+            let mut as_req = request.into_request();
+            $( type_closure_arg(&mut as_req, $closure); )*
+            #[allow(unused_mut)]
             let fact = |c: &mut Self, mut req: tonic::Request<$req>| {
-                $( type_closure_arg(&mut req, $closure); )*
                 let mut c = c.$client_meth().clone();
                 async move { c.$method(req).await }.boxed()
             };
-            self.call(stringify!($method), fact, request.into_request())
+            self.call(stringify!($method), fact, as_req)
         }
     };
     ($client_type:tt, $client_meth:ident, $method:ident, $req:ty, $resp:ty,
-     $closure_before:expr, $closure_after:expr) => {
+     $closure_request:expr, $closure_before:expr, $closure_after:expr) => {
         #[doc = concat!("See [", stringify!($client_type), "::", stringify!($method), "]")]
         fn $method(
             &mut self,
             request: impl tonic::IntoRequest<$req>,
         ) -> BoxFuture<Result<tonic::Response<$resp>, tonic::Status>> {
+            #[allow(unused_mut)]
+            let mut as_req = request.into_request();
+            type_closure_arg(&mut as_req, $closure_request);
             #[allow(unused_mut)]
             let fact = |c: &mut Self, mut req: tonic::Request<$req>| {
                 let data = type_closure_two_arg(&mut req, c.get_workers_info().unwrap(),
@@ -445,13 +464,14 @@ macro_rules! proxy {
                     type_closure_two_arg(c.$method(req).await, data, $closure_after)
                 }.boxed()
             };
-            self.call(stringify!($method), fact, request.into_request())
+            self.call(stringify!($method), fact, as_req)
         }
     };
 }
 macro_rules! proxier {
     ( $trait_name:ident; $impl_list_name:ident; $client_type:tt; $client_meth:ident;
-      $(($method:ident, $req:ty, $resp:ty $(, $closure:expr $(, $closure_after:expr)?)? );)* ) => {
+      $(($method:ident, $req:ty, $resp:ty
+         $(, $closure:expr $(, $closure_before:expr, $closure_after:expr)?)? );)* ) => {
         #[cfg(test)]
         const $impl_list_name: &'static [&'static str] = &[$(stringify!($method)),*];
         /// Trait version of the generated client with modifications to attach appropriate metric
@@ -470,7 +490,7 @@ macro_rules! proxier {
         {
             $(
                proxy!($client_type, $client_meth, $method, $req, $resp
-                      $(,$closure $(,$closure_after)*)*);
+                      $(,$closure $(,$closure_before, $closure_after)*)*);
             )*
         }
     };
@@ -548,15 +568,18 @@ proxier! {
         start_workflow_execution,
         StartWorkflowExecutionRequest,
         StartWorkflowExecutionResponse,
-        |r, workers| {
-            let mut slot: Option<Box<dyn Slot + Send>> = None;
+        |r| {
             let mut labels = namespaced_request!(r);
             labels.task_q(r.get_ref().task_queue.clone());
             r.extensions_mut().insert(labels);
+        },
+        |r, workers| {
+            let mut slot: Option<Box<dyn Slot + Send>> = None;
             let req_mut = r.get_mut();
             if req_mut.request_eager_execution {
                 let namespace = req_mut.namespace.clone();
-                let task_queue = req_mut.task_queue.clone().unwrap().name.clone();
+                let task_queue = req_mut.task_queue.as_ref()
+                                    .map(|tq| tq.name.clone()).unwrap_or_default();
                 match workers.try_reserve_wft_slot(namespace, task_queue) {
                     Some(s) => slot = Some(s),
                     None => req_mut.request_eager_execution = false
@@ -586,6 +609,9 @@ proxier! {
         |r| {
             let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
+            if r.get_ref().wait_new_event {
+                r.extensions_mut().insert(IsUserLongPoll);
+            }
             if r.get_ref().wait_new_event {
                 r.set_default_timeout(LONG_POLL_TIMEOUT);
             }
@@ -981,7 +1007,7 @@ proxier! {
         GetWorkerTaskReachabilityRequest,
         GetWorkerTaskReachabilityResponse,
         |r| {
-            let mut labels = namespaced_request!(r);
+            let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );

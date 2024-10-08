@@ -111,6 +111,7 @@ pub mod coresdk {
             temporal::api::enums::v1::TimeoutType,
         };
         use activity_execution_result as aer;
+        use anyhow::anyhow;
         use std::fmt::{Display, Formatter};
 
         impl ActivityExecutionResult {
@@ -209,11 +210,21 @@ pub mod coresdk {
         }
 
         impl ActivityResolution {
-            pub fn unwrap_ok_payload(self) -> Payload {
-                match self.status.unwrap() {
-                    activity_resolution::Status::Completed(c) => c.result.unwrap(),
-                    e => panic!("Activity was not successful: {e:?}"),
+            /// Extract an activity's payload if it completed successfully, or return an error for all
+            /// other outcomes.
+            pub fn success_payload_or_error(self) -> Result<Option<Payload>, anyhow::Error> {
+                let Some(status) = self.status else {
+                    return Err(anyhow!("Activity completed without a status"));
+                };
+
+                match status {
+                    activity_resolution::Status::Completed(success) => Ok(success.result),
+                    e => Err(anyhow!("Activity was not successful: {e:?}")),
                 }
+            }
+
+            pub fn unwrap_ok_payload(self) -> Payload {
+                self.success_payload_or_error().unwrap().unwrap()
             }
 
             pub fn completed_ok(&self) -> bool {
@@ -510,6 +521,12 @@ pub mod coresdk {
                         None
                     }
                 })
+            }
+        }
+
+        impl workflow_activation_job::Variant {
+            pub fn is_local_activity_resolution(&self) -> bool {
+                matches!(self, workflow_activation_job::Variant::ResolveActivity(ra) if ra.is_local)
             }
         }
 
@@ -2000,60 +2017,60 @@ pub mod temporal {
                     pub fn event_type(&self) -> EventType {
                         // I just absolutely _love_ this
                         match self {
-                            Attributes::WorkflowExecutionStartedEventAttributes(_) => {EventType::WorkflowExecutionStarted}
-                            Attributes::WorkflowExecutionCompletedEventAttributes(_) => {EventType::WorkflowExecutionCompleted}
-                            Attributes::WorkflowExecutionFailedEventAttributes(_) => {EventType::WorkflowExecutionFailed}
-                            Attributes::WorkflowExecutionTimedOutEventAttributes(_) => {EventType::WorkflowExecutionTimedOut}
-                            Attributes::WorkflowTaskScheduledEventAttributes(_) => {EventType::WorkflowTaskScheduled}
-                            Attributes::WorkflowTaskStartedEventAttributes(_) => {EventType::WorkflowTaskStarted}
-                            Attributes::WorkflowTaskCompletedEventAttributes(_) => {EventType::WorkflowTaskCompleted}
-                            Attributes::WorkflowTaskTimedOutEventAttributes(_) => {EventType::WorkflowTaskTimedOut}
-                            Attributes::WorkflowTaskFailedEventAttributes(_) => {EventType::WorkflowTaskFailed}
-                            Attributes::ActivityTaskScheduledEventAttributes(_) => {EventType::ActivityTaskScheduled}
-                            Attributes::ActivityTaskStartedEventAttributes(_) => {EventType::ActivityTaskStarted}
-                            Attributes::ActivityTaskCompletedEventAttributes(_) => {EventType::ActivityTaskCompleted}
-                            Attributes::ActivityTaskFailedEventAttributes(_) => {EventType::ActivityTaskFailed}
-                            Attributes::ActivityTaskTimedOutEventAttributes(_) => {EventType::ActivityTaskTimedOut}
-                            Attributes::TimerStartedEventAttributes(_) => {EventType::TimerStarted}
-                            Attributes::TimerFiredEventAttributes(_) => {EventType::TimerFired}
-                            Attributes::ActivityTaskCancelRequestedEventAttributes(_) => {EventType::ActivityTaskCancelRequested}
-                            Attributes::ActivityTaskCanceledEventAttributes(_) => {EventType::ActivityTaskCanceled}
-                            Attributes::TimerCanceledEventAttributes(_) => {EventType::TimerCanceled}
-                            Attributes::MarkerRecordedEventAttributes(_) => {EventType::MarkerRecorded}
-                            Attributes::WorkflowExecutionSignaledEventAttributes(_) => {EventType::WorkflowExecutionSignaled}
-                            Attributes::WorkflowExecutionTerminatedEventAttributes(_) => {EventType::WorkflowExecutionTerminated}
-                            Attributes::WorkflowExecutionCancelRequestedEventAttributes(_) => {EventType::WorkflowExecutionCancelRequested}
-                            Attributes::WorkflowExecutionCanceledEventAttributes(_) => {EventType::WorkflowExecutionCanceled}
-                            Attributes::RequestCancelExternalWorkflowExecutionInitiatedEventAttributes(_) => {EventType::RequestCancelExternalWorkflowExecutionInitiated}
-                            Attributes::RequestCancelExternalWorkflowExecutionFailedEventAttributes(_) => {EventType::RequestCancelExternalWorkflowExecutionFailed}
-                            Attributes::ExternalWorkflowExecutionCancelRequestedEventAttributes(_) => {EventType::ExternalWorkflowExecutionCancelRequested}
-                            Attributes::WorkflowExecutionContinuedAsNewEventAttributes(_) => {EventType::WorkflowExecutionContinuedAsNew}
-                            Attributes::StartChildWorkflowExecutionInitiatedEventAttributes(_) => {EventType::StartChildWorkflowExecutionInitiated}
-                            Attributes::StartChildWorkflowExecutionFailedEventAttributes(_) => {EventType::StartChildWorkflowExecutionFailed}
-                            Attributes::ChildWorkflowExecutionStartedEventAttributes(_) => {EventType::ChildWorkflowExecutionStarted}
-                            Attributes::ChildWorkflowExecutionCompletedEventAttributes(_) => {EventType::ChildWorkflowExecutionCompleted}
-                            Attributes::ChildWorkflowExecutionFailedEventAttributes(_) => {EventType::ChildWorkflowExecutionFailed}
-                            Attributes::ChildWorkflowExecutionCanceledEventAttributes(_) => {EventType::ChildWorkflowExecutionCanceled}
-                            Attributes::ChildWorkflowExecutionTimedOutEventAttributes(_) => {EventType::ChildWorkflowExecutionTimedOut}
-                            Attributes::ChildWorkflowExecutionTerminatedEventAttributes(_) => {EventType::ChildWorkflowExecutionTerminated}
-                            Attributes::SignalExternalWorkflowExecutionInitiatedEventAttributes(_) => {EventType::SignalExternalWorkflowExecutionInitiated}
-                            Attributes::SignalExternalWorkflowExecutionFailedEventAttributes(_) => {EventType::SignalExternalWorkflowExecutionFailed}
-                            Attributes::ExternalWorkflowExecutionSignaledEventAttributes(_) => {EventType::ExternalWorkflowExecutionSignaled}
-                            Attributes::UpsertWorkflowSearchAttributesEventAttributes(_) => {EventType::UpsertWorkflowSearchAttributes}
-                            Attributes::WorkflowExecutionUpdateAdmittedEventAttributes(_) => {EventType::WorkflowExecutionUpdateAdmitted}
-                            Attributes::WorkflowExecutionUpdateRejectedEventAttributes(_) => {EventType::WorkflowExecutionUpdateRejected}
-                            Attributes::WorkflowExecutionUpdateAcceptedEventAttributes(_) => {EventType::WorkflowExecutionUpdateAccepted}
-                            Attributes::WorkflowExecutionUpdateCompletedEventAttributes(_) => {EventType::WorkflowExecutionUpdateCompleted}
-                            Attributes::WorkflowPropertiesModifiedExternallyEventAttributes(_) => {EventType::WorkflowPropertiesModifiedExternally}
-                            Attributes::ActivityPropertiesModifiedExternallyEventAttributes(_) => {EventType::ActivityPropertiesModifiedExternally}
-                            Attributes::WorkflowPropertiesModifiedEventAttributes(_) => {EventType::WorkflowPropertiesModified}
-                            Attributes::NexusOperationScheduledEventAttributes(_) => {EventType::NexusOperationScheduled}
-                            Attributes::NexusOperationStartedEventAttributes(_) => {EventType::NexusOperationStarted}
-                            Attributes::NexusOperationCompletedEventAttributes(_) => {EventType::NexusOperationCompleted}
-                            Attributes::NexusOperationFailedEventAttributes(_) => {EventType::NexusOperationFailed}
-                            Attributes::NexusOperationCanceledEventAttributes(_) => {EventType::NexusOperationCanceled}
-                            Attributes::NexusOperationTimedOutEventAttributes(_) => {EventType::NexusOperationTimedOut}
-                            Attributes::NexusOperationCancelRequestedEventAttributes(_) => {EventType::NexusOperationCancelRequested}
+                            Attributes::WorkflowExecutionStartedEventAttributes(_) => { EventType::WorkflowExecutionStarted }
+                            Attributes::WorkflowExecutionCompletedEventAttributes(_) => { EventType::WorkflowExecutionCompleted }
+                            Attributes::WorkflowExecutionFailedEventAttributes(_) => { EventType::WorkflowExecutionFailed }
+                            Attributes::WorkflowExecutionTimedOutEventAttributes(_) => { EventType::WorkflowExecutionTimedOut }
+                            Attributes::WorkflowTaskScheduledEventAttributes(_) => { EventType::WorkflowTaskScheduled }
+                            Attributes::WorkflowTaskStartedEventAttributes(_) => { EventType::WorkflowTaskStarted }
+                            Attributes::WorkflowTaskCompletedEventAttributes(_) => { EventType::WorkflowTaskCompleted }
+                            Attributes::WorkflowTaskTimedOutEventAttributes(_) => { EventType::WorkflowTaskTimedOut }
+                            Attributes::WorkflowTaskFailedEventAttributes(_) => { EventType::WorkflowTaskFailed }
+                            Attributes::ActivityTaskScheduledEventAttributes(_) => { EventType::ActivityTaskScheduled }
+                            Attributes::ActivityTaskStartedEventAttributes(_) => { EventType::ActivityTaskStarted }
+                            Attributes::ActivityTaskCompletedEventAttributes(_) => { EventType::ActivityTaskCompleted }
+                            Attributes::ActivityTaskFailedEventAttributes(_) => { EventType::ActivityTaskFailed }
+                            Attributes::ActivityTaskTimedOutEventAttributes(_) => { EventType::ActivityTaskTimedOut }
+                            Attributes::TimerStartedEventAttributes(_) => { EventType::TimerStarted }
+                            Attributes::TimerFiredEventAttributes(_) => { EventType::TimerFired }
+                            Attributes::ActivityTaskCancelRequestedEventAttributes(_) => { EventType::ActivityTaskCancelRequested }
+                            Attributes::ActivityTaskCanceledEventAttributes(_) => { EventType::ActivityTaskCanceled }
+                            Attributes::TimerCanceledEventAttributes(_) => { EventType::TimerCanceled }
+                            Attributes::MarkerRecordedEventAttributes(_) => { EventType::MarkerRecorded }
+                            Attributes::WorkflowExecutionSignaledEventAttributes(_) => { EventType::WorkflowExecutionSignaled }
+                            Attributes::WorkflowExecutionTerminatedEventAttributes(_) => { EventType::WorkflowExecutionTerminated }
+                            Attributes::WorkflowExecutionCancelRequestedEventAttributes(_) => { EventType::WorkflowExecutionCancelRequested }
+                            Attributes::WorkflowExecutionCanceledEventAttributes(_) => { EventType::WorkflowExecutionCanceled }
+                            Attributes::RequestCancelExternalWorkflowExecutionInitiatedEventAttributes(_) => { EventType::RequestCancelExternalWorkflowExecutionInitiated }
+                            Attributes::RequestCancelExternalWorkflowExecutionFailedEventAttributes(_) => { EventType::RequestCancelExternalWorkflowExecutionFailed }
+                            Attributes::ExternalWorkflowExecutionCancelRequestedEventAttributes(_) => { EventType::ExternalWorkflowExecutionCancelRequested }
+                            Attributes::WorkflowExecutionContinuedAsNewEventAttributes(_) => { EventType::WorkflowExecutionContinuedAsNew }
+                            Attributes::StartChildWorkflowExecutionInitiatedEventAttributes(_) => { EventType::StartChildWorkflowExecutionInitiated }
+                            Attributes::StartChildWorkflowExecutionFailedEventAttributes(_) => { EventType::StartChildWorkflowExecutionFailed }
+                            Attributes::ChildWorkflowExecutionStartedEventAttributes(_) => { EventType::ChildWorkflowExecutionStarted }
+                            Attributes::ChildWorkflowExecutionCompletedEventAttributes(_) => { EventType::ChildWorkflowExecutionCompleted }
+                            Attributes::ChildWorkflowExecutionFailedEventAttributes(_) => { EventType::ChildWorkflowExecutionFailed }
+                            Attributes::ChildWorkflowExecutionCanceledEventAttributes(_) => { EventType::ChildWorkflowExecutionCanceled }
+                            Attributes::ChildWorkflowExecutionTimedOutEventAttributes(_) => { EventType::ChildWorkflowExecutionTimedOut }
+                            Attributes::ChildWorkflowExecutionTerminatedEventAttributes(_) => { EventType::ChildWorkflowExecutionTerminated }
+                            Attributes::SignalExternalWorkflowExecutionInitiatedEventAttributes(_) => { EventType::SignalExternalWorkflowExecutionInitiated }
+                            Attributes::SignalExternalWorkflowExecutionFailedEventAttributes(_) => { EventType::SignalExternalWorkflowExecutionFailed }
+                            Attributes::ExternalWorkflowExecutionSignaledEventAttributes(_) => { EventType::ExternalWorkflowExecutionSignaled }
+                            Attributes::UpsertWorkflowSearchAttributesEventAttributes(_) => { EventType::UpsertWorkflowSearchAttributes }
+                            Attributes::WorkflowExecutionUpdateAdmittedEventAttributes(_) => { EventType::WorkflowExecutionUpdateAdmitted }
+                            Attributes::WorkflowExecutionUpdateRejectedEventAttributes(_) => { EventType::WorkflowExecutionUpdateRejected }
+                            Attributes::WorkflowExecutionUpdateAcceptedEventAttributes(_) => { EventType::WorkflowExecutionUpdateAccepted }
+                            Attributes::WorkflowExecutionUpdateCompletedEventAttributes(_) => { EventType::WorkflowExecutionUpdateCompleted }
+                            Attributes::WorkflowPropertiesModifiedExternallyEventAttributes(_) => { EventType::WorkflowPropertiesModifiedExternally }
+                            Attributes::ActivityPropertiesModifiedExternallyEventAttributes(_) => { EventType::ActivityPropertiesModifiedExternally }
+                            Attributes::WorkflowPropertiesModifiedEventAttributes(_) => { EventType::WorkflowPropertiesModified }
+                            Attributes::NexusOperationScheduledEventAttributes(_) => { EventType::NexusOperationScheduled }
+                            Attributes::NexusOperationStartedEventAttributes(_) => { EventType::NexusOperationStarted }
+                            Attributes::NexusOperationCompletedEventAttributes(_) => { EventType::NexusOperationCompleted }
+                            Attributes::NexusOperationFailedEventAttributes(_) => { EventType::NexusOperationFailed }
+                            Attributes::NexusOperationCanceledEventAttributes(_) => { EventType::NexusOperationCanceled }
+                            Attributes::NexusOperationTimedOutEventAttributes(_) => { EventType::NexusOperationTimedOut }
+                            Attributes::NexusOperationCancelRequestedEventAttributes(_) => { EventType::NexusOperationCancelRequested }
                         }
                     }
                 }

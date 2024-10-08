@@ -37,10 +37,13 @@ pub struct TemporalDevServerConfig {
     /// Port to use or obtains a free one if none given.
     #[builder(default)]
     pub port: Option<u16>,
+    /// Port to use for the UI server or obtains a free one if none given.
+    #[builder(default)]
+    pub ui_port: Option<u16>,
     /// Sqlite DB filename if persisting or non-persistent if none.
     #[builder(default)]
     pub db_filename: Option<String>,
-    /// Whether to enable the UI.
+    /// Whether to enable the UI. If ui_port is set, assumes true.
     #[builder(default)]
     pub ui: bool,
     /// Log format and level
@@ -101,7 +104,15 @@ impl TemporalDevServerConfig {
             args.push("--filename".to_owned());
             args.push(db_filename.clone());
         }
-        if !self.ui {
+        if let Some(ui_port) = self.ui_port {
+            args.push("--ui-port".to_owned());
+            args.push(ui_port.to_string());
+        } else if self.ui {
+            // Caps at u16 max which is also max port value
+            let port = port.saturating_add(1000);
+            args.push("--ui-port".to_owned());
+            args.push(port.to_string());
+        } else {
             args.push("--headless".to_owned());
         }
         args.extend(self.extra_args.clone());
@@ -490,7 +501,7 @@ async fn lazy_download_exe(
             info!("Downloading {} to {}", uri, dest.display());
             download_and_extract(client, uri, file_to_extract, &mut temp_file)
                 .await
-                .map_err(|err| {
+                .inspect_err(|_| {
                     // Failed to download, just remove file
                     if let Err(err) = std::fs::remove_file(temp_dest) {
                         warn!(
@@ -499,7 +510,6 @@ async fn lazy_download_exe(
                             err
                         );
                     }
-                    err
                 })
         }
     }?;

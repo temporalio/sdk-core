@@ -8,7 +8,7 @@ use crate::{
     worker::{
         workflow::{
             machines::{activity_state_machine::activity_fail_info, HistEventData},
-            InternalFlagsRef, OutgoingJob,
+            InternalFlagsRef,
         },
         LocalActivityExecutionResult,
     },
@@ -631,9 +631,6 @@ impl Cancellable for LocalActivityMachine {
     }
 }
 
-#[derive(Default, Clone)]
-pub(super) struct Abandoned {}
-
 impl WFMachinesAdapter for LocalActivityMachine {
     fn adapt_response(
         &self,
@@ -737,14 +734,12 @@ impl WFMachinesAdapter for LocalActivityMachine {
                 };
 
                 let mut responses = vec![
-                    MachineResponse::PushWFJob(OutgoingJob {
-                        variant: ResolveActivity {
-                            seq: self.shared_state.attrs.seq,
-                            result: Some(resolution),
-                        }
-                        .into(),
-                        is_la_resolution: true,
-                    }),
+                    ResolveActivity {
+                        seq: self.shared_state.attrs.seq,
+                        result: Some(resolution),
+                        is_local: true,
+                    }
+                    .into(),
                     MachineResponse::UpdateWFTime(complete_time),
                 ];
 

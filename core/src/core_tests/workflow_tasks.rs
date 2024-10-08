@@ -125,10 +125,10 @@ async fn single_timer(#[case] worker: Worker, #[case] evict: WorkflowCachingPoli
 }
 
 #[rstest(worker,
-case::incremental(single_activity_setup(&[1, 2])),
-case::incremental_activity_failure(single_activity_failure_setup(&[1, 2])),
-case::replay(single_activity_setup(&[2])),
-case::replay_activity_failure(single_activity_failure_setup(&[2]))
+    case::incremental(single_activity_setup(&[1, 2])),
+    case::incremental_activity_failure(single_activity_failure_setup(&[1, 2])),
+    case::replay(single_activity_setup(&[2])),
+    case::replay_activity_failure(single_activity_failure_setup(&[2]))
 )]
 #[tokio::test]
 async fn single_activity_completion(worker: Worker) {
@@ -319,7 +319,7 @@ async fn scheduled_activity_timeout(hist_batches: &'static [usize]) {
                                         status: Some(activity_resolution::Status::Failed(ar::Failure {
                                             failure: Some(failure)
                                         })),
-                                    })
+                                    }), ..
                                 }
                             )),
                         }
@@ -361,7 +361,7 @@ async fn started_activity_timeout(hist_batches: &'static [usize]) {
             // Activity is getting resolved right away as it has been timed out.
             gen_assert_and_reply(
                 &|res| {
-                assert_matches!(
+                    assert_matches!(
                     res.jobs.as_slice(),
                     [
                         WorkflowActivationJob {
@@ -372,7 +372,7 @@ async fn started_activity_timeout(hist_batches: &'static [usize]) {
                                         status: Some(activity_resolution::Status::Failed(ar::Failure {
                                             failure: Some(failure)
                                         })),
-                                    })
+                                    }), ..
                                 }
                             )),
                         }
@@ -421,10 +421,10 @@ async fn cancelled_activity_timeout(hist_batches: &'static [usize]) {
             gen_assert_and_reply(
                 &job_assert!(workflow_activation_job::Variant::ResolveActivity(
                     ResolveActivity {
-                        seq: _,
                         result: Some(ActivityResolution {
                             status: Some(activity_resolution::Status::Cancelled(..)),
-                        })
+                        }),
+                        ..
                     }
                 )),
                 vec![CompleteWorkflowExecution { result: None }.into()],
@@ -574,10 +574,10 @@ async fn verify_activity_cancellation(
             gen_assert_and_reply(
                 &job_assert!(workflow_activation_job::Variant::ResolveActivity(
                     ResolveActivity {
-                        seq: _,
                         result: Some(ActivityResolution {
                             status: Some(activity_resolution::Status::Cancelled(..)),
-                        })
+                        }),
+                        ..
                     }
                 )),
                 vec![CompleteWorkflowExecution { result: None }.into()],
@@ -647,10 +647,10 @@ async fn verify_activity_cancellation_wait_for_cancellation(activity_id: u32, wo
             gen_assert_and_reply(
                 &job_assert!(workflow_activation_job::Variant::ResolveActivity(
                     ResolveActivity {
-                        seq: _,
                         result: Some(ActivityResolution {
                             status: Some(activity_resolution::Status::Cancelled(..)),
-                        })
+                        }),
+                        ..
                     }
                 )),
                 vec![CompleteWorkflowExecution { result: None }.into()],
