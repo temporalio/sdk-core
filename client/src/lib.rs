@@ -58,7 +58,7 @@ use temporal_sdk_core_protos::{
     temporal::api::{
         cloud::cloudservice::v1::cloud_service_client::CloudServiceClient,
         common::v1::{Header, Payload, Payloads, RetryPolicy, WorkflowExecution, WorkflowType},
-        enums::v1::{TaskQueueKind, WorkflowIdReusePolicy},
+        enums::v1::{TaskQueueKind, WorkflowIdConflictPolicy, WorkflowIdReusePolicy},
         failure::v1::Failure,
         operatorservice::v1::operator_service_client::OperatorServiceClient,
         query::v1::WorkflowQuery,
@@ -1060,6 +1060,10 @@ pub struct WorkflowOptions {
     /// Set the policy for reusing the workflow id
     pub id_reuse_policy: WorkflowIdReusePolicy,
 
+    /// Set the policy for how to resolve conflicts with running policies.
+    /// NOTE: This is ignored for child workflows.
+    pub id_conflict_policy: WorkflowIdConflictPolicy,
+
     /// Optionally set the execution timeout for the workflow
     /// <https://docs.temporal.io/workflows/#workflow-execution-timeout>
     pub execution_timeout: Option<Duration>,
@@ -1111,6 +1115,7 @@ impl WorkflowClientTrait for Client {
                 }),
                 request_id: request_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
                 workflow_id_reuse_policy: options.id_reuse_policy as i32,
+                workflow_id_conflict_policy: options.id_conflict_policy as i32,
                 workflow_execution_timeout: options
                     .execution_timeout
                     .and_then(|d| d.try_into().ok()),
@@ -1276,6 +1281,7 @@ impl WorkflowClientTrait for Client {
                     .request_id
                     .unwrap_or_else(|| Uuid::new_v4().to_string()),
                 workflow_id_reuse_policy: workflow_options.id_reuse_policy as i32,
+                workflow_id_conflict_policy: workflow_options.id_conflict_policy as i32,
                 workflow_execution_timeout: workflow_options
                     .execution_timeout
                     .and_then(|d| d.try_into().ok()),
