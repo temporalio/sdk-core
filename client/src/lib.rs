@@ -41,8 +41,8 @@ use crate::{
 };
 use backoff::{exponential, ExponentialBackoff, SystemClock};
 use http::{uri::InvalidUri, Uri};
-use once_cell::sync::OnceCell;
 use parking_lot::RwLock;
+use std::sync::OnceLock;
 use std::{
     collections::HashMap,
     fmt::{Debug, Formatter},
@@ -58,7 +58,7 @@ use temporal_sdk_core_protos::{
     temporal::api::{
         cloud::cloudservice::v1::cloud_service_client::CloudServiceClient,
         common::v1::{Header, Payload, Payloads, RetryPolicy, WorkflowExecution, WorkflowType},
-        enums::v1::{TaskQueueKind, WorkflowIdReusePolicy},
+        enums::v1::{TaskQueueKind, WorkflowIdConflictPolicy, WorkflowIdReusePolicy},
         failure::v1::Failure,
         operatorservice::v1::operator_service_client::OperatorServiceClient,
         query::v1::WorkflowQuery,
@@ -546,17 +546,17 @@ impl Interceptor for ServiceCallInterceptor {
 #[derive(Debug, Clone)]
 pub struct TemporalServiceClient<T> {
     svc: T,
-    workflow_svc_client: OnceCell<WorkflowServiceClient<T>>,
-    operator_svc_client: OnceCell<OperatorServiceClient<T>>,
-    cloud_svc_client: OnceCell<CloudServiceClient<T>>,
-    test_svc_client: OnceCell<TestServiceClient<T>>,
-    health_svc_client: OnceCell<HealthClient<T>>,
+    workflow_svc_client: OnceLock<WorkflowServiceClient<T>>,
+    operator_svc_client: OnceLock<OperatorServiceClient<T>>,
+    cloud_svc_client: OnceLock<CloudServiceClient<T>>,
+    test_svc_client: OnceLock<TestServiceClient<T>>,
+    health_svc_client: OnceLock<HealthClient<T>>,
 }
 
 /// We up the limit on incoming messages from server from the 4Mb default to 128Mb. If for
 /// whatever reason this needs to be changed by the user, we support overriding it via env var.
 fn get_decode_max_size() -> usize {
-    static _DECODE_MAX_SIZE: OnceCell<usize> = OnceCell::new();
+    static _DECODE_MAX_SIZE: OnceLock<usize> = OnceLock::new();
     *_DECODE_MAX_SIZE.get_or_init(|| {
         std::env::var("TEMPORAL_MAX_INCOMING_GRPC_BYTES")
             .ok()
@@ -576,11 +576,11 @@ where
     fn new(svc: T) -> Self {
         Self {
             svc,
-            workflow_svc_client: OnceCell::new(),
-            operator_svc_client: OnceCell::new(),
-            cloud_svc_client: OnceCell::new(),
-            test_svc_client: OnceCell::new(),
-            health_svc_client: OnceCell::new(),
+            workflow_svc_client: OnceLock::new(),
+            operator_svc_client: OnceLock::new(),
+            cloud_svc_client: OnceLock::new(),
+            test_svc_client: OnceLock::new(),
+            health_svc_client: OnceLock::new(),
         }
     }
     /// Get the underlying workflow service client
@@ -1060,6 +1060,10 @@ pub struct WorkflowOptions {
     /// Set the policy for reusing the workflow id
     pub id_reuse_policy: WorkflowIdReusePolicy,
 
+    /// Set the policy for how to resolve conflicts with running policies.
+    /// NOTE: This is ignored for child workflows.
+    pub id_conflict_policy: WorkflowIdConflictPolicy,
+
     /// Optionally set the execution timeout for the workflow
     /// <https://docs.temporal.io/workflows/#workflow-execution-timeout>
     pub execution_timeout: Option<Duration>,
@@ -1111,6 +1115,7 @@ impl WorkflowClientTrait for Client {
                 }),
                 request_id: request_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
                 workflow_id_reuse_policy: options.id_reuse_policy as i32,
+                workflow_id_conflict_policy: options.id_conflict_policy as i32,
                 workflow_execution_timeout: options
                     .execution_timeout
                     .and_then(|d| d.try_into().ok()),
@@ -1276,6 +1281,7 @@ impl WorkflowClientTrait for Client {
                     .request_id
                     .unwrap_or_else(|| Uuid::new_v4().to_string()),
                 workflow_id_reuse_policy: workflow_options.id_reuse_policy as i32,
+                workflow_id_conflict_policy: workflow_options.id_conflict_policy as i32,
                 workflow_execution_timeout: workflow_options
                     .execution_timeout
                     .and_then(|d| d.try_into().ok()),

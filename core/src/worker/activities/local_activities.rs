@@ -6,8 +6,8 @@ use crate::{
     worker::workflow::HeartbeatTimeoutMsg,
     MetricsContext, TaskToken,
 };
-use futures::{stream::BoxStream, Stream};
 use futures_util::{future, future::AbortRegistration, stream, StreamExt};
+use futures_util::{stream::BoxStream, Stream};
 use parking_lot::{Mutex, MutexGuard};
 use std::{
     collections::{hash_map::Entry, HashMap},

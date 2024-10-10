@@ -15,8 +15,8 @@ use crate::{
     worker::client::mocks::{mock_manual_workflow_client, mock_workflow_client},
     Worker,
 };
-use futures::FutureExt;
-use once_cell::sync::Lazy;
+use futures_util::FutureExt;
+use std::sync::LazyLock;
 use std::time::Duration;
 use temporal_sdk_core_api::Worker as WorkerTrait;
 use temporal_sdk_core_protos::coresdk::workflow_completion::WorkflowActivationCompletion;
@@ -46,7 +46,7 @@ async fn after_shutdown_server_is_not_polled() {
 }
 
 // Better than cloning a billion arcs...
-static BARR: Lazy<Barrier> = Lazy::new(|| Barrier::new(3));
+static BARR: LazyLock<Barrier> = LazyLock::new(|| Barrier::new(3));
 
 #[tokio::test]
 async fn shutdown_interrupts_both_polls() {

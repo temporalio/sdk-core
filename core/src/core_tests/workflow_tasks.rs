@@ -16,7 +16,7 @@ use crate::{
     },
     Worker,
 };
-use futures::{stream, FutureExt};
+use futures_util::{stream, FutureExt};
 use mockall::TimesRange;
 use rstest::{fixture, rstest};
 use std::{

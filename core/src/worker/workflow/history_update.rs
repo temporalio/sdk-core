@@ -5,9 +5,9 @@ use crate::{
         workflow::{CacheMissFetchReq, PermittedWFT, PreparedWFT},
     },
 };
-use futures::{future::BoxFuture, FutureExt, Stream, TryFutureExt};
+use futures_util::{future::BoxFuture, FutureExt, Stream, TryFutureExt};
 use itertools::Itertools;
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use std::{
     collections::VecDeque,
     fmt::Debug,
@@ -24,9 +24,9 @@ use temporal_sdk_core_protos::temporal::api::{
 };
 use tracing::Instrument;
 
-static EMPTY_FETCH_ERR: Lazy<tonic::Status> =
-    Lazy::new(|| tonic::Status::unknown("Fetched empty history page"));
-static EMPTY_TASK_ERR: Lazy<tonic::Status> = Lazy::new(|| {
+static EMPTY_FETCH_ERR: LazyLock<tonic::Status> =
+    LazyLock::new(|| tonic::Status::unknown("Fetched empty history page"));
+static EMPTY_TASK_ERR: LazyLock<tonic::Status> = LazyLock::new(|| {
     tonic::Status::unknown("Received an empty workflow task with no queries or history")
 });
 
@@ -766,7 +766,7 @@ mod tests {
         test_help::{canned_histories, hist_to_poll_resp, mock_sdk_cfg, MockPollCfg, ResponseType},
         worker::client::mocks::mock_workflow_client,
     };
-    use futures::StreamExt;
+    use futures_util::StreamExt;
     use futures_util::TryStreamExt;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use temporal_client::WorkflowOptions;

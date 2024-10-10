@@ -335,9 +335,9 @@ impl GaugeF64 for MemoryGauge<f64> {
 }
 
 fn default_resource_instance() -> &'static Resource {
-    use once_cell::sync::OnceCell;
+    use std::sync::OnceLock;
 
-    static INSTANCE: OnceCell<Resource> = OnceCell::new();
+    static INSTANCE: OnceLock<Resource> = OnceLock::new();
     INSTANCE.get_or_init(|| {
         let resource = Resource::default();
         if resource.get(Key::from("service.name")) == Some(Value::from("unknown_service")) {

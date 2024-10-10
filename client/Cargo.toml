@@ -20,13 +20,12 @@ backoff = "0.4"
 base64 = "0.22"
 derive_builder = { workspace = true }
 derive_more = { workspace = true }
-futures = "0.3"
+futures-util = { version = "0.3", default-features = false }
 futures-retry = "0.6.0"
 http = "1.1.0"
 http-body-util = "0.1"
 hyper = { version = "1.4.1" }
 hyper-util = "0.1.6"
-once_cell = { workspace = true }
 opentelemetry = { workspace = true, features = ["metrics"], optional = true }
 parking_lot = "0.12"
 prost-types = { workspace = true }

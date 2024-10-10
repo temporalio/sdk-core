@@ -1,5 +1,5 @@
 use crate::{AttachMetricLabels, LONG_POLL_METHOD_NAMES};
-use futures::{future::BoxFuture, FutureExt};
+use futures_util::{future::BoxFuture, FutureExt};
 use std::{
     sync::Arc,
     task::{Context, Poll},

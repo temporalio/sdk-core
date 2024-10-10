@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use futures::StreamExt;
+use futures_util::StreamExt;
 use temporal_client::{SignalWithStartOptions, WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{
     ChildWorkflowOptions, Signal, SignalWorkflowOptions, WfContext, WorkflowResult,

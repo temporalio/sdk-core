@@ -25,7 +25,7 @@ use crate::{
 };
 use activity_heartbeat_manager::ActivityHeartbeatManager;
 use dashmap::DashMap;
-use futures::{
+use futures_util::{
     stream,
     stream::{BoxStream, PollNext},
     Stream, StreamExt,
@@ -279,7 +279,7 @@ impl WorkerActivityTasks {
         // Prefer eager activities over polling the server
         stream::select_with_strategy(non_poll_stream, poller_stream, |_: &mut ()| PollNext::Left)
             .map(|res| Some(res.map_err(Into::into)))
-            .chain(futures::stream::once(async move {
+            .chain(futures_util::stream::once(async move {
                 on_complete_token.cancel();
                 None
             }))
