@@ -1,7 +1,7 @@
 use anyhow::anyhow;
 use assert_matches::assert_matches;
 use futures_util::{future, future::join_all, StreamExt};
-use std::sync::OnceLock;
+use std::sync::LazyLock;
 use std::{
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -957,7 +957,7 @@ async fn worker_restarted_in_middle_of_update() {
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
 
-    static BARR: OnceLock<Barrier> = Lazy::new(|| Barrier::new(2));
+    static BARR: LazyLock<Barrier> = LazyLock::new(|| Barrier::new(2));
     static ACT_RAN: AtomicBool = AtomicBool::new(false);
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         ctx.update_handler(
