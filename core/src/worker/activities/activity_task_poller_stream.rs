@@ -1,5 +1,5 @@
 use crate::{pollers::BoxedActPoller, worker::activities::PermittedTqResp, MetricsContext};
-use futures::{stream, Stream};
+use futures_util::{stream, Stream};
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse;
 use tokio::select;
 use tokio_util::sync::CancellationToken;

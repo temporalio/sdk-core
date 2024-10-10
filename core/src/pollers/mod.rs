@@ -14,7 +14,7 @@ use temporal_sdk_core_protos::temporal::api::workflowservice::v1::{
 };
 
 #[cfg(test)]
-use futures::Future;
+use futures_util::Future;
 #[cfg(test)]
 pub(crate) use poll_buffer::MockPermittedPollBuffer;
 use temporal_sdk_core_api::worker::{ActivitySlotKind, WorkflowSlotKind};

@@ -15,7 +15,7 @@ use crate::{
     worker::client::mocks::{mock_manual_workflow_client, mock_workflow_client},
     Worker,
 };
-use futures::FutureExt;
+use futures_util::FutureExt;
 use once_cell::sync::Lazy;
 use std::time::Duration;
 use temporal_sdk_core_api::Worker as WorkerTrait;

@@ -1,5 +1,5 @@
 use crate::integ_tests::activity_functions::echo;
-use futures::StreamExt;
+use futures_util::StreamExt;
 use std::{
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},

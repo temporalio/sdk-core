@@ -3,8 +3,8 @@ use crate::{
     pollers::{self, Poller},
     worker::client::WorkerClient,
 };
-use futures::{prelude::stream::FuturesUnordered, StreamExt};
 use futures_util::{future::BoxFuture, FutureExt};
+use futures_util::{stream::FuturesUnordered, StreamExt};
 use governor::{Quota, RateLimiter};
 use std::{
     fmt::Debug,
@@ -337,7 +337,7 @@ mod tests {
         abstractions::tests::fixed_size_permit_dealer,
         worker::client::mocks::mock_manual_workflow_client,
     };
-    use futures::FutureExt;
+    use futures_util::FutureExt;
     use std::time::Duration;
     use temporal_sdk_core_protos::temporal::api::enums::v1::TaskQueueKind;
     use tokio::{select, sync::mpsc::channel};

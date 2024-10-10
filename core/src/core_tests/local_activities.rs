@@ -9,7 +9,7 @@ use crate::{
 };
 use anyhow::anyhow;
 use crossbeam_queue::SegQueue;
-use futures::{future::join_all, FutureExt};
+use futures_util::{future::join_all, FutureExt};
 use std::{
     collections::HashMap,
     ops::Sub,
