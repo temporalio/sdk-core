@@ -13,7 +13,7 @@ pub use temporal_sdk_core::replay::HistoryForReplay;
 use crate::stream::{Stream, TryStreamExt};
 use anyhow::{Context, Error};
 use base64::{prelude::BASE64_STANDARD, Engine};
-use futures::{future, stream, stream::FuturesUnordered, StreamExt};
+use futures_util::{future, stream, stream::FuturesUnordered, StreamExt};
 use parking_lot::Mutex;
 use prost::Message;
 use rand::{distributions::Standard, Rng};

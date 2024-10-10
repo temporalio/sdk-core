@@ -38,8 +38,8 @@ use crate::{
     MetricsContext,
 };
 use anyhow::anyhow;
-use futures::{stream::BoxStream, Stream, StreamExt};
 use futures_util::{future::abortable, stream};
+use futures_util::{stream::BoxStream, Stream, StreamExt};
 use itertools::Itertools;
 use prost_types::TimestampError;
 use std::{

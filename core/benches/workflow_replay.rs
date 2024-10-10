@@ -1,5 +1,5 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use futures::StreamExt;
+use futures_util::StreamExt;
 use std::time::Duration;
 use temporal_sdk::{WfContext, WorkflowFunction};
 use temporal_sdk_core::replay::HistoryForReplay;

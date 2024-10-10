@@ -15,7 +15,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use bimap::BiMap;
-use futures::{future::BoxFuture, stream, stream::BoxStream, FutureExt, Stream, StreamExt};
+use futures_util::{future::BoxFuture, stream, stream::BoxStream, FutureExt, Stream, StreamExt};
 use mockall::TimesRange;
 use parking_lot::RwLock;
 use std::{
@@ -1014,9 +1014,9 @@ macro_rules! job_assert {
 #[macro_export]
 macro_rules! advance_fut {
     ($fut:ident) => {
-        ::futures::pin_mut!($fut);
+        ::futures_util::pin_mut!($fut);
         {
-            let waker = ::futures::task::noop_waker();
+            let waker = ::futures_util::task::noop_waker();
             let mut cx = core::task::Context::from_waker(&waker);
             for _ in 0..10 {
                 assert_matches!($fut.poll_unpin(&mut cx), core::task::Poll::Pending);

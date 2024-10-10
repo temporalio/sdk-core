@@ -9,7 +9,7 @@ use crate::{
         },
     },
 };
-use futures::Stream;
+use futures_util::Stream;
 use futures_util::{stream, stream::PollNext, FutureExt, StreamExt};
 use std::{future, sync::Arc};
 use temporal_sdk_core_api::worker::{WorkflowSlotInfo, WorkflowSlotKind};

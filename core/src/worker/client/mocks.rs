@@ -1,5 +1,5 @@
 use super::*;
-use futures::Future;
+use futures_util::Future;
 use std::sync::Arc;
 use std::sync::LazyLock;
 use temporal_client::SlotManager;

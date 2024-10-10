@@ -9,7 +9,7 @@ use crate::{
     },
     Worker,
 };
-use futures::{FutureExt, Stream, StreamExt};
+use futures_util::{FutureExt, Stream, StreamExt};
 use parking_lot::Mutex;
 use std::sync::OnceLock;
 use std::{

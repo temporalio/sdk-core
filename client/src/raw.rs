@@ -9,7 +9,7 @@ use crate::{
     Client, ConfiguredClient, InterceptedMetricsSvc, RequestExt, RetryClient,
     TemporalServiceClient, LONG_POLL_TIMEOUT, TEMPORAL_NAMESPACE_HEADER_KEY,
 };
-use futures::{future::BoxFuture, FutureExt, TryFutureExt};
+use futures_util::{future::BoxFuture, FutureExt, TryFutureExt};
 use std::sync::Arc;
 use temporal_sdk_core_api::telemetry::metrics::MetricKeyValue;
 use temporal_sdk_core_protos::{

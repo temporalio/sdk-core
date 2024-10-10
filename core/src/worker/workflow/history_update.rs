@@ -5,7 +5,7 @@ use crate::{
         workflow::{CacheMissFetchReq, PermittedWFT, PreparedWFT},
     },
 };
-use futures::{future::BoxFuture, FutureExt, Stream, TryFutureExt};
+use futures_util::{future::BoxFuture, FutureExt, Stream, TryFutureExt};
 use itertools::Itertools;
 use std::sync::LazyLock;
 use std::{
@@ -766,7 +766,7 @@ mod tests {
         test_help::{canned_histories, hist_to_poll_resp, mock_sdk_cfg, MockPollCfg, ResponseType},
         worker::client::mocks::mock_workflow_client,
     };
-    use futures::StreamExt;
+    use futures_util::StreamExt;
     use futures_util::TryStreamExt;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use temporal_client::WorkflowOptions;
