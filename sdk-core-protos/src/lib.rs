@@ -1765,9 +1765,11 @@ pub mod temporal {
                     }
                 }
 
-                impl Display for Payload {
+                impl std::fmt::Debug for Payload {
                     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-                        if self.data.len() > 64 {
+                        if std::env::var("TEMPORAL_PRINT_FULL_PAYLOADS").is_err()
+                            && self.data.len() > 64
+                        {
                             let mut windows = self.data.as_slice().windows(32);
                             write!(
                                 f,
@@ -1778,6 +1780,12 @@ pub mod temporal {
                         } else {
                             write!(f, "[{}]", BASE64_STANDARD.encode(&self.data))
                         }
+                    }
+                }
+
+                impl Display for Payload {
+                    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                        write!(f, "{:?}", self)
                     }
                 }
 
