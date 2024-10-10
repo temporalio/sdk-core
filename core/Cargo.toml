@@ -41,7 +41,6 @@ hyper-util = { version = "0.1", features = ["server", "http1", "http2", "tokio"]
 itertools = "0.13"
 lru = "0.12"
 mockall = "0.13"
-once_cell = { workspace = true }
 opentelemetry = { workspace = true, features = ["metrics"], optional = true }
 opentelemetry_sdk = { version = "0.24", features = ["rt-tokio", "metrics"], optional = true }
 opentelemetry-otlp = { version = "0.17", features = ["tokio", "metrics", "tls"], optional = true }

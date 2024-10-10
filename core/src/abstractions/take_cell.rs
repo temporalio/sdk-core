@@ -1,7 +1,7 @@
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-/// Implements something a bit like a `OnceCell`, but starts already initialized and allows you
+/// Implements something a bit like a `OnceLock`, but starts already initialized and allows you
 /// to take everything out of it only once in a thread-safe way. This isn't optimized for super
 /// fast-path usage.
 pub(crate) struct TakeCell<T> {
