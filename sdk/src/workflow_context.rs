@@ -11,9 +11,9 @@ use crate::{
     IntoUpdateValidatorFunc, RustWfCmd, SignalExternalWfResult, TimerResult, UnblockEvent,
     Unblockable, UpdateFunctions,
 };
-use std::sync::mpsc::{Receiver, Sender};
 use futures_util::{task::Context, FutureExt, Stream, StreamExt};
 use parking_lot::{RwLock, RwLockReadGuard};
+use std::sync::mpsc::{Receiver, Sender};
 use std::{
     collections::HashMap,
     future::Future,
