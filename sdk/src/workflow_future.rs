@@ -5,7 +5,7 @@ use crate::{
 };
 use anyhow::{anyhow, bail, Context as AnyhowContext, Error};
 use std::sync::mpsc::Receiver;
-use futures::{future::BoxFuture, FutureExt};
+use futures_util::{future::BoxFuture, FutureExt};
 use std::{
     collections::{hash_map::Entry, HashMap},
     future::Future,

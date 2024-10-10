@@ -3,7 +3,7 @@
 
 use anyhow::anyhow;
 use flate2::read::GzDecoder;
-use futures::StreamExt;
+use futures_util::StreamExt;
 use serde::Deserialize;
 use std::{
     fs::OpenOptions,

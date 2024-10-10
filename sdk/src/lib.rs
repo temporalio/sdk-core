@@ -63,7 +63,7 @@ pub use workflow_context::{
 use crate::{interceptors::WorkerInterceptor, workflow_context::ChildWfCommon};
 use anyhow::{anyhow, bail, Context};
 use app_data::AppData;
-use futures::{future::BoxFuture, FutureExt, StreamExt, TryFutureExt, TryStreamExt};
+use futures_util::{future::BoxFuture, FutureExt, StreamExt, TryFutureExt, TryStreamExt};
 use serde::Serialize;
 use std::{
     any::{Any, TypeId},

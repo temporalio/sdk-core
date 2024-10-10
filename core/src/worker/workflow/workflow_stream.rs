@@ -8,7 +8,7 @@ use crate::{
     },
     MetricsContext,
 };
-use futures::{stream, stream::PollNext, Stream, StreamExt};
+use futures_util::{stream, stream::PollNext, Stream, StreamExt};
 use std::{collections::VecDeque, fmt::Debug, future, sync::Arc};
 use temporal_sdk_core_api::errors::PollWfError;
 use temporal_sdk_core_protos::coresdk::workflow_activation::remove_from_cache::EvictionReason;

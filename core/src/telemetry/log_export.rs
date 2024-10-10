@@ -1,4 +1,4 @@
-use futures::channel::mpsc::{channel, Receiver, Sender};
+use futures_channel::mpsc::{channel, Receiver, Sender};
 use parking_lot::Mutex;
 use ringbuf::{consumer::Consumer, producer::Producer, traits::Split, HeapRb};
 use std::{collections::HashMap, fmt, sync::Arc, time::SystemTime};
@@ -219,7 +219,7 @@ mod tests {
         telemetry::{construct_filter_string, CoreLogStreamConsumer},
         telemetry_init,
     };
-    use futures::stream::StreamExt;
+    use futures_util::stream::StreamExt;
     use std::{
         fmt,
         sync::{Arc, Mutex},
