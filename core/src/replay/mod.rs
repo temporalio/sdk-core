@@ -10,8 +10,8 @@ use crate::{
     Worker,
 };
 use futures::{FutureExt, Stream, StreamExt};
-use std::sync::OnceLock;
 use parking_lot::Mutex;
+use std::sync::OnceLock;
 use std::{
     pin::Pin,
     sync::Arc,

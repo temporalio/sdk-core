@@ -41,8 +41,8 @@ use crate::{
 };
 use backoff::{exponential, ExponentialBackoff, SystemClock};
 use http::{uri::InvalidUri, Uri};
-use std::sync::OnceLock;
 use parking_lot::RwLock;
+use std::sync::OnceLock;
 use std::{
     collections::HashMap,
     fmt::{Debug, Formatter},
