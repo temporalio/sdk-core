@@ -50,7 +50,8 @@ impl DebugClient {
         Ok(History::decode(bytes)?)
     }
 
-    /// Post to current-wft-started to communicate with debug plugin server
+    /// Post to current-wft-started to tell the debug plugin which event we've most recently made it
+    /// to
     pub async fn post_wft_started(
         &self,
         event_id: &i64,
