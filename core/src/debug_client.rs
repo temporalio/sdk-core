@@ -2,14 +2,12 @@
 //! machinery.
 
 use anyhow::Context;
+use hyper::http::HeaderValue;
 use prost::Message;
-use reqwest;
+use reqwest::{self, header::HeaderMap};
 use std::time::Duration;
 use temporal_sdk_core_protos::temporal::api::history::v1::History;
 use url::Url;
-
-const CLIENT_NAME: &str = "temporal-core";
-const CLIENT_VERSION: &str = "0.1.0";
 
 /// A client for interacting with the VSCode debug plugin
 #[derive(Clone)]
@@ -25,26 +23,36 @@ struct WFTStartedMsg {
 }
 
 impl DebugClient {
-    /// Create a new instance of a DebugClient with the specified url.
-    pub fn new(url: String) -> Result<DebugClient, anyhow::Error> {
+    /// Create a new instance of a DebugClient with the specified url and client name/version
+    /// strings.
+    pub fn new(
+        url: String,
+        client_name: &str,
+        client_version: &str,
+    ) -> Result<DebugClient, anyhow::Error> {
+        let mut client = reqwest::ClientBuilder::new();
+        client = client.default_headers({
+            let mut hm = HeaderMap::new();
+            hm.insert("temporal-client-name", HeaderValue::from_str(client_name)?);
+            hm.insert(
+                "temporal-client-version",
+                HeaderValue::from_str(client_version)?,
+            );
+            hm
+        });
+        let client = client.build()?;
         Ok(DebugClient {
             debugger_url: Url::parse(&url).context(
                 "debugger url malformed, is the TEMPORAL_DEBUGGER_PLUGIN_URL env var correct?",
             )?,
-            client: reqwest::Client::new(),
+            client,
         })
     }
 
     /// Get the history from the instance of the debug plugin server
     pub async fn get_history(&self) -> Result<History, anyhow::Error> {
         let url = self.debugger_url.join("history")?;
-        let resp = self
-            .client
-            .get(url)
-            .header("Temporal-Client-Name", CLIENT_NAME)
-            .header("Temporal-Client-Version", CLIENT_VERSION)
-            .send()
-            .await?;
+        let resp = self.client.get(url).send().await?;
 
         let bytes = resp.bytes().await?;
         Ok(History::decode(bytes)?)
@@ -60,8 +68,6 @@ impl DebugClient {
         Ok(self
             .client
             .get(url)
-            .header("Temporal-Client-Name", CLIENT_NAME)
-            .header("Temporal-Client-Version", CLIENT_VERSION)
             .timeout(Duration::from_secs(5))
             .json(&WFTStartedMsg {
                 event_id: *event_id,
