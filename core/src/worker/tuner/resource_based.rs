@@ -406,7 +406,7 @@ impl<MI: SystemResourceInfo + Sync + Send> ResourceController<MI> {
 #[derive(Debug)]
 pub struct RealSysInfo {
     sys: Mutex<sysinfo::System>,
-    total_mem: u64,
+    total_mem: AtomicU64,
     cur_mem_usage: AtomicU64,
     cur_cpu_usage: AtomicU64,
     last_refresh: AtomicCell<Instant>,
@@ -421,7 +421,7 @@ impl RealSysInfo {
             last_refresh: AtomicCell::new(Instant::now()),
             cur_mem_usage: AtomicU64::new(0),
             cur_cpu_usage: AtomicU64::new(0),
-            total_mem,
+            total_mem: AtomicU64::new(total_mem),
         };
         s.refresh();
         s
@@ -441,14 +441,23 @@ impl RealSysInfo {
         lock.refresh_cpu_usage();
         let mem = lock.used_memory();
         let cpu = lock.global_cpu_usage() as f64 / 100.;
+        if let Some(cgroup_limits) = lock.cgroup_limits() {
+            self.total_mem
+                .store(cgroup_limits.total_memory, Ordering::Release);
+            self.cur_mem_usage.store(
+                cgroup_limits.total_memory - cgroup_limits.free_memory,
+                Ordering::Release,
+            );
+        }
         self.cur_mem_usage.store(mem, Ordering::Release);
         self.cur_cpu_usage.store(cpu.to_bits(), Ordering::Release);
         self.last_refresh.store(Instant::now());
     }
 }
+
 impl SystemResourceInfo for RealSysInfo {
     fn total_mem(&self) -> u64 {
-        self.total_mem
+        self.total_mem.load(Ordering::Acquire)
     }
 
     fn used_mem(&self) -> u64 {
