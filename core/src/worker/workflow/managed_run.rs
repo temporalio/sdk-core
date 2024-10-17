@@ -20,6 +20,7 @@ use crate::{
     MetricsContext,
 };
 use futures_util::future::AbortHandle;
+use opentelemetry::{trace::SpanKind, trace::Tracer, KeyValue};
 use std::{
     collections::HashSet,
     mem,
@@ -370,6 +371,13 @@ impl ManagedRun {
         used_flags: Vec<u32>,
         resp_chan: Option<oneshot::Sender<ActivationCompleteResult>>,
     ) -> Result<RunUpdateAct, NextPageReq> {
+        let tracer = opentelemetry::global::tracer("successful_completion-tracer");
+        let _span = tracer
+            .span_builder("successful_completion")
+            .with_kind(SpanKind::Server)
+            .with_attributes([KeyValue::new("temporal.worker", true)])
+            .start(&tracer);
+
         let activation_was_only_eviction = self.activation_is_eviction();
         let (task_token, has_pending_query, start_time) = if let Some(entry) = self.wft.as_ref() {
             (

@@ -1,5 +1,11 @@
 mod local_acts;
 
+use opentelemetry::{
+    self,
+    trace::{SpanKind, Tracer},
+    KeyValue,
+};
+
 use super::{
     cancel_external_state_machine::new_external_cancel,
     cancel_workflow_state_machine::cancel_workflow,
@@ -526,6 +532,13 @@ impl WorkflowMachines {
     /// Apply the next (unapplied) entire workflow task from history to these machines. Will replay
     /// any events that need to be replayed until caught up to the newest WFT.
     pub(crate) fn apply_next_wft_from_history(&mut self) -> Result<usize> {
+        let tracer = opentelemetry::global::tracer("apply_next_wft_from_history-tracer");
+        let _span = tracer
+            .span_builder("apply_next_wft_from_history")
+            .with_kind(SpanKind::Server)
+            .with_attributes([KeyValue::new("temporal.worker", true)])
+            .start(&tracer);
+
         // If we have already seen the terminal event for the entire workflow in a previous WFT,
         // then we don't need to do anything here, and in fact we need to avoid re-applying the
         // final WFT.

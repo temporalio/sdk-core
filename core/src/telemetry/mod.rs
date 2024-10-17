@@ -11,6 +11,16 @@ mod prometheus_server;
 #[cfg(feature = "otel")]
 pub use metrics::{default_buckets_for, MetricsCallBuffer};
 #[cfg(feature = "otel")]
+use opentelemetry::{
+    self,
+    trace::{SpanKind, Tracer, TracerProvider},
+    KeyValue,
+};
+use opentelemetry_otlp::WithExportConfig;
+#[cfg(feature = "otel")]
+use opentelemetry_sdk;
+use otel::default_resource_instance;
+#[cfg(feature = "otel")]
 pub use otel::{build_otlp_metric_exporter, start_prometheus_metric_exporter};
 
 pub use log_export::{CoreLogBuffer, CoreLogBufferedConsumer, CoreLogStreamConsumer};
@@ -166,6 +176,7 @@ pub fn telemetry_init(opts: TelemetryOptions) -> Result<TelemetryInstance, anyho
     let mut console_pretty_layer = None;
     let mut console_compact_layer = None;
     let mut forward_layer = None;
+    let mut export_layer = None;
     // ===================================
 
     let tracing_sub = opts.logging.map(|logger| {
@@ -207,10 +218,53 @@ pub fn telemetry_init(opts: TelemetryOptions) -> Result<TelemetryInstance, anyho
                     Some(CoreLogConsumerLayer::new(consumer).with_filter(EnvFilter::new(filter)));
             }
         };
+
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .thread_name("telemetry")
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+
+        // create otel export layer
+        runtime.block_on(async {
+            let tracer_cfg = opentelemetry_sdk::trace::Config::default()
+                .with_resource(default_resource_instance().clone());
+            let provider = opentelemetry_otlp::new_pipeline()
+                .tracing()
+                .with_exporter(
+                    opentelemetry_otlp::new_exporter()
+                        .tonic()
+                        .with_endpoint("grpc://localhost:4317".to_string()),
+                    // .with_metadata(MetadataMap::from_headers(headers.try_into()?)),
+                )
+                .with_trace_config(tracer_cfg)
+                // Using install_simple instead for now because install_batch is not producing spans and is emitting this error message:
+                // OpenTelemetry trace error occurred. cannot send message to batch processor as the channel is closed
+                // .install_batch(opentelemetry_sdk::runtime::Tokio)
+                .install_simple()
+                .unwrap();
+            opentelemetry::global::set_tracer_provider(provider.clone());
+
+            let tracer = provider.tracer_builder("sdk-core").build();
+            let opentelemetry = tracing_opentelemetry::layer().with_tracer(tracer);
+            //        .with_filter(EnvFilter::new(&tracing.filter))
+            export_layer = Some(opentelemetry);
+
+            let tracer = provider.tracer("sdk-core");
+
+            let _span = tracer
+                .span_builder("telemetry_init")
+                .with_kind(SpanKind::Server)
+                .with_attributes([KeyValue::new("temporal.worker", true)])
+                .start(&tracer);
+        });
+
         let reg = tracing_subscriber::registry()
             .with(console_pretty_layer)
             .with(console_compact_layer)
-            .with(forward_layer);
+            .with(forward_layer)
+            .with(export_layer);
 
         #[cfg(feature = "tokio-console")]
         let reg = reg.with(console_subscriber::spawn());
