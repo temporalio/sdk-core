@@ -334,7 +334,7 @@ impl GaugeF64 for MemoryGauge<f64> {
     }
 }
 
-fn default_resource_instance() -> &'static Resource {
+pub(crate) fn default_resource_instance() -> &'static Resource {
     use once_cell::sync::OnceCell;
 
     static INSTANCE: OnceCell<Resource> = OnceCell::new();

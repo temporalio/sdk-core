@@ -9,6 +9,7 @@ use crate::{
     MetricsContext,
 };
 use futures::{stream, stream::PollNext, Stream, StreamExt};
+use opentelemetry::{trace::SpanKind, trace::Tracer, KeyValue};
 use std::{collections::VecDeque, fmt::Debug, future, sync::Arc};
 use temporal_sdk_core_api::errors::PollWfError;
 use temporal_sdk_core_protos::coresdk::workflow_activation::remove_from_cache::EvictionReason;
@@ -252,6 +253,13 @@ impl WFStream {
     }
 
     fn process_completion(&mut self, complete: NewOrFetchedComplete) -> Vec<ActivationOrAuto> {
+        let tracer = opentelemetry::global::tracer("process_completion-tracer");
+        let _span = tracer
+            .span_builder("process_completion")
+            .with_kind(SpanKind::Server)
+            .with_attributes([KeyValue::new("temporal.worker", true)])
+            .start(&tracer);
+
         let rh = if let Some(rh) = self.runs.get_mut(complete.run_id()) {
             rh
         } else {
