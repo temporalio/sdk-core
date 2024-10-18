@@ -1,11 +1,10 @@
 use anyhow::anyhow;
 use assert_matches::assert_matches;
 use futures_util::{future, future::join_all, StreamExt};
-use std::sync::LazyLock;
 use std::{
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
-        Arc,
+        Arc, LazyLock,
     },
     time::Duration,
 };
@@ -1039,6 +1038,93 @@ async fn worker_restarted_in_middle_of_update() {
         worker.run_until_done().await.unwrap();
     };
     join!(update, run, stopper);
+    starter
+        .fetch_history_and_replay(wf_id, run_id, worker.inner_mut())
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn update_after_empty_wft() {
+    let wf_name = "update_after_empty_wft";
+    let mut starter = CoreWfStarter::new(wf_name);
+    let mut worker = starter.worker().await;
+    let client = starter.get_client().await;
+
+    static ACT_STARTED: AtomicBool = AtomicBool::new(false);
+    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+        ctx.update_handler(
+            "update",
+            |_: &_, _: ()| Ok(()),
+            move |ctx: UpdateContext, _: ()| async move {
+                if ACT_STARTED.load(Ordering::Acquire) {
+                    return Ok(());
+                }
+                ctx.wf_ctx
+                    .activity(ActivityOptions {
+                        activity_type: "echo".to_string(),
+                        input: "hi!".as_json_payload().expect("serializes fine"),
+                        start_to_close_timeout: Some(Duration::from_secs(2)),
+                        ..Default::default()
+                    })
+                    .await;
+                Ok(())
+            },
+        );
+        let mut sig = ctx.make_signal_channel("signal");
+        let sig_handle = async {
+            sig.next().await;
+            ACT_STARTED.store(true, Ordering::Release);
+            ctx.activity(ActivityOptions {
+                activity_type: "echo".to_string(),
+                input: "hi!".as_json_payload().expect("serializes fine"),
+                start_to_close_timeout: Some(Duration::from_secs(2)),
+                ..Default::default()
+            })
+            .await;
+            ACT_STARTED.store(false, Ordering::Release);
+        };
+        join!(sig_handle, async {
+            ctx.timer(Duration::from_secs(2)).await;
+        });
+        Ok(().into())
+    });
+    worker.register_activity("echo", |_ctx: ActContext, echo_me: String| async move {
+        Ok(echo_me)
+    });
+
+    let run_id = starter.start_with_worker(wf_name, &mut worker).await;
+    let wf_id = starter.get_task_queue().to_string();
+    let update = async {
+        client
+            .signal_workflow_execution(
+                wf_id.clone(),
+                "".to_string(),
+                "signal".to_string(),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let res = client
+            .update_workflow_execution(
+                wf_id.clone(),
+                "".to_string(),
+                "update".to_string(),
+                WaitPolicy {
+                    lifecycle_stage: UpdateWorkflowExecutionLifecycleStage::Completed as i32,
+                },
+                [().as_json_payload().unwrap()].into_payloads(),
+            )
+            .await
+            .unwrap();
+        assert!(res.outcome.unwrap().is_success());
+    };
+    let runner = async {
+        worker.run_until_done().await.unwrap();
+    };
+    join!(update, runner);
     starter
         .fetch_history_and_replay(wf_id, run_id, worker.inner_mut())
         .await
