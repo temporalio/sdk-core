@@ -1062,7 +1062,6 @@ async fn worker_restarted_in_middle_of_update() {
         .unwrap();
 }
 
-#[rstest::rstest]
 #[tokio::test]
 async fn update_after_empty_wft() {
     let wf_name = "update_after_empty_wft";

@@ -740,9 +740,13 @@ fn find_end_index_of_next_wft_seq(
                         if next_next_event.event_type() == EventType::WorkflowTaskScheduled {
                             continue;
                         } else {
-                            // If we see some commands after WFT completed, and those commands
-                            // include update acceptance, we want to conclude the WFT sequence where
-                            // that update should have been processed.
+                            // If we see an update accepted command after WFT completed, we want to
+                            // conclude the WFT sequence where that update should have been
+                            // processed. We don't need to check for any other command types,
+                            // because the only thing that can run before an update validator is a
+                            // signal handler - but if a signal handler ran then there would have
+                            // been a previous signal event, and we would've already concluded the
+                            // previous WFT sequence.
                             if let Some(
                                 Attributes::WorkflowExecutionUpdateAcceptedEventAttributes(
                                     ref attr,
