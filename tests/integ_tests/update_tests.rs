@@ -1062,6 +1062,7 @@ async fn worker_restarted_in_middle_of_update() {
         .unwrap();
 }
 
+#[rstest::rstest]
 #[tokio::test]
 async fn update_after_empty_wft() {
     let wf_name = "update_after_empty_wft";
@@ -1070,7 +1071,7 @@ async fn update_after_empty_wft() {
     let client = starter.get_client().await;
 
     static ACT_STARTED: AtomicBool = AtomicBool::new(false);
-    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+    worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| async move {
         ctx.update_handler(
             "update",
             |_: &_, _: ()| Ok(()),

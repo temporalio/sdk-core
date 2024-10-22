@@ -5,13 +5,13 @@ use crate::{
 };
 use anyhow::{anyhow, bail, Context as AnyhowContext, Error};
 use futures_util::{future::BoxFuture, FutureExt};
-use std::sync::mpsc::Receiver;
 use std::{
     collections::{hash_map::Entry, HashMap},
     future::Future,
     panic,
     panic::AssertUnwindSafe,
     pin::Pin,
+    sync::mpsc::Receiver,
     task::{Context, Poll},
 };
 use temporal_sdk_core_protos::{
@@ -397,22 +397,27 @@ impl Future for WorkflowFuture {
             // Drive update functions
             self.update_futures = std::mem::take(&mut self.update_futures)
                 .into_iter()
-                .filter_map(|(instance_id, mut update_fut)| {
-                    match update_fut.poll_unpin(cx) {
+                .filter_map(
+                    |(instance_id, mut update_fut)| match update_fut.poll_unpin(cx) {
                         Poll::Ready(v) => {
-                            activation_cmds.push(update_response(
-                                instance_id,
-                                match v {
-                                    Ok(v) => update_response::Response::Completed(v),
-                                    Err(e) => update_response::Response::Rejected(e.into()),
-                                },
-                            ));
-                            // Delete if we're done.
+                            // Push into the command channel here rather than activation_cmds
+                            // directly to avoid completing and update before any final un-awaited
+                            // commands started from within it.
+                            self.wf_ctx.send(
+                                update_response(
+                                    instance_id,
+                                    match v {
+                                        Ok(v) => update_response::Response::Completed(v),
+                                        Err(e) => update_response::Response::Rejected(e.into()),
+                                    },
+                                )
+                                .into(),
+                            );
                             None
                         }
                         Poll::Pending => Some((instance_id, update_fut)),
-                    }
-                })
+                    },
+                )
                 .collect();
 
             if self.poll_wf_future(cx, &run_id, &mut activation_cmds)? {

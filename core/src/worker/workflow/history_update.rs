@@ -699,7 +699,6 @@ fn find_end_index_of_next_wft_seq(
     }
     let mut last_index = 0;
     let mut saw_any_command_event = false;
-    let mut last_wft_started = None;
     let mut wft_started_event_id_to_index = vec![];
     for (ix, e) in events.iter().enumerate() {
         last_index = ix;
@@ -719,7 +718,6 @@ fn find_end_index_of_next_wft_seq(
 
         if e.event_type() == EventType::WorkflowTaskStarted {
             wft_started_event_id_to_index.push((e.event_id, ix));
-            last_wft_started = Some(e.event_id);
             if let Some(next_event) = events.get(ix + 1) {
                 let next_event_type = next_event.event_type();
                 // If the next event is WFT timeout or fail, or abrupt WF execution end, that
@@ -742,8 +740,9 @@ fn find_end_index_of_next_wft_seq(
                         if next_next_event.event_type() == EventType::WorkflowTaskScheduled {
                             continue;
                         } else {
-                            warn!("Complete, saw wtc w/ next command @ {}", e.event_id);
-                            // // TODO extract if works
+                            // If we see some commands after WFT completed, and those commands
+                            // include update acceptance, we want to conclude the WFT sequence where
+                            // that update should have been processed.
                             if let Some(
                                 Attributes::WorkflowExecutionUpdateAcceptedEventAttributes(
                                     ref attr,
@@ -761,7 +760,6 @@ fn find_end_index_of_next_wft_seq(
                                         None
                                     })
                                 {
-                                    error!("returning at {ix}");
                                     return NextWFTSeqEndIndex::Complete(ret_ix);
                                 }
                             }
