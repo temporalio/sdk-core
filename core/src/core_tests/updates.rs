@@ -41,17 +41,25 @@ async fn replay_with_empty_first_task() {
     mock.worker_cfg(|wc| wc.max_cached_workflows = 1);
     let core = mock_worker(mock);
 
+    // In this task imagine we are waiting on the first update being sent, hence no commands come
+    // out, and on replay the first activation should only be init.
     let task = core.poll_workflow_activation().await.unwrap();
     assert_matches!(
         task.jobs.as_slice(),
-        [
-            WorkflowActivationJob {
-                variant: Some(workflow_activation_job::Variant::InitializeWorkflow(_)),
-            },
-            WorkflowActivationJob {
-                variant: Some(workflow_activation_job::Variant::DoUpdate(_)),
-            },
-        ]
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::InitializeWorkflow(_)),
+        },]
+    );
+    core.complete_workflow_activation(WorkflowActivationCompletion::empty(task.run_id))
+        .await
+        .unwrap();
+
+    let task = core.poll_workflow_activation().await.unwrap();
+    assert_matches!(
+        task.jobs.as_slice(),
+        [WorkflowActivationJob {
+            variant: Some(workflow_activation_job::Variant::DoUpdate(_)),
+        },]
     );
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
         task.run_id,

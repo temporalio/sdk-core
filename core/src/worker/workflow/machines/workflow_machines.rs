@@ -635,8 +635,8 @@ impl WorkflowMachines {
                 event.attributes,
                 Some(history_event::Attributes::WorkflowExecutionUpdateAdmittedEventAttributes(_)),
             ) {
-                // The server has sent a durable update admitted event: create the message that would have been sent
-                // for a non-durable update request message.
+                // The server has sent a durable update admitted event: create the message that
+                // would have been sent for a non-durable update request message.
                 let msg = IncomingProtocolMessage::try_from(&event).context(
                     "Failed to create protocol message from WorkflowExecutionUpdateAdmittedEvent",
                 )?;
@@ -745,9 +745,10 @@ impl WorkflowMachines {
                 history_event::Attributes::WorkflowExecutionUpdateAcceptedEventAttributes(ref atts),
             ) = e.attributes
             {
-                // We've encountered an UpdateAccepted event during replay: pretend that we received the message we
-                // would have when receiving an update request under not-replay. If this event was preceded by an
-                // UpdateAdmitted event, then use the message that we created when we encountered that.
+                // We've encountered an UpdateAccepted event during replay: pretend that we received
+                // the message we would have when receiving an update request under not-replay. If
+                // this event was preceded by an UpdateAdmitted event, then use the message that we
+                // created when we encountered that.
                 delayed_actions.push(DelayedAction::ProtocolMessage(
                     update_admitted_event_messages
                         .remove(&atts.protocol_instance_id)

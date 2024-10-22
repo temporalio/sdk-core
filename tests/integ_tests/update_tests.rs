@@ -77,7 +77,13 @@ async fn update_workflow(#[values(FailUpdate::Yes, FailUpdate::No)] will_fail: F
         .unwrap();
     let with_id = HistoryForReplay::new(history, workflow_id.to_string());
     let replay_worker = init_core_replay_preloaded(workflow_id, [with_id]);
-    handle_update(will_fail, CompleteWorkflow::Yes, replay_worker.as_ref(), 1).await;
+    // Init workflow comes by itself
+    let act = replay_worker.poll_workflow_activation().await.unwrap();
+    replay_worker
+        .complete_workflow_activation(WorkflowActivationCompletion::empty(act.run_id))
+        .await
+        .unwrap();
+    handle_update(will_fail, CompleteWorkflow::Yes, replay_worker.as_ref(), 0).await;
 }
 
 #[tokio::test]
@@ -146,6 +152,12 @@ async fn reapplied_updates_due_to_reset() {
     let with_id = HistoryForReplay::new(history, workflow_id.to_string());
 
     let replay_worker = init_core_replay_preloaded(workflow_id, [with_id]);
+    // Init workflow comes by itself
+    let act = replay_worker.poll_workflow_activation().await.unwrap();
+    replay_worker
+        .complete_workflow_activation(WorkflowActivationCompletion::empty(act.run_id))
+        .await
+        .unwrap();
     // We now recapitulate the actions that the worker took on first execution above, pretending
     // that we always followed the post-reset history.
     // First, we handled the post-reset reapplied update and did not complete the workflow.
@@ -153,9 +165,15 @@ async fn reapplied_updates_due_to_reset() {
         FailUpdate::No,
         CompleteWorkflow::No,
         replay_worker.as_ref(),
-        2,
+        1,
     )
     .await;
+    // Then the timer fires
+    let act = replay_worker.poll_workflow_activation().await.unwrap();
+    replay_worker
+        .complete_workflow_activation(WorkflowActivationCompletion::empty(act.run_id))
+        .await
+        .unwrap();
     // Then the client sent a second update; we handled it and completed the workflow.
     handle_update(
         FailUpdate::No,
