@@ -168,7 +168,7 @@ impl HistoryPaginator {
     }
 
     pub(super) async fn from_fetchreq(
-        mut req: CacheMissFetchReq,
+        mut req: Box<CacheMissFetchReq>,
         client: Arc<dyn WorkerClient>,
     ) -> Result<PermittedWFT, tonic::Status> {
         let mut paginator = Self {
