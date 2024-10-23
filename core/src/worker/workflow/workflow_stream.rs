@@ -106,7 +106,7 @@ impl WFStream {
                 let maybe_act = match action {
                     WFStreamInput::NewWft(pwft) => {
                         debug!(run_id=%pwft.work.execution.run_id, "New WFT");
-                        state.instantiate_or_update(pwft)
+                        state.instantiate_or_update(*pwft)
                     }
                     WFStreamInput::Local(local_input) => {
                         let _span_g = local_input.span.enter();
@@ -124,12 +124,12 @@ impl WFStream {
                             }
                             LocalInputs::FetchedPageCompletion { paginator, update } => {
                                 activations.extend(state.process_completion(
-                                    NewOrFetchedComplete::Fetched(update, paginator),
+                                    NewOrFetchedComplete::Fetched(update, Box::new(paginator)),
                                 ));
                                 None // completions can return more than one activation
                             }
                             LocalInputs::PostActivation(report) => {
-                                state.process_post_activation(report)
+                                state.process_post_activation(*report)
                             }
                             LocalInputs::LocalResolution(res) => state.local_resolution(res),
                             LocalInputs::HeartbeatTimeout(hbt) => {
@@ -242,7 +242,7 @@ impl WFStream {
                    cache. Will fetch history");
             self.metrics.sticky_cache_miss();
             return Err(HistoryFetchReq::Full(
-                CacheMissFetchReq { original_wft: pwft },
+                Box::new(CacheMissFetchReq { original_wft: pwft }),
                 self.history_fetch_refcounter.clone(),
             ));
         }
@@ -292,7 +292,7 @@ impl WFStream {
                 ),
             },
             NewOrFetchedComplete::Fetched(update, paginator) => {
-                rh.fetched_page_completion(update, paginator)
+                rh.fetched_page_completion(update, *paginator)
             }
         }
         .into_iter()
@@ -556,7 +556,7 @@ impl WFStream {
 /// All possible inputs to the [WFStream]
 #[derive(derive_more::From, Debug)]
 enum WFStreamInput {
-    NewWft(PermittedWFT),
+    NewWft(Box<PermittedWFT>),
     Local(LocalInput),
     /// The stream given to us which represents the poller (or a mock) terminated.
     PollerDead,
@@ -595,7 +595,7 @@ pub(super) enum LocalInputs {
         update: HistoryUpdate,
     },
     LocalResolution(LocalResolutionMsg),
-    PostActivation(PostActivationMsg),
+    PostActivation(Box<PostActivationMsg>),
     RequestEviction(RequestEvictMsg),
     HeartbeatTimeout(String),
     GetStateInfo(GetStateInfoMsg),
@@ -634,10 +634,10 @@ enum ExternalPollerInputs {
 impl From<ExternalPollerInputs> for WFStreamInput {
     fn from(l: ExternalPollerInputs) -> Self {
         match l {
-            ExternalPollerInputs::NewWft(v) => WFStreamInput::NewWft(v),
+            ExternalPollerInputs::NewWft(v) => WFStreamInput::NewWft(Box::new(v)),
             ExternalPollerInputs::PollerDead => WFStreamInput::PollerDead,
             ExternalPollerInputs::PollerError(e) => WFStreamInput::PollerError(e),
-            ExternalPollerInputs::FetchedUpdate(wft) => WFStreamInput::NewWft(wft),
+            ExternalPollerInputs::FetchedUpdate(wft) => WFStreamInput::NewWft(Box::new(wft)),
             ExternalPollerInputs::FailedFetch {
                 run_id,
                 err,
@@ -692,7 +692,7 @@ impl From<Result<WFTExtractorOutput, tonic::Status>> for ExternalPollerInputs {
 #[derive(Debug)]
 enum NewOrFetchedComplete {
     New(WFActCompleteMsg),
-    Fetched(HistoryUpdate, HistoryPaginator),
+    Fetched(HistoryUpdate, Box<HistoryPaginator>),
 }
 impl NewOrFetchedComplete {
     fn run_id(&self) -> &str {

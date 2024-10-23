@@ -7,7 +7,6 @@ use crate::{
 };
 use futures_util::{future::BoxFuture, FutureExt, Stream, TryFutureExt};
 use itertools::Itertools;
-use std::sync::LazyLock;
 use std::{
     collections::VecDeque,
     fmt::Debug,
@@ -15,7 +14,7 @@ use std::{
     mem,
     mem::transmute,
     pin::Pin,
-    sync::Arc,
+    sync::{Arc, LazyLock},
     task::{Context, Poll},
 };
 use temporal_sdk_core_protos::temporal::api::{
@@ -166,7 +165,7 @@ impl HistoryPaginator {
     }
 
     pub(super) async fn from_fetchreq(
-        mut req: CacheMissFetchReq,
+        mut req: Box<CacheMissFetchReq>,
         client: Arc<dyn WorkerClient>,
     ) -> Result<PermittedWFT, tonic::Status> {
         let mut paginator = Self {
@@ -766,8 +765,7 @@ mod tests {
         test_help::{canned_histories, hist_to_poll_resp, mock_sdk_cfg, MockPollCfg, ResponseType},
         worker::client::mocks::mock_workflow_client,
     };
-    use futures_util::StreamExt;
-    use futures_util::TryStreamExt;
+    use futures_util::{StreamExt, TryStreamExt};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use temporal_client::WorkflowOptions;
     use temporal_sdk::WfContext;

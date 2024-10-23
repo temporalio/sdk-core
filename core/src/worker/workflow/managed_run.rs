@@ -369,7 +369,7 @@ impl ManagedRun {
         mut commands: Vec<WFCommand>,
         used_flags: Vec<u32>,
         resp_chan: Option<oneshot::Sender<ActivationCompleteResult>>,
-    ) -> Result<RunUpdateAct, NextPageReq> {
+    ) -> Result<RunUpdateAct, Box<NextPageReq>> {
         let activation_was_only_eviction = self.activation_is_eviction();
         let (task_token, has_pending_query, start_time) = if let Some(entry) = self.wft.as_ref() {
             (
@@ -447,10 +447,10 @@ impl ManagedRun {
                 return if let Some(paginator) = self.paginator.take() {
                     debug!("Need to fetch a history page before next WFT can be applied");
                     self.completion_waiting_on_page_fetch = Some(rac);
-                    Err(NextPageReq {
+                    Err(Box::new(NextPageReq {
                         paginator,
                         span: Span::current(),
-                    })
+                    }))
                 } else {
                     Ok(self.update_to_acts(Err(RunUpdateErr {
                         source: WFMachinesError::Fatal(
