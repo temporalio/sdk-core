@@ -2421,9 +2421,7 @@ async fn lang_internal_flag_with_update() {
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
-    t.set_flags_first_wft(&[1, 2], &[]);
-    t.add_full_wf_task();
-    t.set_flags_last_wft(&[], &[1]);
+    t.set_flags_last_wft(&[1, 2], &[1]);
     let updid = t.add_update_accepted("upd1", "upd");
     t.add_update_completed(updid);
     t.add_workflow_execution_completed();
