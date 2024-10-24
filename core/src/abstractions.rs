@@ -142,7 +142,7 @@ where
 }
 
 impl MeteredPermitDealer<WorkflowSlotKind> {
-    pub(crate) fn as_sticky(mut self) -> Self {
+    pub(crate) fn into_sticky(mut self) -> Self {
         self.is_sticky_poller = true;
         self
     }
@@ -284,6 +284,7 @@ pub(crate) struct OwnedMeteredSemPermit<SK: SlotKind> {
     release_ctx: ReleaseCtx<SK>,
     #[allow(clippy::type_complexity)] // not really tho, bud
     use_fn: Box<dyn Fn(&SK::Info) + Send + Sync>,
+    #[allow(clippy::type_complexity)] // not really tho, bud
     release_fn: Box<dyn Fn(&ReleaseCtx<SK>) + Send + Sync>,
 }
 impl<SK: SlotKind> Drop for OwnedMeteredSemPermit<SK> {

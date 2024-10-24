@@ -320,7 +320,7 @@ impl Worker {
                             normal_name: config.task_queue.clone(),
                         },
                         max_sticky_polls,
-                        wft_slots.clone().as_sticky(),
+                        wft_slots.clone().into_sticky(),
                         shutdown_token.child_token(),
                         Some(move |np| {
                             sticky_metrics.record_num_pollers(np);

@@ -320,20 +320,20 @@ where
         if ctx.num_issued_slots() < self.opts.min_slots {
             return Some(self.issue_slot(ctx));
         }
-        if matches!(SK::kind(), SlotKindType::Workflow) {
-            if (ctx.is_sticky() && self.issued_sticky.load(Ordering::Relaxed) == 0)
-                || !ctx.is_sticky() && self.issued_nonsticky.load(Ordering::Relaxed) == 0
-            {
-                return Some(self.issue_slot(ctx));
-            }
+        if SK::kind() == SlotKindType::Workflow
+            && (ctx.is_sticky() && self.issued_sticky.load(Ordering::Relaxed) == 0
+                || !ctx.is_sticky() && self.issued_nonsticky.load(Ordering::Relaxed) == 0)
+        {
+            return Some(self.issue_slot(ctx));
         }
+
         None
     }
 
     fn issue_slot(&self, ctx: &dyn SlotReservationContext) -> SlotSupplierPermit {
         // Always be willing to hand out at least 1 slot for sticky and 1 for non-sticky to avoid
         // getting stuck.
-        if matches!(SK::kind(), SlotKindType::Workflow) {
+        if SK::kind() == SlotKindType::Workflow {
             if ctx.is_sticky() {
                 self.issued_sticky.fetch_add(1, Ordering::Relaxed);
             } else {
@@ -566,7 +566,7 @@ mod tests {
             ramp_throttle: Duration::from_millis(0),
         });
         let pd = MeteredPermitDealer::new(rbs.clone(), MetricsContext::no_op(), None);
-        let pd_s = pd.clone().as_sticky();
+        let pd_s = pd.clone().into_sticky();
         // Start with too high usage
         used.store(90_000, Ordering::Release);
         // Show workflow will always allow 1 each of sticky/non-sticky
@@ -609,7 +609,7 @@ mod tests {
             ramp_throttle: Duration::from_millis(0),
         });
         let pd = MeteredPermitDealer::new(rbs.clone(), MetricsContext::no_op(), None);
-        let pd_s = pd.clone().as_sticky();
+        let pd_s = pd.clone().into_sticky();
         let order = crossbeam_queue::ArrayQueue::new(2);
         // Show workflow will always allow 1 each of sticky/non-sticky
         let _p1 = rbs.reserve_slot(&pd).await;

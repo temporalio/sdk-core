@@ -350,7 +350,7 @@ pub struct LocalActivitySlotInfo {
     pub activity_type: String,
 }
 
-#[derive(Debug, Copy, Clone, derive_more::Display)]
+#[derive(Debug, Copy, Clone, derive_more::Display, Eq, PartialEq)]
 pub enum SlotKindType {
     Workflow,
     Activity,
