@@ -247,41 +247,32 @@ where
 
     async fn reserve_slot(&self, ctx: &dyn SlotReservationContext) -> SlotSupplierPermit {
         loop {
-            // Always be willing to hand out at least 1 slot for sticky and 1 for non-sticky to
-            // avoid getting stuck.
-            if matches!(SK::kind(), SlotKindType::Workflow) {
-                if (ctx.is_sticky() && self.issued_sticky.load(Ordering::Relaxed) == 0)
-                    || !ctx.is_sticky() && self.issued_nonsticky.load(Ordering::Relaxed) == 0
-                {
-                    return self.issue_slot(ctx);
-                }
+            if let Some(value) = self.issue_if_below_minimums(ctx) {
+                return value;
             }
-            if ctx.num_issued_slots() < self.opts.min_slots {
-                return self.issue_slot(ctx);
+            let must_wait_for = self
+                .opts
+                .ramp_throttle
+                .saturating_sub(self.time_since_last_issued());
+            if must_wait_for > Duration::from_millis(0) {
+                tokio::time::sleep(must_wait_for).await;
+            }
+            if let Some(p) = self.try_reserve_slot(ctx) {
+                return p;
             } else {
-                let must_wait_for = self
-                    .opts
-                    .ramp_throttle
-                    .saturating_sub(self.time_since_last_issued());
-                if must_wait_for > Duration::from_millis(0) {
-                    tokio::time::sleep(must_wait_for).await;
-                }
-                if let Some(p) = self.try_reserve_slot(ctx) {
-                    return p;
-                } else {
-                    tokio::time::sleep(Duration::from_millis(10)).await;
-                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
             }
         }
     }
 
     fn try_reserve_slot(&self, ctx: &dyn SlotReservationContext) -> Option<SlotSupplierPermit> {
-        let num_issued = ctx.num_issued_slots();
-        if num_issued < self.opts.min_slots
-            || (self.time_since_last_issued() > self.opts.ramp_throttle
-                && num_issued < self.opts.max_slots
-                && self.inner.pid_decision()
-                && self.inner.can_reserve())
+        if let v @ Some(_) = self.issue_if_below_minimums(ctx) {
+            return v;
+        }
+        if self.time_since_last_issued() > self.opts.ramp_throttle
+            && ctx.num_issued_slots() < self.opts.max_slots
+            && self.inner.pid_decision()
+            && self.inner.can_reserve()
         {
             Some(self.issue_slot(ctx))
         } else {
@@ -318,6 +309,25 @@ where
             issued_sticky: Default::default(),
             _slot_kind: PhantomData,
         }
+    }
+
+    // Always be willing to hand out at least 1 slot for sticky and 1 for non-sticky to
+    // avoid getting stuck.
+    fn issue_if_below_minimums(
+        &self,
+        ctx: &dyn SlotReservationContext,
+    ) -> Option<SlotSupplierPermit> {
+        if ctx.num_issued_slots() < self.opts.min_slots {
+            return Some(self.issue_slot(ctx));
+        }
+        if matches!(SK::kind(), SlotKindType::Workflow) {
+            if (ctx.is_sticky() && self.issued_sticky.load(Ordering::Relaxed) == 0)
+                || !ctx.is_sticky() && self.issued_nonsticky.load(Ordering::Relaxed) == 0
+            {
+                return Some(self.issue_slot(ctx));
+            }
+        }
+        None
     }
 
     fn issue_slot(&self, ctx: &dyn SlotReservationContext) -> SlotSupplierPermit {
@@ -556,9 +566,36 @@ mod tests {
             ramp_throttle: Duration::from_millis(0),
         });
         let pd = MeteredPermitDealer::new(rbs.clone(), MetricsContext::no_op(), None);
+        let pd_s = pd.clone().as_sticky();
+        // Start with too high usage
+        used.store(90_000, Ordering::Release);
+        // Show workflow will always allow 1 each of sticky/non-sticky
         assert!(rbs.try_reserve_slot(&pd).is_some());
+        assert!(rbs.try_reserve_slot(&pd_s).is_some());
+        assert!(rbs.try_reserve_slot(&pd).is_none());
+        assert!(rbs.try_reserve_slot(&pd_s).is_none());
+        used.store(0, Ordering::Release);
+        // Now it's willing to hand out slots again when usage is zero
+        assert!(rbs.try_reserve_slot(&pd).is_some());
+        assert!(rbs.try_reserve_slot(&pd_s).is_some());
+    }
+
+    #[test]
+    fn mem_activity_sync() {
+        let (fmis, used) = FakeMIS::new();
+        let rbs = Arc::new(ResourceController::new_with_sysinfo(test_options(), fmis))
+            .as_kind::<ActivitySlotKind>(ResourceSlotOptions {
+            min_slots: 0,
+            max_slots: 100,
+            ramp_throttle: Duration::from_millis(0),
+        });
+        let pd = MeteredPermitDealer::new(rbs.clone(), MetricsContext::no_op(), None);
+        // Start with too high usage
         used.store(90_000, Ordering::Release);
         assert!(rbs.try_reserve_slot(&pd).is_none());
+        used.store(0, Ordering::Release);
+        // Now it's willing to hand out slots again when usage is zero
+        assert!(rbs.try_reserve_slot(&pd).is_some());
     }
 
     #[tokio::test]
@@ -567,6 +604,36 @@ mod tests {
         used.store(90_000, Ordering::Release);
         let rbs = Arc::new(ResourceController::new_with_sysinfo(test_options(), fmis))
             .as_kind::<WorkflowSlotKind>(ResourceSlotOptions {
+            min_slots: 0,
+            max_slots: 100,
+            ramp_throttle: Duration::from_millis(0),
+        });
+        let pd = MeteredPermitDealer::new(rbs.clone(), MetricsContext::no_op(), None);
+        let pd_s = pd.clone().as_sticky();
+        let order = crossbeam_queue::ArrayQueue::new(2);
+        // Show workflow will always allow 1 each of sticky/non-sticky
+        let _p1 = rbs.reserve_slot(&pd).await;
+        let _p2 = rbs.reserve_slot(&pd_s).await;
+        // Now we need to have some memory get freed before the next call resolves
+        let waits_free = async {
+            rbs.reserve_slot(&pd).await;
+            order.push(2).unwrap();
+        };
+        let frees = async {
+            used.store(70_000, Ordering::Release);
+            order.push(1).unwrap();
+        };
+        tokio::join!(waits_free, frees);
+        assert_eq!(order.pop(), Some(1));
+        assert_eq!(order.pop(), Some(2));
+    }
+
+    #[tokio::test]
+    async fn mem_activity_async() {
+        let (fmis, used) = FakeMIS::new();
+        used.store(90_000, Ordering::Release);
+        let rbs = Arc::new(ResourceController::new_with_sysinfo(test_options(), fmis))
+            .as_kind::<ActivitySlotKind>(ResourceSlotOptions {
             min_slots: 0,
             max_slots: 100,
             ramp_throttle: Duration::from_millis(0),
