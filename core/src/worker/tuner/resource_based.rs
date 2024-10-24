@@ -11,8 +11,8 @@ use std::{
 use temporal_sdk_core_api::{
     telemetry::metrics::{CoreMeter, GaugeF64, MetricAttributes, TemporalMeter},
     worker::{
-        ActivitySlotKind, LocalActivitySlotKind, SlotKind, SlotReservationContext, SlotSupplier,
-        SlotSupplierPermit, WorkerTuner, WorkflowSlotKind,
+        ActivitySlotKind, LocalActivitySlotKind, SlotKind, SlotKindType, SlotReservationContext,
+        SlotSupplier, SlotSupplierPermit, WorkerTuner, WorkflowSlotKind,
     },
 };
 use tokio::{sync::watch, task::JoinHandle};
@@ -240,6 +240,11 @@ where
     type SlotKind = SK;
 
     async fn reserve_slot(&self, ctx: &dyn SlotReservationContext) -> SlotSupplierPermit {
+        // Always be willing to hand out at least 1 slot for sticky and 1 for non-sticky to avoid
+        // getting stuck.
+        if matches!(SK::kind(), SlotKindType::Workflow) {
+            dbg!(ctx.is_sticky());
+        }
         loop {
             if ctx.num_issued_slots() < self.opts.min_slots {
                 return self.issue_slot();

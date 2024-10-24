@@ -301,6 +301,9 @@ pub trait SlotSupplier {
 pub trait SlotReservationContext: Send + Sync {
     /// Returns the number of currently outstanding slot permits, whether used or un-used.
     fn num_issued_slots(&self) -> usize;
+
+    /// Returns true iff this is a sticky poll for a workflow task
+    fn is_sticky(&self) -> bool;
 }
 
 #[derive(Default)]
@@ -325,46 +328,59 @@ impl SlotSupplierPermit {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct WorkflowSlotInfo<'a> {
     pub workflow_type: &'a str,
     // etc...
 }
-
+#[derive(Debug, Clone)]
 pub struct ActivitySlotInfo<'a> {
     pub activity_type: &'a str,
     // etc...
 }
+#[derive(Debug, Clone)]
 pub struct LocalActivitySlotInfo<'a> {
     pub activity_type: &'a str,
     // etc...
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone, derive_more::Display)]
+pub enum SlotKindType {
+    Workflow,
+    Activity,
+    LocalActivity,
+}
+
+#[derive(Debug, Copy, Clone)]
 pub struct WorkflowSlotKind {}
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct ActivitySlotKind {}
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct LocalActivitySlotKind {}
+
 pub trait SlotKind {
     type Info<'a>;
-    fn kind_name() -> &'static str;
+
+    fn kind() -> SlotKindType;
 }
 impl SlotKind for WorkflowSlotKind {
     type Info<'a> = WorkflowSlotInfo<'a>;
 
-    fn kind_name() -> &'static str {
-        "workflow"
+    fn kind() -> SlotKindType {
+        SlotKindType::Workflow
     }
 }
 impl SlotKind for ActivitySlotKind {
     type Info<'a> = ActivitySlotInfo<'a>;
-    fn kind_name() -> &'static str {
-        "activity"
+
+    fn kind() -> SlotKindType {
+        SlotKindType::Activity
     }
 }
 impl SlotKind for LocalActivitySlotKind {
     type Info<'a> = LocalActivitySlotInfo<'a>;
-    fn kind_name() -> &'static str {
-        "local_activity"
+
+    fn kind() -> SlotKindType {
+        SlotKindType::LocalActivity
     }
 }

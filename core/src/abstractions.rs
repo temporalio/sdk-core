@@ -11,7 +11,7 @@ use std::{
     },
 };
 use temporal_sdk_core_api::worker::{
-    SlotKind, SlotReservationContext, SlotSupplier, SlotSupplierPermit,
+    SlotKind, SlotReservationContext, SlotSupplier, SlotSupplierPermit, WorkflowSlotKind,
 };
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
@@ -35,6 +35,9 @@ pub(crate) struct MeteredPermitDealer<SK: SlotKind> {
     /// there will need to be some associated refactoring.
     max_permits: Option<usize>,
     metrics_ctx: MetricsContext,
+    /// Only applies to permit dealers for workflow tasks. True if this permit dealer is associated
+    /// with a sticky queue poller.
+    is_sticky_poller: bool,
 }
 
 impl<SK> MeteredPermitDealer<SK>
@@ -52,6 +55,7 @@ where
             extant_permits: watch::channel(0),
             metrics_ctx,
             max_permits,
+            is_sticky_poller: false,
         }
     }
 
@@ -132,9 +136,20 @@ where
     }
 }
 
+impl MeteredPermitDealer<WorkflowSlotKind> {
+    pub(crate) fn as_sticky(mut self) -> Self {
+        self.is_sticky_poller = true;
+        self
+    }
+}
+
 impl<SK: SlotKind> SlotReservationContext for MeteredPermitDealer<SK> {
     fn num_issued_slots(&self) -> usize {
         *self.extant_permits.1.borrow()
+    }
+
+    fn is_sticky(&self) -> bool {
+        self.is_sticky_poller
     }
 }
 

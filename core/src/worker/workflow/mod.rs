@@ -38,8 +38,7 @@ use crate::{
     MetricsContext,
 };
 use anyhow::anyhow;
-use futures_util::{future::abortable, stream};
-use futures_util::{stream::BoxStream, Stream, StreamExt};
+use futures_util::{future::abortable, stream, stream::BoxStream, Stream, StreamExt};
 use itertools::Itertools;
 use prost_types::TimestampError;
 use std::{
@@ -121,7 +120,7 @@ pub(crate) struct Workflows {
     /// If set, can be used to reserve activity task slots for eager-return of new activity tasks.
     activity_tasks_handle: Option<ActivitiesFromWFTsHandle>,
     /// Ensures we stay at or below this worker's maximum concurrent workflow task limit
-    wft_semaphore: Arc<MeteredPermitDealer<WorkflowSlotKind>>,
+    wft_semaphore: MeteredPermitDealer<WorkflowSlotKind>,
     local_act_mgr: Arc<LocalActivityManager>,
     ever_polled: AtomicBool,
 }
@@ -149,7 +148,7 @@ impl Workflows {
         basics: WorkflowBasics,
         sticky_attrs: Option<StickyExecutionAttributes>,
         client: Arc<dyn WorkerClient>,
-        wft_semaphore: Arc<MeteredPermitDealer<WorkflowSlotKind>>,
+        wft_semaphore: MeteredPermitDealer<WorkflowSlotKind>,
         wft_stream: impl Stream<Item = WFTStreamIn> + Send + 'static,
         local_activity_request_sink: impl LocalActivityRequestSink,
         local_act_mgr: Arc<LocalActivityManager>,
