@@ -3,8 +3,7 @@ use crate::{
     pollers::{self, Poller},
     worker::client::WorkerClient,
 };
-use futures_util::{future::BoxFuture, FutureExt};
-use futures_util::{stream::FuturesUnordered, StreamExt};
+use futures_util::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
 use governor::{Quota, RateLimiter};
 use std::{
     fmt::Debug,
@@ -73,7 +72,7 @@ where
 {
     pub(crate) fn new<FT, DelayFut>(
         poll_fn: impl Fn() -> FT + Send + Sync + 'static,
-        permit_dealer: Arc<MeteredPermitDealer<SK>>,
+        permit_dealer: MeteredPermitDealer<SK>,
         max_pollers: usize,
         shutdown: CancellationToken,
         num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
@@ -85,6 +84,7 @@ where
     {
         let (tx, rx) = unbounded_channel();
         let (starter, wait_for_start) = broadcast::channel(1);
+        let permit_dealer = Arc::new(permit_dealer);
         let active_pollers = Arc::new(AtomicUsize::new(0));
         let join_handles = FuturesUnordered::new();
         let pf = Arc::new(poll_fn);
@@ -243,7 +243,7 @@ pub(crate) fn new_workflow_task_buffer(
     client: Arc<dyn WorkerClient>,
     task_queue: TaskQueue,
     concurrent_pollers: usize,
-    permit_dealer: Arc<MeteredPermitDealer<WorkflowSlotKind>>,
+    permit_dealer: MeteredPermitDealer<WorkflowSlotKind>,
     shutdown: CancellationToken,
     num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
 ) -> PollWorkflowTaskBuffer {
@@ -268,7 +268,7 @@ pub(crate) fn new_activity_task_buffer(
     client: Arc<dyn WorkerClient>,
     task_queue: String,
     concurrent_pollers: usize,
-    semaphore: Arc<MeteredPermitDealer<ActivitySlotKind>>,
+    semaphore: MeteredPermitDealer<ActivitySlotKind>,
     max_tps: Option<f64>,
     shutdown: CancellationToken,
     num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
@@ -364,7 +364,7 @@ mod tests {
                 normal_name: "".to_string(),
             },
             1,
-            Arc::new(fixed_size_permit_dealer(10)),
+            fixed_size_permit_dealer(10),
             CancellationToken::new(),
             None::<fn(usize)>,
         );

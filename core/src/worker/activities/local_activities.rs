@@ -6,8 +6,9 @@ use crate::{
     worker::workflow::HeartbeatTimeoutMsg,
     MetricsContext, TaskToken,
 };
-use futures_util::{future, future::AbortRegistration, stream, StreamExt};
-use futures_util::{stream::BoxStream, Stream};
+use futures_util::{
+    future, future::AbortRegistration, stream, stream::BoxStream, Stream, StreamExt,
+};
 use parking_lot::{Mutex, MutexGuard};
 use std::{
     collections::{hash_map::Entry, HashMap},
@@ -482,7 +483,7 @@ impl LocalActivityManager {
                 dispatch_time: Instant::now(),
                 attempt,
                 _permit: permit.into_used(LocalActivitySlotInfo {
-                    activity_type: new_la.workflow_type.as_str(),
+                    activity_type: new_la.workflow_type.clone(),
                 }),
             },
         );

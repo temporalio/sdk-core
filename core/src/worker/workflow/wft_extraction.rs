@@ -75,7 +75,7 @@ impl WFTExtractor {
                             Ok(match HistoryPaginator::from_poll(wft, client).await {
                                 Ok((pag, prep)) => WFTExtractorOutput::NewWFT(PermittedWFT {
                                     permit: permit.into_used(WorkflowSlotInfo {
-                                        workflow_type: prep.workflow_type.as_str(),
+                                        workflow_type: prep.workflow_type.clone(),
                                     }),
                                     work: prep,
                                     paginator: pag,
