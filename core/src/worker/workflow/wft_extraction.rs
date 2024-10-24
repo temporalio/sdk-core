@@ -49,8 +49,8 @@ pub(crate) type WFTStreamIn = Result<
 >;
 #[derive(derive_more::From, Debug)]
 pub(super) enum HistoryFetchReq {
-    Full(CacheMissFetchReq, Arc<HistfetchRC>),
-    NextPage(NextPageReq, Arc<HistfetchRC>),
+    Full(Box<CacheMissFetchReq>, Arc<HistfetchRC>),
+    NextPage(Box<NextPageReq>, Arc<HistfetchRC>),
 }
 /// Used inside of `Arc`s to ensure we don't shutdown while there are outstanding fetches.
 #[derive(Debug)]

@@ -559,7 +559,7 @@ impl Workflows {
 
     /// Must be called after every activation completion has finished
     fn post_activation(&self, msg: PostActivationMsg) {
-        self.send_local(msg);
+        self.send_local(Box::new(msg));
     }
 
     /// Handle server errors from either completing or failing a workflow task. Un-handleable errors

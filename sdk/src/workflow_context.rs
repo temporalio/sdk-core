@@ -13,7 +13,6 @@ use crate::{
 };
 use futures_util::{task::Context, FutureExt, Stream, StreamExt};
 use parking_lot::{RwLock, RwLockReadGuard};
-use std::sync::mpsc::{Receiver, Sender};
 use std::{
     collections::HashMap,
     future::Future,
@@ -22,6 +21,7 @@ use std::{
     pin::Pin,
     sync::{
         atomic::{AtomicBool, Ordering},
+        mpsc::{Receiver, Sender},
         Arc,
     },
     task::Poll,
@@ -344,6 +344,11 @@ impl WfContext {
         ))
     }
 
+    /// Buffer a command to be sent in the activation reply
+    pub(crate) fn send(&self, c: RustWfCmd) {
+        self.chan.send(c).expect("command channel intact");
+    }
+
     fn send_signal_wf(
         &self,
         target: sig_we::Target,
@@ -372,10 +377,6 @@ impl WfContext {
     /// Cancel any cancellable operation by ID
     fn cancel(&self, cancellable_id: CancellableID) {
         self.send(RustWfCmd::Cancel(cancellable_id));
-    }
-
-    fn send(&self, c: RustWfCmd) {
-        self.chan.send(c).unwrap();
     }
 }
 

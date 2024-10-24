@@ -7,7 +7,6 @@ use crate::{
 };
 use futures_util::{future::BoxFuture, FutureExt, Stream, TryFutureExt};
 use itertools::Itertools;
-use std::sync::LazyLock;
 use std::{
     collections::VecDeque,
     fmt::Debug,
@@ -15,12 +14,15 @@ use std::{
     mem,
     mem::transmute,
     pin::Pin,
-    sync::Arc,
+    sync::{Arc, LazyLock},
     task::{Context, Poll},
 };
 use temporal_sdk_core_protos::temporal::api::{
     enums::v1::EventType,
-    history::v1::{history_event, History, HistoryEvent, WorkflowTaskCompletedEventAttributes},
+    history::v1::{
+        history_event, history_event::Attributes, History, HistoryEvent,
+        WorkflowTaskCompletedEventAttributes,
+    },
 };
 use tracing::Instrument;
 
@@ -166,7 +168,7 @@ impl HistoryPaginator {
     }
 
     pub(super) async fn from_fetchreq(
-        mut req: CacheMissFetchReq,
+        mut req: Box<CacheMissFetchReq>,
         client: Arc<dyn WorkerClient>,
     ) -> Result<PermittedWFT, tonic::Status> {
         let mut paginator = Self {
@@ -697,6 +699,7 @@ fn find_end_index_of_next_wft_seq(
     }
     let mut last_index = 0;
     let mut saw_any_command_event = false;
+    let mut wft_started_event_id_to_index = vec![];
     for (ix, e) in events.iter().enumerate() {
         last_index = ix;
 
@@ -714,12 +717,13 @@ fn find_end_index_of_next_wft_seq(
         }
 
         if e.event_type() == EventType::WorkflowTaskStarted {
+            wft_started_event_id_to_index.push((e.event_id, ix));
             if let Some(next_event) = events.get(ix + 1) {
-                let et = next_event.event_type();
+                let next_event_type = next_event.event_type();
                 // If the next event is WFT timeout or fail, or abrupt WF execution end, that
                 // doesn't conclude a WFT sequence.
                 if matches!(
-                    et,
+                    next_event_type,
                     EventType::WorkflowTaskFailed
                         | EventType::WorkflowTaskTimedOut
                         | EventType::WorkflowExecutionTimedOut
@@ -731,11 +735,38 @@ fn find_end_index_of_next_wft_seq(
                 // If we've never seen an interesting event and the next two events are a completion
                 // followed immediately again by scheduled, then this is a WFT heartbeat and also
                 // doesn't conclude the sequence.
-                else if et == EventType::WorkflowTaskCompleted {
+                else if next_event_type == EventType::WorkflowTaskCompleted {
                     if let Some(next_next_event) = events.get(ix + 2) {
                         if next_next_event.event_type() == EventType::WorkflowTaskScheduled {
                             continue;
                         } else {
+                            // If we see an update accepted command after WFT completed, we want to
+                            // conclude the WFT sequence where that update should have been
+                            // processed. We don't need to check for any other command types,
+                            // because the only thing that can run before an update validator is a
+                            // signal handler - but if a signal handler ran then there would have
+                            // been a previous signal event, and we would've already concluded the
+                            // previous WFT sequence.
+                            if let Some(
+                                Attributes::WorkflowExecutionUpdateAcceptedEventAttributes(
+                                    ref attr,
+                                ),
+                            ) = next_next_event.attributes
+                            {
+                                // Find index of closest WFT started before sequencing id
+                                if let Some(ret_ix) = wft_started_event_id_to_index
+                                    .iter()
+                                    .rev()
+                                    .find_map(|(eid, ix)| {
+                                        if *eid < attr.accepted_request_sequencing_event_id {
+                                            return Some(*ix);
+                                        }
+                                        None
+                                    })
+                                {
+                                    return NextWFTSeqEndIndex::Complete(ret_ix);
+                                }
+                            }
                             return NextWFTSeqEndIndex::Complete(ix);
                         }
                     } else if !has_last_wft && !saw_any_command_event {
@@ -766,8 +797,7 @@ mod tests {
         test_help::{canned_histories, hist_to_poll_resp, mock_sdk_cfg, MockPollCfg, ResponseType},
         worker::client::mocks::mock_workflow_client,
     };
-    use futures_util::StreamExt;
-    use futures_util::TryStreamExt;
+    use futures_util::{StreamExt, TryStreamExt};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use temporal_client::WorkflowOptions;
     use temporal_sdk::WfContext;
