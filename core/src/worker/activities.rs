@@ -553,7 +553,7 @@ where
                                 outstanding_entry.insert(RemoteInFlightActInfo::new(
                                     &task.resp,
                                     task.permit.into_used(ActivitySlotInfo {
-                                        activity_type: activity_type_name,
+                                        activity_type: activity_type_name.to_string(),
                                     }),
                                 ));
                             // If we have already waited the grace period and issued cancels,

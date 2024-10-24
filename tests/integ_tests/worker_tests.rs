@@ -119,6 +119,7 @@ async fn resource_based_few_pollers_guarantees_non_sticky_poll() {
     starter
         .worker_config
         .clear_max_outstanding_opts()
+        .no_remote_activities(true)
         // 3 pollers so the minimum slots of 2 can both be handed out to a sticky poller
         .max_concurrent_wft_polls(3_usize);
     // Set the limits to zero so it's essentially unwilling to hand out slots

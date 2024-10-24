@@ -9,8 +9,7 @@ use crate::{
         },
     },
 };
-use futures_util::Stream;
-use futures_util::{stream, stream::PollNext, FutureExt, StreamExt};
+use futures_util::{stream, stream::PollNext, FutureExt, Stream, StreamExt};
 use std::{future, sync::Arc};
 use temporal_sdk_core_api::worker::{WorkflowSlotInfo, WorkflowSlotKind};
 use temporal_sdk_core_protos::TaskToken;
@@ -76,7 +75,7 @@ impl WFTExtractor {
                             Ok(match HistoryPaginator::from_poll(wft, client).await {
                                 Ok((pag, prep)) => WFTExtractorOutput::NewWFT(PermittedWFT {
                                     permit: permit.into_used(WorkflowSlotInfo {
-                                        workflow_type: prep.workflow_type.as_str(),
+                                        workflow_type: prep.workflow_type.clone(),
                                     }),
                                     work: prep,
                                     paginator: pag,

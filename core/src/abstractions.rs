@@ -11,7 +11,8 @@ use std::{
     },
 };
 use temporal_sdk_core_api::worker::{
-    SlotKind, SlotReservationContext, SlotSupplier, SlotSupplierPermit, WorkflowSlotKind,
+    SlotKind, SlotReleaseContext, SlotReservationContext, SlotSupplier, SlotSupplierPermit,
+    WorkflowSlotKind,
 };
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
@@ -123,12 +124,16 @@ where
         OwnedMeteredSemPermit {
             _inner: res,
             unused_claimants: Some(self.unused_claimants.clone()),
+            release_ctx: ReleaseCtx {
+                is_sticky: self.is_sticky_poller,
+                stored_info: None,
+            },
             use_fn: Box::new(move |info| {
                 supp_c.mark_slot_used(info);
                 metric_rec(false)
             }),
-            release_fn: Box::new(move || {
-                supp_c_c.release_slot();
+            release_fn: Box::new(move |info| {
+                supp_c_c.release_slot(info);
                 ep_tx_c.send_modify(|ep| *ep -= 1);
                 mrc(true)
             }),
@@ -150,6 +155,23 @@ impl<SK: SlotKind> SlotReservationContext for MeteredPermitDealer<SK> {
 
     fn is_sticky(&self) -> bool {
         self.is_sticky_poller
+    }
+}
+
+struct ReleaseCtx<SK: SlotKind> {
+    is_sticky: bool,
+    stored_info: Option<SK::Info>,
+}
+
+impl<SK: SlotKind> SlotReleaseContext for ReleaseCtx<SK> {
+    type SlotKind = SK;
+
+    fn is_sticky(&self) -> bool {
+        self.is_sticky
+    }
+
+    fn info(&self) -> &Option<<Self::SlotKind as SlotKind>::Info> {
+        &self.stored_info
     }
 }
 
@@ -259,16 +281,17 @@ pub(crate) struct OwnedMeteredSemPermit<SK: SlotKind> {
     /// See [MeteredPermitDealer::unused_claimants]. If present when dropping, used to decrement the
     /// count.
     unused_claimants: Option<Arc<AtomicUsize>>,
+    release_ctx: ReleaseCtx<SK>,
     #[allow(clippy::type_complexity)] // not really tho, bud
-    use_fn: Box<dyn Fn(SK::Info<'_>) + Send + Sync>,
-    release_fn: Box<dyn Fn() + Send + Sync>,
+    use_fn: Box<dyn Fn(&SK::Info) + Send + Sync>,
+    release_fn: Box<dyn Fn(&ReleaseCtx<SK>) + Send + Sync>,
 }
 impl<SK: SlotKind> Drop for OwnedMeteredSemPermit<SK> {
     fn drop(&mut self) {
         if let Some(uc) = self.unused_claimants.take() {
             uc.fetch_sub(1, Ordering::Release);
         }
-        (self.release_fn)()
+        (self.release_fn)(&self.release_ctx)
     }
 }
 impl<SK: SlotKind> Debug for OwnedMeteredSemPermit<SK> {
@@ -279,11 +302,12 @@ impl<SK: SlotKind> Debug for OwnedMeteredSemPermit<SK> {
 impl<SK: SlotKind> OwnedMeteredSemPermit<SK> {
     /// Should be called once this permit is actually being "used" for the work it was meant to
     /// permit.
-    pub(crate) fn into_used(mut self, info: SK::Info<'_>) -> UsedMeteredSemPermit<SK> {
+    pub(crate) fn into_used(mut self, info: SK::Info) -> UsedMeteredSemPermit<SK> {
         if let Some(uc) = self.unused_claimants.take() {
             uc.fetch_sub(1, Ordering::Release);
         }
-        (self.use_fn)(info);
+        (self.use_fn)(&info);
+        self.release_ctx.stored_info = Some(info);
         UsedMeteredSemPermit(self)
     }
 }

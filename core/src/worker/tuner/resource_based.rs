@@ -3,7 +3,7 @@ use parking_lot::Mutex;
 use std::{
     marker::PhantomData,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
         Arc, OnceLock,
     },
     time::{Duration, Instant},
@@ -11,8 +11,8 @@ use std::{
 use temporal_sdk_core_api::{
     telemetry::metrics::{CoreMeter, GaugeF64, MetricAttributes, TemporalMeter},
     worker::{
-        ActivitySlotKind, LocalActivitySlotKind, SlotKind, SlotKindType, SlotReservationContext,
-        SlotSupplier, SlotSupplierPermit, WorkerTuner, WorkflowSlotKind,
+        ActivitySlotKind, LocalActivitySlotKind, SlotKind, SlotKindType, SlotReleaseContext,
+        SlotReservationContext, SlotSupplier, SlotSupplierPermit, WorkerTuner, WorkflowSlotKind,
     },
 };
 use tokio::{sync::watch, task::JoinHandle};
@@ -124,6 +124,12 @@ pub(crate) struct ResourceBasedSlotsForType<MI, SK> {
 
     last_slot_issued_tx: watch::Sender<Instant>,
     last_slot_issued_rx: watch::Receiver<Instant>,
+
+    // Only used for workflow slots - count of issued non-sticky slots
+    issued_nonsticky: AtomicUsize,
+    // Only used for workflow slots - count of issued sticky slots
+    issued_sticky: AtomicUsize,
+
     _slot_kind: PhantomData<SK>,
 }
 /// Allows for the full customization of the PID options for a resource based tuner
@@ -240,14 +246,18 @@ where
     type SlotKind = SK;
 
     async fn reserve_slot(&self, ctx: &dyn SlotReservationContext) -> SlotSupplierPermit {
-        // Always be willing to hand out at least 1 slot for sticky and 1 for non-sticky to avoid
-        // getting stuck.
-        if matches!(SK::kind(), SlotKindType::Workflow) {
-            dbg!(ctx.is_sticky());
-        }
         loop {
+            // Always be willing to hand out at least 1 slot for sticky and 1 for non-sticky to
+            // avoid getting stuck.
+            if matches!(SK::kind(), SlotKindType::Workflow) {
+                if (ctx.is_sticky() && self.issued_sticky.load(Ordering::Relaxed) == 0)
+                    || !ctx.is_sticky() && self.issued_nonsticky.load(Ordering::Relaxed) == 0
+                {
+                    return self.issue_slot(ctx);
+                }
+            }
             if ctx.num_issued_slots() < self.opts.min_slots {
-                return self.issue_slot();
+                return self.issue_slot(ctx);
             } else {
                 let must_wait_for = self
                     .opts
@@ -273,15 +283,23 @@ where
                 && self.inner.pid_decision()
                 && self.inner.can_reserve())
         {
-            Some(self.issue_slot())
+            Some(self.issue_slot(ctx))
         } else {
             None
         }
     }
 
-    fn mark_slot_used(&self, _info: SK::Info<'_>) {}
+    fn mark_slot_used(&self, _info: &SK::Info) {}
 
-    fn release_slot(&self) {}
+    fn release_slot(&self, ctx: &dyn SlotReleaseContext<SlotKind = Self::SlotKind>) {
+        if matches!(SK::kind(), SlotKindType::Workflow) {
+            if ctx.is_sticky() {
+                self.issued_sticky.fetch_sub(1, Ordering::Relaxed);
+            } else {
+                self.issued_nonsticky.fetch_sub(1, Ordering::Relaxed);
+            }
+        }
+    }
 }
 
 impl<MI, SK> ResourceBasedSlotsForType<MI, SK>
@@ -296,11 +314,22 @@ where
             last_slot_issued_tx: tx,
             last_slot_issued_rx: rx,
             inner,
+            issued_nonsticky: Default::default(),
+            issued_sticky: Default::default(),
             _slot_kind: PhantomData,
         }
     }
 
-    fn issue_slot(&self) -> SlotSupplierPermit {
+    fn issue_slot(&self, ctx: &dyn SlotReservationContext) -> SlotSupplierPermit {
+        // Always be willing to hand out at least 1 slot for sticky and 1 for non-sticky to avoid
+        // getting stuck.
+        if matches!(SK::kind(), SlotKindType::Workflow) {
+            if ctx.is_sticky() {
+                self.issued_sticky.fetch_add(1, Ordering::Relaxed);
+            } else {
+                self.issued_nonsticky.fetch_add(1, Ordering::Relaxed);
+            }
+        }
         let _ = self.last_slot_issued_tx.send(Instant::now());
         SlotSupplierPermit::default()
     }
