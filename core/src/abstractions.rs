@@ -11,8 +11,8 @@ use std::{
     },
 };
 use temporal_sdk_core_api::worker::{
-    SlotKind, SlotReleaseContext, SlotReservationContext, SlotSupplier, SlotSupplierPermit,
-    WorkflowSlotKind,
+    SlotKind, SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext, SlotSupplier,
+    SlotSupplierPermit, WorkflowSlotKind,
 };
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
@@ -39,6 +39,15 @@ pub(crate) struct MeteredPermitDealer<SK: SlotKind> {
     /// Only applies to permit dealers for workflow tasks. True if this permit dealer is associated
     /// with a sticky queue poller.
     is_sticky_poller: bool,
+    context_data: Arc<PermitDealerContextData>,
+}
+
+#[derive(Clone, Debug)]
+#[cfg_attr(test, derive(Default))]
+pub(crate) struct PermitDealerContextData {
+    pub(crate) task_queue: String,
+    pub(crate) worker_identity: String,
+    pub(crate) worker_build_id: String,
 }
 
 impl<SK> MeteredPermitDealer<SK>
@@ -49,6 +58,7 @@ where
         supplier: Arc<dyn SlotSupplier<SlotKind = SK> + Send + Sync>,
         metrics_ctx: MetricsContext,
         max_permits: Option<usize>,
+        context_data: Arc<PermitDealerContextData>,
     ) -> Self {
         Self {
             supplier,
@@ -57,6 +67,7 @@ where
             metrics_ctx,
             max_permits,
             is_sticky_poller: false,
+            context_data,
         }
     }
 
@@ -149,12 +160,41 @@ impl MeteredPermitDealer<WorkflowSlotKind> {
 }
 
 impl<SK: SlotKind> SlotReservationContext for MeteredPermitDealer<SK> {
+    fn task_queue(&self) -> &str {
+        &self.context_data.task_queue
+    }
+
+    fn worker_identity(&self) -> &str {
+        &self.context_data.worker_identity
+    }
+
+    fn worker_build_id(&self) -> &str {
+        &self.context_data.worker_build_id
+    }
+
     fn num_issued_slots(&self) -> usize {
         *self.extant_permits.1.borrow()
     }
 
     fn is_sticky(&self) -> bool {
         self.is_sticky_poller
+    }
+}
+
+struct UseCtx<'a, SK: SlotKind> {
+    stored_info: &'a SK::Info,
+    permit: &'a SlotSupplierPermit,
+}
+
+impl<'a, SK: SlotKind> SlotMarkUsedContext for UseCtx<'a, SK> {
+    type SlotKind = SK;
+
+    fn permit(&self) -> &SlotSupplierPermit {
+        self.permit
+    }
+
+    fn info(&self) -> &<Self::SlotKind as SlotKind>::Info {
+        self.stored_info
     }
 }
 
@@ -283,7 +323,7 @@ pub(crate) struct OwnedMeteredSemPermit<SK: SlotKind> {
     unused_claimants: Option<Arc<AtomicUsize>>,
     release_ctx: ReleaseCtx<SK>,
     #[allow(clippy::type_complexity)] // not really tho, bud
-    use_fn: Box<dyn Fn(&SK::Info) + Send + Sync>,
+    use_fn: Box<dyn Fn(&UseCtx<SK>) + Send + Sync>,
     #[allow(clippy::type_complexity)] // not really tho, bud
     release_fn: Box<dyn Fn(&ReleaseCtx<SK>) + Send + Sync>,
 }
@@ -307,7 +347,11 @@ impl<SK: SlotKind> OwnedMeteredSemPermit<SK> {
         if let Some(uc) = self.unused_claimants.take() {
             uc.fetch_sub(1, Ordering::Release);
         }
-        (self.use_fn)(&info);
+        let ctx = UseCtx {
+            stored_info: &info,
+            permit: &self._inner,
+        };
+        (self.use_fn)(&ctx);
         self.release_ctx.stored_info = Some(info);
         UsedMeteredSemPermit(self)
     }
@@ -338,6 +382,7 @@ pub(crate) mod tests {
             Arc::new(FixedSizeSlotSupplier::new(size)),
             MetricsContext::no_op(),
             None,
+            Arc::new(Default::default()),
         )
     }
 

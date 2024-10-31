@@ -11,8 +11,9 @@ use std::{
 use temporal_sdk_core_api::{
     telemetry::metrics::{CoreMeter, GaugeF64, MetricAttributes, TemporalMeter},
     worker::{
-        ActivitySlotKind, LocalActivitySlotKind, SlotKind, SlotKindType, SlotReleaseContext,
-        SlotReservationContext, SlotSupplier, SlotSupplierPermit, WorkerTuner, WorkflowSlotKind,
+        ActivitySlotKind, LocalActivitySlotKind, SlotKind, SlotKindType, SlotMarkUsedContext,
+        SlotReleaseContext, SlotReservationContext, SlotSupplier, SlotSupplierPermit, WorkerTuner,
+        WorkflowSlotKind,
     },
 };
 use tokio::{sync::watch, task::JoinHandle};
@@ -280,7 +281,7 @@ where
         }
     }
 
-    fn mark_slot_used(&self, _info: &SK::Info) {}
+    fn mark_slot_used(&self, _ctx: &dyn SlotMarkUsedContext<SlotKind = Self::SlotKind>) {}
 
     fn release_slot(&self, ctx: &dyn SlotReleaseContext<SlotKind = Self::SlotKind>) {
         if matches!(SK::kind(), SlotKindType::Workflow) {
@@ -505,6 +506,8 @@ impl SystemResourceInfo for RealSysInfo {
     }
 
     fn used_mem(&self) -> u64 {
+        // TODO: This should really happen on a background thread since it's getting called from
+        //   the async reserve
         self.refresh_if_needed();
         self.cur_mem_usage.load(Ordering::Acquire)
     }
@@ -565,7 +568,12 @@ mod tests {
             max_slots: 100,
             ramp_throttle: Duration::from_millis(0),
         });
-        let pd = MeteredPermitDealer::new(rbs.clone(), MetricsContext::no_op(), None);
+        let pd = MeteredPermitDealer::new(
+            rbs.clone(),
+            MetricsContext::no_op(),
+            None,
+            Arc::new(Default::default()),
+        );
         let pd_s = pd.clone().into_sticky();
         // Start with too high usage
         used.store(90_000, Ordering::Release);
@@ -589,7 +597,12 @@ mod tests {
             max_slots: 100,
             ramp_throttle: Duration::from_millis(0),
         });
-        let pd = MeteredPermitDealer::new(rbs.clone(), MetricsContext::no_op(), None);
+        let pd = MeteredPermitDealer::new(
+            rbs.clone(),
+            MetricsContext::no_op(),
+            None,
+            Arc::new(Default::default()),
+        );
         // Start with too high usage
         used.store(90_000, Ordering::Release);
         assert!(rbs.try_reserve_slot(&pd).is_none());
@@ -608,7 +621,12 @@ mod tests {
             max_slots: 100,
             ramp_throttle: Duration::from_millis(0),
         });
-        let pd = MeteredPermitDealer::new(rbs.clone(), MetricsContext::no_op(), None);
+        let pd = MeteredPermitDealer::new(
+            rbs.clone(),
+            MetricsContext::no_op(),
+            None,
+            Arc::new(Default::default()),
+        );
         let pd_s = pd.clone().into_sticky();
         let order = crossbeam_queue::ArrayQueue::new(2);
         // Show workflow will always allow 1 each of sticky/non-sticky
@@ -638,7 +656,12 @@ mod tests {
             max_slots: 100,
             ramp_throttle: Duration::from_millis(0),
         });
-        let pd = MeteredPermitDealer::new(rbs.clone(), MetricsContext::no_op(), None);
+        let pd = MeteredPermitDealer::new(
+            rbs.clone(),
+            MetricsContext::no_op(),
+            None,
+            Arc::new(Default::default()),
+        );
         let order = crossbeam_queue::ArrayQueue::new(2);
         let waits_free = async {
             rbs.reserve_slot(&pd).await;
@@ -662,7 +685,12 @@ mod tests {
             max_slots: 100,
             ramp_throttle: Duration::from_millis(0),
         });
-        let pd = MeteredPermitDealer::new(rbs.clone(), MetricsContext::no_op(), None);
+        let pd = MeteredPermitDealer::new(
+            rbs.clone(),
+            MetricsContext::no_op(),
+            None,
+            Arc::new(Default::default()),
+        );
         used.store(90_000, Ordering::Release);
         let _p1 = pd.try_acquire_owned().unwrap();
         let _p2 = pd.try_acquire_owned().unwrap();

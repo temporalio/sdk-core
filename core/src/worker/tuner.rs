@@ -11,7 +11,7 @@ use std::sync::{Arc, OnceLock};
 use temporal_sdk_core_api::{
     telemetry::metrics::TemporalMeter,
     worker::{
-        ActivitySlotKind, LocalActivitySlotKind, SlotSupplier, WorkerConfig, WorkerTuner,
+        ActivitySlotKind, LocalActivitySlotKind, SlotKind, SlotSupplier, WorkerConfig, WorkerTuner,
         WorkflowSlotKind,
     },
 };
@@ -32,13 +32,13 @@ pub struct TunerHolder {
 pub struct TunerHolderOptions {
     /// Options for workflow slots
     #[builder(default, setter(strip_option))]
-    pub workflow_slot_options: Option<SlotSupplierOptions>,
+    pub workflow_slot_options: Option<SlotSupplierOptions<WorkflowSlotKind>>,
     /// Options for activity slots
     #[builder(default, setter(strip_option))]
-    pub activity_slot_options: Option<SlotSupplierOptions>,
+    pub activity_slot_options: Option<SlotSupplierOptions<ActivitySlotKind>>,
     /// Options for local activity slots
     #[builder(default, setter(strip_option))]
-    pub local_activity_slot_options: Option<SlotSupplierOptions>,
+    pub local_activity_slot_options: Option<SlotSupplierOptions<LocalActivitySlotKind>>,
     /// Options that will apply to all resource based slot suppliers. Must be set if any slot
     /// options are [SlotSupplierOptions::ResourceBased]
     #[builder(default, setter(strip_option))]
@@ -67,6 +67,9 @@ impl TunerHolderOptions {
                         .workflow_task_slot_supplier(),
                 );
             }
+            Some(SlotSupplierOptions::Custom(ss)) => {
+                builder.workflow_slot_supplier(ss);
+            }
             None => {}
         }
         match self.activity_slot_options {
@@ -81,6 +84,9 @@ impl TunerHolderOptions {
                         .with_activity_slots_options(rso)
                         .activity_task_slot_supplier(),
                 );
+            }
+            Some(SlotSupplierOptions::Custom(ss)) => {
+                builder.activity_slot_supplier(ss);
             }
             None => {}
         }
@@ -97,6 +103,9 @@ impl TunerHolderOptions {
                         .local_activity_slot_supplier(),
                 );
             }
+            Some(SlotSupplierOptions::Custom(ss)) => {
+                builder.local_activity_slot_supplier(ss);
+            }
             None => {}
         }
         Ok(builder.build())
@@ -104,8 +113,8 @@ impl TunerHolderOptions {
 }
 
 /// Options for known kinds of slot suppliers
-#[derive(Clone, Debug)]
-pub enum SlotSupplierOptions {
+#[derive(Clone, derive_more::Debug)]
+pub enum SlotSupplierOptions<SK: SlotKind> {
     /// Options for a [FixedSizeSlotSupplier]
     FixedSize {
         /// The number of slots the fixed supplier will have
@@ -113,6 +122,9 @@ pub enum SlotSupplierOptions {
     },
     /// Options for a [ResourceBasedSlots]
     ResourceBased(ResourceSlotOptions),
+    /// A user-implemented slot supplier
+    #[debug("Custom")]
+    Custom(Arc<dyn SlotSupplier<SlotKind = SK> + Send + Sync>),
 }
 
 impl TunerHolderOptionsBuilder {

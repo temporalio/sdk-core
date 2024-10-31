@@ -1,5 +1,8 @@
 use crate::{
-    abstractions::{dbg_panic, MeteredPermitDealer, OwnedMeteredSemPermit, UsedMeteredSemPermit},
+    abstractions::{
+        dbg_panic, MeteredPermitDealer, OwnedMeteredSemPermit, PermitDealerContextData,
+        UsedMeteredSemPermit,
+    },
     protosext::ValidScheduleLA,
     retry_logic::RetryPolicyExt,
     telemetry::metrics::{activity_type, local_activity_worker_type, workflow_type},
@@ -214,6 +217,7 @@ impl LocalActivityManager {
         namespace: String,
         heartbeat_timeout_tx: UnboundedSender<HeartbeatTimeoutMsg>,
         metrics_context: MetricsContext,
+        context_data: Arc<PermitDealerContextData>,
     ) -> Self {
         let (act_req_tx, act_req_rx) = unbounded_channel();
         let (cancels_req_tx, cancels_req_rx) = unbounded_channel();
@@ -222,6 +226,7 @@ impl LocalActivityManager {
             slot_supplier,
             metrics_context.with_new_attrs([local_activity_worker_type()]),
             None,
+            context_data,
         );
         Self {
             namespace,
@@ -252,7 +257,13 @@ impl LocalActivityManager {
 
         let ss = Arc::new(FixedSizeSlotSupplier::new(max_concurrent));
         let (hb_tx, _hb_rx) = unbounded_channel();
-        Self::new(ss, "fake_ns".to_string(), hb_tx, MetricsContext::no_op())
+        Self::new(
+            ss,
+            "fake_ns".to_string(),
+            hb_tx,
+            MetricsContext::no_op(),
+            Arc::new(Default::default()),
+        )
     }
 
     #[cfg(test)]
