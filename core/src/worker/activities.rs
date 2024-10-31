@@ -182,7 +182,7 @@ enum ActivityTaskSource {
 impl WorkerActivityTasks {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
-        semaphore: Arc<MeteredPermitDealer<ActivitySlotKind>>,
+        semaphore: MeteredPermitDealer<ActivitySlotKind>,
         poller: BoxedActPoller,
         client: Arc<dyn WorkerClient>,
         metrics: MetricsContext,
@@ -196,7 +196,7 @@ impl WorkerActivityTasks {
         let server_poller_stream =
             new_activity_task_poller(poller, metrics.clone(), shutdown_initiated_token.clone());
         let (eager_activities_tx, eager_activities_rx) = unbounded_channel();
-        let eager_activities_semaphore = ClosableMeteredPermitDealer::new_arc(semaphore);
+        let eager_activities_semaphore = ClosableMeteredPermitDealer::new_arc(Arc::new(semaphore));
 
         let start_tasks_stream_complete = CancellationToken::new();
         let starts_stream = Self::merge_start_task_sources(
@@ -553,7 +553,7 @@ where
                                 outstanding_entry.insert(RemoteInFlightActInfo::new(
                                     &task.resp,
                                     task.permit.into_used(ActivitySlotInfo {
-                                        activity_type: activity_type_name,
+                                        activity_type: activity_type_name.to_string(),
                                     }),
                                 ));
                             // If we have already waited the grace period and issued cancels,
@@ -750,7 +750,7 @@ mod tests {
             .times(2)
             .returning(|_, _| Ok(Default::default()));
         let mock_client = Arc::new(mock_client);
-        let sem = Arc::new(fixed_size_permit_dealer(10));
+        let sem = fixed_size_permit_dealer(10);
         let shutdown_token = CancellationToken::new();
         let ap = new_activity_task_buffer(
             mock_client.clone(),
@@ -839,7 +839,7 @@ mod tests {
                 })
             });
         let mock_client = Arc::new(mock_client);
-        let sem = Arc::new(fixed_size_permit_dealer(1));
+        let sem = fixed_size_permit_dealer(1);
         let shutdown_token = CancellationToken::new();
         let ap = new_activity_task_buffer(
             mock_client.clone(),
@@ -910,7 +910,7 @@ mod tests {
             .times(2)
             .returning(|_, _| Ok(Default::default()));
         let mock_client = Arc::new(mock_client);
-        let sem = Arc::new(fixed_size_permit_dealer(1));
+        let sem = fixed_size_permit_dealer(1);
         let shutdown_token = CancellationToken::new();
         let ap = new_activity_task_buffer(
             mock_client.clone(),

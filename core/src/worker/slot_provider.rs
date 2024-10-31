@@ -7,8 +7,6 @@ use crate::{
     protosext::ValidPollWFTQResponse,
     worker::workflow::wft_poller::validate_wft,
 };
-
-use std::sync::Arc;
 use temporal_client::{Slot as SlotTrait, SlotProvider as SlotProviderTrait};
 use temporal_sdk_core_api::worker::WorkflowSlotKind;
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse;
@@ -58,7 +56,7 @@ impl SlotTrait for Slot {
 pub(super) struct SlotProvider {
     namespace: String,
     task_queue: String,
-    wft_semaphore: Arc<MeteredPermitDealer<WorkflowSlotKind>>,
+    wft_semaphore: MeteredPermitDealer<WorkflowSlotKind>,
     external_wft_tx: WFTStreamSender,
 }
 
@@ -66,7 +64,7 @@ impl SlotProvider {
     pub(super) fn new(
         namespace: String,
         task_queue: String,
-        wft_semaphore: Arc<MeteredPermitDealer<WorkflowSlotKind>>,
+        wft_semaphore: MeteredPermitDealer<WorkflowSlotKind>,
         external_wft_tx: WFTStreamSender,
     ) -> Self {
         Self {
@@ -119,7 +117,7 @@ mod tests {
 
     #[tokio::test]
     async fn slot_propagates_through_channel() {
-        let wft_semaphore = Arc::new(fixed_size_permit_dealer(2));
+        let wft_semaphore = fixed_size_permit_dealer(2);
         let (external_wft_tx, mut external_wft_rx) = unbounded_channel();
 
         let provider = SlotProvider::new(
@@ -142,7 +140,7 @@ mod tests {
         let (external_wft_tx, mut external_wft_rx) = unbounded_channel();
         {
             let external_wft_tx = external_wft_tx;
-            let wft_semaphore = Arc::new(fixed_size_permit_dealer(2));
+            let wft_semaphore = fixed_size_permit_dealer(2);
             let provider = SlotProvider::new(
                 "my_namespace".to_string(),
                 "my_queue".to_string(),
@@ -156,7 +154,7 @@ mod tests {
 
     #[tokio::test]
     async fn unused_slots_reclaimed() {
-        let wft_semaphore = Arc::new(fixed_size_permit_dealer(2));
+        let wft_semaphore = fixed_size_permit_dealer(2);
         {
             let wft_semaphore = wft_semaphore.clone();
             let (external_wft_tx, _) = unbounded_channel();

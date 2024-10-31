@@ -286,10 +286,10 @@ pub trait SlotSupplier {
     /// Users' implementation of this can choose to emit metrics, or otherwise leverage the
     /// information provided by the `info` parameter to be better able to make future decisions
     /// about whether a slot should be handed out.
-    fn mark_slot_used(&self, info: <Self::SlotKind as SlotKind>::Info<'_>);
+    fn mark_slot_used(&self, info: &<Self::SlotKind as SlotKind>::Info);
 
     /// Frees a slot.
-    fn release_slot(&self);
+    fn release_slot(&self, ctx: &dyn SlotReleaseContext<SlotKind = Self::SlotKind>);
 
     /// If this implementation knows how many slots are available at any moment, it should return
     /// that here.
@@ -301,6 +301,18 @@ pub trait SlotSupplier {
 pub trait SlotReservationContext: Send + Sync {
     /// Returns the number of currently outstanding slot permits, whether used or un-used.
     fn num_issued_slots(&self) -> usize;
+
+    /// Returns true iff this is a sticky poll for a workflow task
+    fn is_sticky(&self) -> bool;
+}
+
+pub trait SlotReleaseContext: Send + Sync {
+    type SlotKind: SlotKind;
+    /// Returns true iff this is (or was to be, in the case of an unused slot) sticky poll for a
+    /// workflow task
+    fn is_sticky(&self) -> bool;
+    /// Returns the info of slot that was released, if it was used
+    fn info(&self) -> &Option<<Self::SlotKind as SlotKind>::Info>;
 }
 
 #[derive(Default)]
@@ -325,46 +337,56 @@ impl SlotSupplierPermit {
     }
 }
 
-pub struct WorkflowSlotInfo<'a> {
-    pub workflow_type: &'a str,
-    // etc...
+#[derive(Debug, Clone)]
+pub struct WorkflowSlotInfo {
+    pub workflow_type: String,
+}
+#[derive(Debug, Clone)]
+pub struct ActivitySlotInfo {
+    pub activity_type: String,
+}
+#[derive(Debug, Clone)]
+pub struct LocalActivitySlotInfo {
+    pub activity_type: String,
 }
 
-pub struct ActivitySlotInfo<'a> {
-    pub activity_type: &'a str,
-    // etc...
-}
-pub struct LocalActivitySlotInfo<'a> {
-    pub activity_type: &'a str,
-    // etc...
+#[derive(Debug, Copy, Clone, derive_more::Display, Eq, PartialEq)]
+pub enum SlotKindType {
+    Workflow,
+    Activity,
+    LocalActivity,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct WorkflowSlotKind {}
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct ActivitySlotKind {}
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub struct LocalActivitySlotKind {}
+
 pub trait SlotKind {
-    type Info<'a>;
-    fn kind_name() -> &'static str;
+    type Info: Send + Sync;
+
+    fn kind() -> SlotKindType;
 }
 impl SlotKind for WorkflowSlotKind {
-    type Info<'a> = WorkflowSlotInfo<'a>;
+    type Info = WorkflowSlotInfo;
 
-    fn kind_name() -> &'static str {
-        "workflow"
+    fn kind() -> SlotKindType {
+        SlotKindType::Workflow
     }
 }
 impl SlotKind for ActivitySlotKind {
-    type Info<'a> = ActivitySlotInfo<'a>;
-    fn kind_name() -> &'static str {
-        "activity"
+    type Info = ActivitySlotInfo;
+
+    fn kind() -> SlotKindType {
+        SlotKindType::Activity
     }
 }
 impl SlotKind for LocalActivitySlotKind {
-    type Info<'a> = LocalActivitySlotInfo<'a>;
-    fn kind_name() -> &'static str {
-        "local_activity"
+    type Info = LocalActivitySlotInfo;
+
+    fn kind() -> SlotKindType {
+        SlotKindType::LocalActivity
     }
 }
