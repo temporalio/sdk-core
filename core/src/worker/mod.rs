@@ -70,6 +70,7 @@ use tokio::sync::mpsc::unbounded_channel;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
 
+use crate::abstractions::PermitDealerContextData;
 use temporal_sdk_core_api::errors::WorkerValidationError;
 #[cfg(test)]
 use {
@@ -270,6 +271,11 @@ impl Worker {
             tuner.attach_metrics(meter.clone());
         }
         let shutdown_token = CancellationToken::new();
+        let slot_context_data = Arc::new(PermitDealerContextData {
+            task_queue: config.task_queue.clone(),
+            worker_identity: config.client_identity_override.clone().unwrap_or_default(),
+            worker_build_id: config.worker_build_id.clone(),
+        });
         let wft_slots = MeteredPermitDealer::new(
             tuner.workflow_task_slot_supplier(),
             metrics.with_new_attrs([workflow_worker_type()]),
@@ -280,11 +286,13 @@ impl Worker {
             } else {
                 None
             },
+            slot_context_data.clone(),
         );
         let act_slots = MeteredPermitDealer::new(
             tuner.activity_task_slot_supplier(),
             metrics.with_new_attrs([activity_worker_type()]),
             None,
+            slot_context_data.clone(),
         );
         let (external_wft_tx, external_wft_rx) = unbounded_channel();
         let (wft_stream, act_poller) = match task_pollers {
@@ -387,6 +395,7 @@ impl Worker {
             config.namespace.clone(),
             hb_tx,
             metrics.clone(),
+            slot_context_data,
         ));
         let at_task_mgr = act_poller.map(|ap| {
             WorkerActivityTasks::new(

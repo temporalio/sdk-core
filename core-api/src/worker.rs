@@ -5,6 +5,9 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+use temporal_sdk_core_protos::coresdk::{
+    ActivitySlotInfo, LocalActivitySlotInfo, WorkflowSlotInfo,
+};
 
 const MAX_CONCURRENT_WFT_POLLS_DEFAULT: usize = 5;
 
@@ -275,7 +278,8 @@ pub trait SlotSupplier {
     /// Block until a slot is available, then return a permit for the slot.
     async fn reserve_slot(&self, ctx: &dyn SlotReservationContext) -> SlotSupplierPermit;
 
-    /// Try to immediately reserve a slot, returning None if one is not available
+    /// Try to immediately reserve a slot, returning None if one is not available. Implementations
+    /// must not block, or risk blocking the async event loop.
     fn try_reserve_slot(&self, ctx: &dyn SlotReservationContext) -> Option<SlotSupplierPermit>;
 
     /// Marks a slot as actually now being used. This is separate from reserving one because the
@@ -286,7 +290,7 @@ pub trait SlotSupplier {
     /// Users' implementation of this can choose to emit metrics, or otherwise leverage the
     /// information provided by the `info` parameter to be better able to make future decisions
     /// about whether a slot should be handed out.
-    fn mark_slot_used(&self, info: &<Self::SlotKind as SlotKind>::Info);
+    fn mark_slot_used(&self, ctx: &dyn SlotMarkUsedContext<SlotKind = Self::SlotKind>);
 
     /// Frees a slot.
     fn release_slot(&self, ctx: &dyn SlotReleaseContext<SlotKind = Self::SlotKind>);
@@ -299,6 +303,15 @@ pub trait SlotSupplier {
 }
 
 pub trait SlotReservationContext: Send + Sync {
+    /// Returns the name of the task queue this worker is polling
+    fn task_queue(&self) -> &str;
+
+    /// Returns the identity of the worker
+    fn worker_identity(&self) -> &str;
+
+    /// Returns the build id of the worker
+    fn worker_build_id(&self) -> &str;
+
     /// Returns the number of currently outstanding slot permits, whether used or un-used.
     fn num_issued_slots(&self) -> usize;
 
@@ -306,16 +319,23 @@ pub trait SlotReservationContext: Send + Sync {
     fn is_sticky(&self) -> bool;
 }
 
-pub trait SlotReleaseContext: Send + Sync {
+pub trait SlotMarkUsedContext: Send + Sync {
     type SlotKind: SlotKind;
-    /// Returns true iff this is (or was to be, in the case of an unused slot) sticky poll for a
-    /// workflow task
-    fn is_sticky(&self) -> bool;
-    /// Returns the info of slot that was released, if it was used
-    fn info(&self) -> &Option<<Self::SlotKind as SlotKind>::Info>;
+    /// The slot permit that is being used
+    fn permit(&self) -> &SlotSupplierPermit;
+    /// Returns the info of slot that was marked as used
+    fn info(&self) -> &<Self::SlotKind as SlotKind>::Info;
 }
 
-#[derive(Default)]
+pub trait SlotReleaseContext: Send + Sync {
+    type SlotKind: SlotKind;
+    /// The slot permit that is being used
+    fn permit(&self) -> &SlotSupplierPermit;
+    /// Returns the info of slot that was released, if it was used
+    fn info(&self) -> Option<&<Self::SlotKind as SlotKind>::Info>;
+}
+
+#[derive(Default, Debug)]
 pub struct SlotSupplierPermit {
     user_data: Option<Box<dyn Any + Send + Sync>>,
 }
@@ -337,19 +357,6 @@ impl SlotSupplierPermit {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct WorkflowSlotInfo {
-    pub workflow_type: String,
-}
-#[derive(Debug, Clone)]
-pub struct ActivitySlotInfo {
-    pub activity_type: String,
-}
-#[derive(Debug, Clone)]
-pub struct LocalActivitySlotInfo {
-    pub activity_type: String,
-}
-
 #[derive(Debug, Copy, Clone, derive_more::Display, Eq, PartialEq)]
 pub enum SlotKindType {
     Workflow,
@@ -364,8 +371,33 @@ pub struct ActivitySlotKind {}
 #[derive(Debug, Copy, Clone)]
 pub struct LocalActivitySlotKind {}
 
+pub enum SlotInfo<'a> {
+    Workflow(&'a WorkflowSlotInfo),
+    Activity(&'a ActivitySlotInfo),
+    LocalActivity(&'a LocalActivitySlotInfo),
+}
+
+pub trait SlotInfoTrait: prost::Message {
+    fn downcast(&self) -> SlotInfo;
+}
+impl SlotInfoTrait for WorkflowSlotInfo {
+    fn downcast(&self) -> SlotInfo {
+        SlotInfo::Workflow(self)
+    }
+}
+impl SlotInfoTrait for ActivitySlotInfo {
+    fn downcast(&self) -> SlotInfo {
+        SlotInfo::Activity(self)
+    }
+}
+impl SlotInfoTrait for LocalActivitySlotInfo {
+    fn downcast(&self) -> SlotInfo {
+        SlotInfo::LocalActivity(self)
+    }
+}
+
 pub trait SlotKind {
-    type Info: Send + Sync;
+    type Info: SlotInfoTrait;
 
     fn kind() -> SlotKindType;
 }
