@@ -382,17 +382,17 @@ pub trait SlotInfoTrait: prost::Message {
 }
 impl SlotInfoTrait for WorkflowSlotInfo {
     fn downcast(&self) -> SlotInfo {
-        SlotInfo::Workflow(&self)
+        SlotInfo::Workflow(self)
     }
 }
 impl SlotInfoTrait for ActivitySlotInfo {
     fn downcast(&self) -> SlotInfo {
-        SlotInfo::Activity(&self)
+        SlotInfo::Activity(self)
     }
 }
 impl SlotInfoTrait for LocalActivitySlotInfo {
     fn downcast(&self) -> SlotInfo {
-        SlotInfo::LocalActivity(&self)
+        SlotInfo::LocalActivity(self)
     }
 }
 
