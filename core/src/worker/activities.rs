@@ -39,12 +39,12 @@ use std::{
     },
     time::{Duration, Instant, SystemTime},
 };
-use temporal_sdk_core_api::worker::{ActivitySlotInfo, ActivitySlotKind};
+use temporal_sdk_core_api::worker::ActivitySlotKind;
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{self as ar, activity_execution_result as aer},
         activity_task::{ActivityCancelReason, ActivityTask},
-        ActivityHeartbeat,
+        ActivityHeartbeat, ActivitySlotInfo,
     },
     temporal::api::{
         failure::v1::{failure::FailureInfo, ApplicationFailureInfo, CanceledFailureInfo, Failure},

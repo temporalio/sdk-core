@@ -11,9 +11,9 @@ use std::{
 use temporal_sdk_core_api::{
     telemetry::metrics::{CoreMeter, GaugeF64, MetricAttributes, TemporalMeter},
     worker::{
-        ActivitySlotKind, LocalActivitySlotKind, SlotKind, SlotKindType, SlotMarkUsedContext,
-        SlotReleaseContext, SlotReservationContext, SlotSupplier, SlotSupplierPermit, WorkerTuner,
-        WorkflowSlotKind,
+        ActivitySlotKind, LocalActivitySlotKind, SlotInfo, SlotInfoTrait, SlotKind, SlotKindType,
+        SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext, SlotSupplier,
+        SlotSupplierPermit, WorkerTuner, WorkflowSlotKind,
     },
 };
 use tokio::{sync::watch, task::JoinHandle};
@@ -284,8 +284,9 @@ where
     fn mark_slot_used(&self, _ctx: &dyn SlotMarkUsedContext<SlotKind = Self::SlotKind>) {}
 
     fn release_slot(&self, ctx: &dyn SlotReleaseContext<SlotKind = Self::SlotKind>) {
-        if matches!(SK::kind(), SlotKindType::Workflow) {
-            if ctx.is_sticky() {
+        // Really could use specialization here
+        if let Some(SlotInfo::Workflow(info)) = ctx.info().map(|i| i.downcast()) {
+            if info.is_sticky {
                 self.issued_sticky.fetch_sub(1, Ordering::Relaxed);
             } else {
                 self.issued_nonsticky.fetch_sub(1, Ordering::Relaxed);

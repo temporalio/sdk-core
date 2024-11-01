@@ -5,6 +5,9 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+use temporal_sdk_core_protos::coresdk::{
+    ActivitySlotInfo, LocalActivitySlotInfo, WorkflowSlotInfo,
+};
 
 const MAX_CONCURRENT_WFT_POLLS_DEFAULT: usize = 5;
 
@@ -326,11 +329,10 @@ pub trait SlotMarkUsedContext: Send + Sync {
 
 pub trait SlotReleaseContext: Send + Sync {
     type SlotKind: SlotKind;
-    /// Returns true iff this is (or was to be, in the case of an unused slot) sticky poll for a
-    /// workflow task
-    fn is_sticky(&self) -> bool;
+    /// The slot permit that is being used
+    fn permit(&self) -> &SlotSupplierPermit;
     /// Returns the info of slot that was released, if it was used
-    fn info(&self) -> &Option<<Self::SlotKind as SlotKind>::Info>;
+    fn info(&self) -> Option<&<Self::SlotKind as SlotKind>::Info>;
 }
 
 #[derive(Default, Debug)]
@@ -355,19 +357,6 @@ impl SlotSupplierPermit {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct WorkflowSlotInfo {
-    pub workflow_type: String,
-}
-#[derive(Debug, Clone)]
-pub struct ActivitySlotInfo {
-    pub activity_type: String,
-}
-#[derive(Debug, Clone)]
-pub struct LocalActivitySlotInfo {
-    pub activity_type: String,
-}
-
 #[derive(Debug, Copy, Clone, derive_more::Display, Eq, PartialEq)]
 pub enum SlotKindType {
     Workflow,
@@ -382,8 +371,33 @@ pub struct ActivitySlotKind {}
 #[derive(Debug, Copy, Clone)]
 pub struct LocalActivitySlotKind {}
 
+pub enum SlotInfo<'a> {
+    Workflow(&'a WorkflowSlotInfo),
+    Activity(&'a ActivitySlotInfo),
+    LocalActivity(&'a LocalActivitySlotInfo),
+}
+
+pub trait SlotInfoTrait: prost::Message {
+    fn downcast(&self) -> SlotInfo;
+}
+impl SlotInfoTrait for WorkflowSlotInfo {
+    fn downcast(&self) -> SlotInfo {
+        SlotInfo::Workflow(&self)
+    }
+}
+impl SlotInfoTrait for ActivitySlotInfo {
+    fn downcast(&self) -> SlotInfo {
+        SlotInfo::Activity(&self)
+    }
+}
+impl SlotInfoTrait for LocalActivitySlotInfo {
+    fn downcast(&self) -> SlotInfo {
+        SlotInfo::LocalActivity(&self)
+    }
+}
+
 pub trait SlotKind {
-    type Info: Send + Sync;
+    type Info: SlotInfoTrait;
 
     fn kind() -> SlotKindType;
 }

@@ -11,8 +11,8 @@ use crate::{
 };
 use futures_util::{stream, stream::PollNext, FutureExt, Stream, StreamExt};
 use std::{future, sync::Arc};
-use temporal_sdk_core_api::worker::{WorkflowSlotInfo, WorkflowSlotKind};
-use temporal_sdk_core_protos::TaskToken;
+use temporal_sdk_core_api::worker::WorkflowSlotKind;
+use temporal_sdk_core_protos::{coresdk::WorkflowSlotInfo, TaskToken};
 use tracing::Span;
 
 /// Transforms incoming validated WFTs and history fetching requests into [PermittedWFT]s ready
@@ -76,6 +76,7 @@ impl WFTExtractor {
                                 Ok((pag, prep)) => WFTExtractorOutput::NewWFT(PermittedWFT {
                                     permit: permit.into_used(WorkflowSlotInfo {
                                         workflow_type: prep.workflow_type.clone(),
+                                        is_sticky: prep.is_incremental(),
                                     }),
                                     work: prep,
                                     paginator: pag,

@@ -21,11 +21,12 @@ use std::{
     task::{Context, Poll},
     time::{Duration, Instant, SystemTime},
 };
-use temporal_sdk_core_api::worker::{LocalActivitySlotInfo, LocalActivitySlotKind, SlotSupplier};
+use temporal_sdk_core_api::worker::{LocalActivitySlotKind, SlotSupplier};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{Cancellation, Failure as ActFail, Success},
         activity_task::{activity_task, ActivityCancelReason, ActivityTask, Cancel, Start},
+        LocalActivitySlotInfo,
     },
     temporal::api::{
         common::v1::WorkflowExecution,

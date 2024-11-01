@@ -133,10 +133,9 @@ where
         mrc(false);
 
         OwnedMeteredSemPermit {
-            _inner: res,
             unused_claimants: Some(self.unused_claimants.clone()),
             release_ctx: ReleaseCtx {
-                is_sticky: self.is_sticky_poller,
+                permit: res,
                 stored_info: None,
             },
             use_fn: Box::new(move |info| {
@@ -199,19 +198,19 @@ impl<'a, SK: SlotKind> SlotMarkUsedContext for UseCtx<'a, SK> {
 }
 
 struct ReleaseCtx<SK: SlotKind> {
-    is_sticky: bool,
+    permit: SlotSupplierPermit,
     stored_info: Option<SK::Info>,
 }
 
 impl<SK: SlotKind> SlotReleaseContext for ReleaseCtx<SK> {
     type SlotKind = SK;
 
-    fn is_sticky(&self) -> bool {
-        self.is_sticky
+    fn permit(&self) -> &SlotSupplierPermit {
+        &self.permit
     }
 
-    fn info(&self) -> &Option<<Self::SlotKind as SlotKind>::Info> {
-        &self.stored_info
+    fn info(&self) -> Option<&<Self::SlotKind as SlotKind>::Info> {
+        self.stored_info.as_ref()
     }
 }
 
@@ -317,10 +316,10 @@ impl<SK: SlotKind> Drop for TrackedOwnedMeteredSemPermit<SK> {
 /// Wraps an [SlotSupplierPermit] to update metrics & when it's dropped
 #[clippy::has_significant_drop]
 pub(crate) struct OwnedMeteredSemPermit<SK: SlotKind> {
-    _inner: SlotSupplierPermit,
     /// See [MeteredPermitDealer::unused_claimants]. If present when dropping, used to decrement the
     /// count.
     unused_claimants: Option<Arc<AtomicUsize>>,
+    /// The actual [SlotSupplierPermit] is stored in here
     release_ctx: ReleaseCtx<SK>,
     #[allow(clippy::type_complexity)] // not really tho, bud
     use_fn: Box<dyn Fn(&UseCtx<SK>) + Send + Sync>,
@@ -349,7 +348,7 @@ impl<SK: SlotKind> OwnedMeteredSemPermit<SK> {
         }
         let ctx = UseCtx {
             stored_info: &info,
-            permit: &self._inner,
+            permit: &self.release_ctx.permit,
         };
         (self.use_fn)(&ctx);
         self.release_ctx.stored_info = Some(info);

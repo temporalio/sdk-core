@@ -29,3 +29,19 @@ message ActivityTaskCompletion {
     bytes task_token = 1;
     activity_result.ActivityExecutionResult result = 2;
 }
+
+// Info about workflow task slot usage
+message WorkflowSlotInfo {
+    string workflow_type = 1;
+    bool is_sticky = 2;
+}
+
+// Info about activity task slot usage
+message ActivitySlotInfo {
+    string activity_type = 1;
+}
+
+// Info about local activity slot usage
+message LocalActivitySlotInfo {
+    string activity_type = 1;
+}
