@@ -45,8 +45,14 @@ message WorkflowDefinition {
   // A name scoped by the task queue that maps to this workflow definition.
   // If missing, this workflow is a dynamic workflow.
   string type = 1;
+
+  // Query definitions, sorted by name.
   repeated WorkflowInteractionDefinition query_definitions = 2;
+
+  // Signal definitions, sorted by name.
   repeated WorkflowInteractionDefinition signal_definitions = 3;
+
+  // Update definitions, sorted by name.
   repeated WorkflowInteractionDefinition update_definitions = 4;
 }
 

@@ -31,7 +31,6 @@ option csharp_namespace = "Temporalio.Api.Nexus.V1";
 
 import "google/protobuf/timestamp.proto";
 import "temporal/api/common/v1/message.proto";
-import "temporal/api/sdk/v1/user_metadata.proto";
 
 // A general purpose failure message.
 // See: https://github.com/nexus-rpc/api/blob/main/SPEC.md#failure
@@ -53,6 +52,12 @@ message UnsuccessfulOperationError {
     Failure failure = 2;
 }
 
+message Link {
+    // See https://github.com/nexus-rpc/api/blob/main/SPEC.md#links.
+    string url = 1;
+    string type = 2;
+}
+
 // A request to start an operation.
 message StartOperationRequest {
     // Name of service to start the operation in.
@@ -67,6 +72,8 @@ message StartOperationRequest {
     temporal.api.common.v1.Payload payload = 5;
     // Header that is expected to be attached to the callback request when the operation completes.
     map<string, string> callback_header = 6;
+    // Links contain caller information and can be attached to the operations started by the handler.
+    repeated Link links = 7;
 }
 
 // A request to cancel an operation.
@@ -107,6 +114,7 @@ message StartOperationResponse {
     // The returned ID can be used to reference this operation.
     message Async {
         string operation_id = 1;
+        repeated Link links = 2;
     }
 
     oneof variant {
@@ -162,7 +170,10 @@ message EndpointSpec {
     // Renaming an endpoint breaks all workflow callers that reference this endpoint, causing operations to fail.
     string name = 1;
 
-    temporal.api.sdk.v1.UserMetadata metadata = 2;
+    // Markdown description serialized as a single JSON string.
+    // If the Payload is encrypted, the UI and CLI may decrypt with the configured codec server endpoint.
+    // By default, the server enforces a limit of 20,000 bytes for this entire payload.
+    temporal.api.common.v1.Payload description = 2;
 
     // Target to route requests to.
     EndpointTarget target = 3;
