@@ -56,22 +56,32 @@ service WorkflowService {
     // namespace.
     rpc RegisterNamespace (RegisterNamespaceRequest) returns (RegisterNamespaceResponse) {
         option (google.api.http) = {
-            post: "/namespaces"
+            post: "/cluster/namespaces"
             body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces"
+                body: "*"
+            }
         };
     }
 
     // DescribeNamespace returns the information and configuration for a registered namespace.
     rpc DescribeNamespace (DescribeNamespaceRequest) returns (DescribeNamespaceResponse) {
         option (google.api.http) = {
-            get: "/namespaces/{namespace}"
+            get: "/cluster/namespaces/{namespace}"
+            additional_bindings {
+                get: "/api/v1/namespaces/{namespace}"
+            }
         };
     }
 
     // ListNamespaces returns the information and configuration for all namespaces.
     rpc ListNamespaces (ListNamespacesRequest) returns (ListNamespacesResponse) {
         option (google.api.http) = {
-            get: "/namespaces"
+            get: "/cluster/namespaces"
+            additional_bindings {
+                get: "/api/v1/namespaces"
+            }
         };
     }
 
@@ -79,8 +89,12 @@ service WorkflowService {
     // namespace.
     rpc UpdateNamespace (UpdateNamespaceRequest) returns (UpdateNamespaceResponse) {
         option (google.api.http) = {
-            post: "/namespaces/{namespace}/update"
+            post: "/cluster/namespaces/{namespace}/update"
             body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/update"
+                body: "*"
+            }
         };
     }
 
@@ -104,6 +118,10 @@ service WorkflowService {
         option (google.api.http) = {
             post: "/namespaces/{namespace}/workflows/{workflow_id}"
             body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/workflows/{workflow_id}"
+                body: "*"
+            }
         };
     }
 
@@ -120,6 +138,10 @@ service WorkflowService {
         option (google.api.http) = {
             post: "/namespaces/{namespace}/workflows/execute-multi-operation"
             body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/workflows/execute-multi-operation"
+                body: "*"
+            }
         };
     }
 
@@ -128,6 +150,9 @@ service WorkflowService {
     rpc GetWorkflowExecutionHistory (GetWorkflowExecutionHistoryRequest) returns (GetWorkflowExecutionHistoryResponse) {
         option (google.api.http) = {
             get: "/namespaces/{namespace}/workflows/{execution.workflow_id}/history"
+            additional_bindings {
+                get: "/api/v1/namespaces/{namespace}/workflows/{execution.workflow_id}/history"
+            }
         };
     }
     
@@ -137,6 +162,9 @@ service WorkflowService {
     rpc GetWorkflowExecutionHistoryReverse (GetWorkflowExecutionHistoryReverseRequest) returns (GetWorkflowExecutionHistoryReverseResponse) {
         option (google.api.http) = {
             get: "/namespaces/{namespace}/workflows/{execution.workflow_id}/history-reverse"
+            additional_bindings {
+                get: "/api/v1/namespaces/{namespace}/workflows/{execution.workflow_id}/history-reverse"
+            }
         };
     }
 
@@ -207,6 +235,10 @@ service WorkflowService {
         option (google.api.http) = {
             post: "/namespaces/{namespace}/activities/heartbeat"
             body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/activities/heartbeat"
+                body: "*"
+            }
         };
     }
 
@@ -219,6 +251,10 @@ service WorkflowService {
         option (google.api.http) = {
             post: "/namespaces/{namespace}/activities/heartbeat-by-id"
             body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/activities/heartbeat-by-id"
+                body: "*"
+            }
         };
     }
 
@@ -232,6 +268,10 @@ service WorkflowService {
         option (google.api.http) = {
             post: "/namespaces/{namespace}/activities/complete"
             body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/activities/complete"
+                body: "*"
+            }
         };
     }
 
@@ -244,6 +284,10 @@ service WorkflowService {
         option (google.api.http) = {
             post: "/namespaces/{namespace}/activities/complete-by-id"
             body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/activities/complete-by-id"
+                body: "*"
+            }
         };
     }
 
@@ -256,6 +300,10 @@ service WorkflowService {
         option (google.api.http) = {
             post: "/namespaces/{namespace}/activities/fail"
             body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/activities/fail"
+                body: "*"
+            }
         };
     }
 
@@ -268,6 +316,10 @@ service WorkflowService {
         option (google.api.http) = {
             post: "/namespaces/{namespace}/activities/fail-by-id"
             body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/activities/fail-by-id"
+                body: "*"
+            }
         };
     }
 
@@ -280,6 +332,10 @@ service WorkflowService {
         option (google.api.http) = {
             post: "/namespaces/{namespace}/activities/cancel"
             body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/activities/cancel"
+                body: "*"
+            }
         };
     }
 
@@ -292,6 +348,10 @@ service WorkflowService {
         option (google.api.http) = {
             post: "/namespaces/{namespace}/activities/cancel-by-id"
             body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/activities/cancel-by-id"
+                body: "*"
+            }
         };
     }
 
@@ -305,6 +365,10 @@ service WorkflowService {
         option (google.api.http) = {
             post: "/namespaces/{namespace}/workflows/{workflow_execution.workflow_id}/cancel"
             body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/workflows/{workflow_execution.workflow_id}/cancel"
+                body: "*"
+            }
         };
     }
 
@@ -316,6 +380,10 @@ service WorkflowService {
         option (google.api.http) = {
             post: "/namespaces/{namespace}/workflows/{workflow_execution.workflow_id}/signal/{signal_name}"
             body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/workflows/{workflow_execution.workflow_id}/signal/{signal_name}"
+                body: "*"
+            }
         };
     }
 
@@ -335,6 +403,10 @@ service WorkflowService {
         option (google.api.http) = {
             post: "/namespaces/{namespace}/workflows/{workflow_id}/signal-with-start/{signal_name}"
             body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/workflows/{workflow_id}/signal-with-start/{signal_name}"
+                body: "*"
+            }
         };
     }
 
@@ -346,6 +418,10 @@ service WorkflowService {
         option (google.api.http) = {
             post: "/namespaces/{namespace}/workflows/{workflow_execution.workflow_id}/reset"
             body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/workflows/{workflow_execution.workflow_id}/reset"
+                body: "*"
+            }
         };
     }
 
@@ -356,6 +432,10 @@ service WorkflowService {
         option (google.api.http) = {
             post: "/namespaces/{namespace}/workflows/{workflow_execution.workflow_id}/terminate"
             body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/workflows/{workflow_execution.workflow_id}/terminate"
+                body: "*"
+            }
         };
     }
 
@@ -384,6 +464,9 @@ service WorkflowService {
     rpc ListWorkflowExecutions (ListWorkflowExecutionsRequest) returns (ListWorkflowExecutionsResponse) {
         option (google.api.http) = {
             get: "/namespaces/{namespace}/workflows"
+            additional_bindings {
+                get: "/api/v1/namespaces/{namespace}/workflows"
+            }
         };
     }
 
@@ -391,6 +474,9 @@ service WorkflowService {
     rpc ListArchivedWorkflowExecutions (ListArchivedWorkflowExecutionsRequest) returns (ListArchivedWorkflowExecutionsResponse) {
         option (google.api.http) = {
             get: "/namespaces/{namespace}/archived-workflows"
+            additional_bindings {
+                get: "/api/v1/namespaces/{namespace}/archived-workflows"
+            }
         };
     }
 
@@ -405,6 +491,9 @@ service WorkflowService {
     rpc CountWorkflowExecutions (CountWorkflowExecutionsRequest) returns (CountWorkflowExecutionsResponse) {
         option (google.api.http) = {
             get: "/namespaces/{namespace}/workflow-count"
+            additional_bindings {
+                get: "/api/v1/namespaces/{namespace}/workflow-count"
+            }
         };
     }
 
@@ -432,9 +521,29 @@ service WorkflowService {
     // 1. StickyTaskQueue
     // 2. StickyScheduleToStartTimeout
     //
+    // When possible, ShutdownWorker should be preferred over
+    // ResetStickyTaskQueue (particularly when a worker is shutting down or
+    // cycling).
+    //
     // (-- api-linter: core::0127::http-annotation=disabled
     //     aip.dev/not-precedent: We do not expose worker API to HTTP. --)
     rpc ResetStickyTaskQueue (ResetStickyTaskQueueRequest) returns (ResetStickyTaskQueueResponse) {
+    }
+
+    // ShutdownWorker is used to indicate that the given sticky task
+    // queue is no longer being polled by its worker. Following the completion of
+    // ShutdownWorker, newly-added workflow tasks will instead be placed
+    // in the normal task queue, eligible for any worker to pick up.
+    //
+    // ShutdownWorker should be called by workers while shutting down,
+    // after they've shut down their pollers. If another sticky poll
+    // request is issued, the sticky task queue will be revived.
+    //
+    // As of Temporal Server v1.25.0, ShutdownWorker hasn't yet been implemented.
+    //
+    // (-- api-linter: core::0127::http-annotation=disabled
+    //     aip.dev/not-precedent: We do not expose worker API to HTTP. --)
+    rpc ShutdownWorker (ShutdownWorkerRequest) returns (ShutdownWorkerResponse) {
     }
 
     // QueryWorkflow requests a query be executed for a specified workflow execution.
@@ -442,6 +551,10 @@ service WorkflowService {
         option (google.api.http) = {
             post: "/namespaces/{namespace}/workflows/{execution.workflow_id}/query/{query.query_type}"
             body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/workflows/{execution.workflow_id}/query/{query.query_type}"
+                body: "*"
+            }
         };
     }
 
@@ -449,6 +562,9 @@ service WorkflowService {
     rpc DescribeWorkflowExecution (DescribeWorkflowExecutionRequest) returns (DescribeWorkflowExecutionResponse) {
         option (google.api.http) = {
             get: "/namespaces/{namespace}/workflows/{execution.workflow_id}"
+            additional_bindings {
+                get: "/api/v1/namespaces/{namespace}/workflows/{execution.workflow_id}"
+            }
         };
     }
 
@@ -459,13 +575,19 @@ service WorkflowService {
     rpc DescribeTaskQueue (DescribeTaskQueueRequest) returns (DescribeTaskQueueResponse) {
         option (google.api.http) = {
             get: "/namespaces/{namespace}/task-queues/{task_queue.name}"
+            additional_bindings {
+                get: "/api/v1/namespaces/{namespace}/task-queues/{task_queue.name}"
+            }
         };
     }
 
     // GetClusterInfo returns information about temporal cluster
     rpc GetClusterInfo(GetClusterInfoRequest) returns (GetClusterInfoResponse) {
         option (google.api.http) = {
-            get: "/cluster-info"
+            get: "/cluster"
+            additional_bindings {
+                get: "/api/v1/cluster-info"
+            }
         };
     }
 
@@ -473,6 +595,9 @@ service WorkflowService {
     rpc GetSystemInfo(GetSystemInfoRequest) returns (GetSystemInfoResponse) {
         option (google.api.http) = {
             get: "/system-info"
+            additional_bindings {
+                get: "/api/v1/system-info"
+            }
         };
     }
 
@@ -486,6 +611,10 @@ service WorkflowService {
         option (google.api.http) = {
             post: "/namespaces/{namespace}/schedules/{schedule_id}"
             body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/schedules/{schedule_id}"
+                body: "*"
+            }
         };
     }
 
@@ -493,6 +622,9 @@ service WorkflowService {
     rpc DescribeSchedule (DescribeScheduleRequest) returns (DescribeScheduleResponse) {
         option (google.api.http) = {
             get: "/namespaces/{namespace}/schedules/{schedule_id}"
+            additional_bindings {
+                get: "/api/v1/namespaces/{namespace}/schedules/{schedule_id}"
+            }
         };
     }
 
@@ -501,6 +633,10 @@ service WorkflowService {
         option (google.api.http) = {
             post: "/namespaces/{namespace}/schedules/{schedule_id}/update"
             body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/schedules/{schedule_id}/update"
+                body: "*"
+            }
         };
     }
 
@@ -509,6 +645,10 @@ service WorkflowService {
         option (google.api.http) = {
             post: "/namespaces/{namespace}/schedules/{schedule_id}/patch"
             body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/schedules/{schedule_id}/patch"
+                body: "*"
+            }
         };
     }
 
@@ -516,6 +656,9 @@ service WorkflowService {
     rpc ListScheduleMatchingTimes (ListScheduleMatchingTimesRequest) returns (ListScheduleMatchingTimesResponse) {
         option (google.api.http) = {
             get: "/namespaces/{namespace}/schedules/{schedule_id}/matching-times"
+            additional_bindings {
+                get: "/api/v1/namespaces/{namespace}/schedules/{schedule_id}/matching-times"
+            }
         };
     }
 
@@ -523,6 +666,9 @@ service WorkflowService {
     rpc DeleteSchedule (DeleteScheduleRequest) returns (DeleteScheduleResponse) {
         option (google.api.http) = {
             delete: "/namespaces/{namespace}/schedules/{schedule_id}"
+            additional_bindings {
+                delete: "/api/v1/namespaces/{namespace}/schedules/{schedule_id}"
+            }
         };
     }
 
@@ -530,6 +676,9 @@ service WorkflowService {
     rpc ListSchedules (ListSchedulesRequest) returns (ListSchedulesResponse) {
         option (google.api.http) = {
             get: "/namespaces/{namespace}/schedules"
+            additional_bindings {
+                get: "/api/v1/namespaces/{namespace}/schedules"
+            }
         };
     }
 
@@ -557,23 +706,27 @@ service WorkflowService {
     rpc GetWorkerBuildIdCompatibility (GetWorkerBuildIdCompatibilityRequest) returns (GetWorkerBuildIdCompatibilityResponse) {
         option (google.api.http) = {
             get: "/namespaces/{namespace}/task-queues/{task_queue}/worker-build-id-compatibility"
+            additional_bindings {
+                get: "/api/v1/namespaces/{namespace}/task-queues/{task_queue}/worker-build-id-compatibility"
+            }
         };
     }
 
     // Use this API to manage Worker Versioning Rules for a given Task Queue. There are two types of
     // rules: Build ID Assignment rules and Compatible Build ID Redirect rules.
     //
-    // Assignment rules are used to assign a Build ID for a new execution when it starts. Its primary
-    // use case is to specify the latest Build ID but it has powerful features for gradual rollout
+    // Assignment rules determine how to assign new executions to a Build IDs. Their primary
+    // use case is to specify the latest Build ID but they have powerful features for gradual rollout
     // of a new Build ID.
     //
-    // Once a Build ID is assigned to a workflow execution and it completes its first Workflow Task,
+    // Once a workflow execution is assigned to a Build ID and it completes its first Workflow Task,
     // the workflow stays on the assigned Build ID regardless of changes in assignment rules. This
     // eliminates the need for compatibility between versions when you only care about using the new
     // version for new workflows and let existing workflows finish in their own version.
     //
-    // Activities, Child Workflows and Continue-as-New executions have the option to inherit their
-    // parent/previous workflow or use the latest assigment rules to independently select a Build ID.
+    // Activities, Child Workflows and Continue-as-New executions have the option to inherit the
+    // Build ID of their parent/previous workflow or use the latest assignment rules to independently
+    // select a Build ID.
     //
     // Redirect rules should only be used when you want to move workflows and activities assigned to
     // one Build ID (source) to another compatible Build ID (target). You are responsible to make sure
@@ -590,6 +743,9 @@ service WorkflowService {
     rpc GetWorkerVersioningRules (GetWorkerVersioningRulesRequest) returns (GetWorkerVersioningRulesResponse) {
         option (google.api.http) = {
             get: "/namespaces/{namespace}/task-queues/{task_queue}/worker-versioning-rules"
+            additional_bindings {
+                get: "/api/v1/namespaces/{namespace}/task-queues/{task_queue}/worker-versioning-rules"
+            }
         };
     }
 
@@ -610,18 +766,25 @@ service WorkflowService {
     rpc GetWorkerTaskReachability (GetWorkerTaskReachabilityRequest) returns (GetWorkerTaskReachabilityResponse) {
         option (google.api.http) = {
             get: "/namespaces/{namespace}/worker-task-reachability"
+            additional_bindings {
+                get: "/api/v1/namespaces/{namespace}/worker-task-reachability"
+            }
         };
     }
 
-    // Invokes the specified update function on user workflow code.
+    // Invokes the specified Update function on user Workflow code.
     rpc UpdateWorkflowExecution(UpdateWorkflowExecutionRequest) returns (UpdateWorkflowExecutionResponse) {
         option (google.api.http) = {
             post: "/namespaces/{namespace}/workflows/{workflow_execution.workflow_id}/update/{request.input.name}"
             body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/workflows/{workflow_execution.workflow_id}/update/{request.input.name}"
+                body: "*"
+            }
         };
     }
 
-    // Polls a workflow execution for the outcome of a workflow execution update
+    // Polls a Workflow Execution for the outcome of a Workflow Update
     // previously issued through the UpdateWorkflowExecution RPC. The effective
     // timeout on this call will be shorter of the the caller-supplied gRPC
     // timeout and the server's configured long-poll timeout.
@@ -636,6 +799,10 @@ service WorkflowService {
         option (google.api.http) = {
             post: "/namespaces/{namespace}/batch-operations/{job_id}"
             body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/batch-operations/{job_id}"
+                body: "*"
+            }
         };
     }
 
@@ -644,6 +811,10 @@ service WorkflowService {
         option (google.api.http) = {
             post: "/namespaces/{namespace}/batch-operations/{job_id}/stop"
             body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/batch-operations/{job_id}/stop"
+                body: "*"
+            }
         };
     }
 
@@ -651,6 +822,9 @@ service WorkflowService {
     rpc DescribeBatchOperation(DescribeBatchOperationRequest) returns (DescribeBatchOperationResponse) {
         option (google.api.http) = {
             get: "/namespaces/{namespace}/batch-operations/{job_id}"
+            additional_bindings {
+                get: "/api/v1/namespaces/{namespace}/batch-operations/{job_id}"
+            }
         };
     }
 
@@ -658,6 +832,9 @@ service WorkflowService {
     rpc ListBatchOperations(ListBatchOperationsRequest) returns (ListBatchOperationsResponse) {
         option (google.api.http) = {
             get: "/namespaces/{namespace}/batch-operations"
+            additional_bindings {
+                get: "/api/v1/namespaces/{namespace}/batch-operations"
+            }
         };
     }
 
@@ -678,4 +855,94 @@ service WorkflowService {
     //     aip.dev/not-precedent: We do not expose worker API to HTTP. --)
     rpc RespondNexusTaskFailed(RespondNexusTaskFailedRequest) returns (RespondNexusTaskFailedResponse) {
     }
+
+    // UpdateActivityOptionsById is called by the client to update the options of an activity
+    // (-- api-linter: core::0136::prepositions=disabled
+    //     aip.dev/not-precedent: "By" is used to indicate request type. --)
+    rpc UpdateActivityOptionsById (UpdateActivityOptionsByIdRequest) returns (UpdateActivityOptionsByIdResponse) {
+        option (google.api.http) = {
+            post: "/namespaces/{namespace}/activities/update-options-by-id"
+            body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/activities/update-options-by-id"
+                body: "*"
+            }
+        };
+    }
+
+    // PauseActivityById pauses the execution of an activity specified by its ID.
+    // Returns a `NotFound` error if there is no pending activity with the provided ID.
+    //
+    // Pausing an activity means:
+    // - If the activity is currently waiting for a retry or is running and subsequently fails,
+    //   it will not be rescheduled until it is unpaused.
+    // - If the activity is already paused, calling this method will have no effect.
+    // - If the activity is running and finishes successfully, the activity will be completed.
+    // - If the activity is running and finishes with failure:
+    //   * if there is no retry left - the activity will be completed.
+    //   * if there are more retries left - the activity will be paused.
+    // For long-running activities:
+    // - activities in paused state will send a cancellation with "activity_paused" set to 'true' in response to 'RecordActivityTaskHeartbeat'.
+    // - The activity should respond to the cancellation accordingly.
+    // (-- api-linter: core::0136::prepositions=disabled
+    //     aip.dev/not-precedent: "By" is used to indicate request type. --)
+    rpc PauseActivityById (PauseActivityByIdRequest) returns (PauseActivityByIdResponse) {
+        option (google.api.http) = {
+            post: "/namespaces/{namespace}/activities/pause-by-id"
+            body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/activities/pause-by-id"
+                body: "*"
+            }
+        };
+    }
+
+    // UnpauseActivityById unpauses the execution of an activity specified by its ID.
+    // Returns a `NotFound` error if there is no pending activity with the provided ID.
+    // There are two 'modes' of unpausing an activity:
+    // 'resume' - If the activity is paused, it will be resumed and scheduled for execution.
+    //    * If the activity is currently running Unpause with 'resume' has no effect.
+    //    * if 'no_wait' flag is set and the activity is waiting, the activity will be scheduled immediately.
+    // 'reset' - If the activity is paused, it will be reset to its initial state and (depending on parameters) scheduled for execution.
+    //    * If the activity is currently running, Unpause with 'reset' will reset the number of attempts.
+    //    * if 'no_wait' flag is set, the activity will be scheduled immediately.
+    //    * if 'reset_heartbeats' flag is set, the activity heartbeat timer and heartbeats will be reset.
+    // If the activity is in waiting for retry and past it retry timeout, it will be scheduled immediately.
+    // Once the activity is unpaused, all timeout timers will be regenerated.
+    // (-- api-linter: core::0136::prepositions=disabled
+    //     aip.dev/not-precedent: "By" is used to indicate request type. --)
+    rpc UnpauseActivityById (UnpauseActivityByIdRequest) returns (UnpauseActivityByIdResponse) {
+        option (google.api.http) = {
+            post: "/namespaces/{namespace}/activities/unpause-by-id"
+            body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/activities/unpause-by-id"
+                body: "*"
+            }
+        };
+    }
+
+    // ResetActivityById unpauses the execution of an activity specified by its ID.
+    // Returns a `NotFound` error if there is no pending activity with the provided ID.
+    // Resetting an activity means:
+    // * number of attempts will be reset to 0.
+    // * activity timeouts will be resetted.
+    // If the activity currently running:
+    // *  if 'no_wait' flag is provided, a new instance of the activity will be scheduled immediately.
+    // *  if 'no_wait' flag is not provided, a new instance of the  activity will be scheduled after current instance completes if needed.
+    // If 'reset_heartbeats' flag is set, the activity heartbeat timer and heartbeats will be reset.
+    // (-- api-linter: core::0136::prepositions=disabled
+    //     aip.dev/not-precedent: "By" is used to indicate request type. --)
+    rpc ResetActivityById (ResetActivityByIdRequest) returns (ResetActivityByIdResponse) {
+        option (google.api.http) = {
+            post: "/namespaces/{namespace}/activities/reset-by-id"
+            body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/activities/reset-by-id"
+                body: "*"
+            }
+        };
+    }
+    
 }
+

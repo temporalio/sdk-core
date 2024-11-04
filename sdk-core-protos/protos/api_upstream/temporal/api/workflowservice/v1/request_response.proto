@@ -32,14 +32,15 @@ option ruby_package = "Temporalio::Api::WorkflowService::V1";
 option csharp_namespace = "Temporalio.Api.WorkflowService.V1";
 
 import "temporal/api/enums/v1/batch_operation.proto";
+import "temporal/api/enums/v1/common.proto";
 import "temporal/api/enums/v1/workflow.proto";
 import "temporal/api/enums/v1/namespace.proto";
 import "temporal/api/enums/v1/failed_cause.proto";
-import "temporal/api/enums/v1/common.proto";
 import "temporal/api/enums/v1/query.proto";
 import "temporal/api/enums/v1/reset.proto";
 import "temporal/api/enums/v1/task_queue.proto";
 import "temporal/api/enums/v1/update.proto";
+import "temporal/api/activity/v1/message.proto";
 import "temporal/api/common/v1/message.proto";
 import "temporal/api/history/v1/message.proto";
 import "temporal/api/workflow/v1/message.proto";
@@ -60,6 +61,7 @@ import "temporal/api/sdk/v1/user_metadata.proto";
 import "temporal/api/nexus/v1/message.proto";
 
 import "google/protobuf/duration.proto";
+import "google/protobuf/field_mask.proto";
 import "google/protobuf/timestamp.proto";
 
 message RegisterNamespaceRequest {
@@ -197,6 +199,8 @@ message StartWorkflowExecutionRequest {
     // for use by user interfaces to display the fixed as-of-start summary and details of the
     // workflow.
     temporal.api.sdk.v1.UserMetadata user_metadata = 23;
+    // Links to be associated with the workflow.
+    repeated temporal.api.common.v1.Link links = 24;
 }
 
 message StartWorkflowExecutionResponse {
@@ -350,14 +354,28 @@ message RespondWorkflowTaskCompletedRequest {
     temporal.api.sdk.v1.WorkflowTaskCompletedMetadata sdk_metadata = 12;
     // Local usage data collected for metering
     temporal.api.common.v1.MeteringMetadata metering_metadata = 13;
+    // All capabilities the SDK supports.
+    Capabilities capabilities = 14;
+    // SDK capability details.
+    message Capabilities {
+        // True if the SDK can handle speculative workflow task with command events.
+        // If true, the server may chosse, at its discretion, to discard a speculative workflow task
+        // even if that speculative task included command events the SDK had not previouly processed
+        //
+        // (-- api-linter: core::0140::prepositions=disabled
+        //     aip.dev/not-precedent: "with" used to describe the workflow task. --)
+        bool discard_speculative_workflow_task_with_events = 1;
+    }
 }
 
 message RespondWorkflowTaskCompletedResponse {
     // See `RespondWorkflowTaskCompletedResponse::return_new_workflow_task`
     PollWorkflowTaskQueueResponse workflow_task = 1;
-    // See `ScheduleActivityTaskCommandAttributes::request_start`
+    // See `ScheduleActivityTaskCommandAttributes::request_eager_execution`
     repeated PollActivityTaskQueueResponse activity_tasks = 2;
-
+    // If non zero, indicates the server has discarded the workflow task that was being responded to.
+    // Will be the event ID of the last workflow task started event in the history before the new workflow task.
+    // Server is only expected to discard a workflow task if it could not have modified the workflow state.
     int64 reset_history_event_id = 3;
 }
 
@@ -459,6 +477,9 @@ message RecordActivityTaskHeartbeatResponse {
     // Will be set to true if the activity has been asked to cancel itself. The SDK should then
     // notify the activity of cancellation if it is still running.
     bool cancel_requested = 1;
+
+    // Will be set to true if the activity is paused.
+    bool activity_paused = 2;
 }
 
 message RecordActivityTaskHeartbeatByIdRequest {
@@ -610,6 +631,8 @@ message RequestCancelWorkflowExecutionRequest {
     string first_execution_run_id = 5;
     // Reason for requesting the cancellation
     string reason = 6;
+    // Links to be associated with the WorkflowExecutionCanceled event.
+    repeated temporal.api.common.v1.Link links = 7;
 }
 
 message RequestCancelWorkflowExecutionResponse {
@@ -633,6 +656,9 @@ message SignalWorkflowExecutionRequest {
     temporal.api.common.v1.Header header = 8;
     // Indicates that a new workflow task should not be generated when this signal is received.
     bool skip_generate_workflow_task = 9;
+
+    // Links to be associated with the WorkflowExecutionSignaled event.
+    repeated temporal.api.common.v1.Link links = 10;
 }
 
 message SignalWorkflowExecutionResponse {
@@ -693,6 +719,9 @@ message SignalWithStartWorkflowExecutionRequest {
     // for use by user interfaces to display the fixed as-of-start summary and details of the
     // workflow.
     temporal.api.sdk.v1.UserMetadata user_metadata = 23;
+
+    // Links to be associated with the WorkflowExecutionStarted and WorkflowExecutionSignaled events.
+    repeated temporal.api.common.v1.Link links = 24;
 }
 
 message SignalWithStartWorkflowExecutionResponse {
@@ -734,6 +763,9 @@ message TerminateWorkflowExecutionRequest {
     // `workflow_execution`), or specified (if it is) workflow execution is not part of the same
     // execution chain as this id.
     string first_execution_run_id = 6;
+
+    // Links to be associated with the WorkflowExecutionTerminated event.
+    repeated temporal.api.common.v1.Link links = 7;
 }
 
 message TerminateWorkflowExecutionResponse {
@@ -865,6 +897,16 @@ message ResetStickyTaskQueueRequest {
 }
 
 message ResetStickyTaskQueueResponse {
+}
+
+message ShutdownWorkerRequest {
+    string namespace = 1;
+    string sticky_task_queue = 2;
+    string identity = 3;
+    string reason = 4;
+}
+
+message ShutdownWorkerResponse {
 }
 
 message QueryWorkflowRequest {
@@ -1006,6 +1048,10 @@ message GetSystemInfoResponse {
         // True if the server supports count group by execution status
         // (-- api-linter: core::0140::prepositions=disabled --)
         bool count_group_by_execution_status = 10;
+
+        // True if the server supports Nexus operations.
+        // This flag is dependent both on server version and for Nexus to be enabled via server configuration.
+        bool nexus = 11;
     }
 }
 
@@ -1395,23 +1441,26 @@ message GetWorkerTaskReachabilityResponse {
 // (-- api-linter: core::0134=disabled
 //     aip.dev/not-precedent: Update RPCs don't follow Google API format. --)
 message UpdateWorkflowExecutionRequest {
-    // The namespace name of the target workflow
+    // The namespace name of the target Workflow.
     string namespace = 1;
-    // The target workflow id and (optionally) a specific run thereof
+    // The target Workflow Id and (optionally) a specific Run Id thereof.
     // (-- api-linter: core::0203::optional=disabled
     //     aip.dev/not-precedent: false positive triggered by the word "optional" --)
     temporal.api.common.v1.WorkflowExecution workflow_execution = 2;
-    // If set, this call will error if the most recent (if no run id is set on
-    // `workflow_execution`), or specified (if it is) workflow execution is not
-    // part of the same execution chain as this id.
+    // If set, this call will error if the most recent (if no Run Id is set on
+    // `workflow_execution`), or specified (if it is) Workflow Execution is not
+    // part of the same execution chain as this Id.
     string first_execution_run_id = 3;
 
-    // Describes when this request should return - basically whether the
-    // update is synchronous, asynchronous, or somewhere in between.
+    // Specifies client's intent to wait for Update results.
+    // NOTE: This field works together with API call timeout which is limited by
+    // server timeout (maximum wait time). If server timeout is expired before
+    // user specified timeout, API call returns even if specified stage is not reached.
+    // Actual reached stage will be included in the response.
     temporal.api.update.v1.WaitPolicy wait_policy = 4;
 
     // The request information that will be delivered all the way down to the
-    // workflow execution.
+    // Workflow Execution.
     temporal.api.update.v1.Request request = 5;
 }
 
@@ -1419,8 +1468,8 @@ message UpdateWorkflowExecutionResponse {
     // Enough information for subsequent poll calls if needed. Never null.
     temporal.api.update.v1.UpdateRef update_ref = 1;
 
-    // The outcome of the update if and only if the workflow execution update
-    // has completed. If this response is being returned before the update has
+    // The outcome of the Update if and only if the Workflow Update
+    // has completed. If this response is being returned before the Update has
     // completed then this field will not be set.
     temporal.api.update.v1.Outcome outcome = 2;
 
@@ -1530,15 +1579,14 @@ message ListBatchOperationsResponse {
 }
 
 message PollWorkflowExecutionUpdateRequest {
-    // The namespace of the workflow execution to which the update was
+    // The namespace of the Workflow Execution to which the Update was
     // originally issued.
     string namespace = 1;
-    // The update reference returned in the initial
-    // UpdateWorkflowExecutionResponse
+    // The Update reference returned in the initial UpdateWorkflowExecutionResponse.
     temporal.api.update.v1.UpdateRef update_ref = 2;
-    // The identity of the worker/client who is polling this update outcome
+    // The identity of the worker/client who is polling this Update outcome.
     string identity = 3;
-    // Describes when this poll request should return a response.
+    // Specifies client's intent to wait for Update results.
     // Omit to request a non-blocking poll.
     temporal.api.update.v1.WaitPolicy wait_policy = 4;
 }
@@ -1561,7 +1609,7 @@ message PollWorkflowExecutionUpdateResponse {
     // request WaitPolicy, and before the context deadline expired; clients may
     // may then retry the call as needed.
     temporal.api.enums.v1.UpdateWorkflowExecutionLifecycleStage stage = 2;
-    // Sufficient information to address this update.
+    // Sufficient information to address this Update.
     temporal.api.update.v1.UpdateRef update_ref = 3;
 }
 
@@ -1626,8 +1674,12 @@ message ExecuteMultiOperationRequest {
             // Additional restrictions:
             // - setting `cron_schedule` is invalid
             // - setting `request_eager_execution` is invalid
+            // - setting `workflow_start_delay` is invalid
             StartWorkflowExecutionRequest start_workflow = 1;
 
+            // Additional restrictions:
+            // - setting `first_execution_run_id` is invalid
+            // - setting `workflow_execution.run_id` is invalid
             UpdateWorkflowExecutionRequest update_workflow = 2;
         }
     }
@@ -1643,3 +1695,124 @@ message ExecuteMultiOperationResponse {
         }
     }
 }
+
+message UpdateActivityOptionsByIdRequest {
+    // Namespace of the workflow which scheduled this activity
+    string namespace = 1;
+    // ID of the workflow which scheduled this activity
+    string workflow_id = 2;
+    // Run ID of the workflow which scheduled this activity
+    // if empty - latest workflow is used
+    string run_id = 3;
+    // ID of the activity we're updating
+    string activity_id = 4;
+
+    // The identity of the client who initiated this request
+    string identity = 5;
+
+    // Activity options. Partial updates are accepted and controlled by update_mask
+    temporal.api.activity.v1.ActivityOptions activity_options = 6;
+
+    // Controls which fields from `activity_options` will be applied
+    google.protobuf.FieldMask update_mask = 7;
+
+    // Used to de-dupe requests
+    string request_id = 8;
+}
+
+message UpdateActivityOptionsByIdResponse {
+    // Activity options after an update
+    temporal.api.activity.v1.ActivityOptions activity_options = 1;
+}
+
+message PauseActivityByIdRequest {
+    // Namespace of the workflow which scheduled this activity.
+    string namespace = 1;
+    // ID of the workflow which scheduled this activity.
+    string workflow_id = 2;
+    // Run ID of the workflow which scheduled this activity.
+    // If empty - latest workflow is used.
+    string run_id = 3;
+    // ID of the activity we're updating.
+    string activity_id = 4;
+
+    // The identity of the client who initiated this request.
+    string identity = 5;
+
+    // Used to de-dupe requests.
+    string request_id = 6;
+}
+
+message PauseActivityByIdResponse {
+}
+
+message UnpauseActivityByIdRequest {
+    message ResumeOperation {
+        // Indicates that if the activity is waiting to retry, it will  be scheduled immediately.
+        bool no_wait = 1;
+    }
+
+    message ResetOperation {
+        // Indicates that the activity should be scheduled immediately.
+        // Note that this may run simultaneously with any existing executions of the activity.
+        bool no_wait = 1;
+        // If set, the Heartbeat Details will be cleared out to make the Activity start over from the beginning
+        bool reset_heartbeat = 2;
+    }
+
+    // Namespace of the workflow which scheduled this activity.
+    string namespace = 1;
+    // ID of the workflow which scheduled this activity.
+    string workflow_id = 2;
+    // Run ID of the workflow which scheduled this activity.
+    // If empty - latest workflow is used.
+    string run_id = 3;
+    // ID of the activity we're updating.
+    string activity_id = 4;
+
+    // The identity of the client who initiated this request.
+    string identity = 5;
+
+    // Used to de-dupe requests.
+    string request_id = 6;
+
+    // There are two options to resume the activity - with 'resume' or with 'reset'.
+    oneof operation{
+        ResumeOperation resume = 7;
+        ResetOperation reset = 8;
+    }
+}
+
+message UnpauseActivityByIdResponse {
+}
+
+message ResetActivityByIdRequest {
+    // Namespace of the workflow which scheduled this activity.
+    string namespace = 1;
+    // ID of the workflow which scheduled this activity.
+    string workflow_id = 2;
+    // Run ID of the workflow which scheduled this activity.
+    // If empty - latest workflow is used.
+    string run_id = 3;
+    // ID of the activity we're updating.
+    string activity_id = 4;
+
+    // The identity of the client who initiated this request.
+    string identity = 5;
+
+    // Used to de-dupe requests.
+    string request_id = 6;
+
+    // Indicates that activity should be scheduled immediately.
+    // If this flag doesn't set, and activity currently running - temporal will wait until activity is completed.
+    bool no_wait = 7;
+
+    // Indicates that activity should reset heartbeat details.
+    // This flag will be applied only to the new instance of the activity.
+    bool reset_heartbeat = 8;
+}
+
+message ResetActivityByIdResponse {
+}
+
+

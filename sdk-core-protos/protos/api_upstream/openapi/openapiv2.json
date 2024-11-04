@@ -19,7 +19,2478 @@
     "application/json"
   ],
   "paths": {
-    "/cluster-info": {
+    "/api/v1/cluster-info": {
+      "get": {
+        "summary": "GetClusterInfo returns information about temporal cluster",
+        "operationId": "GetClusterInfo2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetClusterInfoResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces": {
+      "get": {
+        "summary": "ListNamespaces returns the information and configuration for all namespaces.",
+        "operationId": "ListNamespaces2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListNamespacesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "nextPageToken",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "byte"
+          },
+          {
+            "name": "namespaceFilter.includeDeleted",
+            "description": "By default namespaces in NAMESPACE_STATE_DELETED state are not included.\nSetting include_deleted to true will include deleted namespaces.\nNote: Namespace is in NAMESPACE_STATE_DELETED state when it was deleted from the system but associated data is not deleted yet.",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      },
+      "post": {
+        "summary": "RegisterNamespace creates a new namespace which can be used as a container for all resources.",
+        "description": "A Namespace is a top level entity within Temporal, and is used as a container for resources\nlike workflow executions, task queues, etc. A Namespace acts as a sandbox and provides\nisolation for all resources within the namespace. All resources belongs to exactly one\nnamespace.",
+        "operationId": "RegisterNamespace2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RegisterNamespaceResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1RegisterNamespaceRequest"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}": {
+      "get": {
+        "summary": "DescribeNamespace returns the information and configuration for a registered namespace.",
+        "operationId": "DescribeNamespace2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1DescribeNamespaceResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "id",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/activities/cancel": {
+      "post": {
+        "summary": "RespondActivityTaskFailed is called by workers when processing an activity task fails.",
+        "description": "This results in a new `ACTIVITY_TASK_CANCELED` event being written to the workflow history\nand a new workflow task created for the workflow. Fails with `NotFound` if the task token is\nno longer valid due to activity timeout, already being completed, or never having existed.",
+        "operationId": "RespondActivityTaskCanceled2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RespondActivityTaskCanceledResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceRespondActivityTaskCanceledBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/activities/cancel-by-id": {
+      "post": {
+        "summary": "See `RecordActivityTaskCanceled`. This version allows clients to record failures by\nnamespace/workflow id/activity id instead of task token.",
+        "operationId": "RespondActivityTaskCanceledById2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RespondActivityTaskCanceledByIdResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Namespace of the workflow which scheduled this activity",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceRespondActivityTaskCanceledByIdBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/activities/complete": {
+      "post": {
+        "summary": "RespondActivityTaskCompleted is called by workers when they successfully complete an activity\ntask.",
+        "description": "This results in a new `ACTIVITY_TASK_COMPLETED` event being written to the workflow history\nand a new workflow task created for the workflow. Fails with `NotFound` if the task token is\nno longer valid due to activity timeout, already being completed, or never having existed.",
+        "operationId": "RespondActivityTaskCompleted2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RespondActivityTaskCompletedResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceRespondActivityTaskCompletedBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/activities/complete-by-id": {
+      "post": {
+        "summary": "See `RecordActivityTaskCompleted`. This version allows clients to record completions by\nnamespace/workflow id/activity id instead of task token.",
+        "operationId": "RespondActivityTaskCompletedById2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RespondActivityTaskCompletedByIdResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Namespace of the workflow which scheduled this activity",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceRespondActivityTaskCompletedByIdBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/activities/fail": {
+      "post": {
+        "summary": "RespondActivityTaskFailed is called by workers when processing an activity task fails.",
+        "description": "This results in a new `ACTIVITY_TASK_FAILED` event being written to the workflow history and\na new workflow task created for the workflow. Fails with `NotFound` if the task token is no\nlonger valid due to activity timeout, already being completed, or never having existed.",
+        "operationId": "RespondActivityTaskFailed2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RespondActivityTaskFailedResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceRespondActivityTaskFailedBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/activities/fail-by-id": {
+      "post": {
+        "summary": "See `RecordActivityTaskFailed`. This version allows clients to record failures by\nnamespace/workflow id/activity id instead of task token.",
+        "operationId": "RespondActivityTaskFailedById2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RespondActivityTaskFailedByIdResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Namespace of the workflow which scheduled this activity",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceRespondActivityTaskFailedByIdBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/activities/heartbeat": {
+      "post": {
+        "summary": "RecordActivityTaskHeartbeat is optionally called by workers while they execute activities.",
+        "description": "If worker fails to heartbeat within the `heartbeat_timeout` interval for the activity task,\nthen it will be marked as timed out and an `ACTIVITY_TASK_TIMED_OUT` event will be written to\nthe workflow history. Calling `RecordActivityTaskHeartbeat` will fail with `NotFound` in\nsuch situations, in that event, the SDK should request cancellation of the activity.",
+        "operationId": "RecordActivityTaskHeartbeat2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RecordActivityTaskHeartbeatResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceRecordActivityTaskHeartbeatBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/activities/heartbeat-by-id": {
+      "post": {
+        "summary": "See `RecordActivityTaskHeartbeat`. This version allows clients to record heartbeats by\nnamespace/workflow id/activity id instead of task token.",
+        "operationId": "RecordActivityTaskHeartbeatById2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RecordActivityTaskHeartbeatByIdResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Namespace of the workflow which scheduled this activity",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceRecordActivityTaskHeartbeatByIdBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/activities/pause-by-id": {
+      "post": {
+        "summary": "PauseActivityById pauses the execution of an activity specified by its ID.\nReturns a `NotFound` error if there is no pending activity with the provided ID.",
+        "description": "Pausing an activity means:\n- If the activity is currently waiting for a retry or is running and subsequently fails,\n  it will not be rescheduled until it is unpaused.\n- If the activity is already paused, calling this method will have no effect.\n- If the activity is running and finishes successfully, the activity will be completed.\n- If the activity is running and finishes with failure:\n  * if there is no retry left - the activity will be completed.\n  * if there are more retries left - the activity will be paused.\nFor long-running activities:\n- activities in paused state will send a cancellation with \"activity_paused\" set to 'true' in response to 'RecordActivityTaskHeartbeat'.\n- The activity should respond to the cancellation accordingly.",
+        "operationId": "PauseActivityById2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1PauseActivityByIdResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Namespace of the workflow which scheduled this activity.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServicePauseActivityByIdBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/activities/reset-by-id": {
+      "post": {
+        "summary": "ResetActivityById unpauses the execution of an activity specified by its ID.\nReturns a `NotFound` error if there is no pending activity with the provided ID.\nResetting an activity means:\n* number of attempts will be reset to 0.\n* activity timeouts will be resetted.\nIf the activity currently running:\n*  if 'no_wait' flag is provided, a new instance of the activity will be scheduled immediately.\n*  if 'no_wait' flag is not provided, a new instance of the  activity will be scheduled after current instance completes if needed.\nIf 'reset_heartbeats' flag is set, the activity heartbeat timer and heartbeats will be reset.",
+        "operationId": "ResetActivityById2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ResetActivityByIdResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Namespace of the workflow which scheduled this activity.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceResetActivityByIdBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/activities/unpause-by-id": {
+      "post": {
+        "summary": "UnpauseActivityById unpauses the execution of an activity specified by its ID.\nReturns a `NotFound` error if there is no pending activity with the provided ID.\nThere are two 'modes' of unpausing an activity:\n'resume' - If the activity is paused, it will be resumed and scheduled for execution.\n   * If the activity is currently running Unpause with 'resume' has no effect.\n   * if 'no_wait' flag is set and the activity is waiting, the activity will be scheduled immediately.\n'reset' - If the activity is paused, it will be reset to its initial state and (depending on parameters) scheduled for execution.\n   * If the activity is currently running, Unpause with 'reset' will reset the number of attempts.\n   * if 'no_wait' flag is set, the activity will be scheduled immediately.\n   * if 'reset_heartbeats' flag is set, the activity heartbeat timer and heartbeats will be reset.\nIf the activity is in waiting for retry and past it retry timeout, it will be scheduled immediately.\nOnce the activity is unpaused, all timeout timers will be regenerated.",
+        "operationId": "UnpauseActivityById2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1UnpauseActivityByIdResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Namespace of the workflow which scheduled this activity.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceUnpauseActivityByIdBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/activities/update-options-by-id": {
+      "post": {
+        "summary": "UpdateActivityOptionsById is called by the client to update the options of an activity",
+        "operationId": "UpdateActivityOptionsById2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1UpdateActivityOptionsByIdResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Namespace of the workflow which scheduled this activity",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceUpdateActivityOptionsByIdBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/archived-workflows": {
+      "get": {
+        "summary": "ListArchivedWorkflowExecutions is a visibility API to list archived workflow executions in a specific namespace.",
+        "operationId": "ListArchivedWorkflowExecutions2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListArchivedWorkflowExecutionsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "nextPageToken",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "byte"
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/batch-operations": {
+      "get": {
+        "summary": "ListBatchOperations returns a list of batch operations",
+        "operationId": "ListBatchOperations2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListBatchOperationsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Namespace that contains the batch operation",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "pageSize",
+            "description": "List page size",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "nextPageToken",
+            "description": "Next page token",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "byte"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/batch-operations/{jobId}": {
+      "get": {
+        "summary": "DescribeBatchOperation returns the information about a batch operation",
+        "operationId": "DescribeBatchOperation2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1DescribeBatchOperationResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Namespace that contains the batch operation",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "jobId",
+            "description": "Batch job id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      },
+      "post": {
+        "summary": "StartBatchOperation starts a new batch operation",
+        "operationId": "StartBatchOperation2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1StartBatchOperationResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Namespace that contains the batch operation",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "jobId",
+            "description": "Job ID defines the unique ID for the batch job",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceStartBatchOperationBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/batch-operations/{jobId}/stop": {
+      "post": {
+        "summary": "StopBatchOperation stops a batch operation",
+        "operationId": "StopBatchOperation2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1StopBatchOperationResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Namespace that contains the batch operation",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "jobId",
+            "description": "Batch job id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceStopBatchOperationBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/schedules": {
+      "get": {
+        "summary": "List all schedules in a namespace.",
+        "operationId": "ListSchedules2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListSchedulesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "The namespace to list schedules in.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "maximumPageSize",
+            "description": "How many to return at once.",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "nextPageToken",
+            "description": "Token to get the next page of results.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "byte"
+          },
+          {
+            "name": "query",
+            "description": "Query to filter schedules.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/schedules/{scheduleId}": {
+      "get": {
+        "summary": "Returns the schedule description and current state of an existing schedule.",
+        "operationId": "DescribeSchedule2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1DescribeScheduleResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "The namespace of the schedule to describe.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "scheduleId",
+            "description": "The id of the schedule to describe.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      },
+      "delete": {
+        "summary": "Deletes a schedule, removing it from the system.",
+        "operationId": "DeleteSchedule2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1DeleteScheduleResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "The namespace of the schedule to delete.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "scheduleId",
+            "description": "The id of the schedule to delete.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "identity",
+            "description": "The identity of the client who initiated this request.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      },
+      "post": {
+        "summary": "Creates a new schedule.",
+        "operationId": "CreateSchedule2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1CreateScheduleResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "The namespace the schedule should be created in.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "scheduleId",
+            "description": "The id of the new schedule.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceCreateScheduleBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/schedules/{scheduleId}/matching-times": {
+      "get": {
+        "summary": "Lists matching times within a range.",
+        "operationId": "ListScheduleMatchingTimes2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListScheduleMatchingTimesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "The namespace of the schedule to query.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "scheduleId",
+            "description": "The id of the schedule to query.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "startTime",
+            "description": "Time range to query.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "date-time"
+          },
+          {
+            "name": "endTime",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "date-time"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/schedules/{scheduleId}/patch": {
+      "post": {
+        "summary": "Makes a specific change to a schedule or triggers an immediate action.",
+        "operationId": "PatchSchedule2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1PatchScheduleResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "The namespace of the schedule to patch.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "scheduleId",
+            "description": "The id of the schedule to patch.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServicePatchScheduleBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/schedules/{scheduleId}/update": {
+      "post": {
+        "summary": "Changes the configuration or state of an existing schedule.",
+        "operationId": "UpdateSchedule2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1UpdateScheduleResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "The namespace of the schedule to update.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "scheduleId",
+            "description": "The id of the schedule to update.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceUpdateScheduleBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/search-attributes": {
+      "get": {
+        "summary": "ListSearchAttributes returns comprehensive information about search attributes.",
+        "operationId": "ListSearchAttributes2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListSearchAttributesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "OperatorService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/task-queues/{taskQueue.name}": {
+      "get": {
+        "summary": "DescribeTaskQueue returns the following information about the target task queue, broken down by Build ID:\n  - List of pollers\n  - Workflow Reachability status\n  - Backlog info for Workflow and/or Activity tasks",
+        "operationId": "DescribeTaskQueue2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1DescribeTaskQueueResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "taskQueue.name",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "taskQueue.kind",
+            "description": "Default: TASK_QUEUE_KIND_NORMAL.\n\n - TASK_QUEUE_KIND_NORMAL: Tasks from a normal workflow task queue always include complete workflow history\n\nThe task queue specified by the user is always a normal task queue. There can be as many\nworkers as desired for a single normal task queue. All those workers may pick up tasks from\nthat queue.\n - TASK_QUEUE_KIND_STICKY: A sticky queue only includes new history since the last workflow task, and they are\nper-worker.\n\nSticky queues are created dynamically by each worker during their start up. They only exist\nfor the lifetime of the worker process. Tasks in a sticky task queue are only available to\nthe worker that created the sticky queue.\n\nSticky queues are only for workflow tasks. There are no sticky task queues for activities.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "enum": [
+              "TASK_QUEUE_KIND_UNSPECIFIED",
+              "TASK_QUEUE_KIND_NORMAL",
+              "TASK_QUEUE_KIND_STICKY"
+            ],
+            "default": "TASK_QUEUE_KIND_UNSPECIFIED"
+          },
+          {
+            "name": "taskQueue.normalName",
+            "description": "Iff kind == TASK_QUEUE_KIND_STICKY, then this field contains the name of\nthe normal task queue that the sticky worker is running on.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "taskQueueType",
+            "description": "Deprecated. Use `ENHANCED` mode with `task_queue_types`. Ignored in `ENHANCED` mode.\nIf unspecified (TASK_QUEUE_TYPE_UNSPECIFIED), then default value (TASK_QUEUE_TYPE_WORKFLOW) will be used.\n\n - TASK_QUEUE_TYPE_WORKFLOW: Workflow type of task queue.\n - TASK_QUEUE_TYPE_ACTIVITY: Activity type of task queue.\n - TASK_QUEUE_TYPE_NEXUS: Task queue type for dispatching Nexus requests.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "enum": [
+              "TASK_QUEUE_TYPE_UNSPECIFIED",
+              "TASK_QUEUE_TYPE_WORKFLOW",
+              "TASK_QUEUE_TYPE_ACTIVITY",
+              "TASK_QUEUE_TYPE_NEXUS"
+            ],
+            "default": "TASK_QUEUE_TYPE_UNSPECIFIED"
+          },
+          {
+            "name": "includeTaskQueueStatus",
+            "description": "Deprecated. Ignored in `ENHANCED` mode.",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          },
+          {
+            "name": "apiMode",
+            "description": "All options except `task_queue_type` and `include_task_queue_status` are only available in the `ENHANCED` mode.\n\n - DESCRIBE_TASK_QUEUE_MODE_UNSPECIFIED: Unspecified means legacy behavior.\n - DESCRIBE_TASK_QUEUE_MODE_ENHANCED: Enhanced mode reports aggregated results for all partitions, supports Build IDs, and reports richer info.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "enum": [
+              "DESCRIBE_TASK_QUEUE_MODE_UNSPECIFIED",
+              "DESCRIBE_TASK_QUEUE_MODE_ENHANCED"
+            ],
+            "default": "DESCRIBE_TASK_QUEUE_MODE_UNSPECIFIED"
+          },
+          {
+            "name": "versions.buildIds",
+            "description": "Include specific Build IDs.",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "collectionFormat": "multi"
+          },
+          {
+            "name": "versions.unversioned",
+            "description": "Include the unversioned queue.",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          },
+          {
+            "name": "versions.allActive",
+            "description": "Include all active versions. A version is considered active if, in the last few minutes,\nit has had new tasks or polls, or it has been the subject of certain task queue API calls.",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          },
+          {
+            "name": "taskQueueTypes",
+            "description": "Task queue types to report info about. If not specified, all types are considered.\n\n - TASK_QUEUE_TYPE_WORKFLOW: Workflow type of task queue.\n - TASK_QUEUE_TYPE_ACTIVITY: Activity type of task queue.\n - TASK_QUEUE_TYPE_NEXUS: Task queue type for dispatching Nexus requests.",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "TASK_QUEUE_TYPE_UNSPECIFIED",
+                "TASK_QUEUE_TYPE_WORKFLOW",
+                "TASK_QUEUE_TYPE_ACTIVITY",
+                "TASK_QUEUE_TYPE_NEXUS"
+              ]
+            },
+            "collectionFormat": "multi"
+          },
+          {
+            "name": "reportStats",
+            "description": "Report stats for the requested task queue types and versions",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          },
+          {
+            "name": "reportPollers",
+            "description": "Report list of pollers for requested task queue types and versions",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          },
+          {
+            "name": "reportTaskReachability",
+            "description": "Report task reachability for the requested versions and all task types (task reachability is not reported\nper task type).",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/task-queues/{taskQueue}/worker-build-id-compatibility": {
+      "get": {
+        "summary": "Deprecated. Use `GetWorkerVersioningRules`.\nFetches the worker build id versioning sets for a task queue.",
+        "operationId": "GetWorkerBuildIdCompatibility2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetWorkerBuildIdCompatibilityResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "taskQueue",
+            "description": "Must be set, the task queue to interrogate about worker id compatibility.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "maxSets",
+            "description": "Limits how many compatible sets will be returned. Specify 1 to only return the current\ndefault major version set. 0 returns all sets.",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/task-queues/{taskQueue}/worker-versioning-rules": {
+      "get": {
+        "summary": "Fetches the Build ID assignment and redirect rules for a Task Queue.\nWARNING: Worker Versioning is not yet stable and the API and behavior may change incompatibly.",
+        "operationId": "GetWorkerVersioningRules2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetWorkerVersioningRulesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "taskQueue",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/update": {
+      "post": {
+        "summary": "UpdateNamespace is used to update the information and configuration of a registered\nnamespace.",
+        "operationId": "UpdateNamespace2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1UpdateNamespaceResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceUpdateNamespaceBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/worker-task-reachability": {
+      "get": {
+        "summary": "Deprecated. Use `DescribeTaskQueue`.",
+        "description": "Fetches task reachability to determine whether a worker may be retired.\nThe request may specify task queues to query for or let the server fetch all task queues mapped to the given\nbuild IDs.\n\nWhen requesting a large number of task queues or all task queues associated with the given build ids in a\nnamespace, all task queues will be listed in the response but some of them may not contain reachability\ninformation due to a server enforced limit. When reaching the limit, task queues that reachability information\ncould not be retrieved for will be marked with a single TASK_REACHABILITY_UNSPECIFIED entry. The caller may issue\nanother call to get the reachability for those task queues.\n\nOpen source users can adjust this limit by setting the server's dynamic config value for\n`limit.reachabilityTaskQueueScan` with the caveat that this call can strain the visibility store.",
+        "operationId": "GetWorkerTaskReachability2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetWorkerTaskReachabilityResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "buildIds",
+            "description": "Build ids to retrieve reachability for. An empty string will be interpreted as an unversioned worker.\nThe number of build ids that can be queried in a single API call is limited.\nOpen source users can adjust this limit by setting the server's dynamic config value for\n`limit.reachabilityQueryBuildIds` with the caveat that this call can strain the visibility store.",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "collectionFormat": "multi"
+          },
+          {
+            "name": "taskQueues",
+            "description": "Task queues to retrieve reachability for. Leave this empty to query for all task queues associated with given\nbuild ids in the namespace.\nMust specify at least one task queue if querying for an unversioned worker.\nThe number of task queues that the server will fetch reachability information for is limited.\nSee the `GetWorkerTaskReachabilityResponse` documentation for more information.",
+            "in": "query",
+            "required": false,
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "collectionFormat": "multi"
+          },
+          {
+            "name": "reachability",
+            "description": "Type of reachability to query for.\n`TASK_REACHABILITY_NEW_WORKFLOWS` is always returned in the response.\nUse `TASK_REACHABILITY_EXISTING_WORKFLOWS` if your application needs to respond to queries on closed workflows.\nOtherwise, use `TASK_REACHABILITY_OPEN_WORKFLOWS`. Default is `TASK_REACHABILITY_EXISTING_WORKFLOWS` if left\nunspecified.\nSee the TaskReachability docstring for information about each enum variant.\n\n - TASK_REACHABILITY_NEW_WORKFLOWS: There's a possiblity for a worker to receive new workflow tasks. Workers should *not* be retired.\n - TASK_REACHABILITY_EXISTING_WORKFLOWS: There's a possiblity for a worker to receive existing workflow and activity tasks from existing workflows. Workers\nshould *not* be retired.\nThis enum value does not distinguish between open and closed workflows.\n - TASK_REACHABILITY_OPEN_WORKFLOWS: There's a possiblity for a worker to receive existing workflow and activity tasks from open workflows. Workers\nshould *not* be retired.\n - TASK_REACHABILITY_CLOSED_WORKFLOWS: There's a possiblity for a worker to receive existing workflow tasks from closed workflows. Workers may be\nretired dependending on application requirements. For example, if there's no need to query closed workflows.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "enum": [
+              "TASK_REACHABILITY_UNSPECIFIED",
+              "TASK_REACHABILITY_NEW_WORKFLOWS",
+              "TASK_REACHABILITY_EXISTING_WORKFLOWS",
+              "TASK_REACHABILITY_OPEN_WORKFLOWS",
+              "TASK_REACHABILITY_CLOSED_WORKFLOWS"
+            ],
+            "default": "TASK_REACHABILITY_UNSPECIFIED"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/workflow-count": {
+      "get": {
+        "summary": "CountWorkflowExecutions is a visibility API to count of workflow executions in a specific namespace.",
+        "operationId": "CountWorkflowExecutions2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1CountWorkflowExecutionsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/workflows": {
+      "get": {
+        "summary": "ListWorkflowExecutions is a visibility API to list workflow executions in a specific namespace.",
+        "operationId": "ListWorkflowExecutions2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListWorkflowExecutionsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "nextPageToken",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "byte"
+          },
+          {
+            "name": "query",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/workflows/execute-multi-operation": {
+      "post": {
+        "summary": "ExecuteMultiOperation executes multiple operations within a single workflow.",
+        "description": "Operations are started atomically, meaning if *any* operation fails to be started, none are,\nand the request fails. Upon start, the API returns only when *all* operations have a response.\n\nUpon failure, it returns `MultiOperationExecutionFailure` where the status code\nequals the status code of the *first* operation that failed to be started.\n\nNOTE: Experimental API.",
+        "operationId": "ExecuteMultiOperation2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ExecuteMultiOperationResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceExecuteMultiOperationBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/workflows/{execution.workflowId}": {
+      "get": {
+        "summary": "DescribeWorkflowExecution returns information about the specified workflow execution.",
+        "operationId": "DescribeWorkflowExecution2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1DescribeWorkflowExecutionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "execution.workflowId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "execution.runId",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/workflows/{execution.workflowId}/history": {
+      "get": {
+        "summary": "GetWorkflowExecutionHistory returns the history of specified workflow execution. Fails with\n`NotFound` if the specified workflow execution is unknown to the service.",
+        "operationId": "GetWorkflowExecutionHistory2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetWorkflowExecutionHistoryResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "execution.workflowId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "execution.runId",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "maximumPageSize",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "nextPageToken",
+            "description": "If a `GetWorkflowExecutionHistoryResponse` or a `PollWorkflowTaskQueueResponse` had one of\nthese, it should be passed here to fetch the next page.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "byte"
+          },
+          {
+            "name": "waitNewEvent",
+            "description": "If set to true, the RPC call will not resolve until there is a new event which matches\nthe `history_event_filter_type`, or a timeout is hit.",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          },
+          {
+            "name": "historyEventFilterType",
+            "description": "Filter returned events such that they match the specified filter type.\nDefault: HISTORY_EVENT_FILTER_TYPE_ALL_EVENT.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "enum": [
+              "HISTORY_EVENT_FILTER_TYPE_UNSPECIFIED",
+              "HISTORY_EVENT_FILTER_TYPE_ALL_EVENT",
+              "HISTORY_EVENT_FILTER_TYPE_CLOSE_EVENT"
+            ],
+            "default": "HISTORY_EVENT_FILTER_TYPE_UNSPECIFIED"
+          },
+          {
+            "name": "skipArchival",
+            "in": "query",
+            "required": false,
+            "type": "boolean"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/workflows/{execution.workflowId}/history-reverse": {
+      "get": {
+        "summary": "GetWorkflowExecutionHistoryReverse returns the history of specified workflow execution in reverse \norder (starting from last event). Fails with`NotFound` if the specified workflow execution is \nunknown to the service.",
+        "operationId": "GetWorkflowExecutionHistoryReverse2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetWorkflowExecutionHistoryReverseResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "execution.workflowId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "execution.runId",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "maximumPageSize",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "nextPageToken",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "byte"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/workflows/{execution.workflowId}/query/{query.queryType}": {
+      "post": {
+        "summary": "QueryWorkflow requests a query be executed for a specified workflow execution.",
+        "operationId": "QueryWorkflow2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1QueryWorkflowResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "execution.workflowId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "query.queryType",
+            "description": "The workflow-author-defined identifier of the query. Typically a function name.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceQueryWorkflowBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/workflows/{workflowExecution.workflowId}/cancel": {
+      "post": {
+        "summary": "RequestCancelWorkflowExecution is called by workers when they want to request cancellation of\na workflow execution.",
+        "description": "This results in a new `WORKFLOW_EXECUTION_CANCEL_REQUESTED` event being written to the\nworkflow history and a new workflow task created for the workflow. It returns success if the requested\nworkflow is already closed. It fails with 'NotFound' if the requested workflow doesn't exist.",
+        "operationId": "RequestCancelWorkflowExecution2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1RequestCancelWorkflowExecutionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "workflowExecution.workflowId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceRequestCancelWorkflowExecutionBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/workflows/{workflowExecution.workflowId}/reset": {
+      "post": {
+        "summary": "ResetWorkflowExecution will reset an existing workflow execution to a specified\n`WORKFLOW_TASK_COMPLETED` event (exclusive). It will immediately terminate the current\nexecution instance.\nTODO: Does exclusive here mean *just* the completed event, or also WFT started? Otherwise the task is doomed to time out?",
+        "operationId": "ResetWorkflowExecution2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ResetWorkflowExecutionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "workflowExecution.workflowId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceResetWorkflowExecutionBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/workflows/{workflowExecution.workflowId}/signal/{signalName}": {
+      "post": {
+        "summary": "SignalWorkflowExecution is used to send a signal to a running workflow execution.",
+        "description": "This results in a `WORKFLOW_EXECUTION_SIGNALED` event recorded in the history and a workflow\ntask being created for the execution.",
+        "operationId": "SignalWorkflowExecution2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1SignalWorkflowExecutionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "workflowExecution.workflowId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "signalName",
+            "description": "The workflow author-defined name of the signal to send to the workflow",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceSignalWorkflowExecutionBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/workflows/{workflowExecution.workflowId}/terminate": {
+      "post": {
+        "summary": "TerminateWorkflowExecution terminates an existing workflow execution by recording a\n`WORKFLOW_EXECUTION_TERMINATED` event in the history and immediately terminating the\nexecution instance.",
+        "operationId": "TerminateWorkflowExecution2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1TerminateWorkflowExecutionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "workflowExecution.workflowId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceTerminateWorkflowExecutionBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/workflows/{workflowExecution.workflowId}/update/{request.input.name}": {
+      "post": {
+        "summary": "Invokes the specified Update function on user Workflow code.",
+        "operationId": "UpdateWorkflowExecution2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1UpdateWorkflowExecutionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "The namespace name of the target Workflow.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "workflowExecution.workflowId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "request.input.name",
+            "description": "The name of the Update handler to invoke on the target Workflow.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceUpdateWorkflowExecutionBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/workflows/{workflowId}": {
+      "post": {
+        "summary": "StartWorkflowExecution starts a new workflow execution.",
+        "description": "It will create the execution with a `WORKFLOW_EXECUTION_STARTED` event in its history and\nalso schedule the first workflow task. Returns `WorkflowExecutionAlreadyStarted`, if an\ninstance already exists with same workflow id.",
+        "operationId": "StartWorkflowExecution2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1StartWorkflowExecutionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "workflowId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceStartWorkflowExecutionBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/workflows/{workflowId}/signal-with-start/{signalName}": {
+      "post": {
+        "summary": "SignalWithStartWorkflowExecution is used to ensure a signal is sent to a workflow, even if\nit isn't yet started.",
+        "description": "If the workflow is running, a `WORKFLOW_EXECUTION_SIGNALED` event is recorded in the history\nand a workflow task is generated.\n\nIf the workflow is not running or not found, then the workflow is created with\n`WORKFLOW_EXECUTION_STARTED` and `WORKFLOW_EXECUTION_SIGNALED` events in its history, and a\nworkflow task is generated.",
+        "operationId": "SignalWithStartWorkflowExecution2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1SignalWithStartWorkflowExecutionResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "workflowId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "signalName",
+            "description": "The workflow author-defined name of the signal to send to the workflow",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceSignalWithStartWorkflowExecutionBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/nexus/endpoints": {
+      "get": {
+        "summary": "List all Nexus endpoints for the cluster, sorted by ID in ascending order. Set page_token in the request to the\nnext_page_token field of the previous response to get the next page of results. An empty next_page_token\nindicates that there are no more results. During pagination, a newly added service with an ID lexicographically\nearlier than the previous page's last endpoint's ID may be missed.",
+        "operationId": "ListNexusEndpoints2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListNexusEndpointsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "nextPageToken",
+            "description": "To get the next page, pass in `ListNexusEndpointsResponse.next_page_token` from the previous page's\nresponse, the token will be empty if there's no other page.\nNote: the last page may be empty if the total number of endpoints registered is a multiple of the page size.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "byte"
+          },
+          {
+            "name": "name",
+            "description": "Name of the incoming endpoint to filter on - optional. Specifying this will result in zero or one results.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "OperatorService"
+        ]
+      },
+      "post": {
+        "summary": "Create a Nexus endpoint. This will fail if an endpoint with the same name is already registered with a status of\nALREADY_EXISTS.\nReturns the created endpoint with its initial version. You may use this version for subsequent updates.",
+        "operationId": "CreateNexusEndpoint2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1CreateNexusEndpointResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1CreateNexusEndpointRequest"
+            }
+          }
+        ],
+        "tags": [
+          "OperatorService"
+        ]
+      }
+    },
+    "/api/v1/nexus/endpoints/{id}": {
+      "get": {
+        "summary": "Get a registered Nexus endpoint by ID. The returned version can be used for optimistic updates.",
+        "operationId": "GetNexusEndpoint2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetNexusEndpointResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "Server-generated unique endpoint ID.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "OperatorService"
+        ]
+      },
+      "delete": {
+        "summary": "Delete an incoming Nexus service by ID.",
+        "operationId": "DeleteNexusEndpoint2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1DeleteNexusEndpointResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "Server-generated unique endpoint ID.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "version",
+            "description": "Data version for this endpoint. Must match current version.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          }
+        ],
+        "tags": [
+          "OperatorService"
+        ]
+      }
+    },
+    "/api/v1/nexus/endpoints/{id}/update": {
+      "post": {
+        "summary": "Optimistically update a Nexus endpoint based on provided version as obtained via the `GetNexusEndpoint` or\n`ListNexusEndpointResponse` APIs. This will fail with a status of FAILED_PRECONDITION if the version does not\nmatch.\nReturns the updated endpoint with its updated version. You may use this version for subsequent updates. You don't\nneed to increment the version yourself. The server will increment the version for you after each update.",
+        "operationId": "UpdateNexusEndpoint2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1UpdateNexusEndpointResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "Server-generated unique endpoint ID.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/OperatorServiceUpdateNexusEndpointBody"
+            }
+          }
+        ],
+        "tags": [
+          "OperatorService"
+        ]
+      }
+    },
+    "/api/v1/system-info": {
+      "get": {
+        "summary": "GetSystemInfo returns information about the system.",
+        "operationId": "GetSystemInfo2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetSystemInfoResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/cluster": {
       "get": {
         "summary": "GetClusterInfo returns information about temporal cluster",
         "operationId": "GetClusterInfo",
@@ -42,7 +2513,7 @@
         ]
       }
     },
-    "/namespaces": {
+    "/cluster/namespaces": {
       "get": {
         "summary": "ListNamespaces returns the information and configuration for all namespaces.",
         "operationId": "ListNamespaces",
@@ -120,7 +2591,7 @@
         ]
       }
     },
-    "/namespaces/{namespace}": {
+    "/cluster/namespaces/{namespace}": {
       "get": {
         "summary": "DescribeNamespace returns the information and configuration for a registered namespace.",
         "operationId": "DescribeNamespace",
@@ -154,6 +2625,264 @@
         ],
         "tags": [
           "WorkflowService"
+        ]
+      }
+    },
+    "/cluster/namespaces/{namespace}/search-attributes": {
+      "get": {
+        "summary": "ListSearchAttributes returns comprehensive information about search attributes.",
+        "operationId": "ListSearchAttributes",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListSearchAttributesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "OperatorService"
+        ]
+      }
+    },
+    "/cluster/namespaces/{namespace}/update": {
+      "post": {
+        "summary": "UpdateNamespace is used to update the information and configuration of a registered\nnamespace.",
+        "operationId": "UpdateNamespace",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1UpdateNamespaceResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceUpdateNamespaceBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/cluster/nexus/endpoints": {
+      "get": {
+        "summary": "List all Nexus endpoints for the cluster, sorted by ID in ascending order. Set page_token in the request to the\nnext_page_token field of the previous response to get the next page of results. An empty next_page_token\nindicates that there are no more results. During pagination, a newly added service with an ID lexicographically\nearlier than the previous page's last endpoint's ID may be missed.",
+        "operationId": "ListNexusEndpoints",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListNexusEndpointsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "nextPageToken",
+            "description": "To get the next page, pass in `ListNexusEndpointsResponse.next_page_token` from the previous page's\nresponse, the token will be empty if there's no other page.\nNote: the last page may be empty if the total number of endpoints registered is a multiple of the page size.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "byte"
+          },
+          {
+            "name": "name",
+            "description": "Name of the incoming endpoint to filter on - optional. Specifying this will result in zero or one results.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "OperatorService"
+        ]
+      },
+      "post": {
+        "summary": "Create a Nexus endpoint. This will fail if an endpoint with the same name is already registered with a status of\nALREADY_EXISTS.\nReturns the created endpoint with its initial version. You may use this version for subsequent updates.",
+        "operationId": "CreateNexusEndpoint",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1CreateNexusEndpointResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1CreateNexusEndpointRequest"
+            }
+          }
+        ],
+        "tags": [
+          "OperatorService"
+        ]
+      }
+    },
+    "/cluster/nexus/endpoints/{id}": {
+      "get": {
+        "summary": "Get a registered Nexus endpoint by ID. The returned version can be used for optimistic updates.",
+        "operationId": "GetNexusEndpoint",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetNexusEndpointResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "Server-generated unique endpoint ID.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "OperatorService"
+        ]
+      },
+      "delete": {
+        "summary": "Delete an incoming Nexus service by ID.",
+        "operationId": "DeleteNexusEndpoint",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1DeleteNexusEndpointResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "Server-generated unique endpoint ID.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "version",
+            "description": "Data version for this endpoint. Must match current version.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "int64"
+          }
+        ],
+        "tags": [
+          "OperatorService"
+        ]
+      }
+    },
+    "/cluster/nexus/endpoints/{id}/update": {
+      "post": {
+        "summary": "Optimistically update a Nexus endpoint based on provided version as obtained via the `GetNexusEndpoint` or\n`ListNexusEndpointResponse` APIs. This will fail with a status of FAILED_PRECONDITION if the version does not\nmatch.\nReturns the updated endpoint with its updated version. You may use this version for subsequent updates. You don't\nneed to increment the version yourself. The server will increment the version for you after each update.",
+        "operationId": "UpdateNexusEndpoint",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1UpdateNexusEndpointResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "description": "Server-generated unique endpoint ID.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/OperatorServiceUpdateNexusEndpointBody"
+            }
+          }
+        ],
+        "tags": [
+          "OperatorService"
         ]
       }
     },
@@ -469,6 +3198,167 @@
             "required": true,
             "schema": {
               "$ref": "#/definitions/WorkflowServiceRecordActivityTaskHeartbeatByIdBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/namespaces/{namespace}/activities/pause-by-id": {
+      "post": {
+        "summary": "PauseActivityById pauses the execution of an activity specified by its ID.\nReturns a `NotFound` error if there is no pending activity with the provided ID.",
+        "description": "Pausing an activity means:\n- If the activity is currently waiting for a retry or is running and subsequently fails,\n  it will not be rescheduled until it is unpaused.\n- If the activity is already paused, calling this method will have no effect.\n- If the activity is running and finishes successfully, the activity will be completed.\n- If the activity is running and finishes with failure:\n  * if there is no retry left - the activity will be completed.\n  * if there are more retries left - the activity will be paused.\nFor long-running activities:\n- activities in paused state will send a cancellation with \"activity_paused\" set to 'true' in response to 'RecordActivityTaskHeartbeat'.\n- The activity should respond to the cancellation accordingly.",
+        "operationId": "PauseActivityById",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1PauseActivityByIdResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Namespace of the workflow which scheduled this activity.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServicePauseActivityByIdBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/namespaces/{namespace}/activities/reset-by-id": {
+      "post": {
+        "summary": "ResetActivityById unpauses the execution of an activity specified by its ID.\nReturns a `NotFound` error if there is no pending activity with the provided ID.\nResetting an activity means:\n* number of attempts will be reset to 0.\n* activity timeouts will be resetted.\nIf the activity currently running:\n*  if 'no_wait' flag is provided, a new instance of the activity will be scheduled immediately.\n*  if 'no_wait' flag is not provided, a new instance of the  activity will be scheduled after current instance completes if needed.\nIf 'reset_heartbeats' flag is set, the activity heartbeat timer and heartbeats will be reset.",
+        "operationId": "ResetActivityById",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ResetActivityByIdResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Namespace of the workflow which scheduled this activity.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceResetActivityByIdBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/namespaces/{namespace}/activities/unpause-by-id": {
+      "post": {
+        "summary": "UnpauseActivityById unpauses the execution of an activity specified by its ID.\nReturns a `NotFound` error if there is no pending activity with the provided ID.\nThere are two 'modes' of unpausing an activity:\n'resume' - If the activity is paused, it will be resumed and scheduled for execution.\n   * If the activity is currently running Unpause with 'resume' has no effect.\n   * if 'no_wait' flag is set and the activity is waiting, the activity will be scheduled immediately.\n'reset' - If the activity is paused, it will be reset to its initial state and (depending on parameters) scheduled for execution.\n   * If the activity is currently running, Unpause with 'reset' will reset the number of attempts.\n   * if 'no_wait' flag is set, the activity will be scheduled immediately.\n   * if 'reset_heartbeats' flag is set, the activity heartbeat timer and heartbeats will be reset.\nIf the activity is in waiting for retry and past it retry timeout, it will be scheduled immediately.\nOnce the activity is unpaused, all timeout timers will be regenerated.",
+        "operationId": "UnpauseActivityById",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1UnpauseActivityByIdResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Namespace of the workflow which scheduled this activity.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceUnpauseActivityByIdBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/namespaces/{namespace}/activities/update-options-by-id": {
+      "post": {
+        "summary": "UpdateActivityOptionsById is called by the client to update the options of an activity",
+        "operationId": "UpdateActivityOptionsById",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1UpdateActivityOptionsByIdResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "Namespace of the workflow which scheduled this activity",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceUpdateActivityOptionsByIdBody"
             }
           }
         ],
@@ -1038,37 +3928,6 @@
         ]
       }
     },
-    "/namespaces/{namespace}/search-attributes": {
-      "get": {
-        "summary": "ListSearchAttributes returns comprehensive information about search attributes.",
-        "operationId": "ListSearchAttributes",
-        "responses": {
-          "200": {
-            "description": "A successful response.",
-            "schema": {
-              "$ref": "#/definitions/v1ListSearchAttributesResponse"
-            }
-          },
-          "default": {
-            "description": "An unexpected error response.",
-            "schema": {
-              "$ref": "#/definitions/rpcStatus"
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "namespace",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          }
-        ],
-        "tags": [
-          "OperatorService"
-        ]
-      }
-    },
     "/namespaces/{namespace}/task-queues/{taskQueue.name}": {
       "get": {
         "summary": "DescribeTaskQueue returns the following information about the target task queue, broken down by Build ID:\n  - List of pollers\n  - Workflow Reachability status\n  - Backlog info for Workflow and/or Activity tasks",
@@ -1173,7 +4032,7 @@
           },
           {
             "name": "versions.allActive",
-            "description": "Include all active versions. A version is considered active if it has had new\ntasks or polls recently.",
+            "description": "Include all active versions. A version is considered active if, in the last few minutes,\nit has had new tasks or polls, or it has been the subject of certain task queue API calls.",
             "in": "query",
             "required": false,
             "type": "boolean"
@@ -1298,45 +4157,6 @@
             "in": "path",
             "required": true,
             "type": "string"
-          }
-        ],
-        "tags": [
-          "WorkflowService"
-        ]
-      }
-    },
-    "/namespaces/{namespace}/update": {
-      "post": {
-        "summary": "UpdateNamespace is used to update the information and configuration of a registered\nnamespace.",
-        "operationId": "UpdateNamespace",
-        "responses": {
-          "200": {
-            "description": "A successful response.",
-            "schema": {
-              "$ref": "#/definitions/v1UpdateNamespaceResponse"
-            }
-          },
-          "default": {
-            "description": "An unexpected error response.",
-            "schema": {
-              "$ref": "#/definitions/rpcStatus"
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "namespace",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "body",
-            "in": "body",
-            "required": true,
-            "schema": {
-              "$ref": "#/definitions/WorkflowServiceUpdateNamespaceBody"
-            }
           }
         ],
         "tags": [
@@ -1968,7 +4788,7 @@
     },
     "/namespaces/{namespace}/workflows/{workflowExecution.workflowId}/update/{request.input.name}": {
       "post": {
-        "summary": "Invokes the specified update function on user workflow code.",
+        "summary": "Invokes the specified Update function on user Workflow code.",
         "operationId": "UpdateWorkflowExecution",
         "responses": {
           "200": {
@@ -1987,7 +4807,7 @@
         "parameters": [
           {
             "name": "namespace",
-            "description": "The namespace name of the target workflow",
+            "description": "The namespace name of the target Workflow.",
             "in": "path",
             "required": true,
             "type": "string"
@@ -2000,7 +4820,7 @@
           },
           {
             "name": "request.input.name",
-            "description": "The name of the input handler to invoke on the target workflow",
+            "description": "The name of the Update handler to invoke on the target Workflow.",
             "in": "path",
             "required": true,
             "type": "string"
@@ -2118,194 +4938,6 @@
         ]
       }
     },
-    "/nexus/endpoints": {
-      "get": {
-        "summary": "List all Nexus endpoints for the cluster, sorted by ID in ascending order. Set page_token in the request to the\nnext_page_token field of the previous response to get the next page of results. An empty next_page_token\nindicates that there are no more results. During pagination, a newly added service with an ID lexicographically\nearlier than the previous page's last endpoint's ID may be missed.",
-        "operationId": "ListNexusEndpoints",
-        "responses": {
-          "200": {
-            "description": "A successful response.",
-            "schema": {
-              "$ref": "#/definitions/v1ListNexusEndpointsResponse"
-            }
-          },
-          "default": {
-            "description": "An unexpected error response.",
-            "schema": {
-              "$ref": "#/definitions/rpcStatus"
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "pageSize",
-            "in": "query",
-            "required": false,
-            "type": "integer",
-            "format": "int32"
-          },
-          {
-            "name": "nextPageToken",
-            "description": "To get the next page, pass in `ListNexusEndpointsResponse.next_page_token` from the previous page's\nresponse, the token will be empty if there's no other page.\nNote: the last page may be empty if the total number of endpoints registered is a multiple of the page size.",
-            "in": "query",
-            "required": false,
-            "type": "string",
-            "format": "byte"
-          },
-          {
-            "name": "name",
-            "description": "Name of the incoming endpoint to filter on - optional. Specifying this will result in zero or one results.",
-            "in": "query",
-            "required": false,
-            "type": "string"
-          }
-        ],
-        "tags": [
-          "OperatorService"
-        ]
-      },
-      "post": {
-        "summary": "Create a Nexus endpoint. This will fail if an endpoint with the same name is already registered with a status of\nALREADY_EXISTS.\nReturns the created endpoint with its initial version. You may use this version for subsequent updates.",
-        "operationId": "CreateNexusEndpoint",
-        "responses": {
-          "200": {
-            "description": "A successful response.",
-            "schema": {
-              "$ref": "#/definitions/v1CreateNexusEndpointResponse"
-            }
-          },
-          "default": {
-            "description": "An unexpected error response.",
-            "schema": {
-              "$ref": "#/definitions/rpcStatus"
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "body",
-            "in": "body",
-            "required": true,
-            "schema": {
-              "$ref": "#/definitions/v1CreateNexusEndpointRequest"
-            }
-          }
-        ],
-        "tags": [
-          "OperatorService"
-        ]
-      }
-    },
-    "/nexus/endpoints/{id}": {
-      "get": {
-        "summary": "Get a registered Nexus endpoint by ID. The returned version can be used for optimistic updates.",
-        "operationId": "GetNexusEndpoint",
-        "responses": {
-          "200": {
-            "description": "A successful response.",
-            "schema": {
-              "$ref": "#/definitions/v1GetNexusEndpointResponse"
-            }
-          },
-          "default": {
-            "description": "An unexpected error response.",
-            "schema": {
-              "$ref": "#/definitions/rpcStatus"
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "id",
-            "description": "Server-generated unique endpoint ID.",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          }
-        ],
-        "tags": [
-          "OperatorService"
-        ]
-      },
-      "delete": {
-        "summary": "Delete an incoming Nexus service by ID.",
-        "operationId": "DeleteNexusEndpoint",
-        "responses": {
-          "200": {
-            "description": "A successful response.",
-            "schema": {
-              "$ref": "#/definitions/v1DeleteNexusEndpointResponse"
-            }
-          },
-          "default": {
-            "description": "An unexpected error response.",
-            "schema": {
-              "$ref": "#/definitions/rpcStatus"
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "id",
-            "description": "Server-generated unique endpoint ID.",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "version",
-            "description": "Data version for this endpoint. Must match current version.",
-            "in": "query",
-            "required": false,
-            "type": "string",
-            "format": "int64"
-          }
-        ],
-        "tags": [
-          "OperatorService"
-        ]
-      }
-    },
-    "/nexus/endpoints/{id}/update": {
-      "post": {
-        "summary": "Optimistically update a Nexus endpoint based on provided version as obtained via the `GetNexusEndpoint` or\n`ListNexusEndpointResponse` APIs. This will fail with a status of FAILED_PRECONDITION if the version does not\nmatch.\nReturns the updated endpoint with its updated version. You may use this version for subsequent updates. You don't\nneed to increment the version yourself. The server will increment the version for you after each update.",
-        "operationId": "UpdateNexusEndpoint",
-        "responses": {
-          "200": {
-            "description": "A successful response.",
-            "schema": {
-              "$ref": "#/definitions/v1UpdateNexusEndpointResponse"
-            }
-          },
-          "default": {
-            "description": "An unexpected error response.",
-            "schema": {
-              "$ref": "#/definitions/rpcStatus"
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "id",
-            "description": "Server-generated unique endpoint ID.",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          },
-          {
-            "name": "body",
-            "in": "body",
-            "required": true,
-            "schema": {
-              "$ref": "#/definitions/OperatorServiceUpdateNexusEndpointBody"
-            }
-          }
-        ],
-        "tags": [
-          "OperatorService"
-        ]
-      }
-    },
     "/system-info": {
       "get": {
         "summary": "GetSystemInfo returns information about the system.",
@@ -2342,6 +4974,17 @@
     "CallbackInfoWorkflowClosed": {
       "type": "object",
       "description": "Trigger for when the workflow is closed."
+    },
+    "CallbackInternal": {
+      "type": "object",
+      "properties": {
+        "data": {
+          "type": "string",
+          "format": "byte",
+          "description": "Opaque internal data."
+        }
+      },
+      "description": "Callbacks to be delivered internally within the system.\nThis variant is not settable in the API and will be rejected by the service with an INVALID_ARGUMENT error.\nThe only reason that this is exposed is because callbacks are replicated across clusters via the\nWorkflowExecutionStarted event, which is defined in the public API."
     },
     "CallbackNexus": {
       "type": "object",
@@ -2404,10 +5047,37 @@
       "properties": {
         "startWorkflow": {
           "$ref": "#/definitions/v1StartWorkflowExecutionRequest",
-          "title": "Additional restrictions:\n- setting `cron_schedule` is invalid\n- setting `request_eager_execution` is invalid"
+          "title": "Additional restrictions:\n- setting `cron_schedule` is invalid\n- setting `request_eager_execution` is invalid\n- setting `workflow_start_delay` is invalid"
         },
         "updateWorkflow": {
-          "$ref": "#/definitions/v1UpdateWorkflowExecutionRequest"
+          "$ref": "#/definitions/v1UpdateWorkflowExecutionRequest",
+          "title": "Additional restrictions:\n- setting `first_execution_run_id` is invalid\n- setting `workflow_execution.run_id` is invalid"
+        }
+      }
+    },
+    "LinkBatchJob": {
+      "type": "object",
+      "properties": {
+        "jobId": {
+          "type": "string"
+        }
+      },
+      "description": "A link to a built-in batch job.\nBatch jobs can be used to perform operations on a set of workflows (e.g. terminate, signal, cancel, etc).\nThis link can be put on workflow history events generated by actions taken by a batch job."
+    },
+    "LinkWorkflowEvent": {
+      "type": "object",
+      "properties": {
+        "namespace": {
+          "type": "string"
+        },
+        "workflowId": {
+          "type": "string"
+        },
+        "runId": {
+          "type": "string"
+        },
+        "eventRef": {
+          "$ref": "#/definitions/WorkflowEventEventReference"
         }
       }
     },
@@ -2429,6 +5099,13 @@
       "properties": {
         "operationId": {
           "type": "string"
+        },
+        "links": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/apinexusv1Link"
+          }
         }
       },
       "description": "The operation will complete asynchronously.\nThe returned ID can be used to reference this operation."
@@ -2441,6 +5118,28 @@
         }
       },
       "description": "An operation completed successfully."
+    },
+    "UnpauseActivityByIdRequestResetOperation": {
+      "type": "object",
+      "properties": {
+        "noWait": {
+          "type": "boolean",
+          "description": "Indicates that the activity should be scheduled immediately.\nNote that this may run simultaneously with any existing executions of the activity."
+        },
+        "resetHeartbeat": {
+          "type": "boolean",
+          "title": "If set, the Heartbeat Details will be cleared out to make the Activity start over from the beginning"
+        }
+      }
+    },
+    "UnpauseActivityByIdRequestResumeOperation": {
+      "type": "object",
+      "properties": {
+        "noWait": {
+          "type": "boolean",
+          "description": "Indicates that if the activity is waiting to retry, it will  be scheduled immediately."
+        }
+      }
     },
     "UpdateWorkerBuildIdCompatibilityRequestAddNewCompatibleVersion": {
       "type": "object",
@@ -2555,6 +5254,18 @@
       },
       "description": "Replaces the routing rule with the given source Build ID."
     },
+    "WorkflowEventEventReference": {
+      "type": "object",
+      "properties": {
+        "eventId": {
+          "type": "string",
+          "format": "int64"
+        },
+        "eventType": {
+          "$ref": "#/definitions/v1EventType"
+        }
+      }
+    },
     "WorkflowServiceCreateScheduleBody": {
       "type": "object",
       "properties": {
@@ -2609,6 +5320,31 @@
         "requestId": {
           "type": "string",
           "description": "A unique identifier for this update request for idempotence. Typically UUIDv4."
+        }
+      }
+    },
+    "WorkflowServicePauseActivityByIdBody": {
+      "type": "object",
+      "properties": {
+        "workflowId": {
+          "type": "string",
+          "description": "ID of the workflow which scheduled this activity."
+        },
+        "runId": {
+          "type": "string",
+          "description": "Run ID of the workflow which scheduled this activity.\nIf empty - latest workflow is used."
+        },
+        "activityId": {
+          "type": "string",
+          "description": "ID of the activity we're updating."
+        },
+        "identity": {
+          "type": "string",
+          "description": "The identity of the client who initiated this request."
+        },
+        "requestId": {
+          "type": "string",
+          "description": "Used to de-dupe requests."
         }
       }
     },
@@ -2714,6 +5450,47 @@
         "reason": {
           "type": "string",
           "title": "Reason for requesting the cancellation"
+        },
+        "links": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/apicommonv1Link"
+          },
+          "description": "Links to be associated with the WorkflowExecutionCanceled event."
+        }
+      }
+    },
+    "WorkflowServiceResetActivityByIdBody": {
+      "type": "object",
+      "properties": {
+        "workflowId": {
+          "type": "string",
+          "description": "ID of the workflow which scheduled this activity."
+        },
+        "runId": {
+          "type": "string",
+          "description": "Run ID of the workflow which scheduled this activity.\nIf empty - latest workflow is used."
+        },
+        "activityId": {
+          "type": "string",
+          "description": "ID of the activity we're updating."
+        },
+        "identity": {
+          "type": "string",
+          "description": "The identity of the client who initiated this request."
+        },
+        "requestId": {
+          "type": "string",
+          "description": "Used to de-dupe requests."
+        },
+        "noWait": {
+          "type": "boolean",
+          "description": "Indicates that activity should be scheduled immediately.\nIf this flag doesn't set, and activity currently running - temporal will wait until activity is completed."
+        },
+        "resetHeartbeat": {
+          "type": "boolean",
+          "description": "Indicates that activity should reset heartbeat details.\nThis flag will be applied only to the new instance of the activity."
         }
       }
     },
@@ -2981,6 +5758,14 @@
         "userMetadata": {
           "$ref": "#/definitions/v1UserMetadata",
           "description": "Metadata on the workflow if it is started. This is carried over to the WorkflowExecutionInfo\nfor use by user interfaces to display the fixed as-of-start summary and details of the\nworkflow."
+        },
+        "links": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/apicommonv1Link"
+          },
+          "description": "Links to be associated with the WorkflowExecutionStarted and WorkflowExecutionSignaled events."
         }
       }
     },
@@ -3019,6 +5804,14 @@
         "skipGenerateWorkflowTask": {
           "type": "boolean",
           "description": "Indicates that a new workflow task should not be generated when this signal is received."
+        },
+        "links": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/apicommonv1Link"
+          },
+          "description": "Links to be associated with the WorkflowExecutionSignaled event."
         }
       }
     },
@@ -3147,6 +5940,14 @@
         "userMetadata": {
           "$ref": "#/definitions/v1UserMetadata",
           "description": "Metadata on the workflow if it is started. This is carried over to the WorkflowExecutionInfo\nfor use by user interfaces to display the fixed as-of-start summary and details of the\nworkflow."
+        },
+        "links": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/apicommonv1Link"
+          },
+          "description": "Links to be associated with the workflow."
         }
       }
     },
@@ -3189,6 +5990,78 @@
         "firstExecutionRunId": {
           "type": "string",
           "description": "If set, this call will error if the most recent (if no run id is set on\n`workflow_execution`), or specified (if it is) workflow execution is not part of the same\nexecution chain as this id."
+        },
+        "links": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/apicommonv1Link"
+          },
+          "description": "Links to be associated with the WorkflowExecutionTerminated event."
+        }
+      }
+    },
+    "WorkflowServiceUnpauseActivityByIdBody": {
+      "type": "object",
+      "properties": {
+        "workflowId": {
+          "type": "string",
+          "description": "ID of the workflow which scheduled this activity."
+        },
+        "runId": {
+          "type": "string",
+          "description": "Run ID of the workflow which scheduled this activity.\nIf empty - latest workflow is used."
+        },
+        "activityId": {
+          "type": "string",
+          "description": "ID of the activity we're updating."
+        },
+        "identity": {
+          "type": "string",
+          "description": "The identity of the client who initiated this request."
+        },
+        "requestId": {
+          "type": "string",
+          "description": "Used to de-dupe requests."
+        },
+        "resume": {
+          "$ref": "#/definitions/UnpauseActivityByIdRequestResumeOperation"
+        },
+        "reset": {
+          "$ref": "#/definitions/UnpauseActivityByIdRequestResetOperation"
+        }
+      }
+    },
+    "WorkflowServiceUpdateActivityOptionsByIdBody": {
+      "type": "object",
+      "properties": {
+        "workflowId": {
+          "type": "string",
+          "title": "ID of the workflow which scheduled this activity"
+        },
+        "runId": {
+          "type": "string",
+          "title": "Run ID of the workflow which scheduled this activity\nif empty - latest workflow is used"
+        },
+        "activityId": {
+          "type": "string",
+          "title": "ID of the activity we're updating"
+        },
+        "identity": {
+          "type": "string",
+          "title": "The identity of the client who initiated this request"
+        },
+        "activityOptions": {
+          "$ref": "#/definitions/v1ActivityOptions",
+          "title": "Activity options. Partial updates are accepted and controlled by update_mask"
+        },
+        "updateMask": {
+          "type": "string",
+          "title": "Controls which fields from `activity_options` will be applied"
+        },
+        "requestId": {
+          "type": "string",
+          "title": "Used to de-dupe requests"
         }
       }
     },
@@ -3252,15 +6125,16 @@
               "type": "string"
             }
           },
-          "title": "The target workflow id and (optionally) a specific run thereof"
+          "description": "The target Workflow Id and (optionally) a specific Run Id thereof.",
+          "title": "The target Workflow Id and (optionally) a specific Run Id thereof."
         },
         "firstExecutionRunId": {
           "type": "string",
-          "description": "If set, this call will error if the most recent (if no run id is set on\n`workflow_execution`), or specified (if it is) workflow execution is not\npart of the same execution chain as this id."
+          "description": "If set, this call will error if the most recent (if no Run Id is set on\n`workflow_execution`), or specified (if it is) Workflow Execution is not\npart of the same execution chain as this Id."
         },
         "waitPolicy": {
           "$ref": "#/definitions/v1WaitPolicy",
-          "description": "Describes when this request should return - basically whether the\nupdate is synchronous, asynchronous, or somewhere in between."
+          "description": "Specifies client's intent to wait for Update results.\nNOTE: This field works together with API call timeout which is limited by\nserver timeout (maximum wait time). If server timeout is expired before\nuser specified timeout, API call returns even if specified stage is not reached.\nActual reached stage will be included in the response."
         },
         "request": {
           "type": "object",
@@ -3273,19 +6147,31 @@
               "properties": {
                 "header": {
                   "$ref": "#/definitions/v1Header",
-                  "description": "Headers that are passed with the update from the requesting entity.\nThese can include things like auth or tracing tokens."
+                  "description": "Headers that are passed with the Update from the requesting entity.\nThese can include things like auth or tracing tokens."
                 },
                 "args": {
                   "$ref": "#/definitions/v1Payloads",
-                  "description": "The arguments to pass to the named handler."
+                  "description": "The arguments to pass to the named Update handler."
                 }
               }
             }
           },
-          "description": "The request information that will be delivered all the way down to the\nworkflow execution.",
-          "title": "The request information that will be delivered all the way down to the\nworkflow execution."
+          "description": "The request information that will be delivered all the way down to the\nWorkflow Execution.",
+          "title": "The request information that will be delivered all the way down to the\nWorkflow Execution."
         }
       }
+    },
+    "apicommonv1Link": {
+      "type": "object",
+      "properties": {
+        "workflowEvent": {
+          "$ref": "#/definitions/LinkWorkflowEvent"
+        },
+        "batchJob": {
+          "$ref": "#/definitions/LinkBatchJob"
+        }
+      },
+      "description": "Link can be associated with history events. It might contain information about an external entity\nrelated to the history event. For example, workflow A makes a Nexus call that starts workflow B:\nin this case, a history event in workflow A could contain a Link to the workflow started event in\nworkflow B, and vice-versa."
     },
     "apifailurev1Failure": {
       "type": "object",
@@ -3302,7 +6188,7 @@
         },
         "encodedAttributes": {
           "$ref": "#/definitions/v1Payload",
-          "description": "Alternative way to supply `message` and `stack_trace` and possibly other attributes, used for encryption of\nerrors originating in user code which might contain sensitive information.\nThe `encoded_attributes` Payload could represent any serializable object, e.g. JSON object or a `Failure` proto\nmessage.\n\nSDK authors: \n- The SDK should provide a default `encodeFailureAttributes` and `decodeFailureAttributes` implementation that:\n  - Uses a JSON object to represent `{ message, stack_trace }`.\n  - Overwrites the original message with \"Encoded failure\" to indicate that more information could be extracted.\n  - Overwrites the original stack_trace with an empty string.\n  - The resulting JSON object is converted to Payload using the default PayloadConverter and should be processed\n    by the user-provided PayloadCodec\n\n- If there's demand, we could allow overriding the default SDK implementation to encode other opaque Failure attributes."
+          "description": "Alternative way to supply `message` and `stack_trace` and possibly other attributes, used for encryption of\nerrors originating in user code which might contain sensitive information.\nThe `encoded_attributes` Payload could represent any serializable object, e.g. JSON object or a `Failure` proto\nmessage.\n\nSDK authors:\n- The SDK should provide a default `encodeFailureAttributes` and `decodeFailureAttributes` implementation that:\n  - Uses a JSON object to represent `{ message, stack_trace }`.\n  - Overwrites the original message with \"Encoded failure\" to indicate that more information could be extracted.\n  - Overwrites the original stack_trace with an empty string.\n  - The resulting JSON object is converted to Payload using the default PayloadConverter and should be processed\n    by the user-provided PayloadCodec\n\n- If there's demand, we could allow overriding the default SDK implementation to encode other opaque Failure attributes."
         },
         "cause": {
           "$ref": "#/definitions/apifailurev1Failure"
@@ -3355,6 +6241,18 @@
       },
       "title": "A general purpose failure message.\nSee: https://github.com/nexus-rpc/api/blob/main/SPEC.md#failure"
     },
+    "apinexusv1Link": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "See https://github.com/nexus-rpc/api/blob/main/SPEC.md#links."
+        },
+        "type": {
+          "type": "string"
+        }
+      }
+    },
     "apinexusv1Request": {
       "type": "object",
       "properties": {
@@ -3401,7 +6299,7 @@
           "$ref": "#/definitions/v1Input"
         }
       },
-      "title": "The client request that triggers a workflow execution update"
+      "description": "The client request that triggers a Workflow Update."
     },
     "protobufAny": {
       "type": "object",
@@ -3455,6 +6353,33 @@
         },
         "retryState": {
           "$ref": "#/definitions/v1RetryState"
+        }
+      }
+    },
+    "v1ActivityOptions": {
+      "type": "object",
+      "properties": {
+        "taskQueue": {
+          "$ref": "#/definitions/v1TaskQueue"
+        },
+        "scheduleToCloseTimeout": {
+          "type": "string",
+          "description": "Indicates how long the caller is willing to wait for an activity completion. Limits how long\nretries will be attempted. Either this or `start_to_close_timeout` must be specified.\n"
+        },
+        "scheduleToStartTimeout": {
+          "type": "string",
+          "description": "Limits time an activity task can stay in a task queue before a worker picks it up. This\ntimeout is always non retryable, as all a retry would achieve is to put it back into the same\nqueue. Defaults to `schedule_to_close_timeout` or workflow execution timeout if not\nspecified.\n"
+        },
+        "startToCloseTimeout": {
+          "type": "string",
+          "description": "Maximum time an activity is allowed to execute after being picked up by a worker. This\ntimeout is always retryable. Either this or `schedule_to_close_timeout` must be\nspecified.\n"
+        },
+        "heartbeatTimeout": {
+          "type": "string",
+          "description": "Maximum permitted time between successful worker heartbeats."
+        },
+        "retryPolicy": {
+          "$ref": "#/definitions/v1RetryPolicy"
         }
       }
     },
@@ -3725,7 +6650,7 @@
         },
         "nextRetryDelay": {
           "type": "string",
-          "description": "next_retry_delay can be used by the client to override the activity\nretry interval calculated by the retry policy. Retry attempts will\nstill be subject to the maximum retries limit and total time limit\ndefined by the policy.\nATTENTION: this value will be ignored if set for failures produced by\nthe workflow."
+          "description": "next_retry_delay can be used by the client to override the activity\nretry interval calculated by the retry policy. Retry attempts will\nstill be subject to the maximum retries limit and total time limit\ndefined by the policy."
         }
       }
     },
@@ -3945,7 +6870,7 @@
         "BUILD_ID_TASK_REACHABILITY_UNREACHABLE"
       ],
       "default": "BUILD_ID_TASK_REACHABILITY_UNSPECIFIED",
-      "description": "Specifies which category of tasks may reach a versioned worker of a certain Build ID.\n\nTask Reachability is eventually consistent; there may be a delay until it converges to the most\naccurate value but it is designed in a way to take the more conservative side until it converges.\nFor example REACHABLE is more conservative than CLOSED_WORKFLOWS_ONLY.\n\nNote: future activities who inherit their workflow's Build ID but not its Task Queue will not be\naccounted for reachability as server cannot know if they'll happen as they do not use\nassignment rules of their Task Queue. Same goes for Child Workflows or Continue-As-New Workflows\nwho inherit the parent/previous workflow's Build ID but not its Task Queue. In those cases, make\nsure to query reachability for the parent/previous workflow's Task Queue as well.\n\n - BUILD_ID_TASK_REACHABILITY_UNSPECIFIED: Task reachability is not reported\n - BUILD_ID_TASK_REACHABILITY_REACHABLE: Build ID may be used by new workflows or activities (base on versioning rules), or there MAY\nbe open workflows or backlogged activities assigned to it.\n - BUILD_ID_TASK_REACHABILITY_CLOSED_WORKFLOWS_ONLY: Build ID does not have open workflows and is not reachable by new workflows,\nbut MAY have closed workflows within the namespace retention period.\nNot applicable to activity-only task queues.\n - BUILD_ID_TASK_REACHABILITY_UNREACHABLE: Build ID is not used for new executions, nor it has been used by any existing execution\nwithin the retention period."
+      "description": "Specifies which category of tasks may reach a versioned worker of a certain Build ID.\n\nTask Reachability is eventually consistent; there may be a delay (up to few minutes) until it\nconverges to the most accurate value but it is designed in a way to take the more conservative\nside until it converges. For example REACHABLE is more conservative than CLOSED_WORKFLOWS_ONLY.\n\nNote: future activities who inherit their workflow's Build ID but not its Task Queue will not be\naccounted for reachability as server cannot know if they'll happen as they do not use\nassignment rules of their Task Queue. Same goes for Child Workflows or Continue-As-New Workflows\nwho inherit the parent/previous workflow's Build ID but not its Task Queue. In those cases, make\nsure to query reachability for the parent/previous workflow's Task Queue as well.\n\n - BUILD_ID_TASK_REACHABILITY_UNSPECIFIED: Task reachability is not reported\n - BUILD_ID_TASK_REACHABILITY_REACHABLE: Build ID may be used by new workflows or activities (base on versioning rules), or there MAY\nbe open workflows or backlogged activities assigned to it.\n - BUILD_ID_TASK_REACHABILITY_CLOSED_WORKFLOWS_ONLY: Build ID does not have open workflows and is not reachable by new workflows,\nbut MAY have closed workflows within the namespace retention period.\nNot applicable to activity-only task queues.\n - BUILD_ID_TASK_REACHABILITY_UNREACHABLE: Build ID is not used for new executions, nor it has been used by any existing execution\nwithin the retention period."
     },
     "v1CalendarSpec": {
       "type": "object",
@@ -3990,6 +6915,9 @@
       "properties": {
         "nexus": {
           "$ref": "#/definitions/CallbackNexus"
+        },
+        "internal": {
+          "$ref": "#/definitions/CallbackInternal"
         }
       },
       "description": "Callback to attach to various events in the system, e.g. workflow run completion."
@@ -4852,8 +7780,9 @@
           "type": "string",
           "description": "Endpoint name, unique for this cluster. Must match `[a-zA-Z_][a-zA-Z0-9_]*`.\nRenaming an endpoint breaks all workflow callers that reference this endpoint, causing operations to fail."
         },
-        "metadata": {
-          "$ref": "#/definitions/v1UserMetadata"
+        "description": {
+          "$ref": "#/definitions/v1Payload",
+          "description": "Markdown description serialized as a single JSON string.\nIf the Payload is encrypted, the UI and CLI may decrypt with the configured codec server endpoint.\nBy default, the server enforces a limit of 20,000 bytes for this entire payload."
         },
         "target": {
           "$ref": "#/definitions/v1EndpointTarget",
@@ -4918,13 +7847,13 @@
         "EVENT_TYPE_SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_FAILED",
         "EVENT_TYPE_EXTERNAL_WORKFLOW_EXECUTION_SIGNALED",
         "EVENT_TYPE_UPSERT_WORKFLOW_SEARCH_ATTRIBUTES",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_ADMITTED",
         "EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_ACCEPTED",
         "EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_REJECTED",
         "EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_COMPLETED",
         "EVENT_TYPE_WORKFLOW_PROPERTIES_MODIFIED_EXTERNALLY",
         "EVENT_TYPE_ACTIVITY_PROPERTIES_MODIFIED_EXTERNALLY",
         "EVENT_TYPE_WORKFLOW_PROPERTIES_MODIFIED",
-        "EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_ADMITTED",
         "EVENT_TYPE_NEXUS_OPERATION_SCHEDULED",
         "EVENT_TYPE_NEXUS_OPERATION_STARTED",
         "EVENT_TYPE_NEXUS_OPERATION_COMPLETED",
@@ -4934,7 +7863,7 @@
         "EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUESTED"
       ],
       "default": "EVENT_TYPE_UNSPECIFIED",
-      "description": "- EVENT_TYPE_UNSPECIFIED: Place holder and should never appear in a Workflow execution history\n - EVENT_TYPE_WORKFLOW_EXECUTION_STARTED: Workflow execution has been triggered/started\nIt contains Workflow execution inputs, as well as Workflow timeout configurations\n - EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED: Workflow execution has successfully completed and contains Workflow execution results\n - EVENT_TYPE_WORKFLOW_EXECUTION_FAILED: Workflow execution has unsuccessfully completed and contains the Workflow execution error\n - EVENT_TYPE_WORKFLOW_EXECUTION_TIMED_OUT: Workflow execution has timed out by the Temporal Server\nUsually due to the Workflow having not been completed within timeout settings\n - EVENT_TYPE_WORKFLOW_TASK_SCHEDULED: Workflow Task has been scheduled and the SDK client should now be able to process any new history events\n - EVENT_TYPE_WORKFLOW_TASK_STARTED: Workflow Task has started and the SDK client has picked up the Workflow Task and is processing new history events\n - EVENT_TYPE_WORKFLOW_TASK_COMPLETED: Workflow Task has completed\nThe SDK client picked up the Workflow Task and processed new history events\nSDK client may or may not ask the Temporal Server to do additional work, such as:\nEVENT_TYPE_ACTIVITY_TASK_SCHEDULED\nEVENT_TYPE_TIMER_STARTED\nEVENT_TYPE_UPSERT_WORKFLOW_SEARCH_ATTRIBUTES\nEVENT_TYPE_MARKER_RECORDED\nEVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED\nEVENT_TYPE_REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED\nEVENT_TYPE_SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED\nEVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED\nEVENT_TYPE_WORKFLOW_EXECUTION_FAILED\nEVENT_TYPE_WORKFLOW_EXECUTION_CANCELED\nEVENT_TYPE_WORKFLOW_EXECUTION_CONTINUED_AS_NEW\n - EVENT_TYPE_WORKFLOW_TASK_TIMED_OUT: Workflow Task encountered a timeout\nEither an SDK client with a local cache was not available at the time, or it took too long for the SDK client to process the task\n - EVENT_TYPE_WORKFLOW_TASK_FAILED: Workflow Task encountered a failure\nUsually this means that the Workflow was non-deterministic\nHowever, the Workflow reset functionality also uses this event\n - EVENT_TYPE_ACTIVITY_TASK_SCHEDULED: Activity Task was scheduled\nThe SDK client should pick up this activity task and execute\nThis event type contains activity inputs, as well as activity timeout configurations\n - EVENT_TYPE_ACTIVITY_TASK_STARTED: Activity Task has started executing\nThe SDK client has picked up the Activity Task and is processing the Activity invocation\n - EVENT_TYPE_ACTIVITY_TASK_COMPLETED: Activity Task has finished successfully\nThe SDK client has picked up and successfully completed the Activity Task\nThis event type contains Activity execution results\n - EVENT_TYPE_ACTIVITY_TASK_FAILED: Activity Task has finished unsuccessfully\nThe SDK picked up the Activity Task but unsuccessfully completed it\nThis event type contains Activity execution errors\n - EVENT_TYPE_ACTIVITY_TASK_TIMED_OUT: Activity has timed out according to the Temporal Server\nActivity did not complete within the timeout settings\n - EVENT_TYPE_ACTIVITY_TASK_CANCEL_REQUESTED: A request to cancel the Activity has occurred\nThe SDK client will be able to confirm cancellation of an Activity during an Activity heartbeat\n - EVENT_TYPE_ACTIVITY_TASK_CANCELED: Activity has been cancelled\n - EVENT_TYPE_TIMER_STARTED: A timer has started\n - EVENT_TYPE_TIMER_FIRED: A timer has fired\n - EVENT_TYPE_TIMER_CANCELED: A time has been cancelled\n - EVENT_TYPE_WORKFLOW_EXECUTION_CANCEL_REQUESTED: A request has been made to cancel the Workflow execution\n - EVENT_TYPE_WORKFLOW_EXECUTION_CANCELED: SDK client has confirmed the cancellation request and the Workflow execution has been cancelled\n - EVENT_TYPE_REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED: Workflow has requested that the Temporal Server try to cancel another Workflow\n - EVENT_TYPE_REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_FAILED: Temporal Server could not cancel the targeted Workflow\nThis is usually because the target Workflow could not be found\n - EVENT_TYPE_EXTERNAL_WORKFLOW_EXECUTION_CANCEL_REQUESTED: Temporal Server has successfully requested the cancellation of the target Workflow\n - EVENT_TYPE_MARKER_RECORDED: A marker has been recorded.\nThis event type is transparent to the Temporal Server\nThe Server will only store it and will not try to understand it.\n - EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED: Workflow has received a Signal event\nThe event type contains the Signal name, as well as a Signal payload\n - EVENT_TYPE_WORKFLOW_EXECUTION_TERMINATED: Workflow execution has been forcefully terminated\nThis is usually because the terminate Workflow API was called\n - EVENT_TYPE_WORKFLOW_EXECUTION_CONTINUED_AS_NEW: Workflow has successfully completed and a new Workflow has been started within the same transaction\nContains last Workflow execution results as well as new Workflow execution inputs\n - EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED: Temporal Server will try to start a child Workflow\n - EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_FAILED: Child Workflow execution cannot be started/triggered\nUsually due to a child Workflow ID collision\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_STARTED: Child Workflow execution has successfully started/triggered\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_COMPLETED: Child Workflow execution has successfully completed\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_FAILED: Child Workflow execution has unsuccessfully completed\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_CANCELED: Child Workflow execution has been cancelled\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_TIMED_OUT: Child Workflow execution has timed out by the Temporal Server\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_TERMINATED: Child Workflow execution has been terminated\n - EVENT_TYPE_SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED: Temporal Server will try to Signal the targeted Workflow\nContains the Signal name, as well as a Signal payload\n - EVENT_TYPE_SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_FAILED: Temporal Server cannot Signal the targeted Workflow\nUsually because the Workflow could not be found\n - EVENT_TYPE_EXTERNAL_WORKFLOW_EXECUTION_SIGNALED: Temporal Server has successfully Signaled the targeted Workflow\n - EVENT_TYPE_UPSERT_WORKFLOW_SEARCH_ATTRIBUTES: Workflow search attributes should be updated and synchronized with the visibility store\n - EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_ACCEPTED: An update was accepted (i.e. validated)\n - EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_REJECTED: An update was rejected (i.e. failed validation)\n - EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_COMPLETED: An update completed\n - EVENT_TYPE_WORKFLOW_PROPERTIES_MODIFIED_EXTERNALLY: Some property or properties of the workflow as a whole have changed by non-workflow code.\nThe distinction of external vs. command-based modification is important so the SDK can\nmaintain determinism when using the command-based approach.\n - EVENT_TYPE_ACTIVITY_PROPERTIES_MODIFIED_EXTERNALLY: Some property or properties of an already-scheduled activity have changed by non-workflow code.\nThe distinction of external vs. command-based modification is important so the SDK can\nmaintain determinism when using the command-based approach.\n - EVENT_TYPE_WORKFLOW_PROPERTIES_MODIFIED: Workflow properties modified by user workflow code\n - EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_ADMITTED: An update was admitted. Note that not all admitted updates result in this\nevent. See UpdateAdmittedEventOrigin for situations in which this event\nis created.\n - EVENT_TYPE_NEXUS_OPERATION_SCHEDULED: A Nexus operation was scheduled using a ScheduleNexusOperation command.\n - EVENT_TYPE_NEXUS_OPERATION_STARTED: An asynchronous Nexus operation was started by a Nexus handler.\n - EVENT_TYPE_NEXUS_OPERATION_COMPLETED: A Nexus operation completed successfully.\n - EVENT_TYPE_NEXUS_OPERATION_FAILED: A Nexus operation failed.\n - EVENT_TYPE_NEXUS_OPERATION_CANCELED: A Nexus operation completed as canceled.\n - EVENT_TYPE_NEXUS_OPERATION_TIMED_OUT: A Nexus operation timed out.\n - EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUESTED: A Nexus operation was requested to be canceled using a RequestCancelNexusOperation command.",
+      "description": "- EVENT_TYPE_UNSPECIFIED: Place holder and should never appear in a Workflow execution history\n - EVENT_TYPE_WORKFLOW_EXECUTION_STARTED: Workflow execution has been triggered/started\nIt contains Workflow execution inputs, as well as Workflow timeout configurations\n - EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED: Workflow execution has successfully completed and contains Workflow execution results\n - EVENT_TYPE_WORKFLOW_EXECUTION_FAILED: Workflow execution has unsuccessfully completed and contains the Workflow execution error\n - EVENT_TYPE_WORKFLOW_EXECUTION_TIMED_OUT: Workflow execution has timed out by the Temporal Server\nUsually due to the Workflow having not been completed within timeout settings\n - EVENT_TYPE_WORKFLOW_TASK_SCHEDULED: Workflow Task has been scheduled and the SDK client should now be able to process any new history events\n - EVENT_TYPE_WORKFLOW_TASK_STARTED: Workflow Task has started and the SDK client has picked up the Workflow Task and is processing new history events\n - EVENT_TYPE_WORKFLOW_TASK_COMPLETED: Workflow Task has completed\nThe SDK client picked up the Workflow Task and processed new history events\nSDK client may or may not ask the Temporal Server to do additional work, such as:\nEVENT_TYPE_ACTIVITY_TASK_SCHEDULED\nEVENT_TYPE_TIMER_STARTED\nEVENT_TYPE_UPSERT_WORKFLOW_SEARCH_ATTRIBUTES\nEVENT_TYPE_MARKER_RECORDED\nEVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED\nEVENT_TYPE_REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED\nEVENT_TYPE_SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED\nEVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED\nEVENT_TYPE_WORKFLOW_EXECUTION_FAILED\nEVENT_TYPE_WORKFLOW_EXECUTION_CANCELED\nEVENT_TYPE_WORKFLOW_EXECUTION_CONTINUED_AS_NEW\n - EVENT_TYPE_WORKFLOW_TASK_TIMED_OUT: Workflow Task encountered a timeout\nEither an SDK client with a local cache was not available at the time, or it took too long for the SDK client to process the task\n - EVENT_TYPE_WORKFLOW_TASK_FAILED: Workflow Task encountered a failure\nUsually this means that the Workflow was non-deterministic\nHowever, the Workflow reset functionality also uses this event\n - EVENT_TYPE_ACTIVITY_TASK_SCHEDULED: Activity Task was scheduled\nThe SDK client should pick up this activity task and execute\nThis event type contains activity inputs, as well as activity timeout configurations\n - EVENT_TYPE_ACTIVITY_TASK_STARTED: Activity Task has started executing\nThe SDK client has picked up the Activity Task and is processing the Activity invocation\n - EVENT_TYPE_ACTIVITY_TASK_COMPLETED: Activity Task has finished successfully\nThe SDK client has picked up and successfully completed the Activity Task\nThis event type contains Activity execution results\n - EVENT_TYPE_ACTIVITY_TASK_FAILED: Activity Task has finished unsuccessfully\nThe SDK picked up the Activity Task but unsuccessfully completed it\nThis event type contains Activity execution errors\n - EVENT_TYPE_ACTIVITY_TASK_TIMED_OUT: Activity has timed out according to the Temporal Server\nActivity did not complete within the timeout settings\n - EVENT_TYPE_ACTIVITY_TASK_CANCEL_REQUESTED: A request to cancel the Activity has occurred\nThe SDK client will be able to confirm cancellation of an Activity during an Activity heartbeat\n - EVENT_TYPE_ACTIVITY_TASK_CANCELED: Activity has been cancelled\n - EVENT_TYPE_TIMER_STARTED: A timer has started\n - EVENT_TYPE_TIMER_FIRED: A timer has fired\n - EVENT_TYPE_TIMER_CANCELED: A time has been cancelled\n - EVENT_TYPE_WORKFLOW_EXECUTION_CANCEL_REQUESTED: A request has been made to cancel the Workflow execution\n - EVENT_TYPE_WORKFLOW_EXECUTION_CANCELED: SDK client has confirmed the cancellation request and the Workflow execution has been cancelled\n - EVENT_TYPE_REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED: Workflow has requested that the Temporal Server try to cancel another Workflow\n - EVENT_TYPE_REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_FAILED: Temporal Server could not cancel the targeted Workflow\nThis is usually because the target Workflow could not be found\n - EVENT_TYPE_EXTERNAL_WORKFLOW_EXECUTION_CANCEL_REQUESTED: Temporal Server has successfully requested the cancellation of the target Workflow\n - EVENT_TYPE_MARKER_RECORDED: A marker has been recorded.\nThis event type is transparent to the Temporal Server\nThe Server will only store it and will not try to understand it.\n - EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED: Workflow has received a Signal event\nThe event type contains the Signal name, as well as a Signal payload\n - EVENT_TYPE_WORKFLOW_EXECUTION_TERMINATED: Workflow execution has been forcefully terminated\nThis is usually because the terminate Workflow API was called\n - EVENT_TYPE_WORKFLOW_EXECUTION_CONTINUED_AS_NEW: Workflow has successfully completed and a new Workflow has been started within the same transaction\nContains last Workflow execution results as well as new Workflow execution inputs\n - EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED: Temporal Server will try to start a child Workflow\n - EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_FAILED: Child Workflow execution cannot be started/triggered\nUsually due to a child Workflow ID collision\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_STARTED: Child Workflow execution has successfully started/triggered\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_COMPLETED: Child Workflow execution has successfully completed\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_FAILED: Child Workflow execution has unsuccessfully completed\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_CANCELED: Child Workflow execution has been cancelled\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_TIMED_OUT: Child Workflow execution has timed out by the Temporal Server\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_TERMINATED: Child Workflow execution has been terminated\n - EVENT_TYPE_SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED: Temporal Server will try to Signal the targeted Workflow\nContains the Signal name, as well as a Signal payload\n - EVENT_TYPE_SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_FAILED: Temporal Server cannot Signal the targeted Workflow\nUsually because the Workflow could not be found\n - EVENT_TYPE_EXTERNAL_WORKFLOW_EXECUTION_SIGNALED: Temporal Server has successfully Signaled the targeted Workflow\n - EVENT_TYPE_UPSERT_WORKFLOW_SEARCH_ATTRIBUTES: Workflow search attributes should be updated and synchronized with the visibility store\n - EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_ADMITTED: An update was admitted. Note that not all admitted updates result in this\nevent. See UpdateAdmittedEventOrigin for situations in which this event\nis created.\n - EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_ACCEPTED: An update was accepted (i.e. passed validation, perhaps because no validator was defined)\n - EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_REJECTED: This event is never written to history.\n - EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_COMPLETED: An update completed\n - EVENT_TYPE_WORKFLOW_PROPERTIES_MODIFIED_EXTERNALLY: Some property or properties of the workflow as a whole have changed by non-workflow code.\nThe distinction of external vs. command-based modification is important so the SDK can\nmaintain determinism when using the command-based approach.\n - EVENT_TYPE_ACTIVITY_PROPERTIES_MODIFIED_EXTERNALLY: Some property or properties of an already-scheduled activity have changed by non-workflow code.\nThe distinction of external vs. command-based modification is important so the SDK can\nmaintain determinism when using the command-based approach.\n - EVENT_TYPE_WORKFLOW_PROPERTIES_MODIFIED: Workflow properties modified by user workflow code\n - EVENT_TYPE_NEXUS_OPERATION_SCHEDULED: A Nexus operation was scheduled using a ScheduleNexusOperation command.\n - EVENT_TYPE_NEXUS_OPERATION_STARTED: An asynchronous Nexus operation was started by a Nexus handler.\n - EVENT_TYPE_NEXUS_OPERATION_COMPLETED: A Nexus operation completed successfully.\n - EVENT_TYPE_NEXUS_OPERATION_FAILED: A Nexus operation failed.\n - EVENT_TYPE_NEXUS_OPERATION_CANCELED: A Nexus operation completed as canceled.\n - EVENT_TYPE_NEXUS_OPERATION_TIMED_OUT: A Nexus operation timed out.\n - EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUESTED: A Nexus operation was requested to be canceled using a RequestCancelNexusOperation command.",
       "title": "Whenever this list of events is changed do change the function shouldBufferEvent in mutableStateBuilder.go to make sure to do the correct event ordering"
     },
     "v1ExecuteMultiOperationResponse": {
@@ -5136,6 +8065,10 @@
         "countGroupByExecutionStatus": {
           "type": "boolean",
           "title": "True if the server supports count group by execution status"
+        },
+        "nexus": {
+          "type": "boolean",
+          "description": "True if the server supports Nexus operations.\nThis flag is dependent both on server version and for Nexus to be enabled via server configuration."
         }
       },
       "description": "System capability details."
@@ -5296,6 +8229,14 @@
         "userMetadata": {
           "$ref": "#/definitions/v1UserMetadata",
           "description": "Metadata on the event. This is often carried over from commands and client calls. Most events\nwon't have this information, and how this information is used is dependent upon the interface\nthat reads it.\n\nCurrent well-known uses:\n * workflow_execution_started_event_attributes - summary and details from start workflow.\n * timer_started_event_attributes - summary represents an identifier for the timer for use by\n   user interfaces."
+        },
+        "links": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/apicommonv1Link"
+          },
+          "description": "Links associated with the event."
         },
         "workflowExecutionStartedEventAttributes": {
           "$ref": "#/definitions/v1WorkflowExecutionStartedEventAttributes"
@@ -5490,15 +8431,15 @@
       "properties": {
         "header": {
           "$ref": "#/definitions/v1Header",
-          "description": "Headers that are passed with the update from the requesting entity.\nThese can include things like auth or tracing tokens."
+          "description": "Headers that are passed with the Update from the requesting entity.\nThese can include things like auth or tracing tokens."
         },
         "name": {
           "type": "string",
-          "title": "The name of the input handler to invoke on the target workflow"
+          "description": "The name of the Update handler to invoke on the target Workflow."
         },
         "args": {
           "$ref": "#/definitions/v1Payloads",
-          "description": "The arguments to pass to the named handler."
+          "description": "The arguments to pass to the named Update handler."
         }
       }
     },
@@ -5788,14 +8729,14 @@
       "properties": {
         "updateId": {
           "type": "string",
-          "title": "An ID with workflow-scoped uniqueness for this update"
+          "description": "An ID with workflow-scoped uniqueness for this Update."
         },
         "identity": {
           "type": "string",
-          "description": "A string identifying the agent that requested this update."
+          "description": "A string identifying the agent that requested this Update."
         }
       },
-      "description": "Metadata about a workflow execution update."
+      "description": "Metadata about a Workflow Update."
     },
     "v1MeteringMetadata": {
       "type": "object",
@@ -6021,6 +8962,10 @@
         "failure": {
           "$ref": "#/definitions/apifailurev1Failure",
           "description": "Cancellation details."
+        },
+        "requestId": {
+          "type": "string",
+          "description": "The request ID allocated at schedule time."
         }
       },
       "description": "Nexus operation completed as canceled. May or may not have been due to a cancellation request by the workflow."
@@ -6082,6 +9027,10 @@
         "result": {
           "$ref": "#/definitions/v1Payload",
           "description": "Serialized result of the Nexus operation. The response of the Nexus handler.\nDelivered either via a completion callback or as a response to a synchronous operation."
+        },
+        "requestId": {
+          "type": "string",
+          "description": "The request ID allocated at schedule time."
         }
       },
       "description": "Nexus operation completed successfully."
@@ -6097,6 +9046,10 @@
         "failure": {
           "$ref": "#/definitions/apifailurev1Failure",
           "description": "Failure details. A NexusOperationFailureInfo wrapping an ApplicationFailureInfo."
+        },
+        "requestId": {
+          "type": "string",
+          "description": "The request ID allocated at schedule time."
         }
       },
       "description": "Nexus operation failed."
@@ -6165,6 +9118,10 @@
         "requestId": {
           "type": "string",
           "description": "A unique ID generated by the history service upon creation of this event.\nThe ID will be transmitted with all nexus StartOperation requests and is used as an idempotentency key."
+        },
+        "endpointId": {
+          "type": "string",
+          "description": "Endpoint ID as resolved in the endpoint registry at the time this event was generated.\nThis is stored on the event and used internally by the server in case the endpoint is renamed from the time the\nevent was originally scheduled."
         }
       },
       "description": "Event marking that an operation was scheduled by a workflow via the ScheduleNexusOperation command."
@@ -6180,6 +9137,10 @@
         "operationId": {
           "type": "string",
           "description": "The operation ID returned by the Nexus handler in the response to the StartOperation request.\nThis ID is used when canceling the operation."
+        },
+        "requestId": {
+          "type": "string",
+          "description": "The request ID allocated at schedule time."
         }
       },
       "description": "Event marking an asynchronous operation was started by the responding Nexus handler.\nIf the operation completes synchronously, this event is not generated.\nIn rare situations, such as request timeouts, the service may fail to record the actual start time and will fabricate\nthis event upon receiving the operation completion via callback."
@@ -6195,6 +9156,10 @@
         "failure": {
           "$ref": "#/definitions/apifailurev1Failure",
           "description": "Failure details. A NexusOperationFailureInfo wrapping a CanceledFailureInfo."
+        },
+        "requestId": {
+          "type": "string",
+          "description": "The request ID allocated at schedule time."
         }
       },
       "description": "Nexus operation timed out."
@@ -6209,7 +9174,7 @@
           "$ref": "#/definitions/apifailurev1Failure"
         }
       },
-      "description": "The outcome of a workflow update - success or failure."
+      "description": "The outcome of a Workflow Update: success or failure."
     },
     "v1ParentClosePolicy": {
       "type": "string",
@@ -6224,6 +9189,9 @@
       "title": "Defines how child workflows will react to their parent completing"
     },
     "v1PatchScheduleResponse": {
+      "type": "object"
+    },
+    "v1PauseActivityByIdResponse": {
       "type": "object"
     },
     "v1Payload": {
@@ -6299,6 +9267,24 @@
         "lastWorkerVersionStamp": {
           "$ref": "#/definitions/v1WorkerVersionStamp",
           "title": "The version stamp of the worker to whom this activity was most recently dispatched"
+        },
+        "currentRetryInterval": {
+          "type": "string",
+          "description": "The time activity will wait until the next retry.\nIf activity is currently running it will be next retry interval if activity failed.\nIf activity is currently waiting it will be current retry interval.\nIf there will be no retry it will be null."
+        },
+        "lastAttemptCompleteTime": {
+          "type": "string",
+          "format": "date-time",
+          "description": "The time when the last activity attempt was completed. If activity has not been completed yet then it will be null."
+        },
+        "nextAttemptScheduleTime": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Next time when activity will be scheduled.\nIf activity is currently scheduled or started it will be null."
+        },
+        "paused": {
+          "type": "boolean",
+          "description": "Indicates if activity is paused."
         }
       }
     },
@@ -6386,6 +9372,11 @@
         },
         "cancellationInfo": {
           "$ref": "#/definitions/v1NexusOperationCancellationInfo"
+        },
+        "scheduledEventId": {
+          "type": "string",
+          "format": "int64",
+          "description": "The event ID of the NexusOperationScheduled event. Can be used to correlate an operation in the\nDescribeWorkflowExecution response with workflow history."
         }
       },
       "description": "PendingNexusOperationInfo contains the state of a pending Nexus operation."
@@ -6539,7 +9530,7 @@
         },
         "updateRef": {
           "$ref": "#/definitions/v1UpdateRef",
-          "description": "Sufficient information to address this update."
+          "description": "Sufficient information to address this Update."
         }
       }
     },
@@ -6735,6 +9726,10 @@
         "cancelRequested": {
           "type": "boolean",
           "description": "Will be set to true if the activity has been asked to cancel itself. The SDK should then\nnotify the activity of cancellation if it is still running."
+        },
+        "activityPaused": {
+          "type": "boolean",
+          "description": "Will be set to true if the activity is paused."
         }
       }
     },
@@ -6959,6 +9954,9 @@
     "v1RequestCancelWorkflowExecutionResponse": {
       "type": "object"
     },
+    "v1ResetActivityByIdResponse": {
+      "type": "object"
+    },
     "v1ResetOptions": {
       "type": "object",
       "properties": {
@@ -7052,10 +10050,11 @@
       "enum": [
         "RESET_REAPPLY_EXCLUDE_TYPE_UNSPECIFIED",
         "RESET_REAPPLY_EXCLUDE_TYPE_SIGNAL",
-        "RESET_REAPPLY_EXCLUDE_TYPE_UPDATE"
+        "RESET_REAPPLY_EXCLUDE_TYPE_UPDATE",
+        "RESET_REAPPLY_EXCLUDE_TYPE_NEXUS"
       ],
       "default": "RESET_REAPPLY_EXCLUDE_TYPE_UNSPECIFIED",
-      "description": "Event types to exclude when reapplying events.\n\n - RESET_REAPPLY_EXCLUDE_TYPE_SIGNAL: Exclude signals when reapplying events.\n - RESET_REAPPLY_EXCLUDE_TYPE_UPDATE: Exclude updates when reapplying events."
+      "description": "Event types to exclude when reapplying events beyond the reset point.\n\n - RESET_REAPPLY_EXCLUDE_TYPE_SIGNAL: Exclude signals when reapplying events beyond the reset point.\n - RESET_REAPPLY_EXCLUDE_TYPE_UPDATE: Exclude updates when reapplying events beyond the reset point.\n - RESET_REAPPLY_EXCLUDE_TYPE_NEXUS: Exclude nexus events when reapplying events beyond the reset point."
     },
     "v1ResetReapplyType": {
       "type": "string",
@@ -7144,6 +10143,16 @@
     "v1RespondQueryTaskCompletedResponse": {
       "type": "object"
     },
+    "v1RespondWorkflowTaskCompletedRequestCapabilities": {
+      "type": "object",
+      "properties": {
+        "discardSpeculativeWorkflowTaskWithEvents": {
+          "type": "boolean",
+          "title": "True if the SDK can handle speculative workflow task with command events.\nIf true, the server may chosse, at its discretion, to discard a speculative workflow task\neven if that speculative task included command events the SDK had not previouly processed"
+        }
+      },
+      "description": "SDK capability details."
+    },
     "v1RespondWorkflowTaskCompletedResponse": {
       "type": "object",
       "properties": {
@@ -7157,11 +10166,12 @@
             "type": "object",
             "$ref": "#/definitions/v1PollActivityTaskQueueResponse"
           },
-          "title": "See `ScheduleActivityTaskCommandAttributes::request_start`"
+          "title": "See `ScheduleActivityTaskCommandAttributes::request_eager_execution`"
         },
         "resetHistoryEventId": {
           "type": "string",
-          "format": "int64"
+          "format": "int64",
+          "description": "If non zero, indicates the server has discarded the workflow task that was being responded to.\nWill be the event ID of the last workflow task started event in the history before the new workflow task.\nServer is only expected to discard a workflow task if it could not have modified the workflow state."
         }
       }
     },
@@ -7271,6 +10281,10 @@
         "startWorkflowResult": {
           "$ref": "#/definitions/v1WorkflowExecution",
           "title": "If action was start_workflow:"
+        },
+        "startWorkflowStatus": {
+          "$ref": "#/definitions/v1WorkflowExecutionStatus",
+          "description": "If the action was start_workflow, this field will reflect an\neventually-consistent view of the started workflow's status."
         }
       }
     },
@@ -7658,6 +10672,9 @@
       ],
       "default": "SEVERITY_UNSPECIFIED"
     },
+    "v1ShutdownWorkerResponse": {
+      "type": "object"
+    },
     "v1SignalExternalWorkflowExecutionCommandAttributes": {
       "type": "object",
       "properties": {
@@ -7998,6 +11015,14 @@
             "type": "string"
           },
           "description": "Header that is expected to be attached to the callback request when the operation completes."
+        },
+        "links": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/apinexusv1Link"
+          },
+          "description": "Links contain caller information and can be attached to the operations started by the handler."
         }
       },
       "description": "A request to start an operation."
@@ -8134,6 +11159,14 @@
         "userMetadata": {
           "$ref": "#/definitions/v1UserMetadata",
           "description": "Metadata on the workflow if it is started. This is carried over to the WorkflowExecutionInfo\nfor use by user interfaces to display the fixed as-of-start summary and details of the\nworkflow."
+        },
+        "links": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/apicommonv1Link"
+          },
+          "description": "Links to be associated with the workflow."
         }
       }
     },
@@ -8327,24 +11360,24 @@
         "approximateBacklogCount": {
           "type": "string",
           "format": "int64",
-          "description": "The approximate number of tasks backlogged in this task queue. May count expired tasks but eventually converges\nto the right value."
+          "description": "The approximate number of tasks backlogged in this task queue. May count expired tasks but eventually\nconverges to the right value. Can be relied upon for scaling decisions.\n\nSpecial note for workflow task queue type: this metric does not count sticky queue tasks. However, because\nthose tasks only remain valid for a few seconds, the inaccuracy becomes less significant as the backlog size\ngrows."
         },
         "approximateBacklogAge": {
           "type": "string",
-          "description": "Approximate age of the oldest task in the backlog based on the create timestamp of the task at the head of the queue."
+          "description": "Approximate age of the oldest task in the backlog based on the creation time of the task at the head of\nthe queue. Can be relied upon for scaling decisions.\n\nSpecial note for workflow task queue type: this metric does not count sticky queue tasks. However, because\nthose tasks only remain valid for a few seconds, they should not affect the result when backlog is older than\nfew seconds."
         },
         "tasksAddRate": {
           "type": "number",
           "format": "float",
-          "description": "Approximate tasks per second added to the task queue based on activity within a fixed window. This includes both backlogged and\nsync-matched tasks."
+          "description": "The approximate tasks per second added to the task queue, averaging the last 30 seconds. These includes tasks\nwhether or not they were added to/dispatched from the backlog or they were dispatched immediately without going\nto the backlog (sync-matched).\n\nThe difference between `tasks_add_rate` and `tasks_dispatch_rate` is a reliable metric for the rate at which\nbacklog grows/shrinks.\n\nNote: the actual tasks delivered to the workers may significantly be higher than the numbers reported by\ntasks_add_rate, because:\n- Tasks can be sent to workers without going to the task queue. This is called Eager dispatch. Eager dispatch is\n  enable for activities by default in the latest SDKs.\n- Tasks going to Sticky queue are not accounted for. Note that, typically, only the first workflow task of each\n  workflow goes to a normal queue, and the rest workflow tasks go to the Sticky queue associated with a specific\n  worker instance."
         },
         "tasksDispatchRate": {
           "type": "number",
           "format": "float",
-          "description": "Approximate tasks per second dispatched to workers based on activity within a fixed window. This includes both backlogged and\nsync-matched tasks."
+          "description": "The approximate tasks per second dispatched from the task queue, averaging the last 30 seconds. These includes\ntasks whether or not they were added to/dispatched from the backlog or they were dispatched immediately without\ngoing to the backlog (sync-matched).\n\nThe difference between `tasks_add_rate` and `tasks_dispatch_rate` is a reliable metric for the rate at which\nbacklog grows/shrinks.\n\nNote: the actual tasks delivered to the workers may significantly be higher than the numbers reported by\ntasks_dispatch_rate, because:\n- Tasks can be sent to workers without going to the task queue. This is called Eager dispatch. Eager dispatch is\n  enable for activities by default in the latest SDKs.\n- Tasks going to Sticky queue are not accounted for. Note that, typically, only the first workflow task of each\n  workflow goes to a normal queue, and the rest workflow tasks go to the Sticky queue associated with a specific\n  worker instance."
         }
       },
-      "description": "For workflow task queues, we only report the normal queue stats, not sticky queues. This means the stats\nreported here do not count all workflow tasks. However, because the tasks queued in sticky queues only remain\nvalid for a few seconds, the inaccuracy becomes less significant as the backlog age grows."
+      "description": "TaskQueueStats contains statistics about task queue backlog and activity.\n\nFor workflow task queue type, this result is partial because tasks sent to sticky queues are not included. Read\ncomments above each metric to understand the impact of sticky queue exclusion on that metric accuracy."
     },
     "v1TaskQueueStatus": {
       "type": "object",
@@ -8430,7 +11463,7 @@
         },
         "allActive": {
           "type": "boolean",
-          "description": "Include all active versions. A version is considered active if it has had new\ntasks or polls recently."
+          "description": "Include all active versions. A version is considered active if, in the last few minutes,\nit has had new tasks or polls, or it has been the subject of certain task queue API calls."
         }
       },
       "description": "Used for specifying versions the caller is interested in."
@@ -8563,6 +11596,9 @@
         }
       }
     },
+    "v1UnpauseActivityByIdResponse": {
+      "type": "object"
+    },
     "v1UnsuccessfulOperationError": {
       "type": "object",
       "properties": {
@@ -8575,6 +11611,15 @@
         }
       }
     },
+    "v1UpdateActivityOptionsByIdResponse": {
+      "type": "object",
+      "properties": {
+        "activityOptions": {
+          "$ref": "#/definitions/v1ActivityOptions",
+          "title": "Activity options after an update"
+        }
+      }
+    },
     "v1UpdateAdmittedEventOrigin": {
       "type": "string",
       "enum": [
@@ -8582,7 +11627,7 @@
         "UPDATE_ADMITTED_EVENT_ORIGIN_REAPPLY"
       ],
       "default": "UPDATE_ADMITTED_EVENT_ORIGIN_UNSPECIFIED",
-      "description": "Records why a WorkflowExecutionUpdateAdmittedEvent was written to history.\nNote that not all admitted updates result in this event.\n\n - UPDATE_ADMITTED_EVENT_ORIGIN_REAPPLY: The UpdateAdmitted event was created when reapplying events during reset\nor replication. I.e. an accepted update on one branch of workflow history\nwas converted into an admitted update on a different branch."
+      "description": "Records why a WorkflowExecutionUpdateAdmittedEvent was written to history.\nNote that not all admitted Updates result in this event.\n\n - UPDATE_ADMITTED_EVENT_ORIGIN_REAPPLY: The UpdateAdmitted event was created when reapplying events during reset\nor replication. I.e. an accepted Update on one branch of Workflow history\nwas converted into an admitted Update on a different branch."
     },
     "v1UpdateNamespaceInfo": {
       "type": "object",
@@ -8646,7 +11691,7 @@
           "type": "string"
         }
       },
-      "description": "The data needed by a client to refer to a previously invoked workflow\nexecution update process."
+      "description": "The data needed by a client to refer to a previously invoked Workflow Update."
     },
     "v1UpdateScheduleResponse": {
       "type": "object"
@@ -8687,30 +11732,30 @@
         "UPDATE_WORKFLOW_EXECUTION_LIFECYCLE_STAGE_COMPLETED"
       ],
       "default": "UPDATE_WORKFLOW_EXECUTION_LIFECYCLE_STAGE_UNSPECIFIED",
-      "description": "UpdateWorkflowExecutionLifecycleStage is specified by clients invoking\nworkflow execution updates and used to indicate to the server how long the\nclient wishes to wait for a return value from the RPC. If any value other\nthan UPDATE_WORKFLOW_EXECUTION_LIFECYCLE_STAGE_COMPLETED is sent by the\nclient then the RPC will complete before the update is finished and will\nreturn a handle to the running update so that it can later be polled for\ncompletion.\n\n - UPDATE_WORKFLOW_EXECUTION_LIFECYCLE_STAGE_UNSPECIFIED: An unspecified vale for this enum.\n - UPDATE_WORKFLOW_EXECUTION_LIFECYCLE_STAGE_ADMITTED: The gRPC call will not return until the update request has been admitted\nby the server - it may be the case that due to a considerations like load\nor resource limits that an update is made to wait before the server will\nindicate that it has been received and will be processed. This value\ndoes not wait for any sort of acknowledgement from a worker.\n - UPDATE_WORKFLOW_EXECUTION_LIFECYCLE_STAGE_ACCEPTED: The gRPC call will not return until the update has passed validation on\na worker.\n - UPDATE_WORKFLOW_EXECUTION_LIFECYCLE_STAGE_COMPLETED: The gRPC call will not return until the update has executed to completion\non a worker and has either been rejected or returned a value or an error."
+      "description": "UpdateWorkflowExecutionLifecycleStage is specified by clients invoking\nWorkflow Updates and used to indicate to the server how long the\nclient wishes to wait for a return value from the API. If any value other\nthan UPDATE_WORKFLOW_EXECUTION_LIFECYCLE_STAGE_COMPLETED is sent by the\nclient then the API will complete before the Update is finished and will\nreturn a handle to the running Update so that it can later be polled for\ncompletion.\nIf specified stage wasn't reached before server timeout, server returns\nactual stage reached.\n\n - UPDATE_WORKFLOW_EXECUTION_LIFECYCLE_STAGE_UNSPECIFIED: An unspecified value for this enum.\n - UPDATE_WORKFLOW_EXECUTION_LIFECYCLE_STAGE_ADMITTED: The API call will not return until the Update request has been admitted\nby the server - it may be the case that due to a considerations like load\nor resource limits that an Update is made to wait before the server will\nindicate that it has been received and will be processed. This value\ndoes not wait for any sort of acknowledgement from a worker.\n - UPDATE_WORKFLOW_EXECUTION_LIFECYCLE_STAGE_ACCEPTED: The API call will not return until the Update has passed validation on a worker.\n - UPDATE_WORKFLOW_EXECUTION_LIFECYCLE_STAGE_COMPLETED: The API call will not return until the Update has executed to completion\non a worker and has either been rejected or returned a value or an error."
     },
     "v1UpdateWorkflowExecutionRequest": {
       "type": "object",
       "properties": {
         "namespace": {
           "type": "string",
-          "title": "The namespace name of the target workflow"
+          "description": "The namespace name of the target Workflow."
         },
         "workflowExecution": {
           "$ref": "#/definitions/v1WorkflowExecution",
-          "title": "The target workflow id and (optionally) a specific run thereof"
+          "description": "The target Workflow Id and (optionally) a specific Run Id thereof."
         },
         "firstExecutionRunId": {
           "type": "string",
-          "description": "If set, this call will error if the most recent (if no run id is set on\n`workflow_execution`), or specified (if it is) workflow execution is not\npart of the same execution chain as this id."
+          "description": "If set, this call will error if the most recent (if no Run Id is set on\n`workflow_execution`), or specified (if it is) Workflow Execution is not\npart of the same execution chain as this Id."
         },
         "waitPolicy": {
           "$ref": "#/definitions/v1WaitPolicy",
-          "description": "Describes when this request should return - basically whether the\nupdate is synchronous, asynchronous, or somewhere in between."
+          "description": "Specifies client's intent to wait for Update results.\nNOTE: This field works together with API call timeout which is limited by\nserver timeout (maximum wait time). If server timeout is expired before\nuser specified timeout, API call returns even if specified stage is not reached.\nActual reached stage will be included in the response."
         },
         "request": {
           "$ref": "#/definitions/apiupdatev1Request",
-          "description": "The request information that will be delivered all the way down to the\nworkflow execution."
+          "description": "The request information that will be delivered all the way down to the\nWorkflow Execution."
         }
       }
     },
@@ -8723,7 +11768,7 @@
         },
         "outcome": {
           "$ref": "#/definitions/v1Outcome",
-          "description": "The outcome of the update if and only if the workflow execution update\nhas completed. If this response is being returned before the update has\ncompleted then this field will not be set."
+          "description": "The outcome of the Update if and only if the Workflow Update\nhas completed. If this response is being returned before the Update has\ncompleted then this field will not be set."
         },
         "stage": {
           "$ref": "#/definitions/v1UpdateWorkflowExecutionLifecycleStage",
@@ -8797,10 +11842,10 @@
       "properties": {
         "lifecycleStage": {
           "$ref": "#/definitions/v1UpdateWorkflowExecutionLifecycleStage",
-          "description": "Indicates the update lifecycle stage that the gRPC call should wait for\nbefore returning."
+          "description": "Indicates the Update lifecycle stage that the Update must reach before\nAPI call is returned.\nNOTE: This field works together with API call timeout which is limited by\nserver timeout (maximum wait time). If server timeout is expired before\nuser specified timeout, API call returns even if specified stage is not reached."
         }
       },
-      "description": "Specifies to the gRPC server how long the client wants the an update-related\nRPC call to wait before returning control to the caller."
+      "description": "Specifies client's intent to wait for Update results."
     },
     "v1WorkerVersionCapabilities": {
       "type": "object",
@@ -9079,6 +12124,10 @@
         "inheritedBuildId": {
           "type": "string",
           "description": "Build ID inherited from a previous/parent execution. If present, assigned_build_id will be set to this, instead\nof using the assignment rules."
+        },
+        "firstRunId": {
+          "type": "string",
+          "title": "The first run ID in the execution chain.\nExecutions created via the following operations are considered to be in the same chain\n- ContinueAsNew\n- Workflow Retry\n- Workflow Reset\n- Cron Schedule"
         }
       }
     },

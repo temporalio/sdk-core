@@ -41,6 +41,7 @@ import "google/protobuf/timestamp.proto";
 
 import "temporal/api/common/v1/message.proto";
 import "temporal/api/enums/v1/schedule.proto";
+import "temporal/api/enums/v1/workflow.proto";
 import "temporal/api/workflow/v1/message.proto";
 
 // CalendarSpec describes an event specification relative to the calendar,
@@ -269,6 +270,10 @@ message ScheduleActionResult {
 
     // If action was start_workflow:
     temporal.api.common.v1.WorkflowExecution start_workflow_result = 11;
+
+    // If the action was start_workflow, this field will reflect an
+    // eventually-consistent view of the started workflow's status.
+    temporal.api.enums.v1.WorkflowExecutionStatus start_workflow_status = 12;
 }
 
 message ScheduleState {

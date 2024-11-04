@@ -1401,6 +1401,7 @@ impl WorkflowClientTrait for Client {
                 request_id: request_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
                 first_execution_run_id: "".to_string(),
                 reason,
+                links: vec![],
             },
         )
         .await?
@@ -1424,6 +1425,7 @@ impl WorkflowClientTrait for Client {
                 details: None,
                 identity: self.inner.options.identity.clone(),
                 first_execution_run_id: "".to_string(),
+                links: vec![],
             },
         )
         .await?
