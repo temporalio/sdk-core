@@ -202,8 +202,19 @@ pub struct CoreRuntime {
 
 /// Wraps a [tokio::runtime::Builder] to allow layering multiple on_thread_start functions
 pub struct TokioRuntimeBuilder<F> {
+    /// The underlying tokio runtime builder
     pub inner: tokio::runtime::Builder,
+    /// A function to be called when setting the runtime builder's on thread start
     pub lang_on_thread_start: Option<F>,
+}
+
+impl Default for TokioRuntimeBuilder<Box<dyn Fn() + Send + Sync>> {
+    fn default() -> Self {
+        TokioRuntimeBuilder {
+            inner: tokio::runtime::Builder::new_multi_thread(),
+            lang_on_thread_start: None,
+        }
+    }
 }
 
 impl CoreRuntime {
