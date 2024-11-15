@@ -33,7 +33,8 @@ use temporal_sdk::{ActivityOptions, CancellableFuture, WfContext};
 use temporal_sdk_core_api::{
     errors::PollWfError,
     worker::{
-        SlotKind, SlotReservationContext, SlotSupplier, SlotSupplierPermit, WorkflowSlotKind,
+        SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext, SlotSupplier,
+        SlotSupplierPermit, WorkflowSlotKind,
     },
     Worker as WorkerTrait,
 };
@@ -3026,8 +3027,8 @@ async fn slot_provider_cant_hand_out_more_permits_than_cache_size() {
         fn try_reserve_slot(&self, _: &dyn SlotReservationContext) -> Option<SlotSupplierPermit> {
             Some(SlotSupplierPermit::default())
         }
-        fn mark_slot_used(&self, _: <Self::SlotKind as SlotKind>::Info<'_>) {}
-        fn release_slot(&self) {}
+        fn mark_slot_used(&self, _ctx: &dyn SlotMarkUsedContext<SlotKind = Self::SlotKind>) {}
+        fn release_slot(&self, _: &dyn SlotReleaseContext<SlotKind = Self::SlotKind>) {}
         fn available_slots(&self) -> Option<usize> {
             None
         }

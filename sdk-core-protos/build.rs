@@ -112,6 +112,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ".google.protobuf.Value",
             "::prost_wkt_types::Value"
         )
+        .extern_path(
+            ".google.protobuf.FieldMask",
+            "::prost_wkt_types::FieldMask"
+        )
         .file_descriptor_set_path(descriptor_file)
         .skip_debug("temporal.api.common.v1.Payload")
         .compile_protos(

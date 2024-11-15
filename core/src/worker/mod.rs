@@ -70,6 +70,7 @@ use tokio::sync::mpsc::unbounded_channel;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
 
+use crate::abstractions::PermitDealerContextData;
 use temporal_sdk_core_api::errors::WorkerValidationError;
 #[cfg(test)]
 use {
@@ -270,7 +271,12 @@ impl Worker {
             tuner.attach_metrics(meter.clone());
         }
         let shutdown_token = CancellationToken::new();
-        let wft_slots = Arc::new(MeteredPermitDealer::new(
+        let slot_context_data = Arc::new(PermitDealerContextData {
+            task_queue: config.task_queue.clone(),
+            worker_identity: config.client_identity_override.clone().unwrap_or_default(),
+            worker_build_id: config.worker_build_id.clone(),
+        });
+        let wft_slots = MeteredPermitDealer::new(
             tuner.workflow_task_slot_supplier(),
             metrics.with_new_attrs([workflow_worker_type()]),
             if config.max_cached_workflows > 0 {
@@ -280,12 +286,14 @@ impl Worker {
             } else {
                 None
             },
-        ));
-        let act_slots = Arc::new(MeteredPermitDealer::new(
+            slot_context_data.clone(),
+        );
+        let act_slots = MeteredPermitDealer::new(
             tuner.activity_task_slot_supplier(),
             metrics.with_new_attrs([activity_worker_type()]),
             None,
-        ));
+            slot_context_data.clone(),
+        );
         let (external_wft_tx, external_wft_rx) = unbounded_channel();
         let (wft_stream, act_poller) = match task_pollers {
             TaskPollers::Real => {
@@ -320,7 +328,7 @@ impl Worker {
                             normal_name: config.task_queue.clone(),
                         },
                         max_sticky_polls,
-                        wft_slots.clone(),
+                        wft_slots.clone().into_sticky(),
                         shutdown_token.child_token(),
                         Some(move |np| {
                             sticky_metrics.record_num_pollers(np);
@@ -366,7 +374,8 @@ impl Worker {
                 wft_stream,
                 act_poller,
             } => {
-                let ap = act_poller.map(|ap| MockPermittedPollBuffer::new(act_slots.clone(), ap));
+                let ap = act_poller
+                    .map(|ap| MockPermittedPollBuffer::new(Arc::new(act_slots.clone()), ap));
                 let wft_semaphore = wft_slots.clone();
                 let wfs = wft_stream.then(move |s| {
                     let wft_semaphore = wft_semaphore.clone();
@@ -386,6 +395,7 @@ impl Worker {
             config.namespace.clone(),
             hb_tx,
             metrics.clone(),
+            slot_context_data,
         ));
         let at_task_mgr = act_poller.map(|ap| {
             WorkerActivityTasks::new(
