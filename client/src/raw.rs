@@ -1124,6 +1124,52 @@ proxier! {
             r.extensions_mut().insert(labels);
         }
     );
+    (
+        shutdown_worker,
+        ShutdownWorkerRequest,
+        ShutdownWorkerResponse,
+        // TODO: need the namespaced_request label?
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        update_activity_options_by_id,
+        UpdateActivityOptionsByIdRequest,
+        UpdateActivityOptionsByIdResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        pause_activity_by_id,
+        PauseActivityByIdRequest,
+        PauseActivityByIdResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        unpause_activity_by_id,
+        UnpauseActivityByIdRequest,
+        UnpauseActivityByIdResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        reset_activity_by_id,
+        ResetActivityByIdRequest,
+        ResetActivityByIdResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
 }
 
 proxier! {

@@ -1,3 +1,0 @@
-[submodule "proto/api"]
-	url = ../api
-	branch = shivam/backlog-count

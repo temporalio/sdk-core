@@ -140,7 +140,7 @@ impl ActivityHeartbeatManager {
                                     .record_activity_heartbeat(tt.clone(), details.into_payloads())
                                     .await
                                 {
-                                    Ok(RecordActivityTaskHeartbeatResponse { cancel_requested }) => {
+                                    Ok(RecordActivityTaskHeartbeatResponse { cancel_requested, activity_paused: _ }) => {
                                         if cancel_requested {
                                             cancels_tx
                                                 .send(PendingActivityCancel::new(

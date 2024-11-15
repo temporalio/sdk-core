@@ -91,6 +91,13 @@ message WorkflowExecutionInfo {
     // Build ID inherited from a previous/parent execution. If present, assigned_build_id will be set to this, instead
     // of using the assignment rules.
     string inherited_build_id = 20;
+    // The first run ID in the execution chain.
+    // Executions created via the following operations are considered to be in the same chain
+    // - ContinueAsNew
+    // - Workflow Retry
+    // - Workflow Reset
+    // - Cron Schedule
+    string first_run_id = 21;
 }
 
 message WorkflowExecutionConfig {
@@ -129,6 +136,22 @@ message PendingActivityInfo {
     }
     // The version stamp of the worker to whom this activity was most recently dispatched
     temporal.api.common.v1.WorkerVersionStamp last_worker_version_stamp = 15;
+
+    // The time activity will wait until the next retry.
+    // If activity is currently running it will be next retry interval if activity failed.
+    // If activity is currently waiting it will be current retry interval.
+    // If there will be no retry it will be null.
+    google.protobuf.Duration current_retry_interval = 16;
+
+    // The time when the last activity attempt was completed. If activity has not been completed yet then it will be null.
+    google.protobuf.Timestamp last_attempt_complete_time = 17;
+
+    // Next time when activity will be scheduled.
+    // If activity is currently scheduled or started it will be null.
+    google.protobuf.Timestamp next_attempt_schedule_time = 18;
+
+    // Indicates if activity is paused.
+    bool paused = 19;
 }
 
 message PendingChildExecutionInfo {
@@ -273,6 +296,10 @@ message PendingNexusOperationInfo {
     google.protobuf.Timestamp next_attempt_schedule_time = 11;
 
     NexusOperationCancellationInfo cancellation_info = 12;
+
+    // The event ID of the NexusOperationScheduled event. Can be used to correlate an operation in the
+    // DescribeWorkflowExecution response with workflow history.
+    int64 scheduled_event_id = 13;
 }
 
 // NexusOperationCancellationInfo contains the state of a nexus operation cancellation.

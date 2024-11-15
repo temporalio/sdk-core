@@ -145,6 +145,7 @@ async fn heartbeats_report_cancels_only_once() {
         .returning(|_, _| {
             Ok(RecordActivityTaskHeartbeatResponse {
                 cancel_requested: true,
+                activity_paused: false,
             })
         });
     mock_client
@@ -270,6 +271,7 @@ async fn activity_cancel_interrupts_poll() {
             async {
                 Ok(RecordActivityTaskHeartbeatResponse {
                     cancel_requested: true,
+                    activity_paused: false,
                 })
             }
             .boxed()
@@ -390,10 +392,12 @@ async fn many_concurrent_heartbeat_cancels() {
                 if calls < 5 {
                     Ok(RecordActivityTaskHeartbeatResponse {
                         cancel_requested: false,
+                        activity_paused: false,
                     })
                 } else {
                     Ok(RecordActivityTaskHeartbeatResponse {
                         cancel_requested: true,
+                        activity_paused: false,
                     })
                 }
             }
@@ -512,6 +516,7 @@ async fn can_heartbeat_acts_during_shutdown() {
         .returning(|_, _| {
             Ok(RecordActivityTaskHeartbeatResponse {
                 cancel_requested: false,
+                activity_paused: false,
             })
         });
     mock_client
@@ -565,6 +570,7 @@ async fn complete_act_with_fail_flushes_heartbeat() {
             *lsp.borrow_mut() = payload;
             Ok(RecordActivityTaskHeartbeatResponse {
                 cancel_requested: false,
+                activity_paused: false,
             })
         });
     mock_client

@@ -232,6 +232,7 @@ impl WorkerClient for WorkerClientBag {
             namespace: self.namespace.clone(),
             sdk_metadata: Some(request.sdk_metadata),
             metering_metadata: Some(request.metering_metadata),
+            capabilities: None,
         };
         Ok(self
             .cloned_client()
