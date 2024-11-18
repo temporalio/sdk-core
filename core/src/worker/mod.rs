@@ -49,6 +49,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
+    time::Duration,
 };
 use temporal_client::{ConfiguredClient, TemporalServiceClientWithMetrics, WorkerKey};
 use temporal_sdk_core_protos::{
@@ -66,11 +67,13 @@ use temporal_sdk_core_protos::{
     },
     TaskToken,
 };
-use tokio::sync::mpsc::unbounded_channel;
+use tokio::sync::{mpsc::unbounded_channel, watch};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
 
-use crate::abstractions::PermitDealerContextData;
+use crate::{
+    abstractions::PermitDealerContextData, telemetry::metrics::local_activity_worker_type,
+};
 use temporal_sdk_core_api::errors::WorkerValidationError;
 #[cfg(test)]
 use {
@@ -103,6 +106,22 @@ pub struct Worker {
     non_local_activities_complete: Arc<AtomicBool>,
     /// Set when local activities are complete and should stop being polled
     local_activities_complete: Arc<AtomicBool>,
+    /// Used to track all permits have been released
+    all_permits_tracker: tokio::sync::Mutex<AllPermitsTracker>,
+}
+
+struct AllPermitsTracker {
+    wft_permits: watch::Receiver<usize>,
+    act_permits: watch::Receiver<usize>,
+    la_permits: watch::Receiver<usize>,
+}
+
+impl AllPermitsTracker {
+    async fn all_done(&mut self) {
+        let _ = self.wft_permits.wait_for(|x| *x == 0).await;
+        let _ = self.act_permits.wait_for(|x| *x == 0).await;
+        let _ = self.la_permits.wait_for(|x| *x == 0).await;
+    }
 }
 
 #[async_trait::async_trait]
@@ -288,12 +307,14 @@ impl Worker {
             },
             slot_context_data.clone(),
         );
+        let wft_permits = wft_slots.get_extant_count_rcv();
         let act_slots = MeteredPermitDealer::new(
             tuner.activity_task_slot_supplier(),
             metrics.with_new_attrs([activity_worker_type()]),
             None,
             slot_context_data.clone(),
         );
+        let act_permits = act_slots.get_extant_count_rcv();
         let (external_wft_tx, external_wft_rx) = unbounded_channel();
         let (wft_stream, act_poller) = match task_pollers {
             TaskPollers::Real => {
@@ -390,12 +411,18 @@ impl Worker {
         };
 
         let (hb_tx, hb_rx) = unbounded_channel();
-        let local_act_mgr = Arc::new(LocalActivityManager::new(
+        let la_pemit_dealer = MeteredPermitDealer::new(
             tuner.local_activity_slot_supplier(),
+            metrics.with_new_attrs([local_activity_worker_type()]),
+            None,
+            slot_context_data,
+        );
+        let la_permits = la_pemit_dealer.get_extant_count_rcv();
+        let local_act_mgr = Arc::new(LocalActivityManager::new(
             config.namespace.clone(),
+            la_pemit_dealer,
             hb_tx,
             metrics.clone(),
-            slot_context_data,
         ));
         let at_task_mgr = act_poller.map(|ap| {
             WorkerActivityTasks::new(
@@ -463,6 +490,11 @@ impl Worker {
             // Non-local activities are already complete if configured not to poll for them.
             non_local_activities_complete: Arc::new(AtomicBool::new(!poll_on_non_local_activities)),
             local_activities_complete: Default::default(),
+            all_permits_tracker: tokio::sync::Mutex::new(AllPermitsTracker {
+                wft_permits,
+                act_permits,
+                la_permits,
+            }),
         }
     }
 
@@ -484,6 +516,13 @@ impl Worker {
         if let Some(acts) = self.at_task_mgr.as_ref() {
             acts.shutdown().await;
         }
+        // Wait for all permits to be released, but don't totally hang real-world shutdown.
+        tokio::select! {
+            _ = async { self.all_permits_tracker.lock().await.all_done().await } => {},
+            _ = tokio::time::sleep(Duration::from_secs(1)) => {
+                dbg_panic!("Waiting for all slot permits to release took too long!");
+            }
+        };
     }
 
     /// Finish shutting down by consuming the background pollers and freeing all resources
