@@ -200,6 +200,23 @@ pub struct CoreRuntime {
     runtime_handle: tokio::runtime::Handle,
 }
 
+/// Wraps a [tokio::runtime::Builder] to allow layering multiple on_thread_start functions
+pub struct TokioRuntimeBuilder<F> {
+    /// The underlying tokio runtime builder
+    pub inner: tokio::runtime::Builder,
+    /// A function to be called when setting the runtime builder's on thread start
+    pub lang_on_thread_start: Option<F>,
+}
+
+impl Default for TokioRuntimeBuilder<Box<dyn Fn() + Send + Sync>> {
+    fn default() -> Self {
+        TokioRuntimeBuilder {
+            inner: tokio::runtime::Builder::new_multi_thread(),
+            lang_on_thread_start: None,
+        }
+    }
+}
+
 impl CoreRuntime {
     /// Create a new core runtime with the provided telemetry options and tokio runtime builder.
     /// Also initialize telemetry for the thread this is being called on.
@@ -214,17 +231,24 @@ impl CoreRuntime {
     /// # Panics
     /// If a tokio runtime has already been initialized. To re-use an existing runtime, call
     /// [CoreRuntime::new_assume_tokio].
-    pub fn new(
+    pub fn new<F>(
         telemetry_options: TelemetryOptions,
-        mut tokio_builder: tokio::runtime::Builder,
-    ) -> Result<Self, anyhow::Error> {
+        mut tokio_builder: TokioRuntimeBuilder<F>,
+    ) -> Result<Self, anyhow::Error>
+    where
+        F: Fn() + Send + Sync + 'static,
+    {
         let telemetry = telemetry_init(telemetry_options)?;
         let subscriber = telemetry.trace_subscriber();
         let runtime = tokio_builder
+            .inner
             .enable_all()
             .on_thread_start(move || {
                 if let Some(sub) = subscriber.as_ref() {
                     set_trace_subscriber_for_current_thread(sub.clone());
+                }
+                if let Some(lang_on_thread_start) = tokio_builder.lang_on_thread_start.as_ref() {
+                    lang_on_thread_start();
                 }
             })
             .build()?;

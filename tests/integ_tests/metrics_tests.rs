@@ -8,7 +8,7 @@ use temporal_sdk::{
 use temporal_sdk_core::{
     init_worker,
     telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter},
-    CoreRuntime,
+    CoreRuntime, TokioRuntimeBuilder,
 };
 use temporal_sdk_core_api::{
     telemetry::{
@@ -496,11 +496,8 @@ async fn query_of_closed_workflow_doesnt_tick_terminal_metric(
 
 #[test]
 fn runtime_new() {
-    let mut rt = CoreRuntime::new(
-        get_integ_telem_options(),
-        tokio::runtime::Builder::new_multi_thread(),
-    )
-    .unwrap();
+    let mut rt =
+        CoreRuntime::new(get_integ_telem_options(), TokioRuntimeBuilder::default()).unwrap();
     let handle = rt.tokio_handle();
     let _rt = handle.enter();
     let (telemopts, addr, _aborter) = prom_metrics(false, false);
