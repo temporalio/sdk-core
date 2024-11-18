@@ -49,6 +49,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
+    time::Duration,
 };
 use temporal_client::{ConfiguredClient, TemporalServiceClientWithMetrics, WorkerKey};
 use temporal_sdk_core_protos::{
@@ -515,8 +516,13 @@ impl Worker {
         if let Some(acts) = self.at_task_mgr.as_ref() {
             acts.shutdown().await;
         }
-        // Wait for all permits to be released
-        self.all_permits_tracker.lock().await.all_done().await;
+        // Wait for all permits to be released, but don't totally hang real-world shutdown.
+        tokio::select! {
+            _ = async { self.all_permits_tracker.lock().await.all_done().await } => {},
+            _ = tokio::time::sleep(Duration::from_secs(1)) => {
+                dbg_panic!("Waiting for all slot permits to release took too long!");
+            }
+        };
     }
 
     /// Finish shutting down by consuming the background pollers and freeing all resources
