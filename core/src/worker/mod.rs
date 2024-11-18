@@ -470,7 +470,6 @@ impl Worker {
     /// completed
     async fn shutdown(&self) {
         self.initiate_shutdown();
-        // Call shutdownWorker API to initiate server side shutdown
         if let Some(name) = self.workflows.get_sticky_queue_name() {
             // This is a best effort call and we can still shutdown the worker if it fails
             let _ = self.client.shutdown_worker(name).await;
