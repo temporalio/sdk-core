@@ -1128,7 +1128,6 @@ proxier! {
         shutdown_worker,
         ShutdownWorkerRequest,
         ShutdownWorkerResponse,
-        // TODO: need the namespaced_request label?
         |r| {
             let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);

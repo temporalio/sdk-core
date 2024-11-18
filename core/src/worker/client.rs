@@ -146,6 +146,7 @@ pub(crate) trait WorkerClient: Sync + Send {
         query_result: QueryResult,
     ) -> Result<RespondQueryTaskCompletedResponse>;
     async fn describe_namespace(&self) -> Result<DescribeNamespaceResponse>;
+    async fn shutdown_worker(&self, sticky_task_queue: String) -> Result<ShutdownWorkerResponse>;
 
     fn replace_client(&self, new_client: RetryClient<Client>);
     fn capabilities(&self) -> Option<Capabilities>;
@@ -383,6 +384,21 @@ impl WorkerClient for WorkerClientBag {
             Namespace::Name(self.namespace.clone()),
         )
         .await
+    }
+
+    async fn shutdown_worker(&self, sticky_task_queue: String) -> Result<ShutdownWorkerResponse> {
+        let request = ShutdownWorkerRequest {
+            namespace: self.namespace.clone(),
+            identity: self.identity.clone(),
+            sticky_task_queue,
+            reason: "graceful shutdown".to_string(),
+        };
+
+        Ok(
+            WorkflowService::shutdown_worker(&mut self.cloned_client(), request)
+                .await?
+                .into_inner(),
+        )
     }
 
     fn replace_client(&self, new_client: RetryClient<Client>) {

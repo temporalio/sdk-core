@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::sync::LazyLock;
 use temporal_client::SlotManager;
 
-static DEFAULT_WORKERS_REGISTRY: LazyLock<Arc<SlotManager>> =
+pub(crate) static DEFAULT_WORKERS_REGISTRY: LazyLock<Arc<SlotManager>> =
     LazyLock::new(|| Arc::new(SlotManager::new()));
 
 pub(crate) static DEFAULT_TEST_CAPABILITIES: &Capabilities = &Capabilities {
@@ -30,6 +30,8 @@ pub(crate) fn mock_workflow_client() -> MockWorkerClient {
     r.expect_workers()
         .returning(|| DEFAULT_WORKERS_REGISTRY.clone());
     r.expect_is_mock().returning(|| true);
+    r.expect_shutdown_worker()
+        .returning(|_| Ok(ShutdownWorkerResponse {}));
     r
 }
 
@@ -119,6 +121,9 @@ mockall::mock! {
         fn describe_namespace<'a, 'b>(&self) ->
           impl Future<Output = Result<DescribeNamespaceResponse>> + Send + 'b
           where 'a: 'b, Self: 'b;
+
+        fn shutdown_worker<'a, 'b>(&self, sticky_task_queue: String) -> impl Future<Output = Result<ShutdownWorkerResponse>> + Send + 'b
+            where 'a: 'b, Self: 'b;
 
         fn replace_client(&self, new_client: RetryClient<Client>);
         fn capabilities(&self) -> Option<Capabilities>;
