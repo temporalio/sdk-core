@@ -1,11 +1,8 @@
 use crate::{
-    abstractions::{
-        dbg_panic, MeteredPermitDealer, OwnedMeteredSemPermit, PermitDealerContextData,
-        UsedMeteredSemPermit,
-    },
+    abstractions::{dbg_panic, MeteredPermitDealer, OwnedMeteredSemPermit, UsedMeteredSemPermit},
     protosext::ValidScheduleLA,
     retry_logic::RetryPolicyExt,
-    telemetry::metrics::{activity_type, local_activity_worker_type, workflow_type},
+    telemetry::metrics::{activity_type, workflow_type},
     worker::workflow::HeartbeatTimeoutMsg,
     MetricsContext, TaskToken,
 };
@@ -17,11 +14,10 @@ use std::{
     collections::{hash_map::Entry, HashMap},
     fmt::{Debug, Formatter},
     pin::Pin,
-    sync::Arc,
     task::{Context, Poll},
     time::{Duration, Instant, SystemTime},
 };
-use temporal_sdk_core_api::worker::{LocalActivitySlotKind, SlotSupplier};
+use temporal_sdk_core_api::worker::LocalActivitySlotKind;
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{Cancellation, Failure as ActFail, Success},
@@ -214,26 +210,19 @@ impl LAMData {
 
 impl LocalActivityManager {
     pub(crate) fn new(
-        slot_supplier: Arc<dyn SlotSupplier<SlotKind = LocalActivitySlotKind> + Send + Sync>,
         namespace: String,
+        permit_dealer: MeteredPermitDealer<LocalActivitySlotKind>,
         heartbeat_timeout_tx: UnboundedSender<HeartbeatTimeoutMsg>,
         metrics_context: MetricsContext,
-        context_data: Arc<PermitDealerContextData>,
     ) -> Self {
         let (act_req_tx, act_req_rx) = unbounded_channel();
         let (cancels_req_tx, cancels_req_rx) = unbounded_channel();
         let shutdown_complete_tok = CancellationToken::new();
-        let semaphore = MeteredPermitDealer::new(
-            slot_supplier,
-            metrics_context.with_new_attrs([local_activity_worker_type()]),
-            None,
-            context_data,
-        );
         Self {
             namespace,
             rcvs: tokio::sync::Mutex::new(RcvChans::new(
                 act_req_rx,
-                semaphore,
+                permit_dealer,
                 cancels_req_rx,
                 shutdown_complete_tok.clone(),
             )),
@@ -255,15 +244,20 @@ impl LocalActivityManager {
     #[cfg(test)]
     fn test(max_concurrent: usize) -> Self {
         use crate::worker::tuner::FixedSizeSlotSupplier;
+        use std::sync::Arc;
 
         let ss = Arc::new(FixedSizeSlotSupplier::new(max_concurrent));
         let (hb_tx, _hb_rx) = unbounded_channel();
         Self::new(
-            ss,
             "fake_ns".to_string(),
+            MeteredPermitDealer::new(
+                ss,
+                MetricsContext::no_op(),
+                None,
+                Arc::new(Default::default()),
+            ),
             hb_tx,
             MetricsContext::no_op(),
-            Arc::new(Default::default()),
         )
     }
 
@@ -740,6 +734,8 @@ impl LocalActivityManager {
         while !self.set_shutdown_complete_if_ready(&mut self.dat.lock()) {
             self.complete_notify.notified().await;
         }
+        // This makes sure we drop any permits that might be held inside the stream
+        self.rcvs.lock().await.inner = stream::empty().boxed();
     }
 
     /// Try to close the activity stream as soon as worker shutdown is initiated. This is required

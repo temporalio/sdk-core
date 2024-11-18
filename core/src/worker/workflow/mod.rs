@@ -194,8 +194,8 @@ impl Workflows {
                         local_activity_request_sink,
                     );
 
-                    // However, we want to avoid plowing ahead until we've been asked to poll at least
-                    // once. This supports activity-only workers.
+                    // However, we want to avoid plowing ahead until we've been asked to poll at
+                    // least once. This supports activity-only workers.
                     let do_poll = tokio::select! {
                         sp = start_polling_rx => {
                             sp.is_ok()

@@ -107,6 +107,10 @@ where
         }
     }
 
+    pub(crate) fn get_extant_count_rcv(&self) -> watch::Receiver<usize> {
+        self.extant_permits.1.clone()
+    }
+
     fn build_owned(&self, res: SlotSupplierPermit) -> OwnedMeteredSemPermit<SK> {
         self.unused_claimants.fetch_add(1, Ordering::Release);
         self.extant_permits.0.send_modify(|ep| *ep += 1);
@@ -331,7 +335,7 @@ impl<SK: SlotKind> Drop for OwnedMeteredSemPermit<SK> {
         if let Some(uc) = self.unused_claimants.take() {
             uc.fetch_sub(1, Ordering::Release);
         }
-        (self.release_fn)(&self.release_ctx)
+        (self.release_fn)(&self.release_ctx);
     }
 }
 impl<SK: SlotKind> Debug for OwnedMeteredSemPermit<SK> {
