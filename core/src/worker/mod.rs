@@ -507,8 +507,6 @@ impl Worker {
             match self.client.shutdown_worker(name).await {
                 Err(err) if err.code() != tonic::Code::Unavailable => {
                     warn!("Failed to shutdown sticky queue  {:?}", err);
-                    // TODO: This can be uncommented once ShutdownWorker is released on server
-                    // dbg_panic!("Failed to shutdown sticky queue {:?}", err);
                 }
                 _ => {}
             }
