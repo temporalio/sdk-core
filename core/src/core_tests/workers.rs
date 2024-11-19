@@ -4,8 +4,13 @@ use crate::{
         build_fake_worker, build_mock_pollers, canned_histories, mock_worker, test_worker_cfg,
         MockPollCfg, MockWorkerInputs, MocksHolder, ResponseType, WorkerExt,
     },
-    worker,
-    worker::client::mocks::mock_workflow_client,
+    worker::{
+        self,
+        client::{
+            mocks::{mock_workflow_client, DEFAULT_TEST_CAPABILITIES, DEFAULT_WORKERS_REGISTRY},
+            MockWorkerClient,
+        },
+    },
     PollActivityError, PollWfError,
 };
 use futures_util::{stream, stream::StreamExt};
@@ -18,7 +23,7 @@ use temporal_sdk_core_protos::{
         workflow_completion::WorkflowActivationCompletion,
     },
     temporal::api::workflowservice::v1::{
-        PollWorkflowTaskQueueResponse, RespondWorkflowTaskCompletedResponse,
+        PollWorkflowTaskQueueResponse, RespondWorkflowTaskCompletedResponse, ShutdownWorkerResponse,
     },
 };
 use temporal_sdk_core_test_utils::start_timer_cmd;
@@ -294,4 +299,68 @@ async fn worker_can_shutdown_after_never_polling_ok(#[values(true, false)] poll_
         core.finalize_shutdown().await;
         break;
     }
+}
+
+#[rstest::rstest]
+#[case::ok(true, true)]
+#[case::best_effort(true, false)]
+#[case::not_sticky(false, true)]
+#[tokio::test]
+async fn worker_shutdown_api(#[case] use_cache: bool, #[case] api_success: bool) {
+    // Manually need to create MockWorkerClient because we want to specify
+    // the expected number of calls for shutdown_worker.
+    // This will no longer be needed if
+    // https://github.com/asomers/mockall/issues/283 is implemented.
+    let mut mock = MockWorkerClient::new();
+    mock.expect_capabilities()
+        .returning(|| Some(*DEFAULT_TEST_CAPABILITIES));
+    mock.expect_workers()
+        .returning(|| DEFAULT_WORKERS_REGISTRY.clone());
+    mock.expect_is_mock().returning(|| true);
+    if use_cache {
+        if api_success {
+            mock.expect_shutdown_worker()
+                .times(1)
+                .returning(|_| Ok(ShutdownWorkerResponse {}));
+        } else {
+            // worker.shutdown() should succeed even if shutdown_worker fails
+            mock.expect_shutdown_worker()
+                .times(1)
+                .returning(|_| Err(tonic::Status::unavailable("fake shutdown error")));
+        }
+    } else {
+        mock.expect_shutdown_worker().times(0);
+    }
+
+    let t = canned_histories::single_timer("1");
+    let mut mh =
+        MockPollCfg::from_resp_batches("fakeid", t, [1.into(), ResponseType::AllHistory], mock);
+    mh.enforce_correct_number_of_polls = false;
+    let mut mock = build_mock_pollers(mh);
+    mock.worker_cfg(|w| w.max_cached_workflows = if use_cache { 1 } else { 0 });
+    let worker = mock_worker(mock);
+
+    let res = worker.poll_workflow_activation().await.unwrap();
+    assert_eq!(res.jobs.len(), 1);
+    let run_id = res.run_id;
+
+    tokio::join!(worker.shutdown(), async {
+        // Need to complete task for shutdown to finish
+        worker
+            .complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+                run_id.clone(),
+                workflow_command::Variant::StartTimer(StartTimer {
+                    seq: 1,
+                    start_to_fire_timeout: Some(prost_dur!(from_secs(1))),
+                }),
+            ))
+            .await
+            .unwrap();
+
+        // Shutdown proceeds if the only outstanding activations are evictions
+        assert_matches!(
+            worker.poll_workflow_activation().await.unwrap_err(),
+            PollWfError::ShutDown
+        );
+    });
 }

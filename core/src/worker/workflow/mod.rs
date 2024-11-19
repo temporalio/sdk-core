@@ -714,6 +714,13 @@ impl Workflows {
             }
         }
     }
+
+    pub(super) fn get_sticky_queue_name(&self) -> Option<String> {
+        self.sticky_attrs
+            .as_ref()
+            .and_then(|sa| sa.worker_task_queue.as_ref())
+            .map(|tq| tq.name.clone())
+    }
 }
 
 /// Returned when a cache miss happens and we need to fetch history from the beginning to
