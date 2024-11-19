@@ -504,7 +504,13 @@ impl Worker {
         self.initiate_shutdown();
         if let Some(name) = self.workflows.get_sticky_queue_name() {
             // This is a best effort call and we can still shutdown the worker if it fails
-            let _ = self.client.shutdown_worker(name).await;
+            match self.client.shutdown_worker(name).await {
+                Err(err) if err.code() != tonic::Code::Unavailable => {
+                    warn!("Failed to shutdown sticky queue  {:?}", err);
+                    dbg_panic!("Failed to shutdown sticky queue {:?}", err);
+                }
+                _ => {}
+            }
         }
         // We need to wait for all local activities to finish so no more workflow task heartbeats
         // will be generated
