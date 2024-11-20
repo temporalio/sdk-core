@@ -107,7 +107,7 @@ pub struct HistogramBucketOverrides {
     ///
     /// See [here](https://docs.rs/opentelemetry_sdk/latest/opentelemetry_sdk/metrics/enum.Aggregation.html#variant.ExplicitBucketHistogram.field.boundaries)
     /// for the exact meaning of boundaries.
-    pub overrides: HashMap<&'static str, Vec<f64>>,
+    pub overrides: HashMap<String, Vec<f64>>,
 }
 
 /// Control where logs go

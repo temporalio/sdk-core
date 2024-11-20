@@ -98,7 +98,7 @@ async fn prometheus_metrics_exported(
         opts_builder.histogram_bucket_overrides(HistogramBucketOverrides {
             overrides: {
                 let mut hm = HashMap::new();
-                hm.insert(REQUEST_LATENCY_HISTOGRAM_NAME, vec![1337.0]);
+                hm.insert(REQUEST_LATENCY_HISTOGRAM_NAME.to_string(), vec![1337.0]);
                 hm
             },
         });
