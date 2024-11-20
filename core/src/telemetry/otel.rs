@@ -20,12 +20,11 @@ use opentelemetry_sdk::{
         data::Temporality,
         new_view,
         reader::{AggregationSelector, DefaultAggregationSelector, TemporalitySelector},
-        Aggregation, AttributeSet, Instrument, InstrumentKind, MeterProviderBuilder,
-        PeriodicReader, SdkMeterProvider, View,
+        Aggregation, Instrument, InstrumentKind, MeterProviderBuilder, PeriodicReader,
+        SdkMeterProvider, View,
     },
     runtime, Resource,
 };
-use parking_lot::RwLock;
 use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 use temporal_sdk_core_api::telemetry::{
     metrics::{
@@ -103,57 +102,6 @@ pub(super) fn augment_meter_provider_with_defaults(
         .with_view(histo_view(ACT_SCHED_TO_START_LATENCY_NAME, use_seconds)?)
         .with_view(histo_view(ACT_EXEC_LATENCY_NAME, use_seconds)?)
         .with_resource(default_resource(global_tags)))
-}
-
-/// OTel has no built-in synchronous Gauge. Histograms used to be able to serve that purpose, but
-/// they broke that. Lovely. So, we need to implement one by hand.
-pub(crate) struct MemoryGauge<U> {
-    labels_to_values: Arc<RwLock<HashMap<AttributeSet, U>>>,
-}
-
-macro_rules! impl_memory_gauge {
-    ($ty:ty, $gauge_fn:ident, $observe_fn:ident) => {
-        impl MemoryGauge<$ty> {
-            fn new(params: MetricParameters, meter: &Meter) -> Self {
-                let gauge = meter
-                    .$gauge_fn(params.name)
-                    .with_unit(params.unit)
-                    .with_description(params.description)
-                    .init();
-                let map = Arc::new(RwLock::new(HashMap::<AttributeSet, $ty>::new()));
-                let map_c = map.clone();
-                meter
-                    .register_callback(&[gauge.as_any()], move |o| {
-                        // This whole thing is... extra stupid.
-                        // See https://github.com/open-telemetry/opentelemetry-rust/issues/1181
-                        // The performance is likely bad here, but, given this is only called when
-                        // metrics are exported it should be livable for now.
-                        let map_rlock = map_c.read();
-                        for (kvs, val) in map_rlock.iter() {
-                            let kvs: Vec<_> = kvs
-                                .iter()
-                                .map(|(k, v)| KeyValue::new(k.clone(), v.clone()))
-                                .collect();
-                            o.$observe_fn(&gauge, *val, kvs.as_slice())
-                        }
-                    })
-                    .expect("instrument must exist we just created it");
-                MemoryGauge {
-                    labels_to_values: map,
-                }
-            }
-        }
-    };
-}
-impl_memory_gauge!(u64, u64_observable_gauge, observe_u64);
-impl_memory_gauge!(f64, f64_observable_gauge, observe_f64);
-
-impl<U> MemoryGauge<U> {
-    fn record(&self, val: U, kvs: &[KeyValue]) {
-        self.labels_to_values
-            .write()
-            .insert(AttributeSet::from(kvs), val);
-    }
 }
 
 /// Create an OTel meter that can be used as a [CoreMeter] to export metrics over OTLP.
@@ -292,11 +240,23 @@ impl CoreMeter for CoreOtelMeter {
     }
 
     fn gauge(&self, params: MetricParameters) -> Arc<dyn Gauge> {
-        Arc::new(MemoryGauge::<u64>::new(params, &self.meter))
+        Arc::new(
+            self.meter
+                .u64_gauge(params.name)
+                .with_unit(params.unit)
+                .with_description(params.description)
+                .init(),
+        )
     }
 
     fn gauge_f64(&self, params: MetricParameters) -> Arc<dyn GaugeF64> {
-        Arc::new(MemoryGauge::<f64>::new(params, &self.meter))
+        Arc::new(
+            self.meter
+                .f64_gauge(params.name)
+                .with_unit(params.unit)
+                .with_description(params.description)
+                .init(),
+        )
     }
 }
 
@@ -311,25 +271,6 @@ impl HistogramDuration for DurationHistogram {
         match self {
             DurationHistogram::Milliseconds(h) => h.record(value.as_millis() as u64, attributes),
             DurationHistogram::Seconds(h) => h.record(value.as_secs_f64(), attributes),
-        }
-    }
-}
-
-impl Gauge for MemoryGauge<u64> {
-    fn record(&self, value: u64, attributes: &MetricAttributes) {
-        if let MetricAttributes::OTel { kvs } = attributes {
-            self.record(value, kvs);
-        } else {
-            dbg_panic!("Must use OTel attributes with an OTel metric implementation");
-        }
-    }
-}
-impl GaugeF64 for MemoryGauge<f64> {
-    fn record(&self, value: f64, attributes: &MetricAttributes) {
-        if let MetricAttributes::OTel { kvs } = attributes {
-            self.record(value, kvs);
-        } else {
-            dbg_panic!("Must use OTel attributes with an OTel metric implementation");
         }
     }
 }
