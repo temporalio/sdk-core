@@ -30,7 +30,7 @@ temporal-client = { path = "../client" }
 temporal-sdk = { path = "../sdk" }
 temporal-sdk-core = { path = "../core" }
 temporal-sdk-core-api = { path = "../core-api" }
-thiserror = "1.0"
+thiserror = { workspace = true }
 tokio = "1.1"
 tokio-util = { version = "0.7" }
 tracing = "0.1"
