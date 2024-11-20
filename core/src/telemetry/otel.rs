@@ -19,11 +19,8 @@ use opentelemetry::{
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::{
     metrics::{
-        data::Temporality,
-        new_view,
-        reader::{AggregationSelector, DefaultAggregationSelector, TemporalitySelector},
-        Aggregation, Instrument, InstrumentKind, MeterProviderBuilder, PeriodicReader,
-        SdkMeterProvider, View,
+        data::Temporality, new_view, reader::TemporalitySelector, Aggregation, Instrument,
+        InstrumentKind, MeterProviderBuilder, PeriodicReader, SdkMeterProvider, View,
     },
     runtime, Resource,
 };
@@ -37,38 +34,6 @@ use temporal_sdk_core_api::telemetry::{
 };
 use tokio::task::AbortHandle;
 use tonic::{metadata::MetadataMap, transport::ClientTlsConfig};
-
-/// Chooses appropriate aggregators for our metrics
-#[derive(Debug, Clone)]
-struct SDKAggSelector {
-    use_seconds: bool,
-    default: DefaultAggregationSelector,
-}
-
-impl SDKAggSelector {
-    fn new(use_seconds: bool) -> Self {
-        Self {
-            use_seconds,
-            default: Default::default(),
-        }
-    }
-}
-
-impl AggregationSelector for SDKAggSelector {
-    fn aggregation(&self, kind: InstrumentKind) -> Aggregation {
-        match kind {
-            InstrumentKind::Histogram => Aggregation::ExplicitBucketHistogram {
-                boundaries: if self.use_seconds {
-                    DEFAULT_S_BUCKETS.to_vec()
-                } else {
-                    DEFAULT_MS_BUCKETS.to_vec()
-                },
-                record_min_max: true,
-            },
-            _ => self.default.aggregation(kind),
-        }
-    }
-}
 
 fn histo_view(
     metric_name: &'static str,
@@ -130,6 +95,24 @@ pub(super) fn augment_meter_provider_with_defaults(
             ),
         )?)
     }
+    // Fallback default
+    mpb = mpb.with_view(new_view(
+        {
+            let mut i = Instrument::new();
+            i.kind = Some(InstrumentKind::Histogram);
+            i
+        },
+        opentelemetry_sdk::metrics::Stream::new().aggregation(
+            Aggregation::ExplicitBucketHistogram {
+                boundaries: if use_seconds {
+                    DEFAULT_S_BUCKETS.to_vec()
+                } else {
+                    DEFAULT_MS_BUCKETS.to_vec()
+                },
+                record_min_max: true,
+            },
+        ),
+    )?);
     Ok(mpb.with_resource(default_resource(global_tags)))
 }
 
@@ -144,10 +127,9 @@ pub fn build_otlp_metric_exporter(
     }
     let exporter = exporter
         .with_metadata(MetadataMap::from_headers((&opts.headers).try_into()?))
-        .build_metrics_exporter(
-            Box::new(SDKAggSelector::new(opts.use_seconds_for_durations)),
-            Box::new(metric_temporality_to_selector(opts.metric_temporality)),
-        )?;
+        .build_metrics_exporter(Box::new(metric_temporality_to_selector(
+            opts.metric_temporality,
+        )))?;
     let reader = PeriodicReader::builder(exporter, runtime::Tokio)
         .with_interval(opts.metric_periodicity)
         .build();
@@ -178,8 +160,7 @@ pub struct StartedPromServer {
 pub fn start_prometheus_metric_exporter(
     opts: PrometheusExporterOptions,
 ) -> Result<StartedPromServer, anyhow::Error> {
-    let (srv, exporter) =
-        PromServer::new(&opts, SDKAggSelector::new(opts.use_seconds_for_durations))?;
+    let (srv, exporter) = PromServer::new(&opts)?;
     let meter_provider = augment_meter_provider_with_defaults(
         MeterProviderBuilder::default().with_reader(exporter),
         &opts.global_tags,
@@ -202,7 +183,7 @@ pub fn start_prometheus_metric_exporter(
 
 #[derive(Debug)]
 pub struct CoreOtelMeter {
-    meter: Meter,
+    pub meter: Meter,
     use_seconds_for_durations: bool,
     // we have to hold on to the provider otherwise otel automatically shuts it down on drop
     // for whatever crazy reason

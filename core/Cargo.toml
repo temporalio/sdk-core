@@ -43,9 +43,9 @@ itertools = "0.13"
 lru = "0.12"
 mockall = "0.13"
 opentelemetry = { workspace = true, features = ["metrics"], optional = true }
-opentelemetry_sdk = { version = "0.24", features = ["rt-tokio", "metrics"], optional = true }
-opentelemetry-otlp = { version = "0.17", features = ["tokio", "metrics", "tls"], optional = true }
-opentelemetry-prometheus = { version = "0.17", optional = true }
+opentelemetry_sdk = { version = "0.26", features = ["rt-tokio", "metrics"], optional = true }
+opentelemetry-otlp = { version = "0.26", features = ["tokio", "metrics", "tls"], optional = true }
+opentelemetry-prometheus = { git = "https://github.com/open-telemetry/opentelemetry-rust.git", rev = "e911383", optional = true }
 parking_lot = { version = "0.12", features = ["send_guard"] }
 pid = "4.0"
 pin-project = "1.0"
