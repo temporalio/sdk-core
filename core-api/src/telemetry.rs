@@ -81,11 +81,11 @@ pub struct PrometheusExporterOptions {
     #[builder(default)]
     pub global_tags: HashMap<String, String>,
     /// If set true, all counters will include a "_total" suffix
-    #[builder(default = "false")]
+    #[builder(default)]
     pub counters_total_suffix: bool,
     /// If set true, all histograms will include the unit in their name as a suffix.
     /// Ex: "_milliseconds".
-    #[builder(default = "false")]
+    #[builder(default)]
     pub unit_suffix: bool,
     /// If set to true, use f64 seconds for durations instead of u64 milliseconds
     #[builder(default)]
