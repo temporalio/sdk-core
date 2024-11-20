@@ -30,6 +30,7 @@ use temporal_sdk_core_protos::{
             ActivityTaskCompletedEventAttributes, ActivityTaskFailedEventAttributes,
             ActivityTaskTimedOutEventAttributes,
         },
+        sdk::v1::UserMetadata,
     },
 };
 
@@ -114,6 +115,10 @@ impl ActivityMachine {
         internal_flags: InternalFlagsRef,
         use_compatible_version: bool,
     ) -> NewMachineWithCommand {
+        let user_metadata = attrs.summary.clone().map(|x| UserMetadata {
+            summary: Some(x),
+            details: None,
+        });
         let mut s = Self::from_parts(
             Created {}.into(),
             SharedState {
@@ -134,7 +139,7 @@ impl ActivityMachine {
                 s.shared_state().attrs.clone(),
                 use_compatible_version,
             )),
-            user_metadata: Default::default(),
+            user_metadata,
         };
         NewMachineWithCommand {
             command,

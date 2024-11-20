@@ -1,5 +1,6 @@
 mod options;
 
+use options::TimerOptions;
 pub use options::{
     ActivityOptions, ChildWorkflowOptions, LocalActivityOptions, Signal, SignalData,
     SignalWorkflowOptions,
@@ -148,6 +149,15 @@ impl WfContext {
 
     /// Request to create a timer
     pub fn timer(&self, duration: Duration) -> impl CancellableFuture<TimerResult> {
+        self.timer_with_options(duration, TimerOptions::default())
+    }
+
+    /// Request to create a timer with optioons
+    pub fn timer_with_options(
+        &self,
+        duration: Duration,
+        opts: TimerOptions,
+    ) -> impl CancellableFuture<TimerResult> {
         let seq = self.seq_nums.write().next_timer_seq();
         let (cmd, unblocker) = CancellableWFCommandFut::new(CancellableID::Timer(seq));
         self.send(
@@ -159,6 +169,7 @@ impl WfContext {
                             .try_into()
                             .expect("Durations must fit into 64 bits"),
                     ),
+                    summary: opts.summary.map(|x| x.as_bytes().into()),
                 }
                 .into(),
                 unblocker,

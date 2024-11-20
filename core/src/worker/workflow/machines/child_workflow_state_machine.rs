@@ -41,6 +41,7 @@ use temporal_sdk_core_protos::{
             ChildWorkflowExecutionStartedEventAttributes,
             StartChildWorkflowExecutionFailedEventAttributes,
         },
+        sdk::v1::UserMetadata,
     },
 };
 
@@ -449,6 +450,15 @@ impl ChildWorkflowMachine {
                 cancelled_before_sent: false,
             },
         );
+        let user_metadata = if attribs.static_summary.is_some() || attribs.static_details.is_some()
+        {
+            Some(UserMetadata {
+                summary: attribs.static_summary.clone(),
+                details: attribs.static_details.clone(),
+            })
+        } else {
+            None
+        };
         OnEventWrapper::on_event_mut(&mut s, ChildWorkflowMachineEvents::Schedule)
             .expect("Scheduling child workflows doesn't fail");
         let cmd = Command {
@@ -457,7 +467,7 @@ impl ChildWorkflowMachine {
                 attribs,
                 use_compatible_version,
             )),
-            user_metadata: Default::default(),
+            user_metadata,
         };
         NewMachineWithCommand {
             command: cmd,

@@ -68,6 +68,9 @@ pub struct ActivityOptions {
     pub cancellation_type: ActivityCancellationType,
     /// Activity retry policy
     pub retry_policy: Option<RetryPolicy>,
+    /// Summary of the activity
+    /// NOTE: Experimental
+    pub summary: Option<String>,
 }
 
 impl IntoWorkflowCommand for ActivityOptions {
@@ -192,6 +195,12 @@ pub struct ChildWorkflowOptions {
     pub options: WorkflowOptions,
     /// How to respond to parent workflow ending
     pub parent_close_policy: ParentClosePolicy,
+    /// Static summary of the child workflow
+    /// NOTE: Experimental
+    pub static_summary: Option<String>,
+    /// Static details of the child workflow
+    /// NOTE: Experimental
+    pub static_details: Option<String>,
 }
 
 impl IntoWorkflowCommand for ChildWorkflowOptions {
@@ -306,4 +315,12 @@ impl SignalData {
         self.headers.insert(key.into(), payload.into());
         self
     }
+}
+
+/// Options for timer
+#[derive(Default, Debug, Clone)]
+pub struct TimerOptions {
+    /// Summary of the timer
+    /// NOTE: Experimental
+    pub summary: Option<String>,
 }
