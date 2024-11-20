@@ -129,18 +129,16 @@ async fn prometheus_metrics_exported(
             "temporal_request_latency_bucket{\
              operation=\"GetSystemInfo\",service_name=\"temporal-core-sdk\",le=\"1337\"}"
         ));
-    } else {
-        if use_seconds_latency {
-            assert!(body.contains(
-                "temporal_request_latency_bucket{\
+    } else if use_seconds_latency {
+        assert!(body.contains(
+            "temporal_request_latency_bucket{\
              operation=\"GetSystemInfo\",service_name=\"temporal-core-sdk\",le=\"0.05\"}"
-            ));
-        } else {
-            assert!(body.contains(
-                "temporal_request_latency_bucket{\
+        ));
+    } else {
+        assert!(body.contains(
+            "temporal_request_latency_bucket{\
              operation=\"GetSystemInfo\",service_name=\"temporal-core-sdk\",le=\"50\"}"
-            ));
-        }
+        ));
     }
     // Verify counter names are appropriate (don't end w/ '_total')
     assert!(body.contains("temporal_request{"));

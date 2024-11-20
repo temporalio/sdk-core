@@ -33,7 +33,7 @@ use temporal_sdk_core_api::telemetry::{
         CoreMeter, Counter, Gauge, GaugeF64, Histogram, HistogramDuration, HistogramF64,
         MetricAttributes, MetricParameters, NewAttributes,
     },
-    MetricTemporality, OtelCollectorOptions, PrometheusExporterOptions,
+    HistogramBucketOverrides, MetricTemporality, OtelCollectorOptions, PrometheusExporterOptions,
 };
 use tokio::task::AbortHandle;
 use tonic::{metadata::MetadataMap, transport::ClientTlsConfig};
@@ -90,10 +90,11 @@ pub(super) fn augment_meter_provider_with_defaults(
     mpb: MeterProviderBuilder,
     global_tags: &HashMap<String, String>,
     use_seconds: bool,
+    bucket_overrides: HistogramBucketOverrides,
 ) -> opentelemetry::metrics::Result<MeterProviderBuilder> {
     // Some histograms are actually gauges, but we have to use histograms otherwise they forget
     // their value between collections since we don't use callbacks.
-    Ok(mpb
+    let mut mpb = mpb
         .with_view(histo_view(
             WORKFLOW_E2E_LATENCY_HISTOGRAM_NAME,
             use_seconds,
@@ -117,8 +118,19 @@ pub(super) fn augment_meter_provider_with_defaults(
         .with_view(histo_view(
             ACTIVITY_EXEC_LATENCY_HISTOGRAM_NAME,
             use_seconds,
+        )?);
+    for (name, buckets) in bucket_overrides.overrides {
+        mpb = mpb.with_view(new_view(
+            Instrument::new().name(format!("*{name}")),
+            opentelemetry_sdk::metrics::Stream::new().aggregation(
+                Aggregation::ExplicitBucketHistogram {
+                    boundaries: buckets,
+                    record_min_max: true,
+                },
+            ),
         )?)
-        .with_resource(default_resource(global_tags)))
+    }
+    Ok(mpb.with_resource(default_resource(global_tags)))
 }
 
 /// Create an OTel meter that can be used as a [CoreMeter] to export metrics over OTLP.
@@ -143,6 +155,7 @@ pub fn build_otlp_metric_exporter(
         MeterProviderBuilder::default().with_reader(reader),
         &opts.global_tags,
         opts.use_seconds_for_durations,
+        opts.histogram_bucket_overrides,
     )?
     .build();
     Ok::<_, anyhow::Error>(CoreOtelMeter {
@@ -171,6 +184,7 @@ pub fn start_prometheus_metric_exporter(
         MeterProviderBuilder::default().with_reader(exporter),
         &opts.global_tags,
         opts.use_seconds_for_durations,
+        opts.histogram_bucket_overrides,
     )?
     .build();
     let bound_addr = srv.bound_addr()?;
