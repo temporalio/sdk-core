@@ -1,9 +1,11 @@
 use super::{
     default_buckets_for,
     metrics::{
-        ACT_EXEC_LATENCY_NAME, ACT_SCHED_TO_START_LATENCY_NAME, DEFAULT_MS_BUCKETS,
-        WF_E2E_LATENCY_NAME, WF_TASK_EXECUTION_LATENCY_NAME, WF_TASK_REPLAY_LATENCY_NAME,
-        WF_TASK_SCHED_TO_START_LATENCY_NAME,
+        ACTIVITY_EXEC_LATENCY_HISTOGRAM_NAME, ACTIVITY_SCHED_TO_START_LATENCY_HISTOGRAM_NAME,
+        DEFAULT_MS_BUCKETS, WORKFLOW_E2E_LATENCY_HISTOGRAM_NAME,
+        WORKFLOW_TASK_EXECUTION_LATENCY_HISTOGRAM_NAME,
+        WORKFLOW_TASK_REPLAY_LATENCY_HISTOGRAM_NAME,
+        WORKFLOW_TASK_SCHED_TO_START_LATENCY_HISTOGRAM_NAME,
     },
     prometheus_server::PromServer,
     TELEM_SERVICE_NAME,
@@ -92,15 +94,30 @@ pub(super) fn augment_meter_provider_with_defaults(
     // Some histograms are actually gauges, but we have to use histograms otherwise they forget
     // their value between collections since we don't use callbacks.
     Ok(mpb
-        .with_view(histo_view(WF_E2E_LATENCY_NAME, use_seconds)?)
-        .with_view(histo_view(WF_TASK_EXECUTION_LATENCY_NAME, use_seconds)?)
-        .with_view(histo_view(WF_TASK_REPLAY_LATENCY_NAME, use_seconds)?)
         .with_view(histo_view(
-            WF_TASK_SCHED_TO_START_LATENCY_NAME,
+            WORKFLOW_E2E_LATENCY_HISTOGRAM_NAME,
             use_seconds,
         )?)
-        .with_view(histo_view(ACT_SCHED_TO_START_LATENCY_NAME, use_seconds)?)
-        .with_view(histo_view(ACT_EXEC_LATENCY_NAME, use_seconds)?)
+        .with_view(histo_view(
+            WORKFLOW_TASK_EXECUTION_LATENCY_HISTOGRAM_NAME,
+            use_seconds,
+        )?)
+        .with_view(histo_view(
+            WORKFLOW_TASK_REPLAY_LATENCY_HISTOGRAM_NAME,
+            use_seconds,
+        )?)
+        .with_view(histo_view(
+            WORKFLOW_TASK_SCHED_TO_START_LATENCY_HISTOGRAM_NAME,
+            use_seconds,
+        )?)
+        .with_view(histo_view(
+            ACTIVITY_SCHED_TO_START_LATENCY_HISTOGRAM_NAME,
+            use_seconds,
+        )?)
+        .with_view(histo_view(
+            ACTIVITY_EXEC_LATENCY_HISTOGRAM_NAME,
+            use_seconds,
+        )?)
         .with_resource(default_resource(global_tags)))
 }
 
