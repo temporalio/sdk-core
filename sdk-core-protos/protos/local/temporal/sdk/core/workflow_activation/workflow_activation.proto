@@ -343,6 +343,9 @@ message RemoveFromCache {
         FATAL = 8;
         // Something went wrong attempting to fetch more history events.
         PAGINATION_OR_HISTORY_FETCH = 9;
+        // The workflow is being completed with a terminal command and we sent the WFT completion
+        // to server successfully.
+        WORKFLOW_EXECUTION_ENDING = 10;
     }
     EvictionReason reason = 2;
 }

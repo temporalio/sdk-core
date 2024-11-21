@@ -142,6 +142,10 @@ impl ManagedRun {
         self.wfm.machines.have_seen_terminal_event
     }
 
+    pub(super) fn workflow_is_finished(&self) -> bool {
+        self.wfm.machines.workflow_is_finished()
+    }
+
     /// Returns a ref to info about the currently tracked workflow task, if any.
     pub(super) fn wft(&self) -> Option<&OutstandingTask> {
         self.wft.as_ref()
@@ -876,7 +880,7 @@ impl ManagedRun {
             // If we've requested an eviction because of failure related reasons then we want to
             // delete any pending queries, since handling them no longer makes sense. Evictions
             // because the cache is full should get a chance to finish processing properly.
-            if !matches!(info.reason, EvictionReason::CacheFull)
+            if !matches!(info.reason, EvictionReason::CacheFull | EvictionReason::WorkflowExecutionEnding)
                 // If the wft was just a legacy query, still reply, otherwise we might try to
                 // reply to the task as if it were a task rather than a query.
                 && !self.pending_work_is_legacy_query()

@@ -12,6 +12,7 @@ pub use temporal_sdk_core::replay::HistoryForReplay;
 
 use crate::stream::{Stream, TryStreamExt};
 use anyhow::{Context, Error};
+use assert_matches::assert_matches;
 use base64::{prelude::BASE64_STANDARD, Engine};
 use futures_util::{future, stream, stream::FuturesUnordered, StreamExt};
 use parking_lot::Mutex;
@@ -47,7 +48,7 @@ use temporal_sdk_core_api::{
 };
 use temporal_sdk_core_protos::{
     coresdk::{
-        workflow_activation::WorkflowActivation,
+        workflow_activation::{workflow_activation_job, WorkflowActivation, WorkflowActivationJob},
         workflow_commands::{
             workflow_command, ActivityCancellationType, CompleteWorkflowExecution, QueryResult,
             QuerySuccess, ScheduleActivity, ScheduleLocalActivity, StartTimer,
@@ -757,6 +758,7 @@ where
 pub trait WorkerTestHelpers {
     async fn complete_execution(&self, run_id: &str);
     async fn complete_timer(&self, run_id: &str, seq: u32, duration: Duration);
+    async fn handle_eviction(&self);
 }
 
 #[async_trait::async_trait]
@@ -781,6 +783,22 @@ where
                 start_to_fire_timeout: Some(duration.try_into().expect("duration fits")),
             }
             .into()],
+        ))
+        .await
+        .unwrap();
+    }
+
+    async fn handle_eviction(&self) {
+        let task = self.poll_workflow_activation().await.unwrap();
+        assert_matches!(
+            task.jobs.as_slice(),
+            [WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
+            }]
+        );
+        self.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
+            task.run_id,
+            vec![],
         ))
         .await
         .unwrap();

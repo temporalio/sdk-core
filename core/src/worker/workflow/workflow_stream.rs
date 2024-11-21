@@ -321,7 +321,6 @@ impl WFStream {
 
         let mut res = None;
 
-        // If we reported to server, we always want to mark it complete.
         let maybe_t = self.complete_wft(run_id, report.wft_report_status);
         // Augment the WFT from complete with the permit if both exist
         let wft_from_complete = wft_from_complete.and_then(|wft| {
@@ -378,6 +377,20 @@ impl WFStream {
             if let Some(rh) = self.runs.get_mut(run_id) {
                 // Attempt to produce the next activation if needed
                 res = rh.check_more_activations();
+                // If there's no more work and we reported workflow completion to server, evict.
+                if res.is_none()
+                    && rh.workflow_is_finished()
+                    && matches!(report.wft_report_status, WFTReportStatus::Reported { .. })
+                {
+                    res = rh
+                        .request_eviction(RequestEvictMsg {
+                            run_id: run_id.to_string(),
+                            message: "Workflow completed".to_string(),
+                            reason: EvictionReason::WorkflowExecutionEnding,
+                            auto_reply_fail_tt: None,
+                        })
+                        .into_run_update_resp()
+                }
             }
         }
         res

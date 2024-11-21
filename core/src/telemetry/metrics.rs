@@ -262,6 +262,7 @@ impl MetricsContext {
         self.instruments.sticky_cache_size.record(size, &self.kvs);
     }
 
+    // TODO: Not on normal completion
     /// Count a workflow being evicted from the cache
     pub(crate) fn cache_eviction(&self) {
         self.instruments.sticky_cache_evictions.add(1, &self.kvs);

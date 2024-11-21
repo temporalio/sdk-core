@@ -372,23 +372,31 @@ async fn legacy_query_after_complete(#[values(false, true)] full_history: bool) 
     mock.worker_cfg(|wc| wc.max_cached_workflows = 10);
     let core = mock_worker(mock);
 
-    let task = core.poll_workflow_activation().await.unwrap();
-    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-        task.run_id,
-        start_timer_cmd(1, Duration::from_secs(1)),
-    ))
-    .await
-    .unwrap();
-    let task = core.poll_workflow_activation().await.unwrap();
-    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        task.run_id,
-        vec![CompleteWorkflowExecution { result: None }.into()],
-    ))
-    .await
-    .unwrap();
+    let activations = || async {
+        let task = core.poll_workflow_activation().await.unwrap();
+        core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+            task.run_id,
+            start_timer_cmd(1, Duration::from_secs(1)),
+        ))
+        .await
+        .unwrap();
+        let task = core.poll_workflow_activation().await.unwrap();
+        core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
+            task.run_id,
+            vec![CompleteWorkflowExecution { result: None }.into()],
+        ))
+        .await
+        .unwrap();
+    };
+    activations().await;
+
+    if !full_history {
+        core.handle_eviction().await;
+        activations().await;
+    }
 
     // We should get queries two times
-    for _ in 1..=2 {
+    for i in 1..=2 {
         let task = core.poll_workflow_activation().await.unwrap();
         let query = assert_matches!(
             task.jobs.as_slice(),
@@ -402,6 +410,10 @@ async fn legacy_query_after_complete(#[values(false, true)] full_history: bool) 
         ))
         .await
         .unwrap();
+        if i == 1 {
+            core.handle_eviction().await;
+            activations().await;
+        }
     }
 
     core.shutdown().await;
