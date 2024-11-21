@@ -782,8 +782,6 @@ async fn legacy_query_combined_with_timer_fire_repro() {
         },
         {
             let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), ResponseType::ToTaskNum(2));
-            // Strip history, we need to look like we hit the cache for a legacy query
-            pr.history = Some(History { events: vec![] });
             pr.query = Some(WorkflowQuery {
                 query_type: "query-type".to_string(),
                 query_args: Some(b"hi".into()),
@@ -800,41 +798,44 @@ async fn legacy_query_combined_with_timer_fire_repro() {
     mock.worker_cfg(|wc| wc.max_cached_workflows = 1);
     let core = mock_worker(mock);
 
-    let task = core.poll_workflow_activation().await.unwrap();
-    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-        task.run_id,
-        vec![
-            schedule_activity_cmd(
-                1,
-                "whatever",
-                "1",
-                ActivityCancellationType::TryCancel,
-                Duration::from_secs(60),
-                Duration::from_secs(60),
-            ),
-            start_timer_cmd(1, Duration::from_secs(1)),
-        ],
-    ))
-    .await
-    .unwrap();
+    let activations = || async {
+        let task = core.poll_workflow_activation().await.unwrap();
+        core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
+            task.run_id,
+            vec![
+                schedule_activity_cmd(
+                    1,
+                    "whatever",
+                    "1",
+                    ActivityCancellationType::TryCancel,
+                    Duration::from_secs(60),
+                    Duration::from_secs(60),
+                ),
+                start_timer_cmd(1, Duration::from_secs(1)),
+            ],
+        ))
+        .await
+        .unwrap();
 
-    let task = core.poll_workflow_activation().await.unwrap();
-    core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
-        task.run_id,
-        RequestCancelActivity { seq: 1 }.into(),
-    ))
-    .await
-    .unwrap();
+        let task = core.poll_workflow_activation().await.unwrap();
+        core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+            task.run_id,
+            RequestCancelActivity { seq: 1 }.into(),
+        ))
+        .await
+        .unwrap();
 
-    // First should get the activity resolve
-    let task = core.poll_workflow_activation().await.unwrap();
-    assert_matches!(
-        task.jobs.as_slice(),
-        [WorkflowActivationJob {
-            variant: Some(workflow_activation_job::Variant::ResolveActivity(_)),
-        }]
-    );
-    core.complete_execution(&task.run_id).await;
+        // First should get the activity resolve
+        let task = core.poll_workflow_activation().await.unwrap();
+        assert_matches!(
+            task.jobs.as_slice(),
+            [WorkflowActivationJob {
+                variant: Some(workflow_activation_job::Variant::ResolveActivity(_)),
+            }]
+        );
+        core.complete_execution(&task.run_id).await;
+    };
+    activations().await;
 
     // Then the queries
     let task = core.poll_workflow_activation().await.unwrap();
@@ -851,6 +852,9 @@ async fn legacy_query_combined_with_timer_fire_repro() {
     ))
     .await
     .unwrap();
+
+    core.handle_eviction().await;
+    activations().await;
 
     let task = core.poll_workflow_activation().await.unwrap();
     assert_matches!(

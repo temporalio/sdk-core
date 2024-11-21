@@ -39,8 +39,11 @@ pub mod coresdk {
     use crate::{
         temporal::api::{
             common::v1::{Payload, Payloads, WorkflowExecution},
-            enums::v1::WorkflowTaskFailedCause,
-            failure::v1::{failure::FailureInfo, ApplicationFailureInfo, Failure},
+            enums::v1::{TimeoutType, WorkflowTaskFailedCause},
+            failure::v1::{
+                failure::FailureInfo, ActivityFailureInfo, ApplicationFailureInfo, Failure,
+                TimeoutFailureInfo,
+            },
             workflowservice::v1::PollActivityTaskQueueResponse,
         },
         ENCODING_PAYLOAD_KEY, JSON_ENCODING_VAL,
@@ -1240,6 +1243,24 @@ pub mod coresdk {
                         })
                     })
                     .unwrap_or_default()
+            }
+        }
+
+        pub fn timeout(timeout_type: TimeoutType) -> Self {
+            Self {
+                message: "Activity timed out".to_string(),
+                cause: Some(Box::new(Failure {
+                    message: "Activity timed out".to_string(),
+                    failure_info: Some(FailureInfo::TimeoutFailureInfo(TimeoutFailureInfo {
+                        timeout_type: timeout_type.into(),
+                        ..Default::default()
+                    })),
+                    ..Default::default()
+                })),
+                failure_info: Some(FailureInfo::ActivityFailureInfo(
+                    ActivityFailureInfo::default(),
+                )),
+                ..Default::default()
             }
         }
 

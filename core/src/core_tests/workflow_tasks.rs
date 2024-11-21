@@ -2607,6 +2607,7 @@ async fn _do_post_terminal_commands_test(
     .await
     .unwrap();
 
+    core.initiate_shutdown();
     let act = core.poll_workflow_activation().await;
     assert_matches!(act.unwrap_err(), PollWfError::ShutDown);
     core.shutdown().await;
