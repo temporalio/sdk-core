@@ -74,10 +74,12 @@ pub(super) fn new_timer(attribs: StartTimer) -> NewMachineWithCommand {
 impl TimerMachine {
     /// Create a new timer and immediately schedule it
     fn new_scheduled(attribs: StartTimer) -> (Self, Command) {
-        let user_metadata = attribs.summary.clone().map(|x| UserMetadata {
+        let mut attribs = attribs;
+        let user_metadata = attribs.summary.take().map(|x| UserMetadata {
             summary: Some(x),
             details: None,
         });
+        let attribs = attribs;
         let mut s = Self::new(attribs);
         OnEventWrapper::on_event_mut(&mut s, TimerMachineEvents::Schedule)
             .expect("Scheduling timers doesn't fail");
