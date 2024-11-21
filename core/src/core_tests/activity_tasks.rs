@@ -1191,7 +1191,6 @@ async fn activities_must_be_flushed_to_server_on_shutdown(#[values(true, false)]
 
 #[tokio::test]
 async fn pass_activity_summary_to_metadata() {
-    crate::telemetry::test_telem_console();
     let t = canned_histories::single_activity("1");
     let mut mock_cfg = MockPollCfg::from_hist_builder(t);
     let wf_id = mock_cfg.hists[0].wf_id.clone();
