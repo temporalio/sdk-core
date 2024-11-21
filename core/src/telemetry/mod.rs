@@ -9,7 +9,12 @@ mod otel;
 mod prometheus_server;
 
 #[cfg(feature = "otel")]
-pub use metrics::{default_buckets_for, MetricsCallBuffer};
+pub use metrics::{
+    default_buckets_for, MetricsCallBuffer, ACTIVITY_EXEC_LATENCY_HISTOGRAM_NAME,
+    ACTIVITY_SCHED_TO_START_LATENCY_HISTOGRAM_NAME, WORKFLOW_E2E_LATENCY_HISTOGRAM_NAME,
+    WORKFLOW_TASK_EXECUTION_LATENCY_HISTOGRAM_NAME, WORKFLOW_TASK_REPLAY_LATENCY_HISTOGRAM_NAME,
+    WORKFLOW_TASK_SCHED_TO_START_LATENCY_HISTOGRAM_NAME,
+};
 #[cfg(feature = "otel")]
 pub use otel::{build_otlp_metric_exporter, start_prometheus_metric_exporter};
 

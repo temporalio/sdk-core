@@ -68,6 +68,9 @@ pub struct OtelCollectorOptions {
     /// If set to true, use f64 seconds for durations instead of u64 milliseconds
     #[builder(default)]
     pub use_seconds_for_durations: bool,
+    /// Overrides for histogram buckets. Units depend on the value of `use_seconds_for_durations`.
+    #[builder(default)]
+    pub histogram_bucket_overrides: HistogramBucketOverrides,
 }
 
 /// Options for exporting metrics to Prometheus
@@ -78,15 +81,33 @@ pub struct PrometheusExporterOptions {
     #[builder(default)]
     pub global_tags: HashMap<String, String>,
     /// If set true, all counters will include a "_total" suffix
-    #[builder(default = "false")]
+    #[builder(default)]
     pub counters_total_suffix: bool,
     /// If set true, all histograms will include the unit in their name as a suffix.
     /// Ex: "_milliseconds".
-    #[builder(default = "false")]
+    #[builder(default)]
     pub unit_suffix: bool,
     /// If set to true, use f64 seconds for durations instead of u64 milliseconds
     #[builder(default)]
     pub use_seconds_for_durations: bool,
+    /// Overrides for histogram buckets. Units depend on the value of `use_seconds_for_durations`.
+    #[builder(default)]
+    pub histogram_bucket_overrides: HistogramBucketOverrides,
+}
+
+/// Allows overriding the buckets used by histogram metrics
+#[derive(Debug, Clone, Default)]
+pub struct HistogramBucketOverrides {
+    /// Overrides where the key is the metric name and the value is the list of bucket boundaries.
+    /// The metric name will apply regardless of name prefixing, if any. IE: the name acts like
+    /// `*metric_name`.
+    ///
+    /// The string names of core's built-in histogram metrics are publicly available on the
+    /// `core::telemetry` module and the `client` crate.
+    ///
+    /// See [here](https://docs.rs/opentelemetry_sdk/latest/opentelemetry_sdk/metrics/enum.Aggregation.html#variant.ExplicitBucketHistogram.field.boundaries)
+    /// for the exact meaning of boundaries.
+    pub overrides: HashMap<String, Vec<f64>>,
 }
 
 /// Control where logs go
@@ -102,7 +123,8 @@ pub enum Logger {
         /// An [EnvFilter](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/struct.EnvFilter.html) filter string.
         filter: String,
     },
-    // Push logs to Lang. Can used with temporal_sdk_core::telemetry::CoreLogBufferedConsumer to buffer.
+    /// Push logs to Lang. Can be used with
+    /// temporal_sdk_core::telemetry::log_export::CoreLogBufferedConsumer to buffer.
     Push {
         /// An [EnvFilter](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/struct.EnvFilter.html) filter string.
         filter: String,
