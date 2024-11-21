@@ -29,11 +29,13 @@ async fn simple_query_legacy() {
             StartTimer {
                 seq: 0,
                 start_to_fire_timeout: Some(prost_dur!(from_millis(500))),
+                summary: None,
             }
             .into(),
             StartTimer {
                 seq: 1,
                 start_to_fire_timeout: Some(prost_dur!(from_secs(3))),
+                summary: None,
             }
             .into(),
         ],

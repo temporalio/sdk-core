@@ -17,6 +17,7 @@ use temporal_sdk_core_protos::{
         command::v1::Command,
         enums::v1::{CommandType, EventType},
         history::v1::{history_event, TimerFiredEventAttributes},
+        sdk::v1::UserMetadata,
     },
 };
 
@@ -73,13 +74,19 @@ pub(super) fn new_timer(attribs: StartTimer) -> NewMachineWithCommand {
 impl TimerMachine {
     /// Create a new timer and immediately schedule it
     fn new_scheduled(attribs: StartTimer) -> (Self, Command) {
+        let mut attribs = attribs;
+        let user_metadata = attribs.summary.take().map(|x| UserMetadata {
+            summary: Some(x),
+            details: None,
+        });
+        let attribs = attribs;
         let mut s = Self::new(attribs);
         OnEventWrapper::on_event_mut(&mut s, TimerMachineEvents::Schedule)
             .expect("Scheduling timers doesn't fail");
         let cmd = Command {
             command_type: CommandType::StartTimer as i32,
-            attributes: Some(s.shared_state().attrs.into()),
-            user_metadata: Default::default(),
+            attributes: Some(s.shared_state().attrs.clone().into()),
+            user_metadata,
         };
         (s, cmd)
     }

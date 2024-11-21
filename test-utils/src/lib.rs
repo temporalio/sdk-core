@@ -716,6 +716,7 @@ pub fn start_timer_cmd(seq: u32, duration: Duration) -> workflow_command::Varian
     StartTimer {
         seq,
         start_to_fire_timeout: Some(duration.try_into().expect("duration fits")),
+        summary: None,
     }
     .into()
 }
@@ -779,6 +780,7 @@ where
             vec![StartTimer {
                 seq,
                 start_to_fire_timeout: Some(duration.try_into().expect("duration fits")),
+                summary: None,
             }
             .into()],
         ))

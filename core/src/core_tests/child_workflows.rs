@@ -1,21 +1,24 @@
 use crate::{
     replay::DEFAULT_WORKFLOW_TYPE,
     test_help::{
-        build_fake_sdk, canned_histories, mock_sdk, mock_worker, single_hist_mock_sg, MockPollCfg,
-        ResponseType,
+        build_fake_sdk, canned_histories, mock_sdk, mock_sdk_cfg, mock_worker, single_hist_mock_sg,
+        MockPollCfg, ResponseType,
     },
     worker::client::mocks::mock_workflow_client,
 };
 use temporal_client::WorkflowOptions;
 use temporal_sdk::{ChildWorkflowOptions, Signal, WfContext, WorkflowResult};
 use temporal_sdk_core_api::Worker;
-use temporal_sdk_core_protos::coresdk::{
-    child_workflow::{child_workflow_result, ChildWorkflowCancellationType},
-    workflow_activation::{workflow_activation_job, WorkflowActivationJob},
-    workflow_commands::{
-        CancelChildWorkflowExecution, CompleteWorkflowExecution, StartChildWorkflowExecution,
+use temporal_sdk_core_protos::{
+    coresdk::{
+        child_workflow::{child_workflow_result, ChildWorkflowCancellationType},
+        workflow_activation::{workflow_activation_job, WorkflowActivationJob},
+        workflow_commands::{
+            CancelChildWorkflowExecution, CompleteWorkflowExecution, StartChildWorkflowExecution,
+        },
+        workflow_completion::WorkflowActivationCompletion,
     },
-    workflow_completion::WorkflowActivationCompletion,
+    temporal::api::{enums::v1::CommandType, sdk::v1::UserMetadata},
 };
 use tokio::join;
 
@@ -219,4 +222,58 @@ async fn cancel_already_complete_child_ignored() {
     ))
     .await
     .unwrap();
+}
+
+#[tokio::test]
+async fn pass_child_workflow_summary_to_metadata() {
+    let wf_id = "1";
+    let wf_type = DEFAULT_WORKFLOW_TYPE;
+    let t = canned_histories::single_child_workflow(wf_id);
+    let mut mock_cfg = MockPollCfg::from_hist_builder(t);
+    let expected_user_metadata = Some(UserMetadata {
+        summary: Some(b"child summary".into()),
+        details: Some(b"child details".into()),
+    });
+    mock_cfg.completion_asserts_from_expectations(|mut asserts| {
+        asserts
+            .then(move |wft| {
+                assert_eq!(wft.commands.len(), 1);
+                assert_eq!(
+                    wft.commands[0].command_type(),
+                    CommandType::StartChildWorkflowExecution
+                );
+                assert_eq!(wft.commands[0].user_metadata, expected_user_metadata)
+            })
+            .then(move |wft| {
+                assert_eq!(wft.commands.len(), 1);
+                assert_eq!(
+                    wft.commands[0].command_type(),
+                    CommandType::CompleteWorkflowExecution
+                );
+            });
+    });
+
+    let mut worker = mock_sdk_cfg(mock_cfg, |_| {});
+    worker.register_wf(wf_type, move |ctx: WfContext| async move {
+        ctx.child_workflow(ChildWorkflowOptions {
+            workflow_id: wf_id.to_string(),
+            workflow_type: "child".to_string(),
+            static_summary: Some("child summary".to_string()),
+            static_details: Some("child details".to_string()),
+            ..Default::default()
+        })
+        .start(&ctx)
+        .await;
+        Ok(().into())
+    });
+    worker
+        .submit_wf(
+            wf_id.to_owned(),
+            wf_type.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
 }
