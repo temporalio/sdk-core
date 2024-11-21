@@ -5,7 +5,6 @@ use hyper_util::{
     server::conn::auto,
 };
 use opentelemetry_prometheus::PrometheusExporter;
-use opentelemetry_sdk::metrics::reader::AggregationSelector;
 use prometheus::{Encoder, Registry, TextEncoder};
 use std::net::{SocketAddr, TcpListener};
 use temporal_sdk_core_api::telemetry::PrometheusExporterOptions;
@@ -20,11 +19,9 @@ pub(super) struct PromServer {
 impl PromServer {
     pub(super) fn new(
         opts: &PrometheusExporterOptions,
-        aggregation: impl AggregationSelector + 'static,
     ) -> Result<(Self, PrometheusExporter), anyhow::Error> {
         let registry = Registry::new();
         let exporter = opentelemetry_prometheus::exporter()
-            .with_aggregation_selector(aggregation)
             .without_scope_info()
             .with_registry(registry.clone());
         let exporter = if !opts.counters_total_suffix {

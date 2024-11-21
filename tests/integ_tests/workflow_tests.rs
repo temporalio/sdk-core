@@ -755,7 +755,7 @@ async fn build_id_correct_in_wf_info() {
 async fn nondeterminism_errors_fail_workflow_when_configured_to(
     #[values(true, false)] whole_worker: bool,
 ) {
-    let (telemopts, addr, _aborter) = metrics_tests::prom_metrics(false, false);
+    let (telemopts, addr, _aborter) = metrics_tests::prom_metrics(None);
     let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
     let wf_name = "nondeterminism_errors_fail_workflow_when_configured_to";
     let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);

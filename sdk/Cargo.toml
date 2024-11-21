@@ -12,7 +12,7 @@ categories = ["development-tools"]
 
 [dependencies]
 async-trait = "0.1"
-thiserror = "1.0"
+thiserror = { workspace = true }
 anyhow = "1.0"
 derive_more = { workspace = true }
 futures-util = { version = "0.3", default-features = false }

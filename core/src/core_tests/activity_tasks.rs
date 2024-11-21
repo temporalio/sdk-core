@@ -634,11 +634,11 @@ async fn max_tq_acts_set_passed_to_poll_properly() {
     worker.poll_activity_task().await.unwrap();
 }
 
-/// This test doesn't test the real worker config since [mock_worker] bypasses the worker
-/// constructor, [mock_worker] will not pass an activity poller to the worker when
-/// `no_remote_activities` is set to `true`.
+#[rstest::rstest]
 #[tokio::test]
-async fn no_eager_activities_requested_when_worker_options_disable_remote_activities() {
+async fn no_eager_activities_requested_when_worker_options_disable_it(
+    #[values("no_remote", "throttle")] reason: &'static str,
+) {
     let wfid = "fake_wf_id";
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
@@ -649,7 +649,6 @@ async fn no_eager_activities_requested_when_worker_options_disable_remote_activi
     t.add_full_wf_task();
     t.add_workflow_execution_completed();
     let num_eager_requested = Arc::new(AtomicUsize::new(0));
-    // Clone it to move into the callback below
     let num_eager_requested_clone = num_eager_requested.clone();
 
     let mut mock = mock_workflow_client();
@@ -678,14 +677,13 @@ async fn no_eager_activities_requested_when_worker_options_disable_remote_activi
             })
         });
     let mut mock = single_hist_mock_sg(wfid, t, [1], mock, true);
-    let mut mock_poller = mock_manual_poller();
-    mock_poller
-        .expect_poll()
-        .returning(|| futures_util::future::pending().boxed());
-    mock.set_act_poller(Box::new(mock_poller));
     mock.worker_cfg(|wc| {
         wc.max_cached_workflows = 2;
-        wc.no_remote_activities = true;
+        if reason == "no_remote" {
+            wc.no_remote_activities = true;
+        } else {
+            wc.max_task_queue_activities_per_second = Some(1.0);
+        }
     });
     let core = mock_worker(mock);
 

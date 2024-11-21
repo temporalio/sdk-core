@@ -80,6 +80,8 @@ pub struct WorkerConfig {
     /// server-side. Note that this only takes effect upon an activity poll request. If multiple
     /// workers on the same queue have different values set, they will thrash with the last poller
     /// winning.
+    ///
+    /// Setting this to a nonzero value will also disable eager activity execution.
     #[builder(default)]
     pub max_task_queue_activities_per_second: Option<f64>,
 
