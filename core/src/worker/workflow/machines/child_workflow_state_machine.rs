@@ -450,15 +450,17 @@ impl ChildWorkflowMachine {
                 cancelled_before_sent: false,
             },
         );
+        let mut attribs = attribs;
         let user_metadata = if attribs.static_summary.is_some() || attribs.static_details.is_some()
         {
             Some(UserMetadata {
-                summary: attribs.static_summary.clone(),
-                details: attribs.static_details.clone(),
+                summary: attribs.static_summary.take(),
+                details: attribs.static_details.take(),
             })
         } else {
             None
         };
+        let attribs = attribs;
         OnEventWrapper::on_event_mut(&mut s, ChildWorkflowMachineEvents::Schedule)
             .expect("Scheduling child workflows doesn't fail");
         let cmd = Command {

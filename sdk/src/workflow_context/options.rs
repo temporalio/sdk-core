@@ -69,7 +69,6 @@ pub struct ActivityOptions {
     /// Activity retry policy
     pub retry_policy: Option<RetryPolicy>,
     /// Summary of the activity
-    /// NOTE: Experimental
     pub summary: Option<String>,
 }
 
@@ -197,10 +196,8 @@ pub struct ChildWorkflowOptions {
     /// How to respond to parent workflow ending
     pub parent_close_policy: ParentClosePolicy,
     /// Static summary of the child workflow
-    /// NOTE: Experimental
     pub static_summary: Option<String>,
     /// Static details of the child workflow
-    /// NOTE: Experimental
     pub static_details: Option<String>,
 }
 
@@ -326,7 +323,6 @@ pub struct TimerOptions {
     /// Duration for the timer
     pub duration: Duration,
     /// Summary of the timer
-    /// NOTE: Experimental
     pub summary: Option<String>,
 }
 
