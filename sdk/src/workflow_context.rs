@@ -1,9 +1,8 @@
 mod options;
 
-use options::TimerOptions;
 pub use options::{
     ActivityOptions, ChildWorkflowOptions, LocalActivityOptions, Signal, SignalData,
-    SignalWorkflowOptions,
+    SignalWorkflowOptions, TimerOptions,
 };
 
 use crate::{
@@ -148,16 +147,8 @@ impl WfContext {
     }
 
     /// Request to create a timer
-    pub fn timer(&self, duration: Duration) -> impl CancellableFuture<TimerResult> {
-        self.timer_with_options(duration, TimerOptions::default())
-    }
-
-    /// Request to create a timer with optioons
-    pub fn timer_with_options(
-        &self,
-        duration: Duration,
-        opts: TimerOptions,
-    ) -> impl CancellableFuture<TimerResult> {
+    pub fn timer<T: Into<TimerOptions>>(&self, opts: T) -> impl CancellableFuture<TimerResult> {
+        let opts: TimerOptions = opts.into();
         let seq = self.seq_nums.write().next_timer_seq();
         let (cmd, unblocker) = CancellableWFCommandFut::new(CancellableID::Timer(seq));
         self.send(
@@ -165,7 +156,7 @@ impl WfContext {
                 cmd: StartTimer {
                     seq,
                     start_to_fire_timeout: Some(
-                        duration
+                        opts.duration
                             .try_into()
                             .expect("Durations must fit into 64 bits"),
                     ),
@@ -630,7 +621,7 @@ impl<'a> Future for LATimerBackoffFut<'a> {
                     });
                 }
 
-                let timer_f = self.ctx.timer(
+                let timer_f = self.ctx.timer::<Duration>(
                     b.backoff_duration
                         .expect("Duration is set")
                         .try_into()

@@ -29,7 +29,7 @@ use std::{
     time::Duration,
 };
 use temporal_client::WorkflowOptions;
-use temporal_sdk::{ActivityOptions, CancellableFuture, WfContext};
+use temporal_sdk::{ActivityOptions, CancellableFuture, TimerOptions, WfContext};
 use temporal_sdk_core_api::{
     errors::PollWfError,
     worker::{
@@ -64,6 +64,7 @@ use temporal_sdk_core_protos::{
             history_event, TimerFiredEventAttributes,
             WorkflowPropertiesModifiedExternallyEventAttributes,
         },
+        sdk::v1::UserMetadata,
         workflowservice::v1::{
             GetWorkflowExecutionHistoryResponse, RespondWorkflowTaskCompletedResponse,
         },
@@ -3085,4 +3086,51 @@ async fn slot_provider_cant_hand_out_more_permits_than_cache_size() {
     // We shouldn't have got more than the 10 tasks from the poller -- verifying that the concurrent
     // polling is not exceeding the task limit
     assert_eq!(popped_tasks.load(Ordering::Relaxed), 10);
+}
+
+#[tokio::test]
+async fn pass_timer_summary_to_metadata() {
+    let t = canned_histories::single_timer("1");
+    let mut mock_cfg = MockPollCfg::from_hist_builder(t);
+    let wf_id = mock_cfg.hists[0].wf_id.clone();
+    let wf_type = DEFAULT_WORKFLOW_TYPE;
+    let expected_user_metadata = Some(UserMetadata {
+        summary: Some(b"timer summary".into()),
+        details: None,
+    });
+    mock_cfg.completion_asserts_from_expectations(|mut asserts| {
+        asserts
+            .then(move |wft| {
+                assert_eq!(wft.commands.len(), 1);
+                assert_eq!(wft.commands[0].command_type(), CommandType::StartTimer);
+                assert_eq!(wft.commands[0].user_metadata, expected_user_metadata)
+            })
+            .then(move |wft| {
+                assert_eq!(wft.commands.len(), 1);
+                assert_eq!(
+                    wft.commands[0].command_type(),
+                    CommandType::CompleteWorkflowExecution
+                );
+            });
+    });
+
+    let mut worker = mock_sdk_cfg(mock_cfg, |_| {});
+    worker.register_wf(wf_type, |ctx: WfContext| async move {
+        ctx.timer(TimerOptions {
+            duration: Duration::from_secs(1),
+            summary: Some("timer summary".to_string()),
+        })
+        .await;
+        Ok(().into())
+    });
+    worker
+        .submit_wf(
+            wf_id.to_owned(),
+            wf_type.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
 }

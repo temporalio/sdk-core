@@ -95,6 +95,7 @@ impl IntoWorkflowCommand for ActivityOptions {
             cancellation_type: self.cancellation_type as i32,
             arguments: vec![self.input],
             retry_policy: self.retry_policy,
+            summary: self.summary.map(Into::into),
             ..Default::default()
         }
     }
@@ -226,6 +227,8 @@ impl IntoWorkflowCommand for ChildWorkflowOptions {
             search_attributes: self.options.search_attributes.unwrap_or_default(),
             cron_schedule: self.options.cron_schedule.unwrap_or_default(),
             parent_close_policy: self.parent_close_policy as i32,
+            static_summary: self.static_summary.map(Into::into),
+            static_details: self.static_details.map(Into::into),
             ..Default::default()
         }
     }
@@ -320,7 +323,18 @@ impl SignalData {
 /// Options for timer
 #[derive(Default, Debug, Clone)]
 pub struct TimerOptions {
+    /// Duration for the timer
+    pub duration: Duration,
     /// Summary of the timer
     /// NOTE: Experimental
     pub summary: Option<String>,
+}
+
+impl From<Duration> for TimerOptions {
+    fn from(duration: Duration) -> Self {
+        TimerOptions {
+            duration,
+            ..Default::default()
+        }
+    }
 }

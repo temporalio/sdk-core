@@ -57,7 +57,7 @@ use tracing::{field, Instrument, Span};
 pub use workflow_context::{
     ActivityOptions, CancellableFuture, ChildWorkflow, ChildWorkflowOptions, LocalActivityOptions,
     PendingChildWorkflow, Signal, SignalData, SignalWorkflowOptions, StartedChildWorkflow,
-    WfContext,
+    TimerOptions, WfContext,
 };
 
 use crate::{interceptors::WorkerInterceptor, workflow_context::ChildWfCommon};
