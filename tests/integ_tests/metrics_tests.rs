@@ -785,3 +785,33 @@ async fn activity_metrics() {
              workflow_type=\"{wf_name}\"}} 1"
     )));
 }
+
+#[tokio::test]
+async fn evict_on_complete_does_not_count_as_forced_eviction() {
+    let (telemopts, addr, _aborter) = prom_metrics(None);
+    let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
+    let wf_name = "evict_on_complete_does_not_count_as_forced_eviction";
+    let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
+    starter.worker_config.no_remote_activities(true);
+    let mut worker = starter.worker().await;
+
+    worker.register_wf(
+        wf_name.to_string(),
+        |_: WfContext| async move { Ok(().into()) },
+    );
+
+    worker
+        .submit_wf(
+            wf_name.to_owned(),
+            wf_name.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+
+    let body = get_text(format!("http://{addr}/metrics")).await;
+    // Metric shouldn't show up at all, since it's zero the whole time.
+    assert!(!body.contains("temporal_sticky_cache_total_forced_eviction"));
+}

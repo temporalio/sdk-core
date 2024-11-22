@@ -2,14 +2,17 @@ use crate::{
     telemetry::metrics::workflow_type,
     worker::workflow::{
         managed_run::{ManagedRun, RunUpdateAct},
-        HistoryUpdate, LocalActivityRequestSink, PermittedWFT, RunBasics,
+        HistoryUpdate, LocalActivityRequestSink, PermittedWFT, RequestEvictMsg, RunBasics,
     },
     MetricsContext,
 };
 use lru::LruCache;
 use std::{num::NonZeroUsize, rc::Rc, sync::Arc};
 use temporal_sdk_core_api::worker::WorkerConfig;
-use temporal_sdk_core_protos::temporal::api::workflowservice::v1::get_system_info_response;
+use temporal_sdk_core_protos::{
+    coresdk::workflow_activation::remove_from_cache::EvictionReason,
+    temporal::api::workflowservice::v1::get_system_info_response,
+};
 
 pub(super) struct RunCache {
     worker_config: Arc<WorkerConfig>,
@@ -84,7 +87,18 @@ impl RunCache {
     pub(super) fn remove(&mut self, k: &str) -> Option<ManagedRun> {
         let r = self.runs.pop(k);
         self.metrics.cache_size(self.len() as u64);
-        self.metrics.cache_eviction();
+        if let Some(rh) = &r {
+            // A workflow completing normally doesn't count as a forced eviction.
+            if !matches!(
+                rh.trying_to_evict(),
+                Some(RequestEvictMsg {
+                    reason: EvictionReason::WorkflowExecutionEnding,
+                    ..
+                })
+            ) {
+                self.metrics.forced_cache_eviction();
+            }
+        }
         r
     }
 

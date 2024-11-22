@@ -156,9 +156,9 @@ impl ManagedRun {
         self.activation.as_ref()
     }
 
-    /// Returns true if this run has already been told it will be evicted.
-    pub(super) fn is_trying_to_evict(&self) -> bool {
-        self.trying_to_evict.is_some()
+    /// Returns this run's eviction reason if it is going to be evicted
+    pub(super) fn trying_to_evict(&self) -> Option<&RequestEvictMsg> {
+        self.trying_to_evict.as_ref()
     }
 
     /// Called whenever a new workflow task is obtained for this run

@@ -55,7 +55,7 @@ struct Instruments {
     sticky_cache_hit: Arc<dyn Counter>,
     sticky_cache_miss: Arc<dyn Counter>,
     sticky_cache_size: Arc<dyn Gauge>,
-    sticky_cache_evictions: Arc<dyn Counter>,
+    sticky_cache_forced_evictions: Arc<dyn Counter>,
 }
 
 impl MetricsContext {
@@ -262,10 +262,11 @@ impl MetricsContext {
         self.instruments.sticky_cache_size.record(size, &self.kvs);
     }
 
-    // TODO: Not on normal completion
     /// Count a workflow being evicted from the cache
-    pub(crate) fn cache_eviction(&self) {
-        self.instruments.sticky_cache_evictions.add(1, &self.kvs);
+    pub(crate) fn forced_cache_eviction(&self) {
+        self.instruments
+            .sticky_cache_forced_evictions
+            .add(1, &self.kvs);
     }
 }
 
@@ -424,7 +425,7 @@ impl Instruments {
                 description: "Current number of cached workflows".into(),
                 unit: "".into(),
             }),
-            sticky_cache_evictions: meter.counter(MetricParameters {
+            sticky_cache_forced_evictions: meter.counter(MetricParameters {
                 name: "sticky_cache_total_forced_eviction".into(),
                 description: "Count of evictions of cached workflows".into(),
                 unit: "".into(),
@@ -868,7 +869,7 @@ mod tests {
             true,
         );
         let mc = MetricsContext::top_level("foo".to_string(), "q".to_string(), &telem_instance);
-        mc.cache_eviction();
+        mc.forced_cache_eviction();
         let events = call_buffer.retrieve();
         let a1 = assert_matches!(
             &events[0],
