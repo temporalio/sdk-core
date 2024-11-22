@@ -45,6 +45,7 @@ async fn timer_workflow_manual() {
     .unwrap();
     let task = core.poll_workflow_activation().await.unwrap();
     core.complete_execution(&task.run_id).await;
+    core.handle_eviction().await;
     drain_pollers_and_shutdown(&core).await;
 }
 

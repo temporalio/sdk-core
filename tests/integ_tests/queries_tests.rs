@@ -1,6 +1,5 @@
 use assert_matches::assert_matches;
-use futures_util::future::join_all;
-use futures_util::{stream::FuturesUnordered, FutureExt, StreamExt};
+use futures_util::{future::join_all, stream::FuturesUnordered, FutureExt, StreamExt};
 use std::time::{Duration, Instant};
 use temporal_client::WorkflowClientTrait;
 use temporal_sdk_core_protos::{
@@ -224,6 +223,7 @@ async fn fail_legacy_query() {
     // Queries are *always* legacy on closed workflows, so that's the easiest way to ensure that
     // path is used.
     core.complete_execution(&task.run_id).await;
+    core.handle_eviction().await;
     let query_fut = async {
         starter
             .get_client()
@@ -241,6 +241,9 @@ async fn fail_legacy_query() {
             .unwrap_err()
     };
     let query_responder = async {
+        // Have to replay first since we've evicted
+        let task = core.poll_workflow_activation().await.unwrap();
+        core.complete_execution(&task.run_id).await;
         let task = core.poll_workflow_activation().await.unwrap();
         assert_matches!(
             task.jobs.as_slice(),
@@ -428,6 +431,7 @@ async fn queries_handled_before_next_wft() {
             }]
         );
         core.complete_execution(&task.run_id).await;
+        core.handle_eviction().await;
     };
     join!(join_all(query_futs), complete_fut);
     drain_pollers_and_shutdown(&core).await;

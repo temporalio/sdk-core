@@ -796,12 +796,9 @@ where
                 variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
             }]
         );
-        self.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
-            task.run_id,
-            vec![],
-        ))
-        .await
-        .unwrap();
+        self.complete_workflow_activation(WorkflowActivationCompletion::empty(task.run_id))
+            .await
+            .unwrap();
     }
 }
 
