@@ -2485,7 +2485,6 @@ async fn core_internal_flags() {
     core.shutdown().await;
 }
 
-// TODO: Flakes sometimes
 #[tokio::test]
 async fn post_terminal_commands_are_retained_when_not_replaying() {
     // History contains a non-terminal command (N) followed by the terminal
@@ -2581,6 +2580,7 @@ async fn _do_post_terminal_commands_test(
 
     let act = core.poll_workflow_activation().await.unwrap();
 
+    core.initiate_shutdown();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         act.run_id,
         commands_sent_by_lang,
@@ -2588,7 +2588,6 @@ async fn _do_post_terminal_commands_test(
     .await
     .unwrap();
 
-    core.initiate_shutdown();
     let act = core.poll_workflow_activation().await;
     assert_matches!(act.unwrap_err(), PollWfError::ShutDown);
     core.shutdown().await;
