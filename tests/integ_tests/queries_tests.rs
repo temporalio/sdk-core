@@ -472,17 +472,8 @@ async fn query_should_not_be_sent_if_wft_about_to_fail() {
         ))
         .await
         .unwrap();
-        let task = core.poll_workflow_activation().await.unwrap();
         // Should *not* get a query here. If the bug wasn't fixed, this job would have a query.
-        assert_matches!(
-            task.jobs.as_slice(),
-            [WorkflowActivationJob {
-                variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
-            }]
-        );
-        core.complete_workflow_activation(WorkflowActivationCompletion::empty(task.run_id))
-            .await
-            .unwrap();
+        core.handle_eviction().await;
 
         // We can still service the query by trying again
         let task = core.poll_workflow_activation().await.unwrap();

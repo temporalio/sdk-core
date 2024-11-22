@@ -191,17 +191,8 @@ async fn fail_wf_task(#[values(true, false)] replay: bool) {
 
     // The server will want to retry the task. This time we finish the workflow -- but we need
     // to poll a couple of times as there will be more than one required workflow activation.
-    let task = core.poll_workflow_activation().await.unwrap();
-    // The first poll response will tell us to evict
-    assert_matches!(
-        task.jobs.as_slice(),
-        [WorkflowActivationJob {
-            variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
-        }]
-    );
-    core.complete_workflow_activation(WorkflowActivationCompletion::empty(task.run_id))
-        .await
-        .unwrap();
+    // The first poll response will tell us to evict.
+    core.handle_eviction().await;
 
     let task = core.poll_workflow_activation().await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
@@ -369,18 +360,8 @@ async fn signal_workflow_signal_not_handled_on_workflow_completion() {
             // Send completion - not having seen a poll response with a signal in it yet (unhandled
             // command error will be logged as a warning and an eviction will be issued)
             core.complete_execution(&run_id).await;
-
             // We should be told to evict
-            let res = core.poll_workflow_activation().await.unwrap();
-            assert_matches!(
-                res.jobs.as_slice(),
-                [WorkflowActivationJob {
-                    variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
-                }]
-            );
-            core.complete_workflow_activation(WorkflowActivationCompletion::empty(res.run_id))
-                .await
-                .unwrap();
+            core.handle_eviction().await;
             // Loop to the top to handle wf from the beginning
             continue;
         }
@@ -476,16 +457,7 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
         .await
         .unwrap();
     // Now poll again, it will be an eviction b/c non-sticky mode.
-    let wf_task = core.poll_workflow_activation().await.unwrap();
-    assert_matches!(
-        wf_task.jobs.as_slice(),
-        [WorkflowActivationJob {
-            variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
-        }]
-    );
-    core.complete_workflow_activation(WorkflowActivationCompletion::empty(wf_task.run_id))
-        .await
-        .unwrap();
+    core.handle_eviction().await;
     // Start from the beginning
     poll_sched_act().await;
     let wf_task = core.poll_workflow_activation().await.unwrap();

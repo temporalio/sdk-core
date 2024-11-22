@@ -83,15 +83,7 @@ async fn legacy_query(#[case] include_history: bool) {
             .unwrap();
     };
     let clear_eviction = || async {
-        let t = worker.poll_workflow_activation().await.unwrap();
-        assert_matches!(
-            t.jobs[0].variant,
-            Some(workflow_activation_job::Variant::RemoveFromCache(_))
-        );
-        worker
-            .complete_workflow_activation(WorkflowActivationCompletion::empty(t.run_id))
-            .await
-            .unwrap();
+        worker.handle_eviction().await;
     };
 
     first_wft().await;
@@ -324,15 +316,7 @@ async fn query_failure_because_nondeterminism(#[values(true, false)] legacy: boo
     core.complete_workflow_activation(WorkflowActivationCompletion::empty(task.run_id))
         .await
         .unwrap();
-    let task = core.poll_workflow_activation().await.unwrap();
-    assert_matches!(
-        task.jobs[0].variant,
-        Some(workflow_activation_job::Variant::RemoveFromCache(_))
-    );
-    core.complete_workflow_activation(WorkflowActivationCompletion::empty(task.run_id))
-        .await
-        .unwrap();
-
+    core.handle_eviction().await;
     core.shutdown().await;
 }
 
