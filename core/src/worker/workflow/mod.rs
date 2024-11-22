@@ -318,7 +318,6 @@ impl Workflows {
         post_activate_hook: Option<impl Fn(PostActivateHookData)>,
     ) -> Result<(), CompleteWfError> {
         let is_empty_completion = completion.is_empty();
-        // let does_end_execution = completion.has_execution_ending();
         let completion = validate_completion(completion, is_autocomplete)?;
         let run_id = completion.run_id().to_string();
         let (tx, rx) = oneshot::channel();
@@ -405,14 +404,6 @@ impl Workflows {
                         Ok(())
                     })
                     .await;
-                    // Successful completions that finish the workflow should queue up an eviction
-                    // if does_end_execution {
-                    //     self.request_eviction(
-                    //         &run_id,
-                    //         "Workflow completed",
-                    //         EvictionReason::WorkflowExecutionEnding,
-                    //     );
-                    // }
                     WFTReportStatus::Reported {
                         reset_last_started_to,
                     }
