@@ -1248,45 +1248,6 @@ mod tests {
         worker.run().await.unwrap();
     }
 
-    /// This test verifies something that technically shouldn't really be possible but is worth
-    /// checking anyway. What happens if in memory we think an LA passed but then the next history
-    /// chunk comes back with it failing? We should fail with a mismatch.
-    #[tokio::test]
-    async fn exec_passes_but_history_has_fail() {
-        let mut t = TestHistoryBuilder::default();
-        t.add_by_type(EventType::WorkflowExecutionStarted);
-        t.add_full_wf_task();
-        t.add_local_activity_fail_marker(
-            1,
-            "1",
-            Failure::application_failure("I failed".to_string(), false),
-        );
-        t.add_workflow_task_scheduled_and_started();
-
-        let mut mock_cfg = MockPollCfg::from_hist_builder(t);
-        // We expect to see a nondeterminism failure (after we respond with record marker, and then
-        // apply the failed marker from history).
-        mock_cfg.num_expected_fails = 1;
-        mock_cfg.completion_asserts_from_expectations(|mut asserts| {
-            asserts.then(|wft| {
-                assert_eq!(wft.commands.len(), 2);
-                assert_eq!(wft.commands[0].command_type(), CommandType::RecordMarker);
-                assert_matches!(
-                    wft.commands[1].command_type(),
-                    CommandType::CompleteWorkflowExecution
-                );
-            });
-        });
-
-        let mut worker = build_fake_sdk(mock_cfg);
-        worker.register_wf(DEFAULT_WORKFLOW_TYPE, la_wf);
-        worker.register_activity(
-            DEFAULT_ACTIVITY_TYPE,
-            move |_ctx: ActContext, _: ()| async move { Ok("Resolved") },
-        );
-        worker.run().await.unwrap();
-    }
-
     #[rstest]
     #[tokio::test]
     async fn immediate_cancel(

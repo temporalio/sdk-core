@@ -508,7 +508,12 @@ impl Worker {
         if let Some(name) = self.workflows.get_sticky_queue_name() {
             // This is a best effort call and we can still shutdown the worker if it fails
             match self.client.shutdown_worker(name).await {
-                Err(err) if err.code() != tonic::Code::Unavailable => {
+                Err(err)
+                    if !matches!(
+                        err.code(),
+                        tonic::Code::Unimplemented | tonic::Code::Unavailable
+                    ) =>
+                {
                     warn!("Failed to shutdown sticky queue  {:?}", err);
                 }
                 _ => {}

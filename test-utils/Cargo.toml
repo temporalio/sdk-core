@@ -15,6 +15,7 @@ ephemeral-server = ["temporal-sdk-core/ephemeral-server"]
 
 [dependencies]
 anyhow = "1.0"
+assert_matches = "1"
 async-trait = "0.1"
 base64 = "0.22"
 bytes = "1.3"

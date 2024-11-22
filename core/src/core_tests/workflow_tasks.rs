@@ -1330,17 +1330,7 @@ async fn fail_wft_then_recover() {
     .await
     .unwrap();
     // We must handle an eviction now
-    let evict_act = core.poll_workflow_activation().await.unwrap();
-    assert_eq!(evict_act.run_id, act.run_id);
-    assert_matches!(
-        evict_act.jobs.as_slice(),
-        [WorkflowActivationJob {
-            variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
-        }]
-    );
-    core.complete_workflow_activation(WorkflowActivationCompletion::empty(evict_act.run_id))
-        .await
-        .unwrap();
+    core.handle_eviction().await;
 
     // Workflow starting over, this time issue the right command
     let act = core.poll_workflow_activation().await.unwrap();
@@ -1531,6 +1521,7 @@ async fn failing_wft_doesnt_eat_permit_forever() {
     // row because we purposefully time out rather than spamming.
     for _ in 1..=2 {
         let activation = worker.poll_workflow_activation().await.unwrap();
+        run_id.clone_from(&activation.run_id);
         // Issue a nonsense completion that will trigger a WFT failure
         worker
             .complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
@@ -1539,18 +1530,7 @@ async fn failing_wft_doesnt_eat_permit_forever() {
             ))
             .await
             .unwrap();
-        let activation = worker.poll_workflow_activation().await.unwrap();
-        assert_matches!(
-            activation.jobs.as_slice(),
-            [WorkflowActivationJob {
-                variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
-            },]
-        );
-        run_id.clone_from(&activation.run_id);
-        worker
-            .complete_workflow_activation(WorkflowActivationCompletion::empty(activation.run_id))
-            .await
-            .unwrap();
+        worker.handle_eviction().await;
     }
     assert_eq!(worker.outstanding_workflow_tasks().await, 0);
     // We should be "out of work" because the mock service thinks we didn't complete the last task,
@@ -2601,6 +2581,7 @@ async fn _do_post_terminal_commands_test(
 
     let act = core.poll_workflow_activation().await.unwrap();
 
+    core.initiate_shutdown();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         act.run_id,
         commands_sent_by_lang,

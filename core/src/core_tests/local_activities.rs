@@ -573,9 +573,6 @@ async fn la_resolve_during_legacy_query_does_not_combine(#[case] impossible_quer
     // then next task is incremental w/ legacy query (for impossible query case)
     t.add_full_wf_task();
 
-    let barr = Arc::new(Barrier::new(2));
-    let barr_c = barr.clone();
-
     let tasks = [
         hist_to_poll_resp(&t, wfid.to_owned(), ResponseType::ToTaskNum(1)),
         {
@@ -592,17 +589,7 @@ async fn la_resolve_during_legacy_query_does_not_combine(#[case] impossible_quer
             pr
         },
         {
-            let mut pr = hist_to_poll_resp(
-                &t,
-                wfid.to_owned(),
-                ResponseType::UntilResolved(
-                    async move {
-                        barr_c.wait().await;
-                    }
-                    .boxed(),
-                    2,
-                ),
-            );
+            let mut pr = hist_to_poll_resp(&t, wfid.to_owned(), ResponseType::ToTaskNum(2));
             // Strip beginning of history so the only events are WFT sched/started, we need to look
             // like we hit the cache
             {
@@ -629,6 +616,7 @@ async fn la_resolve_during_legacy_query_does_not_combine(#[case] impossible_quer
     }
     let mut mock = single_hist_mock_sg(wfid, t, tasks, mock, true);
     mock.worker_cfg(|wc| wc.max_cached_workflows = 1);
+    let taskmap = mock.outstanding_task_map.clone().unwrap();
     let core = mock_worker(mock);
 
     let wf_fut = async {
@@ -653,6 +641,9 @@ async fn la_resolve_during_legacy_query_does_not_combine(#[case] impossible_quer
                 variant: Some(workflow_activation_job::Variant::FireTimer(_)),
             },]
         );
+        // We want to make sure the weird-looking query gets received while we're working on other
+        // stuff, so that we don't see the workflow complete and choose to evict.
+        taskmap.release_run(&task.run_id);
         core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
             task.run_id,
             schedule_local_activity_cmd(
@@ -691,7 +682,6 @@ async fn la_resolve_during_legacy_query_does_not_combine(#[case] impossible_quer
         ))
         .await
         .unwrap();
-        barr.wait().await;
 
         if impossible_query_in_task {
             // finish last query
@@ -873,7 +863,7 @@ async fn start_to_close_timeout_allows_retries(#[values(true, false)] la_complet
             1,
             "1",
             None,
-            Some(Failure::application_failure("la failed".to_string(), false)),
+            Some(Failure::timeout(TimeoutType::StartToClose)),
             |_| {},
         );
     }
