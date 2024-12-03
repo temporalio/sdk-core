@@ -55,7 +55,7 @@ struct Instruments {
     sticky_cache_hit: Arc<dyn Counter>,
     sticky_cache_miss: Arc<dyn Counter>,
     sticky_cache_size: Arc<dyn Gauge>,
-    sticky_cache_evictions: Arc<dyn Counter>,
+    sticky_cache_forced_evictions: Arc<dyn Counter>,
 }
 
 impl MetricsContext {
@@ -263,8 +263,10 @@ impl MetricsContext {
     }
 
     /// Count a workflow being evicted from the cache
-    pub(crate) fn cache_eviction(&self) {
-        self.instruments.sticky_cache_evictions.add(1, &self.kvs);
+    pub(crate) fn forced_cache_eviction(&self) {
+        self.instruments
+            .sticky_cache_forced_evictions
+            .add(1, &self.kvs);
     }
 }
 
@@ -292,7 +294,7 @@ impl Instruments {
                 unit: "".into(),
             }),
             wf_e2e_latency: meter.histogram_duration(MetricParameters {
-                name: WF_E2E_LATENCY_NAME.into(),
+                name: WORKFLOW_E2E_LATENCY_HISTOGRAM_NAME.into(),
                 unit: "duration".into(),
                 description: "Histogram of total workflow execution latencies".into(),
             }),
@@ -312,17 +314,17 @@ impl Instruments {
                 unit: "".into(),
             }),
             wf_task_sched_to_start_latency: meter.histogram_duration(MetricParameters {
-                name: WF_TASK_SCHED_TO_START_LATENCY_NAME.into(),
+                name: WORKFLOW_TASK_SCHED_TO_START_LATENCY_HISTOGRAM_NAME.into(),
                 unit: "duration".into(),
                 description: "Histogram of workflow task schedule-to-start latencies".into(),
             }),
             wf_task_replay_latency: meter.histogram_duration(MetricParameters {
-                name: WF_TASK_REPLAY_LATENCY_NAME.into(),
+                name: WORKFLOW_TASK_REPLAY_LATENCY_HISTOGRAM_NAME.into(),
                 unit: "duration".into(),
                 description: "Histogram of workflow task replay latencies".into(),
             }),
             wf_task_execution_latency: meter.histogram_duration(MetricParameters {
-                name: WF_TASK_EXECUTION_LATENCY_NAME.into(),
+                name: WORKFLOW_TASK_EXECUTION_LATENCY_HISTOGRAM_NAME.into(),
                 unit: "duration".into(),
                 description: "Histogram of workflow task execution (not replay) latencies".into(),
             }),
@@ -342,12 +344,12 @@ impl Instruments {
                 unit: "".into(),
             }),
             act_sched_to_start_latency: meter.histogram_duration(MetricParameters {
-                name: ACT_SCHED_TO_START_LATENCY_NAME.into(),
+                name: ACTIVITY_SCHED_TO_START_LATENCY_HISTOGRAM_NAME.into(),
                 unit: "duration".into(),
                 description: "Histogram of activity schedule-to-start latencies".into(),
             }),
             act_exec_latency: meter.histogram_duration(MetricParameters {
-                name: ACT_EXEC_LATENCY_NAME.into(),
+                name: ACTIVITY_EXEC_LATENCY_HISTOGRAM_NAME.into(),
                 unit: "duration".into(),
                 description: "Histogram of activity execution latencies".into(),
             }),
@@ -423,7 +425,7 @@ impl Instruments {
                 description: "Current number of cached workflows".into(),
                 unit: "".into(),
             }),
-            sticky_cache_evictions: meter.counter(MetricParameters {
+            sticky_cache_forced_evictions: meter.counter(MetricParameters {
                 name: "sticky_cache_total_forced_eviction".into(),
                 description: "Count of evictions of cached workflows".into(),
                 unit: "".into(),
@@ -496,13 +498,20 @@ pub(crate) fn failure_reason(reason: FailureReason) -> MetricKeyValue {
     MetricKeyValue::new(KEY_TASK_FAILURE_TYPE, reason.to_string())
 }
 
-pub(super) const WF_E2E_LATENCY_NAME: &str = "workflow_endtoend_latency";
-pub(super) const WF_TASK_SCHED_TO_START_LATENCY_NAME: &str =
+/// The string name (which may be prefixed) for this metric
+pub const WORKFLOW_E2E_LATENCY_HISTOGRAM_NAME: &str = "workflow_endtoend_latency";
+/// The string name (which may be prefixed) for this metric
+pub const WORKFLOW_TASK_SCHED_TO_START_LATENCY_HISTOGRAM_NAME: &str =
     "workflow_task_schedule_to_start_latency";
-pub(super) const WF_TASK_REPLAY_LATENCY_NAME: &str = "workflow_task_replay_latency";
-pub(super) const WF_TASK_EXECUTION_LATENCY_NAME: &str = "workflow_task_execution_latency";
-pub(super) const ACT_SCHED_TO_START_LATENCY_NAME: &str = "activity_schedule_to_start_latency";
-pub(super) const ACT_EXEC_LATENCY_NAME: &str = "activity_execution_latency";
+/// The string name (which may be prefixed) for this metric
+pub const WORKFLOW_TASK_REPLAY_LATENCY_HISTOGRAM_NAME: &str = "workflow_task_replay_latency";
+/// The string name (which may be prefixed) for this metric
+pub const WORKFLOW_TASK_EXECUTION_LATENCY_HISTOGRAM_NAME: &str = "workflow_task_execution_latency";
+/// The string name (which may be prefixed) for this metric
+pub const ACTIVITY_SCHED_TO_START_LATENCY_HISTOGRAM_NAME: &str =
+    "activity_schedule_to_start_latency";
+/// The string name (which may be prefixed) for this metric
+pub const ACTIVITY_EXEC_LATENCY_HISTOGRAM_NAME: &str = "activity_execution_latency";
 pub(super) const NUM_POLLERS_NAME: &str = "num_pollers";
 pub(super) const TASK_SLOTS_AVAILABLE_NAME: &str = "worker_task_slots_available";
 pub(super) const TASK_SLOTS_USED_NAME: &str = "worker_task_slots_used";
@@ -533,7 +542,7 @@ macro_rules! define_latency_buckets {
 
 define_latency_buckets!(
     (
-        WF_E2E_LATENCY_NAME,
+        WORKFLOW_E2E_LATENCY_HISTOGRAM_NAME,
         WF_LATENCY_MS_BUCKETS,
         WF_LATENCY_S_BUCKETS,
         [
@@ -556,19 +565,21 @@ define_latency_buckets!(
         ]
     ),
     (
-        WF_TASK_EXECUTION_LATENCY_NAME | WF_TASK_REPLAY_LATENCY_NAME,
+        WORKFLOW_TASK_EXECUTION_LATENCY_HISTOGRAM_NAME
+            | WORKFLOW_TASK_REPLAY_LATENCY_HISTOGRAM_NAME,
         WF_TASK_MS_BUCKETS,
         WF_TASK_S_BUCKETS,
         [1., 10., 20., 50., 100., 200., 500., 1000.]
     ),
     (
-        ACT_EXEC_LATENCY_NAME,
+        ACTIVITY_EXEC_LATENCY_HISTOGRAM_NAME,
         ACT_EXE_MS_BUCKETS,
         ACT_EXE_S_BUCKETS,
         [50., 100., 500., 1000., 5000., 10_000., 60_000.]
     ),
     (
-        WF_TASK_SCHED_TO_START_LATENCY_NAME | ACT_SCHED_TO_START_LATENCY_NAME,
+        WORKFLOW_TASK_SCHED_TO_START_LATENCY_HISTOGRAM_NAME
+            | ACTIVITY_SCHED_TO_START_LATENCY_HISTOGRAM_NAME,
         TASK_SCHED_TO_START_MS_BUCKETS,
         TASK_SCHED_TO_START_S_BUCKETS,
         [100., 500., 1000., 5000., 10_000., 100_000., 1_000_000.]
@@ -858,7 +869,7 @@ mod tests {
             true,
         );
         let mc = MetricsContext::top_level("foo".to_string(), "q".to_string(), &telem_instance);
-        mc.cache_eviction();
+        mc.forced_cache_eviction();
         let events = call_buffer.retrieve();
         let a1 = assert_matches!(
             &events[0],

@@ -321,7 +321,6 @@ impl WFStream {
 
         let mut res = None;
 
-        // If we reported to server, we always want to mark it complete.
         let maybe_t = self.complete_wft(run_id, report.wft_report_status);
         // Augment the WFT from complete with the permit if both exist
         let wft_from_complete = wft_from_complete.and_then(|wft| {
@@ -378,6 +377,20 @@ impl WFStream {
             if let Some(rh) = self.runs.get_mut(run_id) {
                 // Attempt to produce the next activation if needed
                 res = rh.check_more_activations();
+                // If there's no more work and we reported workflow completion to server, evict.
+                if res.is_none()
+                    && rh.workflow_is_finished()
+                    && matches!(report.wft_report_status, WFTReportStatus::Reported { .. })
+                {
+                    res = rh
+                        .request_eviction(RequestEvictMsg {
+                            run_id: run_id.to_string(),
+                            message: "Workflow completed".to_string(),
+                            reason: EvictionReason::WorkflowExecutionEnding,
+                            auto_reply_fail_tt: None,
+                        })
+                        .into_run_update_resp()
+                }
             }
         }
         res
@@ -492,7 +505,7 @@ impl WFStream {
         let num_existing_evictions = self
             .runs
             .runs_lru_order()
-            .filter(|(_, h)| h.is_trying_to_evict())
+            .filter(|(_, h)| h.trying_to_evict().is_some())
             .count();
         let mut num_evicts_needed = num_in_buff.saturating_sub(num_existing_evictions);
         for (rid, handle) in self.runs.runs_lru_order() {
@@ -546,7 +559,7 @@ impl WFStream {
         if let Some(r) = self.runs.peek(run_id) {
             info!(run_id, wft=?r.wft(), activation=?r.activation(),
                   buffered_wft=r.has_buffered_wft(),
-                  trying_to_evict=r.is_trying_to_evict(), more_work=r.more_pending_work());
+                  trying_to_evict=r.trying_to_evict().is_some(), more_work=r.more_pending_work());
         } else {
             info!(run_id, "Run not found");
         }

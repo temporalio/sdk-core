@@ -183,12 +183,6 @@ async fn reapplied_updates_due_to_reset() {
     )
     .await;
 
-    // This is a replay worker and there is a remaining activation containing a RemoveFromCache job.
-    let act = replay_worker.poll_workflow_activation().await.unwrap();
-    replay_worker
-        .complete_workflow_activation(WorkflowActivationCompletion::empty(act.run_id))
-        .await
-        .unwrap();
     drain_pollers_and_shutdown(&replay_worker).await;
 }
 
@@ -292,6 +286,9 @@ async fn handle_update(
     ))
     .await
     .unwrap();
+    if matches!(complete_workflow, CompleteWorkflow::Yes) {
+        core.handle_eviction().await;
+    }
 }
 
 #[tokio::test]

@@ -29,7 +29,7 @@ use std::{
     time::Duration,
 };
 use temporal_client::WorkflowOptions;
-use temporal_sdk::{ActivityOptions, CancellableFuture, WfContext};
+use temporal_sdk::{ActivityOptions, CancellableFuture, TimerOptions, WfContext};
 use temporal_sdk_core_api::{
     errors::PollWfError,
     worker::{
@@ -64,6 +64,7 @@ use temporal_sdk_core_protos::{
             history_event, TimerFiredEventAttributes,
             WorkflowPropertiesModifiedExternallyEventAttributes,
         },
+        sdk::v1::UserMetadata,
         workflowservice::v1::{
             GetWorkflowExecutionHistoryResponse, RespondWorkflowTaskCompletedResponse,
         },
@@ -1329,17 +1330,7 @@ async fn fail_wft_then_recover() {
     .await
     .unwrap();
     // We must handle an eviction now
-    let evict_act = core.poll_workflow_activation().await.unwrap();
-    assert_eq!(evict_act.run_id, act.run_id);
-    assert_matches!(
-        evict_act.jobs.as_slice(),
-        [WorkflowActivationJob {
-            variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
-        }]
-    );
-    core.complete_workflow_activation(WorkflowActivationCompletion::empty(evict_act.run_id))
-        .await
-        .unwrap();
+    core.handle_eviction().await;
 
     // Workflow starting over, this time issue the right command
     let act = core.poll_workflow_activation().await.unwrap();
@@ -1530,6 +1521,7 @@ async fn failing_wft_doesnt_eat_permit_forever() {
     // row because we purposefully time out rather than spamming.
     for _ in 1..=2 {
         let activation = worker.poll_workflow_activation().await.unwrap();
+        run_id.clone_from(&activation.run_id);
         // Issue a nonsense completion that will trigger a WFT failure
         worker
             .complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
@@ -1538,18 +1530,7 @@ async fn failing_wft_doesnt_eat_permit_forever() {
             ))
             .await
             .unwrap();
-        let activation = worker.poll_workflow_activation().await.unwrap();
-        assert_matches!(
-            activation.jobs.as_slice(),
-            [WorkflowActivationJob {
-                variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
-            },]
-        );
-        run_id.clone_from(&activation.run_id);
-        worker
-            .complete_workflow_activation(WorkflowActivationCompletion::empty(activation.run_id))
-            .await
-            .unwrap();
+        worker.handle_eviction().await;
     }
     assert_eq!(worker.outstanding_workflow_tasks().await, 0);
     // We should be "out of work" because the mock service thinks we didn't complete the last task,
@@ -2600,6 +2581,7 @@ async fn _do_post_terminal_commands_test(
 
     let act = core.poll_workflow_activation().await.unwrap();
 
+    core.initiate_shutdown();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         act.run_id,
         commands_sent_by_lang,
@@ -3085,4 +3067,51 @@ async fn slot_provider_cant_hand_out_more_permits_than_cache_size() {
     // We shouldn't have got more than the 10 tasks from the poller -- verifying that the concurrent
     // polling is not exceeding the task limit
     assert_eq!(popped_tasks.load(Ordering::Relaxed), 10);
+}
+
+#[tokio::test]
+async fn pass_timer_summary_to_metadata() {
+    let t = canned_histories::single_timer("1");
+    let mut mock_cfg = MockPollCfg::from_hist_builder(t);
+    let wf_id = mock_cfg.hists[0].wf_id.clone();
+    let wf_type = DEFAULT_WORKFLOW_TYPE;
+    let expected_user_metadata = Some(UserMetadata {
+        summary: Some(b"timer summary".into()),
+        details: None,
+    });
+    mock_cfg.completion_asserts_from_expectations(|mut asserts| {
+        asserts
+            .then(move |wft| {
+                assert_eq!(wft.commands.len(), 1);
+                assert_eq!(wft.commands[0].command_type(), CommandType::StartTimer);
+                assert_eq!(wft.commands[0].user_metadata, expected_user_metadata)
+            })
+            .then(move |wft| {
+                assert_eq!(wft.commands.len(), 1);
+                assert_eq!(
+                    wft.commands[0].command_type(),
+                    CommandType::CompleteWorkflowExecution
+                );
+            });
+    });
+
+    let mut worker = mock_sdk_cfg(mock_cfg, |_| {});
+    worker.register_wf(wf_type, |ctx: WfContext| async move {
+        ctx.timer(TimerOptions {
+            duration: Duration::from_secs(1),
+            summary: Some("timer summary".to_string()),
+        })
+        .await;
+        Ok(().into())
+    });
+    worker
+        .submit_wf(
+            wf_id.to_owned(),
+            wf_type.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
 }

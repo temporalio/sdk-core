@@ -12,6 +12,11 @@ use temporal_sdk_core_api::telemetry::metrics::{
 use tonic::{body::BoxBody, transport::Channel, Code};
 use tower::Service;
 
+/// The string name (which may be prefixed) for this metric
+pub static REQUEST_LATENCY_HISTOGRAM_NAME: &str = "request_latency";
+/// The string name (which may be prefixed) for this metric
+pub static LONG_REQUEST_LATENCY_HISTOGRAM_NAME: &str = "long_request_latency";
+
 /// Used to track context associated with metrics, and record/update them
 // Possible improvement: make generic over some type tag so that methods are only exposed if the
 // appropriate k/vs have already been set.
@@ -58,12 +63,12 @@ impl MetricsContext {
                 unit: "".into(),
             }),
             svc_request_latency: meter.histogram_duration(MetricParameters {
-                name: "request_latency".into(),
+                name: REQUEST_LATENCY_HISTOGRAM_NAME.into(),
                 unit: "duration".into(),
                 description: "Histogram of client request latencies".into(),
             }),
             long_svc_request_latency: meter.histogram_duration(MetricParameters {
-                name: "long_request_latency".into(),
+                name: LONG_REQUEST_LATENCY_HISTOGRAM_NAME.into(),
                 unit: "duration".into(),
                 description: "Histogram of client long-poll request latencies".into(),
             }),

@@ -377,6 +377,32 @@ mod otel_impls {
         }
     }
 
+    impl Gauge for metrics::Gauge<u64> {
+        fn record(&self, value: u64, attributes: &MetricAttributes) {
+            if let MetricAttributes::OTel { kvs } = attributes {
+                self.record(value, kvs);
+            } else {
+                debug_assert!(
+                    false,
+                    "Must use OTel attributes with an OTel metric implementation"
+                );
+            }
+        }
+    }
+
+    impl GaugeF64 for metrics::Gauge<f64> {
+        fn record(&self, value: f64, attributes: &MetricAttributes) {
+            if let MetricAttributes::OTel { kvs } = attributes {
+                self.record(value, kvs);
+            } else {
+                debug_assert!(
+                    false,
+                    "Must use OTel attributes with an OTel metric implementation"
+                );
+            }
+        }
+    }
+
     impl Histogram for metrics::Histogram<u64> {
         fn record(&self, value: u64, attributes: &MetricAttributes) {
             if let MetricAttributes::OTel { kvs } = attributes {

@@ -1,7 +1,9 @@
 use anyhow::anyhow;
 use assert_matches::assert_matches;
-use std::{env, net::SocketAddr, sync::Arc, time::Duration};
-use temporal_client::{WorkflowClientTrait, WorkflowOptions, WorkflowService};
+use std::{collections::HashMap, env, net::SocketAddr, sync::Arc, time::Duration};
+use temporal_client::{
+    WorkflowClientTrait, WorkflowOptions, WorkflowService, REQUEST_LATENCY_HISTOGRAM_NAME,
+};
 use temporal_sdk::{
     ActContext, ActivityError, ActivityOptions, CancellableFuture, LocalActivityOptions, WfContext,
 };
@@ -13,8 +15,8 @@ use temporal_sdk_core::{
 use temporal_sdk_core_api::{
     telemetry::{
         metrics::{CoreMeter, MetricAttributes, MetricParameters},
-        OtelCollectorOptionsBuilder, PrometheusExporterOptionsBuilder, TelemetryOptions,
-        TelemetryOptionsBuilder,
+        HistogramBucketOverrides, OtelCollectorOptionsBuilder, PrometheusExporterOptions,
+        PrometheusExporterOptionsBuilder, TelemetryOptions, TelemetryOptionsBuilder,
     },
     worker::WorkerConfigBuilder,
     Worker,
@@ -62,19 +64,16 @@ impl Drop for AbortOnDrop {
 }
 
 pub(crate) fn prom_metrics(
-    use_seconds: bool,
-    show_units: bool,
+    options_override: Option<PrometheusExporterOptions>,
 ) -> (TelemetryOptions, SocketAddr, AbortOnDrop) {
-    let mut telemopts = get_integ_telem_options();
-    let prom_info = start_prometheus_metric_exporter(
+    let prom_exp_opts = options_override.unwrap_or_else(|| {
         PrometheusExporterOptionsBuilder::default()
             .socket_addr(ANY_PORT.parse().unwrap())
-            .use_seconds_for_durations(use_seconds)
-            .unit_suffix(show_units)
             .build()
-            .unwrap(),
-    )
-    .unwrap();
+            .unwrap()
+    });
+    let mut telemopts = get_integ_telem_options();
+    let prom_info = start_prometheus_metric_exporter(prom_exp_opts).unwrap();
     telemopts.metrics = Some(prom_info.meter as Arc<dyn CoreMeter>);
     (
         telemopts,
@@ -87,8 +86,24 @@ pub(crate) fn prom_metrics(
 
 #[rstest::rstest]
 #[tokio::test]
-async fn prometheus_metrics_exported(#[values(true, false)] use_seconds_latency: bool) {
-    let (telemopts, addr, _aborter) = prom_metrics(use_seconds_latency, false);
+async fn prometheus_metrics_exported(
+    #[values(true, false)] use_seconds_latency: bool,
+    #[values(true, false)] custom_buckets: bool,
+) {
+    let mut opts_builder = PrometheusExporterOptionsBuilder::default();
+    opts_builder
+        .socket_addr(ANY_PORT.parse().unwrap())
+        .use_seconds_for_durations(use_seconds_latency);
+    if custom_buckets {
+        opts_builder.histogram_bucket_overrides(HistogramBucketOverrides {
+            overrides: {
+                let mut hm = HashMap::new();
+                hm.insert(REQUEST_LATENCY_HISTOGRAM_NAME.to_string(), vec![1337.0]);
+                hm
+            },
+        });
+    }
+    let (telemopts, addr, _aborter) = prom_metrics(Some(opts_builder.build().unwrap()));
     let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
     let opts = get_integ_server_options();
     let mut raw_client = opts
@@ -109,7 +124,12 @@ async fn prometheus_metrics_exported(#[values(true, false)] use_seconds_latency:
     assert!(body.contains(
         "temporal_request_latency_count{operation=\"GetSystemInfo\",service_name=\"temporal-core-sdk\"} 1"
     ));
-    if use_seconds_latency {
+    if custom_buckets {
+        assert!(body.contains(
+            "temporal_request_latency_bucket{\
+             operation=\"GetSystemInfo\",service_name=\"temporal-core-sdk\",le=\"1337\"}"
+        ));
+    } else if use_seconds_latency {
         assert!(body.contains(
             "temporal_request_latency_bucket{\
              operation=\"GetSystemInfo\",service_name=\"temporal-core-sdk\",le=\"0.05\"}"
@@ -132,12 +152,13 @@ async fn prometheus_metrics_exported(#[values(true, false)] use_seconds_latency:
         },
     );
     let body = get_text(format!("http://{addr}/metrics")).await;
+    println!("{}", &body);
     assert!(body.contains("\nmygauge 42"));
 }
 
 #[tokio::test]
 async fn one_slot_worker_reports_available_slot() {
-    let (telemopts, addr, _aborter) = prom_metrics(false, false);
+    let (telemopts, addr, _aborter) = prom_metrics(None);
     let tq = "one_slot_worker_tq";
     let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
 
@@ -373,7 +394,7 @@ async fn query_of_closed_workflow_doesnt_tick_terminal_metric(
     )]
     completion: workflow_command::Variant,
 ) {
-    let (telemopts, addr, _aborter) = prom_metrics(false, false);
+    let (telemopts, addr, _aborter) = prom_metrics(None);
     let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
     let mut starter =
         CoreWfStarter::new_with_runtime("query_of_closed_workflow_doesnt_tick_terminal_metric", rt);
@@ -500,7 +521,7 @@ fn runtime_new() {
         CoreRuntime::new(get_integ_telem_options(), TokioRuntimeBuilder::default()).unwrap();
     let handle = rt.tokio_handle();
     let _rt = handle.enter();
-    let (telemopts, addr, _aborter) = prom_metrics(false, false);
+    let (telemopts, addr, _aborter) = prom_metrics(None);
     rt.telemetry_mut()
         .attach_late_init_metrics(telemopts.metrics.unwrap());
     let opts = get_integ_server_options();
@@ -525,7 +546,14 @@ async fn latency_metrics(
     #[values(true, false)] use_seconds_latency: bool,
     #[values(true, false)] show_units: bool,
 ) {
-    let (telemopts, addr, _aborter) = prom_metrics(use_seconds_latency, show_units);
+    let (telemopts, addr, _aborter) = prom_metrics(Some(
+        PrometheusExporterOptionsBuilder::default()
+            .socket_addr(ANY_PORT.parse().unwrap())
+            .use_seconds_for_durations(use_seconds_latency)
+            .unit_suffix(show_units)
+            .build()
+            .unwrap(),
+    ));
     let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
     let mut starter = CoreWfStarter::new_with_runtime("latency_metrics", rt);
     let worker = starter.get_worker().await;
@@ -561,7 +589,7 @@ async fn latency_metrics(
 
 #[tokio::test]
 async fn request_fail_codes() {
-    let (telemopts, addr, _aborter) = prom_metrics(false, false);
+    let (telemopts, addr, _aborter) = prom_metrics(None);
     let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
     let opts = get_integ_server_options();
     let mut client = opts
@@ -625,7 +653,7 @@ async fn request_fail_codes_otel() {
 
 #[tokio::test]
 async fn activity_metrics() {
-    let (telemopts, addr, _aborter) = prom_metrics(false, false);
+    let (telemopts, addr, _aborter) = prom_metrics(None);
     let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
     let wf_name = "activity_metrics";
     let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
@@ -756,4 +784,34 @@ async fn activity_metrics() {
              task_queue=\"{task_queue}\",\
              workflow_type=\"{wf_name}\"}} 1"
     )));
+}
+
+#[tokio::test]
+async fn evict_on_complete_does_not_count_as_forced_eviction() {
+    let (telemopts, addr, _aborter) = prom_metrics(None);
+    let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
+    let wf_name = "evict_on_complete_does_not_count_as_forced_eviction";
+    let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
+    starter.worker_config.no_remote_activities(true);
+    let mut worker = starter.worker().await;
+
+    worker.register_wf(
+        wf_name.to_string(),
+        |_: WfContext| async move { Ok(().into()) },
+    );
+
+    worker
+        .submit_wf(
+            wf_name.to_owned(),
+            wf_name.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+
+    let body = get_text(format!("http://{addr}/metrics")).await;
+    // Metric shouldn't show up at all, since it's zero the whole time.
+    assert!(!body.contains("temporal_sticky_cache_total_forced_eviction"));
 }

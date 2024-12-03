@@ -38,6 +38,7 @@ async fn timer_workflow_manual() {
         vec![StartTimer {
             seq: 0,
             start_to_fire_timeout: Some(prost_dur!(from_secs(1))),
+            summary: None,
         }
         .into()],
     ))
@@ -45,6 +46,7 @@ async fn timer_workflow_manual() {
     .unwrap();
     let task = core.poll_workflow_activation().await.unwrap();
     core.complete_execution(&task.run_id).await;
+    core.handle_eviction().await;
     drain_pollers_and_shutdown(&core).await;
 }
 
@@ -60,11 +62,13 @@ async fn timer_cancel_workflow() {
             StartTimer {
                 seq: 0,
                 start_to_fire_timeout: Some(prost_dur!(from_millis(50))),
+                summary: None,
             }
             .into(),
             StartTimer {
                 seq: 1,
                 start_to_fire_timeout: Some(prost_dur!(from_secs(10))),
+                summary: None,
             }
             .into(),
         ],
