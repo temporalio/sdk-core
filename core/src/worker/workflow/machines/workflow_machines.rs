@@ -1395,14 +1395,12 @@ impl WorkflowMachines {
                     CommandID::ChildWorkflowStart(attrs.child_workflow_seq),
                 )?,
                 WFCommand::RequestCancelExternalWorkflow(attrs) => {
-                    let we: NamespacedWorkflowExecution =
-                        match attrs.workflow_execution {
-                            None => return Err(WFMachinesError::Fatal(
-                                "Cancel external workflow command had no workflow_execution field"
-                                    .to_string(),
-                            )),
-                            Some(we) => we,
-                        };
+                    let we = attrs.workflow_execution.ok_or_else(|| {
+                        WFMachinesError::Fatal(
+                            "Cancel external workflow command had no workflow_execution field"
+                                .to_string(),
+                        )
+                    })?;
                     self.add_cmd_to_wf_task(
                         new_external_cancel(
                             attrs.seq,
