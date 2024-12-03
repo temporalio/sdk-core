@@ -22,9 +22,8 @@ use temporal_sdk_core_protos::{
             WorkflowActivationJob,
         },
         workflow_commands::{
-            request_cancel_external_workflow_execution as cancel_we, update_response,
-            workflow_command, CancelChildWorkflowExecution, CancelSignalWorkflow, CancelTimer,
-            CancelWorkflowExecution, CompleteWorkflowExecution, FailWorkflowExecution,
+            update_response, workflow_command, CancelChildWorkflowExecution, CancelSignalWorkflow,
+            CancelTimer, CancelWorkflowExecution, CompleteWorkflowExecution, FailWorkflowExecution,
             RequestCancelActivity, RequestCancelExternalWorkflowExecution,
             RequestCancelLocalActivity, ScheduleActivity, ScheduleLocalActivity,
             StartChildWorkflowExecution, StartTimer, UpdateResponse,
@@ -514,22 +513,12 @@ impl WorkflowFuture {
                                 CancelSignalWorkflow { seq },
                             ));
                         }
-                        CancellableID::ExternalWorkflow {
-                            seqnum,
-                            execution,
-                            only_child,
-                        } => {
+                        CancellableID::ExternalWorkflow { seqnum, execution } => {
                             activation_cmds.push(
                                 workflow_command::Variant::RequestCancelExternalWorkflowExecution(
                                     RequestCancelExternalWorkflowExecution {
                                         seq: seqnum,
-                                        target: Some(if only_child {
-                                            cancel_we::Target::ChildWorkflowId(
-                                                execution.workflow_id,
-                                            )
-                                        } else {
-                                            cancel_we::Target::WorkflowExecution(execution)
-                                        }),
+                                        workflow_execution: Some(execution),
                                     },
                                 ),
                             );

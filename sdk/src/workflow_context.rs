@@ -34,7 +34,6 @@ use temporal_sdk_core_protos::{
         common::NamespacedWorkflowExecution,
         workflow_activation::resolve_child_workflow_execution_start::Status as ChildWorkflowStartStatus,
         workflow_commands::{
-            request_cancel_external_workflow_execution as cancel_we,
             signal_external_workflow_execution as sig_we, workflow_command,
             CancelChildWorkflowExecution, ModifyWorkflowProperties,
             RequestCancelExternalWorkflowExecution, SetPatchMarker,
@@ -311,14 +310,13 @@ impl WfContext {
         &self,
         target: NamespacedWorkflowExecution,
     ) -> impl Future<Output = CancelExternalWfResult> {
-        let target = cancel_we::Target::WorkflowExecution(target);
         let seq = self.seq_nums.write().next_cancel_external_wf_seq();
         let (cmd, unblocker) = WFCommandFut::new();
         self.send(
             CommandCreateRequest {
                 cmd: RequestCancelExternalWorkflowExecution {
                     seq,
-                    target: Some(target),
+                    workflow_execution: Some(target),
                 }
                 .into(),
                 unblocker,
@@ -700,7 +698,6 @@ impl ChildWorkflow {
                     workflow_id: self.opts.workflow_id.clone(),
                     ..Default::default()
                 },
-                only_child: true,
             });
         cx.send(
             CommandSubscribeChildWorkflowCompletion {
