@@ -261,17 +261,13 @@ message CancelChildWorkflowExecution {
     uint32 child_workflow_seq = 1;
 }
 
-// Request cancellation of an external workflow execution (which may be a started child)
+// Request cancellation of an external workflow execution. For cancellation of a child workflow,
+// prefer `CancelChildWorkflowExecution` instead, as it guards against cancel-before-start issues.
 message RequestCancelExternalWorkflowExecution {
     // Lang's incremental sequence number, used as the operation identifier
     uint32 seq = 1;
-    // What workflow is being targeted
-    oneof target {
-        // A specific workflow instance
-        common.NamespacedWorkflowExecution workflow_execution = 2;
-        // The desired target must be a child of the issuing workflow, and this is its workflow id
-        string child_workflow_id = 3;
-    }
+    // The workflow instance being targeted
+    common.NamespacedWorkflowExecution workflow_execution = 2;
 }
 
 // Send a signal to an external or child workflow

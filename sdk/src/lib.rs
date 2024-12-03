@@ -716,8 +716,6 @@ pub enum CancellableID {
         seqnum: u32,
         /// Identifying information about the workflow to be cancelled
         execution: NamespacedWorkflowExecution,
-        /// Set to true if this workflow is a child of the issuing workflow
-        only_child: bool,
     },
 }
 
