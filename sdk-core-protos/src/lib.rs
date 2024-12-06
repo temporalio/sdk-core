@@ -909,6 +909,12 @@ pub mod coresdk {
             }
         }
 
+        impl Display for ScheduleNexusOperation {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "ScheduleNexusOperation({})", self.seq)
+            }
+        }
+
         impl QueryResult {
             /// Helper to construct the Temporal API query result types.
             pub fn into_components(self) -> (String, QueryResultType, Option<Payloads>, String) {
@@ -1787,6 +1793,21 @@ pub mod temporal {
                     fn from(_c: workflow_commands::CancelWorkflowExecution) -> Self {
                         Self::CancelWorkflowExecutionCommandAttributes(
                             CancelWorkflowExecutionCommandAttributes { details: None },
+                        )
+                    }
+                }
+
+                impl From<workflow_commands::ScheduleNexusOperation> for command::Attributes {
+                    fn from(c: workflow_commands::ScheduleNexusOperation) -> Self {
+                        Self::ScheduleNexusOperationCommandAttributes(
+                            ScheduleNexusOperationCommandAttributes {
+                                endpoint: c.endpoint,
+                                service: c.service,
+                                operation: c.operation,
+                                input: c.input,
+                                schedule_to_close_timeout: c.schedule_to_close_timeout,
+                                nexus_header: c.nexus_header,
+                            },
                         )
                     }
                 }

@@ -1168,6 +1168,7 @@ enum WFCommandVariant {
     UpsertSearchAttributes(UpsertWorkflowSearchAttributes),
     ModifyWorkflowProperties(ModifyWorkflowProperties),
     UpdateResponse(UpdateResponse),
+    ScheduleNexusOperation(ScheduleNexusOperation),
 }
 
 impl TryFrom<WorkflowCommand> for WFCommand {
@@ -1223,6 +1224,9 @@ impl TryFrom<WorkflowCommand> for WFCommand {
                 WFCommandVariant::ModifyWorkflowProperties(s)
             }
             workflow_command::Variant::UpdateResponse(s) => WFCommandVariant::UpdateResponse(s),
+            workflow_command::Variant::ScheduleNexusOperation(s) => {
+                Ok(Self::ScheduleNexusOperation(s))
+            }
         };
         Ok(Self {
             variant,
@@ -1256,6 +1260,7 @@ enum CommandID {
     ChildWorkflowStart(u32),
     SignalExternal(u32),
     CancelExternal(u32),
+    NexusOperation(u32),
 }
 
 /// Details remembered from the workflow execution started event that we may need to recall later.

@@ -9,6 +9,7 @@ mod continue_as_new_workflow_state_machine;
 mod fail_workflow_state_machine;
 mod local_activity_state_machine;
 mod modify_workflow_properties_state_machine;
+mod nexus_operation_state_machine;
 mod patch_state_machine;
 mod signal_external_state_machine;
 mod timer_state_machine;
@@ -34,6 +35,7 @@ use continue_as_new_workflow_state_machine::ContinueAsNewWorkflowMachine;
 use fail_workflow_state_machine::FailWorkflowMachine;
 use local_activity_state_machine::LocalActivityMachine;
 use modify_workflow_properties_state_machine::ModifyWorkflowPropertiesMachine;
+use nexus_operation_state_machine::NexusOperationMachine;
 use patch_state_machine::PatchMachine;
 use rustfsm::{MachineError, StateMachine};
 use signal_external_state_machine::SignalExternalMachine;
@@ -71,6 +73,7 @@ enum Machines {
     UpsertSearchAttributesMachine,
     ModifyWorkflowPropertiesMachine,
     UpdateMachine,
+    NexusOperationMachine,
 }
 
 /// Extends [rustfsm::StateMachine] with some functionality specific to the temporal SDK.
