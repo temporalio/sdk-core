@@ -306,6 +306,12 @@ impl WorkflowFuture {
                         );
                     }
                 }
+                Variant::ResolveNexusOperationStart(_) => {
+                    todo!()
+                }
+                Variant::ResolveNexusOperation(_) => {
+                    todo!()
+                }
 
                 Variant::RemoveFromCache(_) => {
                     // TODO: Need to abort any user-spawned tasks, etc. See also cancel WF.

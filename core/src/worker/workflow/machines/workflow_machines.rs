@@ -1468,6 +1468,7 @@ impl WorkflowMachines {
                     let seq = attrs.seq;
                     self.add_cmd_to_wf_task(
                         NexusOperationMachine::new_scheduled(attrs),
+                        cmd.metadata,
                         CommandID::NexusOperation(seq).into(),
                     );
                 }

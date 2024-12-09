@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package coresdk.nexus;
+option ruby_package = "Temporalio::Internal::Bridge::Api::Nexus";
+
+import "temporal/api/common/v1/message.proto";
+import "temporal/api/failure/v1/message.proto";
+import "temporal/sdk/core/common/common.proto";
+
+// Used by core to resolve nexus operations.
+message NexusOperationResult {
+    oneof status {
+        temporal.api.common.v1.Payload completed = 1;
+        temporal.api.failure.v1.Failure failed = 2;
+        temporal.api.failure.v1.Failure cancelled = 3;
+        temporal.api.failure.v1.Failure timed_out = 4;
+    }
+}

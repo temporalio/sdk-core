@@ -1225,7 +1225,7 @@ impl TryFrom<WorkflowCommand> for WFCommand {
             }
             workflow_command::Variant::UpdateResponse(s) => WFCommandVariant::UpdateResponse(s),
             workflow_command::Variant::ScheduleNexusOperation(s) => {
-                Ok(Self::ScheduleNexusOperation(s))
+                WFCommandVariant::ScheduleNexusOperation(s)
             }
         };
         Ok(Self {
