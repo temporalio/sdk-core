@@ -629,6 +629,12 @@ pub mod coresdk {
                     workflow_activation_job::Variant::DoUpdate(_) => {
                         write!(f, "DoUpdate")
                     }
+                    workflow_activation_job::Variant::ResolveNexusOperationStart(_) => {
+                        write!(f, "ResolveNexusOperationStart")
+                    }
+                    workflow_activation_job::Variant::ResolveNexusOperation(_) => {
+                        write!(f, "ResolveNexusOperation")
+                    }
                 }
             }
         }
@@ -748,6 +754,10 @@ pub mod coresdk {
 
     pub mod child_workflow {
         tonic::include_proto!("coresdk.child_workflow");
+    }
+
+    pub mod nexus {
+        tonic::include_proto!("coresdk.nexus");
     }
 
     pub mod workflow_commands {
