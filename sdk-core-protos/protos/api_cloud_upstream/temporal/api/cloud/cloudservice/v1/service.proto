@@ -74,7 +74,7 @@ service CloudService {
             body: "*"
         };
     }
-    
+
     // Get all namespaces
     rpc GetNamespaces (GetNamespacesRequest)  returns (GetNamespacesResponse) {
         option (google.api.http) = {
@@ -179,6 +179,43 @@ service CloudService {
         };
     }
 
+    // Gets nexus endpoints
+    rpc GetNexusEndpoints(GetNexusEndpointsRequest) returns (GetNexusEndpointsResponse) {
+        option (google.api.http) = {
+            get: "/cloud/nexus/endpoints",
+        };
+    }
+    
+    // Get a nexus endpoint
+    rpc GetNexusEndpoint(GetNexusEndpointRequest) returns (GetNexusEndpointResponse) {
+        option (google.api.http) = {
+            get: "/cloud/nexus/endpoints/{endpoint_id}",
+        };
+    }
+
+    // Create a nexus endpoint
+    rpc CreateNexusEndpoint(CreateNexusEndpointRequest) returns (CreateNexusEndpointResponse) {
+        option (google.api.http) = {
+            post: "/cloud/nexus/endpoints",
+            body: "*"
+        };
+    }
+
+    // Update a nexus endpoint
+    rpc UpdateNexusEndpoint(UpdateNexusEndpointRequest) returns (UpdateNexusEndpointResponse) {
+        option (google.api.http) = {
+            post: "/cloud/nexus/endpoints/{endpoint_id}",
+            body: "*"
+        };
+    }
+
+    // Delete a nexus endpoint
+    rpc DeleteNexusEndpoint(DeleteNexusEndpointRequest) returns (DeleteNexusEndpointResponse) {
+        option (google.api.http) = {
+            delete: "/cloud/nexus/endpoints/{endpoint_id}",
+        };
+    }
+
     // Get all user groups
     rpc GetUserGroups (GetUserGroupsRequest) returns (GetUserGroupsResponse) {
         option (google.api.http) = {
@@ -258,6 +295,75 @@ service CloudService {
     rpc DeleteServiceAccount(DeleteServiceAccountRequest) returns (DeleteServiceAccountResponse) {
         option (google.api.http) = {
             delete: "/cloud/service-accounts/{service_account_id}",
+        };
+    }
+
+    // WARNING: Pre-Release Feature
+    // Get usage data across namespaces
+    rpc GetUsage(GetUsageRequest) returns (GetUsageResponse) {
+        option (google.api.http) = {
+            get: "/cloud/usage",
+        };
+    }
+
+    // Get account information.
+    rpc GetAccount (GetAccountRequest) returns (GetAccountResponse) {
+        option (google.api.http) = {
+            get: "/cloud/account",
+        };
+    }
+
+    // Update account information.
+    rpc UpdateAccount (UpdateAccountRequest) returns (UpdateAccountResponse) {
+        option (google.api.http) = {
+            post: "/cloud/account",
+            body: "*"
+	};
+    }
+
+    // Create an export sink
+    rpc CreateNamespaceExportSink(CreateNamespaceExportSinkRequest) returns (CreateNamespaceExportSinkResponse) {
+        option (google.api.http) = {
+            post: "/cloud/namespaces/{namespace}/export-sinks",
+            body: "*"
+        };
+    }
+
+    // Get an export sink 
+    rpc GetNamespaceExportSink(GetNamespaceExportSinkRequest) returns (GetNamespaceExportSinkResponse) {
+        option (google.api.http) = {
+            get: "/cloud/namespaces/{namespace}/export-sinks/{name}"
+        };
+    }
+
+    // Get export sinks
+    rpc GetNamespaceExportSinks(GetNamespaceExportSinksRequest) returns (GetNamespaceExportSinksResponse) {
+        option (google.api.http) = {
+            get: "/cloud/namespaces/{namespace}/export-sinks"
+        };
+    }
+
+    // Update an export sink
+    rpc UpdateNamespaceExportSink(UpdateNamespaceExportSinkRequest) returns (UpdateNamespaceExportSinkResponse) {
+        option (google.api.http) = {
+            post: "/cloud/namespaces/{namespace}/export-sinks/{spec.name}",
+            body: "*"
+        };
+    }
+
+    // Delete an export sink
+    rpc DeleteNamespaceExportSink(DeleteNamespaceExportSinkRequest) returns (DeleteNamespaceExportSinkResponse) {
+        option (google.api.http) = {
+            delete: "/cloud/namespaces/{namespace}/export-sinks/{name}"
+        };
+    }
+
+    // Validates an export sink configuration by delivering an empty test file to the specified sink.
+    // This operation verifies that the sink is correctly configured, accessible, and ready for data export.
+    rpc ValidateNamespaceExportSink(ValidateNamespaceExportSinkRequest) returns (ValidateNamespaceExportSinkResponse) {
+        option (google.api.http) = {
+            post: "/cloud/namespaces/{namespace}/export-sinks/validate",
+            body: "*"
         };
     }
 }
