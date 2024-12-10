@@ -8,7 +8,7 @@ use std::convert::TryFrom;
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::FailWorkflowExecution,
     temporal::api::{
-        command::v1::Command as ProtoCommand,
+        command::v1::command,
         enums::v1::{CommandType, EventType},
     },
 };
@@ -27,7 +27,7 @@ fsm! {
 
 #[derive(Debug, derive_more::Display)]
 pub(super) enum FailWFCommand {
-    AddCommand(ProtoCommand),
+    AddCommand(command::Attributes),
 }
 
 /// Fail a workflow
@@ -41,7 +41,7 @@ pub(super) fn fail_workflow(attribs: FailWorkflowExecution) -> NewMachineWithCom
 
 impl FailWorkflowMachine {
     /// Create a new WF machine and schedule it
-    pub(crate) fn new_scheduled(attribs: FailWorkflowExecution) -> (Self, ProtoCommand) {
+    pub(crate) fn new_scheduled(attribs: FailWorkflowExecution) -> (Self, command::Attributes) {
         let mut s = Self::from_parts(Created { attribs }.into(), ());
         let cmd = match OnEventWrapper::on_event_mut(&mut s, FailWorkflowMachineEvents::Schedule)
             .expect("Scheduling fail wf machines doesn't fail")
@@ -61,12 +61,7 @@ pub(super) struct Created {
 
 impl Created {
     pub(super) fn on_schedule(self) -> FailWorkflowMachineTransition<FailWorkflowCommandCreated> {
-        let cmd = ProtoCommand {
-            command_type: CommandType::FailWorkflowExecution as i32,
-            attributes: Some(self.attribs.into()),
-            user_metadata: Default::default(),
-        };
-        TransitionResult::commands(vec![FailWFCommand::AddCommand(cmd)])
+        TransitionResult::commands(vec![FailWFCommand::AddCommand(self.attribs.into())])
     }
 }
 

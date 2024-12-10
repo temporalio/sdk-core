@@ -15,7 +15,7 @@ use temporal_sdk_core_protos::{
         IntoPayloadsExt,
     },
     temporal::api::{
-        command::v1::{command, Command, SignalExternalWorkflowExecutionCommandAttributes},
+        command::v1::{command, SignalExternalWorkflowExecutionCommandAttributes},
         common::v1::WorkflowExecution as UpstreamWE,
         enums::v1::{CommandType, EventType, SignalExternalWorkflowExecutionFailedCause},
         failure::v1::{failure::FailureInfo, ApplicationFailureInfo, CanceledFailureInfo, Failure},
@@ -109,13 +109,8 @@ pub(super) fn new_external_signal(
             child_workflow_only: only_child,
         },
     );
-    let cmd = Command {
-        command_type: CommandType::SignalExternalWorkflowExecution as i32,
-        attributes: Some(cmd_attrs),
-        user_metadata: Default::default(),
-    };
     Ok(NewMachineWithCommand {
-        command: cmd,
+        command: cmd_attrs,
         machine: s.into(),
     })
 }
@@ -305,6 +300,7 @@ mod tests {
     use temporal_sdk::{CancellableFuture, SignalWorkflowOptions, WfContext, WorkflowResult};
     use temporal_sdk_core_protos::{
         coresdk::workflow_activation::{workflow_activation_job, WorkflowActivationJob},
+        temporal::api::command::v1::Command,
         DEFAULT_WORKFLOW_TYPE,
     };
     use temporal_sdk_core_test_utils::interceptors::ActivationAssertionsInterceptor;

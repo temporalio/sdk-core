@@ -13,7 +13,7 @@ use rustfsm::{fsm, StateMachine, TransitionResult};
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::UpsertWorkflowSearchAttributes,
     temporal::api::{
-        command::v1::{command, Command, UpsertWorkflowSearchAttributesCommandAttributes},
+        command::v1::{command, UpsertWorkflowSearchAttributesCommandAttributes},
         common::v1::SearchAttributes,
         enums::v1::CommandType,
         history::v1::history_event,
@@ -77,19 +77,13 @@ pub(super) fn upsert_search_attrs_internal(
 
 fn create_new(sa_map: SearchAttributes) -> NewMachineWithCommand {
     let sm = UpsertSearchAttributesMachine::from_parts(Created {}.into(), SharedState {});
-    let cmd = Command {
-        command_type: CommandType::UpsertWorkflowSearchAttributes as i32,
-        attributes: Some(
-            command::Attributes::UpsertWorkflowSearchAttributesCommandAttributes(
-                UpsertWorkflowSearchAttributesCommandAttributes {
-                    search_attributes: Some(sa_map),
-                },
-            ),
-        ),
-        user_metadata: Default::default(),
-    };
     NewMachineWithCommand {
-        command: cmd,
+        command: command::Attributes::UpsertWorkflowSearchAttributesCommandAttributes(
+            UpsertWorkflowSearchAttributesCommandAttributes {
+                search_attributes: Some(sa_map),
+            },
+        ),
+
         machine: sm.into(),
     }
 }
@@ -207,7 +201,7 @@ mod tests {
             AsJsonPayloadExt,
         },
         temporal::api::{
-            command::v1::command::Attributes,
+            command::v1::{command::Attributes, Command},
             common::v1::Payload,
             enums::v1::EventType,
             history::v1::{HistoryEvent, UpsertWorkflowSearchAttributesEventAttributes},

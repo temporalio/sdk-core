@@ -14,10 +14,9 @@ use temporal_sdk_core_protos::{
         HistoryEventId,
     },
     temporal::api::{
-        command::v1::Command,
+        command::v1::command,
         enums::v1::{CommandType, EventType},
         history::v1::{history_event, TimerFiredEventAttributes},
-        sdk::v1::UserMetadata,
     },
 };
 
@@ -50,7 +49,7 @@ fsm! {
 #[derive(Debug, derive_more::Display)]
 pub(super) enum TimerMachineCommand {
     Complete,
-    IssueCancelCmd(Command),
+    IssueCancelCmd(command::Attributes),
     // We don't issue activations for timer cancellations. Lang SDK is expected to cancel
     // it's own timers when user calls cancel, and they cannot be cancelled by any other
     // means.
@@ -73,21 +72,11 @@ pub(super) fn new_timer(attribs: StartTimer) -> NewMachineWithCommand {
 
 impl TimerMachine {
     /// Create a new timer and immediately schedule it
-    fn new_scheduled(attribs: StartTimer) -> (Self, Command) {
-        let mut attribs = attribs;
-        let user_metadata = attribs.summary.take().map(|x| UserMetadata {
-            summary: Some(x),
-            details: None,
-        });
-        let attribs = attribs;
+    fn new_scheduled(attribs: StartTimer) -> (Self, command::Attributes) {
         let mut s = Self::new(attribs);
         OnEventWrapper::on_event_mut(&mut s, TimerMachineEvents::Schedule)
             .expect("Scheduling timers doesn't fail");
-        let cmd = Command {
-            command_type: CommandType::StartTimer as i32,
-            attributes: Some(s.shared_state().attrs.clone().into()),
-            user_metadata,
-        };
+        let cmd = s.shared_state().attrs.into();
         (s, cmd)
     }
 
@@ -215,13 +204,10 @@ impl StartCommandRecorded {
         self,
         dat: &mut SharedState,
     ) -> TimerMachineTransition<CancelTimerCommandCreated> {
-        let cmd = Command {
-            command_type: CommandType::CancelTimer as i32,
-            attributes: Some(CancelTimer { seq: dat.attrs.seq }.into()),
-            user_metadata: Default::default(),
-        };
         TransitionResult::ok(
-            vec![TimerMachineCommand::IssueCancelCmd(cmd)],
+            vec![TimerMachineCommand::IssueCancelCmd(
+                CancelTimer { seq: dat.attrs.seq }.into(),
+            )],
             CancelTimerCommandCreated::default(),
         )
     }
@@ -239,7 +225,9 @@ impl WFMachinesAdapter for TimerMachine {
                 seq: self.shared_state.attrs.seq,
             }
             .into()],
-            TimerMachineCommand::IssueCancelCmd(c) => vec![MachineResponse::IssueNewCommand(c)],
+            TimerMachineCommand::IssueCancelCmd(c) => {
+                vec![MachineResponse::IssueNewCommand(c.into())]
+            }
         })
     }
 }
@@ -249,7 +237,7 @@ impl Cancellable for TimerMachine {
         Ok(
             match OnEventWrapper::on_event_mut(self, TimerMachineEvents::Cancel)?.pop() {
                 Some(TimerMachineCommand::IssueCancelCmd(cmd)) => {
-                    vec![MachineResponse::IssueNewCommand(cmd)]
+                    vec![MachineResponse::IssueNewCommand(cmd.into())]
                 }
                 None => vec![],
                 x => panic!("Invalid cancel event response {x:?}"),

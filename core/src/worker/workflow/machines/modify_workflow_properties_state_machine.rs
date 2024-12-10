@@ -6,10 +6,7 @@ use crate::worker::workflow::{
 use rustfsm::{fsm, StateMachine, TransitionResult};
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::ModifyWorkflowProperties,
-    temporal::api::{
-        command::v1::Command,
-        enums::v1::{CommandType, EventType},
-    },
+    temporal::api::enums::v1::{CommandType, EventType},
 };
 
 fsm! {
@@ -28,13 +25,8 @@ pub(super) fn modify_workflow_properties(
     lang_cmd: ModifyWorkflowProperties,
 ) -> NewMachineWithCommand {
     let sm = ModifyWorkflowPropertiesMachine::from_parts(Created {}.into(), ());
-    let cmd = Command {
-        command_type: CommandType::ModifyWorkflowProperties as i32,
-        attributes: Some(lang_cmd.into()),
-        user_metadata: Default::default(),
-    };
     NewMachineWithCommand {
-        command: cmd,
+        command: lang_cmd.into(),
         machine: sm.into(),
     }
 }
@@ -119,7 +111,10 @@ mod tests {
     };
     use temporal_sdk::WfContext;
     use temporal_sdk_core_protos::{
-        temporal::api::{command::v1::command, common::v1::Payload},
+        temporal::api::{
+            command::v1::{command, Command},
+            common::v1::Payload,
+        },
         DEFAULT_WORKFLOW_TYPE,
     };
 

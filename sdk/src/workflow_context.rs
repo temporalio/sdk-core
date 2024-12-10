@@ -38,9 +38,13 @@ use temporal_sdk_core_protos::{
             CancelChildWorkflowExecution, ModifyWorkflowProperties,
             RequestCancelExternalWorkflowExecution, SetPatchMarker,
             SignalExternalWorkflowExecution, StartTimer, UpsertWorkflowSearchAttributes,
+            WorkflowCommand,
         },
     },
-    temporal::api::common::v1::{Memo, Payload, SearchAttributes},
+    temporal::api::{
+        common::v1::{Memo, Payload, SearchAttributes},
+        sdk::v1::UserMetadata,
+    },
 };
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -152,16 +156,23 @@ impl WfContext {
         let (cmd, unblocker) = CancellableWFCommandFut::new(CancellableID::Timer(seq));
         self.send(
             CommandCreateRequest {
-                cmd: StartTimer {
-                    seq,
-                    start_to_fire_timeout: Some(
-                        opts.duration
-                            .try_into()
-                            .expect("Durations must fit into 64 bits"),
+                cmd: WorkflowCommand {
+                    variant: Some(
+                        StartTimer {
+                            seq,
+                            start_to_fire_timeout: Some(
+                                opts.duration
+                                    .try_into()
+                                    .expect("Durations must fit into 64 bits"),
+                            ),
+                        }
+                        .into(),
                     ),
-                    summary: opts.summary.map(|x| x.as_bytes().into()),
-                }
-                .into(),
+                    user_metadata: Some(UserMetadata {
+                        summary: opts.summary.map(|x| x.as_bytes().into()),
+                        details: None,
+                    }),
+                },
                 unblocker,
             }
             .into(),
@@ -181,7 +192,7 @@ impl WfContext {
         let (cmd, unblocker) = CancellableWFCommandFut::new(CancellableID::Activity(seq));
         self.send(
             CommandCreateRequest {
-                cmd: opts.into_command(seq).into(),
+                cmd: opts.into_command(seq),
                 unblocker,
             }
             .into(),
@@ -206,7 +217,7 @@ impl WfContext {
         let (cmd, unblocker) = CancellableWFCommandFut::new(CancellableID::LocalActivity(seq));
         self.send(
             CommandCreateRequest {
-                cmd: opts.into_command(seq).into(),
+                cmd: opts.into_command(seq),
                 unblocker,
             }
             .into(),
@@ -314,11 +325,16 @@ impl WfContext {
         let (cmd, unblocker) = WFCommandFut::new();
         self.send(
             CommandCreateRequest {
-                cmd: RequestCancelExternalWorkflowExecution {
-                    seq,
-                    workflow_execution: Some(target),
-                }
-                .into(),
+                cmd: WorkflowCommand {
+                    variant: Some(
+                        RequestCancelExternalWorkflowExecution {
+                            seq,
+                            workflow_execution: Some(target),
+                        }
+                        .into(),
+                    ),
+                    user_metadata: None,
+                },
                 unblocker,
             }
             .into(),
@@ -359,14 +375,19 @@ impl WfContext {
             CancellableWFCommandFut::new(CancellableID::SignalExternalWorkflow(seq));
         self.send(
             CommandCreateRequest {
-                cmd: SignalExternalWorkflowExecution {
-                    seq,
-                    signal_name: signal.signal_name,
-                    args: signal.data.input,
-                    target: Some(target),
-                    headers: signal.data.headers,
-                }
-                .into(),
+                cmd: WorkflowCommand {
+                    variant: Some(
+                        SignalExternalWorkflowExecution {
+                            seq,
+                            signal_name: signal.signal_name,
+                            args: signal.data.input,
+                            target: Some(target),
+                            headers: signal.data.headers,
+                        }
+                        .into(),
+                    ),
+                    user_metadata: None,
+                },
                 unblocker,
             }
             .into(),
@@ -578,8 +599,8 @@ impl<'a> LATimerBackoffFut<'a> {
         }
     }
 }
-impl<'a> Unpin for LATimerBackoffFut<'a> {}
-impl<'a> Future for LATimerBackoffFut<'a> {
+impl Unpin for LATimerBackoffFut<'_> {}
+impl Future for LATimerBackoffFut<'_> {
     type Output = ActivityResolution;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -634,7 +655,7 @@ impl<'a> Future for LATimerBackoffFut<'a> {
         poll_res
     }
 }
-impl<'a> CancellableFuture<ActivityResolution> for LATimerBackoffFut<'a> {
+impl CancellableFuture<ActivityResolution> for LATimerBackoffFut<'_> {
     fn cancel(&self, ctx: &WfContext) {
         self.did_cancel.store(true, Ordering::Release);
         if let Some(tf) = self.timer_fut.as_ref() {
@@ -716,7 +737,7 @@ impl ChildWorkflow {
             CancellableWFCommandFut::new_with_dat(CancellableID::ChildWorkflow(child_seq), common);
         cx.send(
             CommandCreateRequest {
-                cmd: self.opts.into_command(child_seq).into(),
+                cmd: self.opts.into_command(child_seq),
                 unblocker,
             }
             .into(),

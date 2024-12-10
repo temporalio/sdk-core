@@ -11,7 +11,7 @@ use temporal_sdk_core_protos::{
         workflow_activation::ResolveRequestCancelExternalWorkflow,
     },
     temporal::api::{
-        command::v1::{command, Command, RequestCancelExternalWorkflowExecutionCommandAttributes},
+        command::v1::{command, RequestCancelExternalWorkflowExecutionCommandAttributes},
         enums::v1::{CancelExternalWorkflowExecutionFailedCause, CommandType, EventType},
         failure::v1::{failure::FailureInfo, ApplicationFailureInfo, Failure},
         history::v1::history_event,
@@ -75,13 +75,8 @@ pub(super) fn new_external_cancel(
             reason,
         },
     );
-    let cmd = Command {
-        command_type: CommandType::RequestCancelExternalWorkflowExecution as i32,
-        attributes: Some(cmd_attrs),
-        user_metadata: Default::default(),
-    };
     NewMachineWithCommand {
-        command: cmd,
+        command: cmd_attrs,
         machine: s.into(),
     }
 }

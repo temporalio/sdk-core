@@ -42,7 +42,6 @@ use std::{
     fmt::{Debug, Display},
 };
 use temporal_sdk_core_protos::temporal::api::{
-    command::v1::Command as ProtoCommand,
     enums::v1::{CommandType, EventType},
     history::v1::HistoryEvent,
 };
@@ -310,7 +309,7 @@ where
 }
 
 struct NewMachineWithCommand {
-    command: ProtoCommand,
+    command: temporal_sdk_core_protos::temporal::api::command::v1::command::Attributes,
     machine: Machines,
 }
 

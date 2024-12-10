@@ -189,7 +189,7 @@ struct UseCtx<'a, SK: SlotKind> {
     permit: &'a SlotSupplierPermit,
 }
 
-impl<'a, SK: SlotKind> SlotMarkUsedContext for UseCtx<'a, SK> {
+impl<SK: SlotKind> SlotMarkUsedContext for UseCtx<'_, SK> {
     type SlotKind = SK;
 
     fn permit(&self) -> &SlotSupplierPermit {

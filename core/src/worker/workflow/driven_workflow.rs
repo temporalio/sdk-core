@@ -1,6 +1,6 @@
 use crate::{
     telemetry::VecDisplayer,
-    worker::workflow::{OutgoingJob, WFCommand, WorkflowStartedInfo},
+    worker::workflow::{OutgoingJob, WFCommand, WFCommandVariant, WorkflowStartedInfo},
 };
 use prost_types::Timestamp;
 use std::{
@@ -86,7 +86,12 @@ impl DrivenWorkflow {
     /// from a buffer that the language side sinks into when it calls [crate::Core::complete_task]
     pub(super) fn fetch_workflow_iteration_output(&mut self) -> Vec<WFCommand> {
         let in_cmds = self.incoming_commands.try_recv();
-        let in_cmds = in_cmds.unwrap_or_else(|_| vec![WFCommand::NoCommandsFromLang]);
+        let in_cmds = in_cmds.unwrap_or_else(|_| {
+            vec![WFCommand {
+                variant: WFCommandVariant::NoCommandsFromLang,
+                metadata: None,
+            }]
+        });
         debug!(in_cmds = %in_cmds.display(), "wf bridge iteration fetch");
         in_cmds
     }

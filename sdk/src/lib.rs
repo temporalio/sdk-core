@@ -91,7 +91,7 @@ use temporal_sdk_core_protos::{
             resolve_child_workflow_execution_start::Status as ChildWorkflowStartStatus,
             workflow_activation_job::Variant, WorkflowActivation,
         },
-        workflow_commands::{workflow_command, ContinueAsNewWorkflowExecution},
+        workflow_commands::{workflow_command, ContinueAsNewWorkflowExecution, WorkflowCommand},
         workflow_completion::WorkflowActivationCompletion,
         ActivityTaskCompletion, AsJsonPayloadExt, FromJsonPayloadExt,
     },
@@ -381,6 +381,7 @@ impl Worker {
 }
 
 impl WorkflowHalf {
+    #[allow(clippy::type_complexity)]
     fn workflow_activation_handler(
         &self,
         common: &CommonWorker,
@@ -747,7 +748,7 @@ enum RustWfCmd {
 }
 
 struct CommandCreateRequest {
-    cmd: workflow_command::Variant,
+    cmd: WorkflowCommand,
     unblocker: oneshot::Sender<UnblockEvent>,
 }
 

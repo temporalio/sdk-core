@@ -1026,6 +1026,7 @@ macro_rules! advance_fut {
     };
 }
 
+/// Helps easily construct prost proto durations from stdlib duration constructors
 #[macro_export]
 macro_rules! prost_dur {
     ($dur_call:ident $args:tt) => {

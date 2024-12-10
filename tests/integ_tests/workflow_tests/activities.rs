@@ -360,7 +360,6 @@ async fn activity_cancellation_try_cancel() {
             StartTimer {
                 seq: 1,
                 start_to_fire_timeout: Some(prost_dur!(from_millis(50))),
-                summary: None,
             }
             .into(),
         ]
@@ -418,7 +417,6 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
             StartTimer {
                 seq: 1,
                 start_to_fire_timeout: Some(prost_dur!(from_millis(50))),
-                summary: None,
             }
             .into(),
         ]
@@ -463,7 +461,6 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
         vec![StartTimer {
             seq: 2,
             start_to_fire_timeout: Some(prost_dur!(from_millis(100))),
-            summary: None,
         }
         .into()],
     ))
@@ -562,7 +559,6 @@ async fn activity_cancellation_wait_cancellation_completed() {
             StartTimer {
                 seq: 1,
                 start_to_fire_timeout: Some(prost_dur!(from_millis(50))),
-                summary: None,
             }
             .into(),
         ]
@@ -625,7 +621,6 @@ async fn activity_cancellation_abandon() {
             StartTimer {
                 seq: 1,
                 start_to_fire_timeout: Some(prost_dur!(from_millis(50))),
-                summary: None,
             }
             .into(),
         ]
