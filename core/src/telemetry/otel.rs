@@ -10,7 +10,7 @@ use super::{
 };
 use crate::{abstractions::dbg_panic, telemetry::metrics::DEFAULT_S_BUCKETS};
 use opentelemetry::{
-    self,
+    self, global,
     metrics::{Meter, MeterProvider as MeterProviderT},
     Key, KeyValue, Value,
 };
@@ -160,6 +160,9 @@ impl<U> MemoryGauge<U> {
 pub fn build_otlp_metric_exporter(
     opts: OtelCollectorOptions,
 ) -> Result<CoreOtelMeter, anyhow::Error> {
+    global::set_error_handler(|err| {
+        tracing::error!("{}", err);
+    })?;
     let mut exporter =
         opentelemetry_otlp::TonicExporterBuilder::default().with_endpoint(opts.url.to_string());
     if opts.url.scheme() == "https" || opts.url.scheme() == "grpcs" {
