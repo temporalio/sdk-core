@@ -959,16 +959,16 @@ pub mod coresdk {
 
     impl From<workflow_command::Variant> for WorkflowCommand {
         fn from(v: workflow_command::Variant) -> Self {
-            Self { variant: Some(v) }
+            Self {
+                variant: Some(v),
+                user_metadata: None,
+            }
         }
     }
 
     impl workflow_completion::Success {
         pub fn from_variants(cmds: Vec<Variant>) -> Self {
-            let cmds: Vec<_> = cmds
-                .into_iter()
-                .map(|c| WorkflowCommand { variant: Some(c) })
-                .collect();
+            let cmds: Vec<_> = cmds.into_iter().map(|c| c.into()).collect();
             cmds.into()
         }
     }
@@ -983,7 +983,7 @@ pub mod coresdk {
             }
         }
 
-        /// Create a successful activation from a list of commands
+        /// Create a successful activation from a list of command variants
         pub fn from_cmds(run_id: impl Into<String>, cmds: Vec<workflow_command::Variant>) -> Self {
             let success = workflow_completion::Success::from_variants(cmds);
             Self {
@@ -992,7 +992,7 @@ pub mod coresdk {
             }
         }
 
-        /// Create a successful activation from just one command
+        /// Create a successful activation from just one command variant
         pub fn from_cmd(run_id: impl Into<String>, cmd: workflow_command::Variant) -> Self {
             let success = workflow_completion::Success::from_variants(vec![cmd]);
             Self {
@@ -1034,6 +1034,7 @@ pub mod coresdk {
                         wfc,
                         WorkflowCommand {
                             variant: Some(workflow_command::Variant::FailWorkflowExecution(_)),
+                            ..
                         }
                     )
                 });
@@ -1049,6 +1050,7 @@ pub mod coresdk {
                         wfc,
                         WorkflowCommand {
                             variant: Some(workflow_command::Variant::CancelWorkflowExecution(_)),
+                            ..
                         }
                     )
                 });
@@ -1066,6 +1068,7 @@ pub mod coresdk {
                             variant: Some(
                                 workflow_command::Variant::ContinueAsNewWorkflowExecution(_)
                             ),
+                            ..
                         }
                     )
                 });
@@ -1081,7 +1084,8 @@ pub mod coresdk {
                         wfc,
                         WorkflowCommand {
                             variant: Some(workflow_command::Variant::CompleteWorkflowExecution(_)),
-                        }
+                            ..
+                        },
                     )
                 });
             }
@@ -1569,6 +1573,70 @@ pub mod temporal {
                         let ct = CommandType::try_from(self.command_type)
                             .unwrap_or(CommandType::Unspecified);
                         write!(f, "{:?}", ct)
+                    }
+                }
+
+                pub trait CommandAttributesExt {
+                    fn as_type(&self) -> CommandType;
+                }
+
+                impl CommandAttributesExt for command::Attributes {
+                    fn as_type(&self) -> CommandType {
+                        match self {
+                            Attributes::ScheduleActivityTaskCommandAttributes(_) => {
+                                CommandType::ScheduleActivityTask
+                            }
+                            Attributes::StartTimerCommandAttributes(_) => CommandType::StartTimer,
+                            Attributes::CompleteWorkflowExecutionCommandAttributes(_) => {
+                                CommandType::CompleteWorkflowExecution
+                            }
+                            Attributes::FailWorkflowExecutionCommandAttributes(_) => {
+                                CommandType::FailWorkflowExecution
+                            }
+                            Attributes::RequestCancelActivityTaskCommandAttributes(_) => {
+                                CommandType::RequestCancelActivityTask
+                            }
+                            Attributes::CancelTimerCommandAttributes(_) => CommandType::CancelTimer,
+                            Attributes::CancelWorkflowExecutionCommandAttributes(_) => {
+                                CommandType::CancelWorkflowExecution
+                            }
+                            Attributes::RequestCancelExternalWorkflowExecutionCommandAttributes(
+                                _,
+                            ) => CommandType::RequestCancelExternalWorkflowExecution,
+                            Attributes::RecordMarkerCommandAttributes(_) => {
+                                CommandType::RecordMarker
+                            }
+                            Attributes::ContinueAsNewWorkflowExecutionCommandAttributes(_) => {
+                                CommandType::ContinueAsNewWorkflowExecution
+                            }
+                            Attributes::StartChildWorkflowExecutionCommandAttributes(_) => {
+                                CommandType::StartChildWorkflowExecution
+                            }
+                            Attributes::SignalExternalWorkflowExecutionCommandAttributes(_) => {
+                                CommandType::SignalExternalWorkflowExecution
+                            }
+                            Attributes::UpsertWorkflowSearchAttributesCommandAttributes(_) => {
+                                CommandType::UpsertWorkflowSearchAttributes
+                            }
+                            Attributes::ProtocolMessageCommandAttributes(_) => {
+                                CommandType::ProtocolMessage
+                            }
+                            Attributes::ModifyWorkflowPropertiesCommandAttributes(_) => {
+                                CommandType::ModifyWorkflowProperties
+                            }
+                            Attributes::ScheduleNexusOperationCommandAttributes(_) => {
+                                CommandType::ScheduleNexusOperation
+                            }
+                            Attributes::RequestCancelNexusOperationCommandAttributes(_) => {
+                                CommandType::RequestCancelNexusOperation
+                            }
+                        }
+                    }
+                }
+
+                impl Display for command::Attributes {
+                    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                        write!(f, "{:?}", self.as_type())
                     }
                 }
 

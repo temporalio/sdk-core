@@ -32,7 +32,8 @@ use crate::{
                 HistEventData,
             },
             CommandID, DrivenWorkflow, HistoryUpdate, InternalFlagsRef, LocalResolution,
-            OutgoingJob, RunBasics, WFCommand, WFMachinesError, WorkflowStartedInfo,
+            OutgoingJob, RunBasics, WFCommand, WFCommandVariant, WFMachinesError,
+            WorkflowStartedInfo,
         },
         ExecutingLAId, LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
     },
@@ -61,11 +62,13 @@ use temporal_sdk_core_protos::{
         workflow_commands::ContinueAsNewWorkflowExecution,
     },
     temporal::api::{
-        command::v1::{command::Attributes as ProtoCmdAttrs, Command as ProtoCommand},
+        command::v1::{
+            command::Attributes as ProtoCmdAttrs, Command as ProtoCommand, CommandAttributesExt,
+        },
         enums::v1::EventType,
         history::v1::{history_event, HistoryEvent},
         protocol::v1::{message::SequencingId, Message as ProtocolMessage},
-        sdk::v1::WorkflowTaskCompletedMetadata,
+        sdk::v1::{UserMetadata, WorkflowTaskCompletedMetadata},
     },
 };
 
@@ -1156,6 +1159,7 @@ impl WorkflowMachines {
                         };
                         self.add_cmd_to_wf_task(
                             new_external_cancel(0, we, attrs.child_workflow_only, attrs.reason),
+                            None,
                             CommandIdKind::CoreInternal,
                         );
                     }
@@ -1165,6 +1169,7 @@ impl WorkflowMachines {
                         // workflows by users (but rather, just for them to search with).
                         self.add_cmd_to_wf_task(
                             upsert_search_attrs_internal(attrs),
+                            None,
                             CommandIdKind::NeverResolves,
                         );
                     }
@@ -1267,12 +1272,16 @@ impl WorkflowMachines {
     /// server.
     fn handle_driven_results(&mut self, results: Vec<WFCommand>) -> Result<()> {
         for cmd in results {
-            match cmd {
-                WFCommand::AddTimer(attrs) => {
+            match cmd.variant {
+                WFCommandVariant::AddTimer(attrs) => {
                     let seq = attrs.seq;
-                    self.add_cmd_to_wf_task(new_timer(attrs), CommandID::Timer(seq).into());
+                    self.add_cmd_to_wf_task(
+                        new_timer(attrs),
+                        cmd.metadata,
+                        CommandID::Timer(seq).into(),
+                    );
                 }
-                WFCommand::UpsertSearchAttributes(attrs) => {
+                WFCommandVariant::UpsertSearchAttributes(attrs) => {
                     self.drive_me
                         .search_attributes_update(attrs.search_attributes.clone());
                     self.add_cmd_to_wf_task(
@@ -1281,13 +1290,14 @@ impl WorkflowMachines {
                             self.observed_internal_flags.clone(),
                             self.replaying,
                         ),
+                        cmd.metadata,
                         CommandIdKind::NeverResolves,
                     );
                 }
-                WFCommand::CancelTimer(attrs) => {
+                WFCommandVariant::CancelTimer(attrs) => {
                     self.process_cancellation(CommandID::Timer(attrs.seq))?;
                 }
-                WFCommand::AddActivity(attrs) => {
+                WFCommandVariant::AddActivity(attrs) => {
                     let seq = attrs.seq;
                     let use_compat = self.determine_use_compatible_flag(
                         attrs.versioning_intent(),
@@ -1299,10 +1309,11 @@ impl WorkflowMachines {
                             self.observed_internal_flags.clone(),
                             use_compat,
                         ),
+                        cmd.metadata,
                         CommandID::Activity(seq).into(),
                     );
                 }
-                WFCommand::AddLocalActivity(attrs) => {
+                WFCommandVariant::AddLocalActivity(attrs) => {
                     let seq = attrs.seq;
                     let attrs: ValidScheduleLA =
                         ValidScheduleLA::from_schedule_la(attrs).map_err(|e| {
@@ -1322,30 +1333,30 @@ impl WorkflowMachines {
                         .insert(CommandID::LocalActivity(seq), machkey);
                     self.process_machine_responses(machkey, mach_resp)?;
                 }
-                WFCommand::RequestCancelActivity(attrs) => {
+                WFCommandVariant::RequestCancelActivity(attrs) => {
                     self.process_cancellation(CommandID::Activity(attrs.seq))?;
                 }
-                WFCommand::RequestCancelLocalActivity(attrs) => {
+                WFCommandVariant::RequestCancelLocalActivity(attrs) => {
                     self.process_cancellation(CommandID::LocalActivity(attrs.seq))?;
                 }
-                WFCommand::CompleteWorkflow(attrs) => {
-                    self.add_terminal_command(complete_workflow(attrs));
+                WFCommandVariant::CompleteWorkflow(attrs) => {
+                    self.add_terminal_command(complete_workflow(attrs), cmd.metadata);
                 }
-                WFCommand::FailWorkflow(attrs) => {
-                    self.add_terminal_command(fail_workflow(attrs));
+                WFCommandVariant::FailWorkflow(attrs) => {
+                    self.add_terminal_command(fail_workflow(attrs), cmd.metadata);
                 }
-                WFCommand::ContinueAsNew(attrs) => {
+                WFCommandVariant::ContinueAsNew(attrs) => {
                     let attrs = self.augment_continue_as_new_with_current_values(attrs);
                     let use_compat = self.determine_use_compatible_flag(
                         attrs.versioning_intent(),
                         &attrs.task_queue,
                     );
-                    self.add_terminal_command(continue_as_new(attrs, use_compat));
+                    self.add_terminal_command(continue_as_new(attrs, use_compat), cmd.metadata);
                 }
-                WFCommand::CancelWorkflow(attrs) => {
-                    self.add_terminal_command(cancel_workflow(attrs));
+                WFCommandVariant::CancelWorkflow(attrs) => {
+                    self.add_terminal_command(cancel_workflow(attrs), cmd.metadata);
                 }
-                WFCommand::SetPatchMarker(attrs) => {
+                WFCommandVariant::SetPatchMarker(attrs) => {
                     // Do not create commands for change IDs that we have already created commands
                     // for.
                     let encountered_entry = self.encountered_patch_markers.get(&attrs.patch_id);
@@ -1360,8 +1371,11 @@ impl WorkflowMachines {
                             self.encountered_patch_markers.keys().map(|s| s.as_str()),
                             self.observed_internal_flags.clone(),
                         )?;
-                        let mkey =
-                            self.add_cmd_to_wf_task(patch_machine, CommandIdKind::NeverResolves);
+                        let mkey = self.add_cmd_to_wf_task(
+                            patch_machine,
+                            cmd.metadata,
+                            CommandIdKind::NeverResolves,
+                        );
                         self.process_machine_responses(mkey, other_cmds)?;
 
                         if let Some(ci) = self.encountered_patch_markers.get_mut(&attrs.patch_id) {
@@ -1376,7 +1390,7 @@ impl WorkflowMachines {
                         }
                     }
                 }
-                WFCommand::AddChildWorkflow(attrs) => {
+                WFCommandVariant::AddChildWorkflow(attrs) => {
                     let seq = attrs.seq;
                     let use_compat = self.determine_use_compatible_flag(
                         attrs.versioning_intent(),
@@ -1388,13 +1402,14 @@ impl WorkflowMachines {
                             self.observed_internal_flags.clone(),
                             use_compat,
                         ),
+                        cmd.metadata,
                         CommandID::ChildWorkflowStart(seq).into(),
                     );
                 }
-                WFCommand::CancelChild(attrs) => self.process_cancellation(
+                WFCommandVariant::CancelChild(attrs) => self.process_cancellation(
                     CommandID::ChildWorkflowStart(attrs.child_workflow_seq),
                 )?,
-                WFCommand::RequestCancelExternalWorkflow(attrs) => {
+                WFCommandVariant::RequestCancelExternalWorkflow(attrs) => {
                     let we = attrs.workflow_execution.ok_or_else(|| {
                         WFMachinesError::Fatal(
                             "Cancel external workflow command had no workflow_execution field"
@@ -1408,30 +1423,33 @@ impl WorkflowMachines {
                             false,
                             format!("Cancel requested by workflow with run id {}", self.run_id),
                         ),
+                        cmd.metadata,
                         CommandID::CancelExternal(attrs.seq).into(),
                     );
                 }
-                WFCommand::SignalExternalWorkflow(attrs) => {
+                WFCommandVariant::SignalExternalWorkflow(attrs) => {
                     let seq = attrs.seq;
                     self.add_cmd_to_wf_task(
                         new_external_signal(attrs, &self.worker_config.namespace)?,
+                        cmd.metadata,
                         CommandID::SignalExternal(seq).into(),
                     );
                 }
-                WFCommand::CancelSignalWorkflow(attrs) => {
+                WFCommandVariant::CancelSignalWorkflow(attrs) => {
                     self.process_cancellation(CommandID::SignalExternal(attrs.seq))?;
                 }
-                WFCommand::QueryResponse(_) => {
+                WFCommandVariant::QueryResponse(_) => {
                     // Nothing to do here, queries are handled above the machine level
                     unimplemented!("Query responses should not make it down into the machines")
                 }
-                WFCommand::ModifyWorkflowProperties(attrs) => {
+                WFCommandVariant::ModifyWorkflowProperties(attrs) => {
                     self.add_cmd_to_wf_task(
                         modify_workflow_properties(attrs),
+                        cmd.metadata,
                         CommandIdKind::NeverResolves,
                     );
                 }
-                WFCommand::UpdateResponse(ur) => {
+                WFCommandVariant::UpdateResponse(ur) => {
                     let m_key = self.get_machine_by_msg(&ur.protocol_instance_id)?;
                     let mach = self.machine_mut(m_key);
                     if let Machines::UpdateMachine(m) = mach {
@@ -1445,7 +1463,7 @@ impl WorkflowMachines {
                         )));
                     }
                 }
-                WFCommand::NoCommandsFromLang => (),
+                WFCommandVariant::NoCommandsFromLang => (),
             }
         }
         Ok(())
@@ -1479,8 +1497,12 @@ impl WorkflowMachines {
             })?)
     }
 
-    fn add_terminal_command(&mut self, machine: NewMachineWithCommand) {
-        let cwfm = self.add_new_command_machine(machine);
+    fn add_terminal_command(
+        &mut self,
+        machine: NewMachineWithCommand,
+        metadata: Option<UserMetadata>,
+    ) {
+        let cwfm = self.add_new_command_machine(machine, metadata);
         self.workflow_end_time = Some(SystemTime::now());
         self.current_wf_task_commands.push_back(cwfm);
         // Wipe out any pending / executing local activity data since we're about to terminate
@@ -1492,9 +1514,10 @@ impl WorkflowMachines {
     fn add_cmd_to_wf_task(
         &mut self,
         machine: NewMachineWithCommand,
+        metadata: Option<UserMetadata>,
         id: CommandIdKind,
     ) -> MachineKey {
-        let mach = self.add_new_command_machine(machine);
+        let mach = self.add_new_command_machine(machine, metadata);
         let key = mach.machine;
         if let CommandIdKind::LangIssued(id) = id {
             self.id_to_machine.insert(id, key);
@@ -1506,10 +1529,19 @@ impl WorkflowMachines {
         key
     }
 
-    fn add_new_command_machine(&mut self, machine: NewMachineWithCommand) -> CommandAndMachine {
+    fn add_new_command_machine(
+        &mut self,
+        machine: NewMachineWithCommand,
+        metadata: Option<UserMetadata>,
+    ) -> CommandAndMachine {
         let k = self.all_machines.insert(machine.machine);
+        let cmd = ProtoCommand {
+            command_type: machine.command.as_type() as i32,
+            attributes: Some(machine.command),
+            user_metadata: metadata,
+        };
         CommandAndMachine {
-            command: MachineAssociatedCommand::Real(Box::new(machine.command)),
+            command: MachineAssociatedCommand::Real(Box::new(cmd)),
             machine: k,
         }
     }
