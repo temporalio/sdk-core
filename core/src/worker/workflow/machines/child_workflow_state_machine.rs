@@ -27,7 +27,7 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::{
         command::v1::{
-            start_child_workflow_cmd_to_api, Command,
+            start_child_workflow_cmd_to_api,
             RequestCancelExternalWorkflowExecutionCommandAttributes,
         },
         common::v1::{Payload, Payloads, WorkflowExecution, WorkflowType},
@@ -41,7 +41,6 @@ use temporal_sdk_core_protos::{
             ChildWorkflowExecutionStartedEventAttributes,
             StartChildWorkflowExecutionFailedEventAttributes,
         },
-        sdk::v1::UserMetadata,
     },
 };
 
@@ -450,29 +449,10 @@ impl ChildWorkflowMachine {
                 cancelled_before_sent: false,
             },
         );
-        let mut attribs = attribs;
-        let user_metadata = if attribs.static_summary.is_some() || attribs.static_details.is_some()
-        {
-            Some(UserMetadata {
-                summary: attribs.static_summary.take(),
-                details: attribs.static_details.take(),
-            })
-        } else {
-            None
-        };
-        let attribs = attribs;
         OnEventWrapper::on_event_mut(&mut s, ChildWorkflowMachineEvents::Schedule)
             .expect("Scheduling child workflows doesn't fail");
-        let cmd = Command {
-            command_type: CommandType::StartChildWorkflowExecution as i32,
-            attributes: Some(start_child_workflow_cmd_to_api(
-                attribs,
-                use_compatible_version,
-            )),
-            user_metadata,
-        };
         NewMachineWithCommand {
-            command: cmd,
+            command: start_child_workflow_cmd_to_api(attribs, use_compatible_version),
             machine: s.into(),
         }
     }

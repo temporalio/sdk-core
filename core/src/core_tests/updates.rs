@@ -291,7 +291,6 @@ async fn replay_with_signal_and_update_same_task() {
             StartTimer {
                 seq: 1,
                 start_to_fire_timeout: Some(prost_dur!(from_secs(1))),
-                summary: None,
             }
             .into(),
             UpdateResponse {
