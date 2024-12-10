@@ -71,6 +71,9 @@ pub struct OtelCollectorOptions {
     /// Overrides for histogram buckets. Units depend on the value of `use_seconds_for_durations`.
     #[builder(default)]
     pub histogram_bucket_overrides: HistogramBucketOverrides,
+    /// Protocol to use for communication with the collector
+    #[builder(default = "OtlpProtocl::Grpc")]
+    pub protocol: OtlpProtocl,
 }
 
 /// Options for exporting metrics to Prometheus
@@ -141,6 +144,15 @@ pub enum MetricTemporality {
     Cumulative,
     /// Successive data points advance the starting timestamp
     Delta,
+}
+
+/// Options for configuring telemetry
+#[derive(Debug, Clone, Copy)]
+pub enum OtlpProtocl {
+    /// Use gRPC to communicate with the collector
+    Grpc,
+    /// Use HTTP to communicate with the collector
+    Http,
 }
 
 impl Default for TelemetryOptions {

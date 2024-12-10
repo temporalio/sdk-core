@@ -30,7 +30,8 @@ use temporal_sdk_core_api::telemetry::{
         CoreMeter, Counter, Gauge, GaugeF64, Histogram, HistogramDuration, HistogramF64,
         MetricAttributes, MetricParameters, NewAttributes,
     },
-    HistogramBucketOverrides, MetricTemporality, OtelCollectorOptions, PrometheusExporterOptions,
+    HistogramBucketOverrides, MetricTemporality, OtelCollectorOptions, OtlpProtocl,
+    PrometheusExporterOptions,
 };
 use tokio::task::AbortHandle;
 use tonic::{metadata::MetadataMap, transport::ClientTlsConfig};
@@ -120,16 +121,26 @@ pub(super) fn augment_meter_provider_with_defaults(
 pub fn build_otlp_metric_exporter(
     opts: OtelCollectorOptions,
 ) -> Result<CoreOtelMeter, anyhow::Error> {
-    let mut exporter =
-        opentelemetry_otlp::TonicExporterBuilder::default().with_endpoint(opts.url.to_string());
-    if opts.url.scheme() == "https" || opts.url.scheme() == "grpcs" {
-        exporter = exporter.with_tls_config(ClientTlsConfig::new().with_native_roots());
-    }
-    let exporter = exporter
-        .with_metadata(MetadataMap::from_headers((&opts.headers).try_into()?))
-        .build_metrics_exporter(Box::new(metric_temporality_to_selector(
-            opts.metric_temporality,
-        )))?;
+    let exporter = match opts.protocol {
+        OtlpProtocl::Grpc => {
+            let mut exporter = opentelemetry_otlp::TonicExporterBuilder::default()
+                .with_endpoint(opts.url.to_string());
+            if opts.url.scheme() == "https" || opts.url.scheme() == "grpcs" {
+                exporter = exporter.with_tls_config(ClientTlsConfig::new().with_native_roots());
+            }
+            exporter
+                .with_metadata(MetadataMap::from_headers((&opts.headers).try_into()?))
+                .build_metrics_exporter(Box::new(metric_temporality_to_selector(
+                    opts.metric_temporality,
+                )))?
+        }
+        OtlpProtocl::Http => opentelemetry_otlp::HttpExporterBuilder::default()
+            .with_endpoint(opts.url.to_string())
+            .with_headers(opts.headers)
+            .build_metrics_exporter(Box::new(metric_temporality_to_selector(
+                opts.metric_temporality,
+            )))?,
+    };
     let reader = PeriodicReader::builder(exporter, runtime::Tokio)
         .with_interval(opts.metric_periodicity)
         .build();
