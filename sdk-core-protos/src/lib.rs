@@ -1725,6 +1725,11 @@ pub mod temporal {
             }
         }
         pub mod cloud {
+            pub mod account {
+                pub mod v1 {
+                    tonic::include_proto!("temporal.api.cloud.account.v1");
+                }
+            }
             pub mod cloudservice {
                 pub mod v1 {
                     tonic::include_proto!("temporal.api.cloud.cloudservice.v1");
@@ -1740,6 +1745,11 @@ pub mod temporal {
                     tonic::include_proto!("temporal.api.cloud.namespace.v1");
                 }
             }
+            pub mod nexus {
+                pub mod v1 {
+                    tonic::include_proto!("temporal.api.cloud.nexus.v1");
+                }
+            }
             pub mod operation {
                 pub mod v1 {
                     tonic::include_proto!("temporal.api.cloud.operation.v1");
@@ -1748,6 +1758,21 @@ pub mod temporal {
             pub mod region {
                 pub mod v1 {
                     tonic::include_proto!("temporal.api.cloud.region.v1");
+                }
+            }
+            pub mod resource {
+                pub mod v1 {
+                    tonic::include_proto!("temporal.api.cloud.resource.v1");
+                }
+            }
+            pub mod sink {
+                pub mod v1 {
+                    tonic::include_proto!("temporal.api.cloud.sink.v1");
+                }
+            }
+            pub mod usage {
+                pub mod v1 {
+                    tonic::include_proto!("temporal.api.cloud.usage.v1");
                 }
             }
         }
