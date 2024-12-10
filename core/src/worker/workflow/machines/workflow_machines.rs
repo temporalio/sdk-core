@@ -58,9 +58,7 @@ use temporal_sdk_core_protos::{
         workflow_activation::{
             workflow_activation_job, NotifyHasPatch, UpdateRandomSeed, WorkflowActivation,
         },
-        workflow_commands::{
-            request_cancel_external_workflow_execution as cancel_we, ContinueAsNewWorkflowExecution,
-        },
+        workflow_commands::ContinueAsNewWorkflowExecution,
     },
     temporal::api::{
         command::v1::{command::Attributes as ProtoCmdAttrs, Command as ProtoCommand},
@@ -1397,28 +1395,17 @@ impl WorkflowMachines {
                     CommandID::ChildWorkflowStart(attrs.child_workflow_seq),
                 )?,
                 WFCommand::RequestCancelExternalWorkflow(attrs) => {
-                    let (we, only_child) = match attrs.target {
-                        None => {
-                            return Err(WFMachinesError::Fatal(
-                                "Cancel external workflow command had empty target field"
-                                    .to_string(),
-                            ))
-                        }
-                        Some(cancel_we::Target::ChildWorkflowId(wfid)) => (
-                            NamespacedWorkflowExecution {
-                                namespace: self.worker_config.namespace.clone(),
-                                workflow_id: wfid,
-                                run_id: "".to_string(),
-                            },
-                            true,
-                        ),
-                        Some(cancel_we::Target::WorkflowExecution(we)) => (we, false),
-                    };
+                    let we = attrs.workflow_execution.ok_or_else(|| {
+                        WFMachinesError::Fatal(
+                            "Cancel external workflow command had no workflow_execution field"
+                                .to_string(),
+                        )
+                    })?;
                     self.add_cmd_to_wf_task(
                         new_external_cancel(
                             attrs.seq,
                             we,
-                            only_child,
+                            false,
                             format!("Cancel requested by workflow with run id {}", self.run_id),
                         ),
                         CommandID::CancelExternal(attrs.seq).into(),

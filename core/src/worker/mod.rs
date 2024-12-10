@@ -477,9 +477,12 @@ impl Worker {
                 la_sink,
                 local_act_mgr.clone(),
                 hb_rx,
-                at_task_mgr
-                    .as_ref()
-                    .map(|mgr| mgr.get_handle_for_workflows()),
+                at_task_mgr.as_ref().and_then(|mgr| {
+                    match config.max_task_queue_activities_per_second {
+                        Some(persec) if persec > 0.0 => None,
+                        _ => Some(mgr.get_handle_for_workflows()),
+                    }
+                }),
                 telem_instance,
             ),
             at_task_mgr,
@@ -505,7 +508,12 @@ impl Worker {
         if let Some(name) = self.workflows.get_sticky_queue_name() {
             // This is a best effort call and we can still shutdown the worker if it fails
             match self.client.shutdown_worker(name).await {
-                Err(err) if err.code() != tonic::Code::Unavailable => {
+                Err(err)
+                    if !matches!(
+                        err.code(),
+                        tonic::Code::Unimplemented | tonic::Code::Unavailable
+                    ) =>
+                {
                     warn!("Failed to shutdown sticky queue  {:?}", err);
                 }
                 _ => {}

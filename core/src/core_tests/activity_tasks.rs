@@ -2,9 +2,9 @@ use crate::{
     advance_fut, job_assert, prost_dur,
     test_help::{
         build_fake_worker, build_mock_pollers, canned_histories, gen_assert_and_reply,
-        mock_manual_poller, mock_poller, mock_poller_from_resps, mock_worker, poll_and_reply,
-        single_hist_mock_sg, test_worker_cfg, MockPollCfg, MockWorkerInputs, MocksHolder,
-        QueueResponse, ResponseType, WorkerExt, WorkflowCachingPolicy, TEST_Q,
+        mock_manual_poller, mock_poller, mock_poller_from_resps, mock_sdk_cfg, mock_worker,
+        poll_and_reply, single_hist_mock_sg, test_worker_cfg, MockPollCfg, MockWorkerInputs,
+        MocksHolder, QueueResponse, ResponseType, WorkerExt, WorkflowCachingPolicy, TEST_Q,
     },
     worker::client::mocks::{mock_manual_workflow_client, mock_workflow_client},
     ActivityHeartbeat, Worker,
@@ -45,17 +45,18 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::{
         command::v1::{command::Attributes, ScheduleActivityTaskCommandAttributes},
-        enums::v1::EventType,
+        enums::v1::{CommandType, EventType},
         history::v1::{
             history_event::Attributes as EventAttributes, ActivityTaskScheduledEventAttributes,
         },
+        sdk::v1::UserMetadata,
         workflowservice::v1::{
             PollActivityTaskQueueResponse, RecordActivityTaskHeartbeatResponse,
             RespondActivityTaskCanceledResponse, RespondActivityTaskCompletedResponse,
             RespondActivityTaskFailedResponse, RespondWorkflowTaskCompletedResponse,
         },
     },
-    TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE,
+    TestHistoryBuilder, DEFAULT_ACTIVITY_TYPE, DEFAULT_WORKFLOW_TYPE,
 };
 use temporal_sdk_core_test_utils::{fanout_tasks, start_timer_cmd, TestWorker};
 use tokio::{join, sync::Barrier, time::sleep};
@@ -633,11 +634,11 @@ async fn max_tq_acts_set_passed_to_poll_properly() {
     worker.poll_activity_task().await.unwrap();
 }
 
-/// This test doesn't test the real worker config since [mock_worker] bypasses the worker
-/// constructor, [mock_worker] will not pass an activity poller to the worker when
-/// `no_remote_activities` is set to `true`.
+#[rstest::rstest]
 #[tokio::test]
-async fn no_eager_activities_requested_when_worker_options_disable_remote_activities() {
+async fn no_eager_activities_requested_when_worker_options_disable_it(
+    #[values("no_remote", "throttle")] reason: &'static str,
+) {
     let wfid = "fake_wf_id";
     let mut t = TestHistoryBuilder::default();
     t.add_by_type(EventType::WorkflowExecutionStarted);
@@ -648,7 +649,6 @@ async fn no_eager_activities_requested_when_worker_options_disable_remote_activi
     t.add_full_wf_task();
     t.add_workflow_execution_completed();
     let num_eager_requested = Arc::new(AtomicUsize::new(0));
-    // Clone it to move into the callback below
     let num_eager_requested_clone = num_eager_requested.clone();
 
     let mut mock = mock_workflow_client();
@@ -677,14 +677,13 @@ async fn no_eager_activities_requested_when_worker_options_disable_remote_activi
             })
         });
     let mut mock = single_hist_mock_sg(wfid, t, [1], mock, true);
-    let mut mock_poller = mock_manual_poller();
-    mock_poller
-        .expect_poll()
-        .returning(|| futures_util::future::pending().boxed());
-    mock.set_act_poller(Box::new(mock_poller));
     mock.worker_cfg(|wc| {
         wc.max_cached_workflows = 2;
-        wc.no_remote_activities = true;
+        if reason == "no_remote" {
+            wc.no_remote_activities = true;
+        } else {
+            wc.max_task_queue_activities_per_second = Some(1.0);
+        }
     });
     let core = mock_worker(mock);
 
@@ -1186,4 +1185,55 @@ async fn activities_must_be_flushed_to_server_on_shutdown(#[values(true, false)]
             .unwrap();
     };
     join!(shutdown_task, complete_task);
+}
+
+#[tokio::test]
+async fn pass_activity_summary_to_metadata() {
+    let t = canned_histories::single_activity("1");
+    let mut mock_cfg = MockPollCfg::from_hist_builder(t);
+    let wf_id = mock_cfg.hists[0].wf_id.clone();
+    let wf_type = DEFAULT_WORKFLOW_TYPE;
+    let expected_user_metadata = Some(UserMetadata {
+        summary: Some(b"activity summary".into()),
+        details: None,
+    });
+    mock_cfg.completion_asserts_from_expectations(|mut asserts| {
+        asserts
+            .then(move |wft| {
+                assert_eq!(wft.commands.len(), 1);
+                assert_eq!(
+                    wft.commands[0].command_type(),
+                    CommandType::ScheduleActivityTask
+                );
+                assert_eq!(wft.commands[0].user_metadata, expected_user_metadata)
+            })
+            .then(move |wft| {
+                assert_eq!(wft.commands.len(), 1);
+                assert_eq!(
+                    wft.commands[0].command_type(),
+                    CommandType::CompleteWorkflowExecution
+                );
+            });
+    });
+
+    let mut worker = mock_sdk_cfg(mock_cfg, |_| {});
+    worker.register_wf(wf_type, |ctx: WfContext| async move {
+        ctx.activity(ActivityOptions {
+            activity_type: DEFAULT_ACTIVITY_TYPE.to_string(),
+            summary: Some("activity summary".to_string()),
+            ..Default::default()
+        })
+        .await;
+        Ok(().into())
+    });
+    worker
+        .submit_wf(
+            wf_id.to_owned(),
+            wf_type.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
 }

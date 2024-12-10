@@ -46,6 +46,8 @@ message StartTimer {
     // Lang's incremental sequence number, used as the operation identifier
     uint32 seq = 1;
     google.protobuf.Duration start_to_fire_timeout = 2;
+    // Summary that is stored as user_metadata
+    temporal.api.common.v1.Payload summary = 3;
 }
 
 message CancelTimer {
@@ -88,6 +90,8 @@ message ScheduleActivity {
     bool do_not_eagerly_execute = 14;
     // Whether this activity should run on a worker with a compatible build id or not.
     coresdk.common.VersioningIntent versioning_intent = 15;
+    // Summary that is stored as user_metadata
+    temporal.api.common.v1.Payload summary = 16;
 }
 
 message ScheduleLocalActivity {
@@ -253,6 +257,10 @@ message StartChildWorkflowExecution {
     child_workflow.ChildWorkflowCancellationType cancellation_type = 18;
     // Whether this child should run on a worker with a compatible build id or not.
     coresdk.common.VersioningIntent versioning_intent = 19;
+    // Static summary of the child workflow
+    temporal.api.common.v1.Payload static_summary = 20;
+    // Static details of the child workflow
+    temporal.api.common.v1.Payload static_details = 21;
 }
 
 // Cancel a child workflow
@@ -261,17 +269,13 @@ message CancelChildWorkflowExecution {
     uint32 child_workflow_seq = 1;
 }
 
-// Request cancellation of an external workflow execution (which may be a started child)
+// Request cancellation of an external workflow execution. For cancellation of a child workflow,
+// prefer `CancelChildWorkflowExecution` instead, as it guards against cancel-before-start issues.
 message RequestCancelExternalWorkflowExecution {
     // Lang's incremental sequence number, used as the operation identifier
     uint32 seq = 1;
-    // What workflow is being targeted
-    oneof target {
-        // A specific workflow instance
-        common.NamespacedWorkflowExecution workflow_execution = 2;
-        // The desired target must be a child of the issuing workflow, and this is its workflow id
-        string child_workflow_id = 3;
-    }
+    // The workflow instance being targeted
+    common.NamespacedWorkflowExecution workflow_execution = 2;
 }
 
 // Send a signal to an external or child workflow

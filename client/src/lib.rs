@@ -18,6 +18,7 @@ pub use crate::{
     proxy::HttpConnectProxyOptions,
     retry::{CallType, RetryClient, RETRYABLE_ERROR_CODES},
 };
+pub use metrics::{LONG_REQUEST_LATENCY_HISTOGRAM_NAME, REQUEST_LATENCY_HISTOGRAM_NAME};
 pub use raw::{CloudService, HealthService, OperatorService, TestService, WorkflowService};
 pub use temporal_sdk_core_protos::temporal::api::{
     enums::v1::ArchivalState,
@@ -42,13 +43,12 @@ use crate::{
 use backoff::{exponential, ExponentialBackoff, SystemClock};
 use http::{uri::InvalidUri, Uri};
 use parking_lot::RwLock;
-use std::sync::OnceLock;
 use std::{
     collections::HashMap,
     fmt::{Debug, Formatter},
     ops::{Deref, DerefMut},
     str::FromStr,
-    sync::Arc,
+    sync::{Arc, OnceLock},
     time::{Duration, Instant},
 };
 use temporal_sdk_core_api::telemetry::metrics::TemporalMeter;

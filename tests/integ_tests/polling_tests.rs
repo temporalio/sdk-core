@@ -41,6 +41,7 @@ async fn out_of_order_completion_doesnt_hang() {
             StartTimer {
                 seq: 1,
                 start_to_fire_timeout: Some(prost_dur!(from_millis(50))),
+                summary: None,
             }
             .into(),
         ]
@@ -179,6 +180,7 @@ async fn switching_worker_client_changes_poll() {
     let act1 = worker.poll_workflow_activation().await.unwrap();
     assert_eq!(wf1.run_id, act1.run_id);
     worker.complete_execution(&act1.run_id).await;
+    worker.handle_eviction().await;
     info!("Waiting on first workflow complete");
     client1
         .get_untyped_workflow_handle("my-workflow-1", wf1.run_id)
@@ -192,6 +194,7 @@ async fn switching_worker_client_changes_poll() {
     let act2 = worker.poll_workflow_activation().await.unwrap();
     assert_eq!(wf2.run_id, act2.run_id);
     worker.complete_execution(&act2.run_id).await;
+    worker.handle_eviction().await;
     info!("Waiting on second workflow complete");
     client2
         .get_untyped_workflow_handle("my-workflow-2", wf2.run_id)

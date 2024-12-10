@@ -656,7 +656,7 @@ pub(crate) fn build_mock_pollers(mut cfg: MockPollCfg) -> MocksHolder {
                 tokio::select! {
                     _ = outstanding_wakeup.notified() => {}
                     _ = tokio::time::sleep(Duration::from_secs(60)) => {}
-                };
+                }
             }
         }
     });

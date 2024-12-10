@@ -1,6 +1,5 @@
 use assert_matches::assert_matches;
-use futures_util::future::join_all;
-use futures_util::{stream::FuturesUnordered, FutureExt, StreamExt};
+use futures_util::{future::join_all, stream::FuturesUnordered, FutureExt, StreamExt};
 use std::time::{Duration, Instant};
 use temporal_client::WorkflowClientTrait;
 use temporal_sdk_core_protos::{
@@ -29,11 +28,13 @@ async fn simple_query_legacy() {
             StartTimer {
                 seq: 0,
                 start_to_fire_timeout: Some(prost_dur!(from_millis(500))),
+                summary: None,
             }
             .into(),
             StartTimer {
                 seq: 1,
                 start_to_fire_timeout: Some(prost_dur!(from_secs(3))),
+                summary: None,
             }
             .into(),
         ],
@@ -224,6 +225,7 @@ async fn fail_legacy_query() {
     // Queries are *always* legacy on closed workflows, so that's the easiest way to ensure that
     // path is used.
     core.complete_execution(&task.run_id).await;
+    core.handle_eviction().await;
     let query_fut = async {
         starter
             .get_client()
@@ -241,6 +243,9 @@ async fn fail_legacy_query() {
             .unwrap_err()
     };
     let query_responder = async {
+        // Have to replay first since we've evicted
+        let task = core.poll_workflow_activation().await.unwrap();
+        core.complete_execution(&task.run_id).await;
         let task = core.poll_workflow_activation().await.unwrap();
         assert_matches!(
             task.jobs.as_slice(),
@@ -428,6 +433,7 @@ async fn queries_handled_before_next_wft() {
             }]
         );
         core.complete_execution(&task.run_id).await;
+        core.handle_eviction().await;
     };
     join!(join_all(query_futs), complete_fut);
     drain_pollers_and_shutdown(&core).await;
@@ -468,17 +474,8 @@ async fn query_should_not_be_sent_if_wft_about_to_fail() {
         ))
         .await
         .unwrap();
-        let task = core.poll_workflow_activation().await.unwrap();
         // Should *not* get a query here. If the bug wasn't fixed, this job would have a query.
-        assert_matches!(
-            task.jobs.as_slice(),
-            [WorkflowActivationJob {
-                variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
-            }]
-        );
-        core.complete_workflow_activation(WorkflowActivationCompletion::empty(task.run_id))
-            .await
-            .unwrap();
+        core.handle_eviction().await;
 
         // We can still service the query by trying again
         let task = core.poll_workflow_activation().await.unwrap();

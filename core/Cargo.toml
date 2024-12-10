@@ -43,9 +43,9 @@ itertools = "0.13"
 lru = "0.12"
 mockall = "0.13"
 opentelemetry = { workspace = true, features = ["metrics"], optional = true }
-opentelemetry_sdk = { version = "0.24", features = ["rt-tokio", "metrics"], optional = true }
-opentelemetry-otlp = { version = "0.17", features = ["tokio", "metrics", "tls"], optional = true }
-opentelemetry-prometheus = { version = "0.17", optional = true }
+opentelemetry_sdk = { version = "0.26", features = ["rt-tokio", "metrics"], optional = true }
+opentelemetry-otlp = { version = "0.26", features = ["tokio", "metrics", "tls"], optional = true }
+opentelemetry-prometheus = { git = "https://github.com/open-telemetry/opentelemetry-rust.git", rev = "e911383", optional = true }
 parking_lot = { version = "0.12", features = ["send_guard"] }
 pid = "4.0"
 pin-project = "1.0"
@@ -61,7 +61,7 @@ siphasher = "1.0"
 slotmap = "1.0"
 sysinfo = { version = "0.32", default-features = false, features = ["system"] }
 tar = { version = "0.4", optional = true }
-thiserror = "1.0"
+thiserror = { workspace = true }
 tokio = { version = "1.37", features = ["rt", "rt-multi-thread", "parking_lot", "time", "fs", "process"] }
 tokio-util = { version = "0.7", features = ["io", "io-util"] }
 tokio-stream = "0.1"

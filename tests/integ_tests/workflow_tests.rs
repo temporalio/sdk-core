@@ -18,27 +18,19 @@ mod upsert_search_attrs;
 
 use crate::integ_tests::{activity_functions::echo, metrics_tests};
 use assert_matches::assert_matches;
-use futures_channel::mpsc::UnboundedReceiver;
-use futures_util::{future, SinkExt, StreamExt};
 use std::{
     collections::{HashMap, HashSet},
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
+    sync::atomic::{AtomicUsize, Ordering},
     time::Duration,
 };
 use temporal_client::{WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{interceptors::WorkerInterceptor, ActivityOptions, WfContext, WorkflowResult};
 use temporal_sdk_core::{replay::HistoryForReplay, CoreRuntime};
-use temporal_sdk_core_api::{
-    errors::{PollWfError, WorkflowErrorType},
-    Worker,
-};
+use temporal_sdk_core_api::errors::{PollWfError, WorkflowErrorType};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::ActivityExecutionResult,
-        workflow_activation::{workflow_activation_job, WorkflowActivation, WorkflowActivationJob},
+        workflow_activation::{workflow_activation_job, WorkflowActivationJob},
         workflow_commands::{
             ActivityCancellationType, FailWorkflowExecution, QueryResult, QuerySuccess, StartTimer,
         },
@@ -62,57 +54,26 @@ use uuid::Uuid;
 
 #[tokio::test]
 async fn parallel_workflows_same_queue() {
-    let mut starter = CoreWfStarter::new("parallel_workflows_same_queue");
-    let core = starter.get_worker().await;
-    let num_workflows = 25usize;
+    let wf_name = "parallel_workflows_same_queue";
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter.worker_config.no_remote_activities(true);
+    let mut core = starter.worker().await;
 
-    let run_ids: Vec<_> = future::join_all(
-        (0..num_workflows).map(|i| starter.start_wf_with_id(format!("wf-id-{i}"))),
-    )
-    .await;
-
-    let mut send_chans = HashMap::new();
-    async fn wf_task(
-        worker: Arc<dyn Worker>,
-        mut task_chan: UnboundedReceiver<WorkflowActivation>,
-    ) {
-        let task = task_chan.next().await.unwrap();
-        assert_matches!(
-            task.jobs.as_slice(),
-            [WorkflowActivationJob {
-                variant: Some(workflow_activation_job::Variant::InitializeWorkflow(_)),
-            }]
-        );
-        worker
-            .complete_timer(&task.run_id, 1, Duration::from_secs(1))
-            .await;
-        let task = task_chan.next().await.unwrap();
-        worker.complete_execution(&task.run_id).await;
+    core.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+        ctx.timer(Duration::from_secs(1)).await;
+        Ok(().into())
+    });
+    for i in 0..25 {
+        core.submit_wf(
+            format!("{}-{}", wf_name, i),
+            wf_name,
+            vec![],
+            starter.workflow_options.clone(),
+        )
+        .await
+        .unwrap();
     }
-
-    let handles: Vec<_> = run_ids
-        .iter()
-        .map(|run_id| {
-            let (tx, rx) = futures_channel::mpsc::unbounded();
-            send_chans.insert(run_id.clone(), tx);
-            tokio::spawn(wf_task(core.clone(), rx))
-        })
-        .collect();
-
-    for _ in 0..num_workflows * 2 {
-        let task = core.poll_workflow_activation().await.unwrap();
-        send_chans
-            .get(&task.run_id)
-            .unwrap()
-            .send(task)
-            .await
-            .unwrap();
-    }
-
-    for handle in handles {
-        handle.await.unwrap()
-    }
-    drain_pollers_and_shutdown(&core).await;
+    core.run_until_done().await.unwrap();
 }
 
 static RUN_CT: AtomicUsize = AtomicUsize::new(0);
@@ -230,17 +191,8 @@ async fn fail_wf_task(#[values(true, false)] replay: bool) {
 
     // The server will want to retry the task. This time we finish the workflow -- but we need
     // to poll a couple of times as there will be more than one required workflow activation.
-    let task = core.poll_workflow_activation().await.unwrap();
-    // The first poll response will tell us to evict
-    assert_matches!(
-        task.jobs.as_slice(),
-        [WorkflowActivationJob {
-            variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
-        }]
-    );
-    core.complete_workflow_activation(WorkflowActivationCompletion::empty(task.run_id))
-        .await
-        .unwrap();
+    // The first poll response will tell us to evict.
+    core.handle_eviction().await;
 
     let task = core.poll_workflow_activation().await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
@@ -248,6 +200,7 @@ async fn fail_wf_task(#[values(true, false)] replay: bool) {
         vec![StartTimer {
             seq: 0,
             start_to_fire_timeout: Some(prost_dur!(from_millis(200))),
+            summary: None,
         }
         .into()],
     ))
@@ -372,6 +325,7 @@ async fn signal_workflow_signal_not_handled_on_workflow_completion() {
             vec![StartTimer {
                 seq: 0,
                 start_to_fire_timeout: Some(prost_dur!(from_millis(10))),
+                summary: None,
             }
             .into()],
         ))
@@ -408,18 +362,8 @@ async fn signal_workflow_signal_not_handled_on_workflow_completion() {
             // Send completion - not having seen a poll response with a signal in it yet (unhandled
             // command error will be logged as a warning and an eviction will be issued)
             core.complete_execution(&run_id).await;
-
             // We should be told to evict
-            let res = core.poll_workflow_activation().await.unwrap();
-            assert_matches!(
-                res.jobs.as_slice(),
-                [WorkflowActivationJob {
-                    variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
-                }]
-            );
-            core.complete_workflow_activation(WorkflowActivationCompletion::empty(res.run_id))
-                .await
-                .unwrap();
+            core.handle_eviction().await;
             // Loop to the top to handle wf from the beginning
             continue;
         }
@@ -515,16 +459,7 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
         .await
         .unwrap();
     // Now poll again, it will be an eviction b/c non-sticky mode.
-    let wf_task = core.poll_workflow_activation().await.unwrap();
-    assert_matches!(
-        wf_task.jobs.as_slice(),
-        [WorkflowActivationJob {
-            variant: Some(workflow_activation_job::Variant::RemoveFromCache(_)),
-        }]
-    );
-    core.complete_workflow_activation(WorkflowActivationCompletion::empty(wf_task.run_id))
-        .await
-        .unwrap();
+    core.handle_eviction().await;
     // Start from the beginning
     poll_sched_act().await;
     let wf_task = core.poll_workflow_activation().await.unwrap();
@@ -753,7 +688,7 @@ async fn build_id_correct_in_wf_info() {
 async fn nondeterminism_errors_fail_workflow_when_configured_to(
     #[values(true, false)] whole_worker: bool,
 ) {
-    let (telemopts, addr, _aborter) = metrics_tests::prom_metrics(false, false);
+    let (telemopts, addr, _aborter) = metrics_tests::prom_metrics(None);
     let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
     let wf_name = "nondeterminism_errors_fail_workflow_when_configured_to";
     let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);

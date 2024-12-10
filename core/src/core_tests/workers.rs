@@ -26,7 +26,7 @@ use temporal_sdk_core_protos::{
         PollWorkflowTaskQueueResponse, RespondWorkflowTaskCompletedResponse, ShutdownWorkerResponse,
     },
 };
-use temporal_sdk_core_test_utils::start_timer_cmd;
+use temporal_sdk_core_test_utils::{start_timer_cmd, WorkerTestHelpers};
 use tokio::sync::{watch, Barrier};
 
 #[tokio::test]
@@ -45,6 +45,7 @@ async fn after_shutdown_of_worker_get_shutdown_err() {
                 workflow_command::Variant::StartTimer(StartTimer {
                     seq: 1,
                     start_to_fire_timeout: Some(prost_dur!(from_secs(1))),
+                    summary: None,
                 }),
             ))
             .await
@@ -259,11 +260,7 @@ async fn worker_does_not_panic_on_retry_exhaustion_of_nonfatal_net_err() {
     .await
     .unwrap();
     // We should see an eviction
-    let res = core.poll_workflow_activation().await.unwrap();
-    assert_matches!(
-        res.jobs[0].variant,
-        Some(workflow_activation_job::Variant::RemoveFromCache(_))
-    );
+    core.handle_eviction().await;
 }
 
 #[rstest::rstest]
@@ -352,6 +349,7 @@ async fn worker_shutdown_api(#[case] use_cache: bool, #[case] api_success: bool)
                 workflow_command::Variant::StartTimer(StartTimer {
                     seq: 1,
                     start_to_fire_timeout: Some(prost_dur!(from_secs(1))),
+                    summary: None,
                 }),
             ))
             .await
