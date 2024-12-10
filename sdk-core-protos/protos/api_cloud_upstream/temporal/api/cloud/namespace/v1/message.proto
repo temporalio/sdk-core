@@ -9,7 +9,9 @@ option java_outer_classname = "MessageProto";
 option ruby_package = "Temporalio::Api::Cloud::Namespace::V1";
 option csharp_namespace = "Temporalio.Api.Cloud.Namespace.V1";
 
+import "temporal/api/cloud/resource/v1/message.proto";
 import "google/protobuf/timestamp.proto";
+import "temporal/api/cloud/sink/v1/message.proto";
 
 message CertificateFilterSpec {
     // The common_name in the certificate.
@@ -31,7 +33,13 @@ message MtlsAuthSpec {
     // This must only be one value, but the CA can have a chain.
     //
     // (-- api-linter: core::0140::base64=disabled --)
-    string accepted_client_ca = 1;
+    // Deprecated: Not supported after 2024-05-13-00 api version. Use accepted_client_ca instead.
+    // temporal:versioning:max_version=2024-05-13-00
+    string accepted_client_ca_deprecated = 1;
+    // The ca cert(s) in PEM format that the clients can use for authentication and authorization.
+    // This must only be one value, but the CA can have a chain.
+    // temporal:versioning:min_version=2024-05-13-00
+    bytes accepted_client_ca = 4;
     // Certificate filters which, if specified, only allow connections from client certificates whose distinguished name properties match at least one of the filters.
     // This allows limiting access to specific end-entity certificates.
     // Optional, default is empty.
@@ -87,10 +95,30 @@ message NamespaceSpec {
     // Supported attribute types: text, keyword, int, double, bool, datetime, keyword_list.
     // NOTE: currently deleting a search attribute is not supported.
     // Optional, default is empty.
-    map<string, string> custom_search_attributes = 5;
+    // Deprecated: Not supported after 2024-10-01-00 api version. Use search_attributes instead.
+    // temporal:versioning:max_version=2024-10-01-00
+    map<string, string> custom_search_attributes = 5 [deprecated = true];
+    // The custom search attributes to use for the namespace.
+    // The name of the attribute is the key and the type is the value.
+    // Note: currently deleting a search attribute is not supported.
+    // Optional, default is empty.
+    // temporal:versioning:min_version=2024-10-01-00
+    // temporal:enums:replaces=custom_search_attributes
+    map<string, SearchAttributeType> search_attributes = 8;
     // Codec server spec used by UI to decode payloads for all users interacting with this namespace.
     // Optional, default is unset.
     CodecServerSpec codec_server = 6;
+
+    enum SearchAttributeType {
+        SEARCH_ATTRIBUTE_TYPE_UNSPECIFIED = 0;
+        SEARCH_ATTRIBUTE_TYPE_TEXT = 1;
+        SEARCH_ATTRIBUTE_TYPE_KEYWORD = 2;
+        SEARCH_ATTRIBUTE_TYPE_INT = 3;
+        SEARCH_ATTRIBUTE_TYPE_DOUBLE = 4;
+        SEARCH_ATTRIBUTE_TYPE_BOOL = 5;
+        SEARCH_ATTRIBUTE_TYPE_DATETIME = 6;
+        SEARCH_ATTRIBUTE_TYPE_KEYWORD_LIST = 7;
+    }
 }
 
 message Endpoints {
@@ -133,7 +161,14 @@ message Namespace {
     // The namespace specification.
     NamespaceSpec spec = 3;
     // The current state of the namespace.
-    string state = 4;
+    // Deprecated: Not supported after 2024-10-01-00 api version. Use state instead.
+    // temporal:versioning:max_version=2024-10-01-00
+    string state_deprecated = 4 [deprecated = true];
+    // The current state of the namespace.
+    // For any failed state, reach out to Temporal Cloud support for remediation.
+    // temporal:versioning:min_version=2024-10-01-00
+    // temporal:enums:replaces=state_deprecated
+    temporal.api.cloud.resource.v1.ResourceState state = 13;
     // The id of the async operation that is creating/updating/deleting the namespace, if any.
     string async_operation_id = 5;
     // The endpoints for the namespace.
@@ -158,7 +193,70 @@ message NamespaceRegionStatus {
     // The current state of the namespace region.
     // Possible values: adding, active, passive, removing, failed.
     // For any failed state, reach out to Temporal Cloud support for remediation.
-    string state = 1;
+    // Deprecated: Not supported after 2024-10-01-00 api version. Use state instead.
+    // temporal:versioning:max_version=2024-10-01-00
+    string state_deprecated = 1 [deprecated = true];
+    // The current state of the namespace region.
+    // temporal:versioning:min_version=2024-10-01-00
+    // temporal:enums:replaces=state_deprecated
+    State state = 3;
     // The id of the async operation that is making changes to where the namespace is available, if any.
     string async_operation_id = 2;
+
+    enum State {
+        STATE_UNSPECIFIED = 0;
+        STATE_ADDING= 1;     	// The region is being added to the namespace.
+        STATE_ACTIVE= 2;        // The namespace is active in this region.
+        STATE_PASSIVE = 3;      // The namespace is passive in this region.
+        STATE_REMOVING = 4;     // The region is being removed from the namespace.
+        STATE_FAILED = 5;       // The region failed to be added/removed, check failure_reason in the last async_operation status for more details.
+    }
+}
+
+message ExportSinkSpec {
+    // The unique name of the export sink, it can't be changed once set. 
+    string name = 1;
+
+    // A flag indicating whether the export sink is enabled or not.
+    bool enabled = 2;
+    
+    // The S3 configuration details when destination_type is S3.
+    temporal.api.cloud.sink.v1.S3Spec s3 = 3;
+
+    // This is a feature under development. We will allow GCS sink support for GCP Namespaces.
+    // The GCS configuration details when destination_type is GCS. 
+    temporal.api.cloud.sink.v1.GCSSpec gcs = 4;
+}
+
+message ExportSink {
+    // The unique name of the export sink.
+    string name = 1;
+
+    // The version of the export sink resource.
+    string resource_version = 2;
+
+    // The current state of the export sink.
+    temporal.api.cloud.resource.v1.ResourceState state = 3;
+
+    // The specification details of the export sink.
+    ExportSinkSpec spec = 4;
+
+    // The health status of the export sink.
+    Health health = 5;
+
+    // An error message describing any issues with the export sink, if applicable.
+    string error_message = 6;
+
+    // The timestamp of the latest successful data export.
+    google.protobuf.Timestamp latest_data_export_time = 7;
+
+    // The timestamp of the last health check performed on the export sink.
+    google.protobuf.Timestamp last_health_check_time = 8;
+
+    enum Health {
+        HEALTH_UNSPECIFIED = 0;
+        HEALTH_OK = 1;
+        HEALTH_ERROR_INTERNAL = 2;
+        HEALTH_ERROR_USER_CONFIGURATION = 3;
+    }
 }
