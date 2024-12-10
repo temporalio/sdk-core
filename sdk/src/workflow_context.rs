@@ -217,7 +217,7 @@ impl WfContext {
         let (cmd, unblocker) = CancellableWFCommandFut::new(CancellableID::LocalActivity(seq));
         self.send(
             CommandCreateRequest {
-                cmd: opts.into_command(seq).into(),
+                cmd: opts.into_command(seq),
                 unblocker,
             }
             .into(),
@@ -599,8 +599,8 @@ impl<'a> LATimerBackoffFut<'a> {
         }
     }
 }
-impl<'a> Unpin for LATimerBackoffFut<'a> {}
-impl<'a> Future for LATimerBackoffFut<'a> {
+impl Unpin for LATimerBackoffFut<'_> {}
+impl Future for LATimerBackoffFut<'_> {
     type Output = ActivityResolution;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -655,7 +655,7 @@ impl<'a> Future for LATimerBackoffFut<'a> {
         poll_res
     }
 }
-impl<'a> CancellableFuture<ActivityResolution> for LATimerBackoffFut<'a> {
+impl CancellableFuture<ActivityResolution> for LATimerBackoffFut<'_> {
     fn cancel(&self, ctx: &WfContext) {
         self.did_cancel.store(true, Ordering::Release);
         if let Some(tf) = self.timer_fut.as_ref() {
@@ -737,7 +737,7 @@ impl ChildWorkflow {
             CancellableWFCommandFut::new_with_dat(CancellableID::ChildWorkflow(child_seq), common);
         cx.send(
             CommandCreateRequest {
-                cmd: self.opts.into_command(child_seq).into(),
+                cmd: self.opts.into_command(child_seq),
                 unblocker,
             }
             .into(),

@@ -76,7 +76,7 @@ impl TimerMachine {
         let mut s = Self::new(attribs);
         OnEventWrapper::on_event_mut(&mut s, TimerMachineEvents::Schedule)
             .expect("Scheduling timers doesn't fail");
-        let cmd = s.shared_state().attrs.clone().into();
+        let cmd = s.shared_state().attrs.into();
         (s, cmd)
     }
 

@@ -381,6 +381,7 @@ impl Worker {
 }
 
 impl WorkflowHalf {
+    #[allow(clippy::type_complexity)]
     fn workflow_activation_handler(
         &self,
         common: &CommonWorker,

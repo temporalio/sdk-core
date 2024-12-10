@@ -605,7 +605,7 @@ pub mod coresdk {
                             r.seq,
                             r.result
                                 .as_ref()
-                                .unwrap_or_else(|| &ActivityResolution { status: None })
+                                .unwrap_or(&ActivityResolution { status: None })
                         )
                     }
                     workflow_activation_job::Variant::NotifyHasPatch(_) => {

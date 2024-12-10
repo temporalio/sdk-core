@@ -1609,7 +1609,7 @@ pub(crate) struct MachinesWFTResponseContent<'a> {
     pub(crate) have_pending_la_resolutions: bool,
 }
 
-impl<'a> MachinesWFTResponseContent<'a> {
+impl MachinesWFTResponseContent<'_> {
     pub(crate) fn commands(&self) -> Peekable<impl Iterator<Item = ProtoCommand> + '_> {
         self.me.get_commands().peekable()
     }
