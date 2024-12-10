@@ -42,7 +42,7 @@ use temporal_sdk_core_protos::{
     coresdk::{common::build_has_change_marker_details, AsJsonPayloadExt},
     temporal::api::{
         command::v1::{
-            Command, RecordMarkerCommandAttributes, UpsertWorkflowSearchAttributesCommandAttributes,
+            RecordMarkerCommandAttributes, UpsertWorkflowSearchAttributesCommandAttributes,
         },
         common::v1::SearchAttributes,
         enums::v1::CommandType,
@@ -102,20 +102,14 @@ pub(super) fn has_change<'a>(
     } else {
         Executing {}.into()
     };
-    let command = Command {
-        command_type: CommandType::RecordMarker as i32,
-        attributes: Some(
-            RecordMarkerCommandAttributes {
-                marker_name: PATCH_MARKER_NAME.to_string(),
-                details: build_has_change_marker_details(&shared_state.patch_id, deprecated)
-                    .context("While encoding patch marker details")?,
-                header: None,
-                failure: None,
-            }
-            .into(),
-        ),
-        user_metadata: Default::default(),
-    };
+    let command = RecordMarkerCommandAttributes {
+        marker_name: PATCH_MARKER_NAME.to_string(),
+        details: build_has_change_marker_details(&shared_state.patch_id, deprecated)
+            .context("While encoding patch marker details")?,
+        header: None,
+        failure: None,
+    }
+    .into();
     let mut machine = PatchMachine::from_parts(initial_state, shared_state);
 
     OnEventWrapper::on_event_mut(&mut machine, PatchMachineEvents::Schedule)

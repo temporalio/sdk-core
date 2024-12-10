@@ -8,7 +8,7 @@ use std::convert::TryFrom;
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::CompleteWorkflowExecution,
     temporal::api::{
-        command::v1::Command,
+        command::v1::command,
         enums::v1::{CommandType, EventType},
     },
 };
@@ -30,31 +30,23 @@ fsm! {
 
 #[derive(Debug, derive_more::Display)]
 pub(super) enum CompleteWFCommand {
-    AddCommand(Command),
+    AddCommand(command::Attributes),
 }
 
 /// Complete a workflow
 pub(super) fn complete_workflow(attribs: CompleteWorkflowExecution) -> NewMachineWithCommand {
-    let (machine, add_cmd) = CompleteWorkflowMachine::new_scheduled(attribs);
+    let mut machine = CompleteWorkflowMachine::from_parts(Created { attribs }.into(), ());
+    let add_cmd =
+        match OnEventWrapper::on_event_mut(&mut machine, CompleteWorkflowMachineEvents::Schedule)
+            .expect("Scheduling complete wf machines doesn't fail")
+            .pop()
+        {
+            Some(CompleteWFCommand::AddCommand(c)) => c,
+            _ => panic!("complete wf machine on_schedule must produce command"),
+        };
     NewMachineWithCommand {
         command: add_cmd,
         machine: machine.into(),
-    }
-}
-
-impl CompleteWorkflowMachine {
-    /// Create a new WF machine and schedule it
-    pub(crate) fn new_scheduled(attribs: CompleteWorkflowExecution) -> (Self, Command) {
-        let mut s = Self::from_parts(Created { attribs }.into(), ());
-        let cmd =
-            match OnEventWrapper::on_event_mut(&mut s, CompleteWorkflowMachineEvents::Schedule)
-                .expect("Scheduling complete wf machines doesn't fail")
-                .pop()
-            {
-                Some(CompleteWFCommand::AddCommand(c)) => c,
-                _ => panic!("complete wf machine on_schedule must produce command"),
-            };
-        (s, cmd)
     }
 }
 
@@ -94,12 +86,7 @@ impl Created {
     pub(super) fn on_schedule(
         self,
     ) -> CompleteWorkflowMachineTransition<CompleteWorkflowCommandCreated> {
-        let cmd = Command {
-            command_type: CommandType::CompleteWorkflowExecution as i32,
-            attributes: Some(self.attribs.into()),
-            user_metadata: Default::default(),
-        };
-        TransitionResult::commands(vec![CompleteWFCommand::AddCommand(cmd)])
+        TransitionResult::commands(vec![CompleteWFCommand::AddCommand(self.attribs.into())])
     }
 }
 
