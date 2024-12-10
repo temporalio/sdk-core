@@ -68,8 +68,6 @@ pub struct OtelCollectorOptions {
     /// If set to true, use f64 seconds for durations instead of u64 milliseconds
     #[builder(default)]
     pub use_seconds_for_durations: bool,
-    #[builder(default = "OtlpProtocl::Grpc")]
-    pub protocol: OtlpProtocl,
 }
 
 /// Options for exporting metrics to Prometheus
@@ -121,15 +119,6 @@ pub enum MetricTemporality {
     Cumulative,
     /// Successive data points advance the starting timestamp
     Delta,
-}
-
-/// Options for configuring telemetry
-#[derive(Debug, Clone, Copy)]
-pub enum OtlpProtocl {
-    /// Use gRPC to communicate with the collector
-    Grpc,
-    /// Use HTTP to communicate with the collector
-    Http,
 }
 
 impl Default for TelemetryOptions {
