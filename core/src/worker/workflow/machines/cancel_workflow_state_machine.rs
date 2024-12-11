@@ -7,10 +7,7 @@ use rustfsm::{fsm, StateMachine, TransitionResult};
 use std::convert::TryFrom;
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::CancelWorkflowExecution,
-    temporal::api::{
-        command::v1::Command,
-        enums::v1::{CommandType, EventType},
-    },
+    temporal::api::enums::v1::{CommandType, EventType},
 };
 
 fsm! {
@@ -34,13 +31,8 @@ pub(super) fn cancel_workflow(attribs: CancelWorkflowExecution) -> NewMachineWit
     let mut machine = CancelWorkflowMachine::from_parts(Created {}.into(), ());
     OnEventWrapper::on_event_mut(&mut machine, CancelWorkflowMachineEvents::Schedule)
         .expect("Scheduling continue as new machine doesn't fail");
-    let command = Command {
-        command_type: CommandType::CancelWorkflowExecution as i32,
-        attributes: Some(attribs.into()),
-        user_metadata: Default::default(),
-    };
     NewMachineWithCommand {
-        command,
+        command: attribs.into(),
         machine: machine.into(),
     }
 }
