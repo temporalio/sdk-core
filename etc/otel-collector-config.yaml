@@ -11,7 +11,7 @@ exporters:
     endpoint: '0.0.0.0:8889'
     namespace: temporal_sdk
 
-  logging:
+  debug:
 
   otlp/jaeger:
     endpoint: jaeger:14250
@@ -32,8 +32,8 @@ service:
     traces:
       receivers: [ otlp ]
       processors: [ batch ]
-      exporters: [ logging, otlp/jaeger ]
+      exporters: [ debug, otlp/jaeger ]
     metrics:
       receivers: [ otlp ]
       processors: [ batch ]
-      exporters: [ logging, prometheus ]
+      exporters: [ debug, prometheus ]
