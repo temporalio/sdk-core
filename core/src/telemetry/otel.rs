@@ -30,7 +30,7 @@ use temporal_sdk_core_api::telemetry::{
         CoreMeter, Counter, Gauge, GaugeF64, Histogram, HistogramDuration, HistogramF64,
         MetricAttributes, MetricParameters, NewAttributes,
     },
-    HistogramBucketOverrides, MetricTemporality, OtelCollectorOptions, OtlpProtocl,
+    HistogramBucketOverrides, MetricTemporality, OtelCollectorOptions, OtlpProtocol,
     PrometheusExporterOptions,
 };
 use tokio::task::AbortHandle;
@@ -122,7 +122,8 @@ pub fn build_otlp_metric_exporter(
     opts: OtelCollectorOptions,
 ) -> Result<CoreOtelMeter, anyhow::Error> {
     let exporter = match opts.protocol {
-        OtlpProtocl::Grpc => {
+        OtlpProtocol::Grpc => {
+            println!("[grpc]");
             let mut exporter = opentelemetry_otlp::TonicExporterBuilder::default()
                 .with_endpoint(opts.url.to_string());
             if opts.url.scheme() == "https" || opts.url.scheme() == "grpcs" {
@@ -134,7 +135,7 @@ pub fn build_otlp_metric_exporter(
                     opts.metric_temporality,
                 )))?
         }
-        OtlpProtocl::Http => opentelemetry_otlp::HttpExporterBuilder::default()
+        OtlpProtocol::Http => opentelemetry_otlp::HttpExporterBuilder::default()
             .with_endpoint(opts.url.to_string())
             .with_headers(opts.headers)
             .build_metrics_exporter(Box::new(metric_temporality_to_selector(

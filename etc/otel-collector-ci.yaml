@@ -13,9 +13,6 @@ exporters:
 
   debug:
 
-  otlp/jaeger:
-    endpoint: jaeger:14250
-
 processors:
   batch:
 
@@ -32,7 +29,7 @@ service:
     traces:
       receivers: [ otlp ]
       processors: [ batch ]
-      exporters: [ debug, otlp/jaeger ]
+      exporters: [ debug, ]
     metrics:
       receivers: [ otlp ]
       processors: [ batch ]

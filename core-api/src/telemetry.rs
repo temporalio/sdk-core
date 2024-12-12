@@ -72,8 +72,8 @@ pub struct OtelCollectorOptions {
     #[builder(default)]
     pub histogram_bucket_overrides: HistogramBucketOverrides,
     /// Protocol to use for communication with the collector
-    #[builder(default = "OtlpProtocl::Grpc")]
-    pub protocol: OtlpProtocl,
+    #[builder(default = "OtlpProtocol::Grpc")]
+    pub protocol: OtlpProtocol,
 }
 
 /// Options for exporting metrics to Prometheus
@@ -148,7 +148,7 @@ pub enum MetricTemporality {
 
 /// Options for configuring telemetry
 #[derive(Debug, Clone, Copy)]
-pub enum OtlpProtocl {
+pub enum OtlpProtocol {
     /// Use gRPC to communicate with the collector
     Grpc,
     /// Use HTTP to communicate with the collector

@@ -1,5 +1,6 @@
 use anyhow::anyhow;
 use assert_matches::assert_matches;
+use std::string::ToString;
 use std::{collections::HashMap, env, net::SocketAddr, sync::Arc, time::Duration};
 use temporal_client::{
     WorkflowClientTrait, WorkflowOptions, WorkflowService, REQUEST_LATENCY_HISTOGRAM_NAME,
@@ -15,8 +16,9 @@ use temporal_sdk_core::{
 use temporal_sdk_core_api::{
     telemetry::{
         metrics::{CoreMeter, MetricAttributes, MetricParameters},
-        HistogramBucketOverrides, OtelCollectorOptionsBuilder, PrometheusExporterOptions,
-        PrometheusExporterOptionsBuilder, TelemetryOptions, TelemetryOptionsBuilder,
+        HistogramBucketOverrides, OtelCollectorOptionsBuilder, OtlpProtocol,
+        PrometheusExporterOptions, PrometheusExporterOptionsBuilder, TelemetryOptions,
+        TelemetryOptionsBuilder,
     },
     worker::WorkerConfigBuilder,
     Worker,
@@ -648,6 +650,112 @@ async fn request_fail_codes_otel() {
             .unwrap_err();
 
         tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+}
+
+#[tokio::test]
+async fn otel_http() {
+    let opts = OtelCollectorOptionsBuilder::default()
+        .url("http://localhost:4318".parse::<Url>().unwrap())
+        .protocol(OtlpProtocol::Http)
+        .build()
+        .unwrap();
+    let exporter = build_otlp_metric_exporter(opts).unwrap();
+
+    let mut telemopts = TelemetryOptionsBuilder::default();
+    let exporter = Arc::new(exporter);
+    telemopts.metrics(exporter as Arc<dyn CoreMeter>);
+
+    let rt = CoreRuntime::new_assume_tokio(telemopts.build().unwrap()).unwrap();
+    let opts = get_integ_server_options();
+    let mut client = opts
+        .connect(NAMESPACE, rt.telemetry().get_temporal_metric_meter())
+        .await
+        .unwrap();
+    println!("connected to client");
+
+    for _ in 0..10 {
+        // Describe namespace w/ invalid argument (unset namespace field)
+        WorkflowService::describe_namespace(&mut client, DescribeNamespaceRequest::default())
+            .await
+            .unwrap_err();
+
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+
+    // Validate metrics exporter
+}
+
+#[rstest::rstest]
+#[tokio::test]
+async fn test_metrics_with_docker_prometheus(
+    #[values(true, false)] use_http: bool,
+) {
+    // HTTP is 4318
+    let (otel_collector_addr, otl_protocl) = match use_http {
+        true => ("http://localhost:4318", OtlpProtocol::Grpc),
+        false => ("http://localhost:4317", OtlpProtocol::Grpc),
+    };
+    // This should match the prometheus port exposed in docker-compose-telem-ci.yaml
+    let prometheus_api = "http://localhost:9090/api/v1/query";
+    let test_uid = format!("test_metrics_with_docker_prometheus_{:?}", otl_protocl);
+
+    // Configure the OTLP exporter with HTTP
+    let opts = OtelCollectorOptionsBuilder::default()
+        .url(otel_collector_addr.parse().unwrap())
+        .protocol(otl_protocl)
+        .global_tags(HashMap::from([(test_uid.clone(), test_uid.clone())]))
+        .build()
+        .unwrap();
+    let exporter = build_otlp_metric_exporter(opts).unwrap();
+    let mut telemopts = TelemetryOptionsBuilder::default();
+    let exporter = Arc::new(exporter);
+    let telemopts = telemopts
+        .metrics(exporter as Arc<dyn CoreMeter>)
+        // .metric_prefix(test_uid.clone())
+        .build()
+        .unwrap();
+
+    let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
+    let mut starter = CoreWfStarter::new_with_runtime("test_metrics_with_docker_prometheus", rt);
+    let worker = starter.get_worker().await;
+    starter.start_wf().await;
+
+    // Immediately finish the workflow
+    let task = worker.poll_workflow_activation().await.unwrap();
+    worker
+        .complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+            task.run_id,
+            CompleteWorkflowExecution { result: None }.into(),
+        ))
+        .await
+        .unwrap();
+
+    // Give Prometheus time to scrape metrics
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+    // Query Prometheus API for metrics
+    let client = reqwest::Client::new();
+    let query = "temporal_sdk_temporal_num_pollers";
+    let response = client
+        .get(prometheus_api)
+        // .query(&[("query", test_uid.clone())])
+        // .query(&[("query", "test_metrics_with_docker_prometheus_")])
+        .query(&[("query", query)])
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+
+    println!("[response]: {:?}", response["data"]);
+
+    // Validate the Prometheus response
+    if let Some(data) = response["data"]["result"].as_array() {
+        assert!(!data.is_empty(), "No metrics found for query: {test_uid}");
+    } else {
+        panic!("Invalid Prometheus response: {:?}", response);
     }
 }
 
