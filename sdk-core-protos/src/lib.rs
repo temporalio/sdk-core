@@ -925,6 +925,12 @@ pub mod coresdk {
             }
         }
 
+        impl Display for RequestCancelNexusOperation {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "RequestCancelNexusOperation({})", self.seq)
+            }
+        }
+
         impl QueryResult {
             /// Helper to construct the Temporal API query result types.
             pub fn into_components(self) -> (String, QueryResultType, Option<Payloads>, String) {

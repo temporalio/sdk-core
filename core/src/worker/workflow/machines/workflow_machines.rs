@@ -1472,6 +1472,9 @@ impl WorkflowMachines {
                         CommandID::NexusOperation(seq).into(),
                     );
                 }
+                WFCommandVariant::RequestCancelNexusOperation(attrs) => {
+                    self.process_cancellation(CommandID::NexusOperation(attrs.seq))?
+                }
                 WFCommandVariant::NoCommandsFromLang => (),
             }
         }

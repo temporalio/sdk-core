@@ -46,6 +46,7 @@ message WorkflowCommand {
         ModifyWorkflowProperties modify_workflow_properties = 19;
         UpdateResponse update_response = 20;
         ScheduleNexusOperation schedule_nexus_operation = 21;
+        RequestCancelNexusOperation request_cancel_nexus_operation = 22;
     }
 }
 
@@ -366,4 +367,9 @@ message ScheduleNexusOperation {
     // activities and child workflows, these are transmitted to Nexus operations that may be
     // external and are not traditional payloads.
     map<string, string> nexus_header = 7;
+}
+
+message RequestCancelNexusOperation {
+    // Lang's incremental sequence number as passed to `ScheduleNexusOperation`
+    uint32 seq = 1;
 }
