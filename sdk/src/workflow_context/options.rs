@@ -6,22 +6,20 @@ use temporal_sdk_core_protos::{
         child_workflow::ChildWorkflowCancellationType,
         workflow_commands::{
             ActivityCancellationType, ScheduleActivity, ScheduleLocalActivity,
-            StartChildWorkflowExecution,
+            StartChildWorkflowExecution, WorkflowCommand,
         },
     },
     temporal::api::{
         common::v1::{Payload, RetryPolicy},
         enums::v1::ParentClosePolicy,
+        sdk::v1::UserMetadata,
     },
 };
-
 // TODO: Before release, probably best to avoid using proto types entirely here. They're awkward.
 
 pub(crate) trait IntoWorkflowCommand {
-    type WFCommandType;
-
     /// Produces a workflow command from some options
-    fn into_command(self, seq: u32) -> Self::WFCommandType;
+    fn into_command(self, seq: u32) -> WorkflowCommand;
 }
 
 /// Options for scheduling an activity
@@ -73,29 +71,38 @@ pub struct ActivityOptions {
 }
 
 impl IntoWorkflowCommand for ActivityOptions {
-    type WFCommandType = ScheduleActivity;
-    fn into_command(self, seq: u32) -> ScheduleActivity {
-        ScheduleActivity {
-            seq,
-            activity_id: match self.activity_id {
-                None => seq.to_string(),
-                Some(aid) => aid,
-            },
-            activity_type: self.activity_type,
-            task_queue: self.task_queue.unwrap_or_default(),
-            schedule_to_close_timeout: self
-                .schedule_to_close_timeout
-                .and_then(|d| d.try_into().ok()),
-            schedule_to_start_timeout: self
-                .schedule_to_start_timeout
-                .and_then(|d| d.try_into().ok()),
-            start_to_close_timeout: self.start_to_close_timeout.and_then(|d| d.try_into().ok()),
-            heartbeat_timeout: self.heartbeat_timeout.and_then(|d| d.try_into().ok()),
-            cancellation_type: self.cancellation_type as i32,
-            arguments: vec![self.input],
-            retry_policy: self.retry_policy,
-            summary: self.summary.map(Into::into),
-            ..Default::default()
+    fn into_command(self, seq: u32) -> WorkflowCommand {
+        WorkflowCommand {
+            variant: Some(
+                ScheduleActivity {
+                    seq,
+                    activity_id: match self.activity_id {
+                        None => seq.to_string(),
+                        Some(aid) => aid,
+                    },
+                    activity_type: self.activity_type,
+                    task_queue: self.task_queue.unwrap_or_default(),
+                    schedule_to_close_timeout: self
+                        .schedule_to_close_timeout
+                        .and_then(|d| d.try_into().ok()),
+                    schedule_to_start_timeout: self
+                        .schedule_to_start_timeout
+                        .and_then(|d| d.try_into().ok()),
+                    start_to_close_timeout: self
+                        .start_to_close_timeout
+                        .and_then(|d| d.try_into().ok()),
+                    heartbeat_timeout: self.heartbeat_timeout.and_then(|d| d.try_into().ok()),
+                    cancellation_type: self.cancellation_type as i32,
+                    arguments: vec![self.input],
+                    retry_policy: self.retry_policy,
+                    ..Default::default()
+                }
+                .into(),
+            ),
+            user_metadata: self.summary.map(|s| UserMetadata {
+                summary: Some(s.into()),
+                details: None,
+            }),
         }
     }
 }
@@ -144,34 +151,43 @@ pub struct LocalActivityOptions {
 }
 
 impl IntoWorkflowCommand for LocalActivityOptions {
-    type WFCommandType = ScheduleLocalActivity;
-    fn into_command(mut self, seq: u32) -> ScheduleLocalActivity {
+    fn into_command(mut self, seq: u32) -> WorkflowCommand {
         // Allow tests to avoid extra verbosity when they don't care about timeouts
         // TODO: Builderize LA options
         self.schedule_to_close_timeout
             .get_or_insert(Duration::from_secs(100));
 
-        ScheduleLocalActivity {
-            seq,
-            attempt: self.attempt.unwrap_or(1),
-            original_schedule_time: self.original_schedule_time,
-            activity_id: match self.activity_id {
-                None => seq.to_string(),
-                Some(aid) => aid,
-            },
-            activity_type: self.activity_type,
-            arguments: vec![self.input],
-            retry_policy: Some(self.retry_policy),
-            local_retry_threshold: self.timer_backoff_threshold.and_then(|d| d.try_into().ok()),
-            cancellation_type: self.cancel_type.into(),
-            schedule_to_close_timeout: self
-                .schedule_to_close_timeout
-                .and_then(|d| d.try_into().ok()),
-            schedule_to_start_timeout: self
-                .schedule_to_start_timeout
-                .and_then(|d| d.try_into().ok()),
-            start_to_close_timeout: self.start_to_close_timeout.and_then(|d| d.try_into().ok()),
-            ..Default::default()
+        WorkflowCommand {
+            variant: Some(
+                ScheduleLocalActivity {
+                    seq,
+                    attempt: self.attempt.unwrap_or(1),
+                    original_schedule_time: self.original_schedule_time,
+                    activity_id: match self.activity_id {
+                        None => seq.to_string(),
+                        Some(aid) => aid,
+                    },
+                    activity_type: self.activity_type,
+                    arguments: vec![self.input],
+                    retry_policy: Some(self.retry_policy),
+                    local_retry_threshold: self
+                        .timer_backoff_threshold
+                        .and_then(|d| d.try_into().ok()),
+                    cancellation_type: self.cancel_type.into(),
+                    schedule_to_close_timeout: self
+                        .schedule_to_close_timeout
+                        .and_then(|d| d.try_into().ok()),
+                    schedule_to_start_timeout: self
+                        .schedule_to_start_timeout
+                        .and_then(|d| d.try_into().ok()),
+                    start_to_close_timeout: self
+                        .start_to_close_timeout
+                        .and_then(|d| d.try_into().ok()),
+                    ..Default::default()
+                }
+                .into(),
+            ),
+            user_metadata: None,
         }
     }
 }
@@ -202,31 +218,45 @@ pub struct ChildWorkflowOptions {
 }
 
 impl IntoWorkflowCommand for ChildWorkflowOptions {
-    type WFCommandType = StartChildWorkflowExecution;
-    fn into_command(self, seq: u32) -> StartChildWorkflowExecution {
-        StartChildWorkflowExecution {
-            seq,
-            workflow_id: self.workflow_id,
-            workflow_type: self.workflow_type,
-            task_queue: self.task_queue.unwrap_or_default(),
-            input: self.input,
-            cancellation_type: self.cancel_type as i32,
-            workflow_id_reuse_policy: self.options.id_reuse_policy as i32,
-            workflow_execution_timeout: self
-                .options
-                .execution_timeout
-                .and_then(|d| d.try_into().ok()),
-            workflow_run_timeout: self
-                .options
-                .execution_timeout
-                .and_then(|d| d.try_into().ok()),
-            workflow_task_timeout: self.options.task_timeout.and_then(|d| d.try_into().ok()),
-            search_attributes: self.options.search_attributes.unwrap_or_default(),
-            cron_schedule: self.options.cron_schedule.unwrap_or_default(),
-            parent_close_policy: self.parent_close_policy as i32,
-            static_summary: self.static_summary.map(Into::into),
-            static_details: self.static_details.map(Into::into),
-            ..Default::default()
+    fn into_command(self, seq: u32) -> WorkflowCommand {
+        let user_metadata = if self.static_summary.is_some() || self.static_details.is_some() {
+            Some(UserMetadata {
+                summary: self.static_summary.map(Into::into),
+                details: self.static_details.map(Into::into),
+            })
+        } else {
+            None
+        };
+        WorkflowCommand {
+            variant: Some(
+                StartChildWorkflowExecution {
+                    seq,
+                    workflow_id: self.workflow_id,
+                    workflow_type: self.workflow_type,
+                    task_queue: self.task_queue.unwrap_or_default(),
+                    input: self.input,
+                    cancellation_type: self.cancel_type as i32,
+                    workflow_id_reuse_policy: self.options.id_reuse_policy as i32,
+                    workflow_execution_timeout: self
+                        .options
+                        .execution_timeout
+                        .and_then(|d| d.try_into().ok()),
+                    workflow_run_timeout: self
+                        .options
+                        .execution_timeout
+                        .and_then(|d| d.try_into().ok()),
+                    workflow_task_timeout: self
+                        .options
+                        .task_timeout
+                        .and_then(|d| d.try_into().ok()),
+                    search_attributes: self.options.search_attributes.unwrap_or_default(),
+                    cron_schedule: self.options.cron_schedule.unwrap_or_default(),
+                    parent_close_policy: self.parent_close_policy as i32,
+                    ..Default::default()
+                }
+                .into(),
+            ),
+            user_metadata,
         }
     }
 }
