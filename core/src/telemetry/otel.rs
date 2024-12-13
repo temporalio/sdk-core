@@ -123,7 +123,6 @@ pub fn build_otlp_metric_exporter(
 ) -> Result<CoreOtelMeter, anyhow::Error> {
     let exporter = match opts.protocol {
         OtlpProtocol::Grpc => {
-            println!("[grpc]");
             let mut exporter = opentelemetry_otlp::TonicExporterBuilder::default()
                 .with_endpoint(opts.url.to_string());
             if opts.url.scheme() == "https" || opts.url.scheme() == "grpcs" {
