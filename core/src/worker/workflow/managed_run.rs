@@ -12,8 +12,8 @@ use crate::{
             FailedActivationWFTReport, HeartbeatTimeoutMsg, HistoryUpdate,
             LocalActivityRequestSink, LocalResolution, NextPageReq, OutstandingActivation,
             OutstandingTask, PermittedWFT, RequestEvictMsg, RunBasics,
-            ServerCommandsWithWorkflowInfo, WFCommand, WFMachinesError, WFTReportStatus,
-            WorkflowTaskInfo, WFT_HEARTBEAT_TIMEOUT_FRACTION,
+            ServerCommandsWithWorkflowInfo, WFCommand, WFCommandVariant, WFMachinesError,
+            WFTReportStatus, WorkflowTaskInfo, WFT_HEARTBEAT_TIMEOUT_FRACTION,
         },
         LocalActRequest, LEGACY_QUERY_ID,
     },
@@ -410,10 +410,14 @@ impl ManagedRun {
         // If the only command from the activation is a legacy query response, that means we need
         // to respond differently than a typical activation.
         if matches!(&commands.as_slice(),
-                    &[WFCommand::QueryResponse(qr)] if qr.query_id == LEGACY_QUERY_ID)
+                    &[WFCommand {variant: WFCommandVariant::QueryResponse(qr), ..}]
+                        if qr.query_id == LEGACY_QUERY_ID)
         {
             let qr = match commands.remove(0) {
-                WFCommand::QueryResponse(qr) => qr,
+                WFCommand {
+                    variant: WFCommandVariant::QueryResponse(qr),
+                    ..
+                } => qr,
                 _ => unreachable!("We just verified this is the only command"),
             };
             self.reply_to_complete(
@@ -605,9 +609,12 @@ impl ManagedRun {
                 warn!(failure=?failure, "Failing workflow due to nondeterminism error");
                 return self
                     .successful_completion(
-                        vec![WFCommand::FailWorkflow(FailWorkflowExecution {
-                            failure: failure.failure,
-                        })],
+                        vec![WFCommand {
+                            variant: WFCommandVariant::FailWorkflow(FailWorkflowExecution {
+                                failure: failure.failure,
+                            }),
+                            metadata: None,
+                        }],
                         vec![],
                         resp_chan,
                     )
@@ -1221,10 +1228,10 @@ fn preprocess_command_sequence(commands: Vec<WFCommand>) -> (Vec<WFCommand>, Vec
     let mut commands: Vec<_> = commands
         .into_iter()
         .filter_map(|c| {
-            if let WFCommand::QueryResponse(qr) = c {
+            if let WFCommandVariant::QueryResponse(qr) = c.variant {
                 query_results.push(qr);
                 None
-            } else if c.is_terminal() {
+            } else if c.variant.is_terminal() {
                 terminals.push(c);
                 None
             } else {
@@ -1247,13 +1254,13 @@ fn preprocess_command_sequence_old_behavior(
     let commands: Vec<_> = commands
         .into_iter()
         .filter_map(|c| {
-            if let WFCommand::QueryResponse(qr) = c {
+            if let WFCommandVariant::QueryResponse(qr) = c.variant {
                 query_results.push(qr);
                 None
             } else if seen_terminal {
                 None
             } else {
-                if c.is_terminal() {
+                if c.variant.is_terminal() {
                     seen_terminal = true;
                 }
                 Some(c)
@@ -1494,7 +1501,7 @@ impl From<WFMachinesError> for RunUpdateErr {
 
 #[cfg(test)]
 mod tests {
-    use crate::worker::workflow::WFCommand;
+    use crate::worker::workflow::{WFCommand, WFCommandVariant};
     use std::mem::{discriminant, Discriminant};
 
     use command_utils::*;
@@ -1591,25 +1598,39 @@ mod tests {
         use super::*;
 
         pub(crate) fn complete() -> WFCommand {
-            WFCommand::CompleteWorkflow(CompleteWorkflowExecution { result: None })
+            WFCommand {
+                variant: WFCommandVariant::CompleteWorkflow(CompleteWorkflowExecution {
+                    result: None,
+                }),
+                metadata: None,
+            }
         }
 
         pub(crate) fn cancel() -> WFCommand {
-            WFCommand::CancelWorkflow(CancelWorkflowExecution {})
+            WFCommand {
+                variant: WFCommandVariant::CancelWorkflow(CancelWorkflowExecution {}),
+                metadata: None,
+            }
         }
 
         pub(crate) fn query_response() -> WFCommand {
-            WFCommand::QueryResponse(QueryResult {
-                query_id: "".into(),
-                variant: None,
-            })
+            WFCommand {
+                variant: WFCommandVariant::QueryResponse(QueryResult {
+                    query_id: "".into(),
+                    variant: None,
+                }),
+                metadata: None,
+            }
         }
 
         pub(crate) fn update_response() -> WFCommand {
-            WFCommand::UpdateResponse(UpdateResponse {
-                protocol_instance_id: "".into(),
-                response: None,
-            })
+            WFCommand {
+                variant: WFCommandVariant::UpdateResponse(UpdateResponse {
+                    protocol_instance_id: "".into(),
+                    response: None,
+                }),
+                metadata: None,
+            }
         }
 
         pub(crate) fn command_types(commands: &[WFCommand]) -> Vec<Discriminant<WFCommand>> {

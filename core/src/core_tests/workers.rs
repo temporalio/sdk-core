@@ -45,7 +45,6 @@ async fn after_shutdown_of_worker_get_shutdown_err() {
                 workflow_command::Variant::StartTimer(StartTimer {
                     seq: 1,
                     start_to_fire_timeout: Some(prost_dur!(from_secs(1))),
-                    summary: None,
                 }),
             ))
             .await
@@ -349,7 +348,6 @@ async fn worker_shutdown_api(#[case] use_cache: bool, #[case] api_success: bool)
                 workflow_command::Variant::StartTimer(StartTimer {
                     seq: 1,
                     start_to_fire_timeout: Some(prost_dur!(from_secs(1))),
-                    summary: None,
                 }),
             ))
             .await

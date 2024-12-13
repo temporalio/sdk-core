@@ -276,11 +276,13 @@ where
     }
 }
 
+/// Helpers for test initialization
 #[cfg(test)]
 pub mod test_initters {
     use super::*;
     use temporal_sdk_core_api::telemetry::TelemetryOptionsBuilder;
 
+    /// Turn on logging to the console
     #[allow(dead_code)] // Not always used, called to enable for debugging when needed
     pub fn test_telem_console() {
         telemetry_init_global(

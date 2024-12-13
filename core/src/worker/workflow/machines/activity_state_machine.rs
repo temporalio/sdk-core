@@ -30,7 +30,6 @@ use temporal_sdk_core_protos::{
             ActivityTaskCompletedEventAttributes, ActivityTaskFailedEventAttributes,
             ActivityTaskTimedOutEventAttributes,
         },
-        sdk::v1::UserMetadata,
     },
 };
 
@@ -115,10 +114,6 @@ impl ActivityMachine {
         internal_flags: InternalFlagsRef,
         use_compatible_version: bool,
     ) -> NewMachineWithCommand {
-        let user_metadata = attrs.summary.clone().map(|x| UserMetadata {
-            summary: Some(x),
-            details: None,
-        });
         let mut s = Self::from_parts(
             Created {}.into(),
             SharedState {
@@ -133,16 +128,11 @@ impl ActivityMachine {
         );
         OnEventWrapper::on_event_mut(&mut s, ActivityMachineEvents::Schedule)
             .expect("Scheduling activities doesn't fail");
-        let command = Command {
-            command_type: CommandType::ScheduleActivityTask as i32,
-            attributes: Some(schedule_activity_cmd_to_api(
+        NewMachineWithCommand {
+            command: schedule_activity_cmd_to_api(
                 s.shared_state().attrs.clone(),
                 use_compatible_version,
-            )),
-            user_metadata,
-        };
-        NewMachineWithCommand {
-            command,
+            ),
             machine: s.into(),
         }
     }
