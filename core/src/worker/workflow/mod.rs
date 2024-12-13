@@ -1169,6 +1169,7 @@ enum WFCommandVariant {
     ModifyWorkflowProperties(ModifyWorkflowProperties),
     UpdateResponse(UpdateResponse),
     ScheduleNexusOperation(ScheduleNexusOperation),
+    RequestCancelNexusOperation(RequestCancelNexusOperation),
 }
 
 impl TryFrom<WorkflowCommand> for WFCommand {
@@ -1226,6 +1227,9 @@ impl TryFrom<WorkflowCommand> for WFCommand {
             workflow_command::Variant::UpdateResponse(s) => WFCommandVariant::UpdateResponse(s),
             workflow_command::Variant::ScheduleNexusOperation(s) => {
                 WFCommandVariant::ScheduleNexusOperation(s)
+            }
+            workflow_command::Variant::RequestCancelNexusOperation(s) => {
+                WFCommandVariant::RequestCancelNexusOperation(s)
             }
         };
         Ok(Self {

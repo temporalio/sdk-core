@@ -8,6 +8,7 @@ mod determinism;
 mod eager;
 mod local_activities;
 mod modify_wf_properties;
+mod nexus;
 mod patches;
 mod replay;
 mod resets;
