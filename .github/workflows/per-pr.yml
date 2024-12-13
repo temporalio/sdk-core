@@ -84,3 +84,31 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
       - run: cargo integ-test
+
+  docker-integ-tests:
+    name: Docker integ tests
+    env:
+      TEMPORAL_CLOUD_ADDRESS: https://${{ vars.TEMPORAL_CLIENT_NAMESPACE }}.tmprl.cloud:7233
+      TEMPORAL_CLOUD_NAMESPACE: ${{ vars.TEMPORAL_CLIENT_NAMESPACE }}
+      TEMPORAL_CLIENT_CERT: ${{ secrets.TEMPORAL_CLIENT_CERT }}
+      TEMPORAL_CLIENT_KEY: ${{ secrets.TEMPORAL_CLIENT_KEY }}
+      DOCKER_PROMETHEUS_RUNNING: true
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.80.0
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          # TODO: Upgrade proto once https://github.com/arduino/setup-protoc/issues/99 is fixed
+          version: '23.x'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Start container for otel-collector and prometheus
+        uses: hoverkraft-tech/compose-action@v2.0.1
+        with:
+          compose-file: ./docker/docker-compose-ci.yaml
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo integ-test test_docker_

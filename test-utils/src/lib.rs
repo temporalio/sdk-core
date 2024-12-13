@@ -80,6 +80,8 @@ pub static SEARCH_ATTR_INT: &str = "CustomIntField";
 pub const OTEL_URL_ENV_VAR: &str = "TEMPORAL_INTEG_OTEL_URL";
 /// If set, enable direct scraping of prom metrics on the specified port
 pub const PROM_ENABLE_ENV_VAR: &str = "TEMPORAL_INTEG_PROM_PORT";
+/// This should match the prometheus port exposed in docker-compose-ci.yaml
+pub const PROMETHEUS_QUERY_API: &str = "http://localhost:9090/api/v1/query";
 #[macro_export]
 macro_rules! prost_dur {
     ($dur_call:ident $args:tt) => {
@@ -822,4 +824,33 @@ pub async fn drain_pollers_and_shutdown(worker: &Arc<dyn CoreWorker>) {
         }
     );
     worker.shutdown().await;
+}
+
+/// Check if Prometheus is running in Docker.
+pub fn is_prometheus_running_in_docker() -> bool {
+    let res = check_docker_prometheus();
+    if std::env::var("DOCKER_PROMETHEUS_RUNNING").is_ok() && !res {
+        panic!("Environment variable `DOCKER_PROMETHEUS_RUNNING` is set but docker/Prometheus is not running.");
+    }
+    res
+}
+fn check_docker_prometheus() -> bool {
+    // Check if port 9090 is accessible
+    if std::net::TcpStream::connect("127.0.0.1:9090").is_err() {
+        return false;
+    }
+
+    // Check if "prom/prometheus" is listed in `docker ps`
+    let output = std::process::Command::new("docker")
+        .arg("ps")
+        .arg("--filter")
+        .arg("ancestor=prom/prometheus")
+        .arg("--format")
+        .arg("{{.Names}}")
+        .output();
+
+    match output {
+        Ok(output) => !String::from_utf8_lossy(&output.stdout).trim().is_empty(),
+        Err(_) => false,
+    }
 }

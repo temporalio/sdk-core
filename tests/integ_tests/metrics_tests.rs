@@ -44,7 +44,8 @@ use temporal_sdk_core_protos::{
     },
 };
 use temporal_sdk_core_test_utils::{
-    get_integ_server_options, get_integ_telem_options, CoreWfStarter, NAMESPACE, OTEL_URL_ENV_VAR,
+    get_integ_server_options, get_integ_telem_options, is_prometheus_running_in_docker,
+    CoreWfStarter, NAMESPACE, OTEL_URL_ENV_VAR, PROMETHEUS_QUERY_API,
 };
 use tokio::{join, sync::Barrier, task::AbortHandle};
 use url::Url;
@@ -653,69 +654,36 @@ async fn request_fail_codes_otel() {
     }
 }
 
-#[tokio::test]
-async fn otel_http() {
-    let opts = OtelCollectorOptionsBuilder::default()
-        .url("http://localhost:4318".parse::<Url>().unwrap())
-        .protocol(OtlpProtocol::Http)
-        .build()
-        .unwrap();
-    let exporter = build_otlp_metric_exporter(opts).unwrap();
-
-    let mut telemopts = TelemetryOptionsBuilder::default();
-    let exporter = Arc::new(exporter);
-    telemopts.metrics(exporter as Arc<dyn CoreMeter>);
-
-    let rt = CoreRuntime::new_assume_tokio(telemopts.build().unwrap()).unwrap();
-    let opts = get_integ_server_options();
-    let mut client = opts
-        .connect(NAMESPACE, rt.telemetry().get_temporal_metric_meter())
-        .await
-        .unwrap();
-    println!("connected to client");
-
-    for _ in 0..10 {
-        // Describe namespace w/ invalid argument (unset namespace field)
-        WorkflowService::describe_namespace(&mut client, DescribeNamespaceRequest::default())
-            .await
-            .unwrap_err();
-
-        tokio::time::sleep(Duration::from_secs(1)).await;
-    }
-
-    // Validate metrics exporter
-}
-
+// Tests that rely on Prometheus running in a docker container need to set
+// the `DOCKER_PROMETHEUS_RUNNING` env variable (see `is_prometheus_running_in_docker()`).
 #[rstest::rstest]
 #[tokio::test]
-async fn test_metrics_with_docker_prometheus(
-    #[values(true, false)] use_http: bool,
-) {
-    // HTTP is 4318
+async fn test_docker_metrics_with_prometheus(#[values(true, false)] use_http: bool) {
+    if !is_prometheus_running_in_docker() {
+        return;
+    }
     let (otel_collector_addr, otl_protocl) = match use_http {
-        true => ("http://localhost:4318", OtlpProtocol::Grpc),
+        true => ("http://localhost:4318/v1/metrics", OtlpProtocol::Http),
         false => ("http://localhost:4317", OtlpProtocol::Grpc),
     };
-    // This should match the prometheus port exposed in docker-compose-telem-ci.yaml
-    let prometheus_api = "http://localhost:9090/api/v1/query";
-    let test_uid = format!("test_metrics_with_docker_prometheus_{:?}", otl_protocl);
+    let test_uid = format!(
+        "test_{}_",
+        uuid::Uuid::new_v4().to_string().replace("-", "")
+    );
 
     // Configure the OTLP exporter with HTTP
     let opts = OtelCollectorOptionsBuilder::default()
         .url(otel_collector_addr.parse().unwrap())
         .protocol(otl_protocl)
-        .global_tags(HashMap::from([(test_uid.clone(), test_uid.clone())]))
+        .global_tags(HashMap::from([("test_id".to_string(), test_uid.clone())]))
         .build()
         .unwrap();
-    let exporter = build_otlp_metric_exporter(opts).unwrap();
-    let mut telemopts = TelemetryOptionsBuilder::default();
-    let exporter = Arc::new(exporter);
-    let telemopts = telemopts
+    let exporter = Arc::new(build_otlp_metric_exporter(opts).unwrap());
+    let telemopts = TelemetryOptionsBuilder::default()
         .metrics(exporter as Arc<dyn CoreMeter>)
-        // .metric_prefix(test_uid.clone())
+        .metric_prefix(test_uid.clone())
         .build()
         .unwrap();
-
     let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
     let mut starter = CoreWfStarter::new_with_runtime("test_metrics_with_docker_prometheus", rt);
     let worker = starter.get_worker().await;
@@ -731,16 +699,18 @@ async fn test_metrics_with_docker_prometheus(
         .await
         .unwrap();
 
+    let client = starter.get_client().await;
+    client.list_namespaces().await.unwrap();
+
     // Give Prometheus time to scrape metrics
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
     // Query Prometheus API for metrics
     let client = reqwest::Client::new();
-    let query = "temporal_sdk_temporal_num_pollers";
+    let query = format!("temporal_sdk_{}num_pollers", test_uid.clone());
+    println!("[query]: {:?}", query);
     let response = client
-        .get(prometheus_api)
-        // .query(&[("query", test_uid.clone())])
-        // .query(&[("query", "test_metrics_with_docker_prometheus_")])
+        .get(PROMETHEUS_QUERY_API)
         .query(&[("query", query)])
         .send()
         .await
