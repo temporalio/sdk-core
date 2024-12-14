@@ -1,16 +1,15 @@
 mod options;
 
 pub use options::{
-    ActivityOptions, ChildWorkflowOptions, LocalActivityOptions, Signal, SignalData,
-    SignalWorkflowOptions, TimerOptions,
+    ActivityOptions, ChildWorkflowOptions, LocalActivityOptions, NexusOperationOptions, Signal,
+    SignalData, SignalWorkflowOptions, TimerOptions,
 };
 
 use crate::{
-    workflow_context::options::{IntoWorkflowCommand, NexusOperationOptions},
-    CancelExternalWfResult, CancellableID, CommandCreateRequest,
-    CommandSubscribeChildWorkflowCompletion, IntoUpdateHandlerFunc, IntoUpdateValidatorFunc,
-    NexusStartResult, RustWfCmd, SignalExternalWfResult, TimerResult, UnblockEvent, Unblockable,
-    UpdateFunctions,
+    workflow_context::options::IntoWorkflowCommand, CancelExternalWfResult, CancellableID,
+    CommandCreateRequest, CommandSubscribeChildWorkflowCompletion, IntoUpdateHandlerFunc,
+    IntoUpdateValidatorFunc, NexusStartResult, RustWfCmd, SignalExternalWfResult, TimerResult,
+    UnblockEvent, Unblockable, UpdateFunctions,
 };
 use futures_util::{task::Context, FutureExt, Stream, StreamExt};
 use parking_lot::{RwLock, RwLockReadGuard};

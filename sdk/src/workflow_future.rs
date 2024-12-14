@@ -211,7 +211,7 @@ impl WorkflowFuture {
                 Variant::QueryWorkflow(q) => {
                     error!(
                         "Queries are not implemented in the Rust SDK. Got query '{}'",
-                        q.query_id
+                        q.query_type
                     );
                 }
                 Variant::CancelWorkflow(_) => {
