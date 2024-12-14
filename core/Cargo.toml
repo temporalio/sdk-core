@@ -97,15 +97,13 @@ temporal-sdk-core-test-utils = { path = "../test-utils" }
 temporal-sdk = { path = "../sdk" }
 tokio-stream = { version = "0.1", features = ["net"] }
 
-[build-dependencies]
-tonic-build = { workspace = true }
-
 [[test]]
 name = "integ_tests"
 path = "../tests/main.rs"
 # Prevents autodiscovery, and hence these getting run with `cargo test`. Run with
 # `cargo test --test integ_tests`
 test = false
+required-features = ["temporal-sdk-core-protos/serde_serialize"]
 
 [[test]]
 name = "heavy_tests"

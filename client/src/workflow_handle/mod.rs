@@ -1,6 +1,6 @@
 use crate::{InterceptedMetricsSvc, RawClientLike, WorkflowService};
 use anyhow::{anyhow, bail};
-use std::marker::PhantomData;
+use std::{fmt::Debug, marker::PhantomData};
 use temporal_sdk_core_protos::{
     coresdk::FromPayloadsExt,
     temporal::api::{
@@ -29,6 +29,19 @@ pub enum WorkflowExecutionResult<T> {
     TimedOut,
     /// The workflow continued as new
     ContinuedAsNew,
+}
+
+impl<T> WorkflowExecutionResult<T>
+where
+    T: Debug,
+{
+    /// Unwrap the result, panicking if it was not a success
+    pub fn unwrap_success(self) -> T {
+        match self {
+            Self::Succeeded(t) => t,
+            o => panic!("Expected success, got {:?}", o),
+        }
+    }
 }
 
 /// Options for fetching workflow results
