@@ -53,11 +53,17 @@ async fn main() -> Result<(), anyhow::Error> {
     } = Cli::parse();
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
     // Try building first, so that we error early on build failures & don't start server
-    let test_args_preamble = ["test", "--test", &test_name]
-        .into_iter()
-        .map(ToString::to_string)
-        .chain(cargo_test_args)
-        .collect::<Vec<_>>();
+    let test_args_preamble = [
+        "test",
+        "--features",
+        "temporal-sdk-core-protos/serde_serialize",
+        "--test",
+        &test_name,
+    ]
+    .into_iter()
+    .map(ToString::to_string)
+    .chain(cargo_test_args)
+    .collect::<Vec<_>>();
     let status = Command::new(&cargo)
         .args([test_args_preamble.as_slice(), &["--no-run".to_string()]].concat())
         .status()

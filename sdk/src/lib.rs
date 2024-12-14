@@ -56,8 +56,8 @@ pub use temporal_client::Namespace;
 use tracing::{field, Instrument, Span};
 pub use workflow_context::{
     ActivityOptions, CancellableFuture, ChildWorkflow, ChildWorkflowOptions, LocalActivityOptions,
-    PendingChildWorkflow, Signal, SignalData, SignalWorkflowOptions, StartedChildWorkflow,
-    TimerOptions, WfContext,
+    NexusOperationOptions, PendingChildWorkflow, Signal, SignalData, SignalWorkflowOptions,
+    StartedChildWorkflow, TimerOptions, WfContext,
 };
 
 use crate::{

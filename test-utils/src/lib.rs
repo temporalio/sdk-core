@@ -13,11 +13,10 @@ pub use temporal_sdk_core::replay::HistoryForReplay;
 use crate::stream::{Stream, TryStreamExt};
 use anyhow::{Context, Error};
 use assert_matches::assert_matches;
-use base64::{prelude::BASE64_STANDARD, Engine};
 use futures_util::{future, stream, stream::FuturesUnordered, StreamExt};
 use parking_lot::Mutex;
 use prost::Message;
-use rand::{distributions::Standard, Rng};
+use rand::{distributions, Rng};
 use std::{
     convert::TryFrom, env, future::Future, net::SocketAddr, path::PathBuf, sync::Arc,
     time::Duration,
@@ -196,8 +195,7 @@ impl CoreWfStarter {
     }
 
     fn _new(test_name: &str, runtime_override: Option<CoreRuntime>) -> Self {
-        let rand_bytes: Vec<u8> = rand::thread_rng().sample_iter(&Standard).take(6).collect();
-        let task_q_salt = BASE64_STANDARD.encode(rand_bytes);
+        let task_q_salt = rand_6_chars();
         let task_queue = format!("{test_name}_{task_q_salt}");
         let mut worker_config = integ_worker_config(&task_queue);
         worker_config
@@ -631,7 +629,7 @@ pub fn get_integ_tls_config() -> Option<TlsConfig> {
 pub fn get_integ_telem_options() -> TelemetryOptions {
     let mut ob = TelemetryOptionsBuilder::default();
     let filter_string =
-        env::var("RUST_LOG").unwrap_or_else(|_| "temporal_sdk_core=INFO".to_string());
+        env::var("RUST_LOG").unwrap_or_else(|_| "INFO,temporal_sdk_core=INFO".to_string());
     if let Some(url) = env::var(OTEL_URL_ENV_VAR)
         .ok()
         .map(|x| x.parse::<Url>().unwrap())
@@ -822,4 +820,12 @@ pub async fn drain_pollers_and_shutdown(worker: &Arc<dyn CoreWorker>) {
         }
     );
     worker.shutdown().await;
+}
+
+pub fn rand_6_chars() -> String {
+    rand::thread_rng()
+        .sample_iter(&distributions::Alphanumeric)
+        .take(6)
+        .map(char::from)
+        .collect()
 }

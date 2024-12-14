@@ -2078,6 +2078,7 @@ pub mod temporal {
                             | EventType::TimerStarted
                             | EventType::UpsertWorkflowSearchAttributes
                             | EventType::WorkflowPropertiesModified
+                            | EventType::NexusOperationScheduled
                             | EventType::WorkflowExecutionCanceled
                             | EventType::WorkflowExecutionCompleted
                             | EventType::WorkflowExecutionContinuedAsNew
@@ -2122,6 +2123,11 @@ pub mod temporal {
                                 Attributes::WorkflowTaskCompletedEventAttributes(a) => Some(a.scheduled_event_id),
                                 Attributes::WorkflowTaskTimedOutEventAttributes(a) => Some(a.scheduled_event_id),
                                 Attributes::WorkflowTaskFailedEventAttributes(a) => Some(a.scheduled_event_id),
+                                Attributes::NexusOperationStartedEventAttributes(a) => Some(a.scheduled_event_id),
+                                Attributes::NexusOperationCompletedEventAttributes(a) => Some(a.scheduled_event_id),
+                                Attributes::NexusOperationFailedEventAttributes(a) => Some(a.scheduled_event_id),
+                                Attributes::NexusOperationTimedOutEventAttributes(a) => Some(a.scheduled_event_id),
+                                Attributes::NexusOperationCanceledEventAttributes(a) => Some(a.scheduled_event_id),
                                 _ => None
                             }
                         })
