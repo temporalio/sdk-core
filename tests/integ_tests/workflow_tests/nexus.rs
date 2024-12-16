@@ -1,4 +1,5 @@
 use assert_matches::assert_matches;
+use std::collections::HashMap;
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowService};
 use temporal_sdk::{NexusOperationOptions, WfContext};
 use temporal_sdk_core_protos::{
@@ -10,19 +11,23 @@ use temporal_sdk_core_protos::{
         enums::v1::TaskQueueKind,
         nexus,
         nexus::v1::{
-            endpoint_target, start_operation_response, EndpointSpec, EndpointTarget,
+            endpoint_target, start_operation_response, EndpointSpec, EndpointTarget, HandlerError,
             StartOperationResponse,
         },
         operatorservice::v1::CreateNexusEndpointRequest,
         taskqueue::v1::TaskQueue,
-        workflowservice::v1::{PollNexusTaskQueueRequest, RespondNexusTaskCompletedRequest},
+        workflowservice::v1::{
+            PollNexusTaskQueueRequest, RespondNexusTaskCompletedRequest,
+            RespondNexusTaskFailedRequest,
+        },
     },
 };
 use temporal_sdk_core_test_utils::{rand_6_chars, CoreWfStarter};
 use tokio::join;
 
+#[rstest::rstest]
 #[tokio::test]
-async fn nexus_basic() {
+async fn nexus_basic(#[values(true, false)] succeed: bool) {
     let wf_name = "nexus_basic";
     let mut starter = CoreWfStarter::new(wf_name);
     starter.worker_config.no_remote_activities(true);
@@ -63,25 +68,51 @@ async fn nexus_basic() {
             .await
             .unwrap()
             .into_inner();
-        client
-            .respond_nexus_task_completed(RespondNexusTaskCompletedRequest {
-                namespace: client.namespace().to_owned(),
-                task_token: nt.task_token,
-                response: Some(nexus::v1::Response {
-                    variant: Some(nexus::v1::response::Variant::StartOperation(
-                        StartOperationResponse {
-                            variant: Some(start_operation_response::Variant::SyncSuccess(
-                                start_operation_response::Sync {
-                                    payload: Some("yay".into()),
-                                },
-                            )),
-                        },
-                    )),
-                }),
-                ..Default::default()
-            })
-            .await
-            .unwrap();
+        if succeed {
+            client
+                .respond_nexus_task_completed(RespondNexusTaskCompletedRequest {
+                    namespace: client.namespace().to_owned(),
+                    task_token: nt.task_token,
+                    response: Some(nexus::v1::Response {
+                        variant: Some(nexus::v1::response::Variant::StartOperation(
+                            StartOperationResponse {
+                                variant: Some(start_operation_response::Variant::SyncSuccess(
+                                    start_operation_response::Sync {
+                                        payload: Some("yay".into()),
+                                    },
+                                )),
+                            },
+                        )),
+                    }),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+        } else {
+            client
+                .respond_nexus_task_failed(RespondNexusTaskFailedRequest {
+                    namespace: client.namespace().to_owned(),
+                    task_token: nt.task_token,
+                    error: Some(HandlerError {
+                        error_type: "BAD_REQUEST".to_string(), // bad req is non-retryable
+                        failure: Some(nexus::v1::Failure {
+                            message: "busted".to_string(),
+                            metadata: {
+                                let mut hm = HashMap::new();
+                                hm.insert(
+                                    "type".to_owned(),
+                                    "temporal.api.failure.v1.Failure".to_owned(),
+                                );
+                                hm
+                            },
+                            details: vec![1, 2, 3],
+                        }),
+                    }),
+                    identity: "whatever".to_string(),
+                })
+                .await
+                .unwrap();
+        };
     };
 
     join!(nexus_task_handle, async {
@@ -94,11 +125,20 @@ async fn nexus_basic() {
         .await
         .unwrap();
     let res = NexusOperationResult::from_json_payload(&res.unwrap_success()[0]).unwrap();
-    let p = assert_matches!(
-        res.status,
-        Some(nexus_operation_result::Status::Completed(p)) => p
-    );
-    assert_eq!(p.data, b"yay");
+    if succeed {
+        let p = assert_matches!(
+            res.status,
+            Some(nexus_operation_result::Status::Completed(p)) => p
+        );
+        assert_eq!(p.data, b"yay");
+    } else {
+        let f = assert_matches!(
+            res.status,
+            Some(nexus_operation_result::Status::Failed(f)) => f
+        );
+        assert_eq!(f.message, "busted");
+        // assert_eq!(p.failure.details, vec![1, 2, 3]);
+    }
 }
 
 async fn mk_endpoint(starter: &mut CoreWfStarter) -> String {
