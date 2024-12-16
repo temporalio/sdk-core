@@ -1,5 +1,6 @@
 use anyhow::anyhow;
 use assert_matches::assert_matches;
+use std::string::ToString;
 use std::{collections::HashMap, env, net::SocketAddr, sync::Arc, time::Duration};
 use temporal_client::{
     WorkflowClientTrait, WorkflowOptions, WorkflowService, REQUEST_LATENCY_HISTOGRAM_NAME,
@@ -15,8 +16,9 @@ use temporal_sdk_core::{
 use temporal_sdk_core_api::{
     telemetry::{
         metrics::{CoreMeter, MetricAttributes, MetricParameters},
-        HistogramBucketOverrides, OtelCollectorOptionsBuilder, PrometheusExporterOptions,
-        PrometheusExporterOptionsBuilder, TelemetryOptions, TelemetryOptionsBuilder,
+        HistogramBucketOverrides, OtelCollectorOptionsBuilder, OtlpProtocol,
+        PrometheusExporterOptions, PrometheusExporterOptionsBuilder, TelemetryOptions,
+        TelemetryOptionsBuilder,
     },
     worker::WorkerConfigBuilder,
     Worker,
@@ -43,6 +45,7 @@ use temporal_sdk_core_protos::{
 };
 use temporal_sdk_core_test_utils::{
     get_integ_server_options, get_integ_telem_options, CoreWfStarter, NAMESPACE, OTEL_URL_ENV_VAR,
+    PROMETHEUS_QUERY_API,
 };
 use tokio::{join, sync::Barrier, task::AbortHandle};
 use url::Url;
@@ -648,6 +651,88 @@ async fn request_fail_codes_otel() {
             .unwrap_err();
 
         tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+}
+
+// Tests that rely on Prometheus running in a docker container need to start
+// with `docker_` and set the `DOCKER_PROMETHEUS_RUNNING` env variable to run
+#[rstest::rstest]
+#[tokio::test]
+async fn docker_metrics_with_prometheus(
+    #[values(
+        ("http://localhost:4318/v1/metrics", OtlpProtocol::Http),
+        ("http://localhost:4317", OtlpProtocol::Grpc)
+    )]
+    otel_collector: (&str, OtlpProtocol),
+) {
+    if std::env::var("DOCKER_PROMETHEUS_RUNNING").is_err() {
+        return;
+    }
+    let (otel_collector_addr, otel_protocol) = otel_collector;
+    let test_uid = format!(
+        "test_{}_",
+        uuid::Uuid::new_v4().to_string().replace("-", "")
+    );
+
+    // Configure the OTLP exporter with HTTP
+    let opts = OtelCollectorOptionsBuilder::default()
+        .url(otel_collector_addr.parse().unwrap())
+        .protocol(otel_protocol)
+        .global_tags(HashMap::from([("test_id".to_string(), test_uid.clone())]))
+        .build()
+        .unwrap();
+    let exporter = Arc::new(build_otlp_metric_exporter(opts).unwrap());
+    let telemopts = TelemetryOptionsBuilder::default()
+        .metrics(exporter as Arc<dyn CoreMeter>)
+        .metric_prefix(test_uid.clone())
+        .build()
+        .unwrap();
+    let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
+    let test_name = "docker_metrics_with_prometheus";
+    let mut starter = CoreWfStarter::new_with_runtime(test_name, rt);
+    let worker = starter.get_worker().await;
+    starter.start_wf().await;
+
+    // Immediately finish the workflow
+    let task = worker.poll_workflow_activation().await.unwrap();
+    worker
+        .complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+            task.run_id,
+            CompleteWorkflowExecution { result: None }.into(),
+        ))
+        .await
+        .unwrap();
+
+    let client = starter.get_client().await;
+    client.list_namespaces().await.unwrap();
+
+    // Give Prometheus time to scrape metrics
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+    // Query Prometheus API for metrics
+    let client = reqwest::Client::new();
+    let query = format!("temporal_sdk_{}num_pollers", test_uid.clone());
+    let response = client
+        .get(PROMETHEUS_QUERY_API)
+        .query(&[("query", query)])
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+
+    // Validate the Prometheus response
+    if let Some(data) = response["data"]["result"].as_array() {
+        assert!(!data.is_empty(), "No metrics found for query: {test_uid}");
+        assert_eq!(data[0]["metric"]["exported_job"], "temporal-core-sdk");
+        assert_eq!(data[0]["metric"]["job"], "otel-collector");
+        assert!(data[0]["metric"]["task_queue"]
+            .as_str()
+            .unwrap()
+            .starts_with(test_name));
+    } else {
+        panic!("Invalid Prometheus response: {:?}", response);
     }
 }
 

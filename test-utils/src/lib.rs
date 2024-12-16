@@ -80,6 +80,8 @@ pub static SEARCH_ATTR_INT: &str = "CustomIntField";
 pub const OTEL_URL_ENV_VAR: &str = "TEMPORAL_INTEG_OTEL_URL";
 /// If set, enable direct scraping of prom metrics on the specified port
 pub const PROM_ENABLE_ENV_VAR: &str = "TEMPORAL_INTEG_PROM_PORT";
+/// This should match the prometheus port exposed in docker-compose-ci.yaml
+pub const PROMETHEUS_QUERY_API: &str = "http://localhost:9090/api/v1/query";
 #[macro_export]
 macro_rules! prost_dur {
     ($dur_call:ident $args:tt) => {
