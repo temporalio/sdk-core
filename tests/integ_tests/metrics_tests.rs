@@ -818,39 +818,6 @@ async fn evict_on_complete_does_not_count_as_forced_eviction() {
     assert!(!body.contains("temporal_sticky_cache_total_forced_eviction"));
 }
 
-#[tokio::test]
-async fn test_otel_errors_are_logged_as_errors() {
-        // Create a subscriber that captures logs
-        let collector = tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::ERROR)
-            .with_test_writer()
-            .finish();
-
-        // Set this subscriber as default
-        let _guard = tracing::subscriber::set_default(collector);
-
-    let opts = OtelCollectorOptionsBuilder::default()
-        // Intentionally invalid endpoint
-        .url("http://localhost:9999/v1/metrics".parse().unwrap())
-        // .protocol(OtlpProtocol::Http)
-        .build()
-        .unwrap();
-
-    // This exporter will fail every time it tries to export metrics
-    let exporter = build_otlp_metric_exporter(opts).unwrap();
-
-}
-
-// use std::sync::{Arc, Mutex};
-// use std::time::Duration;
-// use temporal_sdk_core::{
-//     CoreRuntime, TelemetryOptionsBuilder, telemetry::{build_otlp_metric_exporter, OtlpProtocol, OtelCollectorOptionsBuilder, CoreMeter},
-// };
-// use tracing_subscriber::fmt::MakeWriter;
-// use tracing::Level;
-// use tokio::time::sleep;
-
-// A writer that captures logs into a buffer so we can assert on them.
 struct CapturingWriter {
     buf: Arc<Mutex<Vec<u8>>>,
 }
@@ -876,22 +843,16 @@ impl std::io::Write for CapturingHandle {
     }
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn test_otel_error_logged() {
+#[tokio::test]
+async fn otel_errors_logged_as_errors() {
     // Set up tracing subscriber to capture ERROR logs
     let logs = Arc::new(Mutex::new(Vec::new()));
     let writer = CapturingWriter { buf: logs.clone() };
-
-    let subscriber = tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::TRACE)
-        .with_writer(writer)
-        .finish();
+    let subscriber = tracing_subscriber::fmt().with_writer(writer).finish();
     let _guard = tracing::subscriber::set_default(subscriber);
 
-    // Configure OTLP exporter with an invalid endpoint so it fails
     let opts = OtelCollectorOptionsBuilder::default()
-        .url("http://localhost:9999/v1/metrics".parse().unwrap()) // Invalid endpoint
-        // .protocol(OtlpProtocol::Http)
+        .url("https://localhostt:9995/v1/metrics".parse().unwrap()) // Invalid endpoint
         .build()
         .unwrap();
     let exporter = build_otlp_metric_exporter(opts).unwrap();
@@ -902,38 +863,22 @@ async fn test_otel_error_logged() {
         .unwrap();
 
     let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
+    let mut starter = CoreWfStarter::new_with_runtime("otel_errors_logged_as_errors", rt);
+    let _worker = starter.get_worker().await;
 
-    let opts = get_integ_server_options();
-    let mut raw_client = opts
-        .connect_no_namespace(rt.telemetry().get_temporal_metric_meter())
-        .await
-        .unwrap();
-    assert!(raw_client.get_client().capabilities().is_some());
+    // Wait to allow exporter to attempt sending metrics and fail.
+    tokio::time::sleep(Duration::from_secs(2)).await;
 
-    let _ = raw_client
-        .list_namespaces(ListNamespacesRequest::default())
-        .await
-        .unwrap();
-
-    // Trigger metric emission or just wait for exporter attempts
-    // If you have a Temporal client to generate metrics, you can do so here.
-    // For now, just wait to allow exporter to attempt sending metrics and fail.
-    tokio::time::sleep(Duration::from_secs(5)).await;
-
-
-    // Check the captured logs
     let logs = logs.lock().unwrap();
     let log_str = String::from_utf8_lossy(&logs);
 
-    // Assert that there is an error log
     assert!(
         log_str.contains("ERROR"),
         "Expected ERROR log not found in logs: {}",
         log_str
     );
-    // Look for some substring that indicates OTLP export failed
     assert!(
-        log_str.contains("failed") || log_str.contains("error"),
+        log_str.contains("Metrics exporter otlp failed with the grpc server returns error"),
         "Expected an OTel exporter error message in logs: {}",
         log_str
     );
