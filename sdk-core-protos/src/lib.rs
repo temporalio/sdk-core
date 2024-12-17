@@ -2016,7 +2016,17 @@ pub mod temporal {
         }
         pub mod enums {
             pub mod v1 {
+                use crate::camel_case_to_screaming_snake;
+
                 tonic::include_proto!("temporal.api.enums.v1");
+
+                impl EventType {
+                    pub fn from_json_str(val: &str) -> Option<EventType> {
+                        let with_prefix =
+                            format!("EVENT_TYPE_{}", camel_case_to_screaming_snake(val));
+                        EventType::from_str_name(&with_prefix)
+                    }
+                }
             }
         }
         pub mod failure {
@@ -2331,7 +2341,90 @@ pub mod temporal {
         }
         pub mod nexus {
             pub mod v1 {
+                use crate::temporal::api::{
+                    common,
+                    common::v1::link::{workflow_event, WorkflowEvent},
+                    enums::v1::EventType,
+                };
+                use anyhow::{anyhow, bail};
+                use tonic::transport::Uri;
+
                 tonic::include_proto!("temporal.api.nexus.v1");
+
+                static SCHEME_PREFIX: &str = "temporal://";
+
+                /// Attempt to parse a nexus lint into a workflow event link
+                pub fn workflow_event_link_from_nexus(
+                    l: &Link,
+                ) -> Result<common::v1::Link, anyhow::Error> {
+                    if !l.url.starts_with(SCHEME_PREFIX) {
+                        bail!("Invalid scheme for nexus link: {:?}", l.url);
+                    }
+                    // We strip the scheme/authority portion because of
+                    // https://github.com/hyperium/http/issues/696
+                    let no_authority_url = l.url.strip_prefix(SCHEME_PREFIX).unwrap();
+                    let uri = Uri::try_from(no_authority_url)?;
+                    let parts = uri.into_parts();
+                    let path = parts.path_and_query.ok_or_else(|| {
+                        anyhow!("Failed to parse nexus link, invalid path: {:?}", l)
+                    })?;
+                    let path_parts = path.path().split('/').collect::<Vec<_>>();
+                    if path_parts.get(1) != Some(&"namespaces") {
+                        bail!("Invalid path for nexus link: {:?}", l);
+                    }
+                    let namespace = path_parts.get(2).ok_or_else(|| {
+                        anyhow!("Failed to parse nexus link, no namespace: {:?}", l)
+                    })?;
+                    if path_parts.get(3) != Some(&"workflows") {
+                        bail!("Invalid path for nexus link, no workflows segment: {:?}", l);
+                    }
+                    let workflow_id = path_parts.get(4).ok_or_else(|| {
+                        anyhow!("Failed to parse nexus link, no workflow id: {:?}", l)
+                    })?;
+                    let run_id = path_parts
+                        .get(5)
+                        .ok_or_else(|| anyhow!("Failed to parse nexus link, no run id: {:?}", l))?;
+                    if path_parts.get(6) != Some(&"history") {
+                        bail!("Invalid path for nexus link, no history segment: {:?}", l);
+                    }
+                    let reference = if let Some(query) = path.query() {
+                        let mut eventref = workflow_event::EventReference::default();
+                        let query_parts = query.split('&').collect::<Vec<_>>();
+                        for qp in query_parts {
+                            let mut kv = qp.split('=');
+                            let key = kv.next().ok_or_else(|| {
+                                anyhow!("Failed to parse nexus link query parameter: {:?}", l)
+                            })?;
+                            let val = kv.next().ok_or_else(|| {
+                                anyhow!("Failed to parse nexus link query parameter: {:?}", l)
+                            })?;
+                            match key {
+                                "eventID" => {
+                                    eventref.event_id = val.parse().map_err(|_| {
+                                        anyhow!("Failed to parse nexus link event id: {:?}", l)
+                                    })?;
+                                }
+                                "eventType" => {
+                                    eventref.event_type =
+                                        EventType::from_json_str(val).unwrap_or_default().into()
+                                }
+                                _ => continue,
+                            }
+                        }
+                        Some(workflow_event::Reference::EventRef(eventref))
+                    } else {
+                        None
+                    };
+
+                    Ok(common::v1::Link {
+                        variant: Some(common::v1::link::Variant::WorkflowEvent(WorkflowEvent {
+                            namespace: namespace.to_string(),
+                            workflow_id: workflow_id.to_string(),
+                            run_id: run_id.to_string(),
+                            reference,
+                        })),
+                    })
+                }
             }
         }
         pub mod workflowservice {
@@ -2432,6 +2525,25 @@ pub mod grpc {
             tonic::include_proto!("grpc.health.v1");
         }
     }
+}
+
+/// Case conversion, used for json -> proto enum string conversion
+pub fn camel_case_to_screaming_snake(val: &str) -> String {
+    let mut out = String::new();
+    let mut last_was_upper = true;
+    for c in val.chars() {
+        if c.is_uppercase() {
+            if !last_was_upper {
+                out.push('_');
+            }
+            out.push(c.to_ascii_uppercase());
+            last_was_upper = true;
+        } else {
+            out.push(c.to_ascii_uppercase());
+            last_was_upper = false;
+        }
+    }
+    out
 }
 
 #[cfg(test)]

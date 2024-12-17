@@ -367,7 +367,7 @@ pub struct TestWorker {
     inner: Worker,
     pub core_worker: Arc<dyn CoreWorker>,
     client: Option<Arc<RetryClient<Client>>>,
-    pub started_workflows: Mutex<Vec<WorkflowExecutionInfo>>,
+    pub started_workflows: Arc<Mutex<Vec<WorkflowExecutionInfo>>>,
     /// If set true (default), and a client is available, we will fetch workflow results to
     /// determine when they have all completed.
     pub fetch_results: bool,
@@ -380,7 +380,7 @@ impl TestWorker {
             inner,
             core_worker,
             client: None,
-            started_workflows: Mutex::new(vec![]),
+            started_workflows: Arc::new(Mutex::new(vec![])),
             fetch_results: true,
         }
     }
@@ -406,6 +406,16 @@ impl TestWorker {
         self.inner.register_activity(activity_type, act_function)
     }
 
+    /// Create a handle that can be used to submit workflows. Useful when workflows need to be
+    /// started concurrently with running the worker.
+    pub fn get_submitter_handle(&self) -> TestWorkerSubmitterHandle {
+        TestWorkerSubmitterHandle {
+            client: self.client.clone().expect("client must be set"),
+            tq: self.inner.task_queue().to_string(),
+            started_workflows: self.started_workflows.clone(),
+        }
+    }
+
     /// Create a workflow, asking the server to start it with the provided workflow ID and using the
     /// provided workflow function.
     ///
@@ -419,27 +429,9 @@ impl TestWorker {
         input: Vec<Payload>,
         options: WorkflowOptions,
     ) -> Result<String, anyhow::Error> {
-        if let Some(c) = self.client.as_ref() {
-            let wfid = workflow_id.into();
-            let res = c
-                .start_workflow(
-                    input,
-                    self.inner.task_queue().to_string(),
-                    wfid.clone(),
-                    workflow_type.into(),
-                    None,
-                    options,
-                )
-                .await?;
-            self.started_workflows.lock().push(WorkflowExecutionInfo {
-                namespace: c.namespace().to_string(),
-                workflow_id: wfid,
-                run_id: Some(res.run_id.clone()),
-            });
-            Ok(res.run_id)
-        } else {
-            Ok("fake_run_id".to_string())
-        }
+        self.get_submitter_handle()
+            .submit_wf(workflow_id, workflow_type, input, options)
+            .await
     }
 
     /// Similar to `submit_wf` but checking that the server returns the first
@@ -517,6 +509,46 @@ impl TestWorker {
         self.inner.set_worker_interceptor(iceptor);
         tokio::try_join!(self.inner.run(), get_results_waiter)?;
         Ok(())
+    }
+}
+
+pub struct TestWorkerSubmitterHandle {
+    client: Arc<RetryClient<Client>>,
+    tq: String,
+    started_workflows: Arc<Mutex<Vec<WorkflowExecutionInfo>>>,
+}
+impl TestWorkerSubmitterHandle {
+    /// Create a workflow, asking the server to start it with the provided workflow ID and using the
+    /// provided workflow function.
+    ///
+    /// Increments the expected Workflow run count.
+    ///
+    /// Returns the run id of the started workflow
+    pub async fn submit_wf(
+        &self,
+        workflow_id: impl Into<String>,
+        workflow_type: impl Into<String>,
+        input: Vec<Payload>,
+        options: WorkflowOptions,
+    ) -> Result<String, anyhow::Error> {
+        let wfid = workflow_id.into();
+        let res = self
+            .client
+            .start_workflow(
+                input,
+                self.tq.clone(),
+                wfid.clone(),
+                workflow_type.into(),
+                None,
+                options,
+            )
+            .await?;
+        self.started_workflows.lock().push(WorkflowExecutionInfo {
+            namespace: self.client.namespace().to_string(),
+            workflow_id: wfid,
+            run_id: Some(res.run_id.clone()),
+        });
+        Ok(res.run_id)
     }
 }
 
