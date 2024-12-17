@@ -12,7 +12,7 @@ use super::{
 };
 use crate::{abstractions::dbg_panic, telemetry::metrics::DEFAULT_S_BUCKETS};
 use opentelemetry::{
-    self,
+    self, global,
     metrics::{Meter, MeterProvider as MeterProviderT},
     Key, KeyValue, Value,
 };
@@ -121,6 +121,9 @@ pub(super) fn augment_meter_provider_with_defaults(
 pub fn build_otlp_metric_exporter(
     opts: OtelCollectorOptions,
 ) -> Result<CoreOtelMeter, anyhow::Error> {
+    global::set_error_handler(|err| {
+        tracing::error!("{}", err);
+    })?;
     let exporter = match opts.protocol {
         OtlpProtocol::Grpc => {
             let mut exporter = opentelemetry_otlp::TonicExporterBuilder::default()
