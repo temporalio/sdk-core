@@ -79,6 +79,10 @@ pub(super) enum NexusOperationCommand {
 pub(super) struct SharedState {
     lang_seq_num: u32,
     scheduled_event_id: i64,
+    endpoint: String,
+    service: String,
+    operation: String,
+
     cancelled_before_sent: bool,
 }
 
@@ -89,6 +93,9 @@ impl NexusOperationMachine {
             SharedState {
                 lang_seq_num: attribs.seq,
                 scheduled_event_id: 0,
+                endpoint: attribs.endpoint.clone(),
+                service: attribs.service.clone(),
+                operation: attribs.operation.clone(),
                 cancelled_before_sent: false,
             },
         );
@@ -366,20 +373,19 @@ impl WFMachinesAdapter for NexusOperationMachine {
                                 message: "Nexus Operation cancelled before scheduled".to_owned(),
                                 cause: Some(Box::new(Failure {
                                     failure_info: Some(FailureInfo::CanceledFailureInfo(
-                                        failure::CanceledFailureInfo {
-                                            ..Default::default()
-                                        },
+                                        Default::default(),
                                     )),
                                     ..Default::default()
                                 })),
                                 failure_info: Some(
                                     FailureInfo::NexusOperationExecutionFailureInfo(
                                         failure::NexusOperationFailureInfo {
-                                            // TODO: Get from shared state
-                                            scheduled_event_id: 0,
-                                            endpoint: "".to_string(),
-                                            service: "".to_string(),
-                                            operation: "".to_string(),
+                                            scheduled_event_id: self
+                                                .shared_state
+                                                .scheduled_event_id,
+                                            endpoint: self.shared_state.endpoint.clone(),
+                                            service: self.shared_state.service.clone(),
+                                            operation: self.shared_state.operation.clone(),
                                             operation_id: "".to_string(),
                                         },
                                     ),
