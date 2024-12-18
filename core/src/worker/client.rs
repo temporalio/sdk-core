@@ -233,7 +233,9 @@ impl WorkerClient for WorkerClientBag {
             namespace: self.namespace.clone(),
             sdk_metadata: Some(request.sdk_metadata),
             metering_metadata: Some(request.metering_metadata),
-            capabilities: None,
+            capabilities: Some(respond_workflow_task_completed_request::Capabilities {
+                discard_speculative_workflow_task_with_events: true,
+            }),
         };
         Ok(self
             .cloned_client()
