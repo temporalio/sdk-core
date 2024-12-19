@@ -742,3 +742,50 @@ async fn la_resolve_same_time_as_other_cancel() {
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn la_sequence_parallel_with_long() {
+    let wf_name = "la_sequence_parallel_with_long";
+    let mut starter = CoreWfStarter::new(wf_name);
+    let mut worker = starter.worker().await;
+
+    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+        let long = ctx.local_activity(LocalActivityOptions {
+            activity_type: "delay".to_string(),
+            activity_id: Some("long".to_string()),
+            input: 10_000.as_json_payload().expect("serializes fine"),
+            ..Default::default()
+        });
+        let shorts = async {
+            for _ in 1..=5 {
+                ctx.local_activity(LocalActivityOptions {
+                    activity_type: "delay".to_string(),
+                    input: 5.as_json_payload().expect("serializes fine"),
+                    ..Default::default()
+                })
+                .await;
+            }
+        };
+        tokio::join!(long, shorts);
+        Ok(().into())
+    });
+    worker.register_activity("delay", |_: ActContext, d: u64| async move {
+        tokio::time::sleep(Duration::from_millis(d)).await;
+        Ok(())
+    });
+
+    let run_id = worker
+        .submit_wf(
+            wf_name.to_owned(),
+            wf_name.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+    starter
+        .fetch_history_and_replay(wf_name, run_id, worker.inner_mut())
+        .await
+        .unwrap();
+}
