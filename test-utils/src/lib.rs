@@ -421,7 +421,7 @@ impl TestWorker {
     ///
     /// Increments the expected Workflow run count.
     ///
-    /// Returns the run id of the started workflow
+    /// Returns the run id of the started workflow (if no client has initialized returns a fake id)
     pub async fn submit_wf(
         &self,
         workflow_id: impl Into<String>,
@@ -429,6 +429,9 @@ impl TestWorker {
         input: Vec<Payload>,
         options: WorkflowOptions,
     ) -> Result<String, anyhow::Error> {
+        if self.client.is_none() {
+            return Ok("fake_run_id".to_string());
+        }
         self.get_submitter_handle()
             .submit_wf(workflow_id, workflow_type, input, options)
             .await
