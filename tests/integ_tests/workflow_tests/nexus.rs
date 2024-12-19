@@ -1,7 +1,8 @@
 use anyhow::bail;
 use assert_matches::assert_matches;
+use std::time::Duration;
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions, WorkflowService};
-use temporal_sdk::{CancellableFuture, NexusOperationOptions, WfContext};
+use temporal_sdk::{CancellableFuture, NexusOperationOptions, WfContext, WfExitValue};
 use temporal_sdk_core_protos::{
     coresdk::{
         nexus::{nexus_operation_result, NexusOperationResult},
@@ -13,7 +14,7 @@ use temporal_sdk_core_protos::{
         failure::v1::failure::FailureInfo,
         nexus,
         nexus::v1::{
-            endpoint_target, start_operation_response, workflow_event_link_from_nexus,
+            endpoint_target, request, start_operation_response, workflow_event_link_from_nexus,
             EndpointSpec, EndpointTarget, HandlerError, StartOperationResponse,
         },
         operatorservice::v1::CreateNexusEndpointRequest,
@@ -27,9 +28,19 @@ use temporal_sdk_core_protos::{
 use temporal_sdk_core_test_utils::{rand_6_chars, CoreWfStarter};
 use tokio::join;
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum Outcome {
+    Succeed,
+    Fail,
+    Cancel,
+    Timeout,
+}
+
 #[rstest::rstest]
 #[tokio::test]
-async fn nexus_basic(#[values(true, false)] succeed: bool) {
+async fn nexus_basic(
+    #[values(Outcome::Succeed, Outcome::Fail, Outcome::Timeout)] outcome: Outcome,
+) {
     let wf_name = "nexus_basic";
     let mut starter = CoreWfStarter::new(wf_name);
     starter.worker_config.no_remote_activities(true);
@@ -45,6 +56,7 @@ async fn nexus_basic(#[values(true, false)] succeed: bool) {
                     endpoint,
                     service: "svc".to_string(),
                     operation: "op".to_string(),
+                    schedule_to_close_timeout: Some(Duration::from_secs(3)),
                     ..Default::default()
                 })
                 .await
@@ -70,43 +82,48 @@ async fn nexus_basic(#[values(true, false)] succeed: bool) {
             .await
             .unwrap()
             .into_inner();
-        if succeed {
-            client
-                .respond_nexus_task_completed(RespondNexusTaskCompletedRequest {
-                    namespace: client.namespace().to_owned(),
-                    task_token: nt.task_token,
-                    response: Some(nexus::v1::Response {
-                        variant: Some(nexus::v1::response::Variant::StartOperation(
-                            StartOperationResponse {
-                                variant: Some(start_operation_response::Variant::SyncSuccess(
-                                    start_operation_response::Sync {
-                                        payload: Some("yay".into()),
-                                    },
-                                )),
-                            },
-                        )),
-                    }),
-                    ..Default::default()
-                })
-                .await
-                .unwrap();
-        } else {
-            client
-                .respond_nexus_task_failed(RespondNexusTaskFailedRequest {
-                    namespace: client.namespace().to_owned(),
-                    task_token: nt.task_token,
-                    error: Some(HandlerError {
-                        error_type: "BAD_REQUEST".to_string(), // bad req is non-retryable
-                        failure: Some(nexus::v1::Failure {
-                            message: "busted".to_string(),
-                            ..Default::default()
+        match outcome {
+            Outcome::Succeed => {
+                client
+                    .respond_nexus_task_completed(RespondNexusTaskCompletedRequest {
+                        namespace: client.namespace().to_owned(),
+                        task_token: nt.task_token,
+                        response: Some(nexus::v1::Response {
+                            variant: Some(nexus::v1::response::Variant::StartOperation(
+                                StartOperationResponse {
+                                    variant: Some(start_operation_response::Variant::SyncSuccess(
+                                        start_operation_response::Sync {
+                                            payload: Some("yay".into()),
+                                        },
+                                    )),
+                                },
+                            )),
                         }),
-                    }),
-                    identity: "whatever".to_string(),
-                })
-                .await
-                .unwrap();
-        };
+                        ..Default::default()
+                    })
+                    .await
+                    .unwrap();
+            }
+            Outcome::Fail => {
+                client
+                    .respond_nexus_task_failed(RespondNexusTaskFailedRequest {
+                        namespace: client.namespace().to_owned(),
+                        task_token: nt.task_token,
+                        error: Some(HandlerError {
+                            error_type: "BAD_REQUEST".to_string(), // bad req is non-retryable
+                            failure: Some(nexus::v1::Failure {
+                                message: "busted".to_string(),
+                                ..Default::default()
+                            }),
+                        }),
+                        identity: "whatever".to_string(),
+                    })
+                    .await
+                    .unwrap();
+            }
+            Outcome::Timeout => {}
+            Outcome::Cancel => unimplemented!(),
+        }
     };
 
     join!(nexus_task_handle, async {
@@ -119,24 +136,38 @@ async fn nexus_basic(#[values(true, false)] succeed: bool) {
         .await
         .unwrap();
     let res = NexusOperationResult::from_json_payload(&res.unwrap_success()[0]).unwrap();
-    if succeed {
-        let p = assert_matches!(
-            res.status,
-            Some(nexus_operation_result::Status::Completed(p)) => p
-        );
-        assert_eq!(p.data, b"yay");
-    } else {
-        let f = assert_matches!(
-            res.status,
-            Some(nexus_operation_result::Status::Failed(f)) => f
-        );
-        assert_eq!(f.message, "nexus operation completed unsuccessfully");
+    match outcome {
+        Outcome::Succeed => {
+            let p = assert_matches!(
+                res.status,
+                Some(nexus_operation_result::Status::Completed(p)) => p
+            );
+            assert_eq!(p.data, b"yay");
+        }
+        Outcome::Fail => {
+            let f = assert_matches!(
+                res.status,
+                Some(nexus_operation_result::Status::Failed(f)) => f
+            );
+            assert_eq!(f.message, "nexus operation completed unsuccessfully");
+        }
+        Outcome::Timeout => {
+            let f = assert_matches!(
+                res.status,
+                Some(nexus_operation_result::Status::TimedOut(f)) => f
+            );
+            assert_eq!(f.message, "nexus operation completed unsuccessfully");
+            assert_eq!(f.cause.unwrap().message, "operation timed out");
+        }
+        Outcome::Cancel => unimplemented!(),
     }
 }
 
 #[rstest::rstest]
 #[tokio::test]
-async fn nexus_async(#[values(true, false)] succeed: bool) {
+async fn nexus_async(
+    #[values(Outcome::Succeed, Outcome::Fail, Outcome::Cancel, Outcome::Timeout)] outcome: Outcome,
+) {
     let wf_name = "nexus_async";
     let mut starter = CoreWfStarter::new(wf_name);
     starter.worker_config.no_remote_activities(true);
@@ -152,21 +183,29 @@ async fn nexus_async(#[values(true, false)] succeed: bool) {
                     endpoint,
                     service: "svc".to_string(),
                     operation: "op".to_string(),
+                    schedule_to_close_timeout: Some(Duration::from_secs(1)),
                     ..Default::default()
                 })
                 .await
                 .unwrap();
-            let res = started.result().await;
+            let result = started.result();
+            if outcome == Outcome::Cancel {
+                started.cancel(&ctx).await;
+            }
+            let res = result.await;
             Ok(res.into())
         }
     });
     worker.register_wf(
         "async_completer".to_owned(),
-        move |_: WfContext| async move {
-            if succeed {
-                Ok("completed async".into())
-            } else {
-                bail!("broken")
+        move |ctx: WfContext| async move {
+            match outcome {
+                Outcome::Succeed => Ok("completed async".into()),
+                Outcome::Cancel => {
+                    ctx.cancelled().await;
+                    Ok(WfExitValue::Cancelled)
+                }
+                _ => bail!("broken"),
             }
         },
     );
@@ -188,37 +227,41 @@ async fn nexus_async(#[values(true, false)] succeed: bool) {
             .await
             .unwrap()
             .into_inner();
-        // Start the workflow which will act like the nexus handler and complete the async operation
-        let start_req = if let nexus::v1::request::Variant::StartOperation(sr) =
-            nt.request.unwrap().variant.unwrap()
-        {
-            sr
-        } else {
-            panic!("unexpected request variant");
-        };
-        submitter
-            .submit_wf(
-                format!("completer-{}", rand_6_chars()),
-                "async_completer",
-                vec![],
-                WorkflowOptions {
-                    links: start_req
-                        .links
-                        .iter()
-                        .map(workflow_event_link_from_nexus)
-                        .collect::<Result<Vec<_>, _>>()
-                        .unwrap(),
-                    completion_callbacks: vec![Callback {
-                        variant: Some(callback::Variant::Nexus(callback::Nexus {
-                            url: start_req.callback,
-                            header: start_req.callback_header,
-                        })),
-                    }],
-                    ..Default::default()
-                },
-            )
-            .await
-            .unwrap();
+        let completer_id = format!("completer-{}", rand_6_chars());
+        if outcome != Outcome::Timeout {
+            // Start the workflow which will act like the nexus handler and complete the async
+            // operation
+            let start_req = if let request::Variant::StartOperation(sr) =
+                nt.request.unwrap().variant.unwrap()
+            {
+                sr
+            } else {
+                panic!("unexpected request variant");
+            };
+            submitter
+                .submit_wf(
+                    completer_id.clone(),
+                    "async_completer",
+                    vec![],
+                    WorkflowOptions {
+                        links: start_req
+                            .links
+                            .iter()
+                            .map(workflow_event_link_from_nexus)
+                            .collect::<Result<Vec<_>, _>>()
+                            .unwrap(),
+                        completion_callbacks: vec![Callback {
+                            variant: Some(callback::Variant::Nexus(callback::Nexus {
+                                url: start_req.callback,
+                                header: start_req.callback_header,
+                            })),
+                        }],
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+        }
         client
             .respond_nexus_task_completed(RespondNexusTaskCompletedRequest {
                 namespace: client.namespace().to_owned(),
@@ -239,6 +282,29 @@ async fn nexus_async(#[values(true, false)] succeed: bool) {
             })
             .await
             .unwrap();
+        if outcome == Outcome::Cancel {
+            let nt = client
+                .poll_nexus_task_queue(PollNexusTaskQueueRequest {
+                    namespace: client.namespace().to_owned(),
+                    task_queue: Some(TaskQueue {
+                        name: starter.get_task_queue().to_owned(),
+                        kind: TaskQueueKind::Normal.into(),
+                        normal_name: "".to_string(),
+                    }),
+                    ..Default::default()
+                })
+                .await
+                .unwrap()
+                .into_inner();
+            assert_matches!(
+                nt.request.unwrap().variant.unwrap(),
+                request::Variant::CancelOperation(_)
+            );
+            client
+                .cancel_workflow_execution(completer_id, None, "nexus cancel".to_string(), None)
+                .await
+                .unwrap();
+        }
     };
 
     join!(nexus_task_handle, async {
@@ -251,19 +317,38 @@ async fn nexus_async(#[values(true, false)] succeed: bool) {
         .await
         .unwrap();
     let res = NexusOperationResult::from_json_payload(&res.unwrap_success()[0]).unwrap();
-    if succeed {
-        let p = assert_matches!(
-            res.status,
-            Some(nexus_operation_result::Status::Completed(p)) => p
-        );
-        assert_eq!(p.data, b"\"completed async\"");
-    } else {
-        let f = assert_matches!(
-            res.status,
-            Some(nexus_operation_result::Status::Failed(f)) => f
-        );
-        assert_eq!(f.message, "nexus operation completed unsuccessfully");
-        assert_eq!(f.cause.unwrap().message, "broken");
+    match outcome {
+        Outcome::Succeed => {
+            let p = assert_matches!(
+                res.status,
+                Some(nexus_operation_result::Status::Completed(p)) => p
+            );
+            assert_eq!(p.data, b"\"completed async\"");
+        }
+        Outcome::Fail => {
+            let f = assert_matches!(
+                res.status,
+                Some(nexus_operation_result::Status::Failed(f)) => f
+            );
+            assert_eq!(f.message, "nexus operation completed unsuccessfully");
+            assert_eq!(f.cause.unwrap().message, "broken");
+        }
+        Outcome::Cancel => {
+            let f = assert_matches!(
+                res.status,
+                Some(nexus_operation_result::Status::Cancelled(f)) => f
+            );
+            assert_eq!(f.message, "nexus operation completed unsuccessfully");
+            assert_eq!(f.cause.unwrap().message, "operation canceled");
+        }
+        Outcome::Timeout => {
+            let f = assert_matches!(
+                res.status,
+                Some(nexus_operation_result::Status::TimedOut(f)) => f
+            );
+            assert_eq!(f.message, "nexus operation completed unsuccessfully");
+            assert_eq!(f.cause.unwrap().message, "operation timed out");
+        }
     }
 }
 #[tokio::test]

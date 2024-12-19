@@ -125,6 +125,8 @@ message WorkflowActivationJob {
         ResolveNexusOperationStart resolve_nexus_operation_start = 15;
         // A nexus operation resolved.
         ResolveNexusOperation resolve_nexus_operation = 16;
+        // A request to cancel a nexus operation resolved.
+        ResolveCancelNexusOperation resolve_cancel_nexus_operation = 17;
         // Remove the workflow identified by the [WorkflowActivation] containing this job from the
         // cache after performing the activation. It is guaranteed that this will be the only job
         // in the activation if present.
@@ -327,12 +329,15 @@ message ResolveNexusOperationStart {
     uint32 seq = 1;
     oneof status {
         // The operation started asynchronously. Contains an ID that can be used to perform
-        // operations on the started operation by, ex, clients.
+        // operations on the started operation by, ex, clients. A `ResolveNexusOperation` job will
+        // follow at some point.
         string operation_id = 2;
         // The operation "started" but only because it's also already resolved. A
         // `ResolveNexusOperation` job will be in the same activation.
         google.protobuf.Empty started_sync = 3;
         // The operation was cancelled before it was ever sent to server (same WFT).
+        // Note that core will still send a `ResolveNexusOperation` job in the same activation, so
+        // there does not need to be an exceptional case for this in lang.
         temporal.api.failure.v1.Failure cancelled_before_start = 4;
     }
 }
@@ -341,6 +346,11 @@ message ResolveNexusOperation {
     // Sequence number as provided by lang in the corresponding ScheduleNexusOperation command
     uint32 seq = 1;
     nexus.NexusOperationResult result = 2;
+}
+
+message ResolveCancelNexusOperation {
+    // Sequence number as provided by lang in the corresponding RequestCancelNexusOperation command
+    uint32 seq = 1;
 }
 
 message RemoveFromCache {

@@ -78,7 +78,7 @@ pub(super) enum NexusOperationCommand {
 #[derive(Clone, Debug)]
 pub(super) struct SharedState {
     lang_seq_num: u32,
-    scheduled_event_id: i64,
+    pub(super) scheduled_event_id: i64,
     endpoint: String,
     service: String,
     operation: String,
@@ -369,41 +369,20 @@ impl WFMachinesAdapter for NexusOperationMachine {
                     ResolveNexusOperationStart {
                         seq: self.shared_state.lang_seq_num,
                         status: Some(resolve_nexus_operation_start::Status::CancelledBeforeStart(
-                            Failure {
-                                message: "Nexus Operation cancelled before scheduled".to_owned(),
-                                cause: Some(Box::new(Failure {
-                                    failure_info: Some(FailureInfo::CanceledFailureInfo(
-                                        Default::default(),
-                                    )),
-                                    ..Default::default()
-                                })),
-                                failure_info: Some(
-                                    FailureInfo::NexusOperationExecutionFailureInfo(
-                                        failure::NexusOperationFailureInfo {
-                                            scheduled_event_id: self
-                                                .shared_state
-                                                .scheduled_event_id,
-                                            endpoint: self.shared_state.endpoint.clone(),
-                                            service: self.shared_state.service.clone(),
-                                            operation: self.shared_state.operation.clone(),
-                                            operation_id: "".to_string(),
-                                        },
-                                    ),
-                                ),
-                                ..Default::default()
-                            },
+                            self.cancelled_failure(
+                                "Nexus Operation cancelled before scheduled".to_owned(),
+                            ),
                         )),
                     }
                     .into(),
                     ResolveNexusOperation {
                         seq: self.shared_state.lang_seq_num,
                         result: Some(NexusOperationResult {
-                            status: Some(nexus_operation_result::Status::Cancelled(Failure {
-                                // TODO: Construct failure better
-                                message: "Nexus operation was cancelled before it was started"
-                                    .to_owned(),
-                                ..Default::default()
-                            })),
+                            status: Some(nexus_operation_result::Status::Cancelled(
+                                self.cancelled_failure(
+                                    "Nexus Operation cancelled before scheduled".to_owned(),
+                                ),
+                            )),
                         }),
                     }
                     .into(),
@@ -477,5 +456,27 @@ impl Cancellable for NexusOperationMachine {
 
     fn was_cancelled_before_sent_to_server(&self) -> bool {
         self.shared_state.cancelled_before_sent
+    }
+}
+
+impl NexusOperationMachine {
+    fn cancelled_failure(&self, message: String) -> Failure {
+        Failure {
+            message,
+            cause: Some(Box::new(Failure {
+                failure_info: Some(FailureInfo::CanceledFailureInfo(Default::default())),
+                ..Default::default()
+            })),
+            failure_info: Some(FailureInfo::NexusOperationExecutionFailureInfo(
+                failure::NexusOperationFailureInfo {
+                    scheduled_event_id: self.shared_state.scheduled_event_id,
+                    endpoint: self.shared_state.endpoint.clone(),
+                    service: self.shared_state.service.clone(),
+                    operation: self.shared_state.operation.clone(),
+                    operation_id: "".to_string(),
+                },
+            )),
+            ..Default::default()
+        }
     }
 }
