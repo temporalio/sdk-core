@@ -57,6 +57,7 @@ use temporal_sdk_core_protos::{
     grpc::health::v1::health_client::HealthClient,
     temporal::api::{
         cloud::cloudservice::v1::cloud_service_client::CloudServiceClient,
+        common,
         common::v1::{Header, Payload, Payloads, RetryPolicy, WorkflowExecution, WorkflowType},
         enums::v1::{TaskQueueKind, WorkflowIdConflictPolicy, WorkflowIdReusePolicy},
         failure::v1::Failure,
@@ -1086,6 +1087,13 @@ pub struct WorkflowOptions {
 
     /// Optionally set a retry policy for the workflow
     pub retry_policy: Option<RetryPolicy>,
+
+    /// Links to associate with the workflow. Ex: References to a nexus operation.
+    pub links: Vec<common::v1::Link>,
+
+    /// Callbacks that will be invoked upon workflow completion. For, ex, completing nexus
+    /// operations.
+    pub completion_callbacks: Vec<common::v1::Callback>,
 }
 
 #[async_trait::async_trait]
@@ -1125,6 +1133,8 @@ impl WorkflowClientTrait for Client {
                 cron_schedule: options.cron_schedule.unwrap_or_default(),
                 request_eager_execution: options.enable_eager_workflow_start,
                 retry_policy: options.retry_policy,
+                links: options.links,
+                completion_callbacks: options.completion_callbacks,
                 ..Default::default()
             },
         )

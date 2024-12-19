@@ -1,17 +1,17 @@
 mod options;
 
 pub use options::{
-    ActivityOptions, ChildWorkflowOptions, LocalActivityOptions, Signal, SignalData,
-    SignalWorkflowOptions, TimerOptions,
+    ActivityOptions, ChildWorkflowOptions, LocalActivityOptions, NexusOperationOptions, Signal,
+    SignalData, SignalWorkflowOptions, TimerOptions,
 };
 
 use crate::{
     workflow_context::options::IntoWorkflowCommand, CancelExternalWfResult, CancellableID,
     CommandCreateRequest, CommandSubscribeChildWorkflowCompletion, IntoUpdateHandlerFunc,
-    IntoUpdateValidatorFunc, RustWfCmd, SignalExternalWfResult, TimerResult, UnblockEvent,
-    Unblockable, UpdateFunctions,
+    IntoUpdateValidatorFunc, NexusStartResult, RustWfCmd, SignalExternalWfResult, TimerResult,
+    UnblockEvent, Unblockable, UpdateFunctions,
 };
-use futures_util::{task::Context, FutureExt, Stream, StreamExt};
+use futures_util::{future::Shared, task::Context, FutureExt, Stream, StreamExt};
 use parking_lot::{RwLock, RwLockReadGuard};
 use std::{
     collections::HashMap,
@@ -32,6 +32,7 @@ use temporal_sdk_core_protos::{
         activity_result::{activity_resolution, ActivityResolution},
         child_workflow::ChildWorkflowResult,
         common::NamespacedWorkflowExecution,
+        nexus::NexusOperationResult,
         workflow_activation::resolve_child_workflow_execution_start::Status as ChildWorkflowStartStatus,
         workflow_commands::{
             signal_external_workflow_execution as sig_we, workflow_command,
@@ -90,6 +91,8 @@ impl WfContext {
                     next_child_workflow_sequence_number: 1,
                     next_cancel_external_wf_sequence_number: 1,
                     next_signal_external_wf_sequence_number: 1,
+                    next_nexus_op_sequence_number: 1,
+                    next_cancel_nexus_op_sequence_number: 1,
                 })),
             },
             rx,
@@ -360,6 +363,33 @@ impl WfContext {
         ))
     }
 
+    /// Start a nexus operation
+    pub fn start_nexus_operation(
+        &self,
+        opts: NexusOperationOptions,
+    ) -> impl CancellableFuture<NexusStartResult> {
+        let seq = self.seq_nums.write().next_nexus_op_seq();
+        let cancel_seq = self.seq_nums.write().next_cancel_nexus_op_seq();
+        let (result_future, unblocker) = WFCommandFut::new();
+        self.send(RustWfCmd::SubscribeNexusOperationCompletion { seq, unblocker });
+        let (cmd, unblocker) = CancellableWFCommandFut::new_with_dat(
+            CancellableID::NexusOp(seq),
+            NexusUnblockData {
+                result_future: result_future.shared(),
+                cancel_seq,
+                schedule_seq: seq,
+            },
+        );
+        self.send(
+            CommandCreateRequest {
+                cmd: opts.into_command(seq),
+                unblocker,
+            }
+            .into(),
+        );
+        cmd
+    }
+
     /// Buffer a command to be sent in the activation reply
     pub(crate) fn send(&self, c: RustWfCmd) {
         self.chan.send(c).expect("command channel intact");
@@ -407,6 +437,8 @@ struct WfCtxProtectedDat {
     next_child_workflow_sequence_number: u32,
     next_cancel_external_wf_sequence_number: u32,
     next_signal_external_wf_sequence_number: u32,
+    next_nexus_op_sequence_number: u32,
+    next_cancel_nexus_op_sequence_number: u32,
 }
 
 impl WfCtxProtectedDat {
@@ -433,6 +465,16 @@ impl WfCtxProtectedDat {
     fn next_signal_external_wf_seq(&mut self) -> u32 {
         let seq = self.next_signal_external_wf_sequence_number;
         self.next_signal_external_wf_sequence_number += 1;
+        seq
+    }
+    fn next_nexus_op_seq(&mut self) -> u32 {
+        let seq = self.next_nexus_op_sequence_number;
+        self.next_nexus_op_sequence_number += 1;
+        seq
+    }
+    fn next_cancel_nexus_op_seq(&mut self) -> u32 {
+        let seq = self.next_cancel_nexus_op_sequence_number;
+        self.next_cancel_nexus_op_sequence_number += 1;
         seq
     }
 }
@@ -772,5 +814,35 @@ impl StartedChildWorkflow {
     ) -> impl CancellableFuture<SignalExternalWfResult> {
         let target = sig_we::Target::ChildWorkflowId(self.common.workflow_id.clone());
         cx.send_signal_wf(target, data.into())
+    }
+}
+
+#[derive(derive_more::Debug)]
+#[debug("StartedNexusOperation{{ operation_id: {operation_id:?} }}")]
+pub struct StartedNexusOperation {
+    /// The operation id, if the operation started asynchronously
+    pub operation_id: Option<String>,
+    pub(crate) unblock_dat: NexusUnblockData,
+}
+
+pub(crate) struct NexusUnblockData {
+    result_future: Shared<WFCommandFut<NexusOperationResult, ()>>,
+    cancel_seq: u32,
+    schedule_seq: u32,
+}
+
+impl StartedNexusOperation {
+    pub async fn result(&self) -> NexusOperationResult {
+        self.unblock_dat.result_future.clone().await
+    }
+
+    pub async fn cancel(&self, cx: &WfContext) {
+        let (tx, rx) = oneshot::channel();
+        cx.send(RustWfCmd::CancelStartedNexusOperation {
+            seq: self.unblock_dat.cancel_seq,
+            schedule_seq: self.unblock_dat.schedule_seq,
+            unblocker: tx,
+        });
+        rx.await.expect("unblocker not dropped");
     }
 }

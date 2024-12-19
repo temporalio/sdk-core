@@ -25,8 +25,10 @@ use crate::{
             history_update::NextWFT,
             machines::{
                 activity_state_machine::ActivityMachine,
+                cancel_nexus_op_state_machine::new_nexus_op_cancel,
                 child_workflow_state_machine::ChildWorkflowMachine,
                 modify_workflow_properties_state_machine::modify_workflow_properties,
+                nexus_operation_state_machine::NexusOperationMachine,
                 patch_state_machine::VERSION_SEARCH_ATTR_KEY, update_state_machine::UpdateMachine,
                 upsert_search_attributes_state_machine::upsert_search_attrs_internal,
                 HistEventData,
@@ -39,6 +41,7 @@ use crate::{
     },
 };
 use anyhow::Context;
+use rustfsm::StateMachine;
 use siphasher::sip::SipHasher13;
 use slotmap::{SlotMap, SparseSecondaryMap};
 use std::{
@@ -1462,6 +1465,50 @@ impl WorkflowMachines {
                             &ur.protocol_instance_id
                         )));
                     }
+                }
+                WFCommandVariant::ScheduleNexusOperation(attrs) => {
+                    let seq = attrs.seq;
+                    self.add_cmd_to_wf_task(
+                        NexusOperationMachine::new_scheduled(attrs),
+                        cmd.metadata,
+                        CommandID::NexusOperation(seq).into(),
+                    );
+                }
+                WFCommandVariant::RequestCancelNexusOperation(attrs) => {
+                    self.process_cancellation(CommandID::NexusOperation(attrs.seq))?
+                }
+                WFCommandVariant::RequestCancelStartedNexusOperation(attrs) => {
+                    let nexus_op_id = CommandID::NexusOperation(attrs.schedule_seq);
+                    let op_machine = self
+                        .id_to_machine
+                        .get(&nexus_op_id)
+                        .and_then(|k| {
+                            if let Machines::NexusOperationMachine(m) = self.machine(*k) {
+                                Some(m)
+                            } else {
+                                None
+                            }
+                        })
+                        .ok_or_else(|| {
+                            WFMachinesError::Fatal(format!(
+                                "No nexus operation machine found for seq# {}",
+                                attrs.schedule_seq
+                            ))
+                        })?;
+                    let sched_id = op_machine.shared_state().scheduled_event_id;
+                    if sched_id == 0 {
+                        // TODO: Not sure if this is nondeterminism, fatal, or just no-op
+                        return Err(WFMachinesError::Nondeterminism(format!(
+                            "Nexus operation machine for seq# {} has not been scheduled yet",
+                            attrs.schedule_seq
+                        )));
+                    }
+
+                    self.add_cmd_to_wf_task(
+                        new_nexus_op_cancel(attrs.seq, sched_id),
+                        cmd.metadata,
+                        CommandID::CancelNexusOperation(attrs.seq).into(),
+                    );
                 }
                 WFCommandVariant::NoCommandsFromLang => (),
             }

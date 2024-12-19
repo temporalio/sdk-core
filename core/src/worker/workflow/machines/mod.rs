@@ -2,6 +2,7 @@ mod workflow_machines;
 
 mod activity_state_machine;
 mod cancel_external_state_machine;
+mod cancel_nexus_op_state_machine;
 mod cancel_workflow_state_machine;
 mod child_workflow_state_machine;
 mod complete_workflow_state_machine;
@@ -9,6 +10,7 @@ mod continue_as_new_workflow_state_machine;
 mod fail_workflow_state_machine;
 mod local_activity_state_machine;
 mod modify_workflow_properties_state_machine;
+mod nexus_operation_state_machine;
 mod patch_state_machine;
 mod signal_external_state_machine;
 mod timer_state_machine;
@@ -21,12 +23,10 @@ mod transition_coverage;
 
 pub(crate) use workflow_machines::{MachinesWFTResponseContent, WorkflowMachines};
 
-use crate::{
-    telemetry::VecDisplayer,
-    worker::workflow::{machines::update_state_machine::UpdateMachine, WFMachinesError},
-};
+use crate::{telemetry::VecDisplayer, worker::workflow::WFMachinesError};
 use activity_state_machine::ActivityMachine;
 use cancel_external_state_machine::CancelExternalMachine;
+use cancel_nexus_op_state_machine::CancelNexusOpMachine;
 use cancel_workflow_state_machine::CancelWorkflowMachine;
 use child_workflow_state_machine::ChildWorkflowMachine;
 use complete_workflow_state_machine::CompleteWorkflowMachine;
@@ -34,6 +34,7 @@ use continue_as_new_workflow_state_machine::ContinueAsNewWorkflowMachine;
 use fail_workflow_state_machine::FailWorkflowMachine;
 use local_activity_state_machine::LocalActivityMachine;
 use modify_workflow_properties_state_machine::ModifyWorkflowPropertiesMachine;
+use nexus_operation_state_machine::NexusOperationMachine;
 use patch_state_machine::PatchMachine;
 use rustfsm::{MachineError, StateMachine};
 use signal_external_state_machine::SignalExternalMachine;
@@ -46,6 +47,7 @@ use temporal_sdk_core_protos::temporal::api::{
     history::v1::HistoryEvent,
 };
 use timer_state_machine::TimerMachine;
+use update_state_machine::UpdateMachine;
 use upsert_search_attributes_state_machine::UpsertSearchAttributesMachine;
 use workflow_machines::MachineResponse;
 use workflow_task_state_machine::WorkflowTaskMachine;
@@ -71,6 +73,8 @@ enum Machines {
     UpsertSearchAttributesMachine,
     ModifyWorkflowPropertiesMachine,
     UpdateMachine,
+    NexusOperationMachine,
+    CancelNexusOpMachine,
 }
 
 /// Extends [rustfsm::StateMachine] with some functionality specific to the temporal SDK.
