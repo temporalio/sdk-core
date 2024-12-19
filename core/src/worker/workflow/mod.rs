@@ -1170,6 +1170,7 @@ enum WFCommandVariant {
     UpdateResponse(UpdateResponse),
     ScheduleNexusOperation(ScheduleNexusOperation),
     RequestCancelNexusOperation(RequestCancelNexusOperation),
+    RequestCancelStartedNexusOperation(RequestCancelStartedNexusOperation),
 }
 
 impl TryFrom<WorkflowCommand> for WFCommand {
@@ -1231,6 +1232,9 @@ impl TryFrom<WorkflowCommand> for WFCommand {
             workflow_command::Variant::RequestCancelNexusOperation(s) => {
                 WFCommandVariant::RequestCancelNexusOperation(s)
             }
+            workflow_command::Variant::RequestCancelStartedNexusOperation(s) => {
+                WFCommandVariant::RequestCancelStartedNexusOperation(s)
+            }
         };
         Ok(Self {
             variant,
@@ -1265,6 +1269,7 @@ enum CommandID {
     SignalExternal(u32),
     CancelExternal(u32),
     NexusOperation(u32),
+    CancelNexusOperation(u32),
 }
 
 /// Details remembered from the workflow execution started event that we may need to recall later.

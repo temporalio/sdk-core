@@ -11,7 +11,7 @@ use crate::{
     IntoUpdateValidatorFunc, NexusStartResult, RustWfCmd, SignalExternalWfResult, TimerResult,
     UnblockEvent, Unblockable, UpdateFunctions,
 };
-use futures_util::{task::Context, FutureExt, Stream, StreamExt};
+use futures_util::{future::Shared, task::Context, FutureExt, Stream, StreamExt};
 use parking_lot::{RwLock, RwLockReadGuard};
 use std::{
     collections::HashMap,
@@ -92,6 +92,7 @@ impl WfContext {
                     next_cancel_external_wf_sequence_number: 1,
                     next_signal_external_wf_sequence_number: 1,
                     next_nexus_op_sequence_number: 1,
+                    next_cancel_nexus_op_sequence_number: 1,
                 })),
             },
             rx,
@@ -368,12 +369,15 @@ impl WfContext {
         opts: NexusOperationOptions,
     ) -> impl CancellableFuture<NexusStartResult> {
         let seq = self.seq_nums.write().next_nexus_op_seq();
-        let (result_cmd, unblocker) = CancellableWFCommandFut::new(CancellableID::NexusOp(seq));
+        let cancel_seq = self.seq_nums.write().next_cancel_nexus_op_seq();
+        let (result_future, unblocker) = WFCommandFut::new();
         self.send(RustWfCmd::SubscribeNexusOperationCompletion { seq, unblocker });
         let (cmd, unblocker) = CancellableWFCommandFut::new_with_dat(
             CancellableID::NexusOp(seq),
             NexusUnblockData {
-                result_future: result_cmd,
+                result_future: result_future.shared(),
+                cancel_seq,
+                schedule_seq: seq,
             },
         );
         self.send(
@@ -434,6 +438,7 @@ struct WfCtxProtectedDat {
     next_cancel_external_wf_sequence_number: u32,
     next_signal_external_wf_sequence_number: u32,
     next_nexus_op_sequence_number: u32,
+    next_cancel_nexus_op_sequence_number: u32,
 }
 
 impl WfCtxProtectedDat {
@@ -465,6 +470,11 @@ impl WfCtxProtectedDat {
     fn next_nexus_op_seq(&mut self) -> u32 {
         let seq = self.next_nexus_op_sequence_number;
         self.next_nexus_op_sequence_number += 1;
+        seq
+    }
+    fn next_cancel_nexus_op_seq(&mut self) -> u32 {
+        let seq = self.next_cancel_nexus_op_sequence_number;
+        self.next_cancel_nexus_op_sequence_number += 1;
         seq
     }
 }
@@ -816,11 +826,23 @@ pub struct StartedNexusOperation {
 }
 
 pub(crate) struct NexusUnblockData {
-    result_future: CancellableWFCommandFut<NexusOperationResult, ()>,
+    result_future: Shared<WFCommandFut<NexusOperationResult, ()>>,
+    cancel_seq: u32,
+    schedule_seq: u32,
 }
 
 impl StartedNexusOperation {
-    pub fn result(self) -> impl CancellableFuture<NexusOperationResult> {
-        self.unblock_dat.result_future
+    pub async fn result(&self) -> NexusOperationResult {
+        self.unblock_dat.result_future.clone().await
+    }
+
+    pub async fn cancel(&self, cx: &WfContext) {
+        let (tx, rx) = oneshot::channel();
+        cx.send(RustWfCmd::CancelStartedNexusOperation {
+            seq: self.unblock_dat.cancel_seq,
+            schedule_seq: self.unblock_dat.schedule_seq,
+            unblocker: tx,
+        });
+        rx.await.expect("unblocker not dropped");
     }
 }

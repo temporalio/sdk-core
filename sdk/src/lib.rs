@@ -607,6 +607,7 @@ enum UnblockEvent {
     CancelExternal(u32, Option<Failure>),
     NexusOperationStart(u32, Box<resolve_nexus_operation_start::Status>),
     NexusOperationComplete(u32, Box<NexusOperationResult>),
+    CancelNexusOperationComplete(u32),
 }
 
 /// Result of awaiting on a timer
@@ -760,7 +761,7 @@ pub enum CancellableID {
         /// Identifying information about the workflow to be cancelled
         execution: NamespacedWorkflowExecution,
     },
-    /// A nexus operation
+    /// A nexus operation (waiting for start)
     NexusOp(u32),
 }
 
@@ -792,6 +793,11 @@ enum RustWfCmd {
     RegisterUpdate(String, UpdateFunctions),
     SubscribeNexusOperationCompletion {
         seq: u32,
+        unblocker: oneshot::Sender<UnblockEvent>,
+    },
+    CancelStartedNexusOperation {
+        seq: u32,
+        schedule_seq: u32,
         unblocker: oneshot::Sender<UnblockEvent>,
     },
 }

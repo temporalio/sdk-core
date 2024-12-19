@@ -635,6 +635,9 @@ pub mod coresdk {
                     workflow_activation_job::Variant::ResolveNexusOperation(_) => {
                         write!(f, "ResolveNexusOperation")
                     }
+                    workflow_activation_job::Variant::ResolveCancelNexusOperation(_) => {
+                        write!(f, "ResolveCancelNexusOperation")
+                    }
                 }
             }
         }
@@ -928,6 +931,12 @@ pub mod coresdk {
         impl Display for RequestCancelNexusOperation {
             fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
                 write!(f, "RequestCancelNexusOperation({})", self.seq)
+            }
+        }
+
+        impl Display for RequestCancelStartedNexusOperation {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "RequestCancelStartedNexusOperation({})", self.seq)
             }
         }
 
@@ -2089,6 +2098,7 @@ pub mod temporal {
                             | EventType::UpsertWorkflowSearchAttributes
                             | EventType::WorkflowPropertiesModified
                             | EventType::NexusOperationScheduled
+                            | EventType::NexusOperationCancelRequested
                             | EventType::WorkflowExecutionCanceled
                             | EventType::WorkflowExecutionCompleted
                             | EventType::WorkflowExecutionContinuedAsNew
@@ -2138,6 +2148,7 @@ pub mod temporal {
                                 Attributes::NexusOperationFailedEventAttributes(a) => Some(a.scheduled_event_id),
                                 Attributes::NexusOperationTimedOutEventAttributes(a) => Some(a.scheduled_event_id),
                                 Attributes::NexusOperationCanceledEventAttributes(a) => Some(a.scheduled_event_id),
+                                Attributes::NexusOperationCancelRequestedEventAttributes(a) => Some(a.scheduled_event_id),
                                 _ => None
                             }
                         })

@@ -25,8 +25,9 @@ use temporal_sdk_core_protos::{
             update_response, workflow_command, CancelChildWorkflowExecution, CancelSignalWorkflow,
             CancelTimer, CancelWorkflowExecution, CompleteWorkflowExecution, FailWorkflowExecution,
             RequestCancelActivity, RequestCancelExternalWorkflowExecution,
-            RequestCancelLocalActivity, RequestCancelNexusOperation, ScheduleActivity,
-            ScheduleLocalActivity, StartTimer, UpdateResponse, WorkflowCommand,
+            RequestCancelLocalActivity, RequestCancelNexusOperation,
+            RequestCancelStartedNexusOperation, ScheduleActivity, ScheduleLocalActivity,
+            StartTimer, UpdateResponse, WorkflowCommand,
         },
         workflow_completion,
         workflow_completion::{workflow_activation_completion, WorkflowActivationCompletion},
@@ -132,6 +133,7 @@ impl WorkflowFuture {
             UnblockEvent::CancelExternal(seq, _) => CommandID::CancelExternal(seq),
             UnblockEvent::NexusOperationStart(seq, _) => CommandID::NexusOpStart(seq),
             UnblockEvent::NexusOperationComplete(seq, _) => CommandID::NexusOpComplete(seq),
+            UnblockEvent::CancelNexusOperationComplete(seq) => CommandID::CancelStartedNexusOp(seq),
         };
         let unblocker = self.command_status.remove(&cmd_id);
         let _ = unblocker
@@ -324,7 +326,9 @@ impl WorkflowFuture {
                         Box::new(attrs.result.context("Nexus operation must have result")?),
                     ))?
                 }
-
+                Variant::ResolveCancelNexusOperation(attrs) => {
+                    self.unblock(UnblockEvent::CancelNexusOperationComplete(attrs.seq))?
+                }
                 Variant::RemoveFromCache(_) => {
                     // TODO: Need to abort any user-spawned tasks, etc. See also cancel WF.
                     //   How best to do this in executor agnostic way? Is that possible?
@@ -587,6 +591,9 @@ impl WorkflowFuture {
                         workflow_command::Variant::ScheduleNexusOperation(req) => {
                             CommandID::NexusOpStart(req.seq)
                         }
+                        workflow_command::Variant::RequestCancelStartedNexusOperation(req) => {
+                            CommandID::CancelStartedNexusOp(req.seq)
+                        }
                         _ => unimplemented!("Command type not implemented"),
                     };
                     activation_cmds.push(cmd.cmd);
@@ -632,6 +639,22 @@ impl WorkflowFuture {
                     self.command_status.insert(
                         CommandID::NexusOpComplete(seq),
                         WFCommandFutInfo { unblocker },
+                    );
+                }
+                RustWfCmd::CancelStartedNexusOperation {
+                    seq,
+                    schedule_seq,
+                    unblocker,
+                } => {
+                    self.command_status.insert(
+                        CommandID::CancelStartedNexusOp(seq),
+                        WFCommandFutInfo { unblocker },
+                    );
+                    activation_cmds.push(
+                        workflow_command::Variant::RequestCancelStartedNexusOperation(
+                            RequestCancelStartedNexusOperation { seq, schedule_seq },
+                        )
+                        .into(),
                     );
                 }
             }
@@ -682,6 +705,7 @@ enum CommandID {
     CancelExternal(u32),
     NexusOpStart(u32),
     NexusOpComplete(u32),
+    CancelStartedNexusOp(u32),
 }
 
 fn update_response(
