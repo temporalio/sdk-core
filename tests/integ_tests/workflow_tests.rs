@@ -20,11 +20,14 @@ use crate::integ_tests::{activity_functions::echo, metrics_tests};
 use assert_matches::assert_matches;
 use std::{
     collections::{HashMap, HashSet},
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     time::Duration,
 };
-use temporal_client::{WorkflowClientTrait, WorkflowOptions};
-use temporal_sdk::{interceptors::WorkerInterceptor, ActivityOptions, WfContext, WorkflowResult};
+use temporal_client::{WorkflowClientTrait, WorkflowOptions, WorkflowService};
+use temporal_sdk::{
+    interceptors::WorkerInterceptor, ActivityOptions, LocalActivityOptions, WfContext,
+    WorkflowResult,
+};
 use temporal_sdk_core::{replay::HistoryForReplay, CoreRuntime};
 use temporal_sdk_core_api::errors::{PollWfError, WorkflowErrorType};
 use temporal_sdk_core_protos::{
@@ -48,7 +51,6 @@ use temporal_sdk_core_test_utils::{
 };
 use tokio::{join, time::sleep};
 use uuid::Uuid;
-
 // TODO: We should get expected histories for these tests and confirm that the history at the end
 //  matches.
 
@@ -768,4 +770,88 @@ async fn nondeterminism_errors_fail_workflow_when_configured_to(
          task_queue=\"{wf_id}\",workflow_type=\"{wf_name}\"}} 1"
     );
     assert!(body.contains(&match_this));
+}
+
+#[tokio::test]
+async fn history_out_of_order_on_restart() {
+    let wf_name = "history_out_of_order_on_restart";
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter
+        .worker_config
+        .workflow_failure_errors([WorkflowErrorType::Nondeterminism]);
+    let mut worker = starter.worker().await;
+    let client = starter.get_client().await;
+    let mut starter2 = starter.clone_no_worker();
+    let mut worker2 = starter2.worker().await;
+
+    static HIT_SLEEP: AtomicBool = AtomicBool::new(false);
+
+    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+        ctx.local_activity(LocalActivityOptions {
+            activity_type: "echo".to_owned(),
+            input: "hi".as_json_payload().unwrap(),
+            start_to_close_timeout: Some(Duration::from_secs(5)),
+            ..Default::default()
+        })
+        .await;
+        ctx.activity(ActivityOptions {
+            activity_type: "echo".to_owned(),
+            input: "hi".as_json_payload().unwrap(),
+            start_to_close_timeout: Some(Duration::from_secs(5)),
+            ..Default::default()
+        })
+        .await;
+        // Interrupt this sleep on first go
+        HIT_SLEEP.store(true, Ordering::Release);
+        ctx.timer(Duration::from_secs(5)).await;
+        Ok(().into())
+    });
+    worker.register_activity("echo", echo);
+
+    worker2.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+        ctx.local_activity(LocalActivityOptions {
+            activity_type: "echo".to_owned(),
+            input: "hi".as_json_payload().unwrap(),
+            start_to_close_timeout: Some(Duration::from_secs(5)),
+            ..Default::default()
+        })
+        .await;
+        // Timer is added after restarting workflow
+        ctx.timer(Duration::from_secs(1)).await;
+        ctx.activity(ActivityOptions {
+            activity_type: "echo".to_owned(),
+            input: "hi".as_json_payload().unwrap(),
+            start_to_close_timeout: Some(Duration::from_secs(5)),
+            ..Default::default()
+        })
+        .await;
+        ctx.timer(Duration::from_secs(5)).await;
+        Ok(().into())
+    });
+    worker2.register_activity("echo", echo);
+    let run_id = worker
+        .submit_wf(
+            wf_name.to_owned(),
+            wf_name.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+
+    let w1 = async {
+        worker.run_until_done().await.unwrap();
+    };
+    let w2 = async {
+        // wait to hit sleep
+        while !HIT_SLEEP.load(Ordering::Acquire) {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        starter.shutdown().await;
+        // start new worker
+        worker2.expect_workflow_completion(wf_name, None);
+        worker2.run_until_done().await.unwrap();
+    };
+    join!(w1, w2);
+    // The workflow should complete because the nondeterminism error should fail the workflow
 }
