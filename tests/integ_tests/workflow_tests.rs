@@ -20,10 +20,10 @@ use crate::integ_tests::{activity_functions::echo, metrics_tests};
 use assert_matches::assert_matches;
 use std::{
     collections::{HashMap, HashSet},
-    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+    sync::atomic::{AtomicUsize, Ordering},
     time::Duration,
 };
-use temporal_client::{WorkflowClientTrait, WorkflowOptions, WorkflowService};
+use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowExecutionResult, WorkflowOptions};
 use temporal_sdk::{
     interceptors::WorkerInterceptor, ActivityOptions, LocalActivityOptions, WfContext,
     WorkflowResult,
@@ -49,7 +49,7 @@ use temporal_sdk_core_test_utils::{
     drain_pollers_and_shutdown, history_from_proto_binary, init_core_and_create_wf,
     init_core_replay_preloaded, schedule_activity_cmd, CoreWfStarter, WorkerTestHelpers,
 };
-use tokio::{join, time::sleep};
+use tokio::{join, sync::Notify, time::sleep};
 use uuid::Uuid;
 // TODO: We should get expected histories for these tests and confirm that the history at the end
 //  matches.
@@ -780,11 +780,10 @@ async fn history_out_of_order_on_restart() {
         .worker_config
         .workflow_failure_errors([WorkflowErrorType::Nondeterminism]);
     let mut worker = starter.worker().await;
-    let client = starter.get_client().await;
     let mut starter2 = starter.clone_no_worker();
     let mut worker2 = starter2.worker().await;
 
-    static HIT_SLEEP: AtomicBool = AtomicBool::new(false);
+    static HIT_SLEEP: Notify = Notify::const_new();
 
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
         ctx.local_activity(LocalActivityOptions {
@@ -802,7 +801,7 @@ async fn history_out_of_order_on_restart() {
         })
         .await;
         // Interrupt this sleep on first go
-        HIT_SLEEP.store(true, Ordering::Release);
+        HIT_SLEEP.notify_one();
         ctx.timer(Duration::from_secs(5)).await;
         Ok(().into())
     });
@@ -825,16 +824,19 @@ async fn history_out_of_order_on_restart() {
             ..Default::default()
         })
         .await;
-        ctx.timer(Duration::from_secs(5)).await;
+        ctx.timer(Duration::from_secs(2)).await;
         Ok(().into())
     });
     worker2.register_activity("echo", echo);
-    let run_id = worker
+    worker
         .submit_wf(
             wf_name.to_owned(),
             wf_name.to_owned(),
             vec![],
-            WorkflowOptions::default(),
+            WorkflowOptions {
+                execution_timeout: Some(Duration::from_secs(20)),
+                ..Default::default()
+            },
         )
         .await
         .unwrap();
@@ -844,14 +846,21 @@ async fn history_out_of_order_on_restart() {
     };
     let w2 = async {
         // wait to hit sleep
-        while !HIT_SLEEP.load(Ordering::Acquire) {
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
+        HIT_SLEEP.notified().await;
         starter.shutdown().await;
         // start new worker
         worker2.expect_workflow_completion(wf_name, None);
         worker2.run_until_done().await.unwrap();
     };
     join!(w1, w2);
-    // The workflow should complete because the nondeterminism error should fail the workflow
+    // The workflow should fail with the nondeterminism error
+    let handle = starter
+        .get_client()
+        .await
+        .get_untyped_workflow_handle(wf_name, "");
+    let res = handle
+        .get_workflow_result(Default::default())
+        .await
+        .unwrap();
+    assert_matches!(res, WorkflowExecutionResult::Failed(_));
 }

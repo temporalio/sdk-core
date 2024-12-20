@@ -373,6 +373,7 @@ impl ManagedRun {
         mut commands: Vec<WFCommand>,
         used_flags: Vec<u32>,
         resp_chan: Option<oneshot::Sender<ActivationCompleteResult>>,
+        is_forced_failure: bool,
     ) -> Result<RunUpdateAct, Box<NextPageReq>> {
         let activation_was_only_eviction = self.activation_is_eviction();
         let (task_token, has_pending_query, start_time) = if let Some(entry) = self.wft.as_ref() {
@@ -446,6 +447,7 @@ impl ManagedRun {
                 query_responses,
                 used_flags,
                 resp_chan,
+                is_forced_failure,
             };
 
             // Verify we can actually apply the next workflow task, which will happen as part of
@@ -617,6 +619,7 @@ impl ManagedRun {
                         }],
                         vec![],
                         resp_chan,
+                        true,
                     )
                     .unwrap_or_else(|e| {
                         dbg_panic!("Got next page request when auto-failing workflow: {e:?}");
@@ -686,6 +689,7 @@ impl ManagedRun {
             query_responses: completion.query_responses,
             has_pending_query: completion.has_pending_query,
             activation_was_eviction: completion.activation_was_eviction,
+            is_forced_failure: completion.is_forced_failure,
         };
 
         self.wfm.machines.add_lang_used_flags(completion.used_flags);
@@ -708,7 +712,8 @@ impl ManagedRun {
                 self.wfm.feed_history_from_new_page(update)?;
             }
             // Don't bother applying the next task if we're evicting at the end of this activation
-            if !completion.activation_was_eviction {
+            // or are otherwise broken.
+            if !completion.activation_was_eviction && !self.am_broken {
                 self.wfm.apply_next_task_if_ready()?;
             }
             let new_local_acts = self.wfm.drain_queued_local_activities();
@@ -1083,7 +1088,7 @@ impl ManagedRun {
         // fulfilling a query. If the activation we sent was *only* an eviction, don't send that
         // either.
         let should_respond = !(machines_wft_response.has_pending_jobs
-            || machines_wft_response.replaying
+            || (machines_wft_response.replaying && !data.is_forced_failure)
             || is_query_playback
             || data.activation_was_eviction
             || machines_wft_response.have_seen_terminal_event);
@@ -1331,6 +1336,7 @@ struct CompletionDataForWFT {
     query_responses: Vec<QueryResult>,
     has_pending_query: bool,
     activation_was_eviction: bool,
+    is_forced_failure: bool,
 }
 
 /// Manages an instance of a [WorkflowMachines], which is not thread-safe, as well as other data
@@ -1405,13 +1411,11 @@ impl WorkflowManager {
         self.machines.ready_to_apply_next_wft()
     }
 
-    /// If there are no pending jobs for the workflow, apply the next workflow task and check
-    /// again if there are any jobs. Importantly, does not *drain* jobs.
-    ///
-    /// Returns true if there are jobs (before or after applying the next WFT).
-    fn apply_next_task_if_ready(&mut self) -> Result<bool> {
+    /// If there are no pending jobs for the workflow apply the next workflow task and check again
+    /// if there are any jobs. Importantly, does not *drain* jobs.
+    fn apply_next_task_if_ready(&mut self) -> Result<()> {
         if self.machines.has_pending_jobs() {
-            return Ok(true);
+            return Ok(());
         }
         loop {
             let consumed_events = self.machines.apply_next_wft_from_history()?;
@@ -1423,7 +1427,7 @@ impl WorkflowManager {
                 break;
             }
         }
-        Ok(self.machines.has_pending_jobs())
+        Ok(())
     }
 
     /// Must be called when we're ready to respond to a WFT after handling catching up on replay
@@ -1473,6 +1477,7 @@ struct RunActivationCompletion {
     has_pending_query: bool,
     query_responses: Vec<QueryResult>,
     used_flags: Vec<u32>,
+    is_forced_failure: bool,
     /// Used to notify the worker when the completion is done processing and the completion can
     /// unblock. Must always be `Some` when initialized.
     resp_chan: Option<oneshot::Sender<ActivationCompleteResult>>,
