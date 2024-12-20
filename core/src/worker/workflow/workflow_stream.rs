@@ -264,7 +264,12 @@ impl WFStream {
                     commands,
                     used_flags,
                     ..
-                } => match rh.successful_completion(commands, used_flags, complete.response_tx) {
+                } => match rh.successful_completion(
+                    commands,
+                    used_flags,
+                    complete.response_tx,
+                    false,
+                ) {
                     Ok(acts) => acts,
                     Err(npr) => {
                         self.runs_needing_fetching

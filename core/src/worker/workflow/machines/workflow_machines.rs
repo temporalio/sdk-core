@@ -1482,7 +1482,7 @@ impl WorkflowMachines {
 
     fn get_machine_key(&self, id: CommandID) -> Result<MachineKey> {
         Ok(*self.id_to_machine.get(&id).ok_or_else(|| {
-            WFMachinesError::Fatal(format!("Missing associated machine for {id:?}"))
+            WFMachinesError::Nondeterminism(format!("Missing associated machine for {id:?}"))
         })?)
     }
 
