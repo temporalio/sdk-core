@@ -47,7 +47,6 @@ message WorkflowCommand {
         UpdateResponse update_response = 20;
         ScheduleNexusOperation schedule_nexus_operation = 21;
         RequestCancelNexusOperation request_cancel_nexus_operation = 22;
-        RequestCancelStartedNexusOperation request_cancel_started_nexus_operation = 23;
     }
 }
 
@@ -370,16 +369,8 @@ message ScheduleNexusOperation {
     map<string, string> nexus_header = 7;
 }
 
-// Request cancellation of a nexus operation that has not yet started
+// Request cancellation of a nexus operation started via `ScheduleNexusOperation`
 message RequestCancelNexusOperation {
     // Lang's incremental sequence number as passed to `ScheduleNexusOperation`
     uint32 seq = 1;
-}
-
-// Request cancellation of a nexus operation that has already started
-message RequestCancelStartedNexusOperation {
-    // A sequence number specifically for this cancel request
-    uint32 seq = 1;
-    // The sequence number of the `ScheduleNexusOperation` command being cancelled
-    uint32 schedule_seq = 2;
 }

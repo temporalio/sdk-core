@@ -33,6 +33,7 @@ enum Outcome {
     Succeed,
     Fail,
     Cancel,
+    CancelAfterRecordedBeforeStarted,
     Timeout,
 }
 
@@ -122,7 +123,7 @@ async fn nexus_basic(
                     .unwrap();
             }
             Outcome::Timeout => {}
-            Outcome::Cancel => unimplemented!(),
+            Outcome::Cancel | Outcome::CancelAfterRecordedBeforeStarted => unimplemented!(),
         }
     };
 
@@ -159,14 +160,21 @@ async fn nexus_basic(
             assert_eq!(f.message, "nexus operation completed unsuccessfully");
             assert_eq!(f.cause.unwrap().message, "operation timed out");
         }
-        Outcome::Cancel => unimplemented!(),
+        Outcome::Cancel | Outcome::CancelAfterRecordedBeforeStarted => unimplemented!(),
     }
 }
 
 #[rstest::rstest]
 #[tokio::test]
 async fn nexus_async(
-    #[values(Outcome::Succeed, Outcome::Fail, Outcome::Cancel, Outcome::Timeout)] outcome: Outcome,
+    #[values(
+        Outcome::Succeed,
+        Outcome::Fail,
+        Outcome::Cancel,
+        Outcome::CancelAfterRecordedBeforeStarted,
+        Outcome::Timeout
+    )]
+    outcome: Outcome,
 ) {
     let wf_name = "nexus_async";
     let mut starter = CoreWfStarter::new(wf_name);
@@ -174,25 +182,38 @@ async fn nexus_async(
     let mut worker = starter.worker().await;
 
     let endpoint = mk_endpoint(&mut starter).await;
+    let schedule_to_close_timeout = if outcome == Outcome::CancelAfterRecordedBeforeStarted {
+        // There is some internal timer on the server that won't record cancel in this case until
+        // after some elapsed period, so, don't time out first then.
+        None
+    } else {
+        Some(Duration::from_secs(2))
+    };
 
     worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| {
         let endpoint = endpoint.clone();
         async move {
-            let started = ctx
-                .start_nexus_operation(NexusOperationOptions {
-                    endpoint,
-                    service: "svc".to_string(),
-                    operation: "op".to_string(),
-                    schedule_to_close_timeout: Some(Duration::from_secs(1)),
-                    ..Default::default()
-                })
-                .await
-                .unwrap();
+            let started = ctx.start_nexus_operation(NexusOperationOptions {
+                endpoint,
+                service: "svc".to_string(),
+                operation: "op".to_string(),
+                schedule_to_close_timeout,
+                ..Default::default()
+            });
+            if outcome == Outcome::CancelAfterRecordedBeforeStarted {
+                ctx.timer(Duration::from_millis(1)).await;
+                started.cancel(&ctx);
+            }
+            let started = started.await.unwrap();
             let result = started.result();
-            if outcome == Outcome::Cancel {
-                started.cancel(&ctx).await;
+            if matches!(outcome, Outcome::Cancel) {
+                started.cancel(&ctx);
+                // Make sure double-cancel doesn't cause problems
+                started.cancel(&ctx);
             }
             let res = result.await;
+            // Make sure cancel after completion doesn't cause problems
+            started.cancel(&ctx);
             Ok(res.into())
         }
     });
@@ -214,6 +235,7 @@ async fn nexus_async(
 
     let mut client = starter.get_client().await.get_client().clone();
     let nexus_task_handle = async {
+        // Don't poll for and start the nexus task at all
         let nt = client
             .poll_nexus_task_queue(PollNexusTaskQueueRequest {
                 namespace: client.namespace().to_owned(),
@@ -227,17 +249,17 @@ async fn nexus_async(
             .await
             .unwrap()
             .into_inner();
+        let start_req = assert_matches!(
+            nt.request.unwrap().variant.unwrap(),
+            request::Variant::StartOperation(sr) => sr
+        );
         let completer_id = format!("completer-{}", rand_6_chars());
-        if outcome != Outcome::Timeout {
+        if !matches!(
+            outcome,
+            Outcome::Timeout | Outcome::CancelAfterRecordedBeforeStarted
+        ) {
             // Start the workflow which will act like the nexus handler and complete the async
             // operation
-            let start_req = if let request::Variant::StartOperation(sr) =
-                nt.request.unwrap().variant.unwrap()
-            {
-                sr
-            } else {
-                panic!("unexpected request variant");
-            };
             submitter
                 .submit_wf(
                     completer_id.clone(),
@@ -262,26 +284,29 @@ async fn nexus_async(
                 .await
                 .unwrap();
         }
-        client
-            .respond_nexus_task_completed(RespondNexusTaskCompletedRequest {
-                namespace: client.namespace().to_owned(),
-                task_token: nt.task_token,
-                response: Some(nexus::v1::Response {
-                    variant: Some(nexus::v1::response::Variant::StartOperation(
-                        StartOperationResponse {
-                            variant: Some(start_operation_response::Variant::AsyncSuccess(
-                                start_operation_response::Async {
-                                    operation_id: "op-1".to_string(),
-                                    links: vec![],
-                                },
-                            )),
-                        },
-                    )),
-                }),
-                ..Default::default()
-            })
-            .await
-            .unwrap();
+        if outcome != Outcome::CancelAfterRecordedBeforeStarted {
+            // Do not say the operation started if we are trying to test this type of cancel
+            client
+                .respond_nexus_task_completed(RespondNexusTaskCompletedRequest {
+                    namespace: client.namespace().to_owned(),
+                    task_token: nt.task_token,
+                    response: Some(nexus::v1::Response {
+                        variant: Some(nexus::v1::response::Variant::StartOperation(
+                            StartOperationResponse {
+                                variant: Some(start_operation_response::Variant::AsyncSuccess(
+                                    start_operation_response::Async {
+                                        operation_id: "op-1".to_string(),
+                                        links: vec![],
+                                    },
+                                )),
+                            },
+                        )),
+                    }),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+        }
         if outcome == Outcome::Cancel {
             let nt = client
                 .poll_nexus_task_queue(PollNexusTaskQueueRequest {
@@ -333,13 +358,18 @@ async fn nexus_async(
             assert_eq!(f.message, "nexus operation completed unsuccessfully");
             assert_eq!(f.cause.unwrap().message, "broken");
         }
-        Outcome::Cancel => {
+        Outcome::Cancel | Outcome::CancelAfterRecordedBeforeStarted => {
             let f = assert_matches!(
                 res.status,
                 Some(nexus_operation_result::Status::Cancelled(f)) => f
             );
             assert_eq!(f.message, "nexus operation completed unsuccessfully");
-            assert_eq!(f.cause.unwrap().message, "operation canceled");
+            let msg = if outcome == Outcome::CancelAfterRecordedBeforeStarted {
+                "operation canceled before it was started"
+            } else {
+                "operation canceled"
+            };
+            assert_eq!(f.cause.unwrap().message, msg);
         }
         Outcome::Timeout => {
             let f = assert_matches!(

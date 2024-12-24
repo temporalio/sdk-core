@@ -635,9 +635,6 @@ pub mod coresdk {
                     workflow_activation_job::Variant::ResolveNexusOperation(_) => {
                         write!(f, "ResolveNexusOperation")
                     }
-                    workflow_activation_job::Variant::ResolveCancelNexusOperation(_) => {
-                        write!(f, "ResolveCancelNexusOperation")
-                    }
                 }
             }
         }
@@ -931,12 +928,6 @@ pub mod coresdk {
         impl Display for RequestCancelNexusOperation {
             fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
                 write!(f, "RequestCancelNexusOperation({})", self.seq)
-            }
-        }
-
-        impl Display for RequestCancelStartedNexusOperation {
-            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-                write!(f, "RequestCancelStartedNexusOperation({})", self.seq)
             }
         }
 
@@ -1594,6 +1585,13 @@ pub mod temporal {
                                 attributes: Some(a),
                                 user_metadata: Default::default(),
                             },
+                            a @ Attributes::RequestCancelNexusOperationCommandAttributes(_) => {
+                                Self {
+                                    command_type: CommandType::RequestCancelNexusOperation as i32,
+                                    attributes: Some(a),
+                                    user_metadata: Default::default(),
+                                }
+                            }
                             _ => unimplemented!(),
                         }
                     }

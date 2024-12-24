@@ -16,6 +16,7 @@ use temporal_sdk_core_protos::{
         workflow_commands::ScheduleNexusOperation,
     },
     temporal::api::{
+        command::v1::{command, RequestCancelNexusOperationCommandAttributes},
         common::v1::Payload,
         enums::v1::{CommandType, EventType},
         failure::v1::{self as failure, failure::FailureInfo, Failure},
@@ -38,6 +39,9 @@ fsm! {
       --(NexusOperationScheduled(NexusOpScheduledData), shared on_scheduled)--> ScheduledEventRecorded;
     ScheduleCommandCreated --(Cancel, shared on_cancelled)--> Cancelled;
 
+    ScheduledEventRecorded --(Cancel, shared on_issue_cancel)--> ScheduledEventRecorded;
+    ScheduledEventRecorded --(CommandRequestCancelNexusOperation)--> ScheduledEventRecorded;
+    ScheduledEventRecorded --(NexusOperationCancelRequested)--> ScheduledEventRecorded;
     ScheduledEventRecorded
       --(NexusOperationCompleted(NexusOperationCompletedEventAttributes), on_completed)--> Completed;
     ScheduledEventRecorded
@@ -49,6 +53,9 @@ fsm! {
     ScheduledEventRecorded
       --(NexusOperationStarted(NexusOperationStartedEventAttributes), on_started)--> Started;
 
+    Started --(Cancel, shared on_issue_cancel)--> Started;
+    Started --(CommandRequestCancelNexusOperation)--> Started;
+    Started --(NexusOperationCancelRequested)--> Started;
     Started
       --(NexusOperationCompleted(NexusOperationCompletedEventAttributes), on_completed)--> Completed;
     Started
@@ -57,6 +64,12 @@ fsm! {
       --(NexusOperationCanceled(NexusOperationCanceledEventAttributes), on_canceled)--> Cancelled;
     Started
       --(NexusOperationTimedOut(NexusOperationTimedOutEventAttributes), on_timed_out)--> TimedOut;
+
+    // Ignore cancels in all terminal states
+    Completed --(Cancel)--> Completed;
+    Failed --(Cancel)--> Failed;
+    Cancelled --(Cancel)--> Cancelled;
+    TimedOut --(Cancel)--> TimedOut;
 }
 
 #[derive(Debug, derive_more::Display)]
@@ -73,6 +86,8 @@ pub(super) enum NexusOperationCommand {
     Cancel(Failure),
     #[display("TimedOut")]
     TimedOut(Failure),
+    #[display("IssueCancel")]
+    IssueCancel,
 }
 
 #[derive(Clone, Debug)]
@@ -84,6 +99,7 @@ pub(super) struct SharedState {
     operation: String,
 
     cancelled_before_sent: bool,
+    cancel_sent: bool,
 }
 
 impl NexusOperationMachine {
@@ -97,6 +113,7 @@ impl NexusOperationMachine {
                 service: attribs.service.clone(),
                 operation: attribs.operation.clone(),
                 cancelled_before_sent: false,
+                cancel_sent: false,
             },
         );
         NewMachineWithCommand {
@@ -136,6 +153,18 @@ impl ScheduleCommandCreated {
 pub(super) struct ScheduledEventRecorded;
 
 impl ScheduledEventRecorded {
+    pub(crate) fn on_issue_cancel(
+        &self,
+        ss: &mut SharedState,
+    ) -> NexusOperationMachineTransition<ScheduledEventRecorded> {
+        if !ss.cancel_sent {
+            ss.cancel_sent = true;
+            NexusOperationMachineTransition::commands([NexusOperationCommand::IssueCancel])
+        } else {
+            NexusOperationMachineTransition::default()
+        }
+    }
+
     pub(super) fn on_completed(
         self,
         ca: NexusOperationCompletedEventAttributes,
@@ -208,6 +237,18 @@ impl ScheduledEventRecorded {
 pub(super) struct Started;
 
 impl Started {
+    pub(crate) fn on_issue_cancel(
+        &self,
+        ss: &mut SharedState,
+    ) -> NexusOperationMachineTransition<Started> {
+        if !ss.cancel_sent {
+            ss.cancel_sent = true;
+            NexusOperationMachineTransition::commands([NexusOperationCommand::IssueCancel])
+        } else {
+            NexusOperationMachineTransition::default()
+        }
+    }
+
     pub(super) fn on_completed(
         self,
         ca: NexusOperationCompletedEventAttributes,
@@ -339,6 +380,7 @@ impl TryFrom<HistEventData> for NexusOperationMachineEvents {
                     ));
                 }
             }
+            Ok(EventType::NexusOperationCancelRequested) => Self::NexusOperationCancelRequested,
             _ => {
                 return Err(WFMachinesError::Nondeterminism(format!(
                     "Nexus operation machine does not handle this event: {e:?}"
@@ -426,6 +468,16 @@ impl WFMachinesAdapter for NexusOperationMachine {
                 }
                 .into()]
             }
+            NexusOperationCommand::IssueCancel => {
+                vec![MachineResponse::IssueNewCommand(
+                    command::Attributes::RequestCancelNexusOperationCommandAttributes(
+                        RequestCancelNexusOperationCommandAttributes {
+                            scheduled_event_id: self.shared_state.scheduled_event_id,
+                        },
+                    )
+                    .into(),
+                )]
+            }
         })
     }
 }
@@ -436,7 +488,7 @@ impl TryFrom<CommandType> for NexusOperationMachineEvents {
     fn try_from(c: CommandType) -> Result<Self, Self::Error> {
         Ok(match c {
             CommandType::ScheduleNexusOperation => Self::CommandScheduleNexusOperation,
-            // CommandType::RequestCancelNexusOperation handled by separate cancel nexus op fsm.
+            CommandType::RequestCancelNexusOperation => Self::CommandRequestCancelNexusOperation,
             _ => return Err(()),
         })
     }

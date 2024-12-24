@@ -2,7 +2,9 @@ mod workflow_machines;
 
 mod activity_state_machine;
 mod cancel_external_state_machine;
-mod cancel_nexus_op_state_machine;
+// This machine is kept commented out until cancelling externally started nexus operations is
+// supported
+// mod cancel_nexus_op_state_machine;
 mod cancel_workflow_state_machine;
 mod child_workflow_state_machine;
 mod complete_workflow_state_machine;
@@ -26,7 +28,6 @@ pub(crate) use workflow_machines::{MachinesWFTResponseContent, WorkflowMachines}
 use crate::{telemetry::VecDisplayer, worker::workflow::WFMachinesError};
 use activity_state_machine::ActivityMachine;
 use cancel_external_state_machine::CancelExternalMachine;
-use cancel_nexus_op_state_machine::CancelNexusOpMachine;
 use cancel_workflow_state_machine::CancelWorkflowMachine;
 use child_workflow_state_machine::ChildWorkflowMachine;
 use complete_workflow_state_machine::CompleteWorkflowMachine;
@@ -74,7 +75,6 @@ enum Machines {
     ModifyWorkflowPropertiesMachine,
     UpdateMachine,
     NexusOperationMachine,
-    CancelNexusOpMachine,
 }
 
 /// Extends [rustfsm::StateMachine] with some functionality specific to the temporal SDK.
