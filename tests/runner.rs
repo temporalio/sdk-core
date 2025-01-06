@@ -82,6 +82,8 @@ async fn main() -> Result<(), anyhow::Error> {
                     "system.enableEagerWorkflowStart=true".to_string(),
                     "--dynamic-config-value".to_string(),
                     "system.enableNexus=true".to_string(),
+                    "--http-port".to_string(),
+                    "7243".to_string(),
                     "--search-attribute".to_string(),
                     format!("{SEARCH_ATTR_TXT}=Text"),
                     "--search-attribute".to_string(),

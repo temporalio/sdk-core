@@ -187,7 +187,7 @@ async fn nexus_async(
         // after some elapsed period, so, don't time out first then.
         None
     } else {
-        Some(Duration::from_secs(2))
+        Some(Duration::from_secs(5))
     };
 
     worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| {
@@ -235,7 +235,6 @@ async fn nexus_async(
 
     let mut client = starter.get_client().await.get_client().clone();
     let nexus_task_handle = async {
-        // Don't poll for and start the nexus task at all
         let nt = client
             .poll_nexus_task_queue(PollNexusTaskQueueRequest {
                 namespace: client.namespace().to_owned(),
@@ -437,6 +436,6 @@ async fn mk_endpoint(starter: &mut CoreWfStarter) -> String {
         .await
         .unwrap();
     // Endpoint creation can (as of server 1.25.2 at least) return before they are actually usable.
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    tokio::time::sleep(Duration::from_millis(800)).await;
     endpoint
 }
