@@ -436,5 +436,7 @@ async fn mk_endpoint(starter: &mut CoreWfStarter) -> String {
         })
         .await
         .unwrap();
+    // Endpoint creation can (as of server 1.25.2 at least) return before they are actually usable.
+    tokio::time::sleep(Duration::from_millis(200)).await;
     endpoint
 }
