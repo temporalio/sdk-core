@@ -104,6 +104,7 @@ pub(crate) trait WorkerClient: Sync + Send {
         task_queue: String,
         max_tasks_per_sec: Option<f64>,
     ) -> Result<PollActivityTaskQueueResponse>;
+    async fn poll_nexus_task(&self, task_queue: String) -> Result<PollNexusTaskQueueResponse>;
     async fn complete_workflow_task(
         &self,
         request: WorkflowTaskCompletion,
@@ -197,6 +198,25 @@ impl WorkerClient for WorkerClientBag {
         Ok(self
             .cloned_client()
             .poll_activity_task_queue(request)
+            .await?
+            .into_inner())
+    }
+
+    async fn poll_nexus_task(&self, task_queue: String) -> Result<PollNexusTaskQueueResponse> {
+        let request = PollNexusTaskQueueRequest {
+            namespace: self.namespace.clone(),
+            task_queue: Some(TaskQueue {
+                name: task_queue,
+                kind: TaskQueueKind::Normal as i32,
+                normal_name: "".to_string(),
+            }),
+            identity: self.identity.clone(),
+            worker_version_capabilities: self.worker_version_capabilities(),
+        };
+
+        Ok(self
+            .cloned_client()
+            .poll_nexus_task_queue(request)
             .await?
             .into_inner())
     }

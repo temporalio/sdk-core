@@ -1,7 +1,6 @@
 use super::*;
 use futures_util::Future;
-use std::sync::Arc;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 use temporal_client::SlotManager;
 
 pub(crate) static DEFAULT_WORKERS_REGISTRY: LazyLock<Arc<SlotManager>> =
@@ -59,6 +58,10 @@ mockall::mock! {
 
         fn poll_activity_task<'a, 'b>(&self, task_queue: String, max_tasks_per_sec: Option<f64>)
             -> impl Future<Output = Result<PollActivityTaskQueueResponse>> + Send + 'b
+            where 'a: 'b, Self: 'b;
+
+        fn poll_nexus_task<'a, 'b>(&self, task_queue: String)
+            -> impl Future<Output = Result<PollNexusTaskQueueResponse>> + Send + 'b
             where 'a: 'b, Self: 'b;
 
         fn complete_workflow_task<'a, 'b>(
