@@ -45,3 +45,9 @@ message ActivitySlotInfo {
 message LocalActivitySlotInfo {
     string activity_type = 1;
 }
+
+// Info about nexus task slot usage
+message NexusSlotInfo {
+    string service = 1;
+    string operation = 2;
+}

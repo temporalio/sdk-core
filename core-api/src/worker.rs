@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 use temporal_sdk_core_protos::coresdk::{
-    ActivitySlotInfo, LocalActivitySlotInfo, WorkflowSlotInfo,
+    ActivitySlotInfo, LocalActivitySlotInfo, NexusSlotInfo, WorkflowSlotInfo,
 };
 
 const MAX_CONCURRENT_WFT_POLLS_DEFAULT: usize = 5;
@@ -263,6 +263,11 @@ pub trait WorkerTuner {
         &self,
     ) -> Arc<dyn SlotSupplier<SlotKind = LocalActivitySlotKind> + Send + Sync>;
 
+    /// Return a [SlotSupplier] for nexus tasks
+    fn nexus_task_slot_supplier(
+        &self,
+    ) -> Arc<dyn SlotSupplier<SlotKind = NexusSlotKind> + Send + Sync>;
+
     /// Core will call this at worker initialization time, allowing the implementation to hook up to
     /// metrics if any are configured. If not, it will not be called.
     fn attach_metrics(&self, metrics: TemporalMeter);
@@ -364,6 +369,7 @@ pub enum SlotKindType {
     Workflow,
     Activity,
     LocalActivity,
+    Nexus,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -372,11 +378,14 @@ pub struct WorkflowSlotKind {}
 pub struct ActivitySlotKind {}
 #[derive(Debug, Copy, Clone)]
 pub struct LocalActivitySlotKind {}
+#[derive(Debug, Copy, Clone)]
+pub struct NexusSlotKind {}
 
 pub enum SlotInfo<'a> {
     Workflow(&'a WorkflowSlotInfo),
     Activity(&'a ActivitySlotInfo),
     LocalActivity(&'a LocalActivitySlotInfo),
+    Nexus(&'a NexusSlotInfo),
 }
 
 pub trait SlotInfoTrait: prost::Message {
@@ -395,6 +404,11 @@ impl SlotInfoTrait for ActivitySlotInfo {
 impl SlotInfoTrait for LocalActivitySlotInfo {
     fn downcast(&self) -> SlotInfo {
         SlotInfo::LocalActivity(self)
+    }
+}
+impl SlotInfoTrait for NexusSlotInfo {
+    fn downcast(&self) -> SlotInfo {
+        SlotInfo::Nexus(self)
     }
 }
 
@@ -422,5 +436,12 @@ impl SlotKind for LocalActivitySlotKind {
 
     fn kind() -> SlotKindType {
         SlotKindType::LocalActivity
+    }
+}
+impl SlotKind for NexusSlotKind {
+    type Info = NexusSlotInfo;
+
+    fn kind() -> SlotKindType {
+        SlotKindType::Nexus
     }
 }

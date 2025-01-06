@@ -14,10 +14,12 @@ use std::{
     },
     time::Duration,
 };
-use temporal_sdk_core_api::worker::{ActivitySlotKind, SlotKind, WorkflowSlotKind};
+use temporal_sdk_core_api::worker::{ActivitySlotKind, NexusSlotKind, SlotKind, WorkflowSlotKind};
 use temporal_sdk_core_protos::temporal::api::{
     taskqueue::v1::TaskQueue,
-    workflowservice::v1::{PollActivityTaskQueueResponse, PollWorkflowTaskQueueResponse},
+    workflowservice::v1::{
+        PollActivityTaskQueueResponse, PollNexusTaskQueueResponse, PollWorkflowTaskQueueResponse,
+    },
 };
 use tokio::{
     sync::{
@@ -294,6 +296,29 @@ pub(crate) fn new_activity_task_buffer(
                 async move { rl.until_ready().await }.boxed()
             }
         }),
+    )
+}
+
+pub(crate) type PollNexusTaskBuffer = LongPollBuffer<PollNexusTaskQueueResponse, NexusSlotKind>;
+pub(crate) fn new_nexus_task_buffer(
+    client: Arc<dyn WorkerClient>,
+    task_queue: String,
+    concurrent_pollers: usize,
+    semaphore: MeteredPermitDealer<NexusSlotKind>,
+    shutdown: CancellationToken,
+    num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
+) -> PollNexusTaskBuffer {
+    LongPollBuffer::new(
+        move || {
+            let client = client.clone();
+            let task_queue = task_queue.clone();
+            async move { client.poll_nexus_task(task_queue).await }
+        },
+        semaphore,
+        concurrent_pollers,
+        shutdown,
+        num_pollers_handler,
+        None::<fn() -> BoxFuture<'static, ()>>,
     )
 }
 
