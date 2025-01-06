@@ -9,6 +9,7 @@ option ruby_package = "Temporalio::Internal::Bridge::Api::WorkflowActivation";
 
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/duration.proto";
+import "google/protobuf/empty.proto";
 import "temporal/api/failure/v1/message.proto";
 import "temporal/api/update/v1/message.proto";
 import "temporal/api/common/v1/message.proto";
@@ -16,6 +17,7 @@ import "temporal/api/enums/v1/workflow.proto";
 import "temporal/sdk/core/activity_result/activity_result.proto";
 import "temporal/sdk/core/child_workflow/child_workflow.proto";
 import "temporal/sdk/core/common/common.proto";
+import "temporal/sdk/core/nexus/nexus.proto";
 
 // An instruction to the lang sdk to run some workflow code, whether for the first time or from
 // a cached state.
@@ -119,6 +121,10 @@ message WorkflowActivationJob {
         ResolveRequestCancelExternalWorkflow resolve_request_cancel_external_workflow = 13;
         // A request to handle a workflow update.
         DoUpdate do_update = 14;
+        // A nexus operation started.
+        ResolveNexusOperationStart resolve_nexus_operation_start = 15;
+        // A nexus operation resolved.
+        ResolveNexusOperation resolve_nexus_operation = 16;
         // Remove the workflow identified by the [WorkflowActivation] containing this job from the
         // cache after performing the activation. It is guaranteed that this will be the only job
         // in the activation if present.
@@ -314,6 +320,30 @@ message DoUpdate {
     // If set true, lang must run the update's validator before running the handler. This will be
     // set false during replay, since validation is not re-run during replay.
     bool run_validator = 7;
+}
+
+message ResolveNexusOperationStart {
+    // Sequence number as provided by lang in the corresponding ScheduleNexusOperation command
+    uint32 seq = 1;
+    oneof status {
+        // The operation started asynchronously. Contains an ID that can be used to perform
+        // operations on the started operation by, ex, clients. A `ResolveNexusOperation` job will
+        // follow at some point.
+        string operation_id = 2;
+        // If true the operation "started" but only because it's also already resolved. A
+        // `ResolveNexusOperation` job will be in the same activation.
+        bool started_sync = 3;
+        // The operation was cancelled before it was ever sent to server (same WFT).
+        // Note that core will still send a `ResolveNexusOperation` job in the same activation, so
+        // there does not need to be an exceptional case for this in lang.
+        temporal.api.failure.v1.Failure cancelled_before_start = 4;
+    }
+}
+
+message ResolveNexusOperation {
+    // Sequence number as provided by lang in the corresponding ScheduleNexusOperation command
+    uint32 seq = 1;
+    nexus.NexusOperationResult result = 2;
 }
 
 message RemoveFromCache {

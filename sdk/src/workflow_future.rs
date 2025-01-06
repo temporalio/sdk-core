@@ -25,8 +25,8 @@ use temporal_sdk_core_protos::{
             update_response, workflow_command, CancelChildWorkflowExecution, CancelSignalWorkflow,
             CancelTimer, CancelWorkflowExecution, CompleteWorkflowExecution, FailWorkflowExecution,
             RequestCancelActivity, RequestCancelExternalWorkflowExecution,
-            RequestCancelLocalActivity, ScheduleActivity, ScheduleLocalActivity, StartTimer,
-            UpdateResponse, WorkflowCommand,
+            RequestCancelLocalActivity, RequestCancelNexusOperation, ScheduleActivity,
+            ScheduleLocalActivity, StartTimer, UpdateResponse, WorkflowCommand,
         },
         workflow_completion,
         workflow_completion::{workflow_activation_completion, WorkflowActivationCompletion},
@@ -130,6 +130,8 @@ impl WorkflowFuture {
             UnblockEvent::WorkflowComplete(seq, _) => CommandID::ChildWorkflowComplete(seq),
             UnblockEvent::SignalExternal(seq, _) => CommandID::SignalExternal(seq),
             UnblockEvent::CancelExternal(seq, _) => CommandID::CancelExternal(seq),
+            UnblockEvent::NexusOperationStart(seq, _) => CommandID::NexusOpStart(seq),
+            UnblockEvent::NexusOperationComplete(seq, _) => CommandID::NexusOpComplete(seq),
         };
         let unblocker = self.command_status.remove(&cmd_id);
         let _ = unblocker
@@ -209,7 +211,7 @@ impl WorkflowFuture {
                 Variant::QueryWorkflow(q) => {
                     error!(
                         "Queries are not implemented in the Rust SDK. Got query '{}'",
-                        q.query_id
+                        q.query_type
                     );
                 }
                 Variant::CancelWorkflow(_) => {
@@ -306,7 +308,22 @@ impl WorkflowFuture {
                         );
                     }
                 }
-
+                Variant::ResolveNexusOperationStart(attrs) => {
+                    self.unblock(UnblockEvent::NexusOperationStart(
+                        attrs.seq,
+                        Box::new(
+                            attrs
+                                .status
+                                .context("Nexus operation start must have status")?,
+                        ),
+                    ))?
+                }
+                Variant::ResolveNexusOperation(attrs) => {
+                    self.unblock(UnblockEvent::NexusOperationComplete(
+                        attrs.seq,
+                        Box::new(attrs.result.context("Nexus operation must have result")?),
+                    ))?
+                }
                 Variant::RemoveFromCache(_) => {
                     // TODO: Need to abort any user-spawned tasks, etc. See also cancel WF.
                     //   How best to do this in executor agnostic way? Is that possible?
@@ -531,6 +548,11 @@ impl WorkflowFuture {
                                 },
                             )
                         }
+                        CancellableID::NexusOp(seq) => {
+                            workflow_command::Variant::RequestCancelNexusOperation(
+                                RequestCancelNexusOperation { seq },
+                            )
+                        }
                     };
                     activation_cmds.push(cmd_variant.into());
                 }
@@ -560,6 +582,9 @@ impl WorkflowFuture {
                         }
                         workflow_command::Variant::RequestCancelExternalWorkflowExecution(req) => {
                             CommandID::CancelExternal(req.seq)
+                        }
+                        workflow_command::Variant::ScheduleNexusOperation(req) => {
+                            CommandID::NexusOpStart(req.seq)
                         }
                         _ => unimplemented!("Command type not implemented"),
                     };
@@ -601,6 +626,12 @@ impl WorkflowFuture {
                 }
                 RustWfCmd::RegisterUpdate(name, impls) => {
                     self.updates.insert(name, impls);
+                }
+                RustWfCmd::SubscribeNexusOperationCompletion { seq, unblocker } => {
+                    self.command_status.insert(
+                        CommandID::NexusOpComplete(seq),
+                        WFCommandFutInfo { unblocker },
+                    );
                 }
             }
         }
@@ -648,6 +679,8 @@ enum CommandID {
     ChildWorkflowComplete(u32),
     SignalExternal(u32),
     CancelExternal(u32),
+    NexusOpStart(u32),
+    NexusOpComplete(u32),
 }
 
 fn update_response(
