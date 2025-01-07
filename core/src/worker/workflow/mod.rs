@@ -20,10 +20,11 @@ use crate::{
         UsedMeteredSemPermit,
     },
     internal_flags::InternalFlags,
+    pollers::TrackedPermittedTqResp,
     protosext::{legacy_query_failure, protocol_messages::IncomingProtocolMessage},
     telemetry::{set_trace_subscriber_for_current_thread, TelemetryInstance, VecDisplayer},
     worker::{
-        activities::{ActivitiesFromWFTsHandle, LocalActivityManager, TrackedPermittedTqResp},
+        activities::{ActivitiesFromWFTsHandle, LocalActivityManager},
         client::{WorkerClient, WorkflowTaskCompletion},
         workflow::{
             history_update::HistoryPaginator,
