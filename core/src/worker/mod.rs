@@ -1,5 +1,6 @@
 mod activities;
 pub(crate) mod client;
+mod nexus;
 mod slot_provider;
 pub(crate) mod tuner;
 mod workflow;
@@ -18,22 +19,25 @@ pub(crate) use activities::{
 pub(crate) use workflow::{wft_poller::new_wft_poller, LEGACY_QUERY_ID};
 
 use crate::{
-    abstractions::{dbg_panic, MeteredPermitDealer},
+    abstractions::{dbg_panic, MeteredPermitDealer, PermitDealerContextData},
     errors::CompleteWfError,
     pollers::{
-        new_activity_task_buffer, new_workflow_task_buffer, BoxedActPoller, WorkflowTaskPoller,
+        new_activity_task_buffer, new_nexus_task_buffer, new_workflow_task_buffer, BoxedActPoller,
+        BoxedNexusPoller, WorkflowTaskPoller,
     },
     protosext::validate_activity_completion,
     telemetry::{
         metrics::{
-            activity_poller, activity_worker_type, workflow_poller, workflow_sticky_poller,
-            workflow_worker_type, MetricsContext,
+            activity_poller, activity_worker_type, local_activity_worker_type, nexus_poller,
+            nexus_worker_type, workflow_poller, workflow_sticky_poller, workflow_worker_type,
+            MetricsContext,
         },
         TelemetryInstance,
     },
     worker::{
         activities::{LACompleteAction, LocalActivityManager, NextPendingLAAction},
         client::WorkerClient,
+        nexus::NexusManager,
         workflow::{LAReqSink, LocalResolution, WorkflowBasics, Workflows},
     },
     ActivityHeartbeat, CompleteActivityError, PollActivityError, PollWfError, WorkerTrait,
@@ -52,6 +56,7 @@ use std::{
     time::Duration,
 };
 use temporal_client::{ConfiguredClient, TemporalServiceClientWithMetrics, WorkerKey};
+use temporal_sdk_core_api::errors::WorkerValidationError;
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::activity_execution_result,
@@ -63,7 +68,7 @@ use temporal_sdk_core_protos::{
     temporal::api::{
         enums::v1::TaskQueueKind,
         taskqueue::v1::{StickyExecutionAttributes, TaskQueue},
-        workflowservice::v1::get_system_info_response,
+        workflowservice::v1::{get_system_info_response, PollNexusTaskQueueResponse},
     },
     TaskToken,
 };
@@ -71,10 +76,6 @@ use tokio::sync::{mpsc::unbounded_channel, watch};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
 
-use crate::{
-    abstractions::PermitDealerContextData, telemetry::metrics::local_activity_worker_type,
-};
-use temporal_sdk_core_api::errors::WorkerValidationError;
 #[cfg(test)]
 use {
     crate::{
@@ -97,6 +98,8 @@ pub struct Worker {
     at_task_mgr: Option<WorkerActivityTasks>,
     /// Manages local activities
     local_act_mgr: Arc<LocalActivityManager>,
+    /// Manages Nexus tasks
+    nexus_mgr: Option<NexusManager>,
     /// Has shutdown been called?
     shutdown_token: CancellationToken,
     /// Will be called at the end of each activation completion
@@ -145,6 +148,16 @@ impl WorkerTrait for Worker {
                     continue;
                 }
             }
+        }
+    }
+
+    #[instrument(skip(self))]
+    async fn poll_nexus_task(&self) -> Result<PollNexusTaskQueueResponse, PollActivityError> {
+        if let Some(nm) = self.nexus_mgr.as_ref() {
+            nm.next_nexus_task().await
+        } else {
+            self.shutdown_token.cancelled().await;
+            Err(PollActivityError::ShutDown)
         }
     }
 
@@ -316,7 +329,13 @@ impl Worker {
         );
         let act_permits = act_slots.get_extant_count_rcv();
         let (external_wft_tx, external_wft_rx) = unbounded_channel();
-        let (wft_stream, act_poller) = match task_pollers {
+        let nexus_slots = MeteredPermitDealer::new(
+            tuner.nexus_task_slot_supplier(),
+            metrics.with_new_attrs([nexus_worker_type()]),
+            None,
+            slot_context_data.clone(),
+        );
+        let (wft_stream, act_poller, nexus_poller) = match task_pollers {
             TaskPollers::Real => {
                 let max_nonsticky_polls = if sticky_queue_name.is_some() {
                     config.max_nonsticky_polls()
@@ -386,17 +405,36 @@ impl Worker {
                     wft_stream.right_stream()
                 };
 
+                // TODO: Use config option or always have instance depending on if we combine tasks
+                //  polling or not
+                let nexus_poll_buffer = if false {
+                    None
+                } else {
+                    let np_metrics = metrics.with_new_attrs([nexus_poller()]);
+                    Some(Box::new(new_nexus_task_buffer(
+                        client.clone(),
+                        config.task_queue.clone(),
+                        config.max_concurrent_nexus_polls,
+                        nexus_slots.clone(),
+                        shutdown_token.child_token(),
+                        Some(move |np| np_metrics.record_num_pollers(np)),
+                    )) as BoxedNexusPoller)
+                };
+
                 #[cfg(test)]
                 let wft_stream = wft_stream.left_stream();
-                (wft_stream, act_poll_buffer)
+                (wft_stream, act_poll_buffer, nexus_poll_buffer)
             }
             #[cfg(test)]
             TaskPollers::Mocked {
                 wft_stream,
                 act_poller,
+                nexus_poller,
             } => {
                 let ap = act_poller
                     .map(|ap| MockPermittedPollBuffer::new(Arc::new(act_slots.clone()), ap));
+                let np = nexus_poller
+                    .map(|np| MockPermittedPollBuffer::new(Arc::new(nexus_slots.clone()), np));
                 let wft_semaphore = wft_slots.clone();
                 let wfs = wft_stream.then(move |s| {
                     let wft_semaphore = wft_semaphore.clone();
@@ -406,7 +444,11 @@ impl Worker {
                     }
                 });
                 let wfs = wfs.right_stream();
-                (wfs, ap.map(|ap| Box::new(ap) as BoxedActPoller))
+                (
+                    wfs,
+                    ap.map(|ap| Box::new(ap) as BoxedActPoller),
+                    np.map(|np| Box::new(np) as BoxedNexusPoller),
+                )
             }
         };
 
@@ -441,6 +483,15 @@ impl Worker {
             info!("Activity polling is disabled for this worker");
         };
         let la_sink = LAReqSink::new(local_act_mgr.clone());
+
+        let nexus_mgr = nexus_poller.map(|np| {
+            NexusManager::new(
+                np,
+                metrics.with_new_attrs([nexus_worker_type()]),
+                shutdown_token.child_token(),
+            )
+        });
+
         let provider = SlotProvider::new(
             config.namespace.clone(),
             config.task_queue.clone(),
@@ -498,6 +549,7 @@ impl Worker {
                 act_permits,
                 la_permits,
             }),
+            nexus_mgr,
         }
     }
 
@@ -807,6 +859,7 @@ pub(crate) enum TaskPollers {
     Mocked {
         wft_stream: BoxStream<'static, Result<ValidPollWFTQResponse, tonic::Status>>,
         act_poller: Option<BoxedPoller<PollActivityTaskQueueResponse>>,
+        nexus_poller: Option<BoxedPoller<PollNexusTaskQueueResponse>>,
     },
 }
 

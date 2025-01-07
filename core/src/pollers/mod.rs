@@ -1,7 +1,7 @@
 mod poll_buffer;
 
 pub(crate) use poll_buffer::{
-    new_activity_task_buffer, new_workflow_task_buffer, WorkflowTaskPoller,
+    new_activity_task_buffer, new_nexus_task_buffer, new_workflow_task_buffer, WorkflowTaskPoller,
 };
 pub use temporal_client::{
     Client, ClientOptions, ClientOptionsBuilder, ClientTlsConfig, RetryClient, RetryConfig,
@@ -12,7 +12,7 @@ use crate::{
     abstractions::{OwnedMeteredSemPermit, TrackedOwnedMeteredSemPermit},
     telemetry::metrics::MetricsContext,
 };
-use anyhow::anyhow;
+use anyhow::{anyhow, bail};
 use futures_util::{stream, Stream};
 use std::{fmt::Debug, marker::PhantomData};
 use temporal_sdk_core_api::worker::{ActivitySlotKind, NexusSlotKind, SlotKind, WorkflowSlotKind};
@@ -109,7 +109,6 @@ pub(crate) struct TrackedPermittedTqResp<T: ValidatableTask> {
     pub(crate) resp: T,
 }
 
-// Trait for validatable task responses
 pub(crate) trait ValidatableTask:
     Debug + Default + PartialEq + Send + Sync + 'static
 {
@@ -236,6 +235,46 @@ pub(crate) fn new_activity_task_poller(
         poller,
         metrics,
         MetricsContext::act_poll_timeout,
+        shutdown_token,
+    )
+    .into_stream()
+}
+
+impl ValidatableTask for PollNexusTaskQueueResponse {
+    type SlotKind = NexusSlotKind;
+
+    fn validate(&self) -> Result<(), anyhow::Error> {
+        if self.task_token.is_empty() {
+            bail!("missing task token");
+        } else if self.request.is_none() {
+            bail!("missing request field");
+        } else if self
+            .request
+            .as_ref()
+            .expect("just request exists")
+            .variant
+            .is_none()
+        {
+            bail!("missing request variant");
+        }
+        Ok(())
+    }
+
+    fn task_name() -> &'static str {
+        "nexus"
+    }
+}
+
+pub(crate) type NexusPollItem = Result<PermittedTqResp<PollNexusTaskQueueResponse>, tonic::Status>;
+pub(crate) fn new_nexus_task_poller(
+    poller: BoxedNexusPoller,
+    metrics: MetricsContext,
+    shutdown_token: CancellationToken,
+) -> impl Stream<Item = NexusPollItem> {
+    TaskPollerStream::new(
+        poller,
+        metrics,
+        MetricsContext::nexus_poll_timeout,
         shutdown_token,
     )
     .into_stream()

@@ -49,8 +49,8 @@ use temporal_sdk_core_protos::{
         protocol::v1::message,
         update,
         workflowservice::v1::{
-            PollActivityTaskQueueResponse, PollWorkflowTaskQueueResponse,
-            RespondWorkflowTaskCompletedResponse,
+            PollActivityTaskQueueResponse, PollNexusTaskQueueResponse,
+            PollWorkflowTaskQueueResponse, RespondWorkflowTaskCompletedResponse,
         },
     },
     utilities::pack_any,
@@ -170,6 +170,7 @@ pub(crate) fn mock_worker(mocks: MocksHolder) -> Worker {
         TaskPollers::Mocked {
             wft_stream: mocks.inputs.wft_stream,
             act_poller,
+            nexus_poller: mocks.inputs.nexus_poller,
         },
         None,
     )
@@ -221,6 +222,7 @@ impl MocksHolder {
 pub(crate) struct MockWorkerInputs {
     pub(crate) wft_stream: BoxStream<'static, Result<ValidPollWFTQResponse, tonic::Status>>,
     pub(crate) act_poller: Option<BoxedPoller<PollActivityTaskQueueResponse>>,
+    pub(crate) nexus_poller: Option<BoxedPoller<PollNexusTaskQueueResponse>>,
     pub(crate) config: WorkerConfig,
 }
 
@@ -237,6 +239,7 @@ impl MockWorkerInputs {
         Self {
             wft_stream,
             act_poller: None,
+            nexus_poller: None,
             config: test_worker_cfg().build().unwrap(),
         }
     }
@@ -268,6 +271,7 @@ impl MocksHolder {
         let mock_worker = MockWorkerInputs {
             wft_stream,
             act_poller: Some(mock_act_poller),
+            nexus_poller: None,
             config: test_worker_cfg().build().unwrap(),
         };
         Self {
@@ -290,6 +294,7 @@ impl MocksHolder {
         let mock_worker = MockWorkerInputs {
             wft_stream,
             act_poller: None,
+            nexus_poller: None,
             config: test_worker_cfg().build().unwrap(),
         };
         Self {

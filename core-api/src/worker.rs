@@ -56,6 +56,10 @@ pub struct WorkerConfig {
     /// worker's task queue
     #[builder(default = "5")]
     pub max_concurrent_at_polls: usize,
+    /// Maximum number of concurrent poll nexus task requests we will perform at a time on this
+    /// worker's task queue
+    #[builder(default = "5")]
+    pub max_concurrent_nexus_polls: usize,
     /// If set to true this worker will only handle workflow tasks and local activities, it will not
     /// poll for activity tasks.
     #[builder(default = "false")]

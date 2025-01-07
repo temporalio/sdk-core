@@ -10,7 +10,6 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::{
         common::v1::{callback, Callback},
-        enums::v1::TaskQueueKind,
         failure::v1::failure::FailureInfo,
         nexus,
         nexus::v1::{
@@ -18,11 +17,7 @@ use temporal_sdk_core_protos::{
             EndpointSpec, EndpointTarget, HandlerError, StartOperationResponse,
         },
         operatorservice::v1::CreateNexusEndpointRequest,
-        taskqueue::v1::TaskQueue,
-        workflowservice::v1::{
-            PollNexusTaskQueueRequest, RespondNexusTaskCompletedRequest,
-            RespondNexusTaskFailedRequest,
-        },
+        workflowservice::v1::{RespondNexusTaskCompletedRequest, RespondNexusTaskFailedRequest},
     },
 };
 use temporal_sdk_core_test_utils::{rand_6_chars, CoreWfStarter};
@@ -46,6 +41,7 @@ async fn nexus_basic(
     let mut starter = CoreWfStarter::new(wf_name);
     starter.worker_config.no_remote_activities(true);
     let mut worker = starter.worker().await;
+    let core_worker = starter.get_worker().await;
 
     let endpoint = mk_endpoint(&mut starter).await;
 
@@ -70,19 +66,7 @@ async fn nexus_basic(
 
     let mut client = starter.get_client().await.get_client().clone();
     let nexus_task_handle = async {
-        let nt = client
-            .poll_nexus_task_queue(PollNexusTaskQueueRequest {
-                namespace: client.namespace().to_owned(),
-                task_queue: Some(TaskQueue {
-                    name: starter.get_task_queue().to_owned(),
-                    kind: TaskQueueKind::Normal.into(),
-                    normal_name: "".to_string(),
-                }),
-                ..Default::default()
-            })
-            .await
-            .unwrap()
-            .into_inner();
+        let nt = core_worker.poll_nexus_task().await.unwrap();
         match outcome {
             Outcome::Succeed => {
                 client
@@ -180,6 +164,7 @@ async fn nexus_async(
     let mut starter = CoreWfStarter::new(wf_name);
     starter.worker_config.no_remote_activities(true);
     let mut worker = starter.worker().await;
+    let core_worker = starter.get_worker().await;
 
     let endpoint = mk_endpoint(&mut starter).await;
     let schedule_to_close_timeout = if outcome == Outcome::CancelAfterRecordedBeforeStarted {
@@ -235,19 +220,7 @@ async fn nexus_async(
 
     let mut client = starter.get_client().await.get_client().clone();
     let nexus_task_handle = async {
-        let nt = client
-            .poll_nexus_task_queue(PollNexusTaskQueueRequest {
-                namespace: client.namespace().to_owned(),
-                task_queue: Some(TaskQueue {
-                    name: starter.get_task_queue().to_owned(),
-                    kind: TaskQueueKind::Normal.into(),
-                    normal_name: "".to_string(),
-                }),
-                ..Default::default()
-            })
-            .await
-            .unwrap()
-            .into_inner();
+        let nt = core_worker.poll_nexus_task().await.unwrap();
         let start_req = assert_matches!(
             nt.request.unwrap().variant.unwrap(),
             request::Variant::StartOperation(sr) => sr
@@ -307,19 +280,7 @@ async fn nexus_async(
                 .unwrap();
         }
         if outcome == Outcome::Cancel {
-            let nt = client
-                .poll_nexus_task_queue(PollNexusTaskQueueRequest {
-                    namespace: client.namespace().to_owned(),
-                    task_queue: Some(TaskQueue {
-                        name: starter.get_task_queue().to_owned(),
-                        kind: TaskQueueKind::Normal.into(),
-                        normal_name: "".to_string(),
-                    }),
-                    ..Default::default()
-                })
-                .await
-                .unwrap()
-                .into_inner();
+            let nt = core_worker.poll_nexus_task().await.unwrap();
             assert_matches!(
                 nt.request.unwrap().variant.unwrap(),
                 request::Variant::CancelOperation(_)

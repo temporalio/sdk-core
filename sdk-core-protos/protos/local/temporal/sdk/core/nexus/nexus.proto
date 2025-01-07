@@ -5,6 +5,7 @@ option ruby_package = "Temporalio::Internal::Bridge::Api::Nexus";
 
 import "temporal/api/common/v1/message.proto";
 import "temporal/api/failure/v1/message.proto";
+import "temporal/api/nexus/v1/message.proto";
 import "temporal/sdk/core/common/common.proto";
 
 // Used by core to resolve nexus operations.
@@ -14,5 +15,17 @@ message NexusOperationResult {
         temporal.api.failure.v1.Failure failed = 2;
         temporal.api.failure.v1.Failure cancelled = 3;
         temporal.api.failure.v1.Failure timed_out = 4;
+    }
+}
+
+// A response to a Nexus task
+message NexusTaskResponse {
+    // The unique identifier for this task provided in the poll response
+    bytes task_token = 1;
+    oneof status {
+        // The handler completed. Note that the response kind must match the
+        // request kind (start or cancel).
+        temporal.api.nexus.v1.Response completed = 2;
+        temporal.api.nexus.v1.HandlerError error = 3;
     }
 }
