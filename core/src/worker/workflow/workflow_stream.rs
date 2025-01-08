@@ -10,7 +10,7 @@ use crate::{
 };
 use futures_util::{stream, stream::PollNext, Stream, StreamExt};
 use std::{collections::VecDeque, fmt::Debug, future, sync::Arc};
-use temporal_sdk_core_api::errors::PollWfError;
+use temporal_sdk_core_api::errors::PollError;
 use temporal_sdk_core_protos::coresdk::workflow_activation::remove_from_cache::EvictionReason;
 use tokio_util::sync::CancellationToken;
 use tracing::{Level, Span};
@@ -64,7 +64,7 @@ impl WFStream {
         wft_stream: impl Stream<Item = Result<WFTExtractorOutput, tonic::Status>> + Send + 'static,
         local_rx: impl Stream<Item = LocalInput> + Send + 'static,
         local_activity_request_sink: impl LocalActivityRequestSink,
-    ) -> impl Stream<Item = Result<WFStreamOutput, PollWfError>> {
+    ) -> impl Stream<Item = Result<WFStreamOutput, PollError>> {
         let all_inputs = stream::select_with_strategy(
             local_rx.map(Into::into),
             wft_stream
@@ -82,7 +82,7 @@ impl WFStream {
         all_inputs: impl Stream<Item = WFStreamInput>,
         basics: WorkflowBasics,
         local_activity_request_sink: impl LocalActivityRequestSink,
-    ) -> impl Stream<Item = Result<WFStreamOutput, PollWfError>> {
+    ) -> impl Stream<Item = Result<WFStreamOutput, PollError>> {
         let mut state = WFStream {
             buffered_polls_need_cache_slot: Default::default(),
             runs: RunCache::new(
@@ -165,7 +165,7 @@ impl WFStream {
                         None
                     }
                     WFStreamInput::PollerError(e) => {
-                        return Err(PollWfError::TonicError(e));
+                        return Err(PollError::TonicError(e));
                     }
                 };
 
@@ -174,7 +174,7 @@ impl WFStream {
 
                 if state.shutdown_done() {
                     info!("Workflow shutdown is done");
-                    return Err(PollWfError::ShutDown);
+                    return Err(PollError::ShutDown);
                 }
 
                 Ok(WFStreamOutput {
@@ -184,7 +184,7 @@ impl WFStream {
             })
             .inspect(|o| {
                 if let Some(e) = o.as_ref().err() {
-                    if !matches!(e, PollWfError::ShutDown) {
+                    if !matches!(e, PollError::ShutDown) {
                         error!(
                             "Workflow processing encountered fatal error and must shut down {:?}",
                             e
@@ -193,7 +193,7 @@ impl WFStream {
                 }
             })
             // Stop the stream once we have shut down
-            .take_while(|o| future::ready(!matches!(o, Err(PollWfError::ShutDown))))
+            .take_while(|o| future::ready(!matches!(o, Err(PollError::ShutDown))))
     }
 
     /// Instantiate or update run machines with a new WFT

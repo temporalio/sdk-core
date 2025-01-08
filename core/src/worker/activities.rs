@@ -16,7 +16,7 @@ use crate::{
     worker::{
         activities::activity_heartbeat_manager::ActivityHeartbeatError, client::WorkerClient,
     },
-    PollActivityError, TaskToken,
+    PollError, TaskToken,
 };
 use activity_heartbeat_manager::ActivityHeartbeatManager;
 use dashmap::DashMap;
@@ -142,7 +142,7 @@ pub(crate) struct WorkerActivityTasks {
     heartbeat_manager: ActivityHeartbeatManager,
     /// Combined stream for any ActivityTask producing source (polls, eager activities,
     /// cancellations)
-    activity_task_stream: Mutex<BoxStream<'static, Result<ActivityTask, PollActivityError>>>,
+    activity_task_stream: Mutex<BoxStream<'static, Result<ActivityTask, PollError>>>,
     /// Activities that have been issued to lang but not yet completed
     outstanding_activity_tasks: OutstandingActMap,
     /// Ensures we don't exceed this worker's maximum concurrent activity limit for activities. This
@@ -171,7 +171,7 @@ pub(crate) struct WorkerActivityTasks {
 #[derive(derive_more::From)]
 enum ActivityTaskSource {
     PendingCancel(PendingActivityCancel),
-    PendingStart(Result<(PermittedTqResp<PollActivityTaskQueueResponse>, bool), PollActivityError>),
+    PendingStart(Result<(PermittedTqResp<PollActivityTaskQueueResponse>, bool), PollError>),
 }
 
 impl WorkerActivityTasks {
@@ -246,9 +246,8 @@ impl WorkerActivityTasks {
         >,
         eager_activities_semaphore: Arc<ClosableMeteredPermitDealer<ActivitySlotKind>>,
         on_complete_token: CancellationToken,
-    ) -> impl Stream<
-        Item = Result<(PermittedTqResp<PollActivityTaskQueueResponse>, bool), PollActivityError>,
-    > {
+    ) -> impl Stream<Item = Result<(PermittedTqResp<PollActivityTaskQueueResponse>, bool), PollError>>
+    {
         let non_poll_stream = stream::unfold(
             (non_poll_tasks_rx, eager_activities_semaphore),
             |(mut non_poll_tasks_rx, eager_activities_semaphore)| async move {
@@ -301,13 +300,13 @@ impl WorkerActivityTasks {
     ///
     /// Polls the various task sources (server polls, eager activities, cancellations) while
     /// respecting the provided rate limits and allowed concurrency. Returns
-    /// [PollActivityError::ShutDown] after shutdown is completed and all tasks sources are
+    /// [PollError::ShutDown] after shutdown is completed and all tasks sources are
     /// depleted.
-    pub(crate) async fn poll(&self) -> Result<ActivityTask, PollActivityError> {
+    pub(crate) async fn poll(&self) -> Result<ActivityTask, PollError> {
         let mut poller_stream = self.activity_task_stream.lock().await;
         poller_stream.next().await.unwrap_or_else(|| {
             self.poll_returned_shutdown_token.cancel();
-            Err(PollActivityError::ShutDown)
+            Err(PollError::ShutDown)
         })
     }
 
@@ -484,7 +483,7 @@ where
     ///  cancels_stream ------------------------------+--- activity_task_stream
     ///  eager_activities_rx ---+--- starts_stream ---|
     ///  server_poll_stream  ---|
-    fn streamify(self) -> impl Stream<Item = Result<ActivityTask, PollActivityError>> {
+    fn streamify(self) -> impl Stream<Item = Result<ActivityTask, PollError>> {
         let outstanding_tasks_clone = self.outstanding_tasks.clone();
         let should_issue_immediate_cancel = Arc::new(AtomicBool::new(false));
         let should_issue_immediate_cancel_clone = should_issue_immediate_cancel.clone();
@@ -784,7 +783,7 @@ mod tests {
         )
         .await;
         atm.initiate_shutdown();
-        assert_matches!(atm.poll().await.unwrap_err(), PollActivityError::ShutDown);
+        assert_matches!(atm.poll().await.unwrap_err(), PollError::ShutDown);
         atm.shutdown().await;
     }
 
@@ -872,7 +871,7 @@ mod tests {
         }
 
         atm.initiate_shutdown();
-        assert_matches!(atm.poll().await.unwrap_err(), PollActivityError::ShutDown);
+        assert_matches!(atm.poll().await.unwrap_err(), PollError::ShutDown);
         atm.shutdown().await;
     }
 
@@ -957,7 +956,7 @@ mod tests {
         .await;
 
         atm.initiate_shutdown();
-        assert_matches!(atm.poll().await.unwrap_err(), PollActivityError::ShutDown);
+        assert_matches!(atm.poll().await.unwrap_err(), PollError::ShutDown);
         atm.shutdown().await;
     }
 }

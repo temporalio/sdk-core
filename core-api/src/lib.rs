@@ -4,7 +4,7 @@ pub mod worker;
 
 use crate::{
     errors::{
-        CompleteActivityError, CompleteNexusError, CompleteWfError, PollActivityError, PollWfError,
+        CompleteActivityError, CompleteNexusError, CompleteWfError, PollError,
         WorkerValidationError,
     },
     worker::WorkerConfig,
@@ -40,17 +40,17 @@ pub trait Worker: Send + Sync {
     /// & job processing.
     ///
     /// Do not call poll concurrently. It handles polling the server concurrently internally.
-    async fn poll_workflow_activation(&self) -> Result<WorkflowActivation, PollWfError>;
+    async fn poll_workflow_activation(&self) -> Result<WorkflowActivation, PollError>;
 
     /// Ask the worker for some work, returning an [ActivityTask]. It is then the language SDK's
     /// responsibility to call the appropriate activity code with the provided inputs. Blocks
     /// indefinitely until such work is available or [Worker::shutdown] is called.
     ///
     /// Do not call poll concurrently. It handles polling the server concurrently internally.
-    async fn poll_activity_task(&self) -> Result<ActivityTask, PollActivityError>;
+    async fn poll_activity_task(&self) -> Result<ActivityTask, PollError>;
 
     /// TODO: Keep or combine?
-    async fn poll_nexus_task(&self) -> Result<PollNexusTaskQueueResponse, PollActivityError>;
+    async fn poll_nexus_task(&self) -> Result<PollNexusTaskQueueResponse, PollError>;
 
     /// Tell the worker that a workflow activation has completed. May (and should) be freely called
     /// concurrently. The future may take some time to resolve, as fetching more events might be

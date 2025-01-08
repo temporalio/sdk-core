@@ -7,7 +7,7 @@ use crate::{
 use futures_util::{stream::BoxStream, Stream, StreamExt};
 use std::{collections::HashMap, sync::Arc};
 use temporal_sdk_core_api::{
-    errors::{CompleteNexusError, PollActivityError},
+    errors::{CompleteNexusError, PollError},
     worker::NexusSlotKind,
 };
 use temporal_sdk_core_protos::{
@@ -23,7 +23,7 @@ use tokio_util::sync::CancellationToken;
 
 /// Centralizes all state related to received nexus tasks
 pub(super) struct NexusManager {
-    task_stream: Mutex<BoxStream<'static, Result<PollNexusTaskQueueResponse, PollActivityError>>>,
+    task_stream: Mutex<BoxStream<'static, Result<PollNexusTaskQueueResponse, PollError>>>,
     /// Token to notify when poll returned a shutdown error
     poll_returned_shutdown_token: CancellationToken,
     /// Outstanding nexus tasks that have been issued to lang but not yet completed
@@ -48,13 +48,11 @@ impl NexusManager {
 
     // TODO Different error or combine
     /// Block until then next nexus task is received from server
-    pub(super) async fn next_nexus_task(
-        &self,
-    ) -> Result<PollNexusTaskQueueResponse, PollActivityError> {
+    pub(super) async fn next_nexus_task(&self) -> Result<PollNexusTaskQueueResponse, PollError> {
         let mut sl = self.task_stream.lock().await;
         sl.next().await.unwrap_or_else(|| {
             self.poll_returned_shutdown_token.cancel();
-            Err(PollActivityError::ShutDown)
+            Err(PollError::ShutDown)
         })
     }
 
@@ -132,9 +130,7 @@ where
         }
     }
 
-    fn into_stream(
-        self,
-    ) -> impl Stream<Item = Result<PollNexusTaskQueueResponse, PollActivityError>> {
+    fn into_stream(self) -> impl Stream<Item = Result<PollNexusTaskQueueResponse, PollError>> {
         self.source_stream.map(move |t| match t {
             Ok(t) => {
                 let (service, operation, request_kind) = t
@@ -164,7 +160,7 @@ where
                 );
                 Ok(t.resp)
             }
-            Err(e) => Err(PollActivityError::TonicError(e)),
+            Err(e) => Err(PollError::TonicError(e)),
         })
     }
 }

@@ -31,10 +31,7 @@ use std::{
     time::Duration,
 };
 use temporal_sdk::interceptors::FailOnNondeterminismInterceptor;
-use temporal_sdk_core_api::{
-    errors::{PollActivityError, PollWfError},
-    Worker as WorkerTrait,
-};
+use temporal_sdk_core_api::{errors::PollError, Worker as WorkerTrait};
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::{workflow_activation_job, WorkflowActivation},
@@ -1058,13 +1055,13 @@ impl WorkerExt for Worker {
             async {
                 assert_matches!(
                     self.poll_activity_task().await.unwrap_err(),
-                    PollActivityError::ShutDown
+                    PollError::ShutDown
                 );
             },
             async {
                 assert_matches!(
                     self.poll_workflow_activation().await.unwrap_err(),
-                    PollWfError::ShutDown
+                    PollError::ShutDown
                 );
             }
         );
@@ -1075,7 +1072,7 @@ impl WorkerExt for Worker {
         self.initiate_shutdown();
         assert_matches!(
             self.poll_activity_task().await.unwrap_err(),
-            PollActivityError::ShutDown
+            PollError::ShutDown
         );
         self.shutdown().await;
     }

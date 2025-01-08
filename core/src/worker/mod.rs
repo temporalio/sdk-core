@@ -40,7 +40,7 @@ use crate::{
         nexus::NexusManager,
         workflow::{LAReqSink, LocalResolution, WorkflowBasics, Workflows},
     },
-    ActivityHeartbeat, CompleteActivityError, PollActivityError, PollWfError, WorkerTrait,
+    ActivityHeartbeat, CompleteActivityError, PollError, WorkerTrait,
 };
 use activities::WorkerActivityTasks;
 use futures_util::{stream, StreamExt};
@@ -135,12 +135,12 @@ impl WorkerTrait for Worker {
         Ok(())
     }
 
-    async fn poll_workflow_activation(&self) -> Result<WorkflowActivation, PollWfError> {
+    async fn poll_workflow_activation(&self) -> Result<WorkflowActivation, PollError> {
         self.next_workflow_activation().await
     }
 
     #[instrument(skip(self))]
-    async fn poll_activity_task(&self) -> Result<ActivityTask, PollActivityError> {
+    async fn poll_activity_task(&self) -> Result<ActivityTask, PollError> {
         loop {
             match self.activity_poll().await.transpose() {
                 Some(r) => break r,
@@ -153,12 +153,12 @@ impl WorkerTrait for Worker {
     }
 
     #[instrument(skip(self))]
-    async fn poll_nexus_task(&self) -> Result<PollNexusTaskQueueResponse, PollActivityError> {
+    async fn poll_nexus_task(&self) -> Result<PollNexusTaskQueueResponse, PollError> {
         if let Some(nm) = self.nexus_mgr.as_ref() {
             nm.next_nexus_task().await
         } else {
             self.shutdown_token.cancelled().await;
-            Err(PollActivityError::ShutDown)
+            Err(PollError::ShutDown)
         }
     }
 
@@ -661,12 +661,12 @@ impl Worker {
     ///
     /// Returns `Ok(None)` in the event of a poll timeout or if the polling loop should otherwise
     /// be restarted
-    async fn activity_poll(&self) -> Result<Option<ActivityTask>, PollActivityError> {
+    async fn activity_poll(&self) -> Result<Option<ActivityTask>, PollError> {
         let local_activities_complete = self.local_activities_complete.load(Ordering::Relaxed);
         let non_local_activities_complete =
             self.non_local_activities_complete.load(Ordering::Relaxed);
         if local_activities_complete && non_local_activities_complete {
-            return Err(PollActivityError::ShutDown);
+            return Err(PollError::ShutDown);
         }
         let act_mgr_poll = async {
             if non_local_activities_complete {
@@ -676,7 +676,7 @@ impl Worker {
             if let Some(ref act_mgr) = self.at_task_mgr {
                 let res = act_mgr.poll().await;
                 if let Err(err) = res.as_ref() {
-                    if matches!(err, PollActivityError::ShutDown) {
+                    if matches!(err, PollError::ShutDown) {
                         self.non_local_activities_complete
                             .store(true, Ordering::Relaxed);
                         return Ok(None);
@@ -718,7 +718,7 @@ impl Worker {
         };
         // Since we consider network errors (at this level) fatal, we want to start shutdown if one
         // is encountered
-        if matches!(r, Err(PollActivityError::TonicError(_))) {
+        if matches!(r, Err(PollError::TonicError(_))) {
             self.initiate_shutdown();
         }
         r
@@ -761,7 +761,7 @@ impl Worker {
     }
 
     #[instrument(skip(self), fields(run_id, workflow_id, task_queue=%self.config.task_queue))]
-    pub(crate) async fn next_workflow_activation(&self) -> Result<WorkflowActivation, PollWfError> {
+    pub(crate) async fn next_workflow_activation(&self) -> Result<WorkflowActivation, PollError> {
         let r = self.workflows.next_workflow_activation().await;
         // In the event workflows are shutdown or erroring, begin shutdown of everything else. Once
         // they are shut down, tell the local activity manager that, so that it can know to cancel
@@ -769,7 +769,7 @@ impl Worker {
         if let Err(ref e) = r {
             // This is covering the situation where WFT pollers dying is the reason for shutdown
             self.initiate_shutdown();
-            if matches!(e, PollWfError::ShutDown) {
+            if matches!(e, PollError::ShutDown) {
                 self.local_act_mgr.workflows_have_shutdown();
             }
         }

@@ -38,7 +38,7 @@ use temporal_sdk_core::{
     ClientOptions, ClientOptionsBuilder, CoreRuntime, WorkerConfigBuilder,
 };
 use temporal_sdk_core_api::{
-    errors::{PollActivityError, PollWfError},
+    errors::PollError,
     telemetry::{
         metrics::CoreMeter, Logger, OtelCollectorOptionsBuilder, PrometheusExporterOptionsBuilder,
         TelemetryOptions, TelemetryOptionsBuilder,
@@ -853,13 +853,13 @@ pub async fn drain_pollers_and_shutdown(worker: &Arc<dyn CoreWorker>) {
         async {
             assert!(matches!(
                 worker.poll_activity_task().await.unwrap_err(),
-                PollActivityError::ShutDown
+                PollError::ShutDown
             ));
         },
         async {
             assert!(matches!(
                 worker.poll_workflow_activation().await.unwrap_err(),
-                PollWfError::ShutDown,
+                PollError::ShutDown,
             ));
         }
     );
