@@ -1,11 +1,14 @@
 use anyhow::bail;
 use assert_matches::assert_matches;
 use std::time::Duration;
-use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions, WorkflowService};
+use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{CancellableFuture, NexusOperationOptions, WfContext, WfExitValue};
 use temporal_sdk_core_protos::{
     coresdk::{
-        nexus::{nexus_operation_result, NexusOperationResult},
+        nexus::{
+            nexus_operation_result, nexus_task_completion, NexusOperationResult,
+            NexusTaskCompletion,
+        },
         FromJsonPayloadExt,
     },
     temporal::api::{
@@ -14,10 +17,10 @@ use temporal_sdk_core_protos::{
         nexus,
         nexus::v1::{
             endpoint_target, request, start_operation_response, workflow_event_link_from_nexus,
-            EndpointSpec, EndpointTarget, HandlerError, StartOperationResponse,
+            CancelOperationResponse, EndpointSpec, EndpointTarget, HandlerError,
+            StartOperationResponse,
         },
         operatorservice::v1::CreateNexusEndpointRequest,
-        workflowservice::v1::{RespondNexusTaskCompletedRequest, RespondNexusTaskFailedRequest},
     },
 };
 use temporal_sdk_core_test_utils::{rand_6_chars, CoreWfStarter};
@@ -64,44 +67,44 @@ async fn nexus_basic(
     });
     starter.start_with_worker(wf_name, &mut worker).await;
 
-    let mut client = starter.get_client().await.get_client().clone();
+    let client = starter.get_client().await.get_client().clone();
     let nexus_task_handle = async {
         let nt = core_worker.poll_nexus_task().await.unwrap();
         match outcome {
             Outcome::Succeed => {
-                client
-                    .respond_nexus_task_completed(RespondNexusTaskCompletedRequest {
-                        namespace: client.namespace().to_owned(),
+                core_worker
+                    .complete_nexus_task(NexusTaskCompletion {
                         task_token: nt.task_token,
-                        response: Some(nexus::v1::Response {
-                            variant: Some(nexus::v1::response::Variant::StartOperation(
-                                StartOperationResponse {
-                                    variant: Some(start_operation_response::Variant::SyncSuccess(
-                                        start_operation_response::Sync {
-                                            payload: Some("yay".into()),
-                                        },
-                                    )),
-                                },
-                            )),
-                        }),
-                        ..Default::default()
+                        status: Some(nexus_task_completion::Status::Completed(
+                            nexus::v1::Response {
+                                variant: Some(nexus::v1::response::Variant::StartOperation(
+                                    StartOperationResponse {
+                                        variant: Some(
+                                            start_operation_response::Variant::SyncSuccess(
+                                                start_operation_response::Sync {
+                                                    payload: Some("yay".into()),
+                                                },
+                                            ),
+                                        ),
+                                    },
+                                )),
+                            },
+                        )),
                     })
                     .await
                     .unwrap();
             }
             Outcome::Fail => {
-                client
-                    .respond_nexus_task_failed(RespondNexusTaskFailedRequest {
-                        namespace: client.namespace().to_owned(),
+                core_worker
+                    .complete_nexus_task(NexusTaskCompletion {
                         task_token: nt.task_token,
-                        error: Some(HandlerError {
+                        status: Some(nexus_task_completion::Status::Error(HandlerError {
                             error_type: "BAD_REQUEST".to_string(), // bad req is non-retryable
                             failure: Some(nexus::v1::Failure {
                                 message: "busted".to_string(),
                                 ..Default::default()
                             }),
-                        }),
-                        identity: "whatever".to_string(),
+                        })),
                     })
                     .await
                     .unwrap();
@@ -218,7 +221,7 @@ async fn nexus_async(
     let submitter = worker.get_submitter_handle();
     starter.start_with_worker(wf_name, &mut worker).await;
 
-    let mut client = starter.get_client().await.get_client().clone();
+    let client = starter.get_client().await.get_client().clone();
     let nexus_task_handle = async {
         let nt = core_worker.poll_nexus_task().await.unwrap();
         let start_req = assert_matches!(
@@ -258,23 +261,23 @@ async fn nexus_async(
         }
         if outcome != Outcome::CancelAfterRecordedBeforeStarted {
             // Do not say the operation started if we are trying to test this type of cancel
-            client
-                .respond_nexus_task_completed(RespondNexusTaskCompletedRequest {
-                    namespace: client.namespace().to_owned(),
+            core_worker
+                .complete_nexus_task(NexusTaskCompletion {
                     task_token: nt.task_token,
-                    response: Some(nexus::v1::Response {
-                        variant: Some(nexus::v1::response::Variant::StartOperation(
-                            StartOperationResponse {
-                                variant: Some(start_operation_response::Variant::AsyncSuccess(
-                                    start_operation_response::Async {
-                                        operation_id: "op-1".to_string(),
-                                        links: vec![],
-                                    },
-                                )),
-                            },
-                        )),
-                    }),
-                    ..Default::default()
+                    status: Some(nexus_task_completion::Status::Completed(
+                        nexus::v1::Response {
+                            variant: Some(nexus::v1::response::Variant::StartOperation(
+                                StartOperationResponse {
+                                    variant: Some(start_operation_response::Variant::AsyncSuccess(
+                                        start_operation_response::Async {
+                                            operation_id: "op-1".to_string(),
+                                            links: vec![],
+                                        },
+                                    )),
+                                },
+                            )),
+                        },
+                    )),
                 })
                 .await
                 .unwrap();
@@ -287,6 +290,19 @@ async fn nexus_async(
             );
             client
                 .cancel_workflow_execution(completer_id, None, "nexus cancel".to_string(), None)
+                .await
+                .unwrap();
+            core_worker
+                .complete_nexus_task(NexusTaskCompletion {
+                    task_token: nt.task_token,
+                    status: Some(nexus_task_completion::Status::Completed(
+                        nexus::v1::Response {
+                            variant: Some(nexus::v1::response::Variant::CancelOperation(
+                                CancelOperationResponse {},
+                            )),
+                        },
+                    )),
+                })
                 .await
                 .unwrap();
         }

@@ -4,16 +4,16 @@ pub mod worker;
 
 use crate::{
     errors::{
-        CompleteActivityError, CompleteWfError, PollActivityError, PollWfError,
+        CompleteActivityError, CompleteNexusError, CompleteWfError, PollActivityError, PollWfError,
         WorkerValidationError,
     },
     worker::WorkerConfig,
 };
 use temporal_sdk_core_protos::{
     coresdk::{
-        activity_task::ActivityTask, workflow_activation::WorkflowActivation,
-        workflow_completion::WorkflowActivationCompletion, ActivityHeartbeat,
-        ActivityTaskCompletion,
+        activity_task::ActivityTask, nexus::NexusTaskCompletion,
+        workflow_activation::WorkflowActivation, workflow_completion::WorkflowActivationCompletion,
+        ActivityHeartbeat, ActivityTaskCompletion,
     },
     temporal::api::workflowservice::v1::PollNexusTaskQueueResponse,
 };
@@ -67,6 +67,13 @@ pub trait Worker: Send + Sync {
         &self,
         completion: ActivityTaskCompletion,
     ) -> Result<(), CompleteActivityError>;
+
+    /// Tell the worker that a nexus task has completed. May (and should) be freely called
+    /// concurrently.
+    async fn complete_nexus_task(
+        &self,
+        completion: NexusTaskCompletion,
+    ) -> Result<(), CompleteNexusError>;
 
     /// Notify the Temporal service that an activity is still alive. Long running activities that
     /// take longer than `activity_heartbeat_timeout` to finish must call this function in order to

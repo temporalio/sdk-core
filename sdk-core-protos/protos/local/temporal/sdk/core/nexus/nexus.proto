@@ -19,13 +19,14 @@ message NexusOperationResult {
 }
 
 // A response to a Nexus task
-message NexusTaskResponse {
+message NexusTaskCompletion {
     // The unique identifier for this task provided in the poll response
     bytes task_token = 1;
     oneof status {
-        // The handler completed. Note that the response kind must match the
+        // The handler completed (successfully or not). Note that the response kind must match the
         // request kind (start or cancel).
         temporal.api.nexus.v1.Response completed = 2;
+        // The handler could not complete the request for some reason.
         temporal.api.nexus.v1.HandlerError error = 3;
     }
 }

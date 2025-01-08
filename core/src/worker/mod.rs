@@ -56,7 +56,7 @@ use std::{
     time::Duration,
 };
 use temporal_client::{ConfiguredClient, TemporalServiceClientWithMetrics, WorkerKey};
-use temporal_sdk_core_api::errors::WorkerValidationError;
+use temporal_sdk_core_api::errors::{CompleteNexusError, WorkerValidationError};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::activity_execution_result,
@@ -76,6 +76,7 @@ use tokio::sync::{mpsc::unbounded_channel, watch};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
 
+use temporal_sdk_core_protos::coresdk::nexus::NexusTaskCompletion;
 #[cfg(test)]
 use {
     crate::{
@@ -183,6 +184,27 @@ impl WorkerTrait for Worker {
         };
 
         self.complete_activity(task_token, status).await
+    }
+
+    async fn complete_nexus_task(
+        &self,
+        completion: NexusTaskCompletion,
+    ) -> Result<(), CompleteNexusError> {
+        let task_token = TaskToken(completion.task_token);
+
+        let status = if let Some(s) = completion.status {
+            s
+        } else {
+            return Err(CompleteNexusError::MalformeNexusCompletion {
+                reason: "Nexus completion had empty status field".to_owned(),
+            });
+        };
+
+        if let Some(nm) = self.nexus_mgr.as_ref() {
+            nm.complete_task(task_token, status, &*self.client).await
+        } else {
+            Err(CompleteNexusError::NexusNotEnabled)
+        }
     }
 
     fn record_activity_heartbeat(&self, details: ActivityHeartbeat) {

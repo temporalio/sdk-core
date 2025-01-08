@@ -77,6 +77,13 @@ mockall::mock! {
         ) -> impl Future<Output = Result<RespondActivityTaskCompletedResponse>> + Send + 'b
             where 'a: 'b, Self: 'b;
 
+        fn complete_nexus_task<'a, 'b>(
+            &self,
+            task_token: TaskToken,
+            response: nexus::v1::Response,
+        ) -> impl Future<Output = Result<RespondNexusTaskCompletedResponse>> + Send + 'b
+            where 'a: 'b, Self: 'b;
+
         fn cancel_activity_task<'a, 'b>(
             &self,
             task_token: TaskToken,
@@ -97,6 +104,13 @@ mockall::mock! {
             cause: WorkflowTaskFailedCause,
             failure: Option<Failure>,
         ) -> impl Future<Output = Result<RespondWorkflowTaskFailedResponse>> + Send + 'b
+            where 'a: 'b, Self: 'b;
+
+        fn fail_nexus_task<'a, 'b>(
+            &self,
+            task_token: TaskToken,
+            error: nexus::v1::HandlerError,
+        ) -> impl Future<Output = Result<RespondNexusTaskFailedResponse>> + Send + 'b
             where 'a: 'b, Self: 'b;
 
         fn record_activity_heartbeat<'a, 'b>(

@@ -67,6 +67,21 @@ pub enum CompleteActivityError {
     },
 }
 
+/// Errors thrown by [crate::Worker::complete_nexus_task]
+#[derive(thiserror::Error, Debug)]
+pub enum CompleteNexusError {
+    /// Lang SDK sent us a malformed nexus completion. This likely means a bug in the lang sdk.
+    #[error("Lang SDK sent us a malformed nexus completion: {reason}")]
+    MalformeNexusCompletion {
+        /// Reason the completion was malformed
+        reason: String,
+    },
+    /// Nexus has not been enabled on this worker. If a user registers any Nexus handlers, the
+    /// TODO: xxx option must be set to true.
+    #[error("Nexus is not enabled on this worker")]
+    NexusNotEnabled,
+}
+
 /// Errors we can encounter during workflow processing which we may treat as either WFT failures
 /// or whole-workflow failures depending on user preference.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
