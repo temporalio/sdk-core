@@ -101,7 +101,7 @@ impl TemporalDevServerConfig {
             "frontend.enableUpdateWorkflowExecutionAsyncAccepted=true".to_owned(),
         ];
         if let Some(db_filename) = &self.db_filename {
-            args.push("--filename".to_owned());
+            args.push("--db-filename".to_owned());
             args.push(db_filename.clone());
         }
         if let Some(ui_port) = self.ui_port {
