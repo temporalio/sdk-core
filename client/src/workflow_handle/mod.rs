@@ -109,6 +109,11 @@ where
         &self.info
     }
 
+    /// Get the client attached to this handle
+    pub fn client(&self) -> &CT {
+        &self.client
+    }
+
     /// Await the result of the workflow execution
     pub async fn get_workflow_result(
         &self,
