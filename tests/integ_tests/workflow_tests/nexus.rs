@@ -70,7 +70,7 @@ async fn nexus_basic(
 
     let client = starter.get_client().await.get_client().clone();
     let nexus_task_handle = async {
-        let nt = core_worker.poll_nexus_task().await.unwrap();
+        let nt = core_worker.poll_nexus_task().await.unwrap().unwrap_task();
         match outcome {
             Outcome::Succeed => {
                 core_worker
@@ -232,7 +232,7 @@ async fn nexus_async(
 
     let client = starter.get_client().await.get_client().clone();
     let nexus_task_handle = async {
-        let nt = core_worker.poll_nexus_task().await.unwrap();
+        let nt = core_worker.poll_nexus_task().await.unwrap().unwrap_task();
         let start_req = assert_matches!(
             nt.request.unwrap().variant.unwrap(),
             request::Variant::StartOperation(sr) => sr
@@ -297,7 +297,7 @@ async fn nexus_async(
             .await
             .unwrap();
         if outcome == Outcome::Cancel {
-            let nt = core_worker.poll_nexus_task().await.unwrap();
+            let nt = core_worker.poll_nexus_task().await.unwrap().unwrap_task();
             assert_matches!(
                 nt.request.unwrap().variant.unwrap(),
                 request::Variant::CancelOperation(_)
@@ -442,7 +442,7 @@ async fn nexus_must_complete_task_to_shutdown() {
 
     let task_handle = async {
         // Should get the nexus task first
-        let nt = core_worker.poll_nexus_task().await.unwrap();
+        let nt = core_worker.poll_nexus_task().await.unwrap().unwrap_task();
         // The workflow will complete
         handle
             .get_workflow_result(Default::default())

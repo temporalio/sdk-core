@@ -757,7 +757,19 @@ pub mod coresdk {
     }
 
     pub mod nexus {
+        use crate::temporal::api::workflowservice::v1::PollNexusTaskQueueResponse;
+
         tonic::include_proto!("coresdk.nexus");
+
+        impl NexusTask {
+            /// Unwrap the inner server-delivered nexus task if that's what this is, else panic.
+            pub fn unwrap_task(self) -> PollNexusTaskQueueResponse {
+                if let Some(nexus_task::Variant::Task(t)) = self.variant {
+                    return t;
+                }
+                panic!("Nexus task did not contain a server task");
+            }
+        }
     }
 
     pub mod workflow_commands {

@@ -68,7 +68,7 @@ use temporal_sdk_core_protos::{
     temporal::api::{
         enums::v1::TaskQueueKind,
         taskqueue::v1::{StickyExecutionAttributes, TaskQueue},
-        workflowservice::v1::{get_system_info_response, PollNexusTaskQueueResponse},
+        workflowservice::v1::get_system_info_response,
     },
     TaskToken,
 };
@@ -76,7 +76,7 @@ use tokio::sync::{mpsc::unbounded_channel, watch};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
 
-use temporal_sdk_core_protos::coresdk::nexus::NexusTaskCompletion;
+use temporal_sdk_core_protos::coresdk::nexus::{NexusTask, NexusTaskCompletion};
 #[cfg(test)]
 use {
     crate::{
@@ -153,7 +153,7 @@ impl WorkerTrait for Worker {
     }
 
     #[instrument(skip(self))]
-    async fn poll_nexus_task(&self) -> Result<PollNexusTaskQueueResponse, PollError> {
+    async fn poll_nexus_task(&self) -> Result<NexusTask, PollError> {
         if let Some(nm) = self.nexus_mgr.as_ref() {
             nm.next_nexus_task().await
         } else {

@@ -6,6 +6,7 @@ option ruby_package = "Temporalio::Internal::Bridge::Api::Nexus";
 import "temporal/api/common/v1/message.proto";
 import "temporal/api/failure/v1/message.proto";
 import "temporal/api/nexus/v1/message.proto";
+import "temporal/api/workflowservice/v1/request_response.proto";
 import "temporal/sdk/core/common/common.proto";
 
 // Used by core to resolve nexus operations.
@@ -29,4 +30,31 @@ message NexusTaskCompletion {
         // The handler could not complete the request for some reason.
         temporal.api.nexus.v1.HandlerError error = 3;
     }
+}
+
+message NexusTask {
+    oneof variant {
+        // A nexus task from server
+        temporal.api.workflowservice.v1.PollNexusTaskQueueResponse task = 1;
+        // A request by Core to notify an in-progress operation handler that it should cancel. This
+        // is distinct from a `CancelOperationRequest` from the server, which results from the user
+        // requesting the cancellation of an operation. Handling this variant should result in
+        // something like cancelling a cancellation token given to the user's operation handler.
+        //
+        // EX: Core knows the nexus operation has timed out, and it does not make sense for the
+        // user's operation handler to continue doing work.
+        CancelNexusTask cancel_task = 2;
+    }
+}
+
+message CancelNexusTask {
+    // The task token from the PollNexusTaskQueueResponse
+    bytes task_token = 1;
+    // Why Core is asking for this operation to be cancelled
+    NexusTaskCancelReason reason = 2;
+}
+
+enum NexusTaskCancelReason {
+    // The nexus task is known to have timed out
+    TIMED_OUT = 0;
 }

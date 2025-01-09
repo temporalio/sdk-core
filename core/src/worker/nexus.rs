@@ -18,11 +18,11 @@ use temporal_sdk_core_api::{
     worker::NexusSlotKind,
 };
 use temporal_sdk_core_protos::{
-    coresdk::{nexus::nexus_task_completion, NexusSlotInfo},
-    temporal::api::{
-        nexus::v1::{request::Variant, response},
-        workflowservice::v1::PollNexusTaskQueueResponse,
+    coresdk::{
+        nexus::{nexus_task, nexus_task_completion, NexusTask},
+        NexusSlotInfo,
     },
+    temporal::api::nexus::v1::{request::Variant, response},
     TaskToken,
 };
 use tokio::sync::Mutex;
@@ -30,7 +30,7 @@ use tokio_util::sync::CancellationToken;
 
 /// Centralizes all state related to received nexus tasks
 pub(super) struct NexusManager {
-    task_stream: Mutex<BoxStream<'static, Result<PollNexusTaskQueueResponse, PollError>>>,
+    task_stream: Mutex<BoxStream<'static, Result<NexusTask, PollError>>>,
     /// Token to notify when poll returned a shutdown error
     poll_returned_shutdown_token: CancellationToken,
     /// Outstanding nexus tasks that have been issued to lang but not yet completed
@@ -56,7 +56,7 @@ impl NexusManager {
     }
 
     /// Block until then next nexus task is received from server
-    pub(super) async fn next_nexus_task(&self) -> Result<PollNexusTaskQueueResponse, PollError> {
+    pub(super) async fn next_nexus_task(&self) -> Result<NexusTask, PollError> {
         self.ever_polled.store(true, Ordering::Relaxed);
         let mut sl = self.task_stream.lock().await;
         let r = sl.next().await.unwrap_or_else(|| Err(PollError::ShutDown));
@@ -149,7 +149,7 @@ where
         }
     }
 
-    fn into_stream(self) -> impl Stream<Item = Result<PollNexusTaskQueueResponse, PollError>> {
+    fn into_stream(self) -> impl Stream<Item = Result<NexusTask, PollError>> {
         let outstanding_task_clone = self.outstanding_task_map.clone();
         self.source_stream
             .map(move |t| match t {
@@ -179,7 +179,9 @@ where
                             _permit: t.permit.into_used(NexusSlotInfo { service, operation }),
                         },
                     );
-                    Ok(t.resp)
+                    Ok(NexusTask {
+                        variant: Some(nexus_task::Variant::Task(t.resp)),
+                    })
                 }
                 Err(e) => Err(PollError::TonicError(e)),
             })
