@@ -76,7 +76,10 @@ use tokio::sync::{mpsc::unbounded_channel, watch};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
 
-use temporal_sdk_core_protos::coresdk::nexus::{NexusTask, NexusTaskCompletion};
+use temporal_sdk_core_protos::coresdk::nexus::{
+    nexus_task_completion, NexusTask, NexusTaskCompletion,
+};
+
 #[cfg(test)]
 use {
     crate::{
@@ -84,7 +87,9 @@ use {
         protosext::ValidPollWFTQResponse,
     },
     futures_util::stream::BoxStream,
-    temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse,
+    temporal_sdk_core_protos::temporal::api::workflowservice::v1::{
+        PollActivityTaskQueueResponse, PollNexusTaskQueueResponse,
+    },
 };
 
 /// A worker polls on a certain task queue
@@ -190,8 +195,6 @@ impl WorkerTrait for Worker {
         &self,
         completion: NexusTaskCompletion,
     ) -> Result<(), CompleteNexusError> {
-        let task_token = TaskToken(completion.task_token);
-
         let status = if let Some(s) = completion.status {
             s
         } else {
@@ -200,11 +203,8 @@ impl WorkerTrait for Worker {
             });
         };
 
-        if let Some(nm) = self.nexus_mgr.as_ref() {
-            nm.complete_task(task_token, status, &*self.client).await
-        } else {
-            Err(CompleteNexusError::NexusNotEnabled)
-        }
+        self.complete_nexus_task(TaskToken(completion.task_token), status)
+            .await
     }
 
     fn record_activity_heartbeat(&self, details: ActivityHeartbeat) {
@@ -797,6 +797,22 @@ impl Worker {
             )
             .await?;
         Ok(())
+    }
+
+    #[instrument(
+        skip(self, tt, status),
+        fields(task_token=%&tt, status=%&status, task_queue=%self.config.task_queue)
+    )]
+    async fn complete_nexus_task(
+        &self,
+        tt: TaskToken,
+        status: nexus_task_completion::Status,
+    ) -> Result<(), CompleteNexusError> {
+        if let Some(nm) = self.nexus_mgr.as_ref() {
+            nm.complete_task(tt, status, &*self.client).await
+        } else {
+            Err(CompleteNexusError::NexusNotEnabled)
+        }
     }
 
     /// Request a workflow eviction

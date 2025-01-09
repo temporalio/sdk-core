@@ -4,7 +4,12 @@ use crate::{
     telemetry::metrics::MetricsContext,
     worker::client::WorkerClient,
 };
-use futures_util::{stream, stream::BoxStream, Stream, StreamExt};
+use anyhow::anyhow;
+use futures_util::{
+    stream,
+    stream::{BoxStream, PollNext},
+    Stream, StreamExt,
+};
 use std::{
     collections::HashMap,
     sync::{
@@ -19,14 +24,22 @@ use temporal_sdk_core_api::{
 };
 use temporal_sdk_core_protos::{
     coresdk::{
-        nexus::{nexus_task, nexus_task_completion, NexusTask},
+        nexus::{
+            nexus_task, nexus_task_completion, CancelNexusTask, NexusTask, NexusTaskCancelReason,
+        },
         NexusSlotInfo,
     },
     temporal::api::nexus::v1::{request::Variant, response},
     TaskToken,
 };
-use tokio::sync::Mutex;
+use tokio::{
+    sync::{mpsc::UnboundedSender, Mutex, Notify},
+    task::JoinHandle,
+};
+use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
+
+static REQUEST_TIMEOUT_HEADER: &str = "Request-Timeout";
 
 /// Centralizes all state related to received nexus tasks
 pub(super) struct NexusManager {
@@ -35,6 +48,8 @@ pub(super) struct NexusManager {
     poll_returned_shutdown_token: CancellationToken,
     /// Outstanding nexus tasks that have been issued to lang but not yet completed
     outstanding_task_map: OutstandingTaskMap,
+    /// Notified every time a task in the map is completed
+    task_completed_notify: Arc<Notify>,
     ever_polled: AtomicBool,
 }
 
@@ -45,12 +60,23 @@ impl NexusManager {
         shutdown_initiated_token: CancellationToken,
     ) -> Self {
         let source_stream = new_nexus_task_poller(poller, metrics, shutdown_initiated_token);
-        let task_stream = NexusTaskStream::new(source_stream);
+        let (cancels_tx, cancels_rx) = tokio::sync::mpsc::unbounded_channel();
+        let task_stream_input = stream::select_with_strategy(
+            UnboundedReceiverStream::new(cancels_rx).map(TaskStreamInput::from),
+            source_stream
+                .map(TaskStreamInput::from)
+                .chain(stream::once(async move { TaskStreamInput::SourceComplete })),
+            |_: &mut ()| PollNext::Left,
+        );
+        let task_completed_notify = Arc::new(Notify::new());
+        let task_stream =
+            NexusTaskStream::new(task_stream_input, cancels_tx, task_completed_notify.clone());
         let outstanding_task_map = task_stream.outstanding_task_map.clone();
         Self {
             task_stream: Mutex::new(task_stream.into_stream().boxed()),
             poll_returned_shutdown_token: CancellationToken::new(),
             outstanding_task_map,
+            task_completed_notify,
             ever_polled: AtomicBool::new(false),
         }
     }
@@ -74,7 +100,9 @@ impl NexusManager {
         status: nexus_task_completion::Status,
         client: &dyn WorkerClient,
     ) -> Result<(), CompleteNexusError> {
-        if let Some(task_info) = self.outstanding_task_map.lock().remove(&tt) {
+        let removed = self.outstanding_task_map.lock().remove(&tt);
+        if let Some(task_info) = removed {
+            task_info.timeout_task.inspect(|jh| jh.abort());
             let maybe_net_err = match status {
                 nexus_task_completion::Status::Completed(c) => {
                     // Server doesn't provide obvious errors for this validation, so it's done
@@ -83,7 +111,7 @@ impl NexusManager {
                         Some(response::Variant::StartOperation(_)) => {
                             if task_info.request_kind != RequestKind::Start {
                                 return Err(CompleteNexusError::MalformeNexusCompletion {
-                                    reason: "Nexus request was StartOperation but response was not"
+                                    reason: "Nexus response was StartOperation but request was not"
                                         .to_string(),
                                 });
                             }
@@ -92,7 +120,7 @@ impl NexusManager {
                             if task_info.request_kind != RequestKind::Cancel {
                                 return Err(CompleteNexusError::MalformeNexusCompletion {
                                     reason:
-                                        "Nexus request was CancelOperation but response was not"
+                                        "Nexus response was CancelOperation but request was not"
                                             .to_string(),
                                 });
                             }
@@ -106,15 +134,21 @@ impl NexusManager {
                     }
                     client.complete_nexus_task(tt, c).await.err()
                 }
+                nexus_task_completion::Status::AckCancel(_) => None,
                 nexus_task_completion::Status::Error(e) => {
                     client.fail_nexus_task(tt, e).await.err()
                 }
             };
+
+            self.task_completed_notify.notify_waiters();
+
             if let Some(e) = maybe_net_err {
-                warn!(
-                    error=?e,
-                    "Network error while completing Nexus task",
-                );
+                if e.code() == tonic::Code::NotFound {
+                    warn!(details=?e, "Nexus task not found on completion. This \
+                    may happen if the operation has already been cancelled but completed anyway.");
+                } else {
+                    warn!(error=?e, "Network error while completing Nexus task");
+                }
             }
         } else {
             warn!(
@@ -136,62 +170,110 @@ impl NexusManager {
 struct NexusTaskStream<S> {
     source_stream: S,
     outstanding_task_map: OutstandingTaskMap,
+    cancels_tx: UnboundedSender<CancelNexusTask>,
+    task_completed_notify: Arc<Notify>,
 }
 
 impl<S> NexusTaskStream<S>
 where
-    S: Stream<Item = NexusPollItem>,
+    S: Stream<Item = TaskStreamInput>,
 {
-    fn new(source: S) -> Self {
+    fn new(
+        source: S,
+        cancels_tx: UnboundedSender<CancelNexusTask>,
+        task_completed_notify: Arc<Notify>,
+    ) -> Self {
         Self {
             source_stream: source,
             outstanding_task_map: Arc::new(Default::default()),
+            cancels_tx,
+            task_completed_notify,
         }
     }
 
     fn into_stream(self) -> impl Stream<Item = Result<NexusTask, PollError>> {
         let outstanding_task_clone = self.outstanding_task_map.clone();
+        let source_done = CancellationToken::new();
+        let source_done_clone = source_done.clone();
         self.source_stream
-            .map(move |t| match t {
-                Ok(t) => {
-                    let (service, operation, request_kind) = t
-                        .resp
-                        .request
-                        .as_ref()
-                        .and_then(|r| r.variant.as_ref())
-                        .map(|v| match v {
-                            Variant::StartOperation(s) => (
-                                s.service.to_owned(),
-                                s.operation.to_owned(),
-                                RequestKind::Start,
-                            ),
-                            Variant::CancelOperation(c) => (
-                                c.service.to_owned(),
-                                c.operation.to_owned(),
-                                RequestKind::Cancel,
-                            ),
-                        })
-                        .unwrap_or_default();
-                    self.outstanding_task_map.lock().insert(
-                        TaskToken(t.resp.task_token.clone()),
-                        NexusInFlightTask {
-                            request_kind,
-                            _permit: t.permit.into_used(NexusSlotInfo { service, operation }),
-                        },
-                    );
-                    Ok(NexusTask {
-                        variant: Some(nexus_task::Variant::Task(t.resp)),
-                    })
-                }
-                Err(e) => Err(PollError::TonicError(e)),
+            .filter_map(move |t| {
+                let res = match t {
+                    TaskStreamInput::Poll(Ok(t)) => {
+                        let tt = TaskToken(t.resp.task_token.clone());
+                        let mut timeout_task = None;
+                        if let Some(timeout_str) = t
+                            .resp
+                            .request
+                            .as_ref()
+                            .and_then(|r| r.header.get(REQUEST_TIMEOUT_HEADER))
+                        {
+                            if let Ok(timeout_dur) = parse_request_timeout(timeout_str) {
+                                let tt_clone = tt.clone();
+                                let cancels_tx = self.cancels_tx.clone();
+                                timeout_task = Some(tokio::task::spawn(async move {
+                                    tokio::time::sleep(timeout_dur).await;
+                                    debug!(
+                                        task_token=%tt_clone,
+                                        "Timing out nexus task due to elapsed local timeout timer"
+                                    );
+                                    let _ = cancels_tx.send(CancelNexusTask {
+                                        task_token: tt_clone.0,
+                                        reason: NexusTaskCancelReason::TimedOut.into(),
+                                    });
+                                }));
+                            } else {
+                                // TODO: Auto-respond as bad request
+                            }
+                        }
+
+                        let (service, operation, request_kind) = t
+                            .resp
+                            .request
+                            .as_ref()
+                            .and_then(|r| r.variant.as_ref())
+                            .map(|v| match v {
+                                Variant::StartOperation(s) => (
+                                    s.service.to_owned(),
+                                    s.operation.to_owned(),
+                                    RequestKind::Start,
+                                ),
+                                Variant::CancelOperation(c) => (
+                                    c.service.to_owned(),
+                                    c.operation.to_owned(),
+                                    RequestKind::Cancel,
+                                ),
+                            })
+                            .unwrap_or_default();
+                        self.outstanding_task_map.lock().insert(
+                            tt,
+                            NexusInFlightTask {
+                                request_kind,
+                                timeout_task,
+                                _permit: t.permit.into_used(NexusSlotInfo { service, operation }),
+                            },
+                        );
+                        Some(Ok(NexusTask {
+                            variant: Some(nexus_task::Variant::Task(t.resp)),
+                        }))
+                    }
+                    TaskStreamInput::Cancel(c) => Some(Ok(NexusTask {
+                        variant: Some(nexus_task::Variant::CancelTask(c)),
+                    })),
+                    TaskStreamInput::SourceComplete => {
+                        source_done.cancel();
+                        None
+                    }
+                    TaskStreamInput::Poll(Err(e)) => Some(Err(PollError::TonicError(e))),
+                };
+                async move { res }
             })
-            .chain(stream::once(async move {
+            .take_until(async move {
+                source_done_clone.cancelled().await;
                 while !outstanding_task_clone.lock().is_empty() {
-                    // todo no spin
-                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    self.task_completed_notify.notified().await;
                 }
-                Err(PollError::ShutDown)
-            }))
+            })
+            .chain(stream::once(async move { Err(PollError::ShutDown) }))
     }
 }
 
@@ -199,16 +281,45 @@ type OutstandingTaskMap = Arc<parking_lot::Mutex<HashMap<TaskToken, NexusInFligh
 
 struct NexusInFlightTask {
     request_kind: RequestKind,
+    timeout_task: Option<JoinHandle<()>>,
     _permit: UsedMeteredSemPermit<NexusSlotKind>,
 }
 
-#[derive(Eq, PartialEq, Copy, Clone)]
+#[derive(Eq, PartialEq, Copy, Clone, Default)]
 enum RequestKind {
+    #[default]
     Start,
     Cancel,
 }
-impl Default for RequestKind {
-    fn default() -> Self {
-        RequestKind::Start
+
+#[derive(derive_more::From)]
+enum TaskStreamInput {
+    Poll(NexusPollItem),
+    Cancel(CancelNexusTask),
+    SourceComplete,
+}
+
+fn parse_request_timeout(timeout: &str) -> Result<Duration, anyhow::Error> {
+    let timeout = timeout.trim();
+    let (value, unit) = timeout.split_at(
+        timeout
+            .find(|c: char| !c.is_ascii_digit() && c != '.')
+            .unwrap_or(timeout.len()),
+    );
+
+    match unit {
+        "m" => value
+            .parse::<f64>()
+            .map(|v| Duration::from_secs_f64(60.0 * v))
+            .map_err(Into::into),
+        "s" => value
+            .parse::<f64>()
+            .map(Duration::from_secs_f64)
+            .map_err(Into::into),
+        "ms" => value
+            .parse::<u64>()
+            .map(Duration::from_millis)
+            .map_err(Into::into),
+        _ => Err(anyhow!("Invalid timeout format")),
     }
 }

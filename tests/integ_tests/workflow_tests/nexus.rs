@@ -7,8 +7,8 @@ use temporal_sdk_core_api::errors::PollError;
 use temporal_sdk_core_protos::{
     coresdk::{
         nexus::{
-            nexus_operation_result, nexus_task_completion, NexusOperationResult,
-            NexusTaskCompletion,
+            nexus_operation_result, nexus_task, nexus_task_completion, NexusOperationResult,
+            NexusTaskCancelReason, NexusTaskCompletion,
         },
         FromJsonPayloadExt,
     },
@@ -97,9 +97,13 @@ async fn nexus_basic(
             }
             Outcome::Fail | Outcome::Timeout => {
                 if outcome == Outcome::Timeout {
-                    // We have to complete the nexus task so Core can shut down, but make sure we
-                    // don't do it until after it times out.
-                    tokio::time::sleep(Duration::from_millis(3100)).await;
+                    // Wait for the timeout task cancel to get sent
+                    dbg!("Waiting");
+                    let timeout_t = core_worker.poll_nexus_task().await.unwrap();
+                    let cancel = assert_matches!(timeout_t.variant,
+                        Some(nexus_task::Variant::CancelTask(ct)) => ct);
+                    assert_eq!(cancel.reason, NexusTaskCancelReason::TimedOut as i32);
+                    dbg!("Done waiting!");
                 }
                 core_worker
                     .complete_nexus_task(NexusTaskCompletion {
@@ -180,8 +184,7 @@ async fn nexus_async(
 
     let endpoint = mk_endpoint(&mut starter).await;
     let schedule_to_close_timeout = if outcome == Outcome::CancelAfterRecordedBeforeStarted {
-        // There is some internal timer on the server that won't record cancel in this case until
-        // after some elapsed period, so, don't time out first then.
+        // If we set this, it'll time out before we can cancel it.
         None
     } else {
         Some(Duration::from_secs(5))
@@ -219,7 +222,7 @@ async fn nexus_async(
         move |ctx: WfContext| async move {
             match outcome {
                 Outcome::Succeed => Ok("completed async".into()),
-                Outcome::Cancel => {
+                Outcome::Cancel | Outcome::CancelAfterRecordedBeforeStarted => {
                     ctx.cancelled().await;
                     Ok(WfExitValue::Cancelled)
                 }
@@ -228,20 +231,32 @@ async fn nexus_async(
         },
     );
     let submitter = worker.get_submitter_handle();
-    let handle = starter.start_with_worker(wf_name, &mut worker).await;
+    starter.start_with_worker(wf_name, &mut worker).await;
 
     let client = starter.get_client().await.get_client().clone();
     let nexus_task_handle = async {
-        let nt = core_worker.poll_nexus_task().await.unwrap().unwrap_task();
+        let mut nt = core_worker.poll_nexus_task().await.unwrap().unwrap_task();
         let start_req = assert_matches!(
             nt.request.unwrap().variant.unwrap(),
             request::Variant::StartOperation(sr) => sr
         );
         let completer_id = format!("completer-{}", rand_6_chars());
-        if !matches!(
-            outcome,
-            Outcome::Timeout | Outcome::CancelAfterRecordedBeforeStarted
-        ) {
+        if !matches!(outcome, Outcome::Timeout) {
+            if outcome == Outcome::CancelAfterRecordedBeforeStarted {
+                // Server does not permit cancels to happen in this state. So, we wait for one timeout
+                // to happen, then say the operation started, after which it will be cancelled.
+                let ntt = core_worker.poll_nexus_task().await.unwrap();
+                assert_matches!(ntt.variant, Some(nexus_task::Variant::CancelTask(_)));
+                core_worker
+                    .complete_nexus_task(NexusTaskCompletion {
+                        task_token: ntt.task_token().to_vec(),
+                        status: Some(nexus_task_completion::Status::AckCancel(true)),
+                    })
+                    .await
+                    .unwrap();
+                // Get the next start request
+                nt = core_worker.poll_nexus_task().await.unwrap().unwrap_task();
+            }
             // Start the workflow which will act like the nexus handler and complete the async
             // operation
             submitter
@@ -268,14 +283,6 @@ async fn nexus_async(
                 .await
                 .unwrap();
         }
-        if outcome == Outcome::CancelAfterRecordedBeforeStarted {
-            // Do not say the operation started until after it's had a chance to already be
-            // cancelled in this case
-            handle
-                .get_workflow_result(Default::default())
-                .await
-                .unwrap();
-        }
         core_worker
             .complete_nexus_task(NexusTaskCompletion {
                 task_token: nt.task_token,
@@ -296,8 +303,12 @@ async fn nexus_async(
             })
             .await
             .unwrap();
-        if outcome == Outcome::Cancel {
-            let nt = core_worker.poll_nexus_task().await.unwrap().unwrap_task();
+        if matches!(
+            outcome,
+            Outcome::Cancel | Outcome::CancelAfterRecordedBeforeStarted
+        ) {
+            let nt = core_worker.poll_nexus_task().await.unwrap();
+            let nt = nt.unwrap_task();
             assert_matches!(
                 nt.request.unwrap().variant.unwrap(),
                 request::Variant::CancelOperation(_)
@@ -358,12 +369,7 @@ async fn nexus_async(
                 Some(nexus_operation_result::Status::Cancelled(f)) => f
             );
             assert_eq!(f.message, "nexus operation completed unsuccessfully");
-            let msg = if outcome == Outcome::CancelAfterRecordedBeforeStarted {
-                "operation canceled before it was started"
-            } else {
-                "operation canceled"
-            };
-            assert_eq!(f.cause.unwrap().message, msg);
+            assert_eq!(f.cause.unwrap().message, "operation canceled");
         }
         Outcome::Timeout => {
             let f = assert_matches!(
@@ -424,12 +430,13 @@ async fn nexus_must_complete_task_to_shutdown() {
     worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| {
         let endpoint = endpoint.clone();
         async move {
-            let started = ctx.start_nexus_operation(NexusOperationOptions {
+            // We just need to create the command, not await it.
+            drop(ctx.start_nexus_operation(NexusOperationOptions {
                 endpoint: endpoint.clone(),
                 service: "svc".to_string(),
                 operation: "op".to_string(),
                 ..Default::default()
-            });
+            }));
             // Workflow completes right away, only having scheduled the operation. We need a timer
             // to make sure the nexus task actually gets scheduled.
             ctx.timer(Duration::from_millis(1)).await;
@@ -462,7 +469,6 @@ async fn nexus_must_complete_task_to_shutdown() {
             })
             .await
             .unwrap();
-        dbg!("Completed nexus task");
         complete_order_tx.send("t").unwrap();
         assert_matches!(
             core_worker.poll_nexus_task().await,

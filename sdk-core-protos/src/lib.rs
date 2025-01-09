@@ -758,6 +758,7 @@ pub mod coresdk {
 
     pub mod nexus {
         use crate::temporal::api::workflowservice::v1::PollNexusTaskQueueResponse;
+        use std::fmt::{Display, Formatter};
 
         tonic::include_proto!("coresdk.nexus");
 
@@ -768,6 +769,33 @@ pub mod coresdk {
                     return t;
                 }
                 panic!("Nexus task did not contain a server task");
+            }
+
+            /// Get the task token
+            pub fn task_token(&self) -> &[u8] {
+                match &self.variant {
+                    Some(nexus_task::Variant::Task(t)) => t.task_token.as_slice(),
+                    Some(nexus_task::Variant::CancelTask(c)) => c.task_token.as_slice(),
+                    None => panic!("Nexus task did not contain a task token"),
+                }
+            }
+        }
+
+        impl Display for nexus_task_completion::Status {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "NexusTaskCompletion(")?;
+                match self {
+                    nexus_task_completion::Status::Completed(c) => {
+                        write!(f, "{c}")
+                    }
+                    nexus_task_completion::Status::Error(e) => {
+                        write!(f, "{e}")
+                    }
+                    nexus_task_completion::Status::AckCancel(_) => {
+                        write!(f, "AckCancel")
+                    }
+                }?;
+                write!(f, ")")
             }
         }
     }
@@ -2368,9 +2396,42 @@ pub mod temporal {
                     enums::v1::EventType,
                 };
                 use anyhow::{anyhow, bail};
+                use std::fmt::{Display, Formatter};
                 use tonic::transport::Uri;
 
                 tonic::include_proto!("temporal.api.nexus.v1");
+
+                impl Display for Response {
+                    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                        write!(f, "NexusResponse(",)?;
+                        match &self.variant {
+                            None => {}
+                            Some(v) => {
+                                write!(f, "{v}")?;
+                            }
+                        }
+                        write!(f, ")")
+                    }
+                }
+
+                impl Display for response::Variant {
+                    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                        match self {
+                            response::Variant::StartOperation(_) => {
+                                write!(f, "StartOperation")
+                            }
+                            response::Variant::CancelOperation(_) => {
+                                write!(f, "CancelOperation")
+                            }
+                        }
+                    }
+                }
+
+                impl Display for HandlerError {
+                    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                        write!(f, "HandlerError")
+                    }
+                }
 
                 static SCHEME_PREFIX: &str = "temporal://";
 
