@@ -607,13 +607,17 @@ impl Worker {
         if let Some(acts) = self.at_task_mgr.as_ref() {
             acts.shutdown().await;
         }
+        // Wait for nexus tasks to finish
+        if let Some(nm) = self.nexus_mgr.as_ref() {
+            nm.shutdown().await;
+        }
         // Wait for all permits to be released, but don't totally hang real-world shutdown.
         tokio::select! {
             _ = async { self.all_permits_tracker.lock().await.all_done().await } => {},
             _ = tokio::time::sleep(Duration::from_secs(1)) => {
                 dbg_panic!("Waiting for all slot permits to release took too long!");
             }
-        };
+        }
     }
 
     /// Finish shutting down by consuming the background pollers and freeing all resources

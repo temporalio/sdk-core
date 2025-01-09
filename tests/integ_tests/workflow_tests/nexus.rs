@@ -3,6 +3,7 @@ use assert_matches::assert_matches;
 use std::time::Duration;
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{CancellableFuture, NexusOperationOptions, WfContext, WfExitValue};
+use temporal_sdk_core_api::errors::PollError;
 use temporal_sdk_core_protos::{
     coresdk::{
         nexus::{
@@ -24,7 +25,7 @@ use temporal_sdk_core_protos::{
     },
 };
 use temporal_sdk_core_test_utils::{rand_6_chars, CoreWfStarter};
-use tokio::join;
+use tokio::{join, sync::mpsc};
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum Outcome {
@@ -94,7 +95,12 @@ async fn nexus_basic(
                     .await
                     .unwrap();
             }
-            Outcome::Fail => {
+            Outcome::Fail | Outcome::Timeout => {
+                if outcome == Outcome::Timeout {
+                    // We have to complete the nexus task so Core can shut down, but make sure we
+                    // don't do it until after it times out.
+                    tokio::time::sleep(Duration::from_millis(3100)).await;
+                }
                 core_worker
                     .complete_nexus_task(NexusTaskCompletion {
                         task_token: nt.task_token,
@@ -109,9 +115,12 @@ async fn nexus_basic(
                     .await
                     .unwrap();
             }
-            Outcome::Timeout => {}
-            Outcome::Cancel | Outcome::CancelAfterRecordedBeforeStarted => unimplemented!(),
+            Outcome::Cancel | Outcome::CancelAfterRecordedBeforeStarted => unreachable!(),
         }
+        assert_matches!(
+            core_worker.poll_nexus_task().await,
+            Err(PollError::ShutDown)
+        );
     };
 
     join!(nexus_task_handle, async {
@@ -147,7 +156,7 @@ async fn nexus_basic(
             assert_eq!(f.message, "nexus operation completed unsuccessfully");
             assert_eq!(f.cause.unwrap().message, "operation timed out");
         }
-        Outcome::Cancel | Outcome::CancelAfterRecordedBeforeStarted => unimplemented!(),
+        Outcome::Cancel | Outcome::CancelAfterRecordedBeforeStarted => unreachable!(),
     }
 }
 
@@ -219,7 +228,7 @@ async fn nexus_async(
         },
     );
     let submitter = worker.get_submitter_handle();
-    starter.start_with_worker(wf_name, &mut worker).await;
+    let handle = starter.start_with_worker(wf_name, &mut worker).await;
 
     let client = starter.get_client().await.get_client().clone();
     let nexus_task_handle = async {
@@ -259,29 +268,34 @@ async fn nexus_async(
                 .await
                 .unwrap();
         }
-        if outcome != Outcome::CancelAfterRecordedBeforeStarted {
-            // Do not say the operation started if we are trying to test this type of cancel
-            core_worker
-                .complete_nexus_task(NexusTaskCompletion {
-                    task_token: nt.task_token,
-                    status: Some(nexus_task_completion::Status::Completed(
-                        nexus::v1::Response {
-                            variant: Some(nexus::v1::response::Variant::StartOperation(
-                                StartOperationResponse {
-                                    variant: Some(start_operation_response::Variant::AsyncSuccess(
-                                        start_operation_response::Async {
-                                            operation_id: "op-1".to_string(),
-                                            links: vec![],
-                                        },
-                                    )),
-                                },
-                            )),
-                        },
-                    )),
-                })
+        if outcome == Outcome::CancelAfterRecordedBeforeStarted {
+            // Do not say the operation started until after it's had a chance to already be
+            // cancelled in this case
+            handle
+                .get_workflow_result(Default::default())
                 .await
                 .unwrap();
         }
+        core_worker
+            .complete_nexus_task(NexusTaskCompletion {
+                task_token: nt.task_token,
+                status: Some(nexus_task_completion::Status::Completed(
+                    nexus::v1::Response {
+                        variant: Some(nexus::v1::response::Variant::StartOperation(
+                            StartOperationResponse {
+                                variant: Some(start_operation_response::Variant::AsyncSuccess(
+                                    start_operation_response::Async {
+                                        operation_id: "op-1".to_string(),
+                                        links: vec![],
+                                    },
+                                )),
+                            },
+                        )),
+                    },
+                )),
+            })
+            .await
+            .unwrap();
         if outcome == Outcome::Cancel {
             let nt = core_worker.poll_nexus_task().await.unwrap();
             assert_matches!(
@@ -306,6 +320,10 @@ async fn nexus_async(
                 .await
                 .unwrap();
         }
+        assert_matches!(
+            core_worker.poll_nexus_task().await,
+            Err(PollError::ShutDown)
+        );
     };
 
     join!(nexus_task_handle, async {
@@ -391,6 +409,74 @@ async fn nexus_cancel_before_start() {
     starter.start_with_worker(wf_name, &mut worker).await;
 
     worker.run_until_done().await.unwrap();
+}
+
+#[tokio::test]
+async fn nexus_must_complete_task_to_shutdown() {
+    let wf_name = "nexus_must_complete_task_to_shutdown";
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter.worker_config.no_remote_activities(true);
+    let mut worker = starter.worker().await;
+    let core_worker = starter.get_worker().await;
+
+    let endpoint = mk_endpoint(&mut starter).await;
+
+    worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| {
+        let endpoint = endpoint.clone();
+        async move {
+            let started = ctx.start_nexus_operation(NexusOperationOptions {
+                endpoint: endpoint.clone(),
+                service: "svc".to_string(),
+                operation: "op".to_string(),
+                ..Default::default()
+            });
+            // Workflow completes right away, only having scheduled the operation. We need a timer
+            // to make sure the nexus task actually gets scheduled.
+            ctx.timer(Duration::from_millis(1)).await;
+            // started.await.unwrap();
+            Ok(().into())
+        }
+    });
+    let handle = starter.start_with_worker(wf_name, &mut worker).await;
+    let (complete_order_tx, mut complete_order_rx) = mpsc::unbounded_channel();
+
+    let task_handle = async {
+        // Should get the nexus task first
+        let nt = core_worker.poll_nexus_task().await.unwrap();
+        // The workflow will complete
+        handle
+            .get_workflow_result(Default::default())
+            .await
+            .unwrap();
+        // Complete the task
+        core_worker
+            .complete_nexus_task(NexusTaskCompletion {
+                task_token: nt.task_token,
+                status: Some(nexus_task_completion::Status::Error(HandlerError {
+                    error_type: "BAD_REQUEST".to_string(), // bad req is non-retryable
+                    failure: Some(nexus::v1::Failure {
+                        message: "busted".to_string(),
+                        ..Default::default()
+                    }),
+                })),
+            })
+            .await
+            .unwrap();
+        dbg!("Completed nexus task");
+        complete_order_tx.send("t").unwrap();
+        assert_matches!(
+            core_worker.poll_nexus_task().await,
+            Err(PollError::ShutDown)
+        );
+    };
+
+    join!(task_handle, async {
+        worker.run_until_done().await.unwrap();
+        complete_order_tx.send("w").unwrap();
+    });
+
+    // The first thing to finish needs to have been the nexus task completion
+    assert_eq!(complete_order_rx.recv().await.unwrap(), "t");
 }
 
 async fn mk_endpoint(starter: &mut CoreWfStarter) -> String {

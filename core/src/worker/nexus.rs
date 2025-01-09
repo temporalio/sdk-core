@@ -4,8 +4,15 @@ use crate::{
     telemetry::metrics::MetricsContext,
     worker::client::WorkerClient,
 };
-use futures_util::{stream::BoxStream, Stream, StreamExt};
-use std::{collections::HashMap, sync::Arc};
+use futures_util::{stream, stream::BoxStream, Stream, StreamExt};
+use std::{
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 use temporal_sdk_core_api::{
     errors::{CompleteNexusError, PollError},
     worker::NexusSlotKind,
@@ -28,6 +35,7 @@ pub(super) struct NexusManager {
     poll_returned_shutdown_token: CancellationToken,
     /// Outstanding nexus tasks that have been issued to lang but not yet completed
     outstanding_task_map: OutstandingTaskMap,
+    ever_polled: AtomicBool,
 }
 
 impl NexusManager {
@@ -43,17 +51,21 @@ impl NexusManager {
             task_stream: Mutex::new(task_stream.into_stream().boxed()),
             poll_returned_shutdown_token: CancellationToken::new(),
             outstanding_task_map,
+            ever_polled: AtomicBool::new(false),
         }
     }
 
-    // TODO Different error or combine
     /// Block until then next nexus task is received from server
     pub(super) async fn next_nexus_task(&self) -> Result<PollNexusTaskQueueResponse, PollError> {
+        self.ever_polled.store(true, Ordering::Relaxed);
         let mut sl = self.task_stream.lock().await;
-        sl.next().await.unwrap_or_else(|| {
+        let r = sl.next().await.unwrap_or_else(|| Err(PollError::ShutDown));
+        // This can't happen in the or_else closure because ShutDown is typically returned by the
+        // stream directly, before it terminates.
+        if let Err(PollError::ShutDown) = &r {
             self.poll_returned_shutdown_token.cancel();
-            Err(PollError::ShutDown)
-        })
+        }
+        r
     }
 
     pub(super) async fn complete_task(
@@ -112,6 +124,13 @@ impl NexusManager {
         }
         Ok(())
     }
+
+    pub(super) async fn shutdown(&self) {
+        if !self.ever_polled.load(Ordering::Relaxed) {
+            return;
+        }
+        self.poll_returned_shutdown_token.cancelled().await;
+    }
 }
 
 struct NexusTaskStream<S> {
@@ -131,37 +150,46 @@ where
     }
 
     fn into_stream(self) -> impl Stream<Item = Result<PollNexusTaskQueueResponse, PollError>> {
-        self.source_stream.map(move |t| match t {
-            Ok(t) => {
-                let (service, operation, request_kind) = t
-                    .resp
-                    .request
-                    .as_ref()
-                    .and_then(|r| r.variant.as_ref())
-                    .map(|v| match v {
-                        Variant::StartOperation(s) => (
-                            s.service.to_owned(),
-                            s.operation.to_owned(),
-                            RequestKind::Start,
-                        ),
-                        Variant::CancelOperation(c) => (
-                            c.service.to_owned(),
-                            c.operation.to_owned(),
-                            RequestKind::Cancel,
-                        ),
-                    })
-                    .unwrap_or_default();
-                self.outstanding_task_map.lock().insert(
-                    TaskToken(t.resp.task_token.clone()),
-                    NexusInFlightTask {
-                        request_kind,
-                        _permit: t.permit.into_used(NexusSlotInfo { service, operation }),
-                    },
-                );
-                Ok(t.resp)
-            }
-            Err(e) => Err(PollError::TonicError(e)),
-        })
+        let outstanding_task_clone = self.outstanding_task_map.clone();
+        self.source_stream
+            .map(move |t| match t {
+                Ok(t) => {
+                    let (service, operation, request_kind) = t
+                        .resp
+                        .request
+                        .as_ref()
+                        .and_then(|r| r.variant.as_ref())
+                        .map(|v| match v {
+                            Variant::StartOperation(s) => (
+                                s.service.to_owned(),
+                                s.operation.to_owned(),
+                                RequestKind::Start,
+                            ),
+                            Variant::CancelOperation(c) => (
+                                c.service.to_owned(),
+                                c.operation.to_owned(),
+                                RequestKind::Cancel,
+                            ),
+                        })
+                        .unwrap_or_default();
+                    self.outstanding_task_map.lock().insert(
+                        TaskToken(t.resp.task_token.clone()),
+                        NexusInFlightTask {
+                            request_kind,
+                            _permit: t.permit.into_used(NexusSlotInfo { service, operation }),
+                        },
+                    );
+                    Ok(t.resp)
+                }
+                Err(e) => Err(PollError::TonicError(e)),
+            })
+            .chain(stream::once(async move {
+                while !outstanding_task_clone.lock().is_empty() {
+                    // todo no spin
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                Err(PollError::ShutDown)
+            }))
     }
 }
 
