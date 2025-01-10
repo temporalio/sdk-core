@@ -33,6 +33,7 @@ use temporal_sdk_core_protos::{
     TaskToken,
 };
 use tokio::{
+    join,
     sync::{mpsc::UnboundedSender, Mutex, Notify},
     task::JoinHandle,
 };
@@ -57,6 +58,7 @@ impl NexusManager {
     pub(super) fn new(
         poller: BoxedNexusPoller,
         metrics: MetricsContext,
+        graceful_shutdown: Option<Duration>,
         shutdown_initiated_token: CancellationToken,
     ) -> Self {
         let source_stream = new_nexus_task_poller(poller, metrics, shutdown_initiated_token);
@@ -69,8 +71,12 @@ impl NexusManager {
             |_: &mut ()| PollNext::Left,
         );
         let task_completed_notify = Arc::new(Notify::new());
-        let task_stream =
-            NexusTaskStream::new(task_stream_input, cancels_tx, task_completed_notify.clone());
+        let task_stream = NexusTaskStream::new(
+            task_stream_input,
+            cancels_tx,
+            task_completed_notify.clone(),
+            graceful_shutdown,
+        );
         let outstanding_task_map = task_stream.outstanding_task_map.clone();
         Self {
             task_stream: Mutex::new(task_stream.into_stream().boxed()),
@@ -172,6 +178,7 @@ struct NexusTaskStream<S> {
     outstanding_task_map: OutstandingTaskMap,
     cancels_tx: UnboundedSender<CancelNexusTask>,
     task_completed_notify: Arc<Notify>,
+    grace_period: Option<Duration>,
 }
 
 impl<S> NexusTaskStream<S>
@@ -182,12 +189,14 @@ where
         source: S,
         cancels_tx: UnboundedSender<CancelNexusTask>,
         task_completed_notify: Arc<Notify>,
+        grace_period: Option<Duration>,
     ) -> Self {
         Self {
             source_stream: source,
             outstanding_task_map: Arc::new(Default::default()),
             cancels_tx,
             task_completed_notify,
+            grace_period,
         }
     }
 
@@ -195,6 +204,7 @@ where
         let outstanding_task_clone = self.outstanding_task_map.clone();
         let source_done = CancellationToken::new();
         let source_done_clone = source_done.clone();
+        let cancels_tx_clone = self.cancels_tx.clone();
         self.source_stream
             .filter_map(move |t| {
                 let res = match t {
@@ -269,9 +279,28 @@ where
             })
             .take_until(async move {
                 source_done_clone.cancelled().await;
-                while !outstanding_task_clone.lock().is_empty() {
-                    self.task_completed_notify.notified().await;
-                }
+                let (grace_killer, stop_grace) = futures_util::future::abortable(async {
+                    if let Some(gp) = self.grace_period {
+                        tokio::time::sleep(gp).await;
+                        for (tt, _) in outstanding_task_clone.lock().iter() {
+                            let _ = cancels_tx_clone.send(CancelNexusTask {
+                                task_token: tt.0.clone(),
+                                reason: NexusTaskCancelReason::WorkerShutdown.into(),
+                            });
+                        }
+                    }
+                });
+                join!(
+                    async {
+                        while !outstanding_task_clone.lock().is_empty() {
+                            self.task_completed_notify.notified().await;
+                        }
+                        // If we were waiting for the grace period but everything already finished,
+                        // we don't need to keep waiting.
+                        stop_grace.abort();
+                    },
+                    grace_killer
+                )
             })
             .chain(stream::once(async move { Err(PollError::ShutDown) }))
     }

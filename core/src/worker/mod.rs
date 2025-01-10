@@ -510,6 +510,7 @@ impl Worker {
             NexusManager::new(
                 np,
                 metrics.with_new_attrs([nexus_worker_type()]),
+                config.graceful_shutdown_period,
                 shutdown_token.child_token(),
             )
         });

@@ -417,11 +417,17 @@ async fn nexus_cancel_before_start() {
     worker.run_until_done().await.unwrap();
 }
 
+#[rstest::rstest]
 #[tokio::test]
-async fn nexus_must_complete_task_to_shutdown() {
+async fn nexus_must_complete_task_to_shutdown(#[values(true, false)] use_grace_period: bool) {
     let wf_name = "nexus_must_complete_task_to_shutdown";
     let mut starter = CoreWfStarter::new(wf_name);
     starter.worker_config.no_remote_activities(true);
+    if use_grace_period {
+        starter
+            .worker_config
+            .graceful_shutdown_period(Duration::from_millis(500));
+    }
     let mut worker = starter.worker().await;
     let core_worker = starter.get_worker().await;
 
@@ -455,20 +461,32 @@ async fn nexus_must_complete_task_to_shutdown() {
             .get_workflow_result(Default::default())
             .await
             .unwrap();
-        // Complete the task
-        core_worker
-            .complete_nexus_task(NexusTaskCompletion {
-                task_token: nt.task_token,
-                status: Some(nexus_task_completion::Status::Error(HandlerError {
-                    error_type: "BAD_REQUEST".to_string(), // bad req is non-retryable
-                    failure: Some(nexus::v1::Failure {
-                        message: "busted".to_string(),
-                        ..Default::default()
-                    }),
-                })),
-            })
-            .await
-            .unwrap();
+        if use_grace_period {
+            // Wait for cancel to be sent
+            let nt = core_worker.poll_nexus_task().await.unwrap();
+            assert_matches!(nt.variant, Some(nexus_task::Variant::CancelTask(_)));
+            core_worker
+                .complete_nexus_task(NexusTaskCompletion {
+                    task_token: nt.task_token().to_vec(),
+                    status: Some(nexus_task_completion::Status::AckCancel(true)),
+                })
+                .await
+                .unwrap();
+        } else {
+            core_worker
+                .complete_nexus_task(NexusTaskCompletion {
+                    task_token: nt.task_token,
+                    status: Some(nexus_task_completion::Status::Error(HandlerError {
+                        error_type: "BAD_REQUEST".to_string(), // bad req is non-retryable
+                        failure: Some(nexus::v1::Failure {
+                            message: "busted".to_string(),
+                            ..Default::default()
+                        }),
+                    })),
+                })
+                .await
+                .unwrap();
+        }
         complete_order_tx.send("t").unwrap();
         assert_matches!(
             core_worker.poll_nexus_task().await,

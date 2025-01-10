@@ -118,8 +118,8 @@ pub struct WorkerConfig {
     #[builder(default = "5")]
     pub fetching_concurrency: usize,
 
-    /// If set, core will issue cancels for all outstanding activities after shutdown has been
-    /// initiated and this amount of time has elapsed.
+    /// If set, core will issue cancels for all outstanding activities and nexus operations after
+    /// shutdown has been initiated and this amount of time has elapsed.
     #[builder(default)]
     pub graceful_shutdown_period: Option<Duration>,
 
