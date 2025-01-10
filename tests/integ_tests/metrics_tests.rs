@@ -1,3 +1,4 @@
+use crate::integ_tests::mk_nexus_endpoint;
 use anyhow::anyhow;
 use assert_matches::assert_matches;
 use std::{
@@ -12,7 +13,8 @@ use temporal_client::{
     WorkflowClientTrait, WorkflowOptions, WorkflowService, REQUEST_LATENCY_HISTOGRAM_NAME,
 };
 use temporal_sdk::{
-    ActContext, ActivityError, ActivityOptions, CancellableFuture, LocalActivityOptions, WfContext,
+    ActContext, ActivityError, ActivityOptions, CancellableFuture, LocalActivityOptions,
+    NexusOperationOptions, WfContext,
 };
 use temporal_sdk_core::{
     init_worker,
@@ -20,6 +22,7 @@ use temporal_sdk_core::{
     CoreRuntime, TokioRuntimeBuilder,
 };
 use temporal_sdk_core_api::{
+    errors::PollError,
     telemetry::{
         metrics::{CoreMeter, MetricAttributes, MetricParameters},
         HistogramBucketOverrides, OtelCollectorOptionsBuilder, OtlpProtocol,
@@ -32,6 +35,7 @@ use temporal_sdk_core_api::{
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::ActivityExecutionResult,
+        nexus::{nexus_task, nexus_task_completion, NexusTaskCompletion},
         workflow_activation::{workflow_activation_job, WorkflowActivationJob},
         workflow_commands::{
             workflow_command, CancelWorkflowExecution, CompleteWorkflowExecution,
@@ -45,6 +49,11 @@ use temporal_sdk_core_protos::{
         common::v1::RetryPolicy,
         enums::v1::WorkflowIdReusePolicy,
         failure::v1::Failure,
+        nexus,
+        nexus::v1::{
+            request::Variant, start_operation_response, HandlerError, StartOperationResponse,
+            UnsuccessfulOperationError,
+        },
         query::v1::WorkflowQuery,
         workflowservice::v1::{DescribeNamespaceRequest, ListNamespacesRequest},
     },
@@ -181,6 +190,7 @@ async fn one_slot_worker_reports_available_slot() {
         .max_outstanding_local_activities(1_usize)
         // Need to use two for WFTs because there are a minimum of 2 pollers b/c of sticky polling
         .max_outstanding_workflow_tasks(2_usize)
+        .max_outstanding_nexus_tasks(1_usize)
         .max_concurrent_wft_polls(1_usize)
         .build()
         .unwrap();
@@ -258,6 +268,10 @@ async fn one_slot_worker_reports_available_slot() {
         act_task_barr.wait().await;
     };
 
+    let nexus_polling = async {
+        let _ = worker.poll_nexus_task().await;
+    };
+
     let testing = async {
         // Wait just a beat for the poller to initiate
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -276,6 +290,11 @@ async fn one_slot_worker_reports_available_slot() {
             "temporal_worker_task_slots_available{{namespace=\"{NAMESPACE}\",\
              service_name=\"temporal-core-sdk\",task_queue=\"one_slot_worker_tq\",\
              worker_type=\"LocalActivityWorker\"}} 1"
+        )));
+        assert!(body.contains(&format!(
+            "temporal_worker_task_slots_available{{namespace=\"{NAMESPACE}\",\
+             service_name=\"temporal-core-sdk\",task_queue=\"one_slot_worker_tq\",\
+             worker_type=\"NexusWorker\"}} 1"
         )));
 
         // Start a workflow so that a task will get delivered
@@ -328,6 +347,11 @@ async fn one_slot_worker_reports_available_slot() {
             "temporal_worker_task_slots_used{{namespace=\"{NAMESPACE}\",\
              service_name=\"temporal-core-sdk\",task_queue=\"one_slot_worker_tq\",\
              worker_type=\"LocalActivityWorker\"}} 0"
+        )));
+        assert!(body.contains(&format!(
+            "temporal_worker_task_slots_used{{namespace=\"{NAMESPACE}\",\
+             service_name=\"temporal-core-sdk\",task_queue=\"one_slot_worker_tq\",\
+             worker_type=\"NexusWorker\"}} 0"
         )));
 
         // Now we allow the complete to proceed. Once it goes through, there should be 2 WFT slot
@@ -387,8 +411,9 @@ async fn one_slot_worker_reports_available_slot() {
              service_name=\"temporal-core-sdk\",task_queue=\"one_slot_worker_tq\",\
              worker_type=\"LocalActivityWorker\"}} 1"
         )));
+        worker.initiate_shutdown();
     };
-    join!(wf_polling, act_polling, testing);
+    join!(wf_polling, act_polling, nexus_polling, testing);
 }
 
 #[rstest::rstest]
@@ -875,6 +900,187 @@ async fn activity_metrics() {
              namespace=\"{NAMESPACE}\",service_name=\"temporal-core-sdk\",\
              task_queue=\"{task_queue}\",\
              workflow_type=\"{wf_name}\"}} 1"
+    )));
+}
+
+#[tokio::test]
+async fn nexus_metrics() {
+    let (telemopts, addr, _aborter) = prom_metrics(None);
+    let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
+    let wf_name = "nexus_metrics";
+    let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
+    starter.worker_config.no_remote_activities(true);
+    let task_queue = starter.get_task_queue().to_owned();
+    let mut worker = starter.worker().await;
+    let core_worker = starter.get_worker().await;
+    let endpoint = mk_nexus_endpoint(&mut starter).await;
+
+    worker.register_wf(wf_name.to_string(), move |ctx: WfContext| {
+        let partial_op = NexusOperationOptions {
+            endpoint: endpoint.clone(),
+            service: "mysvc".to_string(),
+            operation: "myop".to_string(),
+            ..Default::default()
+        };
+        async move {
+            join!(
+                async {
+                    ctx.start_nexus_operation(partial_op.clone())
+                        .await
+                        .unwrap()
+                        .result()
+                        .await
+                },
+                async {
+                    ctx.start_nexus_operation(NexusOperationOptions {
+                        input: Some("fail".into()),
+                        ..partial_op.clone()
+                    })
+                    .await
+                    .unwrap()
+                    .result()
+                    .await
+                },
+                async {
+                    ctx.start_nexus_operation(NexusOperationOptions {
+                        input: Some("handler-fail".into()),
+                        ..partial_op.clone()
+                    })
+                    .await
+                    .unwrap()
+                    .result()
+                    .await
+                },
+                async {
+                    ctx.start_nexus_operation(NexusOperationOptions {
+                        input: Some("timeout".into()),
+                        schedule_to_close_timeout: Some(Duration::from_secs(2)),
+                        ..partial_op.clone()
+                    })
+                    .await
+                    .unwrap()
+                    .result()
+                    .await
+                }
+            );
+            Ok(().into())
+        }
+    });
+
+    starter.start_with_worker(wf_name, &mut worker).await;
+
+    let nexus_polling = async {
+        for _ in 0..5 {
+            let nt = core_worker.poll_nexus_task().await.unwrap();
+            let task_token = nt.task_token().to_vec();
+            let status = if matches!(nt.variant, Some(nexus_task::Variant::CancelTask(_))) {
+                nexus_task_completion::Status::AckCancel(true)
+            } else {
+                let nt = nt.unwrap_task();
+                match nt.request.unwrap().variant.unwrap() {
+                    Variant::StartOperation(s) => match s.payload {
+                        Some(p) if p.data.is_empty() => {
+                            nexus_task_completion::Status::Completed(nexus::v1::Response {
+                                variant: Some(nexus::v1::response::Variant::StartOperation(
+                                    StartOperationResponse {
+                                        variant: Some(
+                                            start_operation_response::Variant::SyncSuccess(
+                                                start_operation_response::Sync {
+                                                    payload: Some("yay".into()),
+                                                },
+                                            ),
+                                        ),
+                                    },
+                                )),
+                            })
+                        }
+                        Some(p) if p == "fail".into() => {
+                            nexus_task_completion::Status::Completed(nexus::v1::Response {
+                                variant: Some(nexus::v1::response::Variant::StartOperation(
+                                    StartOperationResponse {
+                                        variant: Some(
+                                            start_operation_response::Variant::OperationError(
+                                                UnsuccessfulOperationError {
+                                                    operation_state: "failed".to_string(),
+                                                    failure: Some(nexus::v1::Failure {
+                                                        message: "fail".to_string(),
+                                                        ..Default::default()
+                                                    }),
+                                                },
+                                            ),
+                                        ),
+                                    },
+                                )),
+                            })
+                        }
+                        Some(p) if p == "handler-fail".into() => {
+                            nexus_task_completion::Status::Error(HandlerError {
+                                error_type: "BAD_REQUEST".to_string(),
+                                failure: Some(nexus::v1::Failure {
+                                    message: "handler-fail".to_string(),
+                                    ..Default::default()
+                                }),
+                            })
+                        }
+                        Some(p) if p == "timeout".into() => {
+                            // Don't do anything, will wait for timeout task
+                            continue;
+                        }
+                        _ => unreachable!(),
+                    },
+                    _ => unreachable!(),
+                }
+            };
+            core_worker
+                .complete_nexus_task(NexusTaskCompletion {
+                    task_token,
+                    status: Some(status),
+                })
+                .await
+                .unwrap();
+        }
+        // Gotta get shutdown poll
+        assert_matches!(
+            core_worker.poll_nexus_task().await,
+            Err(PollError::ShutDown)
+        );
+    };
+
+    join!(nexus_polling, async {
+        worker.run_until_done().await.unwrap()
+    });
+
+    let body = get_text(format!("http://{addr}/metrics")).await;
+    assert!(body.contains(&format!(
+        "temporal_nexus_task_execution_failed{{failure_reason=\"handler_error_BAD_REQUEST\",\
+             namespace=\"{NAMESPACE}\",service_name=\"temporal-core-sdk\",\
+             task_queue=\"{task_queue}\"}} 1"
+    )));
+    assert!(body.contains(&format!(
+        "temporal_nexus_task_execution_failed{{failure_reason=\"timeout\",\
+             namespace=\"{NAMESPACE}\",service_name=\"temporal-core-sdk\",\
+             task_queue=\"{task_queue}\"}} 1"
+    )));
+    assert!(body.contains(&format!(
+        "temporal_nexus_task_execution_failed{{failure_reason=\"operation_failed\",\
+             namespace=\"{NAMESPACE}\",service_name=\"temporal-core-sdk\",\
+             task_queue=\"{task_queue}\"}} 1"
+    )));
+    assert!(body.contains(&format!(
+        "temporal_nexus_task_schedule_to_start_latency_count{{\
+             namespace=\"{NAMESPACE}\",service_name=\"temporal-core-sdk\",\
+             task_queue=\"{task_queue}\"}} 4"
+    )));
+    assert!(body.contains(&format!(
+        "temporal_nexus_task_execution_latency_count{{\
+             namespace=\"{NAMESPACE}\",service_name=\"temporal-core-sdk\",\
+             task_queue=\"{task_queue}\"}} 4"
+    )));
+    // Only 3 actually finished - the timed-out one will not have an e2e latency
+    assert!(body.contains(&format!(
+        "temporal_nexus_task_endtoend_latency_count{{\
+             namespace=\"{NAMESPACE}\",service_name=\"temporal-core-sdk\",\
+             task_queue=\"{task_queue}\"}} 3"
     )));
 }
 

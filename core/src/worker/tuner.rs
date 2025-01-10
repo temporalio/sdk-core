@@ -184,6 +184,9 @@ impl TunerBuilder {
         if let Some(m) = cfg.max_outstanding_local_activities {
             builder.local_activity_slot_supplier(Arc::new(FixedSizeSlotSupplier::new(m)));
         }
+        if let Some(m) = cfg.max_outstanding_nexus_tasks {
+            builder.nexus_slot_supplier(Arc::new(FixedSizeSlotSupplier::new(m)));
+        }
         builder
     }
 

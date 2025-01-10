@@ -1,3 +1,4 @@
+use crate::integ_tests::mk_nexus_endpoint;
 use anyhow::bail;
 use assert_matches::assert_matches;
 use std::time::Duration;
@@ -17,11 +18,9 @@ use temporal_sdk_core_protos::{
         failure::v1::failure::FailureInfo,
         nexus,
         nexus::v1::{
-            endpoint_target, request, start_operation_response, workflow_event_link_from_nexus,
-            CancelOperationResponse, EndpointSpec, EndpointTarget, HandlerError,
-            StartOperationResponse,
+            request, start_operation_response, workflow_event_link_from_nexus,
+            CancelOperationResponse, HandlerError, StartOperationResponse,
         },
-        operatorservice::v1::CreateNexusEndpointRequest,
     },
 };
 use temporal_sdk_core_test_utils::{rand_6_chars, CoreWfStarter};
@@ -47,7 +46,7 @@ async fn nexus_basic(
     let mut worker = starter.worker().await;
     let core_worker = starter.get_worker().await;
 
-    let endpoint = mk_endpoint(&mut starter).await;
+    let endpoint = mk_nexus_endpoint(&mut starter).await;
 
     worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| {
         let endpoint = endpoint.clone();
@@ -98,12 +97,10 @@ async fn nexus_basic(
             Outcome::Fail | Outcome::Timeout => {
                 if outcome == Outcome::Timeout {
                     // Wait for the timeout task cancel to get sent
-                    dbg!("Waiting");
                     let timeout_t = core_worker.poll_nexus_task().await.unwrap();
                     let cancel = assert_matches!(timeout_t.variant,
                         Some(nexus_task::Variant::CancelTask(ct)) => ct);
                     assert_eq!(cancel.reason, NexusTaskCancelReason::TimedOut as i32);
-                    dbg!("Done waiting!");
                 }
                 core_worker
                     .complete_nexus_task(NexusTaskCompletion {
@@ -182,7 +179,7 @@ async fn nexus_async(
     let mut worker = starter.worker().await;
     let core_worker = starter.get_worker().await;
 
-    let endpoint = mk_endpoint(&mut starter).await;
+    let endpoint = mk_nexus_endpoint(&mut starter).await;
     let schedule_to_close_timeout = if outcome == Outcome::CancelAfterRecordedBeforeStarted {
         // If we set this, it'll time out before we can cancel it.
         None
@@ -388,7 +385,7 @@ async fn nexus_cancel_before_start() {
     starter.worker_config.no_remote_activities(true);
     let mut worker = starter.worker().await;
 
-    let endpoint = mk_endpoint(&mut starter).await;
+    let endpoint = mk_nexus_endpoint(&mut starter).await;
 
     worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| {
         let endpoint = endpoint.clone();
@@ -431,7 +428,7 @@ async fn nexus_must_complete_task_to_shutdown(#[values(true, false)] use_grace_p
     let mut worker = starter.worker().await;
     let core_worker = starter.get_worker().await;
 
-    let endpoint = mk_endpoint(&mut starter).await;
+    let endpoint = mk_nexus_endpoint(&mut starter).await;
 
     worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| {
         let endpoint = endpoint.clone();
@@ -501,28 +498,4 @@ async fn nexus_must_complete_task_to_shutdown(#[values(true, false)] use_grace_p
 
     // The first thing to finish needs to have been the nexus task completion
     assert_eq!(complete_order_rx.recv().await.unwrap(), "t");
-}
-
-async fn mk_endpoint(starter: &mut CoreWfStarter) -> String {
-    let client = starter.get_client().await;
-    let endpoint = format!("mycoolendpoint-{}", rand_6_chars());
-    let mut op_client = client.get_client().inner().operator_svc().clone();
-    op_client
-        .create_nexus_endpoint(CreateNexusEndpointRequest {
-            spec: Some(EndpointSpec {
-                name: endpoint.to_owned(),
-                description: None,
-                target: Some(EndpointTarget {
-                    variant: Some(endpoint_target::Variant::Worker(endpoint_target::Worker {
-                        namespace: client.namespace().to_owned(),
-                        task_queue: starter.get_task_queue().to_owned(),
-                    })),
-                }),
-            }),
-        })
-        .await
-        .unwrap();
-    // Endpoint creation can (as of server 1.25.2 at least) return before they are actually usable.
-    tokio::time::sleep(Duration::from_millis(800)).await;
-    endpoint
 }

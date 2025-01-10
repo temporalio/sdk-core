@@ -157,6 +157,12 @@ pub struct WorkerConfig {
     /// Mutually exclusive with `tuner`
     #[builder(setter(into, strip_option), default)]
     pub max_outstanding_local_activities: Option<usize>,
+    /// The maximum number of nexus tasks that will ever be given to this worker
+    /// concurrently
+    ///
+    /// Mutually exclusive with `tuner`
+    #[builder(setter(into, strip_option), default)]
+    pub max_outstanding_nexus_tasks: Option<usize>,
 }
 
 impl WorkerConfig {

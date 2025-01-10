@@ -509,7 +509,7 @@ impl Worker {
         let nexus_mgr = nexus_poller.map(|np| {
             NexusManager::new(
                 np,
-                metrics.with_new_attrs([nexus_worker_type()]),
+                metrics.clone(),
                 config.graceful_shutdown_period,
                 shutdown_token.child_token(),
             )

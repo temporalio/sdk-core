@@ -2527,15 +2527,25 @@ pub mod temporal {
                             if let Some((sch, st)) =
                                 self.$sched_field.clone().zip(self.started_time.clone())
                             {
-                                let sch: Result<SystemTime, _> = sch.try_into();
-                                let st: Result<SystemTime, _> = st.try_into();
-                                if let (Ok(sch), Ok(st)) = (sch, st) {
-                                    return st.duration_since(sch).ok();
+                                if let Some(value) = elapsed_between_prost_times(sch, st) {
+                                    return value;
                                 }
                             }
                             None
                         }
                     };
+                }
+
+                fn elapsed_between_prost_times(
+                    from: prost_wkt_types::Timestamp,
+                    to: prost_wkt_types::Timestamp,
+                ) -> Option<Option<Duration>> {
+                    let from: Result<SystemTime, _> = from.try_into();
+                    let to: Result<SystemTime, _> = to.try_into();
+                    if let (Ok(from), Ok(to)) = (from, to) {
+                        return Some(to.duration_since(from).ok());
+                    }
+                    None
                 }
 
                 impl PollWorkflowTaskQueueResponse {
@@ -2582,6 +2592,23 @@ pub mod temporal {
 
                 impl PollActivityTaskQueueResponse {
                     sched_to_start_impl!(current_attempt_scheduled_time);
+                }
+
+                impl PollNexusTaskQueueResponse {
+                    pub fn sched_to_start(&self) -> Option<Duration> {
+                        if let Some((sch, st)) = self
+                            .request
+                            .as_ref()
+                            .and_then(|r| r.scheduled_time)
+                            .clone()
+                            .zip(SystemTime::now().try_into().ok())
+                        {
+                            if let Some(value) = elapsed_between_prost_times(sch, st) {
+                                return value;
+                            }
+                        }
+                        None
+                    }
                 }
 
                 impl QueryWorkflowResponse {
