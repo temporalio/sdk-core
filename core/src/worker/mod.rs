@@ -198,7 +198,7 @@ impl WorkerTrait for Worker {
         let status = if let Some(s) = completion.status {
             s
         } else {
-            return Err(CompleteNexusError::MalformeNexusCompletion {
+            return Err(CompleteNexusError::MalformedNexusCompletion {
                 reason: "Nexus completion had empty status field".to_owned(),
             });
         };

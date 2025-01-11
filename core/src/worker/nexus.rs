@@ -135,7 +135,7 @@ impl NexusManager {
                                     .nexus_task_execution_failed();
                             };
                             if task_info.request_kind != RequestKind::Start {
-                                return Err(CompleteNexusError::MalformeNexusCompletion {
+                                return Err(CompleteNexusError::MalformedNexusCompletion {
                                     reason: "Nexus response was StartOperation but request was not"
                                         .to_string(),
                                 });
@@ -143,7 +143,7 @@ impl NexusManager {
                         }
                         Some(response::Variant::CancelOperation(_)) => {
                             if task_info.request_kind != RequestKind::Cancel {
-                                return Err(CompleteNexusError::MalformeNexusCompletion {
+                                return Err(CompleteNexusError::MalformedNexusCompletion {
                                     reason:
                                         "Nexus response was CancelOperation but request was not"
                                             .to_string(),
@@ -151,7 +151,7 @@ impl NexusManager {
                             }
                         }
                         None => {
-                            return Err(CompleteNexusError::MalformeNexusCompletion {
+                            return Err(CompleteNexusError::MalformedNexusCompletion {
                                 reason: "Nexus completion must contain a status variant "
                                     .to_string(),
                             })

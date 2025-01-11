@@ -60,7 +60,7 @@ pub enum CompleteActivityError {
 pub enum CompleteNexusError {
     /// Lang SDK sent us a malformed nexus completion. This likely means a bug in the lang sdk.
     #[error("Lang SDK sent us a malformed nexus completion: {reason}")]
-    MalformeNexusCompletion {
+    MalformedNexusCompletion {
         /// Reason the completion was malformed
         reason: String,
     },
