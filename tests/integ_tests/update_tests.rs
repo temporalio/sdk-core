@@ -33,7 +33,7 @@ use temporal_sdk_core_protos::{
 };
 use temporal_sdk_core_test_utils::{
     drain_pollers_and_shutdown, init_core_and_create_wf, init_core_replay_preloaded,
-    start_timer_cmd, CoreWfStarter, WorkerTestHelpers,
+    start_timer_cmd, CoreWfStarter, WorkerTestHelpers, WorkflowHandleExt,
 };
 use tokio::{join, sync::Barrier};
 use uuid::Uuid;
@@ -672,7 +672,7 @@ async fn update_with_local_acts() {
         },
     );
 
-    let run_id = starter.start_with_worker(wf_name, &mut worker).await;
+    let handle = starter.start_with_worker(wf_name, &mut worker).await;
     let wf_id = starter.get_task_queue().to_string();
     let update = async {
         // make sure update has a chance to get registered
@@ -707,8 +707,8 @@ async fn update_with_local_acts() {
         worker.run_until_done().await.unwrap();
     };
     join!(update, run);
-    starter
-        .fetch_history_and_replay(wf_id, run_id, worker.inner_mut())
+    handle
+        .fetch_history_and_replay(worker.inner_mut())
         .await
         .unwrap();
 }
@@ -730,7 +730,7 @@ async fn update_rejection_sdk() {
         Ok(().into())
     });
 
-    let run_id = starter.start_with_worker(wf_name, &mut worker).await;
+    let handle = starter.start_with_worker(wf_name, &mut worker).await;
     let wf_id = starter.get_task_queue().to_string();
     let update = async {
         let res = client
@@ -751,8 +751,8 @@ async fn update_rejection_sdk() {
         worker.run_until_done().await.unwrap();
     };
     join!(update, run);
-    starter
-        .fetch_history_and_replay(wf_id, run_id, worker.inner_mut())
+    handle
+        .fetch_history_and_replay(worker.inner_mut())
         .await
         .unwrap();
 }
@@ -774,7 +774,7 @@ async fn update_fail_sdk() {
         Ok(().into())
     });
 
-    let run_id = starter.start_with_worker(wf_name, &mut worker).await;
+    let handle = starter.start_with_worker(wf_name, &mut worker).await;
     let wf_id = starter.get_task_queue().to_string();
     let update = async {
         let res = client
@@ -795,8 +795,8 @@ async fn update_fail_sdk() {
         worker.run_until_done().await.unwrap();
     };
     join!(update, run);
-    starter
-        .fetch_history_and_replay(wf_id, run_id, worker.inner_mut())
+    handle
+        .fetch_history_and_replay(worker.inner_mut())
         .await
         .unwrap();
 }
@@ -822,7 +822,7 @@ async fn update_timer_sequence() {
         Ok(().into())
     });
 
-    let run_id = starter.start_with_worker(wf_name, &mut worker).await;
+    let handle = starter.start_with_worker(wf_name, &mut worker).await;
     let wf_id = starter.get_task_queue().to_string();
     let update = async {
         let res = client
@@ -843,8 +843,8 @@ async fn update_timer_sequence() {
         worker.run_until_done().await.unwrap();
     };
     join!(update, run);
-    starter
-        .fetch_history_and_replay(wf_id, run_id, worker.inner_mut())
+    handle
+        .fetch_history_and_replay(worker.inner_mut())
         .await
         .unwrap();
 }
@@ -873,7 +873,7 @@ async fn task_failure_during_validation() {
         Ok(().into())
     });
 
-    let run_id = starter.start_with_worker(wf_name, &mut worker).await;
+    let handle = starter.start_with_worker(wf_name, &mut worker).await;
     let wf_id = starter.get_task_queue().to_string();
     let update = async {
         let res = client
@@ -894,8 +894,8 @@ async fn task_failure_during_validation() {
         worker.run_until_done().await.unwrap();
     };
     join!(update, run);
-    starter
-        .fetch_history_and_replay(wf_id.clone(), run_id, worker.inner_mut())
+    handle
+        .fetch_history_and_replay(worker.inner_mut())
         .await
         .unwrap();
     // Verify we did not spam task failures. There should only be one.
@@ -937,7 +937,7 @@ async fn task_failure_after_update() {
         Ok(().into())
     });
 
-    let run_id = starter.start_with_worker(wf_name, &mut worker).await;
+    let handle = starter.start_with_worker(wf_name, &mut worker).await;
     let wf_id = starter.get_task_queue().to_string();
     let update = async {
         let res = client
@@ -958,8 +958,8 @@ async fn task_failure_after_update() {
         worker.run_until_done().await.unwrap();
     };
     join!(update, run);
-    starter
-        .fetch_history_and_replay(wf_id.clone(), run_id, worker.inner_mut())
+    handle
+        .fetch_history_and_replay(worker.inner_mut())
         .await
         .unwrap();
 }
@@ -1002,7 +1002,8 @@ async fn worker_restarted_in_middle_of_update() {
         Ok(echo_me)
     });
 
-    let run_id = starter.start_with_worker(wf_name, &mut worker).await;
+    let handle = starter.start_with_worker(wf_name, &mut worker).await;
+
     let wf_id = starter.get_task_queue().to_string();
     let update = async {
         let res = client
@@ -1039,7 +1040,7 @@ async fn worker_restarted_in_middle_of_update() {
         BARR.wait().await;
         // Poke the workflow off the sticky queue to get it to complete faster than WFT timeout
         client
-            .reset_sticky_task_queue(wf_id.clone(), run_id.clone())
+            .reset_sticky_task_queue(wf_id.clone(), "".to_string())
             .await
             .unwrap();
     };
@@ -1053,8 +1054,8 @@ async fn worker_restarted_in_middle_of_update() {
         worker.run_until_done().await.unwrap();
     };
     join!(update, run, stopper);
-    starter
-        .fetch_history_and_replay(wf_id, run_id, worker.inner_mut())
+    handle
+        .fetch_history_and_replay(worker.inner_mut())
         .await
         .unwrap();
 }
@@ -1108,7 +1109,8 @@ async fn update_after_empty_wft() {
         Ok(echo_me)
     });
 
-    let run_id = starter.start_with_worker(wf_name, &mut worker).await;
+    let handle = starter.start_with_worker(wf_name, &mut worker).await;
+
     let wf_id = starter.get_task_queue().to_string();
     let update = async {
         client
@@ -1140,8 +1142,8 @@ async fn update_after_empty_wft() {
         worker.run_until_done().await.unwrap();
     };
     join!(update, runner);
-    starter
-        .fetch_history_and_replay(wf_id, run_id, worker.inner_mut())
+    handle
+        .fetch_history_and_replay(worker.inner_mut())
         .await
         .unwrap();
 }

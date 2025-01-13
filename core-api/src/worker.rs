@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 use temporal_sdk_core_protos::coresdk::{
-    ActivitySlotInfo, LocalActivitySlotInfo, WorkflowSlotInfo,
+    ActivitySlotInfo, LocalActivitySlotInfo, NexusSlotInfo, WorkflowSlotInfo,
 };
 
 const MAX_CONCURRENT_WFT_POLLS_DEFAULT: usize = 5;
@@ -56,6 +56,10 @@ pub struct WorkerConfig {
     /// worker's task queue
     #[builder(default = "5")]
     pub max_concurrent_at_polls: usize,
+    /// Maximum number of concurrent poll nexus task requests we will perform at a time on this
+    /// worker's task queue
+    #[builder(default = "5")]
+    pub max_concurrent_nexus_polls: usize,
     /// If set to true this worker will only handle workflow tasks and local activities, it will not
     /// poll for activity tasks.
     #[builder(default = "false")]
@@ -114,8 +118,8 @@ pub struct WorkerConfig {
     #[builder(default = "5")]
     pub fetching_concurrency: usize,
 
-    /// If set, core will issue cancels for all outstanding activities after shutdown has been
-    /// initiated and this amount of time has elapsed.
+    /// If set, core will issue cancels for all outstanding activities and nexus operations after
+    /// shutdown has been initiated and this amount of time has elapsed.
     #[builder(default)]
     pub graceful_shutdown_period: Option<Duration>,
 
@@ -153,6 +157,12 @@ pub struct WorkerConfig {
     /// Mutually exclusive with `tuner`
     #[builder(setter(into, strip_option), default)]
     pub max_outstanding_local_activities: Option<usize>,
+    /// The maximum number of nexus tasks that will ever be given to this worker
+    /// concurrently
+    ///
+    /// Mutually exclusive with `tuner`
+    #[builder(setter(into, strip_option), default)]
+    pub max_outstanding_nexus_tasks: Option<usize>,
 }
 
 impl WorkerConfig {
@@ -263,6 +273,11 @@ pub trait WorkerTuner {
         &self,
     ) -> Arc<dyn SlotSupplier<SlotKind = LocalActivitySlotKind> + Send + Sync>;
 
+    /// Return a [SlotSupplier] for nexus tasks
+    fn nexus_task_slot_supplier(
+        &self,
+    ) -> Arc<dyn SlotSupplier<SlotKind = NexusSlotKind> + Send + Sync>;
+
     /// Core will call this at worker initialization time, allowing the implementation to hook up to
     /// metrics if any are configured. If not, it will not be called.
     fn attach_metrics(&self, metrics: TemporalMeter);
@@ -364,6 +379,7 @@ pub enum SlotKindType {
     Workflow,
     Activity,
     LocalActivity,
+    Nexus,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -372,11 +388,14 @@ pub struct WorkflowSlotKind {}
 pub struct ActivitySlotKind {}
 #[derive(Debug, Copy, Clone)]
 pub struct LocalActivitySlotKind {}
+#[derive(Debug, Copy, Clone)]
+pub struct NexusSlotKind {}
 
 pub enum SlotInfo<'a> {
     Workflow(&'a WorkflowSlotInfo),
     Activity(&'a ActivitySlotInfo),
     LocalActivity(&'a LocalActivitySlotInfo),
+    Nexus(&'a NexusSlotInfo),
 }
 
 pub trait SlotInfoTrait: prost::Message {
@@ -395,6 +414,11 @@ impl SlotInfoTrait for ActivitySlotInfo {
 impl SlotInfoTrait for LocalActivitySlotInfo {
     fn downcast(&self) -> SlotInfo {
         SlotInfo::LocalActivity(self)
+    }
+}
+impl SlotInfoTrait for NexusSlotInfo {
+    fn downcast(&self) -> SlotInfo {
+        SlotInfo::Nexus(self)
     }
 }
 
@@ -422,5 +446,12 @@ impl SlotKind for LocalActivitySlotKind {
 
     fn kind() -> SlotKindType {
         SlotKindType::LocalActivity
+    }
+}
+impl SlotKind for NexusSlotKind {
+    type Info = NexusSlotInfo;
+
+    fn kind() -> SlotKindType {
+        SlotKindType::Nexus
     }
 }

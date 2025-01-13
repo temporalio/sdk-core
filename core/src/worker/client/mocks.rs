@@ -1,7 +1,6 @@
 use super::*;
 use futures_util::Future;
-use std::sync::Arc;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 use temporal_client::SlotManager;
 
 pub(crate) static DEFAULT_WORKERS_REGISTRY: LazyLock<Arc<SlotManager>> =
@@ -61,6 +60,10 @@ mockall::mock! {
             -> impl Future<Output = Result<PollActivityTaskQueueResponse>> + Send + 'b
             where 'a: 'b, Self: 'b;
 
+        fn poll_nexus_task<'a, 'b>(&self, task_queue: String)
+            -> impl Future<Output = Result<PollNexusTaskQueueResponse>> + Send + 'b
+            where 'a: 'b, Self: 'b;
+
         fn complete_workflow_task<'a, 'b>(
             &self,
             request: WorkflowTaskCompletion,
@@ -72,6 +75,13 @@ mockall::mock! {
             task_token: TaskToken,
             result: Option<Payloads>,
         ) -> impl Future<Output = Result<RespondActivityTaskCompletedResponse>> + Send + 'b
+            where 'a: 'b, Self: 'b;
+
+        fn complete_nexus_task<'a, 'b>(
+            &self,
+            task_token: TaskToken,
+            response: nexus::v1::Response,
+        ) -> impl Future<Output = Result<RespondNexusTaskCompletedResponse>> + Send + 'b
             where 'a: 'b, Self: 'b;
 
         fn cancel_activity_task<'a, 'b>(
@@ -94,6 +104,13 @@ mockall::mock! {
             cause: WorkflowTaskFailedCause,
             failure: Option<Failure>,
         ) -> impl Future<Output = Result<RespondWorkflowTaskFailedResponse>> + Send + 'b
+            where 'a: 'b, Self: 'b;
+
+        fn fail_nexus_task<'a, 'b>(
+            &self,
+            task_token: TaskToken,
+            error: nexus::v1::HandlerError,
+        ) -> impl Future<Output = Result<RespondNexusTaskFailedResponse>> + Send + 'b
             where 'a: 'b, Self: 'b;
 
         fn record_activity_heartbeat<'a, 'b>(

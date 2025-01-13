@@ -31,10 +31,7 @@ use std::{
     time::Duration,
 };
 use temporal_sdk::interceptors::FailOnNondeterminismInterceptor;
-use temporal_sdk_core_api::{
-    errors::{PollActivityError, PollWfError},
-    Worker as WorkerTrait,
-};
+use temporal_sdk_core_api::{errors::PollError, Worker as WorkerTrait};
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::{workflow_activation_job, WorkflowActivation},
@@ -49,8 +46,8 @@ use temporal_sdk_core_protos::{
         protocol::v1::message,
         update,
         workflowservice::v1::{
-            PollActivityTaskQueueResponse, PollWorkflowTaskQueueResponse,
-            RespondWorkflowTaskCompletedResponse,
+            PollActivityTaskQueueResponse, PollNexusTaskQueueResponse,
+            PollWorkflowTaskQueueResponse, RespondWorkflowTaskCompletedResponse,
         },
     },
     utilities::pack_any,
@@ -170,6 +167,7 @@ pub(crate) fn mock_worker(mocks: MocksHolder) -> Worker {
         TaskPollers::Mocked {
             wft_stream: mocks.inputs.wft_stream,
             act_poller,
+            nexus_poller: mocks.inputs.nexus_poller,
         },
         None,
     )
@@ -221,6 +219,7 @@ impl MocksHolder {
 pub(crate) struct MockWorkerInputs {
     pub(crate) wft_stream: BoxStream<'static, Result<ValidPollWFTQResponse, tonic::Status>>,
     pub(crate) act_poller: Option<BoxedPoller<PollActivityTaskQueueResponse>>,
+    pub(crate) nexus_poller: Option<BoxedPoller<PollNexusTaskQueueResponse>>,
     pub(crate) config: WorkerConfig,
 }
 
@@ -237,6 +236,7 @@ impl MockWorkerInputs {
         Self {
             wft_stream,
             act_poller: None,
+            nexus_poller: None,
             config: test_worker_cfg().build().unwrap(),
         }
     }
@@ -268,6 +268,7 @@ impl MocksHolder {
         let mock_worker = MockWorkerInputs {
             wft_stream,
             act_poller: Some(mock_act_poller),
+            nexus_poller: None,
             config: test_worker_cfg().build().unwrap(),
         };
         Self {
@@ -290,6 +291,7 @@ impl MocksHolder {
         let mock_worker = MockWorkerInputs {
             wft_stream,
             act_poller: None,
+            nexus_poller: None,
             config: test_worker_cfg().build().unwrap(),
         };
         Self {
@@ -1053,13 +1055,13 @@ impl WorkerExt for Worker {
             async {
                 assert_matches!(
                     self.poll_activity_task().await.unwrap_err(),
-                    PollActivityError::ShutDown
+                    PollError::ShutDown
                 );
             },
             async {
                 assert_matches!(
                     self.poll_workflow_activation().await.unwrap_err(),
-                    PollWfError::ShutDown
+                    PollError::ShutDown
                 );
             }
         );
@@ -1070,7 +1072,7 @@ impl WorkerExt for Worker {
         self.initiate_shutdown();
         assert_matches!(
             self.poll_activity_task().await.unwrap_err(),
-            PollActivityError::ShutDown
+            PollError::ShutDown
         );
         self.shutdown().await;
     }

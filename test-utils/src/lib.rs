@@ -11,7 +11,7 @@ pub mod workflows;
 pub use temporal_sdk_core::replay::HistoryForReplay;
 
 use crate::stream::{Stream, TryStreamExt};
-use anyhow::{Context, Error};
+use anyhow::Context;
 use assert_matches::assert_matches;
 use futures_util::{future, stream, stream::FuturesUnordered, StreamExt};
 use parking_lot::Mutex;
@@ -22,8 +22,8 @@ use std::{
     time::Duration,
 };
 use temporal_client::{
-    Client, ClientTlsConfig, RetryClient, TlsConfig, WorkflowClientTrait, WorkflowExecutionInfo,
-    WorkflowOptions,
+    Client, ClientTlsConfig, RetryClient, TlsConfig, WfClientExt, WorkflowClientTrait,
+    WorkflowExecutionInfo, WorkflowHandle, WorkflowOptions,
 };
 use temporal_sdk::{
     interceptors::{FailOnNondeterminismInterceptor, WorkerInterceptor},
@@ -38,7 +38,7 @@ use temporal_sdk_core::{
     ClientOptions, ClientOptionsBuilder, CoreRuntime, WorkerConfigBuilder,
 };
 use temporal_sdk_core_api::{
-    errors::{PollActivityError, PollWfError},
+    errors::PollError,
     telemetry::{
         metrics::CoreMeter, Logger, OtelCollectorOptionsBuilder, PrometheusExporterOptionsBuilder,
         TelemetryOptions, TelemetryOptionsBuilder,
@@ -53,6 +53,7 @@ use temporal_sdk_core_protos::{
             QuerySuccess, ScheduleActivity, ScheduleLocalActivity, StartTimer,
         },
         workflow_completion::WorkflowActivationCompletion,
+        FromPayloadsExt,
     },
     temporal::api::{
         common::v1::Payload, history::v1::History,
@@ -248,13 +249,13 @@ impl CoreWfStarter {
         self.start_wf_with_id(self.task_queue_name.clone()).await
     }
 
-    /// Starts the workflow using the worker, returns run id.
+    /// Starts the workflow using the worker
     pub async fn start_with_worker(
         &self,
         wf_name: impl Into<String>,
         worker: &mut TestWorker,
-    ) -> String {
-        worker
+    ) -> WorkflowHandle<RetryClient<Client>, Vec<Payload>> {
+        let run_id = worker
             .submit_wf(
                 self.task_queue_name.clone(),
                 wf_name.into(),
@@ -262,7 +263,12 @@ impl CoreWfStarter {
                 self.workflow_options.clone(),
             )
             .await
+            .unwrap();
+        self.initted_worker
+            .get()
             .unwrap()
+            .client
+            .get_untyped_workflow_handle(&self.task_queue_name, run_id)
     }
 
     pub async fn eager_start_with_worker(
@@ -299,31 +305,6 @@ impl CoreWfStarter {
             .await
             .unwrap()
             .run_id
-    }
-
-    /// Fetch the history for the indicated workflow and replay it using the provided worker.
-    /// Can be used after completing workflows normally to ensure replay works as well.
-    pub async fn fetch_history_and_replay(
-        &mut self,
-        wf_id: impl Into<String>,
-        run_id: impl Into<String>,
-        worker: &mut Worker,
-    ) -> Result<(), anyhow::Error> {
-        let wf_id = wf_id.into();
-        // Fetch history and replay it
-        let history = self
-            .get_client()
-            .await
-            .get_workflow_execution_history(wf_id.clone(), Some(run_id.into()), vec![])
-            .await?
-            .history
-            .expect("history field must be populated");
-        let with_id = HistoryForReplay::new(history, wf_id);
-        let replay_worker = init_core_replay_preloaded(worker.task_queue(), [with_id]);
-        worker.with_new_core_worker(replay_worker);
-        worker.set_worker_interceptor(FailOnNondeterminismInterceptor {});
-        worker.run().await.unwrap();
-        Ok(())
     }
 
     pub fn get_task_queue(&self) -> &str {
@@ -617,7 +598,7 @@ impl WorkerInterceptor for TestWorkerCompletionIceptor {
             n.on_shutdown(sdk_worker);
         }
     }
-    async fn on_workflow_activation(&self, a: &WorkflowActivation) -> Result<(), Error> {
+    async fn on_workflow_activation(&self, a: &WorkflowActivation) -> Result<(), anyhow::Error> {
         if let Some(n) = self.next.as_ref() {
             n.on_workflow_activation(a).await?;
         }
@@ -837,6 +818,34 @@ where
     }
 }
 
+#[async_trait::async_trait(?Send)]
+pub trait WorkflowHandleExt {
+    async fn fetch_history_and_replay(&self, worker: &mut Worker) -> Result<(), anyhow::Error>;
+}
+
+#[async_trait::async_trait(?Send)]
+impl<R> WorkflowHandleExt for WorkflowHandle<RetryClient<Client>, R>
+where
+    R: FromPayloadsExt,
+{
+    async fn fetch_history_and_replay(&self, worker: &mut Worker) -> Result<(), anyhow::Error> {
+        let wf_id = self.info().workflow_id.clone();
+        let run_id = self.info().run_id.clone();
+        let history = self
+            .client()
+            .get_workflow_execution_history(wf_id.clone(), run_id, vec![])
+            .await?
+            .history
+            .expect("history field must be populated");
+        let with_id = HistoryForReplay::new(history, wf_id);
+        let replay_worker = init_core_replay_preloaded(worker.task_queue(), [with_id]);
+        worker.with_new_core_worker(replay_worker);
+        worker.set_worker_interceptor(FailOnNondeterminismInterceptor {});
+        worker.run().await.unwrap();
+        Ok(())
+    }
+}
+
 /// Initiate shutdown, drain the pollers, and wait for shutdown to complete.
 pub async fn drain_pollers_and_shutdown(worker: &Arc<dyn CoreWorker>) {
     worker.initiate_shutdown();
@@ -844,13 +853,13 @@ pub async fn drain_pollers_and_shutdown(worker: &Arc<dyn CoreWorker>) {
         async {
             assert!(matches!(
                 worker.poll_activity_task().await.unwrap_err(),
-                PollActivityError::ShutDown
+                PollError::ShutDown
             ));
         },
         async {
             assert!(matches!(
                 worker.poll_workflow_activation().await.unwrap_err(),
-                PollWfError::ShutDown,
+                PollError::ShutDown,
             ));
         }
     );

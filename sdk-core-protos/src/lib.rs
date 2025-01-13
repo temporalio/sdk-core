@@ -757,7 +757,47 @@ pub mod coresdk {
     }
 
     pub mod nexus {
+        use crate::temporal::api::workflowservice::v1::PollNexusTaskQueueResponse;
+        use std::fmt::{Display, Formatter};
+
         tonic::include_proto!("coresdk.nexus");
+
+        impl NexusTask {
+            /// Unwrap the inner server-delivered nexus task if that's what this is, else panic.
+            pub fn unwrap_task(self) -> PollNexusTaskQueueResponse {
+                if let Some(nexus_task::Variant::Task(t)) = self.variant {
+                    return t;
+                }
+                panic!("Nexus task did not contain a server task");
+            }
+
+            /// Get the task token
+            pub fn task_token(&self) -> &[u8] {
+                match &self.variant {
+                    Some(nexus_task::Variant::Task(t)) => t.task_token.as_slice(),
+                    Some(nexus_task::Variant::CancelTask(c)) => c.task_token.as_slice(),
+                    None => panic!("Nexus task did not contain a task token"),
+                }
+            }
+        }
+
+        impl Display for nexus_task_completion::Status {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "NexusTaskCompletion(")?;
+                match self {
+                    nexus_task_completion::Status::Completed(c) => {
+                        write!(f, "{c}")
+                    }
+                    nexus_task_completion::Status::Error(e) => {
+                        write!(f, "{e}")
+                    }
+                    nexus_task_completion::Status::AckCancel(_) => {
+                        write!(f, "AckCancel")
+                    }
+                }?;
+                write!(f, ")")
+            }
+        }
     }
 
     pub mod workflow_commands {
@@ -2356,9 +2396,42 @@ pub mod temporal {
                     enums::v1::EventType,
                 };
                 use anyhow::{anyhow, bail};
+                use std::fmt::{Display, Formatter};
                 use tonic::transport::Uri;
 
                 tonic::include_proto!("temporal.api.nexus.v1");
+
+                impl Display for Response {
+                    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                        write!(f, "NexusResponse(",)?;
+                        match &self.variant {
+                            None => {}
+                            Some(v) => {
+                                write!(f, "{v}")?;
+                            }
+                        }
+                        write!(f, ")")
+                    }
+                }
+
+                impl Display for response::Variant {
+                    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                        match self {
+                            response::Variant::StartOperation(_) => {
+                                write!(f, "StartOperation")
+                            }
+                            response::Variant::CancelOperation(_) => {
+                                write!(f, "CancelOperation")
+                            }
+                        }
+                    }
+                }
+
+                impl Display for HandlerError {
+                    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                        write!(f, "HandlerError")
+                    }
+                }
 
                 static SCHEME_PREFIX: &str = "temporal://";
 
@@ -2454,15 +2527,25 @@ pub mod temporal {
                             if let Some((sch, st)) =
                                 self.$sched_field.clone().zip(self.started_time.clone())
                             {
-                                let sch: Result<SystemTime, _> = sch.try_into();
-                                let st: Result<SystemTime, _> = st.try_into();
-                                if let (Ok(sch), Ok(st)) = (sch, st) {
-                                    return st.duration_since(sch).ok();
+                                if let Some(value) = elapsed_between_prost_times(sch, st) {
+                                    return value;
                                 }
                             }
                             None
                         }
                     };
+                }
+
+                fn elapsed_between_prost_times(
+                    from: prost_wkt_types::Timestamp,
+                    to: prost_wkt_types::Timestamp,
+                ) -> Option<Option<Duration>> {
+                    let from: Result<SystemTime, _> = from.try_into();
+                    let to: Result<SystemTime, _> = to.try_into();
+                    if let (Ok(from), Ok(to)) = (from, to) {
+                        return Some(to.duration_since(from).ok());
+                    }
+                    None
                 }
 
                 impl PollWorkflowTaskQueueResponse {
@@ -2509,6 +2592,23 @@ pub mod temporal {
 
                 impl PollActivityTaskQueueResponse {
                     sched_to_start_impl!(current_attempt_scheduled_time);
+                }
+
+                impl PollNexusTaskQueueResponse {
+                    pub fn sched_to_start(&self) -> Option<Duration> {
+                        if let Some((sch, st)) = self
+                            .request
+                            .as_ref()
+                            .and_then(|r| r.scheduled_time)
+                            .clone()
+                            .zip(SystemTime::now().try_into().ok())
+                        {
+                            if let Some(value) = elapsed_between_prost_times(sch, st) {
+                                return value;
+                            }
+                        }
+                        None
+                    }
                 }
 
                 impl QueryWorkflowResponse {

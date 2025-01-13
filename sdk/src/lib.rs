@@ -80,10 +80,7 @@ use std::{
 };
 use temporal_client::ClientOptionsBuilder;
 use temporal_sdk_core::Url;
-use temporal_sdk_core_api::{
-    errors::{PollActivityError, PollWfError},
-    Worker as CoreWorker,
-};
+use temporal_sdk_core_api::{errors::PollError, Worker as CoreWorker};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{ActivityExecutionResult, ActivityResolution},
@@ -284,7 +281,7 @@ impl Worker {
             async {
                 loop {
                     let activation = match common.worker.poll_workflow_activation().await {
-                        Err(PollWfError::ShutDown) => {
+                        Err(PollError::ShutDown) => {
                             break;
                         }
                         o => o?,
@@ -319,7 +316,7 @@ impl Worker {
                 if !act_half.activity_fns.is_empty() {
                     loop {
                         let activity = common.worker.poll_activity_task().await;
-                        if matches!(activity, Err(PollActivityError::ShutDown)) {
+                        if matches!(activity, Err(PollError::ShutDown)) {
                             break;
                         }
                         act_half.activity_task_handler(

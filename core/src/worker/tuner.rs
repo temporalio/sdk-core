@@ -11,8 +11,8 @@ use std::sync::{Arc, OnceLock};
 use temporal_sdk_core_api::{
     telemetry::metrics::TemporalMeter,
     worker::{
-        ActivitySlotKind, LocalActivitySlotKind, SlotKind, SlotSupplier, WorkerConfig, WorkerTuner,
-        WorkflowSlotKind,
+        ActivitySlotKind, LocalActivitySlotKind, NexusSlotKind, SlotKind, SlotSupplier,
+        WorkerConfig, WorkerTuner, WorkflowSlotKind,
     },
 };
 
@@ -21,6 +21,7 @@ pub struct TunerHolder {
     wft_supplier: Arc<dyn SlotSupplier<SlotKind = WorkflowSlotKind> + Send + Sync>,
     act_supplier: Arc<dyn SlotSupplier<SlotKind = ActivitySlotKind> + Send + Sync>,
     la_supplier: Arc<dyn SlotSupplier<SlotKind = LocalActivitySlotKind> + Send + Sync>,
+    nexus_supplier: Arc<dyn SlotSupplier<SlotKind = NexusSlotKind> + Send + Sync>,
     metrics: OnceLock<TemporalMeter>,
 }
 
@@ -39,6 +40,9 @@ pub struct TunerHolderOptions {
     /// Options for local activity slots
     #[builder(default, setter(strip_option))]
     pub local_activity_slot_options: Option<SlotSupplierOptions<LocalActivitySlotKind>>,
+    /// Options for nexus slots
+    #[builder(default, setter(strip_option))]
+    pub nexus_slot_options: Option<SlotSupplierOptions<NexusSlotKind>>,
     /// Options that will apply to all resource based slot suppliers. Must be set if any slot
     /// options are [SlotSupplierOptions::ResourceBased]
     #[builder(default, setter(strip_option))]
@@ -165,6 +169,7 @@ pub struct TunerBuilder {
         Option<Arc<dyn SlotSupplier<SlotKind = ActivitySlotKind> + Send + Sync>>,
     local_activity_slot_supplier:
         Option<Arc<dyn SlotSupplier<SlotKind = LocalActivitySlotKind> + Send + Sync>>,
+    nexus_slot_supplier: Option<Arc<dyn SlotSupplier<SlotKind = NexusSlotKind> + Send + Sync>>,
 }
 
 impl TunerBuilder {
@@ -178,6 +183,9 @@ impl TunerBuilder {
         }
         if let Some(m) = cfg.max_outstanding_local_activities {
             builder.local_activity_slot_supplier(Arc::new(FixedSizeSlotSupplier::new(m)));
+        }
+        if let Some(m) = cfg.max_outstanding_nexus_tasks {
+            builder.nexus_slot_supplier(Arc::new(FixedSizeSlotSupplier::new(m)));
         }
         builder
     }
@@ -209,6 +217,15 @@ impl TunerBuilder {
         self
     }
 
+    /// Set a nexus slot supplier
+    pub fn nexus_slot_supplier(
+        &mut self,
+        supplier: Arc<dyn SlotSupplier<SlotKind = NexusSlotKind> + Send + Sync>,
+    ) -> &mut Self {
+        self.nexus_slot_supplier = Some(supplier);
+        self
+    }
+
     /// Build a [WorkerTuner] from the configured slot suppliers
     pub fn build(&mut self) -> TunerHolder {
         TunerHolder {
@@ -222,6 +239,10 @@ impl TunerBuilder {
                 .unwrap_or_else(|| Arc::new(FixedSizeSlotSupplier::new(100))),
             la_supplier: self
                 .local_activity_slot_supplier
+                .clone()
+                .unwrap_or_else(|| Arc::new(FixedSizeSlotSupplier::new(100))),
+            nexus_supplier: self
+                .nexus_slot_supplier
                 .clone()
                 .unwrap_or_else(|| Arc::new(FixedSizeSlotSupplier::new(100))),
             metrics: OnceLock::new(),
@@ -246,6 +267,12 @@ impl WorkerTuner for TunerHolder {
         &self,
     ) -> Arc<dyn SlotSupplier<SlotKind = LocalActivitySlotKind> + Send + Sync> {
         self.la_supplier.clone()
+    }
+
+    fn nexus_task_slot_supplier(
+        &self,
+    ) -> Arc<dyn SlotSupplier<SlotKind = NexusSlotKind> + Send + Sync> {
+        self.nexus_supplier.clone()
     }
 
     fn attach_metrics(&self, m: TemporalMeter) {

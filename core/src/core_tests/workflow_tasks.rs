@@ -31,7 +31,7 @@ use std::{
 use temporal_client::WorkflowOptions;
 use temporal_sdk::{ActivityOptions, CancellableFuture, TimerOptions, WfContext};
 use temporal_sdk_core_api::{
-    errors::PollWfError,
+    errors::PollError,
     worker::{
         SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext, SlotSupplier,
         SlotSupplierPermit, WorkflowSlotKind,
@@ -2024,7 +2024,7 @@ async fn autocompletes_wft_no_work() {
     // work
     assert_matches!(
         core.poll_workflow_activation().await.unwrap_err(),
-        PollWfError::ShutDown
+        PollError::ShutDown
     );
 
     core.shutdown().await;
@@ -2590,7 +2590,7 @@ async fn _do_post_terminal_commands_test(
     .unwrap();
 
     let act = core.poll_workflow_activation().await;
-    assert_matches!(act.unwrap_err(), PollWfError::ShutDown);
+    assert_matches!(act.unwrap_err(), PollError::ShutDown);
     core.shutdown().await;
 }
 
@@ -2792,7 +2792,7 @@ async fn poller_wont_run_ahead_of_task_slots() {
         // This should end up getting shut down after the other routine finishes tasks
         assert_matches!(
             worker.poll_workflow_activation().await.unwrap_err(),
-            PollWfError::ShutDown
+            PollError::ShutDown
         );
     };
     // Wait for a bit concurrently with above, verify no extra tasks got taken, shutdown
@@ -3047,7 +3047,7 @@ async fn slot_provider_cant_hand_out_more_permits_than_cache_size() {
         // This should end up getting shut down after the other routine finishes tasks
         assert_matches!(
             worker.poll_workflow_activation().await.unwrap_err(),
-            PollWfError::ShutDown
+            PollError::ShutDown
         );
     };
     // Wait for a bit concurrently with above, verify no extra tasks got taken, shutdown
