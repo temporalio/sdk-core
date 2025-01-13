@@ -105,7 +105,7 @@ pub struct Worker {
     /// Manages local activities
     local_act_mgr: Arc<LocalActivityManager>,
     /// Manages Nexus tasks
-    nexus_mgr: Option<NexusManager>,
+    nexus_mgr: NexusManager,
     /// Has shutdown been called?
     shutdown_token: CancellationToken,
     /// Will be called at the end of each activation completion
@@ -159,12 +159,7 @@ impl WorkerTrait for Worker {
 
     #[instrument(skip(self))]
     async fn poll_nexus_task(&self) -> Result<NexusTask, PollError> {
-        if let Some(nm) = self.nexus_mgr.as_ref() {
-            nm.next_nexus_task().await
-        } else {
-            self.shutdown_token.cancelled().await;
-            Err(PollError::ShutDown)
-        }
+        self.nexus_mgr.next_nexus_task().await
     }
 
     async fn complete_workflow_activation(
@@ -427,21 +422,15 @@ impl Worker {
                     wft_stream.right_stream()
                 };
 
-                // TODO: Use config option or always have instance depending on if we combine tasks
-                //  polling or not
-                let nexus_poll_buffer = if false {
-                    None
-                } else {
-                    let np_metrics = metrics.with_new_attrs([nexus_poller()]);
-                    Some(Box::new(new_nexus_task_buffer(
-                        client.clone(),
-                        config.task_queue.clone(),
-                        config.max_concurrent_nexus_polls,
-                        nexus_slots.clone(),
-                        shutdown_token.child_token(),
-                        Some(move |np| np_metrics.record_num_pollers(np)),
-                    )) as BoxedNexusPoller)
-                };
+                let np_metrics = metrics.with_new_attrs([nexus_poller()]);
+                let nexus_poll_buffer = Box::new(new_nexus_task_buffer(
+                    client.clone(),
+                    config.task_queue.clone(),
+                    config.max_concurrent_nexus_polls,
+                    nexus_slots.clone(),
+                    shutdown_token.child_token(),
+                    Some(move |np| np_metrics.record_num_pollers(np)),
+                )) as BoxedNexusPoller;
 
                 #[cfg(test)]
                 let wft_stream = wft_stream.left_stream();
@@ -455,8 +444,7 @@ impl Worker {
             } => {
                 let ap = act_poller
                     .map(|ap| MockPermittedPollBuffer::new(Arc::new(act_slots.clone()), ap));
-                let np = nexus_poller
-                    .map(|np| MockPermittedPollBuffer::new(Arc::new(nexus_slots.clone()), np));
+                let np = MockPermittedPollBuffer::new(Arc::new(nexus_slots.clone()), nexus_poller);
                 let wft_semaphore = wft_slots.clone();
                 let wfs = wft_stream.then(move |s| {
                     let wft_semaphore = wft_semaphore.clone();
@@ -469,7 +457,7 @@ impl Worker {
                 (
                     wfs,
                     ap.map(|ap| Box::new(ap) as BoxedActPoller),
-                    np.map(|np| Box::new(np) as BoxedNexusPoller),
+                    Box::new(np) as BoxedNexusPoller,
                 )
             }
         };
@@ -506,14 +494,12 @@ impl Worker {
         };
         let la_sink = LAReqSink::new(local_act_mgr.clone());
 
-        let nexus_mgr = nexus_poller.map(|np| {
-            NexusManager::new(
-                np,
-                metrics.clone(),
-                config.graceful_shutdown_period,
-                shutdown_token.child_token(),
-            )
-        });
+        let nexus_mgr = NexusManager::new(
+            nexus_poller,
+            metrics.clone(),
+            config.graceful_shutdown_period,
+            shutdown_token.child_token(),
+        );
 
         let provider = SlotProvider::new(
             config.namespace.clone(),
@@ -609,9 +595,7 @@ impl Worker {
             acts.shutdown().await;
         }
         // Wait for nexus tasks to finish
-        if let Some(nm) = self.nexus_mgr.as_ref() {
-            nm.shutdown().await;
-        }
+        self.nexus_mgr.shutdown().await;
         // Wait for all permits to be released, but don't totally hang real-world shutdown.
         tokio::select! {
             _ = async { self.all_permits_tracker.lock().await.all_done().await } => {},
@@ -809,11 +793,9 @@ impl Worker {
         tt: TaskToken,
         status: nexus_task_completion::Status,
     ) -> Result<(), CompleteNexusError> {
-        if let Some(nm) = self.nexus_mgr.as_ref() {
-            nm.complete_task(tt, status, &*self.client).await
-        } else {
-            Err(CompleteNexusError::NexusNotEnabled)
-        }
+        self.nexus_mgr
+            .complete_task(tt, status, &*self.client)
+            .await
     }
 
     /// Request a workflow eviction
@@ -902,7 +884,7 @@ pub(crate) enum TaskPollers {
     Mocked {
         wft_stream: BoxStream<'static, Result<ValidPollWFTQResponse, tonic::Status>>,
         act_poller: Option<BoxedPoller<PollActivityTaskQueueResponse>>,
-        nexus_poller: Option<BoxedPoller<PollNexusTaskQueueResponse>>,
+        nexus_poller: BoxedPoller<PollNexusTaskQueueResponse>,
     },
 }
 

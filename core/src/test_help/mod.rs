@@ -167,7 +167,10 @@ pub(crate) fn mock_worker(mocks: MocksHolder) -> Worker {
         TaskPollers::Mocked {
             wft_stream: mocks.inputs.wft_stream,
             act_poller,
-            nexus_poller: mocks.inputs.nexus_poller,
+            nexus_poller: mocks
+                .inputs
+                .nexus_poller
+                .unwrap_or_else(|| mock_poller_from_resps([])),
         },
         None,
     )

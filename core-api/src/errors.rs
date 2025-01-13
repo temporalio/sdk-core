@@ -65,7 +65,6 @@ pub enum CompleteNexusError {
         reason: String,
     },
     /// Nexus has not been enabled on this worker. If a user registers any Nexus handlers, the
-    /// TODO: xxx option must be set to true.
     #[error("Nexus is not enabled on this worker")]
     NexusNotEnabled,
 }

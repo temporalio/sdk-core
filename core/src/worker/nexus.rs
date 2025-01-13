@@ -273,7 +273,14 @@ where
                                     });
                                 }));
                             } else {
-                                // TODO: Auto-respond as bad request
+                                // This could auto-respond and fail the nexus task, but given that
+                                // the server is going to try to parse this as well, and all we're
+                                // doing with this parsing is notifying the handler of a local
+                                // timeout, it seems reasonable to rely on server to handle this.
+                                warn!(
+                                    "Failed to parse nexus timeout header value '{}'",
+                                    timeout_str
+                                );
                             }
                         }
 
