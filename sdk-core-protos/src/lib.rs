@@ -629,6 +629,12 @@ pub mod coresdk {
                     workflow_activation_job::Variant::DoUpdate(_) => {
                         write!(f, "DoUpdate")
                     }
+                    workflow_activation_job::Variant::ResolveNexusOperationStart(_) => {
+                        write!(f, "ResolveNexusOperationStart")
+                    }
+                    workflow_activation_job::Variant::ResolveNexusOperation(_) => {
+                        write!(f, "ResolveNexusOperation")
+                    }
                 }
             }
         }
@@ -748,6 +754,50 @@ pub mod coresdk {
 
     pub mod child_workflow {
         tonic::include_proto!("coresdk.child_workflow");
+    }
+
+    pub mod nexus {
+        use crate::temporal::api::workflowservice::v1::PollNexusTaskQueueResponse;
+        use std::fmt::{Display, Formatter};
+
+        tonic::include_proto!("coresdk.nexus");
+
+        impl NexusTask {
+            /// Unwrap the inner server-delivered nexus task if that's what this is, else panic.
+            pub fn unwrap_task(self) -> PollNexusTaskQueueResponse {
+                if let Some(nexus_task::Variant::Task(t)) = self.variant {
+                    return t;
+                }
+                panic!("Nexus task did not contain a server task");
+            }
+
+            /// Get the task token
+            pub fn task_token(&self) -> &[u8] {
+                match &self.variant {
+                    Some(nexus_task::Variant::Task(t)) => t.task_token.as_slice(),
+                    Some(nexus_task::Variant::CancelTask(c)) => c.task_token.as_slice(),
+                    None => panic!("Nexus task did not contain a task token"),
+                }
+            }
+        }
+
+        impl Display for nexus_task_completion::Status {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "NexusTaskCompletion(")?;
+                match self {
+                    nexus_task_completion::Status::Completed(c) => {
+                        write!(f, "{c}")
+                    }
+                    nexus_task_completion::Status::Error(e) => {
+                        write!(f, "{e}")
+                    }
+                    nexus_task_completion::Status::AckCancel(_) => {
+                        write!(f, "AckCancel")
+                    }
+                }?;
+                write!(f, ")")
+            }
+        }
     }
 
     pub mod workflow_commands {
@@ -906,6 +956,18 @@ pub mod coresdk {
                     "UpdateResponse(protocol_instance_id: {}, response: {:?})",
                     self.protocol_instance_id, self.response
                 )
+            }
+        }
+
+        impl Display for ScheduleNexusOperation {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "ScheduleNexusOperation({})", self.seq)
+            }
+        }
+
+        impl Display for RequestCancelNexusOperation {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                write!(f, "RequestCancelNexusOperation({})", self.seq)
             }
         }
 
@@ -1563,6 +1625,13 @@ pub mod temporal {
                                 attributes: Some(a),
                                 user_metadata: Default::default(),
                             },
+                            a @ Attributes::RequestCancelNexusOperationCommandAttributes(_) => {
+                                Self {
+                                    command_type: CommandType::RequestCancelNexusOperation as i32,
+                                    attributes: Some(a),
+                                    user_metadata: Default::default(),
+                                }
+                            }
                             _ => unimplemented!(),
                         }
                     }
@@ -1790,6 +1859,21 @@ pub mod temporal {
                         )
                     }
                 }
+
+                impl From<workflow_commands::ScheduleNexusOperation> for command::Attributes {
+                    fn from(c: workflow_commands::ScheduleNexusOperation) -> Self {
+                        Self::ScheduleNexusOperationCommandAttributes(
+                            ScheduleNexusOperationCommandAttributes {
+                                endpoint: c.endpoint,
+                                service: c.service,
+                                operation: c.operation,
+                                input: c.input,
+                                schedule_to_close_timeout: c.schedule_to_close_timeout,
+                                nexus_header: c.nexus_header,
+                            },
+                        )
+                    }
+                }
             }
         }
         pub mod cloud {
@@ -1979,7 +2063,17 @@ pub mod temporal {
         }
         pub mod enums {
             pub mod v1 {
+                use crate::camel_case_to_screaming_snake;
+
                 tonic::include_proto!("temporal.api.enums.v1");
+
+                impl EventType {
+                    pub fn from_json_str(val: &str) -> Option<EventType> {
+                        let with_prefix =
+                            format!("EVENT_TYPE_{}", camel_case_to_screaming_snake(val));
+                        EventType::from_str_name(&with_prefix)
+                    }
+                }
             }
         }
         pub mod failure {
@@ -2041,6 +2135,8 @@ pub mod temporal {
                             | EventType::TimerStarted
                             | EventType::UpsertWorkflowSearchAttributes
                             | EventType::WorkflowPropertiesModified
+                            | EventType::NexusOperationScheduled
+                            | EventType::NexusOperationCancelRequested
                             | EventType::WorkflowExecutionCanceled
                             | EventType::WorkflowExecutionCompleted
                             | EventType::WorkflowExecutionContinuedAsNew
@@ -2085,6 +2181,12 @@ pub mod temporal {
                                 Attributes::WorkflowTaskCompletedEventAttributes(a) => Some(a.scheduled_event_id),
                                 Attributes::WorkflowTaskTimedOutEventAttributes(a) => Some(a.scheduled_event_id),
                                 Attributes::WorkflowTaskFailedEventAttributes(a) => Some(a.scheduled_event_id),
+                                Attributes::NexusOperationStartedEventAttributes(a) => Some(a.scheduled_event_id),
+                                Attributes::NexusOperationCompletedEventAttributes(a) => Some(a.scheduled_event_id),
+                                Attributes::NexusOperationFailedEventAttributes(a) => Some(a.scheduled_event_id),
+                                Attributes::NexusOperationTimedOutEventAttributes(a) => Some(a.scheduled_event_id),
+                                Attributes::NexusOperationCanceledEventAttributes(a) => Some(a.scheduled_event_id),
+                                Attributes::NexusOperationCancelRequestedEventAttributes(a) => Some(a.scheduled_event_id),
                                 _ => None
                             }
                         })
@@ -2288,7 +2390,123 @@ pub mod temporal {
         }
         pub mod nexus {
             pub mod v1 {
+                use crate::temporal::api::{
+                    common,
+                    common::v1::link::{workflow_event, WorkflowEvent},
+                    enums::v1::EventType,
+                };
+                use anyhow::{anyhow, bail};
+                use std::fmt::{Display, Formatter};
+                use tonic::transport::Uri;
+
                 tonic::include_proto!("temporal.api.nexus.v1");
+
+                impl Display for Response {
+                    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                        write!(f, "NexusResponse(",)?;
+                        match &self.variant {
+                            None => {}
+                            Some(v) => {
+                                write!(f, "{v}")?;
+                            }
+                        }
+                        write!(f, ")")
+                    }
+                }
+
+                impl Display for response::Variant {
+                    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                        match self {
+                            response::Variant::StartOperation(_) => {
+                                write!(f, "StartOperation")
+                            }
+                            response::Variant::CancelOperation(_) => {
+                                write!(f, "CancelOperation")
+                            }
+                        }
+                    }
+                }
+
+                impl Display for HandlerError {
+                    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                        write!(f, "HandlerError")
+                    }
+                }
+
+                static SCHEME_PREFIX: &str = "temporal://";
+
+                /// Attempt to parse a nexus lint into a workflow event link
+                pub fn workflow_event_link_from_nexus(
+                    l: &Link,
+                ) -> Result<common::v1::Link, anyhow::Error> {
+                    if !l.url.starts_with(SCHEME_PREFIX) {
+                        bail!("Invalid scheme for nexus link: {:?}", l.url);
+                    }
+                    // We strip the scheme/authority portion because of
+                    // https://github.com/hyperium/http/issues/696
+                    let no_authority_url = l.url.strip_prefix(SCHEME_PREFIX).unwrap();
+                    let uri = Uri::try_from(no_authority_url)?;
+                    let parts = uri.into_parts();
+                    let path = parts.path_and_query.ok_or_else(|| {
+                        anyhow!("Failed to parse nexus link, invalid path: {:?}", l)
+                    })?;
+                    let path_parts = path.path().split('/').collect::<Vec<_>>();
+                    if path_parts.get(1) != Some(&"namespaces") {
+                        bail!("Invalid path for nexus link: {:?}", l);
+                    }
+                    let namespace = path_parts.get(2).ok_or_else(|| {
+                        anyhow!("Failed to parse nexus link, no namespace: {:?}", l)
+                    })?;
+                    if path_parts.get(3) != Some(&"workflows") {
+                        bail!("Invalid path for nexus link, no workflows segment: {:?}", l);
+                    }
+                    let workflow_id = path_parts.get(4).ok_or_else(|| {
+                        anyhow!("Failed to parse nexus link, no workflow id: {:?}", l)
+                    })?;
+                    let run_id = path_parts
+                        .get(5)
+                        .ok_or_else(|| anyhow!("Failed to parse nexus link, no run id: {:?}", l))?;
+                    if path_parts.get(6) != Some(&"history") {
+                        bail!("Invalid path for nexus link, no history segment: {:?}", l);
+                    }
+                    let reference = if let Some(query) = path.query() {
+                        let mut eventref = workflow_event::EventReference::default();
+                        let query_parts = query.split('&').collect::<Vec<_>>();
+                        for qp in query_parts {
+                            let mut kv = qp.split('=');
+                            let key = kv.next().ok_or_else(|| {
+                                anyhow!("Failed to parse nexus link query parameter: {:?}", l)
+                            })?;
+                            let val = kv.next().ok_or_else(|| {
+                                anyhow!("Failed to parse nexus link query parameter: {:?}", l)
+                            })?;
+                            match key {
+                                "eventID" => {
+                                    eventref.event_id = val.parse().map_err(|_| {
+                                        anyhow!("Failed to parse nexus link event id: {:?}", l)
+                                    })?;
+                                }
+                                "eventType" => {
+                                    eventref.event_type =
+                                        EventType::from_json_str(val).unwrap_or_default().into()
+                                }
+                                _ => continue,
+                            }
+                        }
+                        Some(workflow_event::Reference::EventRef(eventref))
+                    } else {
+                        None
+                    };
+
+                    Ok(common::v1::Link {
+                        variant: Some(common::v1::link::Variant::WorkflowEvent(WorkflowEvent {
+                            namespace: namespace.to_string(),
+                            workflow_id: workflow_id.to_string(),
+                            run_id: run_id.to_string(),
+                            reference,
+                        })),
+                    })
+                }
             }
         }
         pub mod workflowservice {
@@ -2309,15 +2527,25 @@ pub mod temporal {
                             if let Some((sch, st)) =
                                 self.$sched_field.clone().zip(self.started_time.clone())
                             {
-                                let sch: Result<SystemTime, _> = sch.try_into();
-                                let st: Result<SystemTime, _> = st.try_into();
-                                if let (Ok(sch), Ok(st)) = (sch, st) {
-                                    return st.duration_since(sch).ok();
+                                if let Some(value) = elapsed_between_prost_times(sch, st) {
+                                    return value;
                                 }
                             }
                             None
                         }
                     };
+                }
+
+                fn elapsed_between_prost_times(
+                    from: prost_wkt_types::Timestamp,
+                    to: prost_wkt_types::Timestamp,
+                ) -> Option<Option<Duration>> {
+                    let from: Result<SystemTime, _> = from.try_into();
+                    let to: Result<SystemTime, _> = to.try_into();
+                    if let (Ok(from), Ok(to)) = (from, to) {
+                        return Some(to.duration_since(from).ok());
+                    }
+                    None
                 }
 
                 impl PollWorkflowTaskQueueResponse {
@@ -2366,6 +2594,23 @@ pub mod temporal {
                     sched_to_start_impl!(current_attempt_scheduled_time);
                 }
 
+                impl PollNexusTaskQueueResponse {
+                    pub fn sched_to_start(&self) -> Option<Duration> {
+                        if let Some((sch, st)) = self
+                            .request
+                            .as_ref()
+                            .and_then(|r| r.scheduled_time)
+                            .clone()
+                            .zip(SystemTime::now().try_into().ok())
+                        {
+                            if let Some(value) = elapsed_between_prost_times(sch, st) {
+                                return value;
+                            }
+                        }
+                        None
+                    }
+                }
+
                 impl QueryWorkflowResponse {
                     /// Unwrap a successful response as vec of payloads
                     pub fn unwrap(self) -> Vec<crate::temporal::api::common::v1::Payload> {
@@ -2389,6 +2634,25 @@ pub mod grpc {
             tonic::include_proto!("grpc.health.v1");
         }
     }
+}
+
+/// Case conversion, used for json -> proto enum string conversion
+pub fn camel_case_to_screaming_snake(val: &str) -> String {
+    let mut out = String::new();
+    let mut last_was_upper = true;
+    for c in val.chars() {
+        if c.is_uppercase() {
+            if !last_was_upper {
+                out.push('_');
+            }
+            out.push(c.to_ascii_uppercase());
+            last_was_upper = true;
+        } else {
+            out.push(c.to_ascii_uppercase());
+            last_was_upper = false;
+        }
+    }
+    out
 }
 
 #[cfg(test)]

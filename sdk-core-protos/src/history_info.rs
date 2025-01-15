@@ -56,10 +56,9 @@ impl HistoryInfo {
             let next_event = history.peek();
 
             if event.event_type == EventType::WorkflowTaskStarted as i32 {
-                let next_is_completed = next_event.map_or(false, |ne| {
-                    ne.event_type == EventType::WorkflowTaskCompleted as i32
-                });
-                let next_is_failed_or_timeout_or_term = next_event.map_or(false, |ne| {
+                let next_is_completed = next_event
+                    .is_some_and(|ne| ne.event_type == EventType::WorkflowTaskCompleted as i32);
+                let next_is_failed_or_timeout_or_term = next_event.is_some_and(|ne| {
                     matches!(
                         ne.event_type(),
                         EventType::WorkflowTaskFailed

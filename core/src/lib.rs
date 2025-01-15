@@ -60,7 +60,7 @@ use futures_util::Stream;
 use std::sync::Arc;
 use temporal_client::{ConfiguredClient, TemporalServiceClientWithMetrics};
 use temporal_sdk_core_api::{
-    errors::{CompleteActivityError, PollActivityError, PollWfError},
+    errors::{CompleteActivityError, PollError},
     telemetry::TelemetryOptions,
     Worker as WorkerTrait,
 };

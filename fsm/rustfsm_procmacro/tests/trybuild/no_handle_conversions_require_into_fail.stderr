@@ -2,7 +2,7 @@ error[E0277]: the trait bound `One: From<Two>` is not satisfied
   --> tests/trybuild/no_handle_conversions_require_into_fail.rs:11:5
    |
 11 |     Two --(B)--> One;
-   |     ^^^ the trait `From<Two>` is not implemented for `One`, which is required by `Two: Into<One>`
+   |     ^^^ the trait `From<Two>` is not implemented for `One`
    |
    = note: required for `Two` to implement `Into<One>`
 note: required by a bound in `TransitionResult::<Sm, Ds>::from`

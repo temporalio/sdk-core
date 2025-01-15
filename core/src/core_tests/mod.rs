@@ -10,14 +10,13 @@ mod workflow_cancels;
 mod workflow_tasks;
 
 use crate::{
-    errors::{PollActivityError, PollWfError},
+    errors::PollError,
     test_help::{build_mock_pollers, canned_histories, mock_worker, test_worker_cfg, MockPollCfg},
     worker::client::mocks::{mock_manual_workflow_client, mock_workflow_client},
     Worker,
 };
 use futures_util::FutureExt;
-use std::sync::LazyLock;
-use std::time::Duration;
+use std::{sync::LazyLock, time::Duration};
 use temporal_sdk_core_api::Worker as WorkerTrait;
 use temporal_sdk_core_protos::coresdk::workflow_completion::WorkflowActivationCompletion;
 use tokio::{sync::Barrier, time::sleep};
@@ -40,7 +39,7 @@ async fn after_shutdown_server_is_not_polled() {
     worker.shutdown().await;
     assert_matches!(
         worker.poll_workflow_activation().await.unwrap_err(),
-        PollWfError::ShutDown
+        PollError::ShutDown
     );
     worker.finalize_shutdown().await;
 }
@@ -86,11 +85,11 @@ async fn shutdown_interrupts_both_polls() {
     tokio::join! {
         async {
             assert_matches!(worker.poll_activity_task().await.unwrap_err(),
-                            PollActivityError::ShutDown);
+                            PollError::ShutDown);
         },
         async {
             assert_matches!(worker.poll_workflow_activation().await.unwrap_err(),
-                            PollWfError::ShutDown);
+                            PollError::ShutDown);
         },
         async {
             // Give polling a bit to get stuck, then shutdown

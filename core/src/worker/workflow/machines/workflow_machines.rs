@@ -27,6 +27,7 @@ use crate::{
                 activity_state_machine::ActivityMachine,
                 child_workflow_state_machine::ChildWorkflowMachine,
                 modify_workflow_properties_state_machine::modify_workflow_properties,
+                nexus_operation_state_machine::NexusOperationMachine,
                 patch_state_machine::VERSION_SEARCH_ATTR_KEY, update_state_machine::UpdateMachine,
                 upsert_search_attributes_state_machine::upsert_search_attrs_internal,
                 HistEventData,
@@ -1462,6 +1463,17 @@ impl WorkflowMachines {
                             &ur.protocol_instance_id
                         )));
                     }
+                }
+                WFCommandVariant::ScheduleNexusOperation(attrs) => {
+                    let seq = attrs.seq;
+                    self.add_cmd_to_wf_task(
+                        NexusOperationMachine::new_scheduled(attrs),
+                        cmd.metadata,
+                        CommandID::NexusOperation(seq).into(),
+                    );
+                }
+                WFCommandVariant::RequestCancelNexusOperation(attrs) => {
+                    self.process_cancellation(CommandID::NexusOperation(attrs.seq))?
                 }
                 WFCommandVariant::NoCommandsFromLang => (),
             }

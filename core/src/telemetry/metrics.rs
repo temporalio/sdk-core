@@ -48,6 +48,11 @@ struct Instruments {
     la_exec_latency: Arc<dyn HistogramDuration>,
     la_exec_succeeded_latency: Arc<dyn HistogramDuration>,
     la_total: Arc<dyn Counter>,
+    nexus_poll_no_task: Arc<dyn Counter>,
+    nexus_task_schedule_to_start_latency: Arc<dyn HistogramDuration>,
+    nexus_task_e2e_latency: Arc<dyn HistogramDuration>,
+    nexus_task_execution_latency: Arc<dyn HistogramDuration>,
+    nexus_task_execution_failed: Arc<dyn Counter>,
     worker_registered: Arc<dyn Counter>,
     num_pollers: Arc<dyn Gauge>,
     task_slots_available: Arc<dyn Gauge>,
@@ -225,6 +230,39 @@ impl MetricsContext {
         self.instruments.la_total.add(1, &self.kvs);
     }
 
+    /// A nexus long poll timed out
+    pub(crate) fn nexus_poll_timeout(&self) {
+        self.instruments.nexus_poll_no_task.add(1, &self.kvs);
+    }
+
+    /// Record nexus task schedule to start time
+    pub(crate) fn nexus_task_sched_to_start_latency(&self, dur: Duration) {
+        self.instruments
+            .nexus_task_schedule_to_start_latency
+            .record(dur, &self.kvs);
+    }
+
+    /// Record nexus task end-to-end time
+    pub(crate) fn nexus_task_e2e_latency(&self, dur: Duration) {
+        self.instruments
+            .nexus_task_e2e_latency
+            .record(dur, &self.kvs);
+    }
+
+    /// Record nexus task execution time
+    pub(crate) fn nexus_task_execution_latency(&self, dur: Duration) {
+        self.instruments
+            .nexus_task_execution_latency
+            .record(dur, &self.kvs);
+    }
+
+    /// Record a nexus task execution failure
+    pub(crate) fn nexus_task_execution_failed(&self) {
+        self.instruments
+            .nexus_task_execution_failed
+            .add(1, &self.kvs);
+    }
+
     /// A worker was registered
     pub(crate) fn worker_registered(&self) {
         self.instruments.worker_registered.add(1, &self.kvs);
@@ -386,6 +424,31 @@ impl Instruments {
                 description: "Count of local activities executed".into(),
                 unit: "".into(),
             }),
+            nexus_poll_no_task: meter.counter(MetricParameters {
+                name: "nexus_poll_no_task".into(),
+                description: "Count of nexus task queue poll timeouts (no new task)".into(),
+                unit: "".into(),
+            }),
+            nexus_task_schedule_to_start_latency: meter.histogram_duration(MetricParameters {
+                name: "nexus_task_schedule_to_start_latency".into(),
+                unit: "duration".into(),
+                description: "Histogram of nexus task schedule-to-start latencies".into(),
+            }),
+            nexus_task_e2e_latency: meter.histogram_duration(MetricParameters {
+                name: "nexus_task_endtoend_latency".into(),
+                unit: "duration".into(),
+                description: "Histogram of nexus task end-to-end latencies".into(),
+            }),
+            nexus_task_execution_latency: meter.histogram_duration(MetricParameters {
+                name: "nexus_task_execution_latency".into(),
+                unit: "duration".into(),
+                description: "Histogram of nexus task execution latencies".into(),
+            }),
+            nexus_task_execution_failed: meter.counter(MetricParameters {
+                name: "nexus_task_execution_failed".into(),
+                description: "Count of nexus task execution failures".into(),
+                unit: "".into(),
+            }),
             // name kept as worker start for compat with old sdk / what users expect
             worker_registered: meter.counter(MetricParameters {
                 name: "worker_start".into(),
@@ -452,6 +515,9 @@ pub(crate) fn workflow_sticky_poller() -> MetricKeyValue {
 pub(crate) fn activity_poller() -> MetricKeyValue {
     MetricKeyValue::new(KEY_POLLER_TYPE, "activity_task")
 }
+pub(crate) fn nexus_poller() -> MetricKeyValue {
+    MetricKeyValue::new(KEY_POLLER_TYPE, "nexus_task")
+}
 pub(crate) fn task_queue(tq: String) -> MetricKeyValue {
     MetricKeyValue::new(KEY_TASK_QUEUE, tq)
 }
@@ -470,18 +536,27 @@ pub(crate) fn activity_worker_type() -> MetricKeyValue {
 pub(crate) fn local_activity_worker_type() -> MetricKeyValue {
     MetricKeyValue::new(KEY_WORKER_TYPE, "LocalActivityWorker")
 }
+pub(crate) fn nexus_worker_type() -> MetricKeyValue {
+    MetricKeyValue::new(KEY_WORKER_TYPE, "NexusWorker")
+}
 pub(crate) fn eager(is_eager: bool) -> MetricKeyValue {
     MetricKeyValue::new(KEY_EAGER, is_eager)
 }
 pub(crate) enum FailureReason {
     Nondeterminism,
     Workflow,
+    Timeout,
+    NexusOperation(String),
+    NexusHandlerError(String),
 }
 impl Display for FailureReason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let str = match self {
-            FailureReason::Nondeterminism => "NonDeterminismError",
-            FailureReason::Workflow => "WorkflowError",
+            FailureReason::Nondeterminism => "NonDeterminismError".to_owned(),
+            FailureReason::Workflow => "WorkflowError".to_owned(),
+            FailureReason::Timeout => "timeout".to_owned(),
+            FailureReason::NexusOperation(op) => format!("operation_{}", op),
+            FailureReason::NexusHandlerError(op) => format!("handler_error_{}", op),
         };
         write!(f, "{}", str)
     }
@@ -886,7 +961,7 @@ mod tests {
         a1.set(Arc::new(DummyCustomAttrs(1))).unwrap();
         // Verify all metrics are created. This number will need to get updated any time a metric
         // is added.
-        let num_metrics = 30;
+        let num_metrics = 35;
         #[allow(clippy::needless_range_loop)] // Sorry clippy, this reads easier.
         for metric_num in 1..=num_metrics {
             let hole = assert_matches!(&events[metric_num],

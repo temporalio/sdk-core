@@ -19,15 +19,21 @@ mod integ_tests {
     mod worker_tests;
     mod workflow_tests;
 
-    use std::{env, str::FromStr};
+    use std::{env, str::FromStr, time::Duration};
     use temporal_client::WorkflowService;
     use temporal_sdk_core::{
         init_worker, ClientOptionsBuilder, ClientTlsConfig, CoreRuntime, TlsConfig,
         WorkflowClientTrait,
     };
     use temporal_sdk_core_api::worker::WorkerConfigBuilder;
-    use temporal_sdk_core_protos::temporal::api::workflowservice::v1::ListNamespacesRequest;
-    use temporal_sdk_core_test_utils::{get_integ_server_options, get_integ_telem_options};
+    use temporal_sdk_core_protos::temporal::api::{
+        nexus::v1::{endpoint_target, EndpointSpec, EndpointTarget},
+        operatorservice::v1::CreateNexusEndpointRequest,
+        workflowservice::v1::ListNamespacesRequest,
+    };
+    use temporal_sdk_core_test_utils::{
+        get_integ_server_options, get_integ_telem_options, rand_6_chars, CoreWfStarter,
+    };
     use url::Url;
 
     // Create a worker like a bridge would (unwraps aside)
@@ -102,5 +108,29 @@ mod integ_tests {
         con.list_workflow_executions(100, vec![], "".to_string())
             .await
             .unwrap();
+    }
+
+    pub(crate) async fn mk_nexus_endpoint(starter: &mut CoreWfStarter) -> String {
+        let client = starter.get_client().await;
+        let endpoint = format!("mycoolendpoint-{}", rand_6_chars());
+        let mut op_client = client.get_client().inner().operator_svc().clone();
+        op_client
+            .create_nexus_endpoint(CreateNexusEndpointRequest {
+                spec: Some(EndpointSpec {
+                    name: endpoint.to_owned(),
+                    description: None,
+                    target: Some(EndpointTarget {
+                        variant: Some(endpoint_target::Variant::Worker(endpoint_target::Worker {
+                            namespace: client.namespace().to_owned(),
+                            task_queue: starter.get_task_queue().to_owned(),
+                        })),
+                    }),
+                }),
+            })
+            .await
+            .unwrap();
+        // Endpoint creation can (as of server 1.25.2 at least) return before they are actually usable.
+        tokio::time::sleep(Duration::from_millis(800)).await;
+        endpoint
     }
 }

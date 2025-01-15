@@ -20,10 +20,11 @@ use crate::{
         UsedMeteredSemPermit,
     },
     internal_flags::InternalFlags,
+    pollers::TrackedPermittedTqResp,
     protosext::{legacy_query_failure, protocol_messages::IncomingProtocolMessage},
     telemetry::{set_trace_subscriber_for_current_thread, TelemetryInstance, VecDisplayer},
     worker::{
-        activities::{ActivitiesFromWFTsHandle, LocalActivityManager, TrackedPermittedTqResp},
+        activities::{ActivitiesFromWFTsHandle, LocalActivityManager},
         client::{WorkerClient, WorkflowTaskCompletion},
         workflow::{
             history_update::HistoryPaginator,
@@ -55,7 +56,7 @@ use std::{
     time::{Duration, Instant},
 };
 use temporal_sdk_core_api::{
-    errors::{CompleteWfError, PollWfError},
+    errors::{CompleteWfError, PollError},
     worker::{ActivitySlotKind, WorkerConfig, WorkflowSlotKind},
 };
 use temporal_sdk_core_protos::{
@@ -100,7 +101,7 @@ const WFT_HEARTBEAT_TIMEOUT_FRACTION: f32 = 0.8;
 const MAX_EAGER_ACTIVITY_RESERVATIONS_PER_WORKFLOW_TASK: usize = 3;
 
 type Result<T, E = WFMachinesError> = result::Result<T, E>;
-type BoxedActivationStream = BoxStream<'static, Result<ActivationOrAuto, PollWfError>>;
+type BoxedActivationStream = BoxStream<'static, Result<ActivationOrAuto, PollError>>;
 type InternalFlagsRef = Rc<RefCell<InternalFlags>>;
 
 /// Centralizes all state related to workflows and workflow tasks
@@ -248,7 +249,7 @@ impl Workflows {
         }
     }
 
-    pub(super) async fn next_workflow_activation(&self) -> Result<WorkflowActivation, PollWfError> {
+    pub(super) async fn next_workflow_activation(&self) -> Result<WorkflowActivation, PollError> {
         self.ever_polled.store(true, atomic::Ordering::Release);
         loop {
             let al = {
@@ -257,7 +258,7 @@ impl Workflows {
                 if let Some(beginner) = beginner.take() {
                     let _ = beginner.send(());
                 }
-                stream.next().await.unwrap_or(Err(PollWfError::ShutDown))?
+                stream.next().await.unwrap_or(Err(PollError::ShutDown))?
             };
             match al {
                 ActivationOrAuto::LangActivation(mut act)
@@ -1168,6 +1169,8 @@ enum WFCommandVariant {
     UpsertSearchAttributes(UpsertWorkflowSearchAttributes),
     ModifyWorkflowProperties(ModifyWorkflowProperties),
     UpdateResponse(UpdateResponse),
+    ScheduleNexusOperation(ScheduleNexusOperation),
+    RequestCancelNexusOperation(RequestCancelNexusOperation),
 }
 
 impl TryFrom<WorkflowCommand> for WFCommand {
@@ -1223,6 +1226,12 @@ impl TryFrom<WorkflowCommand> for WFCommand {
                 WFCommandVariant::ModifyWorkflowProperties(s)
             }
             workflow_command::Variant::UpdateResponse(s) => WFCommandVariant::UpdateResponse(s),
+            workflow_command::Variant::ScheduleNexusOperation(s) => {
+                WFCommandVariant::ScheduleNexusOperation(s)
+            }
+            workflow_command::Variant::RequestCancelNexusOperation(s) => {
+                WFCommandVariant::RequestCancelNexusOperation(s)
+            }
         };
         Ok(Self {
             variant,
@@ -1256,6 +1265,7 @@ enum CommandID {
     ChildWorkflowStart(u32),
     SignalExternal(u32),
     CancelExternal(u32),
+    NexusOperation(u32),
 }
 
 /// Details remembered from the workflow execution started event that we may need to recall later.

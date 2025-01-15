@@ -44,7 +44,7 @@ lru = "0.12"
 mockall = "0.13"
 opentelemetry = { workspace = true, features = ["metrics"], optional = true }
 opentelemetry_sdk = { version = "0.26", features = ["rt-tokio", "metrics"], optional = true }
-opentelemetry-otlp = { version = "0.26", features = ["tokio", "metrics", "tls", "http-proto", "reqwest-client",], optional = true }
+opentelemetry-otlp = { version = "0.26", features = ["tokio", "metrics", "tls", "http-proto", "reqwest-client", ], optional = true }
 opentelemetry-prometheus = { git = "https://github.com/open-telemetry/opentelemetry-rust.git", rev = "e911383", optional = true }
 parking_lot = { version = "0.12", features = ["send_guard"] }
 pid = "4.0"
@@ -97,15 +97,13 @@ temporal-sdk-core-test-utils = { path = "../test-utils" }
 temporal-sdk = { path = "../sdk" }
 tokio-stream = { version = "0.1", features = ["net"] }
 
-[build-dependencies]
-tonic-build = { workspace = true }
-
 [[test]]
 name = "integ_tests"
 path = "../tests/main.rs"
 # Prevents autodiscovery, and hence these getting run with `cargo test`. Run with
 # `cargo test --test integ_tests`
 test = false
+required-features = ["temporal-sdk-core-protos/serde_serialize"]
 
 [[test]]
 name = "heavy_tests"

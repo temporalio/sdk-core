@@ -11,7 +11,7 @@ use crate::{
             MockWorkerClient,
         },
     },
-    PollActivityError, PollWfError,
+    PollError,
 };
 use futures_util::{stream, stream::StreamExt};
 use std::{cell::RefCell, time::Duration};
@@ -53,7 +53,7 @@ async fn after_shutdown_of_worker_get_shutdown_err() {
         // Shutdown proceeds if the only outstanding activations are evictions
         assert_matches!(
             worker.poll_workflow_activation().await.unwrap_err(),
-            PollWfError::ShutDown
+            PollError::ShutDown
         );
     });
 }
@@ -87,7 +87,7 @@ async fn shutdown_worker_can_complete_pending_activation() {
         // Shutdown proceeds if the only outstanding activations are evictions
         assert_matches!(
             worker.poll_workflow_activation().await.unwrap_err(),
-            PollWfError::ShutDown
+            PollError::ShutDown
         );
     });
 }
@@ -120,7 +120,7 @@ async fn worker_shutdown_during_poll_doesnt_deadlock() {
         let _ = tx.send(true);
     };
     let (pollres, _) = tokio::join!(pollfut, shutdownfut);
-    assert_matches!(pollres.unwrap_err(), PollWfError::ShutDown);
+    assert_matches!(pollres.unwrap_err(), PollError::ShutDown);
     worker.finalize_shutdown().await;
 }
 
@@ -153,11 +153,11 @@ async fn can_shutdown_local_act_only_worker_when_act_polling() {
             // We need to see workflow poll return shutdown before activity poll will
             assert_matches!(
                 worker.poll_workflow_activation().await.unwrap_err(),
-                PollWfError::ShutDown
+                PollError::ShutDown
             );
             assert_matches!(
                 worker.poll_activity_task().await.unwrap_err(),
-                PollActivityError::ShutDown
+                PollError::ShutDown
             );
         }
     );
@@ -187,7 +187,7 @@ async fn complete_with_task_not_found_during_shutdown() {
         // This will return shutdown once the completion goes through
         assert_matches!(
             core.poll_workflow_activation().await.unwrap_err(),
-            PollWfError::ShutDown
+            PollError::ShutDown
         );
     };
     let complete_fut = async {
@@ -284,12 +284,12 @@ async fn worker_can_shutdown_after_never_polling_ok(#[values(true, false)] poll_
         // Must continue polling until polls return shutdown.
         if poll_workflow {
             let res = core.poll_workflow_activation().await.unwrap_err();
-            if !matches!(res, PollWfError::ShutDown) {
+            if !matches!(res, PollError::ShutDown) {
                 continue;
             }
         }
         let res = core.poll_activity_task().await.unwrap_err();
-        if !matches!(res, PollActivityError::ShutDown) {
+        if !matches!(res, PollError::ShutDown) {
             continue;
         }
         core.finalize_shutdown().await;
@@ -356,7 +356,7 @@ async fn worker_shutdown_api(#[case] use_cache: bool, #[case] api_success: bool)
         // Shutdown proceeds if the only outstanding activations are evictions
         assert_matches!(
             worker.poll_workflow_activation().await.unwrap_err(),
-            PollWfError::ShutDown
+            PollError::ShutDown
         );
     });
 }

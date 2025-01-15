@@ -8,6 +8,7 @@ mod determinism;
 mod eager;
 mod local_activities;
 mod modify_wf_properties;
+mod nexus;
 mod patches;
 mod replay;
 mod resets;
@@ -29,7 +30,7 @@ use temporal_sdk::{
     WorkflowResult,
 };
 use temporal_sdk_core::{replay::HistoryForReplay, CoreRuntime};
-use temporal_sdk_core_api::errors::{PollWfError, WorkflowErrorType};
+use temporal_sdk_core_api::errors::{PollError, WorkflowErrorType};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::ActivityExecutionResult,
@@ -143,14 +144,14 @@ async fn shutdown_aborts_actively_blocked_poll() {
     });
     assert_matches!(
         core.poll_workflow_activation().await.unwrap_err(),
-        PollWfError::ShutDown
+        PollError::ShutDown
     );
     handle.await.unwrap();
     // Ensure double-shutdown doesn't explode
     core.shutdown().await;
     assert_matches!(
         core.poll_workflow_activation().await.unwrap_err(),
-        PollWfError::ShutDown
+        PollError::ShutDown
     );
 }
 

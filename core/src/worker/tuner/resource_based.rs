@@ -11,9 +11,9 @@ use std::{
 use temporal_sdk_core_api::{
     telemetry::metrics::{CoreMeter, GaugeF64, MetricAttributes, TemporalMeter},
     worker::{
-        ActivitySlotKind, LocalActivitySlotKind, SlotInfo, SlotInfoTrait, SlotKind, SlotKindType,
-        SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext, SlotSupplier,
-        SlotSupplierPermit, WorkerTuner, WorkflowSlotKind,
+        ActivitySlotKind, LocalActivitySlotKind, NexusSlotKind, SlotInfo, SlotInfoTrait, SlotKind,
+        SlotKindType, SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext,
+        SlotSupplier, SlotSupplierPermit, WorkerTuner, WorkflowSlotKind,
     },
 };
 use tokio::{sync::watch, task::JoinHandle};
@@ -30,6 +30,7 @@ pub struct ResourceBasedTuner<MI> {
     wf_opts: Option<ResourceSlotOptions>,
     act_opts: Option<ResourceSlotOptions>,
     la_opts: Option<ResourceSlotOptions>,
+    nexus_opts: Option<ResourceSlotOptions>,
 }
 
 impl ResourceBasedTuner<RealSysInfo> {
@@ -59,6 +60,7 @@ impl<MI> ResourceBasedTuner<MI> {
             wf_opts: None,
             act_opts: None,
             la_opts: None,
+            nexus_opts: None,
         }
     }
 
@@ -79,6 +81,12 @@ impl<MI> ResourceBasedTuner<MI> {
         self.la_opts = Some(opts);
         self
     }
+
+    /// Set nexus slot options
+    pub fn with_nexus_slots_options(&mut self, opts: ResourceSlotOptions) -> &mut Self {
+        self.nexus_opts = Some(opts);
+        self
+    }
 }
 
 const DEFAULT_WF_SLOT_OPTS: ResourceSlotOptions = ResourceSlotOptions {
@@ -90,6 +98,13 @@ const DEFAULT_ACT_SLOT_OPTS: ResourceSlotOptions = ResourceSlotOptions {
     min_slots: 1,
     max_slots: 10_000,
     ramp_throttle: Duration::from_millis(50),
+};
+const DEFAULT_NEXUS_SLOT_OPTS: ResourceSlotOptions = ResourceSlotOptions {
+    min_slots: 1,
+    max_slots: 10_000,
+    // No ramp is chosen under the assumption that nexus tasks are unlikely to use many resources
+    // and would prefer lowest latency over protection against oversubscription.
+    ramp_throttle: Duration::from_millis(0),
 };
 
 /// Options for a specific slot type
@@ -372,6 +387,13 @@ impl<MI: SystemResourceInfo + Sync + Send + 'static> WorkerTuner for ResourceBas
         &self,
     ) -> Arc<dyn SlotSupplier<SlotKind = LocalActivitySlotKind> + Send + Sync> {
         let o = self.la_opts.unwrap_or(DEFAULT_ACT_SLOT_OPTS);
+        self.slots.as_kind(o)
+    }
+
+    fn nexus_task_slot_supplier(
+        &self,
+    ) -> Arc<dyn SlotSupplier<SlotKind = NexusSlotKind> + Send + Sync> {
+        let o = self.nexus_opts.unwrap_or(DEFAULT_NEXUS_SLOT_OPTS);
         self.slots.as_kind(o)
     }
 

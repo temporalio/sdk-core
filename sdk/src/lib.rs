@@ -56,11 +56,14 @@ pub use temporal_client::Namespace;
 use tracing::{field, Instrument, Span};
 pub use workflow_context::{
     ActivityOptions, CancellableFuture, ChildWorkflow, ChildWorkflowOptions, LocalActivityOptions,
-    PendingChildWorkflow, Signal, SignalData, SignalWorkflowOptions, StartedChildWorkflow,
-    TimerOptions, WfContext,
+    NexusOperationOptions, PendingChildWorkflow, Signal, SignalData, SignalWorkflowOptions,
+    StartedChildWorkflow, TimerOptions, WfContext,
 };
 
-use crate::{interceptors::WorkerInterceptor, workflow_context::ChildWfCommon};
+use crate::{
+    interceptors::WorkerInterceptor,
+    workflow_context::{ChildWfCommon, NexusUnblockData, StartedNexusOperation},
+};
 use anyhow::{anyhow, bail, Context};
 use app_data::AppData;
 use futures_util::{future::BoxFuture, FutureExt, StreamExt, TryFutureExt, TryStreamExt};
@@ -77,19 +80,17 @@ use std::{
 };
 use temporal_client::ClientOptionsBuilder;
 use temporal_sdk_core::Url;
-use temporal_sdk_core_api::{
-    errors::{PollActivityError, PollWfError},
-    Worker as CoreWorker,
-};
+use temporal_sdk_core_api::{errors::PollError, Worker as CoreWorker};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{ActivityExecutionResult, ActivityResolution},
         activity_task::{activity_task, ActivityTask},
         child_workflow::ChildWorkflowResult,
         common::NamespacedWorkflowExecution,
+        nexus::NexusOperationResult,
         workflow_activation::{
             resolve_child_workflow_execution_start::Status as ChildWorkflowStartStatus,
-            workflow_activation_job::Variant, WorkflowActivation,
+            resolve_nexus_operation_start, workflow_activation_job::Variant, WorkflowActivation,
         },
         workflow_commands::{workflow_command, ContinueAsNewWorkflowExecution, WorkflowCommand},
         workflow_completion::WorkflowActivationCompletion,
@@ -280,7 +281,7 @@ impl Worker {
             async {
                 loop {
                     let activation = match common.worker.poll_workflow_activation().await {
-                        Err(PollWfError::ShutDown) => {
+                        Err(PollError::ShutDown) => {
                             break;
                         }
                         o => o?,
@@ -315,7 +316,7 @@ impl Worker {
                 if !act_half.activity_fns.is_empty() {
                     loop {
                         let activity = common.worker.poll_activity_task().await;
-                        if matches!(activity, Err(PollActivityError::ShutDown)) {
+                        if matches!(activity, Err(PollError::ShutDown)) {
                             break;
                         }
                         act_half.activity_task_handler(
@@ -601,6 +602,8 @@ enum UnblockEvent {
     WorkflowComplete(u32, Box<ChildWorkflowResult>),
     SignalExternal(u32, Option<Failure>),
     CancelExternal(u32, Option<Failure>),
+    NexusOperationStart(u32, Box<resolve_nexus_operation_start::Status>),
+    NexusOperationComplete(u32, Box<NexusOperationResult>),
 }
 
 /// Result of awaiting on a timer
@@ -698,6 +701,42 @@ impl Unblockable for CancelExternalWfResult {
     }
 }
 
+type NexusStartResult = Result<StartedNexusOperation, Failure>;
+impl Unblockable for NexusStartResult {
+    type OtherDat = NexusUnblockData;
+    fn unblock(ue: UnblockEvent, od: Self::OtherDat) -> Self {
+        match ue {
+            UnblockEvent::NexusOperationStart(_, result) => match *result {
+                resolve_nexus_operation_start::Status::OperationId(op_id) => {
+                    Ok(StartedNexusOperation {
+                        operation_id: Some(op_id),
+                        unblock_dat: od,
+                    })
+                }
+                resolve_nexus_operation_start::Status::StartedSync(_) => {
+                    Ok(StartedNexusOperation {
+                        operation_id: None,
+                        unblock_dat: od,
+                    })
+                }
+                resolve_nexus_operation_start::Status::CancelledBeforeStart(f) => Err(f),
+            },
+            _ => panic!("Invalid unblock event for nexus operation"),
+        }
+    }
+}
+
+impl Unblockable for NexusOperationResult {
+    type OtherDat = ();
+
+    fn unblock(ue: UnblockEvent, _: Self::OtherDat) -> Self {
+        match ue {
+            UnblockEvent::NexusOperationComplete(_, result) => *result,
+            _ => panic!("Invalid unblock event for nexus operation complete"),
+        }
+    }
+}
+
 /// Identifier for cancellable operations
 #[derive(Debug, Clone)]
 pub enum CancellableID {
@@ -718,6 +757,8 @@ pub enum CancellableID {
         /// Identifying information about the workflow to be cancelled
         execution: NamespacedWorkflowExecution,
     },
+    /// A nexus operation (waiting for start)
+    NexusOp(u32),
 }
 
 impl CancellableID {
@@ -730,6 +771,7 @@ impl CancellableID {
             CancellableID::ChildWorkflow(seq) => *seq,
             CancellableID::SignalExternalWorkflow(seq) => *seq,
             CancellableID::ExternalWorkflow { seqnum, .. } => *seqnum,
+            CancellableID::NexusOp(seq) => *seq,
         }
     }
 }
@@ -745,6 +787,10 @@ enum RustWfCmd {
     SubscribeChildWorkflowCompletion(CommandSubscribeChildWorkflowCompletion),
     SubscribeSignal(String, UnboundedSender<SignalData>),
     RegisterUpdate(String, UpdateFunctions),
+    SubscribeNexusOperationCompletion {
+        seq: u32,
+        unblocker: oneshot::Sender<UnblockEvent>,
+    },
 }
 
 struct CommandCreateRequest {

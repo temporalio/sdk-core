@@ -45,6 +45,8 @@ message WorkflowCommand {
         UpsertWorkflowSearchAttributes upsert_workflow_search_attributes = 18;
         ModifyWorkflowProperties modify_workflow_properties = 19;
         UpdateResponse update_response = 20;
+        ScheduleNexusOperation schedule_nexus_operation = 21;
+        RequestCancelNexusOperation request_cancel_nexus_operation = 22;
     }
 }
 
@@ -337,4 +339,38 @@ message UpdateResponse {
         // Must be sent once the update handler completes successfully.
         temporal.api.common.v1.Payload completed = 4;
     }
+}
+
+// A request to begin a Nexus operation
+message ScheduleNexusOperation {
+    // Lang's incremental sequence number, used as the operation identifier
+    uint32 seq = 1;
+    // Endpoint name, must exist in the endpoint registry or this command will fail.
+    string endpoint = 2;
+    // Service name.
+    string service = 3;
+    // Operation name.
+    string operation = 4;
+    // Input for the operation. The server converts this into Nexus request content and the
+    // appropriate content headers internally when sending the StartOperation request. On the
+    // handler side, if it is also backed by Temporal, the content is transformed back to the
+    // original Payload sent in this command.
+    temporal.api.common.v1.Payload input = 5;
+    // Schedule-to-close timeout for this operation.
+    // Indicates how long the caller is willing to wait for operation completion.
+    // Calls are retried internally by the server.
+    google.protobuf.Duration schedule_to_close_timeout = 6;
+    // Header to attach to the Nexus request.
+    // Users are responsible for encrypting sensitive data in this header as it is stored in
+    // workflow history and transmitted to external services as-is. This is useful for propagating
+    // tracing information. Note these headers are not the same as Temporal headers on internal
+    // activities and child workflows, these are transmitted to Nexus operations that may be
+    // external and are not traditional payloads.
+    map<string, string> nexus_header = 7;
+}
+
+// Request cancellation of a nexus operation started via `ScheduleNexusOperation`
+message RequestCancelNexusOperation {
+    // Lang's incremental sequence number as passed to `ScheduleNexusOperation`
+    uint32 seq = 1;
 }

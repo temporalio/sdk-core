@@ -6,7 +6,7 @@ use temporal_sdk_core_protos::{
         child_workflow::ChildWorkflowCancellationType,
         workflow_commands::{
             ActivityCancellationType, ScheduleActivity, ScheduleLocalActivity,
-            StartChildWorkflowExecution, WorkflowCommand,
+            ScheduleNexusOperation, StartChildWorkflowExecution, WorkflowCommand,
         },
     },
     temporal::api::{
@@ -361,6 +361,55 @@ impl From<Duration> for TimerOptions {
         TimerOptions {
             duration,
             ..Default::default()
+        }
+    }
+}
+
+/// Options for Nexus Operations
+#[derive(Default, Debug, Clone)]
+pub struct NexusOperationOptions {
+    /// Endpoint name, must exist in the endpoint registry or this command will fail.
+    pub endpoint: String,
+    /// Service name.
+    pub service: String,
+    /// Operation name.
+    pub operation: String,
+    /// Input for the operation. The server converts this into Nexus request content and the
+    /// appropriate content headers internally when sending the StartOperation request. On the
+    /// handler side, if it is also backed by Temporal, the content is transformed back to the
+    /// original Payload sent in this command.
+    pub input: Option<Payload>,
+    /// Schedule-to-close timeout for this operation.
+    /// Indicates how long the caller is willing to wait for operation completion.
+    /// Calls are retried internally by the server.
+    pub schedule_to_close_timeout: Option<Duration>,
+    /// Header to attach to the Nexus request.
+    /// Users are responsible for encrypting sensitive data in this header as it is stored in
+    /// workflow history and transmitted to external services as-is. This is useful for propagating
+    /// tracing information. Note these headers are not the same as Temporal headers on internal
+    /// activities and child workflows, these are transmitted to Nexus operations that may be
+    /// external and are not traditional payloads.
+    pub nexus_header: HashMap<String, String>,
+}
+
+impl IntoWorkflowCommand for NexusOperationOptions {
+    fn into_command(self, seq: u32) -> WorkflowCommand {
+        WorkflowCommand {
+            user_metadata: None,
+            variant: Some(
+                ScheduleNexusOperation {
+                    seq,
+                    endpoint: self.endpoint,
+                    service: self.service,
+                    operation: self.operation,
+                    input: self.input,
+                    schedule_to_close_timeout: self
+                        .schedule_to_close_timeout
+                        .and_then(|t| t.try_into().ok()),
+                    nexus_header: self.nexus_header,
+                }
+                .into(),
+            ),
         }
     }
 }
