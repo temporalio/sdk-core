@@ -20,10 +20,11 @@ use crate::{
         UsedMeteredSemPermit,
     },
     internal_flags::InternalFlags,
+    pollers::TrackedPermittedTqResp,
     protosext::{legacy_query_failure, protocol_messages::IncomingProtocolMessage},
     telemetry::{set_trace_subscriber_for_current_thread, TelemetryInstance, VecDisplayer},
     worker::{
-        activities::{ActivitiesFromWFTsHandle, LocalActivityManager, TrackedPermittedTqResp},
+        activities::{ActivitiesFromWFTsHandle, LocalActivityManager},
         client::{WorkerClient, WorkflowTaskCompletion},
         workflow::{
             history_update::HistoryPaginator,
@@ -55,7 +56,7 @@ use std::{
     time::{Duration, Instant},
 };
 use temporal_sdk_core_api::{
-    errors::{CompleteWfError, PollWfError},
+    errors::{CompleteWfError, PollError},
     worker::{ActivitySlotKind, WorkerConfig, WorkflowSlotKind},
 };
 use temporal_sdk_core_protos::{
@@ -76,7 +77,7 @@ use temporal_sdk_core_protos::{
         enums::v1::WorkflowTaskFailedCause,
         protocol::v1::Message as ProtocolMessage,
         query::v1::WorkflowQuery,
-        sdk::v1::WorkflowTaskCompletedMetadata,
+        sdk::v1::{UserMetadata, WorkflowTaskCompletedMetadata},
         taskqueue::v1::StickyExecutionAttributes,
         workflowservice::v1::{get_system_info_response, PollActivityTaskQueueResponse},
     },
@@ -100,7 +101,7 @@ const WFT_HEARTBEAT_TIMEOUT_FRACTION: f32 = 0.8;
 const MAX_EAGER_ACTIVITY_RESERVATIONS_PER_WORKFLOW_TASK: usize = 3;
 
 type Result<T, E = WFMachinesError> = result::Result<T, E>;
-type BoxedActivationStream = BoxStream<'static, Result<ActivationOrAuto, PollWfError>>;
+type BoxedActivationStream = BoxStream<'static, Result<ActivationOrAuto, PollError>>;
 type InternalFlagsRef = Rc<RefCell<InternalFlags>>;
 
 /// Centralizes all state related to workflows and workflow tasks
@@ -248,7 +249,7 @@ impl Workflows {
         }
     }
 
-    pub(super) async fn next_workflow_activation(&self) -> Result<WorkflowActivation, PollWfError> {
+    pub(super) async fn next_workflow_activation(&self) -> Result<WorkflowActivation, PollError> {
         self.ever_polled.store(true, atomic::Ordering::Release);
         loop {
             let al = {
@@ -257,7 +258,7 @@ impl Workflows {
                 if let Some(beginner) = beginner.take() {
                     let _ = beginner.send(());
                 }
-                stream.next().await.unwrap_or(Err(PollWfError::ShutDown))?
+                stream.next().await.unwrap_or(Err(PollError::ShutDown))?
             };
             match al {
                 ActivationOrAuto::LangActivation(mut act)
@@ -1057,9 +1058,10 @@ fn validate_completion(
                 })?;
 
             if commands.len() > 1
-                && commands.iter().any(
-                    |c| matches!(c, WFCommand::QueryResponse(q) if q.query_id == LEGACY_QUERY_ID),
-                )
+                && commands.iter().any(|c: &WFCommand| {
+                    matches!(&c.variant,
+                        WFCommandVariant::QueryResponse(q) if q.query_id == LEGACY_QUERY_ID)
+                })
             {
                 return Err(CompleteWfError::MalformedWorkflowCompletion {
                     reason: format!(
@@ -1136,8 +1138,15 @@ struct EmptyWorkflowCommandErr;
 /// [DrivenWorkflow]s respond with these when called, to indicate what they want to do next.
 /// EX: Create a new timer, complete the workflow, etc.
 #[derive(Debug, derive_more::From, derive_more::Display)]
+#[display("{}", variant)]
+struct WFCommand {
+    variant: WFCommandVariant,
+    metadata: Option<UserMetadata>,
+}
+
+#[derive(Debug, derive_more::From, derive_more::Display)]
 #[allow(clippy::large_enum_variant)]
-enum WFCommand {
+enum WFCommandVariant {
     /// Returned when we need to wait for the lang sdk to send us something
     NoCommandsFromLang,
     AddActivity(ScheduleActivity),
@@ -1160,56 +1169,78 @@ enum WFCommand {
     UpsertSearchAttributes(UpsertWorkflowSearchAttributes),
     ModifyWorkflowProperties(ModifyWorkflowProperties),
     UpdateResponse(UpdateResponse),
+    ScheduleNexusOperation(ScheduleNexusOperation),
+    RequestCancelNexusOperation(RequestCancelNexusOperation),
 }
 
 impl TryFrom<WorkflowCommand> for WFCommand {
     type Error = EmptyWorkflowCommandErr;
 
     fn try_from(c: WorkflowCommand) -> result::Result<Self, Self::Error> {
-        match c.variant.ok_or(EmptyWorkflowCommandErr)? {
-            workflow_command::Variant::StartTimer(s) => Ok(Self::AddTimer(s)),
-            workflow_command::Variant::CancelTimer(s) => Ok(Self::CancelTimer(s)),
-            workflow_command::Variant::ScheduleActivity(s) => Ok(Self::AddActivity(s)),
+        let variant = match c.variant.ok_or(EmptyWorkflowCommandErr)? {
+            workflow_command::Variant::StartTimer(s) => WFCommandVariant::AddTimer(s),
+            workflow_command::Variant::CancelTimer(s) => WFCommandVariant::CancelTimer(s),
+            workflow_command::Variant::ScheduleActivity(s) => WFCommandVariant::AddActivity(s),
             workflow_command::Variant::RequestCancelActivity(s) => {
-                Ok(Self::RequestCancelActivity(s))
+                WFCommandVariant::RequestCancelActivity(s)
             }
             workflow_command::Variant::CompleteWorkflowExecution(c) => {
-                Ok(Self::CompleteWorkflow(c))
+                WFCommandVariant::CompleteWorkflow(c)
             }
-            workflow_command::Variant::FailWorkflowExecution(s) => Ok(Self::FailWorkflow(s)),
-            workflow_command::Variant::RespondToQuery(s) => Ok(Self::QueryResponse(s)),
+            workflow_command::Variant::FailWorkflowExecution(s) => {
+                WFCommandVariant::FailWorkflow(s)
+            }
+            workflow_command::Variant::RespondToQuery(s) => WFCommandVariant::QueryResponse(s),
             workflow_command::Variant::ContinueAsNewWorkflowExecution(s) => {
-                Ok(Self::ContinueAsNew(s))
+                WFCommandVariant::ContinueAsNew(s)
             }
-            workflow_command::Variant::CancelWorkflowExecution(s) => Ok(Self::CancelWorkflow(s)),
-            workflow_command::Variant::SetPatchMarker(s) => Ok(Self::SetPatchMarker(s)),
+            workflow_command::Variant::CancelWorkflowExecution(s) => {
+                WFCommandVariant::CancelWorkflow(s)
+            }
+            workflow_command::Variant::SetPatchMarker(s) => WFCommandVariant::SetPatchMarker(s),
             workflow_command::Variant::StartChildWorkflowExecution(s) => {
-                Ok(Self::AddChildWorkflow(s))
+                WFCommandVariant::AddChildWorkflow(s)
             }
             workflow_command::Variant::RequestCancelExternalWorkflowExecution(s) => {
-                Ok(Self::RequestCancelExternalWorkflow(s))
+                WFCommandVariant::RequestCancelExternalWorkflow(s)
             }
             workflow_command::Variant::SignalExternalWorkflowExecution(s) => {
-                Ok(Self::SignalExternalWorkflow(s))
+                WFCommandVariant::SignalExternalWorkflow(s)
             }
-            workflow_command::Variant::CancelSignalWorkflow(s) => Ok(Self::CancelSignalWorkflow(s)),
-            workflow_command::Variant::CancelChildWorkflowExecution(s) => Ok(Self::CancelChild(s)),
-            workflow_command::Variant::ScheduleLocalActivity(s) => Ok(Self::AddLocalActivity(s)),
+            workflow_command::Variant::CancelSignalWorkflow(s) => {
+                WFCommandVariant::CancelSignalWorkflow(s)
+            }
+            workflow_command::Variant::CancelChildWorkflowExecution(s) => {
+                WFCommandVariant::CancelChild(s)
+            }
+            workflow_command::Variant::ScheduleLocalActivity(s) => {
+                WFCommandVariant::AddLocalActivity(s)
+            }
             workflow_command::Variant::RequestCancelLocalActivity(s) => {
-                Ok(Self::RequestCancelLocalActivity(s))
+                WFCommandVariant::RequestCancelLocalActivity(s)
             }
             workflow_command::Variant::UpsertWorkflowSearchAttributes(s) => {
-                Ok(Self::UpsertSearchAttributes(s))
+                WFCommandVariant::UpsertSearchAttributes(s)
             }
             workflow_command::Variant::ModifyWorkflowProperties(s) => {
-                Ok(Self::ModifyWorkflowProperties(s))
+                WFCommandVariant::ModifyWorkflowProperties(s)
             }
-            workflow_command::Variant::UpdateResponse(s) => Ok(Self::UpdateResponse(s)),
-        }
+            workflow_command::Variant::UpdateResponse(s) => WFCommandVariant::UpdateResponse(s),
+            workflow_command::Variant::ScheduleNexusOperation(s) => {
+                WFCommandVariant::ScheduleNexusOperation(s)
+            }
+            workflow_command::Variant::RequestCancelNexusOperation(s) => {
+                WFCommandVariant::RequestCancelNexusOperation(s)
+            }
+        };
+        Ok(Self {
+            variant,
+            metadata: c.user_metadata,
+        })
     }
 }
 
-impl WFCommand {
+impl WFCommandVariant {
     /// Returns true if the command is one which ends the workflow:
     /// * Completed
     /// * Failed
@@ -1218,10 +1249,10 @@ impl WFCommand {
     fn is_terminal(&self) -> bool {
         matches!(
             self,
-            WFCommand::CompleteWorkflow(_)
-                | WFCommand::FailWorkflow(_)
-                | WFCommand::CancelWorkflow(_)
-                | WFCommand::ContinueAsNew(_)
+            WFCommandVariant::CompleteWorkflow(_)
+                | WFCommandVariant::FailWorkflow(_)
+                | WFCommandVariant::CancelWorkflow(_)
+                | WFCommandVariant::ContinueAsNew(_)
         )
     }
 }
@@ -1234,6 +1265,7 @@ enum CommandID {
     ChildWorkflowStart(u32),
     SignalExternal(u32),
     CancelExternal(u32),
+    NexusOperation(u32),
 }
 
 /// Details remembered from the workflow execution started event that we may need to recall later.

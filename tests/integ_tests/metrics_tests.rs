@@ -1,11 +1,20 @@
+use crate::integ_tests::mk_nexus_endpoint;
 use anyhow::anyhow;
 use assert_matches::assert_matches;
-use std::{collections::HashMap, env, net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    env,
+    net::SocketAddr,
+    string::ToString,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 use temporal_client::{
     WorkflowClientTrait, WorkflowOptions, WorkflowService, REQUEST_LATENCY_HISTOGRAM_NAME,
 };
 use temporal_sdk::{
-    ActContext, ActivityError, ActivityOptions, CancellableFuture, LocalActivityOptions, WfContext,
+    ActContext, ActivityError, ActivityOptions, CancellableFuture, LocalActivityOptions,
+    NexusOperationOptions, WfContext,
 };
 use temporal_sdk_core::{
     init_worker,
@@ -13,10 +22,12 @@ use temporal_sdk_core::{
     CoreRuntime, TokioRuntimeBuilder,
 };
 use temporal_sdk_core_api::{
+    errors::PollError,
     telemetry::{
         metrics::{CoreMeter, MetricAttributes, MetricParameters},
-        HistogramBucketOverrides, OtelCollectorOptionsBuilder, PrometheusExporterOptions,
-        PrometheusExporterOptionsBuilder, TelemetryOptions, TelemetryOptionsBuilder,
+        HistogramBucketOverrides, OtelCollectorOptionsBuilder, OtlpProtocol,
+        PrometheusExporterOptions, PrometheusExporterOptionsBuilder, TelemetryOptions,
+        TelemetryOptionsBuilder,
     },
     worker::WorkerConfigBuilder,
     Worker,
@@ -24,6 +35,7 @@ use temporal_sdk_core_api::{
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::ActivityExecutionResult,
+        nexus::{nexus_task, nexus_task_completion, NexusTaskCompletion},
         workflow_activation::{workflow_activation_job, WorkflowActivationJob},
         workflow_commands::{
             workflow_command, CancelWorkflowExecution, CompleteWorkflowExecution,
@@ -37,14 +49,21 @@ use temporal_sdk_core_protos::{
         common::v1::RetryPolicy,
         enums::v1::WorkflowIdReusePolicy,
         failure::v1::Failure,
+        nexus,
+        nexus::v1::{
+            request::Variant, start_operation_response, HandlerError, StartOperationResponse,
+            UnsuccessfulOperationError,
+        },
         query::v1::WorkflowQuery,
         workflowservice::v1::{DescribeNamespaceRequest, ListNamespacesRequest},
     },
 };
 use temporal_sdk_core_test_utils::{
     get_integ_server_options, get_integ_telem_options, CoreWfStarter, NAMESPACE, OTEL_URL_ENV_VAR,
+    PROMETHEUS_QUERY_API,
 };
 use tokio::{join, sync::Barrier, task::AbortHandle};
+use tracing_subscriber::fmt::MakeWriter;
 use url::Url;
 
 static ANY_PORT: &str = "127.0.0.1:0";
@@ -171,6 +190,7 @@ async fn one_slot_worker_reports_available_slot() {
         .max_outstanding_local_activities(1_usize)
         // Need to use two for WFTs because there are a minimum of 2 pollers b/c of sticky polling
         .max_outstanding_workflow_tasks(2_usize)
+        .max_outstanding_nexus_tasks(1_usize)
         .max_concurrent_wft_polls(1_usize)
         .build()
         .unwrap();
@@ -248,6 +268,10 @@ async fn one_slot_worker_reports_available_slot() {
         act_task_barr.wait().await;
     };
 
+    let nexus_polling = async {
+        let _ = worker.poll_nexus_task().await;
+    };
+
     let testing = async {
         // Wait just a beat for the poller to initiate
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -266,6 +290,11 @@ async fn one_slot_worker_reports_available_slot() {
             "temporal_worker_task_slots_available{{namespace=\"{NAMESPACE}\",\
              service_name=\"temporal-core-sdk\",task_queue=\"one_slot_worker_tq\",\
              worker_type=\"LocalActivityWorker\"}} 1"
+        )));
+        assert!(body.contains(&format!(
+            "temporal_worker_task_slots_available{{namespace=\"{NAMESPACE}\",\
+             service_name=\"temporal-core-sdk\",task_queue=\"one_slot_worker_tq\",\
+             worker_type=\"NexusWorker\"}} 1"
         )));
 
         // Start a workflow so that a task will get delivered
@@ -318,6 +347,11 @@ async fn one_slot_worker_reports_available_slot() {
             "temporal_worker_task_slots_used{{namespace=\"{NAMESPACE}\",\
              service_name=\"temporal-core-sdk\",task_queue=\"one_slot_worker_tq\",\
              worker_type=\"LocalActivityWorker\"}} 0"
+        )));
+        assert!(body.contains(&format!(
+            "temporal_worker_task_slots_used{{namespace=\"{NAMESPACE}\",\
+             service_name=\"temporal-core-sdk\",task_queue=\"one_slot_worker_tq\",\
+             worker_type=\"NexusWorker\"}} 0"
         )));
 
         // Now we allow the complete to proceed. Once it goes through, there should be 2 WFT slot
@@ -377,8 +411,9 @@ async fn one_slot_worker_reports_available_slot() {
              service_name=\"temporal-core-sdk\",task_queue=\"one_slot_worker_tq\",\
              worker_type=\"LocalActivityWorker\"}} 1"
         )));
+        worker.initiate_shutdown();
     };
-    join!(wf_polling, act_polling, testing);
+    join!(wf_polling, act_polling, nexus_polling, testing);
 }
 
 #[rstest::rstest]
@@ -651,6 +686,88 @@ async fn request_fail_codes_otel() {
     }
 }
 
+// Tests that rely on Prometheus running in a docker container need to start
+// with `docker_` and set the `DOCKER_PROMETHEUS_RUNNING` env variable to run
+#[rstest::rstest]
+#[tokio::test]
+async fn docker_metrics_with_prometheus(
+    #[values(
+        ("http://localhost:4318/v1/metrics", OtlpProtocol::Http),
+        ("http://localhost:4317", OtlpProtocol::Grpc)
+    )]
+    otel_collector: (&str, OtlpProtocol),
+) {
+    if std::env::var("DOCKER_PROMETHEUS_RUNNING").is_err() {
+        return;
+    }
+    let (otel_collector_addr, otel_protocol) = otel_collector;
+    let test_uid = format!(
+        "test_{}_",
+        uuid::Uuid::new_v4().to_string().replace("-", "")
+    );
+
+    // Configure the OTLP exporter with HTTP
+    let opts = OtelCollectorOptionsBuilder::default()
+        .url(otel_collector_addr.parse().unwrap())
+        .protocol(otel_protocol)
+        .global_tags(HashMap::from([("test_id".to_string(), test_uid.clone())]))
+        .build()
+        .unwrap();
+    let exporter = Arc::new(build_otlp_metric_exporter(opts).unwrap());
+    let telemopts = TelemetryOptionsBuilder::default()
+        .metrics(exporter as Arc<dyn CoreMeter>)
+        .metric_prefix(test_uid.clone())
+        .build()
+        .unwrap();
+    let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
+    let test_name = "docker_metrics_with_prometheus";
+    let mut starter = CoreWfStarter::new_with_runtime(test_name, rt);
+    let worker = starter.get_worker().await;
+    starter.start_wf().await;
+
+    // Immediately finish the workflow
+    let task = worker.poll_workflow_activation().await.unwrap();
+    worker
+        .complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
+            task.run_id,
+            CompleteWorkflowExecution { result: None }.into(),
+        ))
+        .await
+        .unwrap();
+
+    let client = starter.get_client().await;
+    client.list_namespaces().await.unwrap();
+
+    // Give Prometheus time to scrape metrics
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+    // Query Prometheus API for metrics
+    let client = reqwest::Client::new();
+    let query = format!("temporal_sdk_{}num_pollers", test_uid.clone());
+    let response = client
+        .get(PROMETHEUS_QUERY_API)
+        .query(&[("query", query)])
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+
+    // Validate the Prometheus response
+    if let Some(data) = response["data"]["result"].as_array() {
+        assert!(!data.is_empty(), "No metrics found for query: {test_uid}");
+        assert_eq!(data[0]["metric"]["exported_job"], "temporal-core-sdk");
+        assert_eq!(data[0]["metric"]["job"], "otel-collector");
+        assert!(data[0]["metric"]["task_queue"]
+            .as_str()
+            .unwrap()
+            .starts_with(test_name));
+    } else {
+        panic!("Invalid Prometheus response: {:?}", response);
+    }
+}
+
 #[tokio::test]
 async fn activity_metrics() {
     let (telemopts, addr, _aborter) = prom_metrics(None);
@@ -787,6 +904,187 @@ async fn activity_metrics() {
 }
 
 #[tokio::test]
+async fn nexus_metrics() {
+    let (telemopts, addr, _aborter) = prom_metrics(None);
+    let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
+    let wf_name = "nexus_metrics";
+    let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
+    starter.worker_config.no_remote_activities(true);
+    let task_queue = starter.get_task_queue().to_owned();
+    let mut worker = starter.worker().await;
+    let core_worker = starter.get_worker().await;
+    let endpoint = mk_nexus_endpoint(&mut starter).await;
+
+    worker.register_wf(wf_name.to_string(), move |ctx: WfContext| {
+        let partial_op = NexusOperationOptions {
+            endpoint: endpoint.clone(),
+            service: "mysvc".to_string(),
+            operation: "myop".to_string(),
+            ..Default::default()
+        };
+        async move {
+            join!(
+                async {
+                    ctx.start_nexus_operation(partial_op.clone())
+                        .await
+                        .unwrap()
+                        .result()
+                        .await
+                },
+                async {
+                    ctx.start_nexus_operation(NexusOperationOptions {
+                        input: Some("fail".into()),
+                        ..partial_op.clone()
+                    })
+                    .await
+                    .unwrap()
+                    .result()
+                    .await
+                },
+                async {
+                    ctx.start_nexus_operation(NexusOperationOptions {
+                        input: Some("handler-fail".into()),
+                        ..partial_op.clone()
+                    })
+                    .await
+                    .unwrap()
+                    .result()
+                    .await
+                },
+                async {
+                    ctx.start_nexus_operation(NexusOperationOptions {
+                        input: Some("timeout".into()),
+                        schedule_to_close_timeout: Some(Duration::from_secs(2)),
+                        ..partial_op.clone()
+                    })
+                    .await
+                    .unwrap()
+                    .result()
+                    .await
+                }
+            );
+            Ok(().into())
+        }
+    });
+
+    starter.start_with_worker(wf_name, &mut worker).await;
+
+    let nexus_polling = async {
+        for _ in 0..5 {
+            let nt = core_worker.poll_nexus_task().await.unwrap();
+            let task_token = nt.task_token().to_vec();
+            let status = if matches!(nt.variant, Some(nexus_task::Variant::CancelTask(_))) {
+                nexus_task_completion::Status::AckCancel(true)
+            } else {
+                let nt = nt.unwrap_task();
+                match nt.request.unwrap().variant.unwrap() {
+                    Variant::StartOperation(s) => match s.payload {
+                        Some(p) if p.data.is_empty() => {
+                            nexus_task_completion::Status::Completed(nexus::v1::Response {
+                                variant: Some(nexus::v1::response::Variant::StartOperation(
+                                    StartOperationResponse {
+                                        variant: Some(
+                                            start_operation_response::Variant::SyncSuccess(
+                                                start_operation_response::Sync {
+                                                    payload: Some("yay".into()),
+                                                },
+                                            ),
+                                        ),
+                                    },
+                                )),
+                            })
+                        }
+                        Some(p) if p == "fail".into() => {
+                            nexus_task_completion::Status::Completed(nexus::v1::Response {
+                                variant: Some(nexus::v1::response::Variant::StartOperation(
+                                    StartOperationResponse {
+                                        variant: Some(
+                                            start_operation_response::Variant::OperationError(
+                                                UnsuccessfulOperationError {
+                                                    operation_state: "failed".to_string(),
+                                                    failure: Some(nexus::v1::Failure {
+                                                        message: "fail".to_string(),
+                                                        ..Default::default()
+                                                    }),
+                                                },
+                                            ),
+                                        ),
+                                    },
+                                )),
+                            })
+                        }
+                        Some(p) if p == "handler-fail".into() => {
+                            nexus_task_completion::Status::Error(HandlerError {
+                                error_type: "BAD_REQUEST".to_string(),
+                                failure: Some(nexus::v1::Failure {
+                                    message: "handler-fail".to_string(),
+                                    ..Default::default()
+                                }),
+                            })
+                        }
+                        Some(p) if p == "timeout".into() => {
+                            // Don't do anything, will wait for timeout task
+                            continue;
+                        }
+                        _ => unreachable!(),
+                    },
+                    _ => unreachable!(),
+                }
+            };
+            core_worker
+                .complete_nexus_task(NexusTaskCompletion {
+                    task_token,
+                    status: Some(status),
+                })
+                .await
+                .unwrap();
+        }
+        // Gotta get shutdown poll
+        assert_matches!(
+            core_worker.poll_nexus_task().await,
+            Err(PollError::ShutDown)
+        );
+    };
+
+    join!(nexus_polling, async {
+        worker.run_until_done().await.unwrap()
+    });
+
+    let body = get_text(format!("http://{addr}/metrics")).await;
+    assert!(body.contains(&format!(
+        "temporal_nexus_task_execution_failed{{failure_reason=\"handler_error_BAD_REQUEST\",\
+             namespace=\"{NAMESPACE}\",service_name=\"temporal-core-sdk\",\
+             task_queue=\"{task_queue}\"}} 1"
+    )));
+    assert!(body.contains(&format!(
+        "temporal_nexus_task_execution_failed{{failure_reason=\"timeout\",\
+             namespace=\"{NAMESPACE}\",service_name=\"temporal-core-sdk\",\
+             task_queue=\"{task_queue}\"}} 1"
+    )));
+    assert!(body.contains(&format!(
+        "temporal_nexus_task_execution_failed{{failure_reason=\"operation_failed\",\
+             namespace=\"{NAMESPACE}\",service_name=\"temporal-core-sdk\",\
+             task_queue=\"{task_queue}\"}} 1"
+    )));
+    assert!(body.contains(&format!(
+        "temporal_nexus_task_schedule_to_start_latency_count{{\
+             namespace=\"{NAMESPACE}\",service_name=\"temporal-core-sdk\",\
+             task_queue=\"{task_queue}\"}} 4"
+    )));
+    assert!(body.contains(&format!(
+        "temporal_nexus_task_execution_latency_count{{\
+             namespace=\"{NAMESPACE}\",service_name=\"temporal-core-sdk\",\
+             task_queue=\"{task_queue}\"}} 4"
+    )));
+    // Only 3 actually finished - the timed-out one will not have an e2e latency
+    assert!(body.contains(&format!(
+        "temporal_nexus_task_endtoend_latency_count{{\
+             namespace=\"{NAMESPACE}\",service_name=\"temporal-core-sdk\",\
+             task_queue=\"{task_queue}\"}} 3"
+    )));
+}
+
+#[tokio::test]
 async fn evict_on_complete_does_not_count_as_forced_eviction() {
     let (telemopts, addr, _aborter) = prom_metrics(None);
     let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
@@ -814,4 +1112,70 @@ async fn evict_on_complete_does_not_count_as_forced_eviction() {
     let body = get_text(format!("http://{addr}/metrics")).await;
     // Metric shouldn't show up at all, since it's zero the whole time.
     assert!(!body.contains("temporal_sticky_cache_total_forced_eviction"));
+}
+
+struct CapturingWriter {
+    buf: Arc<Mutex<Vec<u8>>>,
+}
+
+impl MakeWriter<'_> for CapturingWriter {
+    type Writer = CapturingHandle;
+
+    fn make_writer(&self) -> Self::Writer {
+        CapturingHandle(self.buf.clone())
+    }
+}
+
+struct CapturingHandle(Arc<Mutex<Vec<u8>>>);
+
+impl std::io::Write for CapturingHandle {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let mut b = self.0.lock().unwrap();
+        b.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn otel_errors_logged_as_errors() {
+    // Set up tracing subscriber to capture ERROR logs
+    let logs = Arc::new(Mutex::new(Vec::new()));
+    let writer = CapturingWriter { buf: logs.clone() };
+    let subscriber = tracing_subscriber::fmt().with_writer(writer).finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    let opts = OtelCollectorOptionsBuilder::default()
+        .url("https://localhostt:9995/v1/metrics".parse().unwrap()) // Invalid endpoint
+        .build()
+        .unwrap();
+    let exporter = build_otlp_metric_exporter(opts).unwrap();
+
+    let telemopts = TelemetryOptionsBuilder::default()
+        .metrics(Arc::new(exporter) as Arc<dyn CoreMeter>)
+        .build()
+        .unwrap();
+
+    let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
+    let mut starter = CoreWfStarter::new_with_runtime("otel_errors_logged_as_errors", rt);
+    let _worker = starter.get_worker().await;
+
+    // Wait to allow exporter to attempt sending metrics and fail.
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    let logs = logs.lock().unwrap();
+    let log_str = String::from_utf8_lossy(&logs);
+
+    assert!(
+        log_str.contains("ERROR"),
+        "Expected ERROR log not found in logs: {}",
+        log_str
+    );
+    assert!(
+        log_str.contains("Metrics exporter otlp failed with the grpc server returns error"),
+        "Expected an OTel exporter error message in logs: {}",
+        log_str
+    );
 }

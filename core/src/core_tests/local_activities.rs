@@ -23,10 +23,7 @@ use temporal_client::WorkflowOptions;
 use temporal_sdk::{
     ActContext, ActivityError, LocalActivityOptions, WfContext, WorkflowFunction, WorkflowResult,
 };
-use temporal_sdk_core_api::{
-    errors::{PollActivityError, PollWfError},
-    Worker,
-};
+use temporal_sdk_core_api::{errors::PollError, Worker};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::ActivityExecutionResult,
@@ -1179,8 +1176,8 @@ async fn local_activities_can_be_delivered_during_shutdown() {
     };
 
     let (wf_r, act_r) = join!(wf_poller, at_poller);
-    assert_matches!(wf_r.unwrap_err(), PollWfError::ShutDown);
-    assert_matches!(act_r.unwrap_err(), PollActivityError::ShutDown);
+    assert_matches!(wf_r.unwrap_err(), PollError::ShutDown);
+    assert_matches!(act_r.unwrap_err(), PollError::ShutDown);
 }
 
 #[tokio::test]

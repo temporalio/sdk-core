@@ -13,30 +13,18 @@ pub enum WorkerValidationError {
     },
 }
 
-/// Errors thrown by [crate::Worker::poll_workflow_activation]
+/// Errors thrown by [crate::Worker] polling methods
 #[derive(thiserror::Error, Debug)]
-pub enum PollWfError {
-    /// [crate::Worker::shutdown] was called, and there are no more replay tasks to be handled. Lang
-    /// must call [crate::Worker::complete_workflow_activation] for any remaining tasks, and then
-    /// may exit.
-    #[error("Core is shut down and there are no more workflow replay tasks")]
+pub enum PollError {
+    /// [crate::Worker::shutdown] was called, and there are no more tasks to be handled from this
+    /// poll function. Lang must call [crate::Worker::complete_workflow_activation],
+    /// [crate::Worker::complete_activity_task], or
+    /// [crate::Worker::complete_nexus_task] for any remaining tasks, and then may exit.
+    #[error("Core is shut down and there are no more tasks of this kind")]
     ShutDown,
     /// Unhandled error when calling the temporal server. Core will attempt to retry any non-fatal
     /// errors, so lang should consider this fatal.
-    #[error("Unhandled grpc error when workflow polling: {0:?}")]
-    TonicError(#[from] tonic::Status),
-}
-
-/// Errors thrown by [crate::Worker::poll_activity_task]
-#[derive(thiserror::Error, Debug)]
-pub enum PollActivityError {
-    /// [crate::Worker::shutdown] was called, we will no longer fetch new activity tasks. Lang must
-    /// ensure it is finished with any workflow replay, see [PollWfError::ShutDown]
-    #[error("Core is shut down")]
-    ShutDown,
-    /// Unhandled error when calling the temporal server. Core will attempt to retry any non-fatal
-    /// errors, so lang should consider this fatal.
-    #[error("Unhandled grpc error when activity polling: {0:?}")]
+    #[error("Unhandled grpc error when polling: {0:?}")]
     TonicError(#[from] tonic::Status),
 }
 
@@ -65,6 +53,20 @@ pub enum CompleteActivityError {
         /// The completion, which may not be included to avoid unnecessary copies.
         completion: Option<ActivityExecutionResult>,
     },
+}
+
+/// Errors thrown by [crate::Worker::complete_nexus_task]
+#[derive(thiserror::Error, Debug)]
+pub enum CompleteNexusError {
+    /// Lang SDK sent us a malformed nexus completion. This likely means a bug in the lang sdk.
+    #[error("Lang SDK sent us a malformed nexus completion: {reason}")]
+    MalformedNexusCompletion {
+        /// Reason the completion was malformed
+        reason: String,
+    },
+    /// Nexus has not been enabled on this worker. If a user registers any Nexus handlers, the
+    #[error("Nexus is not enabled on this worker")]
+    NexusNotEnabled,
 }
 
 /// Errors we can encounter during workflow processing which we may treat as either WFT failures

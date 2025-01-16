@@ -4,14 +4,17 @@ pub mod worker;
 
 use crate::{
     errors::{
-        CompleteActivityError, CompleteWfError, PollActivityError, PollWfError,
+        CompleteActivityError, CompleteNexusError, CompleteWfError, PollError,
         WorkerValidationError,
     },
     worker::WorkerConfig,
 };
 use temporal_sdk_core_protos::coresdk::{
-    activity_task::ActivityTask, workflow_activation::WorkflowActivation,
-    workflow_completion::WorkflowActivationCompletion, ActivityHeartbeat, ActivityTaskCompletion,
+    activity_task::ActivityTask,
+    nexus::{NexusTask, NexusTaskCompletion},
+    workflow_activation::WorkflowActivation,
+    workflow_completion::WorkflowActivationCompletion,
+    ActivityHeartbeat, ActivityTaskCompletion,
 };
 
 /// This trait is the primary way by which language specific SDKs interact with the core SDK.
@@ -36,14 +39,23 @@ pub trait Worker: Send + Sync {
     /// & job processing.
     ///
     /// Do not call poll concurrently. It handles polling the server concurrently internally.
-    async fn poll_workflow_activation(&self) -> Result<WorkflowActivation, PollWfError>;
+    async fn poll_workflow_activation(&self) -> Result<WorkflowActivation, PollError>;
 
     /// Ask the worker for some work, returning an [ActivityTask]. It is then the language SDK's
     /// responsibility to call the appropriate activity code with the provided inputs. Blocks
     /// indefinitely until such work is available or [Worker::shutdown] is called.
     ///
     /// Do not call poll concurrently. It handles polling the server concurrently internally.
-    async fn poll_activity_task(&self) -> Result<ActivityTask, PollActivityError>;
+    async fn poll_activity_task(&self) -> Result<ActivityTask, PollError>;
+
+    /// Ask the worker for some nexus related work. It is then the language SDK's
+    /// responsibility to call the appropriate nexus operation handler code with the provided
+    /// inputs. Blocks indefinitely until such work is available or [Worker::shutdown] is called.
+    ///
+    /// All tasks must be responded to for shutdown to complete.
+    ///
+    /// Do not call poll concurrently. It handles polling the server concurrently internally.
+    async fn poll_nexus_task(&self) -> Result<NexusTask, PollError>;
 
     /// Tell the worker that a workflow activation has completed. May (and should) be freely called
     /// concurrently. The future may take some time to resolve, as fetching more events might be
@@ -60,6 +72,13 @@ pub trait Worker: Send + Sync {
         &self,
         completion: ActivityTaskCompletion,
     ) -> Result<(), CompleteActivityError>;
+
+    /// Tell the worker that a nexus task has completed. May (and should) be freely called
+    /// concurrently.
+    async fn complete_nexus_task(
+        &self,
+        completion: NexusTaskCompletion,
+    ) -> Result<(), CompleteNexusError>;
 
     /// Notify the Temporal service that an activity is still alive. Long running activities that
     /// take longer than `activity_heartbeat_timeout` to finish must call this function in order to

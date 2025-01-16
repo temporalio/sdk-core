@@ -14,9 +14,22 @@ message Region {
     string id = 1;
     // The name of the cloud provider that's hosting the region.
     // Currently only "aws" is supported.
-    string cloud_provider = 2;
+    // Deprecated: Not supported after 2024-10-01-00 api version. Use cloud_provider instead. 
+    // temporal:versioning:max_version=2024-10-01-00
+    string cloud_provider_deprecated = 2 [deprecated = true];
+    // The cloud provider that's hosting the region.
+    // temporal:versioning:min_version=2024-10-01-00
+    // temporal:enums:replaces=cloud_provider_deprecated
+    CloudProvider cloud_provider = 5;
     // The region identifier as defined by the cloud provider.
     string cloud_provider_region = 3;
     // The human readable location of the region.
     string location = 4;
+
+    // The cloud provider that's hosting the region.
+    enum CloudProvider {
+        CLOUD_PROVIDER_UNSPECIFIED = 0;
+        CLOUD_PROVIDER_AWS = 1;
+	CLOUD_PROVIDER_GCP = 2;
+    }
 }

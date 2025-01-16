@@ -14,6 +14,7 @@ use temporal_sdk_core_protos::{
         },
         enums::v1::{TaskQueueKind, WorkflowTaskFailedCause},
         failure::v1::Failure,
+        nexus,
         protocol::v1::Message as ProtocolMessage,
         query::v1::WorkflowQueryResult,
         sdk::v1::WorkflowTaskCompletedMetadata,
@@ -104,6 +105,7 @@ pub(crate) trait WorkerClient: Sync + Send {
         task_queue: String,
         max_tasks_per_sec: Option<f64>,
     ) -> Result<PollActivityTaskQueueResponse>;
+    async fn poll_nexus_task(&self, task_queue: String) -> Result<PollNexusTaskQueueResponse>;
     async fn complete_workflow_task(
         &self,
         request: WorkflowTaskCompletion,
@@ -113,6 +115,11 @@ pub(crate) trait WorkerClient: Sync + Send {
         task_token: TaskToken,
         result: Option<Payloads>,
     ) -> Result<RespondActivityTaskCompletedResponse>;
+    async fn complete_nexus_task(
+        &self,
+        task_token: TaskToken,
+        response: nexus::v1::Response,
+    ) -> Result<RespondNexusTaskCompletedResponse>;
     async fn record_activity_heartbeat(
         &self,
         task_token: TaskToken,
@@ -134,6 +141,11 @@ pub(crate) trait WorkerClient: Sync + Send {
         cause: WorkflowTaskFailedCause,
         failure: Option<Failure>,
     ) -> Result<RespondWorkflowTaskFailedResponse>;
+    async fn fail_nexus_task(
+        &self,
+        task_token: TaskToken,
+        error: nexus::v1::HandlerError,
+    ) -> Result<RespondNexusTaskFailedResponse>;
     async fn get_workflow_execution_history(
         &self,
         workflow_id: String,
@@ -201,6 +213,25 @@ impl WorkerClient for WorkerClientBag {
             .into_inner())
     }
 
+    async fn poll_nexus_task(&self, task_queue: String) -> Result<PollNexusTaskQueueResponse> {
+        let request = PollNexusTaskQueueRequest {
+            namespace: self.namespace.clone(),
+            task_queue: Some(TaskQueue {
+                name: task_queue,
+                kind: TaskQueueKind::Normal as i32,
+                normal_name: "".to_string(),
+            }),
+            identity: self.identity.clone(),
+            worker_version_capabilities: self.worker_version_capabilities(),
+        };
+
+        Ok(self
+            .cloned_client()
+            .poll_nexus_task_queue(request)
+            .await?
+            .into_inner())
+    }
+
     async fn complete_workflow_task(
         &self,
         request: WorkflowTaskCompletion,
@@ -257,6 +288,23 @@ impl WorkerClient for WorkerClientBag {
                 identity: self.identity.clone(),
                 namespace: self.namespace.clone(),
                 worker_version: self.worker_version_stamp(),
+            })
+            .await?
+            .into_inner())
+    }
+
+    async fn complete_nexus_task(
+        &self,
+        task_token: TaskToken,
+        response: nexus::v1::Response,
+    ) -> Result<RespondNexusTaskCompletedResponse> {
+        Ok(self
+            .cloned_client()
+            .respond_nexus_task_completed(RespondNexusTaskCompletedRequest {
+                namespace: self.namespace.clone(),
+                identity: self.identity.clone(),
+                task_token: task_token.0,
+                response: Some(response),
             })
             .await?
             .into_inner())
@@ -336,6 +384,23 @@ impl WorkerClient for WorkerClientBag {
         Ok(self
             .cloned_client()
             .respond_workflow_task_failed(request)
+            .await?
+            .into_inner())
+    }
+
+    async fn fail_nexus_task(
+        &self,
+        task_token: TaskToken,
+        error: nexus::v1::HandlerError,
+    ) -> Result<RespondNexusTaskFailedResponse> {
+        Ok(self
+            .cloned_client()
+            .respond_nexus_task_failed(RespondNexusTaskFailedRequest {
+                namespace: self.namespace.clone(),
+                identity: self.identity.clone(),
+                task_token: task_token.0,
+                error: Some(error),
+            })
             .await?
             .into_inner())
     }

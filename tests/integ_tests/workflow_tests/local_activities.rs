@@ -5,7 +5,7 @@ use std::{
     sync::atomic::{AtomicU8, Ordering},
     time::Duration,
 };
-use temporal_client::WorkflowOptions;
+use temporal_client::{WfClientExt, WorkflowOptions};
 use temporal_sdk::{
     interceptors::WorkerInterceptor, ActContext, ActivityError, ActivityOptions, CancellableFuture,
     LocalActivityOptions, WfContext, WorkflowResult,
@@ -23,6 +23,7 @@ use temporal_sdk_core_protos::{
 };
 use temporal_sdk_core_test_utils::{
     history_from_proto_binary, replay_sdk_worker, workflows::la_problem_workflow, CoreWfStarter,
+    WorkflowHandleExt,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -47,11 +48,10 @@ async fn one_local_activity() {
     worker.register_wf(wf_name.to_owned(), one_local_activity_wf);
     worker.register_activity("echo_activity", echo);
 
-    let run_id = starter.start_with_worker(wf_name, &mut worker).await;
+    let handle = starter.start_with_worker(wf_name, &mut worker).await;
     worker.run_until_done().await.unwrap();
-    let tq = starter.get_task_queue().to_string();
-    starter
-        .fetch_history_and_replay(tq, run_id, worker.inner_mut())
+    handle
+        .fetch_history_and_replay(worker.inner_mut())
         .await
         .unwrap();
 }
@@ -190,8 +190,10 @@ async fn local_act_retry_timer_backoff() {
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    starter
-        .fetch_history_and_replay(wf_name, run_id, worker.inner_mut())
+    let client = starter.get_client().await;
+    let handle = client.get_untyped_workflow_handle(wf_name, run_id);
+    handle
+        .fetch_history_and_replay(worker.inner_mut())
         .await
         .unwrap();
 }
@@ -586,8 +588,10 @@ async fn repro_nondeterminism_with_timer_bug() {
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    starter
-        .fetch_history_and_replay(wf_name, run_id, worker.inner_mut())
+    let client = starter.get_client().await;
+    let handle = client.get_untyped_workflow_handle(wf_name, run_id);
+    handle
+        .fetch_history_and_replay(worker.inner_mut())
         .await
         .unwrap();
 }
@@ -737,8 +741,10 @@ async fn la_resolve_same_time_as_other_cancel() {
         .await
         .unwrap();
     worker.run_until_done().await.unwrap();
-    starter
-        .fetch_history_and_replay(wf_name, run_id, worker.inner_mut())
+    let client = starter.get_client().await;
+    let handle = client.get_untyped_workflow_handle(wf_name, run_id);
+    handle
+        .fetch_history_and_replay(worker.inner_mut())
         .await
         .unwrap();
 }

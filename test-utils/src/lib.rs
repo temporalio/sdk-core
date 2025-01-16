@@ -11,20 +11,19 @@ pub mod workflows;
 pub use temporal_sdk_core::replay::HistoryForReplay;
 
 use crate::stream::{Stream, TryStreamExt};
-use anyhow::{Context, Error};
+use anyhow::Context;
 use assert_matches::assert_matches;
-use base64::{prelude::BASE64_STANDARD, Engine};
 use futures_util::{future, stream, stream::FuturesUnordered, StreamExt};
 use parking_lot::Mutex;
 use prost::Message;
-use rand::{distributions::Standard, Rng};
+use rand::{distributions, Rng};
 use std::{
     convert::TryFrom, env, future::Future, net::SocketAddr, path::PathBuf, sync::Arc,
     time::Duration,
 };
 use temporal_client::{
-    Client, ClientTlsConfig, RetryClient, TlsConfig, WorkflowClientTrait, WorkflowExecutionInfo,
-    WorkflowOptions,
+    Client, ClientTlsConfig, RetryClient, TlsConfig, WfClientExt, WorkflowClientTrait,
+    WorkflowExecutionInfo, WorkflowHandle, WorkflowOptions,
 };
 use temporal_sdk::{
     interceptors::{FailOnNondeterminismInterceptor, WorkerInterceptor},
@@ -39,7 +38,7 @@ use temporal_sdk_core::{
     ClientOptions, ClientOptionsBuilder, CoreRuntime, WorkerConfigBuilder,
 };
 use temporal_sdk_core_api::{
-    errors::{PollActivityError, PollWfError},
+    errors::PollError,
     telemetry::{
         metrics::CoreMeter, Logger, OtelCollectorOptionsBuilder, PrometheusExporterOptionsBuilder,
         TelemetryOptions, TelemetryOptionsBuilder,
@@ -54,6 +53,7 @@ use temporal_sdk_core_protos::{
             QuerySuccess, ScheduleActivity, ScheduleLocalActivity, StartTimer,
         },
         workflow_completion::WorkflowActivationCompletion,
+        FromPayloadsExt,
     },
     temporal::api::{
         common::v1::Payload, history::v1::History,
@@ -80,6 +80,8 @@ pub static SEARCH_ATTR_INT: &str = "CustomIntField";
 pub const OTEL_URL_ENV_VAR: &str = "TEMPORAL_INTEG_OTEL_URL";
 /// If set, enable direct scraping of prom metrics on the specified port
 pub const PROM_ENABLE_ENV_VAR: &str = "TEMPORAL_INTEG_PROM_PORT";
+/// This should match the prometheus port exposed in docker-compose-ci.yaml
+pub const PROMETHEUS_QUERY_API: &str = "http://localhost:9090/api/v1/query";
 #[macro_export]
 macro_rules! prost_dur {
     ($dur_call:ident $args:tt) => {
@@ -194,8 +196,7 @@ impl CoreWfStarter {
     }
 
     fn _new(test_name: &str, runtime_override: Option<CoreRuntime>) -> Self {
-        let rand_bytes: Vec<u8> = rand::thread_rng().sample_iter(&Standard).take(6).collect();
-        let task_q_salt = BASE64_STANDARD.encode(rand_bytes);
+        let task_q_salt = rand_6_chars();
         let task_queue = format!("{test_name}_{task_q_salt}");
         let mut worker_config = integ_worker_config(&task_queue);
         worker_config
@@ -248,13 +249,13 @@ impl CoreWfStarter {
         self.start_wf_with_id(self.task_queue_name.clone()).await
     }
 
-    /// Starts the workflow using the worker, returns run id.
+    /// Starts the workflow using the worker
     pub async fn start_with_worker(
         &self,
         wf_name: impl Into<String>,
         worker: &mut TestWorker,
-    ) -> String {
-        worker
+    ) -> WorkflowHandle<RetryClient<Client>, Vec<Payload>> {
+        let run_id = worker
             .submit_wf(
                 self.task_queue_name.clone(),
                 wf_name.into(),
@@ -262,7 +263,12 @@ impl CoreWfStarter {
                 self.workflow_options.clone(),
             )
             .await
+            .unwrap();
+        self.initted_worker
+            .get()
             .unwrap()
+            .client
+            .get_untyped_workflow_handle(&self.task_queue_name, run_id)
     }
 
     pub async fn eager_start_with_worker(
@@ -299,31 +305,6 @@ impl CoreWfStarter {
             .await
             .unwrap()
             .run_id
-    }
-
-    /// Fetch the history for the indicated workflow and replay it using the provided worker.
-    /// Can be used after completing workflows normally to ensure replay works as well.
-    pub async fn fetch_history_and_replay(
-        &mut self,
-        wf_id: impl Into<String>,
-        run_id: impl Into<String>,
-        worker: &mut Worker,
-    ) -> Result<(), anyhow::Error> {
-        let wf_id = wf_id.into();
-        // Fetch history and replay it
-        let history = self
-            .get_client()
-            .await
-            .get_workflow_execution_history(wf_id.clone(), Some(run_id.into()), vec![])
-            .await?
-            .history
-            .expect("history field must be populated");
-        let with_id = HistoryForReplay::new(history, wf_id);
-        let replay_worker = init_core_replay_preloaded(worker.task_queue(), [with_id]);
-        worker.with_new_core_worker(replay_worker);
-        worker.set_worker_interceptor(FailOnNondeterminismInterceptor {});
-        worker.run().await.unwrap();
-        Ok(())
     }
 
     pub fn get_task_queue(&self) -> &str {
@@ -367,7 +348,7 @@ pub struct TestWorker {
     inner: Worker,
     pub core_worker: Arc<dyn CoreWorker>,
     client: Option<Arc<RetryClient<Client>>>,
-    pub started_workflows: Mutex<Vec<WorkflowExecutionInfo>>,
+    pub started_workflows: Arc<Mutex<Vec<WorkflowExecutionInfo>>>,
     /// If set true (default), and a client is available, we will fetch workflow results to
     /// determine when they have all completed.
     pub fetch_results: bool,
@@ -380,7 +361,7 @@ impl TestWorker {
             inner,
             core_worker,
             client: None,
-            started_workflows: Mutex::new(vec![]),
+            started_workflows: Arc::new(Mutex::new(vec![])),
             fetch_results: true,
         }
     }
@@ -406,12 +387,22 @@ impl TestWorker {
         self.inner.register_activity(activity_type, act_function)
     }
 
+    /// Create a handle that can be used to submit workflows. Useful when workflows need to be
+    /// started concurrently with running the worker.
+    pub fn get_submitter_handle(&self) -> TestWorkerSubmitterHandle {
+        TestWorkerSubmitterHandle {
+            client: self.client.clone().expect("client must be set"),
+            tq: self.inner.task_queue().to_string(),
+            started_workflows: self.started_workflows.clone(),
+        }
+    }
+
     /// Create a workflow, asking the server to start it with the provided workflow ID and using the
     /// provided workflow function.
     ///
     /// Increments the expected Workflow run count.
     ///
-    /// Returns the run id of the started workflow
+    /// Returns the run id of the started workflow (if no client has initialized returns a fake id)
     pub async fn submit_wf(
         &self,
         workflow_id: impl Into<String>,
@@ -419,27 +410,12 @@ impl TestWorker {
         input: Vec<Payload>,
         options: WorkflowOptions,
     ) -> Result<String, anyhow::Error> {
-        if let Some(c) = self.client.as_ref() {
-            let wfid = workflow_id.into();
-            let res = c
-                .start_workflow(
-                    input,
-                    self.inner.task_queue().to_string(),
-                    wfid.clone(),
-                    workflow_type.into(),
-                    None,
-                    options,
-                )
-                .await?;
-            self.started_workflows.lock().push(WorkflowExecutionInfo {
-                namespace: c.namespace().to_string(),
-                workflow_id: wfid,
-                run_id: Some(res.run_id.clone()),
-            });
-            Ok(res.run_id)
-        } else {
-            Ok("fake_run_id".to_string())
+        if self.client.is_none() {
+            return Ok("fake_run_id".to_string());
         }
+        self.get_submitter_handle()
+            .submit_wf(workflow_id, workflow_type, input, options)
+            .await
     }
 
     /// Similar to `submit_wf` but checking that the server returns the first
@@ -520,6 +496,46 @@ impl TestWorker {
     }
 }
 
+pub struct TestWorkerSubmitterHandle {
+    client: Arc<RetryClient<Client>>,
+    tq: String,
+    started_workflows: Arc<Mutex<Vec<WorkflowExecutionInfo>>>,
+}
+impl TestWorkerSubmitterHandle {
+    /// Create a workflow, asking the server to start it with the provided workflow ID and using the
+    /// provided workflow function.
+    ///
+    /// Increments the expected Workflow run count.
+    ///
+    /// Returns the run id of the started workflow
+    pub async fn submit_wf(
+        &self,
+        workflow_id: impl Into<String>,
+        workflow_type: impl Into<String>,
+        input: Vec<Payload>,
+        options: WorkflowOptions,
+    ) -> Result<String, anyhow::Error> {
+        let wfid = workflow_id.into();
+        let res = self
+            .client
+            .start_workflow(
+                input,
+                self.tq.clone(),
+                wfid.clone(),
+                workflow_type.into(),
+                None,
+                options,
+            )
+            .await?;
+        self.started_workflows.lock().push(WorkflowExecutionInfo {
+            namespace: self.client.namespace().to_string(),
+            workflow_id: wfid,
+            run_id: Some(res.run_id.clone()),
+        });
+        Ok(res.run_id)
+    }
+}
+
 pub type BoxDynActivationHook = Box<dyn Fn(&WorkflowActivationCompletion)>;
 
 pub enum TestWorkerShutdownCond {
@@ -582,7 +598,7 @@ impl WorkerInterceptor for TestWorkerCompletionIceptor {
             n.on_shutdown(sdk_worker);
         }
     }
-    async fn on_workflow_activation(&self, a: &WorkflowActivation) -> Result<(), Error> {
+    async fn on_workflow_activation(&self, a: &WorkflowActivation) -> Result<(), anyhow::Error> {
         if let Some(n) = self.next.as_ref() {
             n.on_workflow_activation(a).await?;
         }
@@ -629,7 +645,7 @@ pub fn get_integ_tls_config() -> Option<TlsConfig> {
 pub fn get_integ_telem_options() -> TelemetryOptions {
     let mut ob = TelemetryOptionsBuilder::default();
     let filter_string =
-        env::var("RUST_LOG").unwrap_or_else(|_| "temporal_sdk_core=INFO".to_string());
+        env::var("RUST_LOG").unwrap_or_else(|_| "INFO,temporal_sdk_core=INFO".to_string());
     if let Some(url) = env::var(OTEL_URL_ENV_VAR)
         .ok()
         .map(|x| x.parse::<Url>().unwrap())
@@ -717,7 +733,6 @@ pub fn start_timer_cmd(seq: u32, duration: Duration) -> workflow_command::Varian
     StartTimer {
         seq,
         start_to_fire_timeout: Some(duration.try_into().expect("duration fits")),
-        summary: None,
     }
     .into()
 }
@@ -782,7 +797,6 @@ where
             vec![StartTimer {
                 seq,
                 start_to_fire_timeout: Some(duration.try_into().expect("duration fits")),
-                summary: None,
             }
             .into()],
         ))
@@ -804,6 +818,34 @@ where
     }
 }
 
+#[async_trait::async_trait(?Send)]
+pub trait WorkflowHandleExt {
+    async fn fetch_history_and_replay(&self, worker: &mut Worker) -> Result<(), anyhow::Error>;
+}
+
+#[async_trait::async_trait(?Send)]
+impl<R> WorkflowHandleExt for WorkflowHandle<RetryClient<Client>, R>
+where
+    R: FromPayloadsExt,
+{
+    async fn fetch_history_and_replay(&self, worker: &mut Worker) -> Result<(), anyhow::Error> {
+        let wf_id = self.info().workflow_id.clone();
+        let run_id = self.info().run_id.clone();
+        let history = self
+            .client()
+            .get_workflow_execution_history(wf_id.clone(), run_id, vec![])
+            .await?
+            .history
+            .expect("history field must be populated");
+        let with_id = HistoryForReplay::new(history, wf_id);
+        let replay_worker = init_core_replay_preloaded(worker.task_queue(), [with_id]);
+        worker.with_new_core_worker(replay_worker);
+        worker.set_worker_interceptor(FailOnNondeterminismInterceptor {});
+        worker.run().await.unwrap();
+        Ok(())
+    }
+}
+
 /// Initiate shutdown, drain the pollers, and wait for shutdown to complete.
 pub async fn drain_pollers_and_shutdown(worker: &Arc<dyn CoreWorker>) {
     worker.initiate_shutdown();
@@ -811,15 +853,23 @@ pub async fn drain_pollers_and_shutdown(worker: &Arc<dyn CoreWorker>) {
         async {
             assert!(matches!(
                 worker.poll_activity_task().await.unwrap_err(),
-                PollActivityError::ShutDown
+                PollError::ShutDown
             ));
         },
         async {
             assert!(matches!(
                 worker.poll_workflow_activation().await.unwrap_err(),
-                PollWfError::ShutDown,
+                PollError::ShutDown,
             ));
         }
     );
     worker.shutdown().await;
+}
+
+pub fn rand_6_chars() -> String {
+    rand::thread_rng()
+        .sample_iter(&distributions::Alphanumeric)
+        .take(6)
+        .map(char::from)
+        .collect()
 }

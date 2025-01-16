@@ -1,5 +1,4 @@
 mod activity_heartbeat_manager;
-mod activity_task_poller_stream;
 mod local_activities;
 
 pub(crate) use local_activities::{
@@ -9,19 +8,15 @@ pub(crate) use local_activities::{
 
 use crate::{
     abstractions::{
-        ClosableMeteredPermitDealer, MeteredPermitDealer, OwnedMeteredSemPermit,
-        TrackedOwnedMeteredSemPermit, UsedMeteredSemPermit,
+        ClosableMeteredPermitDealer, MeteredPermitDealer, TrackedOwnedMeteredSemPermit,
+        UsedMeteredSemPermit,
     },
-    pollers::BoxedActPoller,
+    pollers::{new_activity_task_poller, BoxedActPoller, PermittedTqResp, TrackedPermittedTqResp},
     telemetry::metrics::{activity_type, eager, workflow_type, MetricsContext},
     worker::{
-        activities::{
-            activity_heartbeat_manager::ActivityHeartbeatError,
-            activity_task_poller_stream::new_activity_task_poller,
-        },
-        client::WorkerClient,
+        activities::activity_heartbeat_manager::ActivityHeartbeatError, client::WorkerClient,
     },
-    PollActivityError, TaskToken,
+    PollError, TaskToken,
 };
 use activity_heartbeat_manager::ActivityHeartbeatManager;
 use dashmap::DashMap;
@@ -147,7 +142,7 @@ pub(crate) struct WorkerActivityTasks {
     heartbeat_manager: ActivityHeartbeatManager,
     /// Combined stream for any ActivityTask producing source (polls, eager activities,
     /// cancellations)
-    activity_task_stream: Mutex<BoxStream<'static, Result<ActivityTask, PollActivityError>>>,
+    activity_task_stream: Mutex<BoxStream<'static, Result<ActivityTask, PollError>>>,
     /// Activities that have been issued to lang but not yet completed
     outstanding_activity_tasks: OutstandingActMap,
     /// Ensures we don't exceed this worker's maximum concurrent activity limit for activities. This
@@ -157,7 +152,7 @@ pub(crate) struct WorkerActivityTasks {
     /// Holds activity tasks we have received in direct response to workflow task completion (a.k.a
     /// eager activities). Tasks received in this stream hold a "tracked" permit that is issued by
     /// the `eager_activities_semaphore`.
-    eager_activities_tx: UnboundedSender<TrackedPermittedTqResp>,
+    eager_activities_tx: UnboundedSender<TrackedPermittedTqResp<PollActivityTaskQueueResponse>>,
     /// Ensures that no activities are in the middle of flushing their results to server while we
     /// try to shut down.
     completers_lock: tokio::sync::RwLock<()>,
@@ -176,7 +171,7 @@ pub(crate) struct WorkerActivityTasks {
 #[derive(derive_more::From)]
 enum ActivityTaskSource {
     PendingCancel(PendingActivityCancel),
-    PendingStart(Result<(PermittedTqResp, bool), PollActivityError>),
+    PendingStart(Result<(PermittedTqResp<PollActivityTaskQueueResponse>, bool), PollError>),
 }
 
 impl WorkerActivityTasks {
@@ -245,11 +240,14 @@ impl WorkerActivityTasks {
 
     /// Merges the server poll and eager [ActivityTask] sources
     fn merge_start_task_sources(
-        non_poll_tasks_rx: UnboundedReceiver<TrackedPermittedTqResp>,
-        poller_stream: impl Stream<Item = Result<PermittedTqResp, tonic::Status>>,
+        non_poll_tasks_rx: UnboundedReceiver<TrackedPermittedTqResp<PollActivityTaskQueueResponse>>,
+        poller_stream: impl Stream<
+            Item = Result<PermittedTqResp<PollActivityTaskQueueResponse>, tonic::Status>,
+        >,
         eager_activities_semaphore: Arc<ClosableMeteredPermitDealer<ActivitySlotKind>>,
         on_complete_token: CancellationToken,
-    ) -> impl Stream<Item = Result<(PermittedTqResp, bool), PollActivityError>> {
+    ) -> impl Stream<Item = Result<(PermittedTqResp<PollActivityTaskQueueResponse>, bool), PollError>>
+    {
         let non_poll_stream = stream::unfold(
             (non_poll_tasks_rx, eager_activities_semaphore),
             |(mut non_poll_tasks_rx, eager_activities_semaphore)| async move {
@@ -302,13 +300,13 @@ impl WorkerActivityTasks {
     ///
     /// Polls the various task sources (server polls, eager activities, cancellations) while
     /// respecting the provided rate limits and allowed concurrency. Returns
-    /// [PollActivityError::ShutDown] after shutdown is completed and all tasks sources are
+    /// [PollError::ShutDown] after shutdown is completed and all tasks sources are
     /// depleted.
-    pub(crate) async fn poll(&self) -> Result<ActivityTask, PollActivityError> {
+    pub(crate) async fn poll(&self) -> Result<ActivityTask, PollError> {
         let mut poller_stream = self.activity_task_stream.lock().await;
         poller_stream.next().await.unwrap_or_else(|| {
             self.poll_returned_shutdown_token.cancel();
-            Err(PollActivityError::ShutDown)
+            Err(PollError::ShutDown)
         })
     }
 
@@ -485,7 +483,7 @@ where
     ///  cancels_stream ------------------------------+--- activity_task_stream
     ///  eager_activities_rx ---+--- starts_stream ---|
     ///  server_poll_stream  ---|
-    fn streamify(self) -> impl Stream<Item = Result<ActivityTask, PollActivityError>> {
+    fn streamify(self) -> impl Stream<Item = Result<ActivityTask, PollError>> {
         let outstanding_tasks_clone = self.outstanding_tasks.clone();
         let should_issue_immediate_cancel = Arc::new(AtomicBool::new(false));
         let should_issue_immediate_cancel_clone = should_issue_immediate_cancel.clone();
@@ -662,7 +660,7 @@ where
 /// Allows for the handling of activities returned by WFT completions.
 pub(crate) struct ActivitiesFromWFTsHandle {
     sem: Arc<ClosableMeteredPermitDealer<ActivitySlotKind>>,
-    tx: UnboundedSender<TrackedPermittedTqResp>,
+    tx: UnboundedSender<TrackedPermittedTqResp<PollActivityTaskQueueResponse>>,
 }
 
 impl ActivitiesFromWFTsHandle {
@@ -675,25 +673,16 @@ impl ActivitiesFromWFTsHandle {
 
     /// Queue new activity tasks for dispatch received from non-polling sources (ex: eager returns
     /// from WFT completion)
-    pub(crate) fn add_tasks(&self, tasks: impl IntoIterator<Item = TrackedPermittedTqResp>) {
+    pub(crate) fn add_tasks(
+        &self,
+        tasks: impl IntoIterator<Item = TrackedPermittedTqResp<PollActivityTaskQueueResponse>>,
+    ) {
         for t in tasks.into_iter() {
             // Technically we should be reporting `activity_task_received` here, but for simplicity
             // and time insensitivity, that metric is tracked in `about_to_issue_task`.
             self.tx.send(t).expect("Receive half cannot be dropped");
         }
     }
-}
-
-#[derive(Debug)]
-pub(crate) struct PermittedTqResp {
-    pub(crate) permit: OwnedMeteredSemPermit<ActivitySlotKind>,
-    pub(crate) resp: PollActivityTaskQueueResponse,
-}
-
-#[derive(Debug)]
-pub(crate) struct TrackedPermittedTqResp {
-    pub(crate) permit: TrackedOwnedMeteredSemPermit<ActivitySlotKind>,
-    pub(crate) resp: PollActivityTaskQueueResponse,
 }
 
 fn worker_shutdown_failure() -> Failure {
@@ -794,7 +783,7 @@ mod tests {
         )
         .await;
         atm.initiate_shutdown();
-        assert_matches!(atm.poll().await.unwrap_err(), PollActivityError::ShutDown);
+        assert_matches!(atm.poll().await.unwrap_err(), PollError::ShutDown);
         atm.shutdown().await;
     }
 
@@ -882,7 +871,7 @@ mod tests {
         }
 
         atm.initiate_shutdown();
-        assert_matches!(atm.poll().await.unwrap_err(), PollActivityError::ShutDown);
+        assert_matches!(atm.poll().await.unwrap_err(), PollError::ShutDown);
         atm.shutdown().await;
     }
 
@@ -967,7 +956,7 @@ mod tests {
         .await;
 
         atm.initiate_shutdown();
-        assert_matches!(atm.poll().await.unwrap_err(), PollActivityError::ShutDown);
+        assert_matches!(atm.poll().await.unwrap_err(), PollError::ShutDown);
         atm.shutdown().await;
     }
 }

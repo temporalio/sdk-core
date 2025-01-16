@@ -12,8 +12,8 @@ use crate::{
             FailedActivationWFTReport, HeartbeatTimeoutMsg, HistoryUpdate,
             LocalActivityRequestSink, LocalResolution, NextPageReq, OutstandingActivation,
             OutstandingTask, PermittedWFT, RequestEvictMsg, RunBasics,
-            ServerCommandsWithWorkflowInfo, WFCommand, WFMachinesError, WFTReportStatus,
-            WorkflowTaskInfo, WFT_HEARTBEAT_TIMEOUT_FRACTION,
+            ServerCommandsWithWorkflowInfo, WFCommand, WFCommandVariant, WFMachinesError,
+            WFTReportStatus, WorkflowTaskInfo, WFT_HEARTBEAT_TIMEOUT_FRACTION,
         },
         LocalActRequest, LEGACY_QUERY_ID,
     },
@@ -373,6 +373,7 @@ impl ManagedRun {
         mut commands: Vec<WFCommand>,
         used_flags: Vec<u32>,
         resp_chan: Option<oneshot::Sender<ActivationCompleteResult>>,
+        is_forced_failure: bool,
     ) -> Result<RunUpdateAct, Box<NextPageReq>> {
         let activation_was_only_eviction = self.activation_is_eviction();
         let (task_token, has_pending_query, start_time) = if let Some(entry) = self.wft.as_ref() {
@@ -410,10 +411,14 @@ impl ManagedRun {
         // If the only command from the activation is a legacy query response, that means we need
         // to respond differently than a typical activation.
         if matches!(&commands.as_slice(),
-                    &[WFCommand::QueryResponse(qr)] if qr.query_id == LEGACY_QUERY_ID)
+                    &[WFCommand {variant: WFCommandVariant::QueryResponse(qr), ..}]
+                        if qr.query_id == LEGACY_QUERY_ID)
         {
             let qr = match commands.remove(0) {
-                WFCommand::QueryResponse(qr) => qr,
+                WFCommand {
+                    variant: WFCommandVariant::QueryResponse(qr),
+                    ..
+                } => qr,
                 _ => unreachable!("We just verified this is the only command"),
             };
             self.reply_to_complete(
@@ -442,6 +447,7 @@ impl ManagedRun {
                 query_responses,
                 used_flags,
                 resp_chan,
+                is_forced_failure,
             };
 
             // Verify we can actually apply the next workflow task, which will happen as part of
@@ -605,11 +611,15 @@ impl ManagedRun {
                 warn!(failure=?failure, "Failing workflow due to nondeterminism error");
                 return self
                     .successful_completion(
-                        vec![WFCommand::FailWorkflow(FailWorkflowExecution {
-                            failure: failure.failure,
-                        })],
+                        vec![WFCommand {
+                            variant: WFCommandVariant::FailWorkflow(FailWorkflowExecution {
+                                failure: failure.failure,
+                            }),
+                            metadata: None,
+                        }],
                         vec![],
                         resp_chan,
+                        true,
                     )
                     .unwrap_or_else(|e| {
                         dbg_panic!("Got next page request when auto-failing workflow: {e:?}");
@@ -679,6 +689,7 @@ impl ManagedRun {
             query_responses: completion.query_responses,
             has_pending_query: completion.has_pending_query,
             activation_was_eviction: completion.activation_was_eviction,
+            is_forced_failure: completion.is_forced_failure,
         };
 
         self.wfm.machines.add_lang_used_flags(completion.used_flags);
@@ -701,7 +712,8 @@ impl ManagedRun {
                 self.wfm.feed_history_from_new_page(update)?;
             }
             // Don't bother applying the next task if we're evicting at the end of this activation
-            if !completion.activation_was_eviction {
+            // or are otherwise broken.
+            if !completion.activation_was_eviction && !self.am_broken {
                 self.wfm.apply_next_task_if_ready()?;
             }
             let new_local_acts = self.wfm.drain_queued_local_activities();
@@ -1076,7 +1088,7 @@ impl ManagedRun {
         // fulfilling a query. If the activation we sent was *only* an eviction, don't send that
         // either.
         let should_respond = !(machines_wft_response.has_pending_jobs
-            || machines_wft_response.replaying
+            || (machines_wft_response.replaying && !data.is_forced_failure)
             || is_query_playback
             || data.activation_was_eviction
             || machines_wft_response.have_seen_terminal_event);
@@ -1221,10 +1233,10 @@ fn preprocess_command_sequence(commands: Vec<WFCommand>) -> (Vec<WFCommand>, Vec
     let mut commands: Vec<_> = commands
         .into_iter()
         .filter_map(|c| {
-            if let WFCommand::QueryResponse(qr) = c {
+            if let WFCommandVariant::QueryResponse(qr) = c.variant {
                 query_results.push(qr);
                 None
-            } else if c.is_terminal() {
+            } else if c.variant.is_terminal() {
                 terminals.push(c);
                 None
             } else {
@@ -1247,13 +1259,13 @@ fn preprocess_command_sequence_old_behavior(
     let commands: Vec<_> = commands
         .into_iter()
         .filter_map(|c| {
-            if let WFCommand::QueryResponse(qr) = c {
+            if let WFCommandVariant::QueryResponse(qr) = c.variant {
                 query_results.push(qr);
                 None
             } else if seen_terminal {
                 None
             } else {
-                if c.is_terminal() {
+                if c.variant.is_terminal() {
                     seen_terminal = true;
                 }
                 Some(c)
@@ -1324,6 +1336,7 @@ struct CompletionDataForWFT {
     query_responses: Vec<QueryResult>,
     has_pending_query: bool,
     activation_was_eviction: bool,
+    is_forced_failure: bool,
 }
 
 /// Manages an instance of a [WorkflowMachines], which is not thread-safe, as well as other data
@@ -1398,13 +1411,11 @@ impl WorkflowManager {
         self.machines.ready_to_apply_next_wft()
     }
 
-    /// If there are no pending jobs for the workflow, apply the next workflow task and check
-    /// again if there are any jobs. Importantly, does not *drain* jobs.
-    ///
-    /// Returns true if there are jobs (before or after applying the next WFT).
-    fn apply_next_task_if_ready(&mut self) -> Result<bool> {
+    /// If there are no pending jobs for the workflow apply the next workflow task and check again
+    /// if there are any jobs. Importantly, does not *drain* jobs.
+    fn apply_next_task_if_ready(&mut self) -> Result<()> {
         if self.machines.has_pending_jobs() {
-            return Ok(true);
+            return Ok(());
         }
         loop {
             let consumed_events = self.machines.apply_next_wft_from_history()?;
@@ -1416,7 +1427,7 @@ impl WorkflowManager {
                 break;
             }
         }
-        Ok(self.machines.has_pending_jobs())
+        Ok(())
     }
 
     /// Must be called when we're ready to respond to a WFT after handling catching up on replay
@@ -1466,6 +1477,7 @@ struct RunActivationCompletion {
     has_pending_query: bool,
     query_responses: Vec<QueryResult>,
     used_flags: Vec<u32>,
+    is_forced_failure: bool,
     /// Used to notify the worker when the completion is done processing and the completion can
     /// unblock. Must always be `Some` when initialized.
     resp_chan: Option<oneshot::Sender<ActivationCompleteResult>>,
@@ -1494,7 +1506,7 @@ impl From<WFMachinesError> for RunUpdateErr {
 
 #[cfg(test)]
 mod tests {
-    use crate::worker::workflow::WFCommand;
+    use crate::worker::workflow::{WFCommand, WFCommandVariant};
     use std::mem::{discriminant, Discriminant};
 
     use command_utils::*;
@@ -1591,25 +1603,39 @@ mod tests {
         use super::*;
 
         pub(crate) fn complete() -> WFCommand {
-            WFCommand::CompleteWorkflow(CompleteWorkflowExecution { result: None })
+            WFCommand {
+                variant: WFCommandVariant::CompleteWorkflow(CompleteWorkflowExecution {
+                    result: None,
+                }),
+                metadata: None,
+            }
         }
 
         pub(crate) fn cancel() -> WFCommand {
-            WFCommand::CancelWorkflow(CancelWorkflowExecution {})
+            WFCommand {
+                variant: WFCommandVariant::CancelWorkflow(CancelWorkflowExecution {}),
+                metadata: None,
+            }
         }
 
         pub(crate) fn query_response() -> WFCommand {
-            WFCommand::QueryResponse(QueryResult {
-                query_id: "".into(),
-                variant: None,
-            })
+            WFCommand {
+                variant: WFCommandVariant::QueryResponse(QueryResult {
+                    query_id: "".into(),
+                    variant: None,
+                }),
+                metadata: None,
+            }
         }
 
         pub(crate) fn update_response() -> WFCommand {
-            WFCommand::UpdateResponse(UpdateResponse {
-                protocol_instance_id: "".into(),
-                response: None,
-            })
+            WFCommand {
+                variant: WFCommandVariant::UpdateResponse(UpdateResponse {
+                    protocol_instance_id: "".into(),
+                    response: None,
+                }),
+                metadata: None,
+            }
         }
 
         pub(crate) fn command_types(commands: &[WFCommand]) -> Vec<Discriminant<WFCommand>> {

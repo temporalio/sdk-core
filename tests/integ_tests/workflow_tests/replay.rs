@@ -4,7 +4,7 @@ use parking_lot::Mutex;
 use std::{collections::HashSet, sync::Arc, time::Duration};
 use temporal_sdk::{interceptors::WorkerInterceptor, WfContext, Worker, WorkflowFunction};
 use temporal_sdk_core::replay::{HistoryFeeder, HistoryForReplay};
-use temporal_sdk_core_api::errors::{PollActivityError, PollWfError};
+use temporal_sdk_core_api::errors::PollError;
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::remove_from_cache::EvictionReason,
@@ -42,7 +42,6 @@ async fn timer_workflow_replay() {
         vec![StartTimer {
             seq: 0,
             start_to_fire_timeout: Some(prost_dur!(from_secs(1))),
-            summary: None,
         }
         .into()],
     ))
@@ -51,10 +50,7 @@ async fn timer_workflow_replay() {
     let task = core.poll_workflow_activation().await.unwrap();
     // Verify that an in-progress poll is interrupted by completion finishing processing history
     let act_poll_fut = async {
-        assert_matches!(
-            core.poll_activity_task().await,
-            Err(PollActivityError::ShutDown)
-        );
+        assert_matches!(core.poll_activity_task().await, Err(PollError::ShutDown));
     };
     let poll_fut = async {
         let evict_task = core
@@ -67,7 +63,7 @@ async fn timer_workflow_replay() {
             .unwrap();
         assert_matches!(
             core.poll_workflow_activation().await,
-            Err(PollWfError::ShutDown)
+            Err(PollError::ShutDown)
         );
     };
     let complete_fut = async {
@@ -78,7 +74,7 @@ async fn timer_workflow_replay() {
     // Subsequent polls should still return shutdown
     assert_matches!(
         core.poll_workflow_activation().await,
-        Err(PollWfError::ShutDown)
+        Err(PollError::ShutDown)
     );
 
     core.shutdown().await;
@@ -118,7 +114,7 @@ async fn workflow_nondeterministic_replay() {
     core.shutdown().await;
     assert_matches!(
         core.poll_workflow_activation().await,
-        Err(PollWfError::ShutDown)
+        Err(PollError::ShutDown)
     );
 }
 
