@@ -131,6 +131,8 @@ pub(crate) struct WorkflowBasics {
     pub(crate) shutdown_token: CancellationToken,
     pub(crate) metrics: MetricsContext,
     pub(crate) server_capabilities: get_system_info_response::Capabilities,
+    pub(crate) sdk_name: String,
+    pub(crate) sdk_version: String,
 }
 
 pub(crate) struct RunBasics<'a> {
@@ -141,6 +143,8 @@ pub(crate) struct RunBasics<'a> {
     pub(crate) history: HistoryUpdate,
     pub(crate) metrics: MetricsContext,
     pub(crate) capabilities: &'a get_system_info_response::Capabilities,
+    pub(crate) sdk_name: &'a str,
+    pub(crate) sdk_version: &'a str,
 }
 
 impl Workflows {

@@ -68,7 +68,6 @@ use temporal_sdk_core_protos::{
     temporal::api::{
         enums::v1::TaskQueueKind,
         taskqueue::v1::{StickyExecutionAttributes, TaskQueue},
-        workflowservice::v1::get_system_info_response,
     },
     TaskToken,
 };
@@ -508,16 +507,19 @@ impl Worker {
             external_wft_tx,
         );
         let worker_key = Mutex::new(client.workers().register(Box::new(provider)));
+        let sdk_name_and_ver = client.sdk_name_and_version();
         Self {
             worker_key,
             client: client.clone(),
             workflows: Workflows::new(
-                build_wf_basics(
-                    config.clone(),
+                WorkflowBasics {
+                    worker_config: Arc::new(config.clone()),
+                    shutdown_token: shutdown_token.child_token(),
                     metrics,
-                    shutdown_token.child_token(),
-                    client.capabilities().unwrap_or_default(),
-                ),
+                    server_capabilities: client.capabilities().unwrap_or_default(),
+                    sdk_name: sdk_name_and_ver.0,
+                    sdk_version: sdk_name_and_ver.1,
+                },
                 sticky_queue_name.map(|sq| StickyExecutionAttributes {
                     worker_task_queue: Some(TaskQueue {
                         name: sq,
@@ -862,20 +864,6 @@ impl Worker {
 pub(crate) struct PostActivateHookData<'a> {
     pub(crate) run_id: &'a str,
     pub(crate) replaying: bool,
-}
-
-fn build_wf_basics(
-    config: WorkerConfig,
-    metrics: MetricsContext,
-    shutdown_token: CancellationToken,
-    server_capabilities: get_system_info_response::Capabilities,
-) -> WorkflowBasics {
-    WorkflowBasics {
-        worker_config: Arc::new(config),
-        shutdown_token,
-        metrics,
-        server_capabilities,
-    }
 }
 
 pub(crate) enum TaskPollers {

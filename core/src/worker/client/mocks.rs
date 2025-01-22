@@ -31,6 +31,8 @@ pub(crate) fn mock_workflow_client() -> MockWorkerClient {
     r.expect_is_mock().returning(|| true);
     r.expect_shutdown_worker()
         .returning(|_| Ok(ShutdownWorkerResponse {}));
+    r.expect_sdk_name_and_version()
+        .returning(|| ("test-core".to_string(), "0.0.0".to_string()));
     r
 }
 
@@ -42,6 +44,8 @@ pub(crate) fn mock_manual_workflow_client() -> MockManualWorkerClient {
     r.expect_workers()
         .returning(|| DEFAULT_WORKERS_REGISTRY.clone());
     r.expect_is_mock().returning(|| true);
+    r.expect_sdk_name_and_version()
+        .returning(|| ("test-core".to_string(), "0.0.0".to_string()));
     r
 }
 
@@ -146,5 +150,6 @@ mockall::mock! {
         fn capabilities(&self) -> Option<Capabilities>;
         fn workers(&self) -> Arc<SlotManager>;
         fn is_mock(&self) -> bool;
+        fn sdk_name_and_version(&self) -> (String, String);
     }
 }

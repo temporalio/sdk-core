@@ -87,6 +87,7 @@ impl WFStream {
             buffered_polls_need_cache_slot: Default::default(),
             runs: RunCache::new(
                 basics.worker_config.clone(),
+                (basics.sdk_name.clone(), basics.sdk_version.clone()),
                 basics.server_capabilities,
                 local_activity_request_sink,
                 basics.metrics.clone(),

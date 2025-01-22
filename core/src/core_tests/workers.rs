@@ -313,6 +313,8 @@ async fn worker_shutdown_api(#[case] use_cache: bool, #[case] api_success: bool)
     mock.expect_workers()
         .returning(|| DEFAULT_WORKERS_REGISTRY.clone());
     mock.expect_is_mock().returning(|| true);
+    mock.expect_sdk_name_and_version()
+        .returning(|| ("test-core".to_string(), "0.0.0".to_string()));
     if use_cache {
         if api_success {
             mock.expect_shutdown_worker()

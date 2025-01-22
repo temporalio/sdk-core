@@ -985,7 +985,7 @@ mod test {
                     workflow_type: "".to_string(),
                     cancelled_before_sent: false,
                     cancel_type: Default::default(),
-                    internal_flags: Rc::new(RefCell::new(InternalFlags::new(&Default::default()))),
+                    internal_flags: Rc::new(RefCell::new(InternalFlags::default())),
                 },
             );
             let cmds = s.cancel().unwrap();
@@ -1006,7 +1006,7 @@ mod test {
             workflow_type: "".to_string(),
             cancelled_before_sent: false,
             cancel_type: ChildWorkflowCancellationType::Abandon,
-            internal_flags: Rc::new(RefCell::new(InternalFlags::new(&Default::default()))),
+            internal_flags: Rc::new(RefCell::new(InternalFlags::default())),
         };
         let state = Cancelled {
             seen_cancelled_event: true,

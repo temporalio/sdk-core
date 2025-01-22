@@ -240,7 +240,11 @@ where
 impl WorkflowMachines {
     pub(crate) fn new(basics: RunBasics, driven_wf: DrivenWorkflow) -> Self {
         let replaying = basics.history.previous_wft_started_id > 0;
-        let mut observed_internal_flags = InternalFlags::new(basics.capabilities);
+        let mut observed_internal_flags = InternalFlags::new(
+            basics.capabilities,
+            basics.sdk_name.to_owned(),
+            basics.sdk_version.to_owned(),
+        );
         // Peek ahead to determine used flags in the first WFT.
         if let Some(attrs) = basics.history.peek_next_wft_completed(0) {
             observed_internal_flags.add_from_complete(attrs);

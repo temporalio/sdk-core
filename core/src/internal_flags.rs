@@ -47,25 +47,44 @@ pub(crate) enum InternalFlags {
         lang: BTreeSet<u32>,
         core_since_last_complete: HashSet<CoreInternalFlags>,
         lang_since_last_complete: HashSet<u32>,
+        last_sdk_name: String,
+        last_sdk_version: String,
+        sdk_name: String,
+        sdk_version: String,
     },
     Disabled,
 }
 
 impl InternalFlags {
-    pub(crate) fn new(server_capabilities: &get_system_info_response::Capabilities) -> Self {
+    pub(crate) fn new(
+        server_capabilities: &get_system_info_response::Capabilities,
+        sdk_name: String,
+        sdk_version: String,
+    ) -> Self {
         match server_capabilities.sdk_metadata {
             true => Self::Enabled {
                 core: Default::default(),
                 lang: Default::default(),
                 core_since_last_complete: Default::default(),
                 lang_since_last_complete: Default::default(),
+                last_sdk_name: "".to_string(),
+                last_sdk_version: "".to_string(),
+                sdk_name,
+                sdk_version,
             },
             false => Self::Disabled,
         }
     }
 
     pub(crate) fn add_from_complete(&mut self, e: &WorkflowTaskCompletedEventAttributes) {
-        if let Self::Enabled { core, lang, .. } = self {
+        if let Self::Enabled {
+            core,
+            lang,
+            last_sdk_name,
+            last_sdk_version,
+            ..
+        } = self
+        {
             if let Some(metadata) = e.sdk_metadata.as_ref() {
                 core.extend(
                     metadata
@@ -74,6 +93,12 @@ impl InternalFlags {
                         .map(|u| CoreInternalFlags::from_u32(*u)),
                 );
                 lang.extend(metadata.lang_used_flags.iter());
+                if !metadata.sdk_name.is_empty() {
+                    *last_sdk_name = metadata.sdk_name.clone();
+                }
+                if !metadata.sdk_version.is_empty() {
+                    *last_sdk_version = metadata.sdk_version.clone();
+                }
             }
         }
     }
@@ -133,6 +158,10 @@ impl InternalFlags {
                 lang_since_last_complete,
                 core,
                 lang,
+                last_sdk_name,
+                last_sdk_version,
+                sdk_name,
+                sdk_version,
             } => {
                 let core_newly_used: Vec<_> = core_since_last_complete
                     .iter()
@@ -146,11 +175,21 @@ impl InternalFlags {
                     .collect();
                 core.extend(core_since_last_complete.iter());
                 lang.extend(lang_since_last_complete.iter());
+                let sdk_name = if last_sdk_name != sdk_name {
+                    sdk_name.clone()
+                } else {
+                    "".to_string()
+                };
+                let sdk_version = if last_sdk_version != sdk_version {
+                    sdk_version.clone()
+                } else {
+                    "".to_string()
+                };
                 WorkflowTaskCompletedMetadata {
                     core_used_flags: core_newly_used,
                     lang_used_flags: lang_newly_used,
-                    sdk_name: "".to_string(),
-                    sdk_version: "".to_string(),
+                    sdk_name,
+                    sdk_version,
                 }
             }
             Self::Disabled => WorkflowTaskCompletedMetadata::default(),
@@ -186,9 +225,19 @@ mod tests {
     use super::*;
     use temporal_sdk_core_protos::temporal::api::workflowservice::v1::get_system_info_response::Capabilities;
 
+    impl Default for InternalFlags {
+        fn default() -> Self {
+            Self::Disabled
+        }
+    }
+
     #[test]
     fn disabled_in_capabilities_disables() {
-        let mut f = InternalFlags::new(&Capabilities::default());
+        let mut f = InternalFlags::new(
+            &Capabilities::default(),
+            "name".to_string(),
+            "ver".to_string(),
+        );
         f.add_lang_used([1]);
         f.add_from_complete(&WorkflowTaskCompletedEventAttributes {
             sdk_metadata: Some(WorkflowTaskCompletedMetadata {
@@ -214,23 +263,29 @@ mod tests {
     }
 
     #[test]
-    fn only_writes_new_flags() {
-        let mut f = InternalFlags::new(&Capabilities {
-            sdk_metadata: true,
-            ..Default::default()
-        });
+    fn only_writes_new_flags_and_sdk_info() {
+        let mut f = InternalFlags::new(
+            &Capabilities {
+                sdk_metadata: true,
+                ..Default::default()
+            },
+            "name".to_string(),
+            "ver".to_string(),
+        );
         f.add_lang_used([1]);
         f.try_use(CoreInternalFlags::IdAndTypeDeterminismChecks, true);
         let gathered = f.gather_for_wft_complete();
         assert_matches!(gathered.core_used_flags.as_slice(), &[1]);
         assert_matches!(gathered.lang_used_flags.as_slice(), &[1]);
+        assert_matches!(gathered.sdk_name.as_str(), "name");
+        assert_matches!(gathered.sdk_version.as_str(), "ver");
 
         f.add_from_complete(&WorkflowTaskCompletedEventAttributes {
             sdk_metadata: Some(WorkflowTaskCompletedMetadata {
                 core_used_flags: vec![2],
                 lang_used_flags: vec![2],
-                sdk_name: "".to_string(),
-                sdk_version: "".to_string(),
+                sdk_name: "name".to_string(),
+                sdk_version: "ver".to_string(),
             }),
             ..Default::default()
         });
@@ -239,5 +294,41 @@ mod tests {
         let gathered = f.gather_for_wft_complete();
         assert_matches!(gathered.core_used_flags.as_slice(), &[]);
         assert_matches!(gathered.lang_used_flags.as_slice(), &[]);
+        assert!(gathered.sdk_name.is_empty());
+        assert!(gathered.sdk_version.is_empty());
+
+        f.add_from_complete(&WorkflowTaskCompletedEventAttributes {
+            sdk_metadata: Some(WorkflowTaskCompletedMetadata::default()),
+            ..Default::default()
+        });
+        let gathered = f.gather_for_wft_complete();
+        assert_matches!(gathered.core_used_flags.as_slice(), &[]);
+        assert_matches!(gathered.lang_used_flags.as_slice(), &[]);
+        assert!(gathered.sdk_name.is_empty());
+        assert!(gathered.sdk_version.is_empty());
+
+        f.add_from_complete(&WorkflowTaskCompletedEventAttributes {
+            sdk_metadata: Some(WorkflowTaskCompletedMetadata {
+                sdk_name: "other sdk".to_string(),
+                sdk_version: "other ver".to_string(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        let gathered = f.gather_for_wft_complete();
+        assert_matches!(gathered.sdk_name.as_str(), "name");
+        assert_matches!(gathered.sdk_version.as_str(), "ver");
+
+        f.add_from_complete(&WorkflowTaskCompletedEventAttributes {
+            sdk_metadata: Some(WorkflowTaskCompletedMetadata {
+                sdk_name: "name".to_string(),
+                sdk_version: "ver2".to_string(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        let gathered = f.gather_for_wft_complete();
+        assert!(gathered.sdk_name.is_empty());
+        assert_matches!(gathered.sdk_version.as_str(), "ver");
     }
 }
