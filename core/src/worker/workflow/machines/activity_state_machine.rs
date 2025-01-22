@@ -876,7 +876,7 @@ mod test {
                     attrs: Default::default(),
                     cancellation_type: Default::default(),
                     cancelled_before_sent: false,
-                    internal_flags: Rc::new(RefCell::new(InternalFlags::new(&Default::default()))),
+                    internal_flags: Rc::new(RefCell::new(InternalFlags::default())),
                 },
             );
             let cmds = s.cancel().unwrap();
@@ -894,7 +894,7 @@ mod test {
                 cancellation_type: ActivityCancellationType::Abandon.into(),
                 ..Default::default()
             },
-            Rc::new(RefCell::new(InternalFlags::new(&Default::default()))),
+            Rc::new(RefCell::new(InternalFlags::default())),
             true,
         );
         let mut s = if let Machines::ActivityMachine(am) = s.machine {

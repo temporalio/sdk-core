@@ -16,6 +16,7 @@ use temporal_sdk_core_protos::{
 
 pub(super) struct RunCache {
     worker_config: Arc<WorkerConfig>,
+    sdk_name_and_version: (String, String),
     server_capabilities: get_system_info_response::Capabilities,
     /// Run id -> Data
     runs: LruCache<String, ManagedRun>,
@@ -27,6 +28,7 @@ pub(super) struct RunCache {
 impl RunCache {
     pub(super) fn new(
         worker_config: Arc<WorkerConfig>,
+        sdk_name_and_version: (String, String),
         server_capabilities: get_system_info_response::Capabilities,
         local_activity_request_sink: impl LocalActivityRequestSink,
         metrics: MetricsContext,
@@ -40,6 +42,7 @@ impl RunCache {
         };
         Self {
             worker_config,
+            sdk_name_and_version,
             server_capabilities,
             runs: LruCache::new(
                 NonZeroUsize::new(lru_size).expect("LRU size is guaranteed positive"),
@@ -73,6 +76,8 @@ impl RunCache {
                 history: HistoryUpdate::dummy(),
                 metrics,
                 capabilities: &self.server_capabilities,
+                sdk_name: &self.sdk_name_and_version.0,
+                sdk_version: &self.sdk_name_and_version.1,
             },
             pwft,
             self.local_activity_request_sink.clone(),

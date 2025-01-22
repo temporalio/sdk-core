@@ -164,6 +164,8 @@ pub(crate) trait WorkerClient: Sync + Send {
     fn capabilities(&self) -> Option<Capabilities>;
     fn workers(&self) -> Arc<SlotManager>;
     fn is_mock(&self) -> bool;
+    /// Return (sdk_name, sdk_version) from the underlying client configuration
+    fn sdk_name_and_version(&self) -> (String, String);
 }
 
 #[async_trait::async_trait]
@@ -485,6 +487,12 @@ impl WorkerClient for WorkerClientBag {
 
     fn is_mock(&self) -> bool {
         false
+    }
+
+    fn sdk_name_and_version(&self) -> (String, String) {
+        let lock = self.replaceable_client.read();
+        let opts = lock.get_client().inner().options();
+        (opts.client_name.clone(), opts.client_version.clone())
     }
 }
 
