@@ -175,12 +175,16 @@ impl InternalFlags {
                     .collect();
                 core.extend(core_since_last_complete.iter());
                 lang.extend(lang_since_last_complete.iter());
-                let (sdk_name, sdk_version) =
-                    if last_sdk_name != sdk_name || last_sdk_version != sdk_version {
-                        (sdk_name.clone(), sdk_version.clone())
-                    } else {
-                        ("".to_owned(), "".to_owned())
-                    };
+                let sdk_name = if last_sdk_name != sdk_name {
+                    sdk_name.clone()
+                } else {
+                    "".to_string()
+                };
+                let sdk_version = if last_sdk_version != sdk_version {
+                    sdk_version.clone()
+                } else {
+                    "".to_string()
+                };
                 WorkflowTaskCompletedMetadata {
                     core_used_flags: core_newly_used,
                     lang_used_flags: lang_newly_used,
@@ -306,13 +310,25 @@ mod tests {
         f.add_from_complete(&WorkflowTaskCompletedEventAttributes {
             sdk_metadata: Some(WorkflowTaskCompletedMetadata {
                 sdk_name: "other sdk".to_string(),
-                sdk_version: "ver".to_string(),
+                sdk_version: "other ver".to_string(),
                 ..Default::default()
             }),
             ..Default::default()
         });
         let gathered = f.gather_for_wft_complete();
         assert_matches!(gathered.sdk_name.as_str(), "name");
+        assert_matches!(gathered.sdk_version.as_str(), "ver");
+
+        f.add_from_complete(&WorkflowTaskCompletedEventAttributes {
+            sdk_metadata: Some(WorkflowTaskCompletedMetadata {
+                sdk_name: "name".to_string(),
+                sdk_version: "ver2".to_string(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        let gathered = f.gather_for_wft_complete();
+        assert!(gathered.sdk_name.is_empty());
         assert_matches!(gathered.sdk_version.as_str(), "ver");
     }
 }
