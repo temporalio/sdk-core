@@ -73,6 +73,8 @@ impl WorkerClientBag {
             Some(WorkerVersionCapabilities {
                 build_id: self.worker_build_id.clone(),
                 use_versioning: self.use_versioning,
+                // TODO: https://github.com/temporalio/sdk-core/issues/866
+                deployment_series_name: "".to_string(),
             })
         } else {
             None
@@ -238,6 +240,7 @@ impl WorkerClient for WorkerClientBag {
         &self,
         request: WorkflowTaskCompletion,
     ) -> Result<RespondWorkflowTaskCompletedResponse> {
+        #[allow(deprecated)] // want to list all fields explicitly
         let request = RespondWorkflowTaskCompletedRequest {
             task_token: request.task_token.into(),
             commands: request.commands,
@@ -259,6 +262,8 @@ impl WorkerClient for WorkerClientBag {
                             result_type: completed_type as i32,
                             answer: query_result,
                             error_message,
+                            // TODO: https://github.com/temporalio/sdk-core/issues/867
+                            failure: None,
                         },
                     )
                 })
@@ -269,6 +274,9 @@ impl WorkerClient for WorkerClientBag {
             capabilities: Some(respond_workflow_task_completed_request::Capabilities {
                 discard_speculative_workflow_task_with_events: true,
             }),
+            // TODO: https://github.com/temporalio/sdk-core/issues/866
+            deployment: None,
+            versioning_behavior: 0,
         };
         Ok(self
             .cloned_client()
@@ -284,13 +292,18 @@ impl WorkerClient for WorkerClientBag {
     ) -> Result<RespondActivityTaskCompletedResponse> {
         Ok(self
             .cloned_client()
-            .respond_activity_task_completed(RespondActivityTaskCompletedRequest {
-                task_token: task_token.0,
-                result,
-                identity: self.identity.clone(),
-                namespace: self.namespace.clone(),
-                worker_version: self.worker_version_stamp(),
-            })
+            .respond_activity_task_completed(
+                #[allow(deprecated)] // want to list all fields explicitly
+                RespondActivityTaskCompletedRequest {
+                    task_token: task_token.0,
+                    result,
+                    identity: self.identity.clone(),
+                    namespace: self.namespace.clone(),
+                    worker_version: self.worker_version_stamp(),
+                    // TODO: https://github.com/temporalio/sdk-core/issues/866
+                    deployment: None,
+                },
+            )
             .await?
             .into_inner())
     }
@@ -336,13 +349,18 @@ impl WorkerClient for WorkerClientBag {
     ) -> Result<RespondActivityTaskCanceledResponse> {
         Ok(self
             .cloned_client()
-            .respond_activity_task_canceled(RespondActivityTaskCanceledRequest {
-                task_token: task_token.0,
-                details,
-                identity: self.identity.clone(),
-                namespace: self.namespace.clone(),
-                worker_version: self.worker_version_stamp(),
-            })
+            .respond_activity_task_canceled(
+                #[allow(deprecated)] // want to list all fields explicitly
+                RespondActivityTaskCanceledRequest {
+                    task_token: task_token.0,
+                    details,
+                    identity: self.identity.clone(),
+                    namespace: self.namespace.clone(),
+                    worker_version: self.worker_version_stamp(),
+                    // TODO: https://github.com/temporalio/sdk-core/issues/866
+                    deployment: None,
+                },
+            )
             .await?
             .into_inner())
     }
@@ -354,15 +372,20 @@ impl WorkerClient for WorkerClientBag {
     ) -> Result<RespondActivityTaskFailedResponse> {
         Ok(self
             .cloned_client()
-            .respond_activity_task_failed(RespondActivityTaskFailedRequest {
-                task_token: task_token.0,
-                failure,
-                identity: self.identity.clone(),
-                namespace: self.namespace.clone(),
-                // TODO: Implement - https://github.com/temporalio/sdk-core/issues/293
-                last_heartbeat_details: None,
-                worker_version: self.worker_version_stamp(),
-            })
+            .respond_activity_task_failed(
+                #[allow(deprecated)] // want to list all fields explicitly
+                RespondActivityTaskFailedRequest {
+                    task_token: task_token.0,
+                    failure,
+                    identity: self.identity.clone(),
+                    namespace: self.namespace.clone(),
+                    // TODO: Implement - https://github.com/temporalio/sdk-core/issues/293
+                    last_heartbeat_details: None,
+                    worker_version: self.worker_version_stamp(),
+                    // TODO: https://github.com/temporalio/sdk-core/issues/866
+                    deployment: None,
+                },
+            )
             .await?
             .into_inner())
     }
@@ -373,6 +396,7 @@ impl WorkerClient for WorkerClientBag {
         cause: WorkflowTaskFailedCause,
         failure: Option<Failure>,
     ) -> Result<RespondWorkflowTaskFailedResponse> {
+        #[allow(deprecated)] // want to list all fields explicitly
         let request = RespondWorkflowTaskFailedRequest {
             task_token: task_token.0,
             cause: cause as i32,
@@ -382,6 +406,8 @@ impl WorkerClient for WorkerClientBag {
             namespace: self.namespace.clone(),
             messages: vec![],
             worker_version: self.worker_version_stamp(),
+            // TODO: https://github.com/temporalio/sdk-core/issues/866
+            deployment: None,
         };
         Ok(self
             .cloned_client()
@@ -442,6 +468,8 @@ impl WorkerClient for WorkerClientBag {
                 query_result,
                 error_message,
                 namespace: self.namespace.clone(),
+                // TODO: https://github.com/temporalio/sdk-core/issues/867
+                failure: None,
             })
             .await?
             .into_inner())
