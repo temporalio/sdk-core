@@ -1,6 +1,6 @@
 // The MIT License
 //
-// Copyright (c) 2022 Temporal Technologies Inc.  All rights reserved.
+// Copyright (c) 2020 Temporal Technologies Inc.  All rights reserved.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -27,23 +27,23 @@ package temporal.api.enums.v1;
 option go_package = "go.temporal.io/api/enums/v1;enums";
 option java_package = "io.temporal.api.enums.v1";
 option java_multiple_files = true;
-option java_outer_classname = "BatchOperationProto";
+option java_outer_classname = "DeploymentProto";
 option ruby_package = "Temporalio::Api::Enums::V1";
 option csharp_namespace = "Temporalio.Api.Enums.V1";
 
-enum BatchOperationType {
-  BATCH_OPERATION_TYPE_UNSPECIFIED = 0;
-  BATCH_OPERATION_TYPE_TERMINATE = 1;
-  BATCH_OPERATION_TYPE_CANCEL = 2;
-  BATCH_OPERATION_TYPE_SIGNAL = 3;
-  BATCH_OPERATION_TYPE_DELETE = 4;
-  BATCH_OPERATION_TYPE_RESET = 5;
-  BATCH_OPERATION_TYPE_UPDATE_EXECUTION_OPTIONS = 6;
-}
-
-enum BatchOperationState {
-  BATCH_OPERATION_STATE_UNSPECIFIED = 0;
-  BATCH_OPERATION_STATE_RUNNING = 1;
-  BATCH_OPERATION_STATE_COMPLETED = 2;
-  BATCH_OPERATION_STATE_FAILED = 3;
+// Specify the reachability level for a deployment so users can decide if it is time to
+// decommission the deployment.
+enum DeploymentReachability {
+    // Reachability level is not specified.
+    DEPLOYMENT_REACHABILITY_UNSPECIFIED = 0;
+    // The deployment is reachable by new and/or open workflows. The deployment cannot be
+    // decommissioned safely.
+    DEPLOYMENT_REACHABILITY_REACHABLE = 1;
+    // The deployment is not reachable by new or open workflows, but might be still needed by
+    // Queries sent to closed workflows. The deployment can be decommissioned safely if user does
+    // not query closed workflows.
+    DEPLOYMENT_REACHABILITY_CLOSED_WORKFLOWS_ONLY = 2;
+    // The deployment is not reachable by any workflow because all the workflows who needed this
+    // deployment went out of retention period. The deployment can be decommissioned safely.
+    DEPLOYMENT_REACHABILITY_UNREACHABLE = 3;
 }

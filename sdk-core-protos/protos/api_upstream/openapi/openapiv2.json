@@ -868,6 +868,231 @@
         ]
       }
     },
+    "/api/v1/namespaces/{namespace}/current-deployment/{deployment.seriesName}": {
+      "post": {
+        "summary": "Sets a deployment as the current deployment for its deployment series. Can optionally update\nthe metadata of the deployment as well.\nExperimental. This API might significantly change or be removed in a future release.",
+        "operationId": "SetCurrentDeployment2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1SetCurrentDeploymentResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "deployment.seriesName",
+            "description": "Different versions of the same worker service/application are related together by having a\nshared series name.\nOut of all deployments of a series, one can be designated as the current deployment, which\nreceives new workflow executions and new tasks of workflows with\n`VERSIONING_BEHAVIOR_AUTO_UPGRADE` versioning behavior.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceSetCurrentDeploymentBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/current-deployment/{seriesName}": {
+      "get": {
+        "summary": "Returns the current deployment (and its info) for a given deployment series.\nExperimental. This API might significantly change or be removed in a future release.",
+        "operationId": "GetCurrentDeployment2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetCurrentDeploymentResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "seriesName",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/deployments": {
+      "get": {
+        "summary": "Lists worker deployments in the namespace. Optionally can filter based on deployment series\nname.\nExperimental. This API might significantly change or be removed in a future release.",
+        "operationId": "ListDeployments2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListDeploymentsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "nextPageToken",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "byte"
+          },
+          {
+            "name": "seriesName",
+            "description": "Optional. Use to filter based on exact series name match.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/deployments/{deployment.seriesName}/{deployment.buildId}": {
+      "get": {
+        "summary": "Describes a worker deployment.\nExperimental. This API might significantly change or be removed in a future release.",
+        "operationId": "DescribeDeployment2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1DescribeDeploymentResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "deployment.seriesName",
+            "description": "Different versions of the same worker service/application are related together by having a\nshared series name.\nOut of all deployments of a series, one can be designated as the current deployment, which\nreceives new workflow executions and new tasks of workflows with\n`VERSIONING_BEHAVIOR_AUTO_UPGRADE` versioning behavior.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "deployment.buildId",
+            "description": "Build ID changes with each version of the worker when the worker program code and/or config\nchanges.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/deployments/{deployment.seriesName}/{deployment.buildId}/reachability": {
+      "get": {
+        "summary": "Returns the reachability level of a worker deployment to help users decide when it is time\nto decommission a deployment. Reachability level is calculated based on the deployment's\n`status` and existing workflows that depend on the given deployment for their execution.\nCalculating reachability is relatively expensive. Therefore, server might return a recently\ncached value. In such a case, the `last_update_time` will inform you about the actual\nreachability calculation time.\nExperimental. This API might significantly change or be removed in a future release.",
+        "operationId": "GetDeploymentReachability2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetDeploymentReachabilityResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "deployment.seriesName",
+            "description": "Different versions of the same worker service/application are related together by having a\nshared series name.\nOut of all deployments of a series, one can be designated as the current deployment, which\nreceives new workflow executions and new tasks of workflows with\n`VERSIONING_BEHAVIOR_AUTO_UPGRADE` versioning behavior.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "deployment.buildId",
+            "description": "Build ID changes with each version of the worker when the worker program code and/or config\nchanges.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
     "/api/v1/namespaces/{namespace}/schedules": {
       "get": {
         "summary": "List all schedules in a namespace.",
@@ -2119,6 +2344,52 @@
             "required": true,
             "schema": {
               "$ref": "#/definitions/WorkflowServiceTerminateWorkflowExecutionBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/workflows/{workflowExecution.workflowId}/update-options": {
+      "post": {
+        "summary": "UpdateWorkflowExecutionOptions partially updates the WorkflowExecutionOptions of an existing workflow execution.",
+        "operationId": "UpdateWorkflowExecutionOptions2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1UpdateWorkflowExecutionOptionsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "The namespace name of the target Workflow.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "workflowExecution.workflowId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceUpdateWorkflowExecutionOptionsBody"
             }
           }
         ],
@@ -3597,6 +3868,231 @@
         ]
       }
     },
+    "/namespaces/{namespace}/current-deployment/{deployment.seriesName}": {
+      "post": {
+        "summary": "Sets a deployment as the current deployment for its deployment series. Can optionally update\nthe metadata of the deployment as well.\nExperimental. This API might significantly change or be removed in a future release.",
+        "operationId": "SetCurrentDeployment",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1SetCurrentDeploymentResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "deployment.seriesName",
+            "description": "Different versions of the same worker service/application are related together by having a\nshared series name.\nOut of all deployments of a series, one can be designated as the current deployment, which\nreceives new workflow executions and new tasks of workflows with\n`VERSIONING_BEHAVIOR_AUTO_UPGRADE` versioning behavior.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceSetCurrentDeploymentBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/namespaces/{namespace}/current-deployment/{seriesName}": {
+      "get": {
+        "summary": "Returns the current deployment (and its info) for a given deployment series.\nExperimental. This API might significantly change or be removed in a future release.",
+        "operationId": "GetCurrentDeployment",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetCurrentDeploymentResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "seriesName",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/namespaces/{namespace}/deployments": {
+      "get": {
+        "summary": "Lists worker deployments in the namespace. Optionally can filter based on deployment series\nname.\nExperimental. This API might significantly change or be removed in a future release.",
+        "operationId": "ListDeployments",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListDeploymentsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          },
+          {
+            "name": "nextPageToken",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "byte"
+          },
+          {
+            "name": "seriesName",
+            "description": "Optional. Use to filter based on exact series name match.",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/namespaces/{namespace}/deployments/{deployment.seriesName}/{deployment.buildId}": {
+      "get": {
+        "summary": "Describes a worker deployment.\nExperimental. This API might significantly change or be removed in a future release.",
+        "operationId": "DescribeDeployment",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1DescribeDeploymentResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "deployment.seriesName",
+            "description": "Different versions of the same worker service/application are related together by having a\nshared series name.\nOut of all deployments of a series, one can be designated as the current deployment, which\nreceives new workflow executions and new tasks of workflows with\n`VERSIONING_BEHAVIOR_AUTO_UPGRADE` versioning behavior.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "deployment.buildId",
+            "description": "Build ID changes with each version of the worker when the worker program code and/or config\nchanges.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/namespaces/{namespace}/deployments/{deployment.seriesName}/{deployment.buildId}/reachability": {
+      "get": {
+        "summary": "Returns the reachability level of a worker deployment to help users decide when it is time\nto decommission a deployment. Reachability level is calculated based on the deployment's\n`status` and existing workflows that depend on the given deployment for their execution.\nCalculating reachability is relatively expensive. Therefore, server might return a recently\ncached value. In such a case, the `last_update_time` will inform you about the actual\nreachability calculation time.\nExperimental. This API might significantly change or be removed in a future release.",
+        "operationId": "GetDeploymentReachability",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetDeploymentReachabilityResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "deployment.seriesName",
+            "description": "Different versions of the same worker service/application are related together by having a\nshared series name.\nOut of all deployments of a series, one can be designated as the current deployment, which\nreceives new workflow executions and new tasks of workflows with\n`VERSIONING_BEHAVIOR_AUTO_UPGRADE` versioning behavior.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "deployment.buildId",
+            "description": "Build ID changes with each version of the worker when the worker program code and/or config\nchanges.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
     "/namespaces/{namespace}/schedules": {
       "get": {
         "summary": "List all schedules in a namespace.",
@@ -4786,6 +5282,52 @@
         ]
       }
     },
+    "/namespaces/{namespace}/workflows/{workflowExecution.workflowId}/update-options": {
+      "post": {
+        "summary": "UpdateWorkflowExecutionOptions partially updates the WorkflowExecutionOptions of an existing workflow execution.",
+        "operationId": "UpdateWorkflowExecutionOptions",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1UpdateWorkflowExecutionOptionsResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "description": "The namespace name of the target Workflow.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "workflowExecution.workflowId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceUpdateWorkflowExecutionOptionsBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
     "/namespaces/{namespace}/workflows/{workflowExecution.workflowId}/update/{request.input.name}": {
       "post": {
         "summary": "Invokes the specified Update function on user Workflow code.",
@@ -5018,6 +5560,22 @@
         }
       }
     },
+    "DeploymentInfoTaskQueueInfo": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "$ref": "#/definitions/v1TaskQueueType"
+        },
+        "firstPollerTime": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When server saw the first poller for this task queue in this deployment."
+        }
+      }
+    },
     "EndpointTargetExternal": {
       "type": "object",
       "properties": {
@@ -5115,6 +5673,13 @@
       "properties": {
         "payload": {
           "$ref": "#/definitions/v1Payload"
+        },
+        "links": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/apinexusv1Link"
+          }
         }
       },
       "description": "An operation completed successfully."
@@ -5369,7 +5934,7 @@
             },
             "header": {
               "$ref": "#/definitions/v1Header",
-              "description": "Headers that were passed by the caller of the query and copied by temporal \nserver into the workflow task."
+              "description": "Headers that were passed by the caller of the query and copied by temporal\nserver into the workflow task."
             }
           },
           "title": "See https://docs.temporal.io/docs/concepts/queries/"
@@ -5504,7 +6069,8 @@
               "type": "string"
             }
           },
-          "description": "Identifies a specific workflow within a namespace. Practically speaking, because run_id is a\nuuid, a workflow execution is globally unique. Note that many commands allow specifying an empty\nrun id as a way of saying \"target the latest run of the workflow\"."
+          "description": "The workflow to reset. If this contains a run ID then the workflow will be reset back to the\nprovided event ID in that run. Otherwise it will be reset to the provided event ID in the\ncurrent run. In all cases the current run will be terminated and a new run started.",
+          "title": "The workflow to reset. If this contains a run ID then the workflow will be reset back to the\nprovided event ID in that run. Otherwise it will be reset to the provided event ID in the\ncurrent run. In all cases the current run will be terminated and a new run started."
         },
         "reason": {
           "type": "string"
@@ -5549,7 +6115,11 @@
         },
         "workerVersion": {
           "$ref": "#/definitions/v1WorkerVersionStamp",
-          "description": "Version info of the worker who processed this task. This message's `build_id` field should\nalways be set by SDKs. Workers opting into versioning will also set the `use_versioning`\nfield to true. See message docstrings for more."
+          "description": "Version info of the worker who processed this task. This message's `build_id` field should\nalways be set by SDKs. Workers opting into versioning will also set the `use_versioning`\nfield to true. See message docstrings for more.\nDeprecated. Use `deployment` instead."
+        },
+        "deployment": {
+          "$ref": "#/definitions/v1Deployment",
+          "description": "Deployment info of the worker that completed this task. Must be present if user has set\n`WorkerDeploymentOptions` regardless of versioning being enabled or not."
         }
       }
     },
@@ -5596,7 +6166,11 @@
         },
         "workerVersion": {
           "$ref": "#/definitions/v1WorkerVersionStamp",
-          "description": "Version info of the worker who processed this task. This message's `build_id` field should\nalways be set by SDKs. Workers opting into versioning will also set the `use_versioning`\nfield to true. See message docstrings for more."
+          "description": "Version info of the worker who processed this task. This message's `build_id` field should\nalways be set by SDKs. Workers opting into versioning will also set the `use_versioning`\nfield to true. See message docstrings for more.\nDeprecated. Use `deployment` instead."
+        },
+        "deployment": {
+          "$ref": "#/definitions/v1Deployment",
+          "description": "Deployment info of the worker that completed this task. Must be present if user has set\n`WorkerDeploymentOptions` regardless of versioning being enabled or not."
         }
       }
     },
@@ -5647,7 +6221,11 @@
         },
         "workerVersion": {
           "$ref": "#/definitions/v1WorkerVersionStamp",
-          "description": "Version info of the worker who processed this task. This message's `build_id` field should\nalways be set by SDKs. Workers opting into versioning will also set the `use_versioning`\nfield to true. See message docstrings for more."
+          "description": "Version info of the worker who processed this task. This message's `build_id` field should\nalways be set by SDKs. Workers opting into versioning will also set the `use_versioning`\nfield to true. See message docstrings for more.\nDeprecated. Use `deployment` instead."
+        },
+        "deployment": {
+          "$ref": "#/definitions/v1Deployment",
+          "description": "Deployment info of the worker that completed this task. Must be present if user has set\n`WorkerDeploymentOptions` regardless of versioning being enabled or not."
         }
       }
     },
@@ -5677,6 +6255,29 @@
         "lastHeartbeatDetails": {
           "$ref": "#/definitions/v1Payloads",
           "title": "Additional details to be stored as last activity heartbeat"
+        }
+      }
+    },
+    "WorkflowServiceSetCurrentDeploymentBody": {
+      "type": "object",
+      "properties": {
+        "deployment": {
+          "type": "object",
+          "properties": {
+            "buildId": {
+              "type": "string",
+              "description": "Build ID changes with each version of the worker when the worker program code and/or config\nchanges."
+            }
+          },
+          "description": "`Deployment` identifies a deployment of Temporal workers. The combination of deployment series\nname + build ID serves as the identifier. User can use `WorkerDeploymentOptions` in their worker\nprograms to specify these values."
+        },
+        "identity": {
+          "type": "string",
+          "description": "Optional. The identity of the client who initiated this request."
+        },
+        "updateMetadata": {
+          "$ref": "#/definitions/v1UpdateDeploymentMetadata",
+          "description": "Optional. Use to add or remove user-defined metadata entries. Metadata entries are exposed\nwhen describing a deployment. It is a good place for information such as operator name,\nlinks to internal deployment pipelines, etc."
         }
       }
     },
@@ -5749,11 +6350,7 @@
         },
         "workflowStartDelay": {
           "type": "string",
-          "description": "Time to wait before dispatching the first workflow task. Cannot be used with `cron_schedule`.\nNote that the signal will be delivered with the first workflow task. If the workflow gets\nanother SignalWithStartWorkflow before the delay and `skip_generate_workflow_task` is false\nor not set, a workflow task will be dispatched immediately and the rest of the delay period\nwill be ignored, even if that request also had a delay. Signal via SignalWorkflowExecution\nwill not unblock the workflow."
-        },
-        "skipGenerateWorkflowTask": {
-          "type": "boolean",
-          "description": "Indicates that a new workflow task should not be generated when this signal is received."
+          "description": "Time to wait before dispatching the first workflow task. Cannot be used with `cron_schedule`.\nNote that the signal will be delivered with the first workflow task. If the workflow gets\nanother SignalWithStartWorkflow before the delay a workflow task will be dispatched immediately\nand the rest of the delay period will be ignored, even if that request also had a delay.\nSignal via SignalWorkflowExecution will not unblock the workflow."
         },
         "userMetadata": {
           "$ref": "#/definitions/v1UserMetadata",
@@ -5766,6 +6363,10 @@
             "$ref": "#/definitions/apicommonv1Link"
           },
           "description": "Links to be associated with the WorkflowExecutionStarted and WorkflowExecutionSignaled events."
+        },
+        "versioningOverride": {
+          "$ref": "#/definitions/v1VersioningOverride",
+          "description": "If set, takes precedence over the Versioning Behavior sent by the SDK on Workflow Task completion.\nTo unset the override after the workflow is running, use UpdateWorkflowExecutionOptions."
         }
       }
     },
@@ -5800,10 +6401,6 @@
         "header": {
           "$ref": "#/definitions/v1Header",
           "description": "Headers that are passed with the signal to the processing workflow.\nThese can include things like auth or tracing tokens."
-        },
-        "skipGenerateWorkflowTask": {
-          "type": "boolean",
-          "description": "Indicates that a new workflow task should not be generated when this signal is received."
         },
         "links": {
           "type": "array",
@@ -5853,6 +6450,9 @@
         },
         "resetOperation": {
           "$ref": "#/definitions/v1BatchOperationReset"
+        },
+        "updateWorkflowOptionsOperation": {
+          "$ref": "#/definitions/v1BatchOperationUpdateWorkflowExecutionOptions"
         }
       }
     },
@@ -5948,6 +6548,10 @@
             "$ref": "#/definitions/apicommonv1Link"
           },
           "description": "Links to be associated with the workflow."
+        },
+        "versioningOverride": {
+          "$ref": "#/definitions/v1VersioningOverride",
+          "description": "If set, takes precedence over the Versioning Behavior sent by the SDK on Workflow Task completion.\nTo unset the override after the workflow is running, use UpdateWorkflowExecutionOptions."
         }
       }
     },
@@ -6161,6 +6765,29 @@
         }
       }
     },
+    "WorkflowServiceUpdateWorkflowExecutionOptionsBody": {
+      "type": "object",
+      "properties": {
+        "workflowExecution": {
+          "type": "object",
+          "properties": {
+            "runId": {
+              "type": "string"
+            }
+          },
+          "description": "The target Workflow Id and (optionally) a specific Run Id thereof.",
+          "title": "The target Workflow Id and (optionally) a specific Run Id thereof."
+        },
+        "workflowExecutionOptions": {
+          "$ref": "#/definitions/v1WorkflowExecutionOptions",
+          "description": "Workflow Execution options. Partial updates are accepted and controlled by update_mask."
+        },
+        "updateMask": {
+          "type": "string",
+          "description": "Controls which fields from `workflow_execution_options` will be applied.\nTo unset a field, set it to null and use the update mask to indicate that it should be mutated."
+        }
+      }
+    },
     "apicommonv1Link": {
       "type": "object",
       "properties": {
@@ -6219,6 +6846,9 @@
         },
         "nexusOperationExecutionFailureInfo": {
           "$ref": "#/definitions/v1NexusOperationFailureInfo"
+        },
+        "nexusHandlerFailureInfo": {
+          "$ref": "#/definitions/v1NexusHandlerFailureInfo"
         }
       }
     },
@@ -6236,7 +6866,8 @@
         },
         "details": {
           "type": "string",
-          "format": "byte"
+          "format": "byte",
+          "description": "UTF-8 encoded JSON serializable details."
         }
       },
       "title": "A general purpose failure message.\nSee: https://github.com/nexus-rpc/api/blob/main/SPEC.md#failure"
@@ -6578,12 +7209,12 @@
         },
         "workerVersion": {
           "$ref": "#/definitions/v1WorkerVersionStamp",
-          "description": "Version info of the worker to whom this task was dispatched."
+          "title": "Version info of the worker to whom this task was dispatched.\nDeprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]"
         },
         "buildIdRedirectCounter": {
           "type": "string",
           "format": "int64",
-          "description": "Used by server internally to properly reapply build ID redirects to an execution\nwhen rebuilding it from events."
+          "title": "Used by server internally to properly reapply build ID redirects to an execution\nwhen rebuilding it from events.\nDeprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]"
         }
       }
     },
@@ -6826,9 +7457,28 @@
         "BATCH_OPERATION_TYPE_CANCEL",
         "BATCH_OPERATION_TYPE_SIGNAL",
         "BATCH_OPERATION_TYPE_DELETE",
-        "BATCH_OPERATION_TYPE_RESET"
+        "BATCH_OPERATION_TYPE_RESET",
+        "BATCH_OPERATION_TYPE_UPDATE_EXECUTION_OPTIONS"
       ],
       "default": "BATCH_OPERATION_TYPE_UNSPECIFIED"
+    },
+    "v1BatchOperationUpdateWorkflowExecutionOptions": {
+      "type": "object",
+      "properties": {
+        "identity": {
+          "type": "string",
+          "description": "The identity of the worker/client."
+        },
+        "workflowExecutionOptions": {
+          "$ref": "#/definitions/v1WorkflowExecutionOptions",
+          "description": "Workflow Execution options. Partial updates are accepted and controlled by update_mask."
+        },
+        "updateMask": {
+          "type": "string",
+          "description": "Controls which fields from `workflow_execution_options` will be applied.\nTo unset a field, set it to null and use the update mask to indicate that it should be mutated."
+        }
+      },
+      "description": "BatchOperationUpdateWorkflowExecutionOptions sends UpdateWorkflowExecutionOptions requests to batch workflows.\nKeep the parameters in sync with temporal.api.workflowservice.v1.UpdateWorkflowExecutionOptionsRequest."
     },
     "v1BuildIdAssignmentRule": {
       "type": "object",
@@ -6959,6 +7609,10 @@
           "type": "string",
           "format": "date-time",
           "description": "The time when the next attempt is scheduled."
+        },
+        "blockedReason": {
+          "type": "string",
+          "description": "If the state is BLOCKED, blocked reason provides additional information."
         }
       },
       "description": "CallbackInfo contains the state of an attached workflow callback."
@@ -6971,10 +7625,11 @@
         "CALLBACK_STATE_SCHEDULED",
         "CALLBACK_STATE_BACKING_OFF",
         "CALLBACK_STATE_FAILED",
-        "CALLBACK_STATE_SUCCEEDED"
+        "CALLBACK_STATE_SUCCEEDED",
+        "CALLBACK_STATE_BLOCKED"
       ],
       "default": "CALLBACK_STATE_UNSPECIFIED",
-      "description": "State of a callback.\n\n - CALLBACK_STATE_UNSPECIFIED: Default value, unspecified state.\n - CALLBACK_STATE_STANDBY: Callback is standing by, waiting to be triggered.\n - CALLBACK_STATE_SCHEDULED: Callback is in the queue waiting to be executed or is currently executing.\n - CALLBACK_STATE_BACKING_OFF: Callback has failed with a retryable error and is backing off before the next attempt.\n - CALLBACK_STATE_FAILED: Callback has failed.\n - CALLBACK_STATE_SUCCEEDED: Callback has succeeded."
+      "description": "State of a callback.\n\n - CALLBACK_STATE_UNSPECIFIED: Default value, unspecified state.\n - CALLBACK_STATE_STANDBY: Callback is standing by, waiting to be triggered.\n - CALLBACK_STATE_SCHEDULED: Callback is in the queue waiting to be executed or is currently executing.\n - CALLBACK_STATE_BACKING_OFF: Callback has failed with a retryable error and is backing off before the next attempt.\n - CALLBACK_STATE_FAILED: Callback has failed.\n - CALLBACK_STATE_SUCCEEDED: Callback has succeeded.\n - CALLBACK_STATE_BLOCKED: Callback is blocked (eg: by circuit breaker)."
     },
     "v1CancelExternalWorkflowExecutionFailedCause": {
       "type": "string",
@@ -7548,6 +8203,89 @@
     "v1DeleteWorkflowExecutionResponse": {
       "type": "object"
     },
+    "v1Deployment": {
+      "type": "object",
+      "properties": {
+        "seriesName": {
+          "type": "string",
+          "description": "Different versions of the same worker service/application are related together by having a\nshared series name.\nOut of all deployments of a series, one can be designated as the current deployment, which\nreceives new workflow executions and new tasks of workflows with\n`VERSIONING_BEHAVIOR_AUTO_UPGRADE` versioning behavior."
+        },
+        "buildId": {
+          "type": "string",
+          "description": "Build ID changes with each version of the worker when the worker program code and/or config\nchanges."
+        }
+      },
+      "description": "`Deployment` identifies a deployment of Temporal workers. The combination of deployment series\nname + build ID serves as the identifier. User can use `WorkerDeploymentOptions` in their worker\nprograms to specify these values."
+    },
+    "v1DeploymentInfo": {
+      "type": "object",
+      "properties": {
+        "deployment": {
+          "$ref": "#/definitions/v1Deployment"
+        },
+        "createTime": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "taskQueueInfos": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/DeploymentInfoTaskQueueInfo"
+          }
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/v1Payload"
+          },
+          "description": "A user-defined set of key-values. Can be updated as part of write operations to the\ndeployment, such as `SetCurrentDeployment`."
+        },
+        "isCurrent": {
+          "type": "boolean",
+          "description": "If this deployment is the current deployment of its deployment series."
+        }
+      },
+      "description": "`DeploymentInfo` holds information about a deployment. Deployment information is tracked\nautomatically by server as soon as the first poll from that deployment reaches the server. There\ncan be multiple task queue workers in a single deployment which are listed in this message."
+    },
+    "v1DeploymentListInfo": {
+      "type": "object",
+      "properties": {
+        "deployment": {
+          "$ref": "#/definitions/v1Deployment"
+        },
+        "createTime": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "isCurrent": {
+          "type": "boolean",
+          "description": "If this deployment is the current deployment of its deployment series."
+        }
+      },
+      "description": "DeploymentListInfo is an abbreviated set of fields from DeploymentInfo that's returned in\nListDeployments."
+    },
+    "v1DeploymentReachability": {
+      "type": "string",
+      "enum": [
+        "DEPLOYMENT_REACHABILITY_UNSPECIFIED",
+        "DEPLOYMENT_REACHABILITY_REACHABLE",
+        "DEPLOYMENT_REACHABILITY_CLOSED_WORKFLOWS_ONLY",
+        "DEPLOYMENT_REACHABILITY_UNREACHABLE"
+      ],
+      "default": "DEPLOYMENT_REACHABILITY_UNSPECIFIED",
+      "description": "Specify the reachability level for a deployment so users can decide if it is time to\ndecommission the deployment.\n\n - DEPLOYMENT_REACHABILITY_UNSPECIFIED: Reachability level is not specified.\n - DEPLOYMENT_REACHABILITY_REACHABLE: The deployment is reachable by new and/or open workflows. The deployment cannot be\ndecommissioned safely.\n - DEPLOYMENT_REACHABILITY_CLOSED_WORKFLOWS_ONLY: The deployment is not reachable by new or open workflows, but might be still needed by\nQueries sent to closed workflows. The deployment can be decommissioned safely if user does\nnot query closed workflows.\n - DEPLOYMENT_REACHABILITY_UNREACHABLE: The deployment is not reachable by any workflow because all the workflows who needed this\ndeployment went out of retention period. The deployment can be decommissioned safely."
+    },
+    "v1DeploymentTransition": {
+      "type": "object",
+      "properties": {
+        "deployment": {
+          "$ref": "#/definitions/v1Deployment",
+          "description": "The target deployment of the transition. Null means a so-far-versioned workflow is\ntransitioning to unversioned workers."
+        }
+      },
+      "description": "Holds information about ongoing transition of a workflow execution from one deployment to another.\nExperimental. Deployment transition is experimental and might change in the future."
+    },
     "v1DeprecateNamespaceResponse": {
       "type": "object",
       "description": "Deprecated."
@@ -7599,6 +8337,14 @@
         "reason": {
           "type": "string",
           "title": "Reason indicates the reason to stop a operation"
+        }
+      }
+    },
+    "v1DescribeDeploymentResponse": {
+      "type": "object",
+      "properties": {
+        "deploymentInfo": {
+          "$ref": "#/definitions/v1DeploymentInfo"
         }
       }
     },
@@ -7728,6 +8474,9 @@
             "type": "object",
             "$ref": "#/definitions/v1PendingNexusOperationInfo"
           }
+        },
+        "workflowExtendedInfo": {
+          "$ref": "#/definitions/v1WorkflowExecutionExtendedInfo"
         }
       }
     },
@@ -7860,10 +8609,11 @@
         "EVENT_TYPE_NEXUS_OPERATION_FAILED",
         "EVENT_TYPE_NEXUS_OPERATION_CANCELED",
         "EVENT_TYPE_NEXUS_OPERATION_TIMED_OUT",
-        "EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUESTED"
+        "EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUESTED",
+        "EVENT_TYPE_WORKFLOW_EXECUTION_OPTIONS_UPDATED"
       ],
       "default": "EVENT_TYPE_UNSPECIFIED",
-      "description": "- EVENT_TYPE_UNSPECIFIED: Place holder and should never appear in a Workflow execution history\n - EVENT_TYPE_WORKFLOW_EXECUTION_STARTED: Workflow execution has been triggered/started\nIt contains Workflow execution inputs, as well as Workflow timeout configurations\n - EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED: Workflow execution has successfully completed and contains Workflow execution results\n - EVENT_TYPE_WORKFLOW_EXECUTION_FAILED: Workflow execution has unsuccessfully completed and contains the Workflow execution error\n - EVENT_TYPE_WORKFLOW_EXECUTION_TIMED_OUT: Workflow execution has timed out by the Temporal Server\nUsually due to the Workflow having not been completed within timeout settings\n - EVENT_TYPE_WORKFLOW_TASK_SCHEDULED: Workflow Task has been scheduled and the SDK client should now be able to process any new history events\n - EVENT_TYPE_WORKFLOW_TASK_STARTED: Workflow Task has started and the SDK client has picked up the Workflow Task and is processing new history events\n - EVENT_TYPE_WORKFLOW_TASK_COMPLETED: Workflow Task has completed\nThe SDK client picked up the Workflow Task and processed new history events\nSDK client may or may not ask the Temporal Server to do additional work, such as:\nEVENT_TYPE_ACTIVITY_TASK_SCHEDULED\nEVENT_TYPE_TIMER_STARTED\nEVENT_TYPE_UPSERT_WORKFLOW_SEARCH_ATTRIBUTES\nEVENT_TYPE_MARKER_RECORDED\nEVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED\nEVENT_TYPE_REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED\nEVENT_TYPE_SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED\nEVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED\nEVENT_TYPE_WORKFLOW_EXECUTION_FAILED\nEVENT_TYPE_WORKFLOW_EXECUTION_CANCELED\nEVENT_TYPE_WORKFLOW_EXECUTION_CONTINUED_AS_NEW\n - EVENT_TYPE_WORKFLOW_TASK_TIMED_OUT: Workflow Task encountered a timeout\nEither an SDK client with a local cache was not available at the time, or it took too long for the SDK client to process the task\n - EVENT_TYPE_WORKFLOW_TASK_FAILED: Workflow Task encountered a failure\nUsually this means that the Workflow was non-deterministic\nHowever, the Workflow reset functionality also uses this event\n - EVENT_TYPE_ACTIVITY_TASK_SCHEDULED: Activity Task was scheduled\nThe SDK client should pick up this activity task and execute\nThis event type contains activity inputs, as well as activity timeout configurations\n - EVENT_TYPE_ACTIVITY_TASK_STARTED: Activity Task has started executing\nThe SDK client has picked up the Activity Task and is processing the Activity invocation\n - EVENT_TYPE_ACTIVITY_TASK_COMPLETED: Activity Task has finished successfully\nThe SDK client has picked up and successfully completed the Activity Task\nThis event type contains Activity execution results\n - EVENT_TYPE_ACTIVITY_TASK_FAILED: Activity Task has finished unsuccessfully\nThe SDK picked up the Activity Task but unsuccessfully completed it\nThis event type contains Activity execution errors\n - EVENT_TYPE_ACTIVITY_TASK_TIMED_OUT: Activity has timed out according to the Temporal Server\nActivity did not complete within the timeout settings\n - EVENT_TYPE_ACTIVITY_TASK_CANCEL_REQUESTED: A request to cancel the Activity has occurred\nThe SDK client will be able to confirm cancellation of an Activity during an Activity heartbeat\n - EVENT_TYPE_ACTIVITY_TASK_CANCELED: Activity has been cancelled\n - EVENT_TYPE_TIMER_STARTED: A timer has started\n - EVENT_TYPE_TIMER_FIRED: A timer has fired\n - EVENT_TYPE_TIMER_CANCELED: A time has been cancelled\n - EVENT_TYPE_WORKFLOW_EXECUTION_CANCEL_REQUESTED: A request has been made to cancel the Workflow execution\n - EVENT_TYPE_WORKFLOW_EXECUTION_CANCELED: SDK client has confirmed the cancellation request and the Workflow execution has been cancelled\n - EVENT_TYPE_REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED: Workflow has requested that the Temporal Server try to cancel another Workflow\n - EVENT_TYPE_REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_FAILED: Temporal Server could not cancel the targeted Workflow\nThis is usually because the target Workflow could not be found\n - EVENT_TYPE_EXTERNAL_WORKFLOW_EXECUTION_CANCEL_REQUESTED: Temporal Server has successfully requested the cancellation of the target Workflow\n - EVENT_TYPE_MARKER_RECORDED: A marker has been recorded.\nThis event type is transparent to the Temporal Server\nThe Server will only store it and will not try to understand it.\n - EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED: Workflow has received a Signal event\nThe event type contains the Signal name, as well as a Signal payload\n - EVENT_TYPE_WORKFLOW_EXECUTION_TERMINATED: Workflow execution has been forcefully terminated\nThis is usually because the terminate Workflow API was called\n - EVENT_TYPE_WORKFLOW_EXECUTION_CONTINUED_AS_NEW: Workflow has successfully completed and a new Workflow has been started within the same transaction\nContains last Workflow execution results as well as new Workflow execution inputs\n - EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED: Temporal Server will try to start a child Workflow\n - EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_FAILED: Child Workflow execution cannot be started/triggered\nUsually due to a child Workflow ID collision\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_STARTED: Child Workflow execution has successfully started/triggered\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_COMPLETED: Child Workflow execution has successfully completed\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_FAILED: Child Workflow execution has unsuccessfully completed\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_CANCELED: Child Workflow execution has been cancelled\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_TIMED_OUT: Child Workflow execution has timed out by the Temporal Server\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_TERMINATED: Child Workflow execution has been terminated\n - EVENT_TYPE_SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED: Temporal Server will try to Signal the targeted Workflow\nContains the Signal name, as well as a Signal payload\n - EVENT_TYPE_SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_FAILED: Temporal Server cannot Signal the targeted Workflow\nUsually because the Workflow could not be found\n - EVENT_TYPE_EXTERNAL_WORKFLOW_EXECUTION_SIGNALED: Temporal Server has successfully Signaled the targeted Workflow\n - EVENT_TYPE_UPSERT_WORKFLOW_SEARCH_ATTRIBUTES: Workflow search attributes should be updated and synchronized with the visibility store\n - EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_ADMITTED: An update was admitted. Note that not all admitted updates result in this\nevent. See UpdateAdmittedEventOrigin for situations in which this event\nis created.\n - EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_ACCEPTED: An update was accepted (i.e. passed validation, perhaps because no validator was defined)\n - EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_REJECTED: This event is never written to history.\n - EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_COMPLETED: An update completed\n - EVENT_TYPE_WORKFLOW_PROPERTIES_MODIFIED_EXTERNALLY: Some property or properties of the workflow as a whole have changed by non-workflow code.\nThe distinction of external vs. command-based modification is important so the SDK can\nmaintain determinism when using the command-based approach.\n - EVENT_TYPE_ACTIVITY_PROPERTIES_MODIFIED_EXTERNALLY: Some property or properties of an already-scheduled activity have changed by non-workflow code.\nThe distinction of external vs. command-based modification is important so the SDK can\nmaintain determinism when using the command-based approach.\n - EVENT_TYPE_WORKFLOW_PROPERTIES_MODIFIED: Workflow properties modified by user workflow code\n - EVENT_TYPE_NEXUS_OPERATION_SCHEDULED: A Nexus operation was scheduled using a ScheduleNexusOperation command.\n - EVENT_TYPE_NEXUS_OPERATION_STARTED: An asynchronous Nexus operation was started by a Nexus handler.\n - EVENT_TYPE_NEXUS_OPERATION_COMPLETED: A Nexus operation completed successfully.\n - EVENT_TYPE_NEXUS_OPERATION_FAILED: A Nexus operation failed.\n - EVENT_TYPE_NEXUS_OPERATION_CANCELED: A Nexus operation completed as canceled.\n - EVENT_TYPE_NEXUS_OPERATION_TIMED_OUT: A Nexus operation timed out.\n - EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUESTED: A Nexus operation was requested to be canceled using a RequestCancelNexusOperation command.",
+      "description": "- EVENT_TYPE_UNSPECIFIED: Place holder and should never appear in a Workflow execution history\n - EVENT_TYPE_WORKFLOW_EXECUTION_STARTED: Workflow execution has been triggered/started\nIt contains Workflow execution inputs, as well as Workflow timeout configurations\n - EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED: Workflow execution has successfully completed and contains Workflow execution results\n - EVENT_TYPE_WORKFLOW_EXECUTION_FAILED: Workflow execution has unsuccessfully completed and contains the Workflow execution error\n - EVENT_TYPE_WORKFLOW_EXECUTION_TIMED_OUT: Workflow execution has timed out by the Temporal Server\nUsually due to the Workflow having not been completed within timeout settings\n - EVENT_TYPE_WORKFLOW_TASK_SCHEDULED: Workflow Task has been scheduled and the SDK client should now be able to process any new history events\n - EVENT_TYPE_WORKFLOW_TASK_STARTED: Workflow Task has started and the SDK client has picked up the Workflow Task and is processing new history events\n - EVENT_TYPE_WORKFLOW_TASK_COMPLETED: Workflow Task has completed\nThe SDK client picked up the Workflow Task and processed new history events\nSDK client may or may not ask the Temporal Server to do additional work, such as:\nEVENT_TYPE_ACTIVITY_TASK_SCHEDULED\nEVENT_TYPE_TIMER_STARTED\nEVENT_TYPE_UPSERT_WORKFLOW_SEARCH_ATTRIBUTES\nEVENT_TYPE_MARKER_RECORDED\nEVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED\nEVENT_TYPE_REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED\nEVENT_TYPE_SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED\nEVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED\nEVENT_TYPE_WORKFLOW_EXECUTION_FAILED\nEVENT_TYPE_WORKFLOW_EXECUTION_CANCELED\nEVENT_TYPE_WORKFLOW_EXECUTION_CONTINUED_AS_NEW\n - EVENT_TYPE_WORKFLOW_TASK_TIMED_OUT: Workflow Task encountered a timeout\nEither an SDK client with a local cache was not available at the time, or it took too long for the SDK client to process the task\n - EVENT_TYPE_WORKFLOW_TASK_FAILED: Workflow Task encountered a failure\nUsually this means that the Workflow was non-deterministic\nHowever, the Workflow reset functionality also uses this event\n - EVENT_TYPE_ACTIVITY_TASK_SCHEDULED: Activity Task was scheduled\nThe SDK client should pick up this activity task and execute\nThis event type contains activity inputs, as well as activity timeout configurations\n - EVENT_TYPE_ACTIVITY_TASK_STARTED: Activity Task has started executing\nThe SDK client has picked up the Activity Task and is processing the Activity invocation\n - EVENT_TYPE_ACTIVITY_TASK_COMPLETED: Activity Task has finished successfully\nThe SDK client has picked up and successfully completed the Activity Task\nThis event type contains Activity execution results\n - EVENT_TYPE_ACTIVITY_TASK_FAILED: Activity Task has finished unsuccessfully\nThe SDK picked up the Activity Task but unsuccessfully completed it\nThis event type contains Activity execution errors\n - EVENT_TYPE_ACTIVITY_TASK_TIMED_OUT: Activity has timed out according to the Temporal Server\nActivity did not complete within the timeout settings\n - EVENT_TYPE_ACTIVITY_TASK_CANCEL_REQUESTED: A request to cancel the Activity has occurred\nThe SDK client will be able to confirm cancellation of an Activity during an Activity heartbeat\n - EVENT_TYPE_ACTIVITY_TASK_CANCELED: Activity has been cancelled\n - EVENT_TYPE_TIMER_STARTED: A timer has started\n - EVENT_TYPE_TIMER_FIRED: A timer has fired\n - EVENT_TYPE_TIMER_CANCELED: A time has been cancelled\n - EVENT_TYPE_WORKFLOW_EXECUTION_CANCEL_REQUESTED: A request has been made to cancel the Workflow execution\n - EVENT_TYPE_WORKFLOW_EXECUTION_CANCELED: SDK client has confirmed the cancellation request and the Workflow execution has been cancelled\n - EVENT_TYPE_REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED: Workflow has requested that the Temporal Server try to cancel another Workflow\n - EVENT_TYPE_REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_FAILED: Temporal Server could not cancel the targeted Workflow\nThis is usually because the target Workflow could not be found\n - EVENT_TYPE_EXTERNAL_WORKFLOW_EXECUTION_CANCEL_REQUESTED: Temporal Server has successfully requested the cancellation of the target Workflow\n - EVENT_TYPE_MARKER_RECORDED: A marker has been recorded.\nThis event type is transparent to the Temporal Server\nThe Server will only store it and will not try to understand it.\n - EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED: Workflow has received a Signal event\nThe event type contains the Signal name, as well as a Signal payload\n - EVENT_TYPE_WORKFLOW_EXECUTION_TERMINATED: Workflow execution has been forcefully terminated\nThis is usually because the terminate Workflow API was called\n - EVENT_TYPE_WORKFLOW_EXECUTION_CONTINUED_AS_NEW: Workflow has successfully completed and a new Workflow has been started within the same transaction\nContains last Workflow execution results as well as new Workflow execution inputs\n - EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED: Temporal Server will try to start a child Workflow\n - EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_FAILED: Child Workflow execution cannot be started/triggered\nUsually due to a child Workflow ID collision\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_STARTED: Child Workflow execution has successfully started/triggered\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_COMPLETED: Child Workflow execution has successfully completed\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_FAILED: Child Workflow execution has unsuccessfully completed\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_CANCELED: Child Workflow execution has been cancelled\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_TIMED_OUT: Child Workflow execution has timed out by the Temporal Server\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_TERMINATED: Child Workflow execution has been terminated\n - EVENT_TYPE_SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED: Temporal Server will try to Signal the targeted Workflow\nContains the Signal name, as well as a Signal payload\n - EVENT_TYPE_SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_FAILED: Temporal Server cannot Signal the targeted Workflow\nUsually because the Workflow could not be found\n - EVENT_TYPE_EXTERNAL_WORKFLOW_EXECUTION_SIGNALED: Temporal Server has successfully Signaled the targeted Workflow\n - EVENT_TYPE_UPSERT_WORKFLOW_SEARCH_ATTRIBUTES: Workflow search attributes should be updated and synchronized with the visibility store\n - EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_ADMITTED: An update was admitted. Note that not all admitted updates result in this\nevent. See UpdateAdmittedEventOrigin for situations in which this event\nis created.\n - EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_ACCEPTED: An update was accepted (i.e. passed validation, perhaps because no validator was defined)\n - EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_REJECTED: This event is never written to history.\n - EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_COMPLETED: An update completed\n - EVENT_TYPE_WORKFLOW_PROPERTIES_MODIFIED_EXTERNALLY: Some property or properties of the workflow as a whole have changed by non-workflow code.\nThe distinction of external vs. command-based modification is important so the SDK can\nmaintain determinism when using the command-based approach.\n - EVENT_TYPE_ACTIVITY_PROPERTIES_MODIFIED_EXTERNALLY: Some property or properties of an already-scheduled activity have changed by non-workflow code.\nThe distinction of external vs. command-based modification is important so the SDK can\nmaintain determinism when using the command-based approach.\n - EVENT_TYPE_WORKFLOW_PROPERTIES_MODIFIED: Workflow properties modified by user workflow code\n - EVENT_TYPE_NEXUS_OPERATION_SCHEDULED: A Nexus operation was scheduled using a ScheduleNexusOperation command.\n - EVENT_TYPE_NEXUS_OPERATION_STARTED: An asynchronous Nexus operation was started by a Nexus handler.\n - EVENT_TYPE_NEXUS_OPERATION_COMPLETED: A Nexus operation completed successfully.\n - EVENT_TYPE_NEXUS_OPERATION_FAILED: A Nexus operation failed.\n - EVENT_TYPE_NEXUS_OPERATION_CANCELED: A Nexus operation completed as canceled.\n - EVENT_TYPE_NEXUS_OPERATION_TIMED_OUT: A Nexus operation timed out.\n - EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUESTED: A Nexus operation was requested to be canceled using a RequestCancelNexusOperation command.\n - EVENT_TYPE_WORKFLOW_EXECUTION_OPTIONS_UPDATED: Workflow execution options updated by user.",
       "title": "Whenever this list of events is changed do change the function shouldBufferEvent in mutableStateBuilder.go to make sure to do the correct event ordering"
     },
     "v1ExecuteMultiOperationResponse": {
@@ -7990,6 +8740,30 @@
         }
       },
       "description": "GetClusterInfoResponse contains information about Temporal cluster."
+    },
+    "v1GetCurrentDeploymentResponse": {
+      "type": "object",
+      "properties": {
+        "currentDeploymentInfo": {
+          "$ref": "#/definitions/v1DeploymentInfo"
+        }
+      }
+    },
+    "v1GetDeploymentReachabilityResponse": {
+      "type": "object",
+      "properties": {
+        "deploymentInfo": {
+          "$ref": "#/definitions/v1DeploymentInfo"
+        },
+        "reachability": {
+          "$ref": "#/definitions/v1DeploymentReachability"
+        },
+        "lastUpdateTime": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Reachability level might come from server cache. This timestamp specifies when the value\nwas actually calculated."
+        }
+      }
     },
     "v1GetNexusEndpointResponse": {
       "type": "object",
@@ -8399,6 +9173,9 @@
         },
         "nexusOperationCancelRequestedEventAttributes": {
           "$ref": "#/definitions/v1NexusOperationCancelRequestedEventAttributes"
+        },
+        "workflowExecutionOptionsUpdatedEventAttributes": {
+          "$ref": "#/definitions/v1WorkflowExecutionOptionsUpdatedEventAttributes"
         }
       },
       "description": "History events are the method by which Temporal SDKs advance (or recreate) workflow state.\nSee the `EventType` enum for more info about what each event is for."
@@ -8518,6 +9295,22 @@
         "nextPageToken": {
           "type": "string",
           "format": "byte"
+        }
+      }
+    },
+    "v1ListDeploymentsResponse": {
+      "type": "object",
+      "properties": {
+        "nextPageToken": {
+          "type": "string",
+          "format": "byte"
+        },
+        "deployments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1DeploymentListInfo"
+          }
         }
       }
     },
@@ -8932,9 +9725,22 @@
         "userMetadata": {
           "$ref": "#/definitions/v1UserMetadata",
           "description": "Metadata on the workflow if it is started. This is carried over to the WorkflowExecutionConfig\nfor use by user interfaces to display the fixed as-of-start summary and details of the\nworkflow."
+        },
+        "versioningOverride": {
+          "$ref": "#/definitions/v1VersioningOverride",
+          "description": "If set, takes precedence over the Versioning Behavior sent by the SDK on Workflow Task completion.\nTo unset the override after the workflow is running, use UpdateWorkflowExecutionOptions."
         }
       },
       "description": "NewWorkflowExecutionInfo is a shared message that encapsulates all the\nrequired arguments to starting a workflow in different contexts."
+    },
+    "v1NexusHandlerFailureInfo": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "The Nexus error type as defined in the spec:\nhttps://github.com/nexus-rpc/api/blob/main/SPEC.md#predefined-handler-errors."
+        }
+      }
     },
     "v1NexusOperationCancelRequestedEventAttributes": {
       "type": "object",
@@ -8999,6 +9805,10 @@
           "type": "string",
           "format": "date-time",
           "description": "The time when the next attempt is scheduled."
+        },
+        "blockedReason": {
+          "type": "string",
+          "description": "If the state is BLOCKED, blocked reason provides additional information."
         }
       },
       "description": "NexusOperationCancellationInfo contains the state of a nexus operation cancellation."
@@ -9011,10 +9821,11 @@
         "NEXUS_OPERATION_CANCELLATION_STATE_BACKING_OFF",
         "NEXUS_OPERATION_CANCELLATION_STATE_SUCCEEDED",
         "NEXUS_OPERATION_CANCELLATION_STATE_FAILED",
-        "NEXUS_OPERATION_CANCELLATION_STATE_TIMED_OUT"
+        "NEXUS_OPERATION_CANCELLATION_STATE_TIMED_OUT",
+        "NEXUS_OPERATION_CANCELLATION_STATE_BLOCKED"
       ],
       "default": "NEXUS_OPERATION_CANCELLATION_STATE_UNSPECIFIED",
-      "description": "State of a Nexus operation cancellation.\n\n - NEXUS_OPERATION_CANCELLATION_STATE_UNSPECIFIED: Default value, unspecified state.\n - NEXUS_OPERATION_CANCELLATION_STATE_SCHEDULED: Cancellation request is in the queue waiting to be executed or is currently executing.\n - NEXUS_OPERATION_CANCELLATION_STATE_BACKING_OFF: Cancellation request has failed with a retryable error and is backing off before the next attempt.\n - NEXUS_OPERATION_CANCELLATION_STATE_SUCCEEDED: Cancellation request succeeded.\n - NEXUS_OPERATION_CANCELLATION_STATE_FAILED: Cancellation request failed with a non-retryable error.\n - NEXUS_OPERATION_CANCELLATION_STATE_TIMED_OUT: The associated operation timed out - exceeded the user supplied schedule-to-close timeout."
+      "description": "State of a Nexus operation cancellation.\n\n - NEXUS_OPERATION_CANCELLATION_STATE_UNSPECIFIED: Default value, unspecified state.\n - NEXUS_OPERATION_CANCELLATION_STATE_SCHEDULED: Cancellation request is in the queue waiting to be executed or is currently executing.\n - NEXUS_OPERATION_CANCELLATION_STATE_BACKING_OFF: Cancellation request has failed with a retryable error and is backing off before the next attempt.\n - NEXUS_OPERATION_CANCELLATION_STATE_SUCCEEDED: Cancellation request succeeded.\n - NEXUS_OPERATION_CANCELLATION_STATE_FAILED: Cancellation request failed with a non-retryable error.\n - NEXUS_OPERATION_CANCELLATION_STATE_TIMED_OUT: The associated operation timed out - exceeded the user supplied schedule-to-close timeout.\n - NEXUS_OPERATION_CANCELLATION_STATE_BLOCKED: Cancellation request is blocked (eg: by circuit breaker)."
     },
     "v1NexusOperationCompletedEventAttributes": {
       "type": "object",
@@ -9266,7 +10077,7 @@
         },
         "lastWorkerVersionStamp": {
           "$ref": "#/definitions/v1WorkerVersionStamp",
-          "title": "The version stamp of the worker to whom this activity was most recently dispatched"
+          "title": "The version stamp of the worker to whom this activity was most recently dispatched\nDeprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]"
         },
         "currentRetryInterval": {
           "type": "string",
@@ -9285,6 +10096,10 @@
         "paused": {
           "type": "boolean",
           "description": "Indicates if activity is paused."
+        },
+        "lastDeployment": {
+          "$ref": "#/definitions/v1Deployment",
+          "description": "The deployment this activity was dispatched to most recently. Present only if the activity\nwas dispatched to a versioned worker."
         }
       }
     },
@@ -9377,6 +10192,10 @@
           "type": "string",
           "format": "int64",
           "description": "The event ID of the NexusOperationScheduled event. Can be used to correlate an operation in the\nDescribeWorkflowExecution response with workflow history."
+        },
+        "blockedReason": {
+          "type": "string",
+          "description": "If the state is BLOCKED, blocked reason provides additional information."
         }
       },
       "description": "PendingNexusOperationInfo contains the state of a pending Nexus operation."
@@ -9387,10 +10206,11 @@
         "PENDING_NEXUS_OPERATION_STATE_UNSPECIFIED",
         "PENDING_NEXUS_OPERATION_STATE_SCHEDULED",
         "PENDING_NEXUS_OPERATION_STATE_BACKING_OFF",
-        "PENDING_NEXUS_OPERATION_STATE_STARTED"
+        "PENDING_NEXUS_OPERATION_STATE_STARTED",
+        "PENDING_NEXUS_OPERATION_STATE_BLOCKED"
       ],
       "default": "PENDING_NEXUS_OPERATION_STATE_UNSPECIFIED",
-      "description": "State of a pending Nexus operation.\n\n - PENDING_NEXUS_OPERATION_STATE_UNSPECIFIED: Default value, unspecified state.\n - PENDING_NEXUS_OPERATION_STATE_SCHEDULED: Operation is in the queue waiting to be executed or is currently executing.\n - PENDING_NEXUS_OPERATION_STATE_BACKING_OFF: Operation has failed with a retryable error and is backing off before the next attempt.\n - PENDING_NEXUS_OPERATION_STATE_STARTED: Operation was started and will complete asynchronously."
+      "description": "State of a pending Nexus operation.\n\n - PENDING_NEXUS_OPERATION_STATE_UNSPECIFIED: Default value, unspecified state.\n - PENDING_NEXUS_OPERATION_STATE_SCHEDULED: Operation is in the queue waiting to be executed or is currently executing.\n - PENDING_NEXUS_OPERATION_STATE_BACKING_OFF: Operation has failed with a retryable error and is backing off before the next attempt.\n - PENDING_NEXUS_OPERATION_STATE_STARTED: Operation was started and will complete asynchronously.\n - PENDING_NEXUS_OPERATION_STATE_BLOCKED: Operation is blocked (eg: by circuit breaker)."
     },
     "v1PendingWorkflowTaskInfo": {
       "type": "object",
@@ -9566,7 +10386,7 @@
         "backlogCountHint": {
           "type": "string",
           "format": "int64",
-          "description": "A hint that there are more tasks already present in this task queue \npartition. Can be used to prioritize draining a sticky queue.\n\nSpecifically, the returned number is the number of tasks remaining in\nthe in-memory buffer for this partition, which is currently capped at\n1000. Because sticky queues only have one partition, this number is \nmore useful when draining them. Normal queues, typically having more than one \npartition, will return a number representing only some portion of the \noverall backlog. Subsequent RPCs may not hit the same partition as \nthis call."
+          "description": "A hint that there are more tasks already present in this task queue\npartition. Can be used to prioritize draining a sticky queue.\n\nSpecifically, the returned number is the number of tasks remaining in\nthe in-memory buffer for this partition, which is currently capped at\n1000. Because sticky queues only have one partition, this number is\nmore useful when draining them. Normal queues, typically having more than one\npartition, will return a number representing only some portion of the\noverall backlog. Subsequent RPCs may not hit the same partition as\nthis call."
         },
         "history": {
           "$ref": "#/definitions/v1History",
@@ -9717,6 +10537,10 @@
         "cancelRequested": {
           "type": "boolean",
           "description": "Will be set to true if the activity has been asked to cancel itself. The SDK should then\nnotify the activity of cancellation if it is still running."
+        },
+        "activityPaused": {
+          "type": "boolean",
+          "description": "Will be set to true if the activity is paused."
         }
       }
     },
@@ -10051,10 +10875,11 @@
         "RESET_REAPPLY_EXCLUDE_TYPE_UNSPECIFIED",
         "RESET_REAPPLY_EXCLUDE_TYPE_SIGNAL",
         "RESET_REAPPLY_EXCLUDE_TYPE_UPDATE",
-        "RESET_REAPPLY_EXCLUDE_TYPE_NEXUS"
+        "RESET_REAPPLY_EXCLUDE_TYPE_NEXUS",
+        "RESET_REAPPLY_EXCLUDE_TYPE_CANCEL_REQUEST"
       ],
       "default": "RESET_REAPPLY_EXCLUDE_TYPE_UNSPECIFIED",
-      "description": "Event types to exclude when reapplying events beyond the reset point.\n\n - RESET_REAPPLY_EXCLUDE_TYPE_SIGNAL: Exclude signals when reapplying events beyond the reset point.\n - RESET_REAPPLY_EXCLUDE_TYPE_UPDATE: Exclude updates when reapplying events beyond the reset point.\n - RESET_REAPPLY_EXCLUDE_TYPE_NEXUS: Exclude nexus events when reapplying events beyond the reset point."
+      "description": "Event types to exclude when reapplying events beyond the reset point.\n\n - RESET_REAPPLY_EXCLUDE_TYPE_SIGNAL: Exclude signals when reapplying events beyond the reset point.\n - RESET_REAPPLY_EXCLUDE_TYPE_UPDATE: Exclude updates when reapplying events beyond the reset point.\n - RESET_REAPPLY_EXCLUDE_TYPE_NEXUS: Exclude nexus events when reapplying events beyond the reset point.\n - RESET_REAPPLY_EXCLUDE_TYPE_CANCEL_REQUEST: Deprecated, unimplemented option."
     },
     "v1ResetReapplyType": {
       "type": "string",
@@ -10148,7 +10973,7 @@
       "properties": {
         "discardSpeculativeWorkflowTaskWithEvents": {
           "type": "boolean",
-          "title": "True if the SDK can handle speculative workflow task with command events.\nIf true, the server may chosse, at its discretion, to discard a speculative workflow task\neven if that speculative task included command events the SDK had not previouly processed"
+          "description": "True if the SDK can handle speculative workflow task with command events. If true, the\nserver may choose, at its discretion, to discard a speculative workflow task even if that\nspeculative task included command events the SDK had not previously processed.\n"
         }
       },
       "description": "SDK capability details."
@@ -10662,6 +11487,18 @@
         }
       }
     },
+    "v1SetCurrentDeploymentResponse": {
+      "type": "object",
+      "properties": {
+        "currentDeploymentInfo": {
+          "$ref": "#/definitions/v1DeploymentInfo"
+        },
+        "previousDeploymentInfo": {
+          "$ref": "#/definitions/v1DeploymentInfo",
+          "description": "Info of the deployment that was current before executing this operation."
+        }
+      }
+    },
     "v1Severity": {
       "type": "string",
       "enum": [
@@ -11167,6 +12004,10 @@
             "$ref": "#/definitions/apicommonv1Link"
           },
           "description": "Links to be associated with the workflow."
+        },
+        "versioningOverride": {
+          "$ref": "#/definitions/v1VersioningOverride",
+          "description": "If set, takes precedence over the Versioning Behavior sent by the SDK on Workflow Task completion.\nTo unset the override after the workflow is running, use UpdateWorkflowExecutionOptions."
         }
       }
     },
@@ -11629,6 +12470,25 @@
       "default": "UPDATE_ADMITTED_EVENT_ORIGIN_UNSPECIFIED",
       "description": "Records why a WorkflowExecutionUpdateAdmittedEvent was written to history.\nNote that not all admitted Updates result in this event.\n\n - UPDATE_ADMITTED_EVENT_ORIGIN_REAPPLY: The UpdateAdmitted event was created when reapplying events during reset\nor replication. I.e. an accepted Update on one branch of Workflow history\nwas converted into an admitted Update on a different branch."
     },
+    "v1UpdateDeploymentMetadata": {
+      "type": "object",
+      "properties": {
+        "upsertEntries": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/v1Payload"
+          }
+        },
+        "removeEntries": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "List of keys to remove from the metadata."
+        }
+      },
+      "description": "Used as part of Deployment write APIs to update metadata attached to a deployment."
+    },
     "v1UpdateNamespaceInfo": {
       "type": "object",
       "properties": {
@@ -11734,6 +12594,15 @@
       "default": "UPDATE_WORKFLOW_EXECUTION_LIFECYCLE_STAGE_UNSPECIFIED",
       "description": "UpdateWorkflowExecutionLifecycleStage is specified by clients invoking\nWorkflow Updates and used to indicate to the server how long the\nclient wishes to wait for a return value from the API. If any value other\nthan UPDATE_WORKFLOW_EXECUTION_LIFECYCLE_STAGE_COMPLETED is sent by the\nclient then the API will complete before the Update is finished and will\nreturn a handle to the running Update so that it can later be polled for\ncompletion.\nIf specified stage wasn't reached before server timeout, server returns\nactual stage reached.\n\n - UPDATE_WORKFLOW_EXECUTION_LIFECYCLE_STAGE_UNSPECIFIED: An unspecified value for this enum.\n - UPDATE_WORKFLOW_EXECUTION_LIFECYCLE_STAGE_ADMITTED: The API call will not return until the Update request has been admitted\nby the server - it may be the case that due to a considerations like load\nor resource limits that an Update is made to wait before the server will\nindicate that it has been received and will be processed. This value\ndoes not wait for any sort of acknowledgement from a worker.\n - UPDATE_WORKFLOW_EXECUTION_LIFECYCLE_STAGE_ACCEPTED: The API call will not return until the Update has passed validation on a worker.\n - UPDATE_WORKFLOW_EXECUTION_LIFECYCLE_STAGE_COMPLETED: The API call will not return until the Update has executed to completion\non a worker and has either been rejected or returned a value or an error."
     },
+    "v1UpdateWorkflowExecutionOptionsResponse": {
+      "type": "object",
+      "properties": {
+        "workflowExecutionOptions": {
+          "$ref": "#/definitions/v1WorkflowExecutionOptions",
+          "description": "Workflow Execution options after update."
+        }
+      }
+    },
     "v1UpdateWorkflowExecutionRequest": {
       "type": "object",
       "properties": {
@@ -11837,6 +12706,30 @@
       },
       "description": "VersionInfo contains details about current and recommended release versions as well as alerts and upgrade instructions."
     },
+    "v1VersioningBehavior": {
+      "type": "string",
+      "enum": [
+        "VERSIONING_BEHAVIOR_UNSPECIFIED",
+        "VERSIONING_BEHAVIOR_PINNED",
+        "VERSIONING_BEHAVIOR_AUTO_UPGRADE"
+      ],
+      "default": "VERSIONING_BEHAVIOR_UNSPECIFIED",
+      "description": " - VERSIONING_BEHAVIOR_UNSPECIFIED: Workflow execution is unversioned. This is the legacy behavior. An unversioned workflow's\ntask may go to any unversioned worker who is polling for the task queue.\n - VERSIONING_BEHAVIOR_PINNED: Workflow will be pinned to the current deployment until completion. Can be overridden\nexplicitly via `UpdateWorkflowExecutionOptions` API.\nActivities of `PINNED` workflows are sent to the same deployment. Exception to this would be\nwhen the activity task queue workers are not present in the workflows deployment, in which\ncase the activity will be sent to the current deployment of its own task queue.\n - VERSIONING_BEHAVIOR_AUTO_UPGRADE: Workflow will automatically move to the current deployment of its task queue when the next\nworkflow task is dispatched.\nActivities of `AUTO_UPGRADE` workflows are sent to the current deployment of the workflow\nexecution based on the last completed workflow task. Exception to this would be when the\nactivity task queue workers are not present in the workflow's deployment, in which case the\nactivity will be sent to the current deployment of its own task queue.\nWorkflows stuck on a backlogged activity will still auto-upgrade if the default deployment\nof their task queue changes, without having to wait for the backlogged activity to complete\non the old deployment."
+    },
+    "v1VersioningOverride": {
+      "type": "object",
+      "properties": {
+        "behavior": {
+          "$ref": "#/definitions/v1VersioningBehavior",
+          "description": "Required."
+        },
+        "deployment": {
+          "$ref": "#/definitions/v1Deployment",
+          "description": "Required if behavior is `PINNED`. Must be null if behavior is `AUTO_UPGRADE`.\nIdentifies the worker deployment to pin the workflow to."
+        }
+      },
+      "description": "Used to override the versioning behavior and deployment of a specific workflow execution. If set,\ntakes precedence over the worker-sent values. See `WorkflowExecutionInfo.VersioningInfo` for more\ninformation. To remove the override, call `UpdateWorkflowExecutionOptions` with a null\n`VersioningOverride`, and use the `update_mask` to indicate that it should be mutated."
+    },
     "v1WaitPolicy": {
       "type": "object",
       "properties": {
@@ -11857,9 +12750,13 @@
         "useVersioning": {
           "type": "boolean",
           "description": "If set, the worker is opting in to worker versioning, and wishes to only receive appropriate\ntasks."
+        },
+        "deploymentSeriesName": {
+          "type": "string",
+          "description": "Must be sent if user has set a deployment series name (versioning-3)."
         }
       },
-      "description": "Identifies the version(s) that a worker is compatible with when polling or identifying itself,\nand whether or not this worker is opting into the build-id based versioning feature. This is\nused by matching to determine which workers ought to receive what tasks."
+      "description": "Identifies the version that a worker is compatible with when polling or identifying itself,\nand whether or not this worker is opting into the build-id based versioning feature. This is\nused by matching to determine which workers ought to receive what tasks."
     },
     "v1WorkerVersionStamp": {
       "type": "object",
@@ -11873,7 +12770,7 @@
           "description": "If set, the worker is opting in to worker versioning. Otherwise, this is used only as a\nmarker for workflow reset points and the BuildIDs search attribute."
         }
       },
-      "title": "Identifies the version(s) of a worker that processed a task"
+      "title": "Deprecated. This message is replaced with `Deployment` and `VersioningBehavior`.\nIdentifies the version(s) of a worker that processed a task"
     },
     "v1WorkflowExecution": {
       "type": "object",
@@ -12019,6 +12916,36 @@
         }
       }
     },
+    "v1WorkflowExecutionExtendedInfo": {
+      "type": "object",
+      "properties": {
+        "executionExpirationTime": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Workflow execution expiration time is defined as workflow start time plus expiration timeout.\nWorkflow start time may change after workflow reset."
+        },
+        "runExpirationTime": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Workflow run expiration time is defined as current workflow run start time plus workflow run timeout."
+        },
+        "cancelRequested": {
+          "type": "boolean",
+          "title": "indicates if the workflow received a cancel request"
+        },
+        "lastResetTime": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last workflow reset time. Nil if the workflow was never reset."
+        },
+        "originalStartTime": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Original workflow start time."
+        }
+      },
+      "description": "Holds all the extra information about workflow execution that is not part of Visibility."
+    },
     "v1WorkflowExecutionFailedEventAttributes": {
       "type": "object",
       "properties": {
@@ -12107,7 +13034,7 @@
         },
         "mostRecentWorkerVersionStamp": {
           "$ref": "#/definitions/v1WorkerVersionStamp",
-          "title": "If set, the most recent worker version stamp that appeared in a workflow task completion"
+          "title": "If set, the most recent worker version stamp that appeared in a workflow task completion\nDeprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]"
         },
         "executionDuration": {
           "type": "string",
@@ -12119,15 +13046,42 @@
         },
         "assignedBuildId": {
           "type": "string",
-          "description": "The currently assigned build ID for this execution. Presence of this value means worker versioning is used\nfor this execution. Assigned build ID is selected based on Worker Versioning Assignment Rules\nwhen the first workflow task of the execution is scheduled. If the first workflow task fails and is scheduled\nagain, the assigned build ID may change according to the latest versioning rules.\nAssigned build ID can also change in the middle of a execution if Compatible Redirect Rules are applied to\nthis execution."
+          "title": "The currently assigned build ID for this execution. Presence of this value means worker versioning is used\nfor this execution. Assigned build ID is selected based on Worker Versioning Assignment Rules\nwhen the first workflow task of the execution is scheduled. If the first workflow task fails and is scheduled\nagain, the assigned build ID may change according to the latest versioning rules.\nAssigned build ID can also change in the middle of a execution if Compatible Redirect Rules are applied to\nthis execution.\nDeprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]"
         },
         "inheritedBuildId": {
           "type": "string",
-          "description": "Build ID inherited from a previous/parent execution. If present, assigned_build_id will be set to this, instead\nof using the assignment rules."
+          "title": "Build ID inherited from a previous/parent execution. If present, assigned_build_id will be set to this, instead\nof using the assignment rules.\nDeprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]"
         },
         "firstRunId": {
           "type": "string",
           "title": "The first run ID in the execution chain.\nExecutions created via the following operations are considered to be in the same chain\n- ContinueAsNew\n- Workflow Retry\n- Workflow Reset\n- Cron Schedule"
+        },
+        "versioningInfo": {
+          "$ref": "#/definitions/v1WorkflowExecutionVersioningInfo",
+          "description": "Absent value means the workflow execution is not versioned. When present, the execution might\nbe versioned or unversioned, depending on `versioning_info.behavior` and `versioning_info.versioning_override`.\nExperimental. Versioning info is experimental and might change in the future."
+        }
+      },
+      "description": "Hold basic information about a workflow execution.\nThis structure is a part of visibility, and thus contain a limited subset of information."
+    },
+    "v1WorkflowExecutionOptions": {
+      "type": "object",
+      "properties": {
+        "versioningOverride": {
+          "$ref": "#/definitions/v1VersioningOverride",
+          "description": "If set, takes precedence over the Versioning Behavior sent by the SDK on Workflow Task completion."
+        }
+      }
+    },
+    "v1WorkflowExecutionOptionsUpdatedEventAttributes": {
+      "type": "object",
+      "properties": {
+        "versioningOverride": {
+          "$ref": "#/definitions/v1VersioningOverride",
+          "description": "Versioning override upserted in this event.\nIgnored if nil or if unset_versioning_override is true."
+        },
+        "unsetVersioningOverride": {
+          "type": "boolean",
+          "description": "Versioning override removed in this event."
         }
       }
     },
@@ -12152,7 +13106,7 @@
         },
         "skipGenerateWorkflowTask": {
           "type": "boolean",
-          "description": "Indicates the signal did not generate a new workflow task when received."
+          "description": "This field is deprecated and never respected. It should always be set to false."
         },
         "externalWorkflowExecution": {
           "$ref": "#/definitions/v1WorkflowExecution",
@@ -12270,7 +13224,7 @@
         },
         "sourceVersionStamp": {
           "$ref": "#/definitions/v1WorkerVersionStamp",
-          "title": "If this workflow intends to use anything other than the current overall default version for\nthe queue, then we include it here.\nDeprecated. use `inherited_build_id` instead"
+          "title": "If this workflow intends to use anything other than the current overall default version for\nthe queue, then we include it here.\nDeprecated. [cleanup-experimental-wv]"
         },
         "completionCallbacks": {
           "type": "array",
@@ -12286,7 +13240,11 @@
         },
         "inheritedBuildId": {
           "type": "string",
-          "description": "When present, this execution is assigned to the build ID of its parent or previous execution."
+          "title": "When present, this execution is assigned to the build ID of its parent or previous execution.\nDeprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]"
+        },
+        "versioningOverride": {
+          "$ref": "#/definitions/v1VersioningOverride",
+          "description": "Versioning override applied to this workflow when it was started."
         }
       },
       "title": "Always the first event in workflow history"
@@ -12413,6 +13371,28 @@
         }
       }
     },
+    "v1WorkflowExecutionVersioningInfo": {
+      "type": "object",
+      "properties": {
+        "behavior": {
+          "$ref": "#/definitions/v1VersioningBehavior",
+          "description": "Versioning behavior determines how the server should treat this execution when workers are\nupgraded. When present it means this workflow execution is versioned; UNSPECIFIED means\nunversioned. See the comments in `VersioningBehavior` enum for more info about different\nbehaviors.\nThis field is first set after an execution completes its first workflow task on a versioned\nworker, and set again on completion of every subsequent workflow task.\nNote that `behavior` is overridden by `versioning_override` if the latter is present."
+        },
+        "deployment": {
+          "$ref": "#/definitions/v1Deployment",
+          "description": "The worker deployment that completed the last workflow task of this workflow execution. Must\nbe present if `behavior` is set. Absent value means no workflow task is completed, or the\nlast workflow task was completed by an unversioned worker. Unversioned workers may still send\na deployment value which will be stored here, so the right way to check if an execution is\nversioned if an execution is versioned or not is via the `behavior` field.\nNote that `deployment` is overridden by `versioning_override` if the latter is present."
+        },
+        "versioningOverride": {
+          "$ref": "#/definitions/v1VersioningOverride",
+          "description": "Present if user has set an execution-specific versioning override. This override takes\nprecedence over SDK-sent `behavior` (and `deployment` when override is PINNED). An override\ncan be set when starting a new execution, as well as afterwards by calling the\n`UpdateWorkflowExecutionOptions` API."
+        },
+        "deploymentTransition": {
+          "$ref": "#/definitions/v1DeploymentTransition",
+          "description": "When present, indicates the workflow is transitioning to a different deployment. Can\nindicate one of the following transitions: unversioned -> versioned, versioned -> versioned\non a different deployment, or versioned -> unversioned.\nNot applicable to workflows with PINNED behavior.\nWhen a workflow with AUTO_UPGRADE behavior creates a new workflow task, it will automatically\nstart a transition to the task queue's current deployment if the task queue's current\ndeployment is different from the workflow's deployment.\nIf the AUTO_UPGRADE workflow is stuck due to backlogged activity or workflow tasks, those\ntasks will be redirected to the task queue's current deployment. As soon as a poller from\nthat deployment is available to receive the task, the workflow will automatically start a\ntransition to that deployment and continue execution there.\nA deployment transition can only exist while there is a pending or started workflow task.\nOnce the pending workflow task completes on the transition's target deployment, the\ntransition completes and the workflow's `deployment` and `behavior` fields are updated per\nthe worker's task completion response.\nPending activities will not start new attempts during a transition. Once the transition is\ncompleted, pending activities will start their next attempt on the new deployment."
+        }
+      },
+      "description": "Holds all the information about versioning for a workflow execution.\nExperimental. Versioning info is experimental and might change in the future."
+    },
     "v1WorkflowIdConflictPolicy": {
       "type": "string",
       "enum": [
@@ -12455,25 +13435,26 @@
       "properties": {
         "newTaskQueue": {
           "type": "string",
-          "description": "If set to a nonempty string, future workflow tasks for this workflow shall be dispatched on\nthe provided queue."
+          "description": "Not used."
         },
         "newWorkflowTaskTimeout": {
           "type": "string",
-          "description": "If set, update the workflow task timeout to this value."
+          "description": "Not used."
         },
         "newWorkflowRunTimeout": {
           "type": "string",
-          "description": "If set, update the workflow run timeout to this value. May be set to 0 for no timeout."
+          "description": "Not used."
         },
         "newWorkflowExecutionTimeout": {
           "type": "string",
-          "description": "If set, update the workflow execution timeout to this value. May be set to 0 for no timeout."
+          "description": "Not used."
         },
         "upsertedMemo": {
           "$ref": "#/definitions/v1Memo",
-          "description": "If set, update the workflow memo with the provided values. The values will be merged with\nthe existing memo. If the user wants to delete values, a default/empty Payload should be\nused as the value for the key being deleted."
+          "description": "Not used."
         }
-      }
+      },
+      "title": "Not used anywhere. Use case is replaced by WorkflowExecutionOptionsUpdatedEventAttributes"
     },
     "v1WorkflowQuery": {
       "type": "object",
@@ -12488,7 +13469,7 @@
         },
         "header": {
           "$ref": "#/definitions/v1Header",
-          "description": "Headers that were passed by the caller of the query and copied by temporal \nserver into the workflow task."
+          "description": "Headers that were passed by the caller of the query and copied by temporal\nserver into the workflow task."
         }
       },
       "title": "See https://docs.temporal.io/docs/concepts/queries/"
@@ -12502,11 +13483,15 @@
         },
         "answer": {
           "$ref": "#/definitions/v1Payloads",
-          "title": "Set when the query succeeds with the results"
+          "description": "Set when the query succeeds with the results.\nMutually exclusive with `error_message` and `failure`."
         },
         "errorMessage": {
           "type": "string",
-          "description": "Mutually exclusive with `answer`. Set when the query fails."
+          "description": "Mutually exclusive with `answer`. Set when the query fails.\nSee also the newer `failure` field."
+        },
+        "failure": {
+          "$ref": "#/definitions/apifailurev1Failure",
+          "description": "The full reason for this query failure. This field is newer than `error_message` and can be encoded by the SDK's\nfailure converter to support E2E encryption of messages and stack traces.\nMutually exclusive with `answer`. Set when the query fails."
         }
       },
       "title": "Answer to a `WorkflowQuery`"
@@ -12534,7 +13519,7 @@
         },
         "workerVersion": {
           "$ref": "#/definitions/v1WorkerVersionStamp",
-          "title": "Version info of the worker who processed this workflow task. If present, the `build_id` field\nwithin is also used as `binary_checksum`, which may be omitted in that case (it may also be\npopulated to preserve compatibility).\nDeprecated. Use the info inside the corresponding WorkflowTaskStartedEvent"
+          "description": "Version info of the worker who processed this workflow task. If present, the `build_id` field\nwithin is also used as `binary_checksum`, which may be omitted in that case (it may also be\npopulated to preserve compatibility).\nDeprecated. Use `deployment` and `versioning_behavior` instead."
         },
         "sdkMetadata": {
           "$ref": "#/definitions/v1WorkflowTaskCompletedMetadata",
@@ -12543,6 +13528,14 @@
         "meteringMetadata": {
           "$ref": "#/definitions/v1MeteringMetadata",
           "title": "Local usage data sent during workflow task completion and recorded here for posterity"
+        },
+        "deployment": {
+          "$ref": "#/definitions/v1Deployment",
+          "description": "The deployment that completed this task. May or may not be set for unversioned workers,\ndepending on whether a value is sent by the SDK. This value updates workflow execution's\n`versioning_info.deployment`."
+        },
+        "versioningBehavior": {
+          "$ref": "#/definitions/v1VersioningBehavior",
+          "description": "Versioning behavior sent by the worker that completed this task for this particular workflow\nexecution. UNSPECIFIED means the task was completed by an unversioned worker. This value\nupdates workflow execution's `versioning_info.behavior`."
         }
       }
     },
@@ -12711,12 +13704,12 @@
         },
         "workerVersion": {
           "$ref": "#/definitions/v1WorkerVersionStamp",
-          "description": "Version info of the worker to whom this task was dispatched."
+          "title": "Version info of the worker to whom this task was dispatched.\nDeprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]"
         },
         "buildIdRedirectCounter": {
           "type": "string",
           "format": "int64",
-          "description": "Used by server internally to properly reapply build ID redirects to an execution\nwhen rebuilding it from events."
+          "title": "Used by server internally to properly reapply build ID redirects to an execution\nwhen rebuilding it from events.\nDeprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]"
         }
       }
     },

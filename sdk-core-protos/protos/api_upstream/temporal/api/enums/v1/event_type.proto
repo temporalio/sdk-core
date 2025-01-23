@@ -185,4 +185,6 @@ enum EventType {
     EVENT_TYPE_NEXUS_OPERATION_TIMED_OUT = 53;
     // A Nexus operation was requested to be canceled using a RequestCancelNexusOperation command.
     EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUESTED = 54;
+    // Workflow execution options updated by user.
+    EVENT_TYPE_WORKFLOW_EXECUTION_OPTIONS_UPDATED = 55;
 }

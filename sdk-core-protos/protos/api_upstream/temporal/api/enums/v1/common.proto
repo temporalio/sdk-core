@@ -69,6 +69,8 @@ enum CallbackState {
     CALLBACK_STATE_FAILED = 4;
     // Callback has succeeded.
     CALLBACK_STATE_SUCCEEDED = 5;
+    // Callback is blocked (eg: by circuit breaker).
+    CALLBACK_STATE_BLOCKED = 6;
 }
 
 // State of a pending Nexus operation.
@@ -81,6 +83,8 @@ enum PendingNexusOperationState {
     PENDING_NEXUS_OPERATION_STATE_BACKING_OFF = 2;
     // Operation was started and will complete asynchronously.
     PENDING_NEXUS_OPERATION_STATE_STARTED = 3;
+    // Operation is blocked (eg: by circuit breaker).
+    PENDING_NEXUS_OPERATION_STATE_BLOCKED = 4;
 }
 
 // State of a Nexus operation cancellation.
@@ -97,4 +101,6 @@ enum NexusOperationCancellationState {
     NEXUS_OPERATION_CANCELLATION_STATE_FAILED = 4;
     // The associated operation timed out - exceeded the user supplied schedule-to-close timeout.
     NEXUS_OPERATION_CANCELLATION_STATE_TIMED_OUT = 5;
+    // Cancellation request is blocked (eg: by circuit breaker).
+    NEXUS_OPERATION_CANCELLATION_STATE_BLOCKED = 6;
 }

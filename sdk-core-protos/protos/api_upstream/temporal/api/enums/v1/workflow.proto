@@ -138,3 +138,25 @@ enum TimeoutType {
     TIMEOUT_TYPE_SCHEDULE_TO_CLOSE = 3;
     TIMEOUT_TYPE_HEARTBEAT = 4;
 }
+
+enum VersioningBehavior {
+    // Workflow execution is unversioned. This is the legacy behavior. An unversioned workflow's
+    // task may go to any unversioned worker who is polling for the task queue.
+    VERSIONING_BEHAVIOR_UNSPECIFIED = 0;
+    // Workflow will be pinned to the current deployment until completion. Can be overridden
+    // explicitly via `UpdateWorkflowExecutionOptions` API.
+    // Activities of `PINNED` workflows are sent to the same deployment. Exception to this would be
+    // when the activity task queue workers are not present in the workflows deployment, in which
+    // case the activity will be sent to the current deployment of its own task queue.
+    VERSIONING_BEHAVIOR_PINNED = 1;
+    // Workflow will automatically move to the current deployment of its task queue when the next
+    // workflow task is dispatched.
+    // Activities of `AUTO_UPGRADE` workflows are sent to the current deployment of the workflow
+    // execution based on the last completed workflow task. Exception to this would be when the
+    // activity task queue workers are not present in the workflow's deployment, in which case the
+    // activity will be sent to the current deployment of its own task queue.
+    // Workflows stuck on a backlogged activity will still auto-upgrade if the default deployment
+    // of their task queue changes, without having to wait for the backlogged activity to complete
+    // on the old deployment.
+    VERSIONING_BEHAVIOR_AUTO_UPGRADE = 2;
+}

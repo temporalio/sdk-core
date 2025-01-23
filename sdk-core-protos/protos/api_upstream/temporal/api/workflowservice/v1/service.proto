@@ -772,6 +772,70 @@ service WorkflowService {
         };
     }
 
+    // Describes a worker deployment.
+    // Experimental. This API might significantly change or be removed in a future release.
+    rpc DescribeDeployment (DescribeDeploymentRequest) returns (DescribeDeploymentResponse) {
+        option (google.api.http) = {
+            get: "/namespaces/{namespace}/deployments/{deployment.series_name}/{deployment.build_id}"
+            additional_bindings {
+                get: "/api/v1/namespaces/{namespace}/deployments/{deployment.series_name}/{deployment.build_id}"
+            }
+        };
+    }
+
+    // Lists worker deployments in the namespace. Optionally can filter based on deployment series
+    // name.
+    // Experimental. This API might significantly change or be removed in a future release.
+    rpc ListDeployments (ListDeploymentsRequest) returns (ListDeploymentsResponse) {
+        option (google.api.http) = {
+            get: "/namespaces/{namespace}/deployments"
+            additional_bindings {
+                get: "/api/v1/namespaces/{namespace}/deployments"
+            }
+        };
+    }
+
+    // Returns the reachability level of a worker deployment to help users decide when it is time
+    // to decommission a deployment. Reachability level is calculated based on the deployment's
+    // `status` and existing workflows that depend on the given deployment for their execution.
+    // Calculating reachability is relatively expensive. Therefore, server might return a recently
+    // cached value. In such a case, the `last_update_time` will inform you about the actual
+    // reachability calculation time.
+    // Experimental. This API might significantly change or be removed in a future release.
+    rpc GetDeploymentReachability (GetDeploymentReachabilityRequest) returns (GetDeploymentReachabilityResponse) {
+        option (google.api.http) = {
+            get: "/namespaces/{namespace}/deployments/{deployment.series_name}/{deployment.build_id}/reachability"
+            additional_bindings {
+                get: "/api/v1/namespaces/{namespace}/deployments/{deployment.series_name}/{deployment.build_id}/reachability"
+            }
+        };
+    }
+
+    // Returns the current deployment (and its info) for a given deployment series.
+    // Experimental. This API might significantly change or be removed in a future release.
+    rpc GetCurrentDeployment (GetCurrentDeploymentRequest) returns (GetCurrentDeploymentResponse) {
+        option (google.api.http) = {
+            get: "/namespaces/{namespace}/current-deployment/{series_name}"
+            additional_bindings {
+                get: "/api/v1/namespaces/{namespace}/current-deployment/{series_name}"
+            }
+        };
+    }
+
+    // Sets a deployment as the current deployment for its deployment series. Can optionally update
+    // the metadata of the deployment as well.
+    // Experimental. This API might significantly change or be removed in a future release.
+    rpc SetCurrentDeployment (SetCurrentDeploymentRequest) returns (SetCurrentDeploymentResponse) {
+        option (google.api.http) = {
+            post: "/namespaces/{namespace}/current-deployment/{deployment.series_name}"
+            body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/current-deployment/{deployment.series_name}"
+                body: "*"
+            }
+        };
+    }
+
     // Invokes the specified Update function on user Workflow code.
     rpc UpdateWorkflowExecution(UpdateWorkflowExecutionRequest) returns (UpdateWorkflowExecutionResponse) {
         option (google.api.http) = {
@@ -870,6 +934,18 @@ service WorkflowService {
         };
     }
 
+    // UpdateWorkflowExecutionOptions partially updates the WorkflowExecutionOptions of an existing workflow execution.
+    rpc UpdateWorkflowExecutionOptions (UpdateWorkflowExecutionOptionsRequest) returns (UpdateWorkflowExecutionOptionsResponse) {
+        option (google.api.http) = {
+            post: "/namespaces/{namespace}/workflows/{workflow_execution.workflow_id}/update-options"
+            body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/workflows/{workflow_execution.workflow_id}/update-options"
+                body: "*"
+            }
+        };
+    }
+
     // PauseActivityById pauses the execution of an activity specified by its ID.
     // Returns a `NotFound` error if there is no pending activity with the provided ID.
     //
@@ -943,6 +1019,5 @@ service WorkflowService {
             }
         };
     }
-    
 }
 

@@ -772,6 +772,233 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
+  /api/v1/namespaces/{namespace}/current-deployment/{deployment.series_name}:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        Sets a deployment as the current deployment for its deployment series. Can optionally update
+         the metadata of the deployment as well.
+         Experimental. This API might significantly change or be removed in a future release.
+      operationId: SetCurrentDeployment
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: deployment.series_name
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetCurrentDeploymentRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SetCurrentDeploymentResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /api/v1/namespaces/{namespace}/current-deployment/{seriesName}:
+    get:
+      tags:
+        - WorkflowService
+      description: |-
+        Returns the current deployment (and its info) for a given deployment series.
+         Experimental. This API might significantly change or be removed in a future release.
+      operationId: GetCurrentDeployment
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: seriesName
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetCurrentDeploymentResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /api/v1/namespaces/{namespace}/deployments:
+    get:
+      tags:
+        - WorkflowService
+      description: |-
+        Lists worker deployments in the namespace. Optionally can filter based on deployment series
+         name.
+         Experimental. This API might significantly change or be removed in a future release.
+      operationId: ListDeployments
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: pageSize
+          in: query
+          schema:
+            type: integer
+            format: int32
+        - name: nextPageToken
+          in: query
+          schema:
+            type: string
+            format: bytes
+        - name: seriesName
+          in: query
+          description: Optional. Use to filter based on exact series name match.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListDeploymentsResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /api/v1/namespaces/{namespace}/deployments/{deployment.series_name}/{deployment.build_id}:
+    get:
+      tags:
+        - WorkflowService
+      description: |-
+        Describes a worker deployment.
+         Experimental. This API might significantly change or be removed in a future release.
+      operationId: DescribeDeployment
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: deployment.series_name
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: deployment.build_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: deployment.seriesName
+          in: query
+          description: |-
+            Different versions of the same worker service/application are related together by having a
+             shared series name.
+             Out of all deployments of a series, one can be designated as the current deployment, which
+             receives new workflow executions and new tasks of workflows with
+             `VERSIONING_BEHAVIOR_AUTO_UPGRADE` versioning behavior.
+          schema:
+            type: string
+        - name: deployment.buildId
+          in: query
+          description: |-
+            Build ID changes with each version of the worker when the worker program code and/or config
+             changes.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DescribeDeploymentResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /api/v1/namespaces/{namespace}/deployments/{deployment.series_name}/{deployment.build_id}/reachability:
+    get:
+      tags:
+        - WorkflowService
+      description: |-
+        Returns the reachability level of a worker deployment to help users decide when it is time
+         to decommission a deployment. Reachability level is calculated based on the deployment's
+         `status` and existing workflows that depend on the given deployment for their execution.
+         Calculating reachability is relatively expensive. Therefore, server might return a recently
+         cached value. In such a case, the `last_update_time` will inform you about the actual
+         reachability calculation time.
+         Experimental. This API might significantly change or be removed in a future release.
+      operationId: GetDeploymentReachability
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: deployment.series_name
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: deployment.build_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: deployment.seriesName
+          in: query
+          description: |-
+            Different versions of the same worker service/application are related together by having a
+             shared series name.
+             Out of all deployments of a series, one can be designated as the current deployment, which
+             receives new workflow executions and new tasks of workflows with
+             `VERSIONING_BEHAVIOR_AUTO_UPGRADE` versioning behavior.
+          schema:
+            type: string
+        - name: deployment.buildId
+          in: query
+          description: |-
+            Build ID changes with each version of the worker when the worker program code and/or config
+             changes.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetDeploymentReachabilityResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
   /api/v1/namespaces/{namespace}/schedules:
     get:
       tags:
@@ -1948,6 +2175,43 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TerminateWorkflowExecutionResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /api/v1/namespaces/{namespace}/workflows/{workflow_execution.workflow_id}/update-options:
+    post:
+      tags:
+        - WorkflowService
+      description: UpdateWorkflowExecutionOptions partially updates the WorkflowExecutionOptions of an existing workflow execution.
+      operationId: UpdateWorkflowExecutionOptions
+      parameters:
+        - name: namespace
+          in: path
+          description: The namespace name of the target Workflow.
+          required: true
+          schema:
+            type: string
+        - name: workflow_execution.workflow_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateWorkflowExecutionOptionsRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateWorkflowExecutionOptionsResponse'
         default:
           description: Default error response
           content:
@@ -3171,6 +3435,233 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
+  /namespaces/{namespace}/current-deployment/{deployment.series_name}:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        Sets a deployment as the current deployment for its deployment series. Can optionally update
+         the metadata of the deployment as well.
+         Experimental. This API might significantly change or be removed in a future release.
+      operationId: SetCurrentDeployment
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: deployment.series_name
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetCurrentDeploymentRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SetCurrentDeploymentResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /namespaces/{namespace}/current-deployment/{seriesName}:
+    get:
+      tags:
+        - WorkflowService
+      description: |-
+        Returns the current deployment (and its info) for a given deployment series.
+         Experimental. This API might significantly change or be removed in a future release.
+      operationId: GetCurrentDeployment
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: seriesName
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetCurrentDeploymentResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /namespaces/{namespace}/deployments:
+    get:
+      tags:
+        - WorkflowService
+      description: |-
+        Lists worker deployments in the namespace. Optionally can filter based on deployment series
+         name.
+         Experimental. This API might significantly change or be removed in a future release.
+      operationId: ListDeployments
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: pageSize
+          in: query
+          schema:
+            type: integer
+            format: int32
+        - name: nextPageToken
+          in: query
+          schema:
+            type: string
+            format: bytes
+        - name: seriesName
+          in: query
+          description: Optional. Use to filter based on exact series name match.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListDeploymentsResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /namespaces/{namespace}/deployments/{deployment.series_name}/{deployment.build_id}:
+    get:
+      tags:
+        - WorkflowService
+      description: |-
+        Describes a worker deployment.
+         Experimental. This API might significantly change or be removed in a future release.
+      operationId: DescribeDeployment
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: deployment.series_name
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: deployment.build_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: deployment.seriesName
+          in: query
+          description: |-
+            Different versions of the same worker service/application are related together by having a
+             shared series name.
+             Out of all deployments of a series, one can be designated as the current deployment, which
+             receives new workflow executions and new tasks of workflows with
+             `VERSIONING_BEHAVIOR_AUTO_UPGRADE` versioning behavior.
+          schema:
+            type: string
+        - name: deployment.buildId
+          in: query
+          description: |-
+            Build ID changes with each version of the worker when the worker program code and/or config
+             changes.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DescribeDeploymentResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /namespaces/{namespace}/deployments/{deployment.series_name}/{deployment.build_id}/reachability:
+    get:
+      tags:
+        - WorkflowService
+      description: |-
+        Returns the reachability level of a worker deployment to help users decide when it is time
+         to decommission a deployment. Reachability level is calculated based on the deployment's
+         `status` and existing workflows that depend on the given deployment for their execution.
+         Calculating reachability is relatively expensive. Therefore, server might return a recently
+         cached value. In such a case, the `last_update_time` will inform you about the actual
+         reachability calculation time.
+         Experimental. This API might significantly change or be removed in a future release.
+      operationId: GetDeploymentReachability
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: deployment.series_name
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: deployment.build_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: deployment.seriesName
+          in: query
+          description: |-
+            Different versions of the same worker service/application are related together by having a
+             shared series name.
+             Out of all deployments of a series, one can be designated as the current deployment, which
+             receives new workflow executions and new tasks of workflows with
+             `VERSIONING_BEHAVIOR_AUTO_UPGRADE` versioning behavior.
+          schema:
+            type: string
+        - name: deployment.buildId
+          in: query
+          description: |-
+            Build ID changes with each version of the worker when the worker program code and/or config
+             changes.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetDeploymentReachabilityResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
   /namespaces/{namespace}/schedules:
     get:
       tags:
@@ -4295,6 +4786,43 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
+  /namespaces/{namespace}/workflows/{workflow_execution.workflow_id}/update-options:
+    post:
+      tags:
+        - WorkflowService
+      description: UpdateWorkflowExecutionOptions partially updates the WorkflowExecutionOptions of an existing workflow execution.
+      operationId: UpdateWorkflowExecutionOptions
+      parameters:
+        - name: namespace
+          in: path
+          description: The namespace name of the target Workflow.
+          required: true
+          schema:
+            type: string
+        - name: workflow_execution.workflow_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateWorkflowExecutionOptionsRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateWorkflowExecutionOptionsResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
   /namespaces/{namespace}/workflows/{workflow_execution.workflow_id}/update/{request.input.name}:
     post:
       tags:
@@ -4616,12 +5144,15 @@ components:
         workerVersion:
           allOf:
             - $ref: '#/components/schemas/WorkerVersionStamp'
-          description: Version info of the worker to whom this task was dispatched.
+          description: |-
+            Version info of the worker to whom this task was dispatched.
+             Deprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]
         buildIdRedirectCounter:
           type: string
           description: |-
             Used by server internally to properly reapply build ID redirects to an execution
              when rebuilding it from events.
+             Deprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]
     ActivityTaskTimedOutEventAttributes:
       type: object
       properties:
@@ -4841,6 +5372,25 @@ components:
         BatchOperationTermination sends terminate requests to batch workflows.
          Keep the parameter in sync with temporal.api.workflowservice.v1.TerminateWorkflowExecutionRequest.
          Ignore first_execution_run_id because this is used for single workflow operation.
+    BatchOperationUpdateWorkflowExecutionOptions:
+      type: object
+      properties:
+        identity:
+          type: string
+          description: The identity of the worker/client.
+        workflowExecutionOptions:
+          allOf:
+            - $ref: '#/components/schemas/WorkflowExecutionOptions'
+          description: Workflow Execution options. Partial updates are accepted and controlled by update_mask.
+        updateMask:
+          type: string
+          description: |-
+            Controls which fields from `workflow_execution_options` will be applied.
+             To unset a field, set it to null and use the update mask to indicate that it should be mutated.
+          format: field-mask
+      description: |-
+        BatchOperationUpdateWorkflowExecutionOptions sends UpdateWorkflowExecutionOptions requests to batch workflows.
+         Keep the parameters in sync with temporal.api.workflowservice.v1.UpdateWorkflowExecutionOptionsRequest.
     BuildIdAssignmentRule:
       type: object
       properties:
@@ -4983,6 +5533,7 @@ components:
             - CALLBACK_STATE_BACKING_OFF
             - CALLBACK_STATE_FAILED
             - CALLBACK_STATE_SUCCEEDED
+            - CALLBACK_STATE_BLOCKED
           type: string
           format: enum
         attempt:
@@ -5003,6 +5554,9 @@ components:
           type: string
           description: The time when the next attempt is scheduled.
           format: date-time
+        blockedReason:
+          type: string
+          description: If the state is BLOCKED, blocked reason provides additional information.
       description: CallbackInfo contains the state of an attached workflow callback.
     CallbackInfo_Trigger:
       type: object
@@ -5362,6 +5916,95 @@ components:
     DeleteScheduleResponse:
       type: object
       properties: {}
+    Deployment:
+      type: object
+      properties:
+        seriesName:
+          type: string
+          description: |-
+            Different versions of the same worker service/application are related together by having a
+             shared series name.
+             Out of all deployments of a series, one can be designated as the current deployment, which
+             receives new workflow executions and new tasks of workflows with
+             `VERSIONING_BEHAVIOR_AUTO_UPGRADE` versioning behavior.
+        buildId:
+          type: string
+          description: |-
+            Build ID changes with each version of the worker when the worker program code and/or config
+             changes.
+      description: |-
+        `Deployment` identifies a deployment of Temporal workers. The combination of deployment series
+         name + build ID serves as the identifier. User can use `WorkerDeploymentOptions` in their worker
+         programs to specify these values.
+    DeploymentInfo:
+      type: object
+      properties:
+        deployment:
+          $ref: '#/components/schemas/Deployment'
+        createTime:
+          type: string
+          format: date-time
+        taskQueueInfos:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeploymentInfo_TaskQueueInfo'
+        metadata:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/Payload'
+          description: |-
+            A user-defined set of key-values. Can be updated as part of write operations to the
+             deployment, such as `SetCurrentDeployment`.
+        isCurrent:
+          type: boolean
+          description: If this deployment is the current deployment of its deployment series.
+      description: |-
+        `DeploymentInfo` holds information about a deployment. Deployment information is tracked
+         automatically by server as soon as the first poll from that deployment reaches the server. There
+         can be multiple task queue workers in a single deployment which are listed in this message.
+    DeploymentInfo_TaskQueueInfo:
+      type: object
+      properties:
+        name:
+          type: string
+        type:
+          enum:
+            - TASK_QUEUE_TYPE_UNSPECIFIED
+            - TASK_QUEUE_TYPE_WORKFLOW
+            - TASK_QUEUE_TYPE_ACTIVITY
+            - TASK_QUEUE_TYPE_NEXUS
+          type: string
+          format: enum
+        firstPollerTime:
+          type: string
+          description: When server saw the first poller for this task queue in this deployment.
+          format: date-time
+    DeploymentListInfo:
+      type: object
+      properties:
+        deployment:
+          $ref: '#/components/schemas/Deployment'
+        createTime:
+          type: string
+          format: date-time
+        isCurrent:
+          type: boolean
+          description: If this deployment is the current deployment of its deployment series.
+      description: |-
+        DeploymentListInfo is an abbreviated set of fields from DeploymentInfo that's returned in
+         ListDeployments.
+    DeploymentTransition:
+      type: object
+      properties:
+        deployment:
+          allOf:
+            - $ref: '#/components/schemas/Deployment'
+          description: |-
+            The target deployment of the transition. Null means a so-far-versioned workflow is
+             transitioning to unversioned workers.
+      description: |-
+        Holds information about ongoing transition of a workflow execution from one deployment to another.
+         Experimental. Deployment transition is experimental and might change in the future.
     DescribeBatchOperationResponse:
       type: object
       properties:
@@ -5373,6 +6016,7 @@ components:
             - BATCH_OPERATION_TYPE_SIGNAL
             - BATCH_OPERATION_TYPE_DELETE
             - BATCH_OPERATION_TYPE_RESET
+            - BATCH_OPERATION_TYPE_UPDATE_EXECUTION_OPTIONS
           type: string
           description: Batch operation type
           format: enum
@@ -5411,6 +6055,11 @@ components:
         reason:
           type: string
           description: Reason indicates the reason to stop a operation
+    DescribeDeploymentResponse:
+      type: object
+      properties:
+        deploymentInfo:
+          $ref: '#/components/schemas/DeploymentInfo'
     DescribeNamespaceResponse:
       type: object
       properties:
@@ -5508,6 +6157,8 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/PendingNexusOperationInfo'
+        workflowExtendedInfo:
+          $ref: '#/components/schemas/WorkflowExecutionExtendedInfo'
     Endpoint:
       type: object
       properties:
@@ -5736,6 +6387,8 @@ components:
           $ref: '#/components/schemas/ChildWorkflowExecutionFailureInfo'
         nexusOperationExecutionFailureInfo:
           $ref: '#/components/schemas/NexusOperationFailureInfo'
+        nexusHandlerFailureInfo:
+          $ref: '#/components/schemas/NexusHandlerFailureInfo'
     GetClusterInfoResponse:
       type: object
       properties:
@@ -5762,6 +6415,30 @@ components:
         visibilityStore:
           type: string
       description: GetClusterInfoResponse contains information about Temporal cluster.
+    GetCurrentDeploymentResponse:
+      type: object
+      properties:
+        currentDeploymentInfo:
+          $ref: '#/components/schemas/DeploymentInfo'
+    GetDeploymentReachabilityResponse:
+      type: object
+      properties:
+        deploymentInfo:
+          $ref: '#/components/schemas/DeploymentInfo'
+        reachability:
+          enum:
+            - DEPLOYMENT_REACHABILITY_UNSPECIFIED
+            - DEPLOYMENT_REACHABILITY_REACHABLE
+            - DEPLOYMENT_REACHABILITY_CLOSED_WORKFLOWS_ONLY
+            - DEPLOYMENT_REACHABILITY_UNREACHABLE
+          type: string
+          format: enum
+        lastUpdateTime:
+          type: string
+          description: |-
+            Reachability level might come from server cache. This timestamp specifies when the value
+             was actually calculated.
+          format: date-time
     GetNexusEndpointResponse:
       type: object
       properties:
@@ -5993,6 +6670,7 @@ components:
             - EVENT_TYPE_NEXUS_OPERATION_CANCELED
             - EVENT_TYPE_NEXUS_OPERATION_TIMED_OUT
             - EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUESTED
+            - EVENT_TYPE_WORKFLOW_EXECUTION_OPTIONS_UPDATED
           type: string
           format: enum
         version:
@@ -6133,6 +6811,8 @@ components:
           $ref: '#/components/schemas/NexusOperationTimedOutEventAttributes'
         nexusOperationCancelRequestedEventAttributes:
           $ref: '#/components/schemas/NexusOperationCancelRequestedEventAttributes'
+        workflowExecutionOptionsUpdatedEventAttributes:
+          $ref: '#/components/schemas/WorkflowExecutionOptionsUpdatedEventAttributes'
       description: |-
         History events are the method by which Temporal SDKs advance (or recreate) workflow state.
          See the `EventType` enum for more info about what each event is for.
@@ -6226,6 +6906,16 @@ components:
         nextPageToken:
           type: string
           format: bytes
+    ListDeploymentsResponse:
+      type: object
+      properties:
+        nextPageToken:
+          type: string
+          format: bytes
+        deployments:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeploymentListInfo'
     ListNamespacesResponse:
       type: object
       properties:
@@ -6539,9 +7229,23 @@ components:
             Metadata on the workflow if it is started. This is carried over to the WorkflowExecutionConfig
              for use by user interfaces to display the fixed as-of-start summary and details of the
              workflow.
+        versioningOverride:
+          allOf:
+            - $ref: '#/components/schemas/VersioningOverride'
+          description: |-
+            If set, takes precedence over the Versioning Behavior sent by the SDK on Workflow Task completion.
+             To unset the override after the workflow is running, use UpdateWorkflowExecutionOptions.
       description: |-
         NewWorkflowExecutionInfo is a shared message that encapsulates all the
          required arguments to starting a workflow in different contexts.
+    NexusHandlerFailureInfo:
+      type: object
+      properties:
+        type:
+          type: string
+          description: |-
+            The Nexus error type as defined in the spec:
+             https://github.com/nexus-rpc/api/blob/main/SPEC.md#predefined-handler-errors.
     NexusOperationCancelRequestedEventAttributes:
       type: object
       properties:
@@ -6582,6 +7286,7 @@ components:
             - NEXUS_OPERATION_CANCELLATION_STATE_SUCCEEDED
             - NEXUS_OPERATION_CANCELLATION_STATE_FAILED
             - NEXUS_OPERATION_CANCELLATION_STATE_TIMED_OUT
+            - NEXUS_OPERATION_CANCELLATION_STATE_BLOCKED
           type: string
           format: enum
         attempt:
@@ -6602,6 +7307,9 @@ components:
           type: string
           description: The time when the next attempt is scheduled.
           format: date-time
+        blockedReason:
+          type: string
+          description: If the state is BLOCKED, blocked reason provides additional information.
       description: NexusOperationCancellationInfo contains the state of a nexus operation cancellation.
     NexusOperationCompletedEventAttributes:
       type: object
@@ -6851,7 +7559,9 @@ components:
         lastWorkerVersionStamp:
           allOf:
             - $ref: '#/components/schemas/WorkerVersionStamp'
-          description: The version stamp of the worker to whom this activity was most recently dispatched
+          description: |-
+            The version stamp of the worker to whom this activity was most recently dispatched
+             Deprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]
         currentRetryInterval:
           pattern: ^-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,9})?s$
           type: string
@@ -6873,6 +7583,12 @@ components:
         paused:
           type: boolean
           description: Indicates if activity is paused.
+        lastDeployment:
+          allOf:
+            - $ref: '#/components/schemas/Deployment'
+          description: |-
+            The deployment this activity was dispatched to most recently. Present only if the activity
+             was dispatched to a versioned worker.
     PendingChildExecutionInfo:
       type: object
       properties:
@@ -6928,6 +7644,7 @@ components:
             - PENDING_NEXUS_OPERATION_STATE_SCHEDULED
             - PENDING_NEXUS_OPERATION_STATE_BACKING_OFF
             - PENDING_NEXUS_OPERATION_STATE_STARTED
+            - PENDING_NEXUS_OPERATION_STATE_BLOCKED
           type: string
           format: enum
         attempt:
@@ -6955,6 +7672,9 @@ components:
           description: |-
             The event ID of the NexusOperationScheduled event. Can be used to correlate an operation in the
              DescribeWorkflowExecution response with workflow history.
+        blockedReason:
+          type: string
+          description: If the state is BLOCKED, blocked reason provides additional information.
       description: PendingNexusOperationInfo contains the state of a pending Nexus operation.
     PendingWorkflowTaskInfo:
       type: object
@@ -7012,7 +7732,17 @@ components:
           format: int32
         backlogCountHint:
           type: string
-          description: "A hint that there are more tasks already present in this task queue \n partition. Can be used to prioritize draining a sticky queue.\n\n Specifically, the returned number is the number of tasks remaining in\n the in-memory buffer for this partition, which is currently capped at\n 1000. Because sticky queues only have one partition, this number is \n more useful when draining them. Normal queues, typically having more than one \n partition, will return a number representing only some portion of the \n overall backlog. Subsequent RPCs may not hit the same partition as \n this call."
+          description: |-
+            A hint that there are more tasks already present in this task queue
+             partition. Can be used to prioritize draining a sticky queue.
+
+             Specifically, the returned number is the number of tasks remaining in
+             the in-memory buffer for this partition, which is currently capped at
+             1000. Because sticky queues only have one partition, this number is
+             more useful when draining them. Normal queues, typically having more than one
+             partition, will return a number representing only some portion of the
+             overall backlog. Subsequent RPCs may not hit the same partition as
+             this call.
         history:
           allOf:
             - $ref: '#/components/schemas/History'
@@ -7176,6 +7906,9 @@ components:
           description: |-
             Will be set to true if the activity has been asked to cancel itself. The SDK should then
              notify the activity of cancellation if it is still running.
+        activityPaused:
+          type: boolean
+          description: Will be set to true if the activity is paused.
     RecordActivityTaskHeartbeatRequest:
       type: object
       properties:
@@ -7435,6 +8168,7 @@ components:
               - RESET_REAPPLY_EXCLUDE_TYPE_SIGNAL
               - RESET_REAPPLY_EXCLUDE_TYPE_UPDATE
               - RESET_REAPPLY_EXCLUDE_TYPE_NEXUS
+              - RESET_REAPPLY_EXCLUDE_TYPE_CANCEL_REQUEST
             type: string
             format: enum
           description: Event types not to be reapplied
@@ -7486,7 +8220,12 @@ components:
         namespace:
           type: string
         workflowExecution:
-          $ref: '#/components/schemas/WorkflowExecution'
+          allOf:
+            - $ref: '#/components/schemas/WorkflowExecution'
+          description: |-
+            The workflow to reset. If this contains a run ID then the workflow will be reset back to the
+             provided event ID in that run. Otherwise it will be reset to the provided event ID in the
+             current run. In all cases the current run will be terminated and a new run started.
         reason:
           type: string
         workflowTaskFinishEventId:
@@ -7516,6 +8255,7 @@ components:
               - RESET_REAPPLY_EXCLUDE_TYPE_SIGNAL
               - RESET_REAPPLY_EXCLUDE_TYPE_UPDATE
               - RESET_REAPPLY_EXCLUDE_TYPE_NEXUS
+              - RESET_REAPPLY_EXCLUDE_TYPE_CANCEL_REQUEST
             type: string
             format: enum
           description: Event types not to be reapplied
@@ -7577,6 +8317,13 @@ components:
             Version info of the worker who processed this task. This message's `build_id` field should
              always be set by SDKs. Workers opting into versioning will also set the `use_versioning`
              field to true. See message docstrings for more.
+             Deprecated. Use `deployment` instead.
+        deployment:
+          allOf:
+            - $ref: '#/components/schemas/Deployment'
+          description: |-
+            Deployment info of the worker that completed this task. Must be present if user has set
+             `WorkerDeploymentOptions` regardless of versioning being enabled or not.
     RespondActivityTaskCanceledResponse:
       type: object
       properties: {}
@@ -7628,6 +8375,13 @@ components:
             Version info of the worker who processed this task. This message's `build_id` field should
              always be set by SDKs. Workers opting into versioning will also set the `use_versioning`
              field to true. See message docstrings for more.
+             Deprecated. Use `deployment` instead.
+        deployment:
+          allOf:
+            - $ref: '#/components/schemas/Deployment'
+          description: |-
+            Deployment info of the worker that completed this task. Must be present if user has set
+             `WorkerDeploymentOptions` regardless of versioning being enabled or not.
     RespondActivityTaskCompletedResponse:
       type: object
       properties: {}
@@ -7694,6 +8448,13 @@ components:
             Version info of the worker who processed this task. This message's `build_id` field should
              always be set by SDKs. Workers opting into versioning will also set the `use_versioning`
              field to true. See message docstrings for more.
+             Deprecated. Use `deployment` instead.
+        deployment:
+          allOf:
+            - $ref: '#/components/schemas/Deployment'
+          description: |-
+            Deployment info of the worker that completed this task. Must be present if user has set
+             `WorkerDeploymentOptions` regardless of versioning being enabled or not.
     RespondActivityTaskFailedResponse:
       type: object
       properties:
@@ -8103,6 +8864,32 @@ components:
       properties:
         nonRetryable:
           type: boolean
+    SetCurrentDeploymentRequest:
+      type: object
+      properties:
+        namespace:
+          type: string
+        deployment:
+          $ref: '#/components/schemas/Deployment'
+        identity:
+          type: string
+          description: Optional. The identity of the client who initiated this request.
+        updateMetadata:
+          allOf:
+            - $ref: '#/components/schemas/UpdateDeploymentMetadata'
+          description: |-
+            Optional. Use to add or remove user-defined metadata entries. Metadata entries are exposed
+             when describing a deployment. It is a good place for information such as operator name,
+             links to internal deployment pipelines, etc.
+    SetCurrentDeploymentResponse:
+      type: object
+      properties:
+        currentDeploymentInfo:
+          $ref: '#/components/schemas/DeploymentInfo'
+        previousDeploymentInfo:
+          allOf:
+            - $ref: '#/components/schemas/DeploymentInfo'
+          description: Info of the deployment that was current before executing this operation.
     SignalExternalWorkflowExecutionFailedEventAttributes:
       type: object
       properties:
@@ -8255,13 +9042,9 @@ components:
           description: |-
             Time to wait before dispatching the first workflow task. Cannot be used with `cron_schedule`.
              Note that the signal will be delivered with the first workflow task. If the workflow gets
-             another SignalWithStartWorkflow before the delay and `skip_generate_workflow_task` is false
-             or not set, a workflow task will be dispatched immediately and the rest of the delay period
-             will be ignored, even if that request also had a delay. Signal via SignalWorkflowExecution
-             will not unblock the workflow.
-        skipGenerateWorkflowTask:
-          type: boolean
-          description: Indicates that a new workflow task should not be generated when this signal is received.
+             another SignalWithStartWorkflow before the delay a workflow task will be dispatched immediately
+             and the rest of the delay period will be ignored, even if that request also had a delay.
+             Signal via SignalWorkflowExecution will not unblock the workflow.
         userMetadata:
           allOf:
             - $ref: '#/components/schemas/UserMetadata'
@@ -8274,6 +9057,12 @@ components:
           items:
             $ref: '#/components/schemas/Link'
           description: Links to be associated with the WorkflowExecutionStarted and WorkflowExecutionSignaled events.
+        versioningOverride:
+          allOf:
+            - $ref: '#/components/schemas/VersioningOverride'
+          description: |-
+            If set, takes precedence over the Versioning Behavior sent by the SDK on Workflow Task completion.
+             To unset the override after the workflow is running, use UpdateWorkflowExecutionOptions.
     SignalWithStartWorkflowExecutionResponse:
       type: object
       properties:
@@ -8312,9 +9101,6 @@ components:
           description: |-
             Headers that are passed with the signal to the processing workflow.
              These can include things like auth or tracing tokens.
-        skipGenerateWorkflowTask:
-          type: boolean
-          description: Indicates that a new workflow task should not be generated when this signal is received.
         links:
           type: array
           items:
@@ -8367,6 +9153,8 @@ components:
           $ref: '#/components/schemas/BatchOperationDeletion'
         resetOperation:
           $ref: '#/components/schemas/BatchOperationReset'
+        updateWorkflowOptionsOperation:
+          $ref: '#/components/schemas/BatchOperationUpdateWorkflowExecutionOptions'
     StartBatchOperationResponse:
       type: object
       properties: {}
@@ -8588,6 +9376,12 @@ components:
           items:
             $ref: '#/components/schemas/Link'
           description: Links to be associated with the workflow.
+        versioningOverride:
+          allOf:
+            - $ref: '#/components/schemas/VersioningOverride'
+          description: |-
+            If set, takes precedence over the Versioning Behavior sent by the SDK on Workflow Task completion.
+             To unset the override after the workflow is running, use UpdateWorkflowExecutionOptions.
     StartWorkflowExecutionResponse:
       type: object
       properties:
@@ -9057,6 +9851,19 @@ components:
           allOf:
             - $ref: '#/components/schemas/ActivityOptions'
           description: Activity options after an update
+    UpdateDeploymentMetadata:
+      type: object
+      properties:
+        upsertEntries:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/Payload'
+        removeEntries:
+          type: array
+          items:
+            type: string
+          description: List of keys to remove from the metadata.
+      description: Used as part of Deployment write APIs to update metadata attached to a deployment.
     UpdateNamespaceInfo:
       type: object
       properties:
@@ -9181,6 +9988,36 @@ components:
     UpdateScheduleResponse:
       type: object
       properties: {}
+    UpdateWorkflowExecutionOptionsRequest:
+      type: object
+      properties:
+        namespace:
+          type: string
+          description: The namespace name of the target Workflow.
+        workflowExecution:
+          allOf:
+            - $ref: '#/components/schemas/WorkflowExecution'
+          description: |-
+            The target Workflow Id and (optionally) a specific Run Id thereof.
+             (-- api-linter: core::0203::optional=disabled
+                 aip.dev/not-precedent: false positive triggered by the word "optional" --)
+        workflowExecutionOptions:
+          allOf:
+            - $ref: '#/components/schemas/WorkflowExecutionOptions'
+          description: Workflow Execution options. Partial updates are accepted and controlled by update_mask.
+        updateMask:
+          type: string
+          description: |-
+            Controls which fields from `workflow_execution_options` will be applied.
+             To unset a field, set it to null and use the update mask to indicate that it should be mutated.
+          format: field-mask
+    UpdateWorkflowExecutionOptionsResponse:
+      type: object
+      properties:
+        workflowExecutionOptions:
+          allOf:
+            - $ref: '#/components/schemas/WorkflowExecutionOptions'
+          description: Workflow Execution options after update.
     UpdateWorkflowExecutionRequest:
       type: object
       properties:
@@ -9295,6 +10132,28 @@ components:
           type: string
           format: date-time
       description: VersionInfo contains details about current and recommended release versions as well as alerts and upgrade instructions.
+    VersioningOverride:
+      type: object
+      properties:
+        behavior:
+          enum:
+            - VERSIONING_BEHAVIOR_UNSPECIFIED
+            - VERSIONING_BEHAVIOR_PINNED
+            - VERSIONING_BEHAVIOR_AUTO_UPGRADE
+          type: string
+          description: Required.
+          format: enum
+        deployment:
+          allOf:
+            - $ref: '#/components/schemas/Deployment'
+          description: |-
+            Required if behavior is `PINNED`. Must be null if behavior is `AUTO_UPGRADE`.
+             Identifies the worker deployment to pin the workflow to.
+      description: |-
+        Used to override the versioning behavior and deployment of a specific workflow execution. If set,
+         takes precedence over the worker-sent values. See `WorkflowExecutionInfo.VersioningInfo` for more
+         information. To remove the override, call `UpdateWorkflowExecutionOptions` with a null
+         `VersioningOverride`, and use the `update_mask` to indicate that it should be mutated.
     WaitPolicy:
       type: object
       properties:
@@ -9324,8 +10183,11 @@ components:
           description: |-
             If set, the worker is opting in to worker versioning, and wishes to only receive appropriate
              tasks.
+        deploymentSeriesName:
+          type: string
+          description: Must be sent if user has set a deployment series name (versioning-3).
       description: |-
-        Identifies the version(s) that a worker is compatible with when polling or identifying itself,
+        Identifies the version that a worker is compatible with when polling or identifying itself,
          and whether or not this worker is opting into the build-id based versioning feature. This is
          used by matching to determine which workers ought to receive what tasks.
     WorkerVersionStamp:
@@ -9341,7 +10203,9 @@ components:
           description: |-
             If set, the worker is opting in to worker versioning. Otherwise, this is used only as a
              marker for workflow reset points and the BuildIDs search attribute.
-      description: Identifies the version(s) of a worker that processed a task
+      description: |-
+        Deprecated. This message is replaced with `Deployment` and `VersioningBehavior`.
+         Identifies the version(s) of a worker that processed a task
     WorkflowEvent_EventReference:
       type: object
       properties:
@@ -9404,6 +10268,7 @@ components:
             - EVENT_TYPE_NEXUS_OPERATION_CANCELED
             - EVENT_TYPE_NEXUS_OPERATION_TIMED_OUT
             - EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUESTED
+            - EVENT_TYPE_WORKFLOW_EXECUTION_OPTIONS_UPDATED
           type: string
           format: enum
     WorkflowExecution:
@@ -9530,6 +10395,31 @@ components:
           description: |-
             If this is set, the new execution inherits the Build ID of the current execution. Otherwise,
              the assignment rules will be used to independently assign a Build ID to the new execution.
+    WorkflowExecutionExtendedInfo:
+      type: object
+      properties:
+        executionExpirationTime:
+          type: string
+          description: |-
+            Workflow execution expiration time is defined as workflow start time plus expiration timeout.
+             Workflow start time may change after workflow reset.
+          format: date-time
+        runExpirationTime:
+          type: string
+          description: Workflow run expiration time is defined as current workflow run start time plus workflow run timeout.
+          format: date-time
+        cancelRequested:
+          type: boolean
+          description: indicates if the workflow received a cancel request
+        lastResetTime:
+          type: string
+          description: Last workflow reset time. Nil if the workflow was never reset.
+          format: date-time
+        originalStartTime:
+          type: string
+          description: Original workflow start time.
+          format: date-time
+      description: Holds all the extra information about workflow execution that is not part of Visibility.
     WorkflowExecutionFailedEventAttributes:
       type: object
       properties:
@@ -9604,7 +10494,9 @@ components:
         mostRecentWorkerVersionStamp:
           allOf:
             - $ref: '#/components/schemas/WorkerVersionStamp'
-          description: If set, the most recent worker version stamp that appeared in a workflow task completion
+          description: |-
+            If set, the most recent worker version stamp that appeared in a workflow task completion
+             Deprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]
         executionDuration:
           pattern: ^-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,9})?s$
           type: string
@@ -9641,11 +10533,13 @@ components:
              again, the assigned build ID may change according to the latest versioning rules.
              Assigned build ID can also change in the middle of a execution if Compatible Redirect Rules are applied to
              this execution.
+             Deprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]
         inheritedBuildId:
           type: string
           description: |-
             Build ID inherited from a previous/parent execution. If present, assigned_build_id will be set to this, instead
              of using the assignment rules.
+             Deprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]
         firstRunId:
           type: string
           description: |-
@@ -9655,6 +10549,35 @@ components:
              - Workflow Retry
              - Workflow Reset
              - Cron Schedule
+        versioningInfo:
+          allOf:
+            - $ref: '#/components/schemas/WorkflowExecutionVersioningInfo'
+          description: |-
+            Absent value means the workflow execution is not versioned. When present, the execution might
+             be versioned or unversioned, depending on `versioning_info.behavior` and `versioning_info.versioning_override`.
+             Experimental. Versioning info is experimental and might change in the future.
+      description: |-
+        Hold basic information about a workflow execution.
+         This structure is a part of visibility, and thus contain a limited subset of information.
+    WorkflowExecutionOptions:
+      type: object
+      properties:
+        versioningOverride:
+          allOf:
+            - $ref: '#/components/schemas/VersioningOverride'
+          description: If set, takes precedence over the Versioning Behavior sent by the SDK on Workflow Task completion.
+    WorkflowExecutionOptionsUpdatedEventAttributes:
+      type: object
+      properties:
+        versioningOverride:
+          allOf:
+            - $ref: '#/components/schemas/VersioningOverride'
+          description: |-
+            Versioning override upserted in this event.
+             Ignored if nil or if unset_versioning_override is true.
+        unsetVersioningOverride:
+          type: boolean
+          description: Versioning override removed in this event.
     WorkflowExecutionSignaledEventAttributes:
       type: object
       properties:
@@ -9674,7 +10597,7 @@ components:
           description: "Headers that were passed by the sender of the signal and copied by temporal \n server into the workflow task."
         skipGenerateWorkflowTask:
           type: boolean
-          description: Indicates the signal did not generate a new workflow task when received.
+          description: This field is deprecated and never respected. It should always be set to false.
         externalWorkflowExecution:
           allOf:
             - $ref: '#/components/schemas/WorkflowExecution'
@@ -9792,7 +10715,7 @@ components:
           description: |-
             If this workflow intends to use anything other than the current overall default version for
              the queue, then we include it here.
-             Deprecated. use `inherited_build_id` instead
+             Deprecated. [cleanup-experimental-wv]
         completionCallbacks:
           type: array
           items:
@@ -9821,7 +10744,13 @@ components:
                  - The root workflow of W1 is W1 and the root workflow of W2 is W2.
         inheritedBuildId:
           type: string
-          description: When present, this execution is assigned to the build ID of its parent or previous execution.
+          description: |-
+            When present, this execution is assigned to the build ID of its parent or previous execution.
+             Deprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]
+        versioningOverride:
+          allOf:
+            - $ref: '#/components/schemas/VersioningOverride'
+          description: Versioning override applied to this workflow when it was started.
       description: Always the first event in workflow history
     WorkflowExecutionTerminatedEventAttributes:
       type: object
@@ -9926,6 +10855,66 @@ components:
           allOf:
             - $ref: '#/components/schemas/Failure'
           description: The cause of rejection.
+    WorkflowExecutionVersioningInfo:
+      type: object
+      properties:
+        behavior:
+          enum:
+            - VERSIONING_BEHAVIOR_UNSPECIFIED
+            - VERSIONING_BEHAVIOR_PINNED
+            - VERSIONING_BEHAVIOR_AUTO_UPGRADE
+          type: string
+          description: |-
+            Versioning behavior determines how the server should treat this execution when workers are
+             upgraded. When present it means this workflow execution is versioned; UNSPECIFIED means
+             unversioned. See the comments in `VersioningBehavior` enum for more info about different
+             behaviors.
+             This field is first set after an execution completes its first workflow task on a versioned
+             worker, and set again on completion of every subsequent workflow task.
+             Note that `behavior` is overridden by `versioning_override` if the latter is present.
+          format: enum
+        deployment:
+          allOf:
+            - $ref: '#/components/schemas/Deployment'
+          description: |-
+            The worker deployment that completed the last workflow task of this workflow execution. Must
+             be present if `behavior` is set. Absent value means no workflow task is completed, or the
+             last workflow task was completed by an unversioned worker. Unversioned workers may still send
+             a deployment value which will be stored here, so the right way to check if an execution is
+             versioned if an execution is versioned or not is via the `behavior` field.
+             Note that `deployment` is overridden by `versioning_override` if the latter is present.
+        versioningOverride:
+          allOf:
+            - $ref: '#/components/schemas/VersioningOverride'
+          description: |-
+            Present if user has set an execution-specific versioning override. This override takes
+             precedence over SDK-sent `behavior` (and `deployment` when override is PINNED). An override
+             can be set when starting a new execution, as well as afterwards by calling the
+             `UpdateWorkflowExecutionOptions` API.
+        deploymentTransition:
+          allOf:
+            - $ref: '#/components/schemas/DeploymentTransition'
+          description: |-
+            When present, indicates the workflow is transitioning to a different deployment. Can
+             indicate one of the following transitions: unversioned -> versioned, versioned -> versioned
+             on a different deployment, or versioned -> unversioned.
+             Not applicable to workflows with PINNED behavior.
+             When a workflow with AUTO_UPGRADE behavior creates a new workflow task, it will automatically
+             start a transition to the task queue's current deployment if the task queue's current
+             deployment is different from the workflow's deployment.
+             If the AUTO_UPGRADE workflow is stuck due to backlogged activity or workflow tasks, those
+             tasks will be redirected to the task queue's current deployment. As soon as a poller from
+             that deployment is available to receive the task, the workflow will automatically start a
+             transition to that deployment and continue execution there.
+             A deployment transition can only exist while there is a pending or started workflow task.
+             Once the pending workflow task completes on the transition's target deployment, the
+             transition completes and the workflow's `deployment` and `behavior` fields are updated per
+             the worker's task completion response.
+             Pending activities will not start new attempts during a transition. Once the transition is
+             completed, pending activities will start their next attempt on the new deployment.
+      description: |-
+        Holds all the information about versioning for a workflow execution.
+         Experimental. Versioning info is experimental and might change in the future.
     WorkflowPropertiesModifiedEventAttributes:
       type: object
       properties:
@@ -9944,28 +10933,24 @@ components:
       properties:
         newTaskQueue:
           type: string
-          description: |-
-            If set to a nonempty string, future workflow tasks for this workflow shall be dispatched on
-             the provided queue.
+          description: Not used.
         newWorkflowTaskTimeout:
           pattern: ^-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,9})?s$
           type: string
-          description: If set, update the workflow task timeout to this value.
+          description: Not used.
         newWorkflowRunTimeout:
           pattern: ^-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,9})?s$
           type: string
-          description: If set, update the workflow run timeout to this value. May be set to 0 for no timeout.
+          description: Not used.
         newWorkflowExecutionTimeout:
           pattern: ^-?(?:0|[1-9][0-9]{0,11})(?:\.[0-9]{1,9})?s$
           type: string
-          description: If set, update the workflow execution timeout to this value. May be set to 0 for no timeout.
+          description: Not used.
         upsertedMemo:
           allOf:
             - $ref: '#/components/schemas/Memo'
-          description: |-
-            If set, update the workflow memo with the provided values. The values will be merged with
-             the existing memo. If the user wants to delete values, a default/empty Payload should be
-             used as the value for the key being deleted.
+          description: Not used.
+      description: Not used anywhere. Use case is replaced by WorkflowExecutionOptionsUpdatedEventAttributes
     WorkflowQuery:
       type: object
       properties:
@@ -9979,7 +10964,9 @@ components:
         header:
           allOf:
             - $ref: '#/components/schemas/Header'
-          description: "Headers that were passed by the caller of the query and copied by temporal \n server into the workflow task."
+          description: |-
+            Headers that were passed by the caller of the query and copied by temporal
+             server into the workflow task.
       description: See https://docs.temporal.io/docs/concepts/queries/
     WorkflowTaskCompletedEventAttributes:
       type: object
@@ -10003,7 +10990,7 @@ components:
             Version info of the worker who processed this workflow task. If present, the `build_id` field
              within is also used as `binary_checksum`, which may be omitted in that case (it may also be
              populated to preserve compatibility).
-             Deprecated. Use the info inside the corresponding WorkflowTaskStartedEvent
+             Deprecated. Use `deployment` and `versioning_behavior` instead.
         sdkMetadata:
           allOf:
             - $ref: '#/components/schemas/WorkflowTaskCompletedMetadata'
@@ -10014,6 +11001,24 @@ components:
           allOf:
             - $ref: '#/components/schemas/MeteringMetadata'
           description: Local usage data sent during workflow task completion and recorded here for posterity
+        deployment:
+          allOf:
+            - $ref: '#/components/schemas/Deployment'
+          description: |-
+            The deployment that completed this task. May or may not be set for unversioned workers,
+             depending on whether a value is sent by the SDK. This value updates workflow execution's
+             `versioning_info.deployment`.
+        versioningBehavior:
+          enum:
+            - VERSIONING_BEHAVIOR_UNSPECIFIED
+            - VERSIONING_BEHAVIOR_PINNED
+            - VERSIONING_BEHAVIOR_AUTO_UPGRADE
+          type: string
+          description: |-
+            Versioning behavior sent by the worker that completed this task for this particular workflow
+             execution. UNSPECIFIED means the task was completed by an unversioned worker. This value
+             updates workflow execution's `versioning_info.behavior`.
+          format: enum
     WorkflowTaskCompletedMetadata:
       type: object
       properties:
@@ -10192,12 +11197,15 @@ components:
         workerVersion:
           allOf:
             - $ref: '#/components/schemas/WorkerVersionStamp'
-          description: Version info of the worker to whom this task was dispatched.
+          description: |-
+            Version info of the worker to whom this task was dispatched.
+             Deprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]
         buildIdRedirectCounter:
           type: string
           description: |-
             Used by server internally to properly reapply build ID redirects to an execution
              when rebuilding it from events.
+             Deprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]
     WorkflowTaskTimedOutEventAttributes:
       type: object
       properties:
