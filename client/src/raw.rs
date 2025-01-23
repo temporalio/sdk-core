@@ -1059,6 +1059,15 @@ proxier! {
         }
     );
     (
+        describe_deployment,
+        DescribeDeploymentRequest,
+        DescribeDeploymentResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
         list_batch_operations,
         ListBatchOperationsRequest,
         ListBatchOperationsResponse,
@@ -1068,9 +1077,36 @@ proxier! {
         }
     );
     (
+        list_deployments,
+        ListDeploymentsRequest,
+        ListDeploymentsResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
         execute_multi_operation,
         ExecuteMultiOperationRequest,
         ExecuteMultiOperationResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        get_current_deployment,
+        GetCurrentDeploymentRequest,
+        GetCurrentDeploymentResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        get_deployment_reachability,
+        GetDeploymentReachabilityRequest,
+        GetDeploymentReachabilityResponse,
         |r| {
             let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
@@ -1125,6 +1161,15 @@ proxier! {
         }
     );
     (
+        set_current_deployment,
+        SetCurrentDeploymentRequest,
+        SetCurrentDeploymentResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
         shutdown_worker,
         ShutdownWorkerRequest,
         ShutdownWorkerResponse,
@@ -1155,6 +1200,15 @@ proxier! {
         unpause_activity_by_id,
         UnpauseActivityByIdRequest,
         UnpauseActivityByIdResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        update_workflow_execution_options,
+        UpdateWorkflowExecutionOptionsRequest,
+        UpdateWorkflowExecutionOptionsResponse,
         |r| {
             let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
