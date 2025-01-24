@@ -83,6 +83,7 @@ async fn nexus_basic(
                                             start_operation_response::Variant::SyncSuccess(
                                                 start_operation_response::Sync {
                                                     payload: Some("yay".into()),
+                                                    links: vec![],
                                                 },
                                             ),
                                         ),

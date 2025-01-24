@@ -39,6 +39,7 @@ import "temporal/api/enums/v1/failed_cause.proto";
 import "temporal/api/enums/v1/update.proto";
 import "temporal/api/enums/v1/workflow.proto";
 import "temporal/api/common/v1/message.proto";
+import "temporal/api/deployment/v1/message.proto";
 import "temporal/api/failure/v1/message.proto";
 import "temporal/api/taskqueue/v1/message.proto";
 import "temporal/api/update/v1/message.proto";
@@ -104,7 +105,7 @@ message WorkflowExecutionStartedEventAttributes {
     string workflow_id = 28;
     // If this workflow intends to use anything other than the current overall default version for
     // the queue, then we include it here.
-    // Deprecated. use `inherited_build_id` instead
+    // Deprecated. [cleanup-experimental-wv]
     temporal.api.common.v1.WorkerVersionStamp source_version_stamp = 29;
     // Completion callbacks attached when this workflow was started.
     repeated temporal.api.common.v1.Callback completion_callbacks = 30;
@@ -128,7 +129,10 @@ message WorkflowExecutionStartedEventAttributes {
     //     - The root workflow of W1 is W1 and the root workflow of W2 is W2.
     temporal.api.common.v1.WorkflowExecution root_workflow_execution = 31;
     // When present, this execution is assigned to the build ID of its parent or previous execution.
+    // Deprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]
     string inherited_build_id = 32;
+    // Versioning override applied to this workflow when it was started.
+    temporal.api.workflow.v1.VersioningOverride versioning_override = 33;
 }
 
 message WorkflowExecutionCompletedEventAttributes {
@@ -215,9 +219,11 @@ message WorkflowTaskStartedEventAttributes {
     // just the event id of this event, so we don't include it explicitly here.
     int64 history_size_bytes = 5;
     // Version info of the worker to whom this task was dispatched.
+    // Deprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]
     temporal.api.common.v1.WorkerVersionStamp worker_version = 6;
     // Used by server internally to properly reapply build ID redirects to an execution
     // when rebuilding it from events.
+    // Deprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]
     int64 build_id_redirect_counter = 7;
 }
 
@@ -233,7 +239,7 @@ message WorkflowTaskCompletedEventAttributes {
     // Version info of the worker who processed this workflow task. If present, the `build_id` field
     // within is also used as `binary_checksum`, which may be omitted in that case (it may also be
     // populated to preserve compatibility).
-    // Deprecated. Use the info inside the corresponding WorkflowTaskStartedEvent
+    // Deprecated. Use `deployment` and `versioning_behavior` instead.
     temporal.api.common.v1.WorkerVersionStamp worker_version = 5;
     // Data the SDK wishes to record for itself, but server need not interpret, and does not
     // directly impact workflow state.
@@ -241,6 +247,15 @@ message WorkflowTaskCompletedEventAttributes {
 
     // Local usage data sent during workflow task completion and recorded here for posterity
     temporal.api.common.v1.MeteringMetadata metering_metadata = 13;
+
+    // The deployment that completed this task. May or may not be set for unversioned workers,
+    // depending on whether a value is sent by the SDK. This value updates workflow execution's
+    // `versioning_info.deployment`.
+    temporal.api.deployment.v1.Deployment deployment = 7;
+    // Versioning behavior sent by the worker that completed this task for this particular workflow
+    // execution. UNSPECIFIED means the task was completed by an unversioned worker. This value
+    // updates workflow execution's `versioning_info.behavior`.
+    temporal.api.enums.v1.VersioningBehavior versioning_behavior = 8;
 }
 
 message WorkflowTaskTimedOutEventAttributes {
@@ -333,9 +348,11 @@ message ActivityTaskStartedEventAttributes {
     // been retried.
     temporal.api.failure.v1.Failure last_failure = 5;
     // Version info of the worker to whom this task was dispatched.
+    // Deprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]
     temporal.api.common.v1.WorkerVersionStamp worker_version = 6;
     // Used by server internally to properly reapply build ID redirects to an execution
     // when rebuilding it from events.
+    // Deprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]
     int64 build_id_redirect_counter = 7;
 }
 
@@ -472,8 +489,8 @@ message WorkflowExecutionSignaledEventAttributes {
     // Headers that were passed by the sender of the signal and copied by temporal 
     // server into the workflow task.
     temporal.api.common.v1.Header header = 4;
-    // Indicates the signal did not generate a new workflow task when received.
-    bool skip_generate_workflow_task = 5;
+    // This field is deprecated and never respected. It should always be set to false.
+    bool skip_generate_workflow_task = 5 [deprecated = true];
     // When signal origin is a workflow execution, this field is set.
     temporal.api.common.v1.WorkflowExecution external_workflow_execution = 6;
 }
@@ -723,19 +740,25 @@ message ChildWorkflowExecutionTerminatedEventAttributes {
     int64 started_event_id = 5;
 }
 
+message WorkflowExecutionOptionsUpdatedEventAttributes {
+    // Versioning override upserted in this event.
+    // Ignored if nil or if unset_versioning_override is true.
+    temporal.api.workflow.v1.VersioningOverride versioning_override = 1;
+    // Versioning override removed in this event.
+    bool unset_versioning_override = 2;
+}
+
+// Not used anywhere. Use case is replaced by WorkflowExecutionOptionsUpdatedEventAttributes
 message WorkflowPropertiesModifiedExternallyEventAttributes {
-    // If set to a nonempty string, future workflow tasks for this workflow shall be dispatched on
-    // the provided queue.
+    // Not used.
     string new_task_queue = 1;
-    // If set, update the workflow task timeout to this value.
+    // Not used.
     google.protobuf.Duration new_workflow_task_timeout = 2;
-    // If set, update the workflow run timeout to this value. May be set to 0 for no timeout.
+    // Not used.
     google.protobuf.Duration new_workflow_run_timeout = 3;
-    // If set, update the workflow execution timeout to this value. May be set to 0 for no timeout.
+    // Not used.
     google.protobuf.Duration new_workflow_execution_timeout = 4;
-    // If set, update the workflow memo with the provided values. The values will be merged with
-    // the existing memo. If the user wants to delete values, a default/empty Payload should be
-    // used as the value for the key being deleted.
+    // Not used.
     temporal.api.common.v1.Memo upserted_memo = 5;
 }
 
@@ -980,6 +1003,7 @@ message HistoryEvent {
         NexusOperationCanceledEventAttributes nexus_operation_canceled_event_attributes = 57;
         NexusOperationTimedOutEventAttributes nexus_operation_timed_out_event_attributes = 58;
         NexusOperationCancelRequestedEventAttributes nexus_operation_cancel_requested_event_attributes = 59;
+        WorkflowExecutionOptionsUpdatedEventAttributes workflow_execution_options_updated_event_attributes = 60;
     }
 }
 

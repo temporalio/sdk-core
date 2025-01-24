@@ -40,6 +40,8 @@ enum ResetReapplyExcludeType {
     RESET_REAPPLY_EXCLUDE_TYPE_UPDATE = 2;
     // Exclude nexus events when reapplying events beyond the reset point.
     RESET_REAPPLY_EXCLUDE_TYPE_NEXUS = 3;
+    // Deprecated, unimplemented option.
+    RESET_REAPPLY_EXCLUDE_TYPE_CANCEL_REQUEST = 4 [deprecated=true];
 }
 
 // Event types to include when reapplying events. Deprecated: applications

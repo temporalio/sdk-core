@@ -53,14 +53,13 @@ use std::{
 };
 use temporal_sdk_core_api::telemetry::metrics::TemporalMeter;
 use temporal_sdk_core_protos::{
-    coresdk::{workflow_commands::QueryResult, IntoPayloadsExt},
+    coresdk::IntoPayloadsExt,
     grpc::health::v1::health_client::HealthClient,
     temporal::api::{
         cloud::cloudservice::v1::cloud_service_client::CloudServiceClient,
         common,
         common::v1::{Header, Payload, Payloads, RetryPolicy, WorkflowExecution, WorkflowType},
         enums::v1::{TaskQueueKind, WorkflowIdConflictPolicy, WorkflowIdReusePolicy},
-        failure::v1::Failure,
         operatorservice::v1::operator_service_client::OperatorServiceClient,
         query::v1::WorkflowQuery,
         replication::v1::ClusterReplicationConfig,
@@ -915,15 +914,6 @@ pub trait WorkflowClientTrait {
         details: Option<Payloads>,
     ) -> Result<RespondActivityTaskCanceledResponse>;
 
-    /// Fail activity task by sending response to the server. `task_token` contains activity
-    /// identifier that would've been received from polling for an activity task. `failure` provides
-    /// failure details, such as message, cause and stack trace.
-    async fn fail_activity_task(
-        &self,
-        task_token: TaskToken,
-        failure: Option<Failure>,
-    ) -> Result<RespondActivityTaskFailedResponse>;
-
     /// Send a signal to a certain workflow instance
     async fn signal_workflow_execution(
         &self,
@@ -965,13 +955,6 @@ pub trait WorkflowClientTrait {
         run_id: Option<String>,
         page_token: Vec<u8>,
     ) -> Result<GetWorkflowExecutionHistoryResponse>;
-
-    /// Respond to a legacy query-only workflow task
-    async fn respond_legacy_query(
-        &self,
-        task_token: TaskToken,
-        query_result: QueryResult,
-    ) -> Result<RespondQueryTaskCompletedResponse>;
 
     /// Cancel a currently executing workflow
     async fn cancel_workflow_execution(
@@ -1173,7 +1156,7 @@ impl WorkflowClientTrait for Client {
                 result,
                 identity: self.inner.options.identity.clone(),
                 namespace: self.namespace.clone(),
-                worker_version: None,
+                ..Default::default()
             },
         )
         .await?
@@ -1210,28 +1193,7 @@ impl WorkflowClientTrait for Client {
                 details,
                 identity: self.inner.options.identity.clone(),
                 namespace: self.namespace.clone(),
-                worker_version: None,
-            },
-        )
-        .await?
-        .into_inner())
-    }
-
-    async fn fail_activity_task(
-        &self,
-        task_token: TaskToken,
-        failure: Option<Failure>,
-    ) -> Result<RespondActivityTaskFailedResponse> {
-        Ok(WorkflowService::respond_activity_task_failed(
-            &mut self.inner.client.clone(),
-            RespondActivityTaskFailedRequest {
-                task_token: task_token.0,
-                failure,
-                identity: self.inner.options.identity.clone(),
-                namespace: self.namespace.clone(),
-                // TODO: Implement - https://github.com/temporalio/sdk-core/issues/293
-                last_heartbeat_details: None,
-                worker_version: None,
+                ..Default::default()
             },
         )
         .await?
@@ -1366,26 +1328,6 @@ impl WorkflowClientTrait for Client {
                 }),
                 next_page_token: page_token,
                 ..Default::default()
-            },
-        )
-        .await?
-        .into_inner())
-    }
-
-    async fn respond_legacy_query(
-        &self,
-        task_token: TaskToken,
-        query_result: QueryResult,
-    ) -> Result<RespondQueryTaskCompletedResponse> {
-        let (_, completed_type, query_result, error_message) = query_result.into_components();
-        Ok(WorkflowService::respond_query_task_completed(
-            &mut self.inner.client.clone(),
-            RespondQueryTaskCompletedRequest {
-                task_token: task_token.into(),
-                completed_type: completed_type as i32,
-                query_result,
-                error_message,
-                namespace: self.namespace.clone(),
             },
         )
         .await?

@@ -39,12 +39,14 @@ import "temporal/api/enums/v1/failed_cause.proto";
 import "temporal/api/enums/v1/query.proto";
 import "temporal/api/enums/v1/reset.proto";
 import "temporal/api/enums/v1/task_queue.proto";
+import "temporal/api/enums/v1/deployment.proto";
 import "temporal/api/enums/v1/update.proto";
 import "temporal/api/activity/v1/message.proto";
 import "temporal/api/common/v1/message.proto";
 import "temporal/api/history/v1/message.proto";
 import "temporal/api/workflow/v1/message.proto";
 import "temporal/api/command/v1/message.proto";
+import "temporal/api/deployment/v1/message.proto";
 import "temporal/api/failure/v1/message.proto";
 import "temporal/api/filter/v1/message.proto";
 import "temporal/api/protocol/v1/message.proto";
@@ -201,6 +203,9 @@ message StartWorkflowExecutionRequest {
     temporal.api.sdk.v1.UserMetadata user_metadata = 23;
     // Links to be associated with the workflow.
     repeated temporal.api.common.v1.Link links = 24;
+    // If set, takes precedence over the Versioning Behavior sent by the SDK on Workflow Task completion.
+    // To unset the override after the workflow is running, use UpdateWorkflowExecutionOptions.
+    temporal.api.workflow.v1.VersioningOverride versioning_override = 25;
 }
 
 message StartWorkflowExecutionResponse {
@@ -282,15 +287,15 @@ message PollWorkflowTaskQueueResponse {
     int64 started_event_id = 5;
     // Starting at 1, the number of attempts to complete this task by any worker.
     int32 attempt = 6;
-    // A hint that there are more tasks already present in this task queue 
+    // A hint that there are more tasks already present in this task queue
     // partition. Can be used to prioritize draining a sticky queue.
     //
     // Specifically, the returned number is the number of tasks remaining in
     // the in-memory buffer for this partition, which is currently capped at
-    // 1000. Because sticky queues only have one partition, this number is 
-    // more useful when draining them. Normal queues, typically having more than one 
-    // partition, will return a number representing only some portion of the 
-    // overall backlog. Subsequent RPCs may not hit the same partition as 
+    // 1000. Because sticky queues only have one partition, this number is
+    // more useful when draining them. Normal queues, typically having more than one
+    // partition, will return a number representing only some portion of the
+    // overall backlog. Subsequent RPCs may not hit the same partition as
     // this call.
     int64 backlog_count_hint = 7;
     // The history for this workflow, which will either be complete or partial. Partial histories
@@ -346,7 +351,8 @@ message RespondWorkflowTaskCompletedRequest {
     // Version info of the worker who processed this task. This message's `build_id` field should
     // always be set by SDKs. Workers opting into versioning will also set the `use_versioning`
     // field to true. See message docstrings for more.
-    temporal.api.common.v1.WorkerVersionStamp worker_version_stamp = 10;
+    // Deprecated. Use `deployment` and `versioning_behavior` instead.
+    temporal.api.common.v1.WorkerVersionStamp worker_version_stamp = 10 [deprecated = true];
     // Protocol messages piggybacking on a WFT as a transport
     repeated temporal.api.protocol.v1.Message messages = 11;
     // Data the SDK wishes to record for itself, but server need not interpret, and does not
@@ -356,11 +362,18 @@ message RespondWorkflowTaskCompletedRequest {
     temporal.api.common.v1.MeteringMetadata metering_metadata = 13;
     // All capabilities the SDK supports.
     Capabilities capabilities = 14;
+    // Deployment info of the worker that completed this task. Must be present if user has set
+    // `WorkerDeploymentOptions` regardless of versioning being enabled or not.
+    temporal.api.deployment.v1.Deployment deployment = 15;
+    // Versioning behavior of this workflow execution as set on the worker that completed this task.
+    // UNSPECIFIED means versioning is not enabled in the worker.
+    temporal.api.enums.v1.VersioningBehavior versioning_behavior = 16;
+
     // SDK capability details.
     message Capabilities {
-        // True if the SDK can handle speculative workflow task with command events.
-        // If true, the server may chosse, at its discretion, to discard a speculative workflow task
-        // even if that speculative task included command events the SDK had not previouly processed
+        // True if the SDK can handle speculative workflow task with command events. If true, the
+        // server may choose, at its discretion, to discard a speculative workflow task even if that
+        // speculative task included command events the SDK had not previously processed.
         //
         // (-- api-linter: core::0140::prepositions=disabled
         //     aip.dev/not-precedent: "with" used to describe the workflow task. --)
@@ -398,7 +411,11 @@ message RespondWorkflowTaskFailedRequest {
     // Version info of the worker who processed this task. This message's `build_id` field should
     // always be set by SDKs. Workers opting into versioning will also set the `use_versioning`
     // field to true. See message docstrings for more.
-    temporal.api.common.v1.WorkerVersionStamp worker_version = 8;
+    // Deprecated. Use `deployment` instead.
+    temporal.api.common.v1.WorkerVersionStamp worker_version = 8 [deprecated = true];
+    // Deployment info of the worker that completed this task. Must be present if user has set
+    // `WorkerDeploymentOptions` regardless of versioning being enabled or not.
+    temporal.api.deployment.v1.Deployment deployment = 9;
 }
 
 message RespondWorkflowTaskFailedResponse {
@@ -501,6 +518,9 @@ message RecordActivityTaskHeartbeatByIdResponse {
     // Will be set to true if the activity has been asked to cancel itself. The SDK should then
     // notify the activity of cancellation if it is still running.
     bool cancel_requested = 1;
+
+    // Will be set to true if the activity is paused.
+    bool activity_paused = 2;
 }
 
 message RespondActivityTaskCompletedRequest {
@@ -514,7 +534,11 @@ message RespondActivityTaskCompletedRequest {
     // Version info of the worker who processed this task. This message's `build_id` field should
     // always be set by SDKs. Workers opting into versioning will also set the `use_versioning`
     // field to true. See message docstrings for more.
-    temporal.api.common.v1.WorkerVersionStamp worker_version = 5;
+    // Deprecated. Use `deployment` instead.
+    temporal.api.common.v1.WorkerVersionStamp worker_version = 5 [deprecated = true];
+    // Deployment info of the worker that completed this task. Must be present if user has set
+    // `WorkerDeploymentOptions` regardless of versioning being enabled or not.
+    temporal.api.deployment.v1.Deployment deployment = 6;
 }
 
 message RespondActivityTaskCompletedResponse {
@@ -551,7 +575,11 @@ message RespondActivityTaskFailedRequest {
     // Version info of the worker who processed this task. This message's `build_id` field should
     // always be set by SDKs. Workers opting into versioning will also set the `use_versioning`
     // field to true. See message docstrings for more.
-    temporal.api.common.v1.WorkerVersionStamp worker_version = 6;
+    // Deprecated. Use `deployment` instead.
+    temporal.api.common.v1.WorkerVersionStamp worker_version = 6 [deprecated = true];
+    // Deployment info of the worker that completed this task. Must be present if user has set
+    // `WorkerDeploymentOptions` regardless of versioning being enabled or not.
+    temporal.api.deployment.v1.Deployment deployment = 7;
 }
 
 message RespondActivityTaskFailedResponse {
@@ -594,7 +622,11 @@ message RespondActivityTaskCanceledRequest {
     // Version info of the worker who processed this task. This message's `build_id` field should
     // always be set by SDKs. Workers opting into versioning will also set the `use_versioning`
     // field to true. See message docstrings for more.
-    temporal.api.common.v1.WorkerVersionStamp worker_version = 5;
+    // Deprecated. Use `deployment` instead.
+    temporal.api.common.v1.WorkerVersionStamp worker_version = 5 [deprecated = true];
+    // Deployment info of the worker that completed this task. Must be present if user has set
+    // `WorkerDeploymentOptions` regardless of versioning being enabled or not.
+    temporal.api.deployment.v1.Deployment deployment = 6;
 }
 
 message RespondActivityTaskCanceledResponse {
@@ -654,8 +686,7 @@ message SignalWorkflowExecutionRequest {
     // Headers that are passed with the signal to the processing workflow.
     // These can include things like auth or tracing tokens.
     temporal.api.common.v1.Header header = 8;
-    // Indicates that a new workflow task should not be generated when this signal is received.
-    bool skip_generate_workflow_task = 9;
+    reserved 9;
 
     // Links to be associated with the WorkflowExecutionSignaled event.
     repeated temporal.api.common.v1.Link links = 10;
@@ -708,13 +739,11 @@ message SignalWithStartWorkflowExecutionRequest {
     temporal.api.common.v1.Header header = 19;
     // Time to wait before dispatching the first workflow task. Cannot be used with `cron_schedule`.
     // Note that the signal will be delivered with the first workflow task. If the workflow gets
-    // another SignalWithStartWorkflow before the delay and `skip_generate_workflow_task` is false
-    // or not set, a workflow task will be dispatched immediately and the rest of the delay period
-    // will be ignored, even if that request also had a delay. Signal via SignalWorkflowExecution
-    // will not unblock the workflow.
+    // another SignalWithStartWorkflow before the delay a workflow task will be dispatched immediately
+    // and the rest of the delay period will be ignored, even if that request also had a delay.
+    // Signal via SignalWorkflowExecution will not unblock the workflow.
     google.protobuf.Duration workflow_start_delay = 20;
-    // Indicates that a new workflow task should not be generated when this signal is received.
-    bool skip_generate_workflow_task = 21;
+    reserved 21;
     // Metadata on the workflow if it is started. This is carried over to the WorkflowExecutionInfo
     // for use by user interfaces to display the fixed as-of-start summary and details of the
     // workflow.
@@ -722,6 +751,9 @@ message SignalWithStartWorkflowExecutionRequest {
 
     // Links to be associated with the WorkflowExecutionStarted and WorkflowExecutionSignaled events.
     repeated temporal.api.common.v1.Link links = 24;
+    // If set, takes precedence over the Versioning Behavior sent by the SDK on Workflow Task completion.
+    // To unset the override after the workflow is running, use UpdateWorkflowExecutionOptions.
+    temporal.api.workflow.v1.VersioningOverride versioning_override = 25;
 }
 
 message SignalWithStartWorkflowExecutionResponse {
@@ -733,6 +765,9 @@ message SignalWithStartWorkflowExecutionResponse {
 
 message ResetWorkflowExecutionRequest {
     string namespace = 1;
+    // The workflow to reset. If this contains a run ID then the workflow will be reset back to the
+    // provided event ID in that run. Otherwise it will be reset to the provided event ID in the
+    // current run. In all cases the current run will be terminated and a new run started.
     temporal.api.common.v1.WorkflowExecution workflow_execution = 2;
     string reason = 3;
     // The id of a `WORKFLOW_TASK_COMPLETED`,`WORKFLOW_TASK_TIMED_OUT`, `WORKFLOW_TASK_FAILED`, or
@@ -882,10 +917,24 @@ message GetSearchAttributesResponse {
 message RespondQueryTaskCompletedRequest {
     bytes task_token = 1;
     temporal.api.enums.v1.QueryResultType completed_type = 2;
+    // The result of the query.
+    // Mutually exclusive with `error_message` and `failure`. Set when the query succeeds.
     temporal.api.common.v1.Payloads query_result = 3;
+    // A plain error message that must be set if completed_type is QUERY_RESULT_TYPE_FAILED.
+    // SDKs should also fill in the more complete `failure` field to provide the full context and
+    // support encryption of failure information.
+    // `error_message` will be duplicated if the `failure` field is present to support callers
+    // that pre-date the addition of that field, regardless of whether or not a custom failure
+    // converter is used.
+    // Mutually exclusive with `query_result`. Set when the query fails.
     string error_message = 4;
     reserved 5;
     string namespace = 6;
+    // The full reason for this query failure. This field is newer than `error_message` and can be
+    // encoded by the SDK's failure converter to support E2E encryption of messages and stack
+    // traces.
+    // Mutually exclusive with `query_result`. Set when the query fails.
+    temporal.api.failure.v1.Failure failure = 7;
 }
 
 message RespondQueryTaskCompletedResponse {
@@ -936,6 +985,7 @@ message DescribeWorkflowExecutionResponse {
     temporal.api.workflow.v1.PendingWorkflowTaskInfo pending_workflow_task = 5;
     repeated temporal.api.workflow.v1.CallbackInfo callbacks = 6;
     repeated temporal.api.workflow.v1.PendingNexusOperationInfo pending_nexus_operations = 7;
+    temporal.api.workflow.v1.WorkflowExecutionExtendedInfo workflow_extended_info = 8;
 }
 
 // (-- api-linter: core::0203::optional=disabled
@@ -1513,6 +1563,7 @@ message StartBatchOperationRequest {
         temporal.api.batch.v1.BatchOperationCancellation cancellation_operation = 12;
         temporal.api.batch.v1.BatchOperationDeletion deletion_operation = 13;
         temporal.api.batch.v1.BatchOperationReset reset_operation = 14;
+        temporal.api.batch.v1.BatchOperationUpdateWorkflowExecutionOptions update_workflow_options_operation = 15;
     }
 }
 
@@ -1815,4 +1866,85 @@ message ResetActivityByIdRequest {
 message ResetActivityByIdResponse {
 }
 
+message UpdateWorkflowExecutionOptionsRequest {
+    // The namespace name of the target Workflow.
+    string namespace = 1;
+    // The target Workflow Id and (optionally) a specific Run Id thereof.
+    // (-- api-linter: core::0203::optional=disabled
+    //     aip.dev/not-precedent: false positive triggered by the word "optional" --)
+    temporal.api.common.v1.WorkflowExecution workflow_execution = 2;
 
+    // Workflow Execution options. Partial updates are accepted and controlled by update_mask.
+    temporal.api.workflow.v1.WorkflowExecutionOptions workflow_execution_options = 3;
+
+    // Controls which fields from `workflow_execution_options` will be applied.
+    // To unset a field, set it to null and use the update mask to indicate that it should be mutated.
+    google.protobuf.FieldMask update_mask = 4;
+}
+
+message UpdateWorkflowExecutionOptionsResponse {
+    // Workflow Execution options after update.
+    temporal.api.workflow.v1.WorkflowExecutionOptions workflow_execution_options = 1;
+}
+
+message DescribeDeploymentRequest {
+    string namespace = 1;
+    deployment.v1.Deployment deployment = 2;
+}
+
+message DescribeDeploymentResponse {
+    deployment.v1.DeploymentInfo deployment_info = 1;
+}
+
+message ListDeploymentsRequest {
+    string namespace = 1;
+    int32 page_size = 2;
+    bytes next_page_token = 3;
+    // Optional. Use to filter based on exact series name match.
+    string series_name = 4;
+}
+
+message ListDeploymentsResponse {
+    bytes next_page_token = 1;
+    repeated temporal.api.deployment.v1.DeploymentListInfo deployments = 2;
+}
+
+message SetCurrentDeploymentRequest {
+    string namespace = 1;
+    temporal.api.deployment.v1.Deployment deployment = 2;
+    // Optional. The identity of the client who initiated this request.
+    string identity = 3;
+    // Optional. Use to add or remove user-defined metadata entries. Metadata entries are exposed
+    // when describing a deployment. It is a good place for information such as operator name,
+    // links to internal deployment pipelines, etc.
+    temporal.api.deployment.v1.UpdateDeploymentMetadata update_metadata = 4;
+}
+
+message SetCurrentDeploymentResponse {
+    temporal.api.deployment.v1.DeploymentInfo current_deployment_info = 1;
+    // Info of the deployment that was current before executing this operation.
+    temporal.api.deployment.v1.DeploymentInfo previous_deployment_info = 2;
+}
+
+// Returns the Current Deployment of a deployment series.
+message GetCurrentDeploymentRequest {
+    string namespace = 1;
+    string series_name = 2;
+}
+
+message GetCurrentDeploymentResponse {
+    temporal.api.deployment.v1.DeploymentInfo current_deployment_info = 1;
+}
+
+message GetDeploymentReachabilityRequest {
+    string namespace = 1;
+    temporal.api.deployment.v1.Deployment deployment = 2;
+}
+
+message GetDeploymentReachabilityResponse {
+    temporal.api.deployment.v1.DeploymentInfo deployment_info = 1;
+    enums.v1.DeploymentReachability reachability = 2;
+    // Reachability level might come from server cache. This timestamp specifies when the value
+    // was actually calculated.
+    google.protobuf.Timestamp last_update_time = 3;
+}

@@ -7,10 +7,8 @@ use backoff::{backoff::Backoff, exponential::ExponentialBackoff, Clock, SystemCl
 use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
 use std::{error::Error, fmt::Debug, future::Future, sync::Arc, time::Duration};
 use temporal_sdk_core_protos::{
-    coresdk::workflow_commands::QueryResult,
     temporal::api::{
         common::v1::{Payload, Payloads},
-        failure::v1::Failure,
         query::v1::WorkflowQuery,
         update,
         workflowservice::v1::*,
@@ -365,19 +363,6 @@ where
         )
     }
 
-    async fn fail_activity_task(
-        &self,
-        task_token: TaskToken,
-        failure: Option<Failure>,
-    ) -> Result<RespondActivityTaskFailedResponse> {
-        retry_call!(
-            self,
-            fail_activity_task,
-            task_token.clone(),
-            failure.clone()
-        )
-    }
-
     async fn signal_workflow_execution(
         &self,
         workflow_id: String,
@@ -450,19 +435,6 @@ where
             workflow_id.clone(),
             run_id.clone(),
             page_token.clone()
-        )
-    }
-
-    async fn respond_legacy_query(
-        &self,
-        task_token: TaskToken,
-        query_result: QueryResult,
-    ) -> Result<RespondQueryTaskCompletedResponse> {
-        retry_call!(
-            self,
-            respond_legacy_query,
-            task_token.clone(),
-            query_result.clone()
         )
     }
 

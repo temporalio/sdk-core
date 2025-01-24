@@ -1388,6 +1388,9 @@ pub mod coresdk {
                         v.scheduled_event_id
                     )?;
                 }
+                Some(FailureInfo::NexusHandlerFailureInfo(v)) => {
+                    write!(f, "Nexus Handler Failure: {}", v.r#type)?;
+                }
             }
             write!(f, ")")
         }
@@ -2061,6 +2064,11 @@ pub mod temporal {
                 }
             }
         }
+        pub mod deployment {
+            pub mod v1 {
+                tonic::include_proto!("temporal.api.deployment.v1");
+            }
+        }
         pub mod enums {
             pub mod v1 {
                 use crate::camel_case_to_screaming_snake;
@@ -2294,6 +2302,7 @@ pub mod temporal {
                             Attributes::NexusOperationCanceledEventAttributes(_) => { EventType::NexusOperationCanceled }
                             Attributes::NexusOperationTimedOutEventAttributes(_) => { EventType::NexusOperationTimedOut }
                             Attributes::NexusOperationCancelRequestedEventAttributes(_) => { EventType::NexusOperationCancelRequested }
+                            Attributes::WorkflowExecutionOptionsUpdatedEventAttributes(_) => { EventType::WorkflowExecutionOptionsUpdated }
                         }
                     }
                 }

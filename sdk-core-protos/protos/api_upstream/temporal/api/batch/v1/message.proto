@@ -31,11 +31,12 @@ option java_outer_classname = "MessageProto";
 option ruby_package = "Temporalio::Api::Batch::V1";
 option csharp_namespace = "Temporalio.Api.Batch.V1";
 
+import "google/protobuf/field_mask.proto";
 import "google/protobuf/timestamp.proto";
-
 import "temporal/api/common/v1/message.proto";
 import "temporal/api/enums/v1/batch_operation.proto";
 import "temporal/api/enums/v1/reset.proto";
+import "temporal/api/workflow/v1/message.proto";
 
 message BatchOperationInfo {
   // Batch job ID
@@ -101,4 +102,18 @@ message BatchOperationReset {
   // History event reapply options (deprecated, use `options`).
   temporal.api.enums.v1.ResetReapplyType reset_reapply_type = 2;
 
+}
+
+// BatchOperationUpdateWorkflowExecutionOptions sends UpdateWorkflowExecutionOptions requests to batch workflows.
+// Keep the parameters in sync with temporal.api.workflowservice.v1.UpdateWorkflowExecutionOptionsRequest.
+message BatchOperationUpdateWorkflowExecutionOptions {
+  // The identity of the worker/client.
+  string identity = 1;
+
+  // Workflow Execution options. Partial updates are accepted and controlled by update_mask.
+  temporal.api.workflow.v1.WorkflowExecutionOptions workflow_execution_options = 2;
+
+  // Controls which fields from `workflow_execution_options` will be applied.
+  // To unset a field, set it to null and use the update mask to indicate that it should be mutated.
+  google.protobuf.FieldMask update_mask = 3;
 }
