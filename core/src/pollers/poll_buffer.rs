@@ -3,19 +3,20 @@ use crate::{
     pollers::{self, Poller},
     worker::client::WorkerClient,
 };
-use futures_util::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
+use futures_util::{future::BoxFuture, FutureExt, StreamExt};
 use governor::{Quota, RateLimiter};
 use std::{
     fmt::Debug,
     future::Future,
     sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicBool, Ordering},
         Arc,
     },
     time::Duration,
 };
 use temporal_sdk_core_api::worker::{ActivitySlotKind, NexusSlotKind, SlotKind, WorkflowSlotKind};
 use temporal_sdk_core_protos::temporal::api::{
+    sdk::v1::PollerScalingDecision,
     taskqueue::v1::TaskQueue,
     workflowservice::v1::{
         PollActivityTaskQueueResponse, PollNexusTaskQueueResponse, PollWorkflowTaskQueueResponse,
@@ -25,10 +26,11 @@ use tokio::{
     sync::{
         broadcast,
         mpsc::{unbounded_channel, UnboundedReceiver},
-        Mutex,
+        watch, Mutex,
     },
     task::JoinHandle,
 };
+use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 
 type PollReceiver<T, SK> =
@@ -36,40 +38,15 @@ type PollReceiver<T, SK> =
 pub(crate) struct LongPollBuffer<T, SK: SlotKind> {
     buffered_polls: PollReceiver<T, SK>,
     shutdown: CancellationToken,
-    join_handles: FuturesUnordered<JoinHandle<()>>,
+    poller_task: JoinHandle<()>,
     /// Pollers won't actually start polling until initialized & value is sent
     starter: broadcast::Sender<()>,
     did_start: AtomicBool,
 }
 
-struct ActiveCounter<'a, F: Fn(usize)>(&'a AtomicUsize, Option<F>);
-impl<'a, F> ActiveCounter<'a, F>
-where
-    F: Fn(usize),
-{
-    fn new(a: &'a AtomicUsize, change_fn: Option<F>) -> Self {
-        let v = a.fetch_add(1, Ordering::Relaxed) + 1;
-        if let Some(cfn) = change_fn.as_ref() {
-            cfn(v);
-        }
-        Self(a, change_fn)
-    }
-}
-impl<F> Drop for ActiveCounter<'_, F>
-where
-    F: Fn(usize),
-{
-    fn drop(&mut self) {
-        let v = self.0.fetch_sub(1, Ordering::Relaxed) - 1;
-        if let Some(cfn) = self.1.as_ref() {
-            cfn(v)
-        }
-    }
-}
-
 impl<T, SK> LongPollBuffer<T, SK>
 where
-    T: Send + Debug + 'static,
+    T: TaskPollerResult + Send + Debug + 'static,
     SK: SlotKind + 'static,
 {
     pub(crate) fn new<FT, DelayFut>(
@@ -86,57 +63,85 @@ where
     {
         let (tx, rx) = unbounded_channel();
         let (starter, wait_for_start) = broadcast::channel(1);
-        let permit_dealer = Arc::new(permit_dealer);
-        let active_pollers = Arc::new(AtomicUsize::new(0));
-        let join_handles = FuturesUnordered::new();
+        let (active_tx, active_rx) = watch::channel(0);
         let pf = Arc::new(poll_fn);
-        let nph = num_pollers_handler.map(Arc::new);
+        let num_pollers_handler = num_pollers_handler.map(Arc::new);
         let pre_permit_delay = pre_permit_delay.map(Arc::new);
-        for _ in 0..max_pollers {
-            let tx = tx.clone();
-            let pf = pf.clone();
-            let shutdown = shutdown.clone();
-            let ap = active_pollers.clone();
-            let permit_dealer = permit_dealer.clone();
-            let nph = nph.clone();
-            let pre_permit_delay = pre_permit_delay.clone();
-            let mut wait_for_start = wait_for_start.resubscribe();
-            let jh = tokio::spawn(async move {
-                tokio::select! {
-                    _ = wait_for_start.recv() => (),
-                    _ = shutdown.cancelled() => return,
-                }
-                drop(wait_for_start);
+        let mut wait_for_start = wait_for_start.resubscribe();
+        let shutdown_clone = shutdown.clone();
+        let mut poll_scaler = PollScaler {
+            max: max_pollers,
+            min: 1,
+            active_tx,
+            active_rx,
+            num_pollers_handler,
+        };
+        let poller_task = tokio::spawn(async move {
+            tokio::select! {
+                _ = wait_for_start.recv() => (),
+                _ = shutdown_clone.cancelled() => return,
+            }
+            drop(wait_for_start);
 
-                let nph = nph.as_ref().map(|a| a.as_ref());
-                loop {
-                    if shutdown.is_cancelled() {
-                        break;
+            let (spawned_tx, spawned_rx) = tokio::sync::mpsc::channel(max_pollers);
+            let poll_task_awaiter = tokio::spawn(async move {
+                ReceiverStream::new(spawned_rx)
+                    .for_each_concurrent(None, |t| async move {
+                        handle_task_panic(t).await;
+                    })
+                    .await;
+            });
+            loop {
+                if shutdown_clone.is_cancelled() {
+                    break;
+                }
+                if let Some(ref ppd) = pre_permit_delay {
+                    tokio::select! {
+                        _ = ppd() => (),
+                        _ = shutdown_clone.cancelled() => break,
                     }
-                    if let Some(ref ppd) = pre_permit_delay {
-                        tokio::select! {
-                            _ = ppd() => (),
-                            _ = shutdown.cancelled() => break,
-                        }
-                    }
-                    let permit = tokio::select! {
-                        p = permit_dealer.acquire_owned() => p,
-                        _ = shutdown.cancelled() => break,
-                    };
-                    let _active_guard = ActiveCounter::new(ap.as_ref(), nph);
+                }
+                // We wait until below max pollers before even attempting to acquire a permit. This
+                // is to avoid sticky/non-sticky starving each other for WFT pollers.
+                // TODO: See if this can be made to go away after other changes.
+                tokio::select! {
+                    _ = poll_scaler.wait_until_below_max() => (),
+                    _ = shutdown_clone.cancelled() => break,
+                };
+                let permit = tokio::select! {
+                    p = permit_dealer.acquire_owned() => p,
+                    _ = shutdown_clone.cancelled() => break,
+                };
+                let active_guard = tokio::select! {
+                    ag = poll_scaler.wait_until_allowed() => ag,
+                    _ = shutdown_clone.cancelled() => break,
+                };
+                // Spawn poll task
+                let shutdown = shutdown_clone.clone();
+                let pf = pf.clone();
+                let tx = tx.clone();
+                let poll_task = tokio::spawn(async move {
                     let r = tokio::select! {
                         r = pf() => r,
-                        _ = shutdown.cancelled() => break,
+                        _ = shutdown.cancelled() => return,
                     };
+                    drop(active_guard);
+                    if let Some(scaling_decision) =
+                        r.as_ref().ok().and_then(|t| t.scaling_decision())
+                    {
+                        warn!("Got sd {:?}", scaling_decision);
+                    }
                     let _ = tx.send(r.map(|r| (r, permit)));
-                }
-            });
-            join_handles.push(jh);
-        }
+                });
+                let _ = spawned_tx.send(poll_task);
+            }
+            drop(spawned_tx);
+            poll_task_awaiter.await.unwrap();
+        });
         Self {
             buffered_polls: Mutex::new(rx),
             shutdown,
-            join_handles,
+            poller_task,
             starter,
             did_start: AtomicBool::new(false),
         }
@@ -168,22 +173,79 @@ where
 
     async fn shutdown(mut self) {
         self.notify_shutdown();
-        while let Some(jh) = self.join_handles.next().await {
-            if let Err(e) = jh {
-                if e.is_panic() {
-                    let as_panic = e.into_panic().downcast::<String>();
-                    dbg_panic!(
-                        "Poller task died or did not terminate cleanly: {:?}",
-                        as_panic
-                    );
-                }
-            }
-        }
+        handle_task_panic(self.poller_task).await;
     }
 
     async fn shutdown_box(self: Box<Self>) {
         let this = *self;
         this.shutdown().await;
+    }
+}
+
+async fn handle_task_panic(t: JoinHandle<()>) {
+    if let Err(e) = t.await {
+        if e.is_panic() {
+            let as_panic = e.into_panic().downcast::<String>();
+            dbg_panic!(
+                "Poller task died or did not terminate cleanly: {:?}",
+                as_panic
+            );
+        }
+    }
+}
+
+struct ActiveCounter<F: Fn(usize)>(watch::Sender<usize>, Option<Arc<F>>);
+impl<F> ActiveCounter<F>
+where
+    F: Fn(usize),
+{
+    fn new(a: watch::Sender<usize>, change_fn: Option<Arc<F>>) -> Self {
+        a.send_modify(|v| {
+            *v += 1;
+            if let Some(cfn) = change_fn.as_ref() {
+                cfn(*v);
+            }
+        });
+        Self(a, change_fn)
+    }
+}
+impl<F> Drop for ActiveCounter<F>
+where
+    F: Fn(usize),
+{
+    fn drop(&mut self) {
+        self.0.send_modify(|v| {
+            *v -= 1;
+            if let Some(cfn) = self.1.as_ref() {
+                cfn(*v)
+            };
+        });
+    }
+}
+
+struct PollScaler<F> {
+    max: usize,
+    min: usize,
+    active_tx: watch::Sender<usize>,
+    active_rx: watch::Receiver<usize>,
+    num_pollers_handler: Option<Arc<F>>,
+}
+impl<F> PollScaler<F>
+where
+    F: Fn(usize),
+{
+    async fn wait_until_below_max(&mut self) {
+        self.active_rx
+            .wait_for(|v| *v < self.max)
+            .await
+            .expect("Poll allow does not panic");
+    }
+    async fn wait_until_allowed(&mut self) -> ActiveCounter<impl Fn(usize)> {
+        self.active_rx
+            .wait_for(|v| *v < self.max)
+            .await
+            .expect("Poll allow does not panic");
+        ActiveCounter::new(self.active_tx.clone(), self.num_pollers_handler.clone())
     }
 }
 
@@ -322,6 +384,25 @@ pub(crate) fn new_nexus_task_buffer(
     )
 }
 
+pub(crate) trait TaskPollerResult {
+    fn scaling_decision(&self) -> Option<&PollerScalingDecision>;
+}
+impl TaskPollerResult for PollWorkflowTaskQueueResponse {
+    fn scaling_decision(&self) -> Option<&PollerScalingDecision> {
+        self.poller_scaling_decision.as_ref()
+    }
+}
+impl TaskPollerResult for PollActivityTaskQueueResponse {
+    fn scaling_decision(&self) -> Option<&PollerScalingDecision> {
+        self.poller_scaling_decision.as_ref()
+    }
+}
+impl TaskPollerResult for PollNexusTaskQueueResponse {
+    fn scaling_decision(&self) -> Option<&PollerScalingDecision> {
+        self.poller_scaling_decision.as_ref()
+    }
+}
+
 #[cfg(test)]
 #[derive(derive_more::Constructor)]
 pub(crate) struct MockPermittedPollBuffer<PT, SK: SlotKind> {
@@ -365,7 +446,7 @@ mod tests {
     use futures_util::FutureExt;
     use std::time::Duration;
     use temporal_sdk_core_protos::temporal::api::enums::v1::TaskQueueKind;
-    use tokio::{select, sync::mpsc::channel};
+    use tokio::select;
 
     #[tokio::test]
     async fn only_polls_once_with_1_poller() {
@@ -375,7 +456,7 @@ mod tests {
             .times(2)
             .returning(move |_| {
                 async {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    tokio::time::sleep(Duration::from_millis(300)).await;
                     Ok(Default::default())
                 }
                 .boxed()
@@ -396,16 +477,10 @@ mod tests {
 
         // Poll a bunch of times, "interrupting" it each time, we should only actually have polled
         // once since the poll takes a while
-        let (interrupter_tx, mut interrupter_rx) = channel(50);
-        for _ in 0..10 {
-            interrupter_tx.send(()).await.unwrap();
-        }
-
-        // We should never get anything out since we interrupted 100% of polls
         let mut last_val = false;
         for _ in 0..10 {
             select! {
-                _ = interrupter_rx.recv() => {
+                _ = tokio::time::sleep(Duration::from_millis(1)) => {
                     last_val = true;
                 }
                 _ = pb.poll() => {
