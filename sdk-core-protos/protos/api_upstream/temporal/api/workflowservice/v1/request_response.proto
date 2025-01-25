@@ -58,6 +58,7 @@ import "temporal/api/taskqueue/v1/message.proto";
 import "temporal/api/update/v1/message.proto";
 import "temporal/api/version/v1/message.proto";
 import "temporal/api/batch/v1/message.proto";
+import "temporal/api/sdk/v1/poller_scaling.proto";
 import "temporal/api/sdk/v1/task_complete_metadata.proto";
 import "temporal/api/sdk/v1/user_metadata.proto";
 import "temporal/api/nexus/v1/message.proto";
@@ -322,6 +323,8 @@ message PollWorkflowTaskQueueResponse {
     map<string, temporal.api.query.v1.WorkflowQuery> queries = 14;
     // Protocol messages piggybacking on a WFT as a transport
     repeated temporal.api.protocol.v1.Message messages = 15;
+    // Server-advised information the SDK may use to adjust its poller count.
+    temporal.api.sdk.v1.PollerScalingDecision poller_scaling_decision = 16;
 }
 
 message RespondWorkflowTaskCompletedRequest {
@@ -478,6 +481,8 @@ message PollActivityTaskQueueResponse {
     // (or not) during activity scheduling. The service can override the provided one if some
     // values are not specified or exceed configured system limits.
     temporal.api.common.v1.RetryPolicy retry_policy = 17;
+    // Server-advised information the SDK may use to adjust its poller count.
+    temporal.api.sdk.v1.PollerScalingDecision poller_scaling_decision = 18;
 }
 
 message RecordActivityTaskHeartbeatRequest {
@@ -1679,6 +1684,8 @@ message PollNexusTaskQueueResponse {
     bytes task_token = 1;
     // Embedded request as translated from the incoming frontend request.
     temporal.api.nexus.v1.Request request = 2;
+    // Server-advised information the SDK may use to adjust its poller count.
+    temporal.api.sdk.v1.PollerScalingDecision poller_scaling_decision = 3;
 }
 
 message RespondNexusTaskCompletedRequest {
