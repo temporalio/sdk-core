@@ -7790,6 +7790,10 @@ components:
           items:
             $ref: '#/components/schemas/Message'
           description: Protocol messages piggybacking on a WFT as a transport
+        pollerScalingDecision:
+          allOf:
+            - $ref: '#/components/schemas/PollerScalingDecision'
+          description: Server-advised information the SDK may use to adjust its poller count.
     PollerInfo:
       type: object
       properties:
@@ -7807,6 +7811,15 @@ components:
           description: |-
             If a worker has opted into the worker versioning feature while polling, its capabilities will
              appear here.
+    PollerScalingDecision:
+      type: object
+      properties:
+        pollerDelta:
+          type: integer
+          description: |-
+            Values may be [-1, 0, 1] - whether to decrease or increase the number of
+             pollers. Could allow for bigger values as well.
+          format: int32
     QueryRejected:
       type: object
       properties:

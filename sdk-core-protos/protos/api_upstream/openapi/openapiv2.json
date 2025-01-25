@@ -10320,6 +10320,10 @@
         "retryPolicy": {
           "$ref": "#/definitions/v1RetryPolicy",
           "description": "This is the retry policy the service uses which may be different from the one provided\n(or not) during activity scheduling. The service can override the provided one if some\nvalues are not specified or exceed configured system limits."
+        },
+        "pollerScalingDecision": {
+          "$ref": "#/definitions/v1PollerScalingDecision",
+          "description": "Server-advised information the SDK may use to adjust its poller count."
         }
       }
     },
@@ -10334,6 +10338,10 @@
         "request": {
           "$ref": "#/definitions/apinexusv1Request",
           "description": "Embedded request as translated from the incoming frontend request."
+        },
+        "pollerScalingDecision": {
+          "$ref": "#/definitions/v1PollerScalingDecision",
+          "description": "Server-advised information the SDK may use to adjust its poller count."
         }
       }
     },
@@ -10429,6 +10437,10 @@
             "$ref": "#/definitions/v1Message"
           },
           "title": "Protocol messages piggybacking on a WFT as a transport"
+        },
+        "pollerScalingDecision": {
+          "$ref": "#/definitions/v1PollerScalingDecision",
+          "description": "Server-advised information the SDK may use to adjust its poller count."
         }
       }
     },
@@ -10451,6 +10463,17 @@
           "description": "If a worker has opted into the worker versioning feature while polling, its capabilities will\nappear here."
         }
       }
+    },
+    "v1PollerScalingDecision": {
+      "type": "object",
+      "properties": {
+        "pollerDelta": {
+          "type": "integer",
+          "format": "int32",
+          "description": "Values may be [-1, 0, 1] - whether to decrease or increase the number of\npollers. Could allow for bigger values as well."
+        }
+      },
+      "title": "TODO: enum DecisionMaker [root, partition] needed?\n TODO: Doesn't necessarily have to be its own message if we don't put more\n   in here"
     },
     "v1ProtocolMessageCommandAttributes": {
       "type": "object",
