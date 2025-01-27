@@ -41,7 +41,8 @@ use temporal_sdk_core_api::{
     Worker as CoreWorker,
     errors::PollError,
     telemetry::{
-        Logger, OtelCollectorOptionsBuilder, PrometheusExporterOptionsBuilder, TelemetryOptions,
+        Logger, OtelCollectorOptionsBuilder, PrometheusExporterOptions,
+        PrometheusExporterOptionsBuilder, TelemetryOptions,
         TelemetryOptionsBuilder, metrics::CoreMeter,
     },
 };
@@ -61,7 +62,7 @@ use temporal_sdk_core_protos::{
         workflowservice::v1::StartWorkflowExecutionResponse,
     },
 };
-use tokio::sync::OnceCell;
+use tokio::{sync::OnceCell, task::AbortHandle};
 use url::Url;
 
 pub const NAMESPACE: &str = "default";
@@ -70,6 +71,7 @@ pub const TEST_Q: &str = "q";
 pub const INTEG_SERVER_TARGET_ENV_VAR: &str = "TEMPORAL_SERVICE_ADDRESS";
 pub const INTEG_NAMESPACE_ENV_VAR: &str = "TEMPORAL_NAMESPACE";
 pub const INTEG_USE_TLS_ENV_VAR: &str = "TEMPORAL_USE_TLS";
+pub const INTEG_API_KEY: &str = "TEMPORAL_API_KEY_PATH";
 /// This env var is set (to any value) if temporal CLI dev server is in use
 pub const INTEG_TEMPORAL_DEV_SERVER_USED_ENV_VAR: &str = "INTEG_TEMPORAL_DEV_SERVER_ON";
 /// This env var is set (to any value) if the test server is in use
@@ -611,16 +613,18 @@ impl WorkerInterceptor for TestWorkerCompletionIceptor {
 
 /// Returns the client options used to connect to the server used for integration tests.
 pub fn get_integ_server_options() -> ClientOptions {
-    let temporal_server_address = match env::var(INTEG_SERVER_TARGET_ENV_VAR) {
-        Ok(addr) => addr,
-        Err(_) => "http://localhost:7233".to_owned(),
-    };
+    let temporal_server_address = env::var(INTEG_SERVER_TARGET_ENV_VAR)
+        .unwrap_or_else(|_| "http://localhost:7233".to_owned());
     let url = Url::try_from(&*temporal_server_address).unwrap();
     let mut cb = ClientOptionsBuilder::default();
     cb.identity("integ_tester".to_string())
         .target_url(url)
         .client_name("temporal-core".to_string())
         .client_version("0.1.0".to_string());
+    if let Ok(key_file) = env::var(INTEG_API_KEY) {
+        let content = std::fs::read_to_string(key_file).unwrap();
+        cb.api_key(Some(content));
+    }
     if let Some(tls) = get_integ_tls_config() {
         cb.tls_cfg(tls);
     };
@@ -848,7 +852,7 @@ where
         let replay_worker = init_core_replay_preloaded(worker.task_queue(), [with_id]);
         worker.with_new_core_worker(replay_worker);
         worker.set_worker_interceptor(FailOnNondeterminismInterceptor {});
-        worker.run().await.unwrap();
+        worker.run().await?;
         Ok(())
     }
 }
@@ -879,4 +883,37 @@ pub fn rand_6_chars() -> String {
         .take(6)
         .map(char::from)
         .collect()
+}
+
+pub static ANY_PORT: &str = "127.0.0.1:0";
+
+pub fn prom_metrics(
+    options_override: Option<PrometheusExporterOptions>,
+) -> (TelemetryOptions, SocketAddr, AbortOnDrop) {
+    let prom_exp_opts = options_override.unwrap_or_else(|| {
+        PrometheusExporterOptionsBuilder::default()
+            .socket_addr(ANY_PORT.parse().unwrap())
+            .build()
+            .unwrap()
+    });
+    let mut telemopts = get_integ_telem_options();
+    let prom_info = start_prometheus_metric_exporter(prom_exp_opts).unwrap();
+    telemopts.metrics = Some(prom_info.meter as Arc<dyn CoreMeter>);
+    (
+        telemopts,
+        prom_info.bound_addr,
+        AbortOnDrop {
+            ah: prom_info.abort_handle,
+        },
+    )
+}
+
+pub struct AbortOnDrop {
+    ah: AbortHandle,
+}
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.ah.abort();
+    }
 }

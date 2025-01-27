@@ -6,6 +6,7 @@ use crate::{
 use futures_util::{FutureExt, StreamExt, future::BoxFuture, stream::FuturesUnordered};
 use governor::{Quota, RateLimiter};
 use std::{
+    cmp,
     fmt::Debug,
     future::Future,
     sync::{
@@ -14,7 +15,10 @@ use std::{
     },
     time::Duration,
 };
-use temporal_sdk_core_api::worker::{ActivitySlotKind, NexusSlotKind, SlotKind, WorkflowSlotKind};
+use temporal_client::NoRetryOnMatching;
+use temporal_sdk_core_api::worker::{
+    ActivitySlotKind, NexusSlotKind, PollerBehavior, SlotKind, WorkflowSlotKind,
+};
 use temporal_sdk_core_protos::temporal::api::{
     sdk::v1::PollerScalingDecision,
     taskqueue::v1::TaskQueue,
@@ -29,8 +33,10 @@ use tokio::{
     },
     task::JoinHandle,
 };
-use tokio_stream::wrappers::ReceiverStream;
+use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
+use tonic::Code;
+use tracing::Instrument;
 
 type PollReceiver<T, SK> =
     Mutex<UnboundedReceiver<pollers::Result<(T, OwnedMeteredSemPermit<SK>)>>>;
@@ -51,7 +57,7 @@ where
     pub(crate) fn new<FT, DelayFut>(
         poll_fn: impl Fn() -> FT + Send + Sync + 'static,
         permit_dealer: MeteredPermitDealer<SK>,
-        max_pollers: usize,
+        poller_behavior: PollerBehavior,
         shutdown: CancellationToken,
         num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
         pre_permit_delay: Option<impl Fn() -> DelayFut + Send + Sync + 'static>,
@@ -62,81 +68,73 @@ where
     {
         let (tx, rx) = unbounded_channel();
         let (starter, wait_for_start) = broadcast::channel(1);
-        let (active_tx, active_rx) = watch::channel(0);
         let pf = Arc::new(poll_fn);
-        let num_pollers_handler = num_pollers_handler.map(Arc::new);
         let pre_permit_delay = pre_permit_delay.map(Arc::new);
         let mut wait_for_start = wait_for_start.resubscribe();
         let shutdown_clone = shutdown.clone();
-        let mut poll_scaler = PollScaler {
-            max: max_pollers,
-            min: 1,
-            active_tx,
-            active_rx,
-            num_pollers_handler,
-        };
-        let poller_task = tokio::spawn(async move {
-            tokio::select! {
-                _ = wait_for_start.recv() => (),
-                _ = shutdown_clone.cancelled() => return,
-            }
-            drop(wait_for_start);
-
-            let (spawned_tx, spawned_rx) = tokio::sync::mpsc::channel(max_pollers);
-            let poll_task_awaiter = tokio::spawn(async move {
-                ReceiverStream::new(spawned_rx)
-                    .for_each_concurrent(None, |t| async move {
-                        handle_task_panic(t).await;
-                    })
-                    .await;
-            });
-            loop {
-                if shutdown_clone.is_cancelled() {
-                    break;
+        let mut poll_scaler = PollScaler::new(poller_behavior, num_pollers_handler);
+        let poller_task = tokio::spawn(
+            async move {
+                tokio::select! {
+                    _ = wait_for_start.recv() => (),
+                    _ = shutdown_clone.cancelled() => return,
                 }
-                if let Some(ref ppd) = pre_permit_delay {
+                drop(wait_for_start);
+
+                let (spawned_tx, spawned_rx) = unbounded_channel();
+                let poll_task_awaiter = tokio::spawn(async move {
+                    UnboundedReceiverStream::new(spawned_rx)
+                        .for_each_concurrent(None, |t| async move {
+                            handle_task_panic(t).await;
+                        })
+                        .await;
+                });
+                loop {
+                    if shutdown_clone.is_cancelled() {
+                        break;
+                    }
+                    if let Some(ref ppd) = pre_permit_delay {
+                        tokio::select! {
+                            _ = ppd() => (),
+                            _ = shutdown_clone.cancelled() => break,
+                        }
+                    }
+                    // We wait until below max pollers before even attempting to acquire a permit.
+                    // This is to avoid sticky/non-sticky starving each other for WFT pollers.
+                    // TODO: See if this can be made to go away after other changes.
                     tokio::select! {
-                        _ = ppd() => (),
+                        _ = poll_scaler.wait_until_below_max() => (),
                         _ = shutdown_clone.cancelled() => break,
                     }
-                }
-                // We wait until below max pollers before even attempting to acquire a permit. This
-                // is to avoid sticky/non-sticky starving each other for WFT pollers.
-                // TODO: See if this can be made to go away after other changes.
-                tokio::select! {
-                    _ = poll_scaler.wait_until_below_max() => (),
-                    _ = shutdown_clone.cancelled() => break,
-                };
-                let permit = tokio::select! {
-                    p = permit_dealer.acquire_owned() => p,
-                    _ = shutdown_clone.cancelled() => break,
-                };
-                let active_guard = tokio::select! {
-                    ag = poll_scaler.wait_until_allowed() => ag,
-                    _ = shutdown_clone.cancelled() => break,
-                };
-                // Spawn poll task
-                let shutdown = shutdown_clone.clone();
-                let pf = pf.clone();
-                let tx = tx.clone();
-                let poll_task = tokio::spawn(async move {
-                    let r = tokio::select! {
-                        r = pf() => r,
-                        _ = shutdown.cancelled() => return,
+                    let permit = tokio::select! {
+                        p = permit_dealer.acquire_owned() => p,
+                        _ = shutdown_clone.cancelled() => break,
                     };
-                    drop(active_guard);
-                    if let Some(scaling_decision) =
-                        r.as_ref().ok().and_then(|t| t.scaling_decision())
-                    {
-                        warn!("Got sd {:?}", scaling_decision);
-                    }
-                    let _ = tx.send(r.map(|r| (r, permit)));
-                });
-                let _ = spawned_tx.send(poll_task);
+                    let active_guard = tokio::select! {
+                        ag = poll_scaler.wait_until_allowed() => ag,
+                        _ = shutdown_clone.cancelled() => break,
+                    };
+                    // Spawn poll task
+                    let shutdown = shutdown_clone.clone();
+                    let pf = pf.clone();
+                    let tx = tx.clone();
+                    let report_handle = poll_scaler.get_report_handle();
+                    let poll_task = tokio::spawn(async move {
+                        let r = tokio::select! {
+                            r = pf() => r,
+                            _ = shutdown.cancelled() => return,
+                        };
+                        drop(active_guard);
+                        report_handle.poll_result(&r);
+                        let _ = tx.send(r.map(|r| (r, permit)));
+                    });
+                    let _ = spawned_tx.send(poll_task);
+                }
+                drop(spawned_tx);
+                poll_task_awaiter.await.unwrap();
             }
-            drop(spawned_tx);
-            poll_task_awaiter.await.unwrap();
-        });
+            .instrument(info_span!("polling_task").or_current()),
+        );
         Self {
             buffered_polls: Mutex::new(rx),
             shutdown,
@@ -223,28 +221,128 @@ where
 }
 
 struct PollScaler<F> {
-    max: usize,
-    min: usize,
+    report_handle: Arc<PollScalerReportHandle>,
     active_tx: watch::Sender<usize>,
     active_rx: watch::Receiver<usize>,
     num_pollers_handler: Option<Arc<F>>,
 }
+
 impl<F> PollScaler<F>
 where
     F: Fn(usize),
 {
+    fn new(behavior: PollerBehavior, num_pollers_handler: Option<F>) -> Self {
+        let (active_tx, active_rx) = watch::channel(0);
+        let num_pollers_handler = num_pollers_handler.map(Arc::new);
+        let (min, max, target) = match behavior {
+            PollerBehavior::SimpleMaximum(m) => (1, m, m),
+            PollerBehavior::Autoscaling {
+                minimum,
+                maximum,
+                initial,
+            } => (minimum, maximum, initial),
+        };
+        let report_handle = Arc::new(PollScalerReportHandle {
+            max,
+            min,
+            target: AtomicUsize::new(target),
+            ever_saw_scaling_decision: AtomicBool::default(),
+            behavior,
+        });
+        Self {
+            report_handle,
+            active_tx,
+            active_rx,
+            num_pollers_handler,
+        }
+    }
     async fn wait_until_below_max(&mut self) {
         self.active_rx
-            .wait_for(|v| *v < self.max)
+            .wait_for(|v| {
+                *v < self.report_handle.max
+                    && *v < self.report_handle.target.load(Ordering::Relaxed)
+            })
             .await
             .expect("Poll allow does not panic");
     }
     async fn wait_until_allowed(&mut self) -> ActiveCounter<impl Fn(usize)> {
         self.active_rx
-            .wait_for(|v| *v < self.max)
+            .wait_for(|v| {
+                *v < self.report_handle.max
+                    && *v < self.report_handle.target.load(Ordering::Relaxed)
+            })
             .await
             .expect("Poll allow does not panic");
         ActiveCounter::new(self.active_tx.clone(), self.num_pollers_handler.clone())
+    }
+    fn get_report_handle(&self) -> Arc<PollScalerReportHandle> {
+        self.report_handle.clone()
+    }
+}
+
+struct PollScalerReportHandle {
+    max: usize,
+    min: usize,
+    target: AtomicUsize,
+    ever_saw_scaling_decision: AtomicBool,
+    behavior: PollerBehavior,
+}
+
+impl PollScalerReportHandle {
+    fn poll_result(&self, res: &Result<impl TaskPollerResult, tonic::Status>) {
+        match res {
+            Ok(res) => {
+                if let PollerBehavior::SimpleMaximum(_) = self.behavior {
+                    // We don't do auto-scaling with the simple max
+                    return;
+                }
+                if let Some(scaling_decision) = res.scaling_decision() {
+                    warn!("Got sd {:?}", scaling_decision);
+                    match scaling_decision.poller_delta.cmp(&0) {
+                        cmp::Ordering::Less => self.change_target(
+                            usize::saturating_sub,
+                            scaling_decision.poller_delta.unsigned_abs() as usize,
+                        ),
+                        cmp::Ordering::Greater => self.change_target(
+                            usize::saturating_add,
+                            scaling_decision.poller_delta as usize,
+                        ),
+                        cmp::Ordering::Equal => {}
+                    }
+                    self.ever_saw_scaling_decision
+                        .store(true, Ordering::Relaxed);
+                }
+                // We want to avoid scaling down on empty polls if the server has never made any scaling
+                // decisions - otherwise we might never scale up again.
+                else if self.ever_saw_scaling_decision.load(Ordering::Relaxed) && res.is_empty() {
+                    self.change_target(usize::saturating_sub, 1);
+                }
+            }
+            Err(e) => {
+                // We should only see (and react to) errors in autoscaling mode
+                if matches!(self.behavior, PollerBehavior::Autoscaling { .. }) {
+                    // TODO: Make debug before merge
+                    warn!("Got error from server: {:?}", e);
+                    if e.code() == Code::ResourceExhausted {
+                        // Scale down significantly for resource exhaustion
+                        self.change_target(usize::saturating_div, 2);
+                    } else {
+                        // Other codes that would normally have made us back off briefly can
+                        // reclaim this poller
+                        self.change_target(usize::saturating_sub, 1);
+                    }
+                }
+            }
+        }
+    }
+
+    #[inline]
+    fn change_target(&self, change: fn(usize, usize) -> usize, change_by: usize) {
+        self.target
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                Some(change(v, change_by).clamp(self.min, self.max))
+            })
+            .expect("Cannot fail because always returns Some");
     }
 }
 
@@ -305,19 +403,26 @@ pub(crate) type PollWorkflowTaskBuffer =
 pub(crate) fn new_workflow_task_buffer(
     client: Arc<dyn WorkerClient>,
     task_queue: TaskQueue,
-    concurrent_pollers: usize,
+    poller_behavior: PollerBehavior,
     permit_dealer: MeteredPermitDealer<WorkflowSlotKind>,
     shutdown: CancellationToken,
     num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
 ) -> PollWorkflowTaskBuffer {
+    let no_poll_retry = if matches!(poller_behavior, PollerBehavior::Autoscaling { .. }) {
+        Some(NoRetryOnMatching {
+            predicate: poll_scaling_error_matcher,
+        })
+    } else {
+        None
+    };
     LongPollBuffer::new(
         move || {
             let client = client.clone();
             let task_queue = task_queue.clone();
-            async move { client.poll_workflow_task(task_queue).await }
+            async move { client.poll_workflow_task(task_queue, no_poll_retry).await }
         },
         permit_dealer,
-        concurrent_pollers,
+        poller_behavior,
         shutdown,
         num_pollers_handler,
         None::<fn() -> BoxFuture<'static, ()>>,
@@ -330,7 +435,7 @@ pub(crate) type PollActivityTaskBuffer =
 pub(crate) fn new_activity_task_buffer(
     client: Arc<dyn WorkerClient>,
     task_queue: String,
-    concurrent_pollers: usize,
+    poller_behavior: PollerBehavior,
     semaphore: MeteredPermitDealer<ActivitySlotKind>,
     max_tps: Option<f64>,
     shutdown: CancellationToken,
@@ -341,14 +446,25 @@ pub(crate) fn new_activity_task_buffer(
         Quota::with_period(Duration::from_secs_f64(ps.recip()))
             .map(|q| Arc::new(RateLimiter::direct(q)))
     });
+    let no_poll_retry = if matches!(poller_behavior, PollerBehavior::Autoscaling { .. }) {
+        Some(NoRetryOnMatching {
+            predicate: poll_scaling_error_matcher,
+        })
+    } else {
+        None
+    };
     LongPollBuffer::new(
         move || {
             let client = client.clone();
             let task_queue = task_queue.clone();
-            async move { client.poll_activity_task(task_queue, max_tps).await }
+            async move {
+                client
+                    .poll_activity_task(task_queue, max_tps, no_poll_retry)
+                    .await
+            }
         },
         semaphore,
-        concurrent_pollers,
+        poller_behavior,
         shutdown,
         num_pollers_handler,
         rate_limiter.map(|rl| {
@@ -364,41 +480,70 @@ pub(crate) type PollNexusTaskBuffer = LongPollBuffer<PollNexusTaskQueueResponse,
 pub(crate) fn new_nexus_task_buffer(
     client: Arc<dyn WorkerClient>,
     task_queue: String,
-    concurrent_pollers: usize,
+    poller_behavior: PollerBehavior,
     semaphore: MeteredPermitDealer<NexusSlotKind>,
     shutdown: CancellationToken,
     num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
 ) -> PollNexusTaskBuffer {
+    let no_poll_retry = if matches!(poller_behavior, PollerBehavior::Autoscaling { .. }) {
+        Some(NoRetryOnMatching {
+            predicate: poll_scaling_error_matcher,
+        })
+    } else {
+        None
+    };
     LongPollBuffer::new(
         move || {
             let client = client.clone();
             let task_queue = task_queue.clone();
-            async move { client.poll_nexus_task(task_queue).await }
+            async move { client.poll_nexus_task(task_queue, no_poll_retry).await }
         },
         semaphore,
-        concurrent_pollers,
+        poller_behavior,
         shutdown,
         num_pollers_handler,
         None::<fn() -> BoxFuture<'static, ()>>,
     )
 }
 
+/// Returns true for errors that the poller scaler wants to see
+fn poll_scaling_error_matcher(err: &tonic::Status) -> bool {
+    if matches!(
+        err.code(),
+        Code::ResourceExhausted | Code::Cancelled | Code::DeadlineExceeded
+    ) {
+        return true;
+    }
+    false
+}
+
 pub(crate) trait TaskPollerResult {
     fn scaling_decision(&self) -> Option<&PollerScalingDecision>;
+    /// Returns true if this is an empty poll response (IE: poll timeout)
+    fn is_empty(&self) -> bool;
 }
 impl TaskPollerResult for PollWorkflowTaskQueueResponse {
     fn scaling_decision(&self) -> Option<&PollerScalingDecision> {
         self.poller_scaling_decision.as_ref()
+    }
+    fn is_empty(&self) -> bool {
+        self.task_token.is_empty()
     }
 }
 impl TaskPollerResult for PollActivityTaskQueueResponse {
     fn scaling_decision(&self) -> Option<&PollerScalingDecision> {
         self.poller_scaling_decision.as_ref()
     }
+    fn is_empty(&self) -> bool {
+        self.task_token.is_empty()
+    }
 }
 impl TaskPollerResult for PollNexusTaskQueueResponse {
     fn scaling_decision(&self) -> Option<&PollerScalingDecision> {
         self.poller_scaling_decision.as_ref()
+    }
+    fn is_empty(&self) -> bool {
+        self.task_token.is_empty()
     }
 }
 
@@ -453,7 +598,7 @@ mod tests {
         mock_client
             .expect_poll_workflow_task()
             .times(2)
-            .returning(move |_| {
+            .returning(move |_, _| {
                 async {
                     tokio::time::sleep(Duration::from_millis(300)).await;
                     Ok(Default::default())
@@ -468,7 +613,7 @@ mod tests {
                 kind: TaskQueueKind::Normal as i32,
                 normal_name: "".to_string(),
             },
-            1,
+            PollerBehavior::SimpleMaximum(1),
             fixed_size_permit_dealer(10),
             CancellationToken::new(),
             None::<fn(usize)>,

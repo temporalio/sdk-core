@@ -39,4 +39,18 @@ message PollerScalingDecision {
   // Values may be [-1, 0, 1] - whether to decrease or increase the number of
   // pollers. Could allow for bigger values as well.
   int32 poller_delta = 1;
+
+  // TODO: Kept just for debugging right now, remove if not useful for scaling
+  // 0 for root
+  int32 partition_num = 2;
+
+  // TODO: Kept just for debugging right now, remove if not useful for scaling
+  enum DecisionReason {
+    DECISION_REASON_UNSPECIFIED = 0;
+    DECISION_REASON_BACKLOG = 1;
+    DECISION_REASON_SYNC_MATCH = 2;
+    DECISION_REASON_DISPATCH_RATE_UP = 3;
+    DECISION_REASON_DISPATCH_RATE_DOWN = 4;
+  }
+  DecisionReason reason = 3;
 }
