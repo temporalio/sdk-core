@@ -23,7 +23,7 @@ use futures_util::future::AbortHandle;
 use std::{
     collections::HashSet,
     mem,
-    ops::Add,
+    ops::{Add, Sub},
     rc::Rc,
     sync::{Arc, mpsc::Sender},
     time::{Duration, Instant},
@@ -295,10 +295,12 @@ impl ManagedRun {
         // Only record latency metrics if we genuinely reported to server
         if let WFTReportStatus::Reported {
             reset_last_started_to,
+            completion_time,
         } = report_status
         {
             if let Some(ot) = &retme {
-                self.metrics.wf_task_latency(ot.start_time.elapsed());
+                self.metrics
+                    .wf_task_latency(completion_time.sub(ot.start_time));
             }
             if let Some(id) = reset_last_started_to {
                 self.wfm.machines.reset_last_started_id(id);

@@ -708,6 +708,7 @@ mod tests {
         abstractions::tests::fixed_size_permit_dealer, pollers::new_activity_task_buffer,
         prost_dur, worker::client::mocks::mock_workflow_client,
     };
+    use temporal_sdk_core_api::worker::PollerBehavior;
     use temporal_sdk_core_protos::coresdk::activity_result::ActivityExecutionResult;
 
     #[tokio::test]
@@ -716,7 +717,7 @@ mod tests {
         mock_client
             .expect_poll_activity_task()
             .times(1)
-            .returning(move |_, _| {
+            .returning(move |_, _, _| {
                 Ok(PollActivityTaskQueueResponse {
                     task_token: vec![1],
                     activity_id: "act1".to_string(),
@@ -726,7 +727,7 @@ mod tests {
         mock_client
             .expect_poll_activity_task()
             .times(1)
-            .returning(move |_, _| {
+            .returning(move |_, _, _| {
                 Ok(PollActivityTaskQueueResponse {
                     task_token: vec![2],
                     activity_id: "act2".to_string(),
@@ -743,7 +744,8 @@ mod tests {
         let ap = new_activity_task_buffer(
             mock_client.clone(),
             "tq".to_string(),
-            5, // Lots of concurrent pollers, to ensure we don't poll to much when that's the case
+            // Lots of concurrent pollers, to ensure we don't poll to much when that's the case
+            PollerBehavior::SimpleMaximum(5),
             sem.clone(),
             None,
             shutdown_token.clone(),
@@ -792,7 +794,7 @@ mod tests {
         mock_client
             .expect_poll_activity_task()
             .times(1)
-            .returning(move |_, _| {
+            .returning(move |_, _, _| {
                 Ok(PollActivityTaskQueueResponse {
                     task_token: vec![1],
                     activity_id: "act1".to_string(),
@@ -805,7 +807,7 @@ mod tests {
         mock_client
             .expect_poll_activity_task()
             .times(1)
-            .returning(move |_, _| {
+            .returning(move |_, _, _| {
                 Ok(PollActivityTaskQueueResponse {
                     task_token: vec![2],
                     activity_id: "act2".to_string(),
@@ -816,7 +818,7 @@ mod tests {
         mock_client
             .expect_poll_activity_task()
             .times(1)
-            .returning(move |_, _| {
+            .returning(move |_, _, _| {
                 Ok(PollActivityTaskQueueResponse {
                     task_token: vec![3],
                     activity_id: "act3".to_string(),
@@ -832,7 +834,7 @@ mod tests {
         let ap = new_activity_task_buffer(
             mock_client.clone(),
             "tq".to_string(),
-            1,
+            PollerBehavior::SimpleMaximum(1),
             sem.clone(),
             None,
             shutdown_token.clone(),
@@ -880,7 +882,7 @@ mod tests {
         mock_client
             .expect_poll_activity_task()
             .times(1)
-            .returning(move |_, _| {
+            .returning(move |_, _, _| {
                 Ok(PollActivityTaskQueueResponse {
                     task_token: vec![1],
                     activity_id: "act1".to_string(),
@@ -892,7 +894,7 @@ mod tests {
             });
         mock_client // We can end up polling again - just return nothing.
             .expect_poll_activity_task()
-            .returning(|_, _| Ok(Default::default()));
+            .returning(|_, _, _| Ok(Default::default()));
         mock_client
             .expect_record_activity_heartbeat()
             .times(2)
@@ -903,7 +905,7 @@ mod tests {
         let ap = new_activity_task_buffer(
             mock_client.clone(),
             "tq".to_string(),
-            1,
+            PollerBehavior::SimpleMaximum(1),
             sem.clone(),
             None,
             shutdown_token.clone(),

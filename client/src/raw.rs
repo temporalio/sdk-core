@@ -1178,27 +1178,27 @@ proxier! {
         }
     );
     (
-        update_activity_options_by_id,
-        UpdateActivityOptionsByIdRequest,
-        UpdateActivityOptionsByIdResponse,
+        update_activity_options,
+        UpdateActivityOptionsRequest,
+        UpdateActivityOptionsResponse,
         |r| {
             let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
     (
-        pause_activity_by_id,
-        PauseActivityByIdRequest,
-        PauseActivityByIdResponse,
+        pause_activity,
+        PauseActivityRequest,
+        PauseActivityResponse,
         |r| {
             let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
     (
-        unpause_activity_by_id,
-        UnpauseActivityByIdRequest,
-        UnpauseActivityByIdResponse,
+        unpause_activity,
+        UnpauseActivityRequest,
+        UnpauseActivityResponse,
         |r| {
             let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
@@ -1214,9 +1214,9 @@ proxier! {
         }
     );
     (
-        reset_activity_by_id,
-        ResetActivityByIdRequest,
-        ResetActivityByIdResponse,
+        reset_activity,
+        ResetActivityRequest,
+        ResetActivityResponse,
         |r| {
             let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);

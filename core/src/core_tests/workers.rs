@@ -14,7 +14,7 @@ use crate::{
 };
 use futures_util::{stream, stream::StreamExt};
 use std::{cell::RefCell, time::Duration};
-use temporal_sdk_core_api::Worker;
+use temporal_sdk_core_api::{worker::PollerBehavior, Worker};
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::workflow_activation_job,
@@ -266,14 +266,14 @@ async fn worker_does_not_panic_on_retry_exhaustion_of_nonfatal_net_err() {
 async fn worker_can_shutdown_after_never_polling_ok(#[values(true, false)] poll_workflow: bool) {
     let mut mock = mock_workflow_client();
     mock.expect_poll_activity_task()
-        .returning(|_, _| Err(tonic::Status::permission_denied("you shall not pass")));
+        .returning(|_, _, _| Err(tonic::Status::permission_denied("you shall not pass")));
     if poll_workflow {
         mock.expect_poll_workflow_task()
-            .returning(|_| Err(tonic::Status::permission_denied("you shall not pass")));
+            .returning(|_, _| Err(tonic::Status::permission_denied("you shall not pass")));
     }
     let core = worker::Worker::new_test(
         test_worker_cfg()
-            .max_concurrent_at_polls(1_usize)
+            .activity_task_poller_behavior(PollerBehavior::SimpleMaximum(1_usize))
             .build()
             .unwrap(),
         mock,

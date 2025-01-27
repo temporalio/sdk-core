@@ -4,8 +4,8 @@ pub(crate) mod mocks;
 use parking_lot::RwLock;
 use std::sync::Arc;
 use temporal_client::{
-    Client, IsWorkerTaskLongPoll, Namespace, NamespacedClient, RetryClient, SlotManager,
-    WorkflowService,
+    Client, IsWorkerTaskLongPoll, Namespace, NamespacedClient, NoRetryOnMatching, RetryClient,
+    SlotManager, WorkflowService,
 };
 use temporal_sdk_core_protos::{
     TaskToken,
@@ -105,13 +105,19 @@ pub(crate) trait WorkerClient: Sync + Send {
     async fn poll_workflow_task(
         &self,
         task_queue: TaskQueue,
+        no_retry: Option<NoRetryOnMatching>,
     ) -> Result<PollWorkflowTaskQueueResponse>;
     async fn poll_activity_task(
         &self,
         task_queue: String,
         max_tasks_per_sec: Option<f64>,
+        no_retry: Option<NoRetryOnMatching>,
     ) -> Result<PollActivityTaskQueueResponse>;
-    async fn poll_nexus_task(&self, task_queue: String) -> Result<PollNexusTaskQueueResponse>;
+    async fn poll_nexus_task(
+        &self,
+        task_queue: String,
+        no_retry: Option<NoRetryOnMatching>,
+    ) -> Result<PollNexusTaskQueueResponse>;
     async fn complete_workflow_task(
         &self,
         request: WorkflowTaskCompletion,
@@ -179,6 +185,7 @@ impl WorkerClient for WorkerClientBag {
     async fn poll_workflow_task(
         &self,
         task_queue: TaskQueue,
+        no_retry: Option<NoRetryOnMatching>,
     ) -> Result<PollWorkflowTaskQueueResponse> {
         let mut request = PollWorkflowTaskQueueRequest {
             namespace: self.namespace.clone(),
@@ -189,6 +196,9 @@ impl WorkerClient for WorkerClientBag {
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
+        if let Some(nr) = no_retry {
+            request.extensions_mut().insert(nr);
+        }
 
         Ok(self
             .cloned_client()
@@ -201,6 +211,7 @@ impl WorkerClient for WorkerClientBag {
         &self,
         task_queue: String,
         max_tasks_per_sec: Option<f64>,
+        no_retry: Option<NoRetryOnMatching>,
     ) -> Result<PollActivityTaskQueueResponse> {
         let mut request = PollActivityTaskQueueRequest {
             namespace: self.namespace.clone(),
@@ -217,6 +228,9 @@ impl WorkerClient for WorkerClientBag {
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
+        if let Some(nr) = no_retry {
+            request.extensions_mut().insert(nr);
+        }
 
         Ok(self
             .cloned_client()
@@ -225,7 +239,11 @@ impl WorkerClient for WorkerClientBag {
             .into_inner())
     }
 
-    async fn poll_nexus_task(&self, task_queue: String) -> Result<PollNexusTaskQueueResponse> {
+    async fn poll_nexus_task(
+        &self,
+        task_queue: String,
+        no_retry: Option<NoRetryOnMatching>,
+    ) -> Result<PollNexusTaskQueueResponse> {
         let mut request = PollNexusTaskQueueRequest {
             namespace: self.namespace.clone(),
             task_queue: Some(TaskQueue {
@@ -238,6 +256,9 @@ impl WorkerClient for WorkerClientBag {
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
+        if let Some(nr) = no_retry {
+            request.extensions_mut().insert(nr);
+        }
 
         Ok(self
             .cloned_client()
