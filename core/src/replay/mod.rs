@@ -11,13 +11,12 @@ use crate::{
 };
 use futures_util::{FutureExt, Stream, StreamExt};
 use parking_lot::Mutex;
-use std::sync::OnceLock;
 use std::{
     pin::Pin,
-    sync::Arc,
+    sync::{Arc, OnceLock},
     task::{Context, Poll},
 };
-use temporal_sdk_core_api::worker::WorkerConfig;
+use temporal_sdk_core_api::worker::{PollerBehavior, WorkerConfig};
 use temporal_sdk_core_protos::{
     coresdk::workflow_activation::remove_from_cache::EvictionReason,
     temporal::api::{
@@ -60,7 +59,7 @@ where
 
     pub(crate) fn into_core_worker(mut self) -> Result<Worker, anyhow::Error> {
         self.config.max_cached_workflows = 1;
-        self.config.max_concurrent_wft_polls = 1;
+        self.config.workflow_task_poller_behavior = PollerBehavior::SimpleMaximum(1);
         self.config.no_remote_activities = true;
         let historator = Historator::new(self.history_stream);
         let post_activate = historator.get_post_activate_hook();
@@ -81,7 +80,7 @@ where
         let historator = Arc::new(TokioMutex::new(historator));
 
         // TODO: Should use `new_with_pollers` and avoid re-doing mocking stuff
-        client.expect_poll_workflow_task().returning(move |_| {
+        client.expect_poll_workflow_task().returning(move |_, _| {
             let historator = historator.clone();
             async move {
                 let mut hlock = historator.lock().await;

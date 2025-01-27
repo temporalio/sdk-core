@@ -4,12 +4,11 @@
 //! never ever be removed from behind `#[cfg(test)]` compilation.
 
 use dashmap::{mapref::entry::Entry, DashMap, DashSet};
-use std::sync::LazyLock;
 use std::{
     path::PathBuf,
     sync::{
         mpsc::{sync_channel, SyncSender},
-        Mutex,
+        LazyLock, Mutex,
     },
     thread::JoinHandle,
     time::Duration,

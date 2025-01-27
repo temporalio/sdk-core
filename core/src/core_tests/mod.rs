@@ -17,7 +17,7 @@ use crate::{
 };
 use futures_util::FutureExt;
 use std::{sync::LazyLock, time::Duration};
-use temporal_sdk_core_api::Worker as WorkerTrait;
+use temporal_sdk_core_api::{worker::PollerBehavior, Worker as WorkerTrait};
 use temporal_sdk_core_protos::coresdk::workflow_completion::WorkflowActivationCompletion;
 use tokio::{sync::Barrier, time::sleep};
 
@@ -53,7 +53,7 @@ async fn shutdown_interrupts_both_polls() {
     mock_client
         .expect_poll_activity_task()
         .times(1)
-        .returning(move |_, _| {
+        .returning(move |_, _, _| {
             async move {
                 BARR.wait().await;
                 sleep(Duration::from_secs(1)).await;
@@ -64,7 +64,7 @@ async fn shutdown_interrupts_both_polls() {
     mock_client
         .expect_poll_workflow_task()
         .times(1)
-        .returning(move |_| {
+        .returning(move |_, _| {
             async move {
                 BARR.wait().await;
                 sleep(Duration::from_secs(1)).await;
@@ -76,8 +76,8 @@ async fn shutdown_interrupts_both_polls() {
     let worker = Worker::new_test(
         test_worker_cfg()
             // Need only 1 concurrent pollers for mock expectations to work here
-            .max_concurrent_wft_polls(1_usize)
-            .max_concurrent_at_polls(1_usize)
+            .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(1_usize))
+            .activity_task_poller_behavior(PollerBehavior::SimpleMaximum(1_usize))
             .build()
             .unwrap(),
         mock_client,

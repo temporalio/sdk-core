@@ -71,6 +71,7 @@ impl<SG> RetryClient<SG> {
         } else {
             (*self.retry_config).clone()
         };
+        // TODO: Set retry short-circuits
         CallInfo {
             call_type,
             call_name,
@@ -187,8 +188,6 @@ impl CallType {
     }
 }
 
-// TODO: This ought to be configurable by the owner of the client. That way worker-specific concerns
-//  don't need to exist in this crate.
 impl<C> ErrorHandler<tonic::Status> for TonicErrorHandler<C>
 where
     C: Clock,
