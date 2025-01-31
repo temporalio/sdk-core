@@ -1,4 +1,4 @@
-use crate::{AttachMetricLabels, LONG_POLL_METHOD_NAMES};
+use crate::{AttachMetricLabels, CallType};
 use futures_util::{future::BoxFuture, FutureExt};
 use std::{
     sync::Arc,
@@ -195,6 +195,11 @@ impl Service<http::Request<BoxBody>> for GrpcMetricSvc {
                 if let Some(other_labels) = req.extensions_mut().remove::<AttachMetricLabels>() {
                     m.with_new_attrs(other_labels.labels)
                 }
+                if let Some(ct) = req.extensions().get::<CallType>() {
+                    if ct.is_long() {
+                        m.set_is_long_poll();
+                    }
+                }
                 m
             })
             .and_then(|mut metrics| {
@@ -202,9 +207,6 @@ impl Service<http::Request<BoxBody>> for GrpcMetricSvc {
                 req.uri().to_string().rsplit_once('/').map(|split_tup| {
                     let method_name = split_tup.1;
                     metrics.with_new_attrs([svc_operation(method_name.to_string())]);
-                    if LONG_POLL_METHOD_NAMES.contains(&method_name) {
-                        metrics.set_is_long_poll();
-                    }
                     metrics.svc_request();
                     metrics
                 })

@@ -8,7 +8,9 @@ use std::{
     },
     time::Duration,
 };
-use temporal_client::{Client, RetryClient, WorkflowClientTrait, WorkflowService};
+use temporal_client::{
+    Client, NamespacedClient, RetryClient, WorkflowClientTrait, WorkflowService,
+};
 use temporal_sdk::{ActContext, ActivityOptions, LocalActivityOptions, UpdateContext, WfContext};
 use temporal_sdk_core::replay::HistoryForReplay;
 use temporal_sdk_core_api::Worker;

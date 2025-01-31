@@ -58,7 +58,7 @@ use crate::{
 use anyhow::bail;
 use futures_util::Stream;
 use std::sync::Arc;
-use temporal_client::{ConfiguredClient, TemporalServiceClientWithMetrics};
+use temporal_client::{ConfiguredClient, NamespacedClient, TemporalServiceClientWithMetrics};
 use temporal_sdk_core_api::{
     errors::{CompleteActivityError, PollError},
     telemetry::TelemetryOptions,
@@ -90,9 +90,9 @@ where
         bail!("Passed in client is not bound to the same namespace as the worker");
     }
     if client.namespace() == "" {
-        bail!("Namespace cannot be empty");
+        bail!("Client namespace cannot be empty");
     }
-    let client_ident = client.get_options().identity.clone();
+    let client_ident = client.get_identity().to_owned();
     let sticky_q = sticky_q_name_for_worker(&client_ident, &worker_config);
     let client_bag = Arc::new(WorkerClientBag::new(
         client,
@@ -162,31 +162,39 @@ mod sealed {
     /// use-case was worker initialization.
     ///
     /// Needs to exist in this crate to avoid blanket impl conflicts.
-    pub struct AnyClient(Box<ConfiguredClient<TemporalServiceClientWithMetrics>>);
+    pub struct AnyClient {
+        pub(crate) inner: Box<ConfiguredClient<TemporalServiceClientWithMetrics>>,
+    }
     impl AnyClient {
         pub(crate) fn into_inner(self) -> Box<ConfiguredClient<TemporalServiceClientWithMetrics>> {
-            self.0
+            self.inner
         }
     }
 
     impl From<RetryClient<ConfiguredClient<TemporalServiceClientWithMetrics>>> for AnyClient {
         fn from(c: RetryClient<ConfiguredClient<TemporalServiceClientWithMetrics>>) -> Self {
-            Self(Box::new(c.into_inner()))
+            Self {
+                inner: Box::new(c.into_inner()),
+            }
         }
     }
     impl From<RetryClient<Client>> for AnyClient {
         fn from(c: RetryClient<Client>) -> Self {
-            Self(Box::new(c.into_inner().into_inner()))
+            Self {
+                inner: Box::new(c.into_inner().into_inner()),
+            }
         }
     }
     impl From<Arc<RetryClient<Client>>> for AnyClient {
         fn from(c: Arc<RetryClient<Client>>) -> Self {
-            Self(Box::new(c.get_client().inner().clone()))
+            Self {
+                inner: Box::new(c.get_client().inner().clone()),
+            }
         }
     }
     impl From<ConfiguredClient<TemporalServiceClientWithMetrics>> for AnyClient {
         fn from(c: ConfiguredClient<TemporalServiceClientWithMetrics>) -> Self {
-            Self(Box::new(c))
+            Self { inner: Box::new(c) }
         }
     }
 }

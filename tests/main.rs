@@ -20,7 +20,7 @@ mod integ_tests {
     mod workflow_tests;
 
     use std::{env, str::FromStr, time::Duration};
-    use temporal_client::WorkflowService;
+    use temporal_client::{NamespacedClient, WorkflowService};
     use temporal_sdk_core::{
         init_worker, ClientOptionsBuilder, ClientTlsConfig, CoreRuntime, TlsConfig,
         WorkflowClientTrait,

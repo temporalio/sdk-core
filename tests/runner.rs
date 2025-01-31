@@ -116,7 +116,9 @@ async fn main() -> Result<(), anyhow::Error> {
             )
         }
         ServerKind::External => {
+            println!("========================================================");
             println!("Not starting up a server. One should be running already.");
+            println!("========================================================");
             (None, vec![])
         }
     };

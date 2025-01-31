@@ -142,7 +142,7 @@ where
         &mut self,
         call_name: &'static str,
         mut callfn: F,
-        req: Request<Req>,
+        mut req: Request<Req>,
     ) -> Result<Response<Resp>, Status>
     where
         Req: Clone + Unpin + Send + Sync + 'static,
@@ -150,6 +150,10 @@ where
         F: Send + Sync + Unpin + 'static,
     {
         let info = self.get_call_info(call_name, Some(&req));
+        req.extensions_mut().insert(info.call_type);
+        if info.call_type.is_long() {
+            req.set_default_timeout(LONG_POLL_TIMEOUT);
+        }
         let fact = || {
             let req_clone = req_cloner(&req);
             callfn(self, req_clone)
@@ -612,9 +616,6 @@ proxier! {
             if r.get_ref().wait_new_event {
                 r.extensions_mut().insert(IsUserLongPoll);
             }
-            if r.get_ref().wait_new_event {
-                r.set_default_timeout(LONG_POLL_TIMEOUT);
-            }
         }
     );
     (
@@ -634,7 +635,6 @@ proxier! {
             let mut labels = namespaced_request!(r);
             labels.task_q(r.get_ref().task_queue.clone());
             r.extensions_mut().insert(labels);
-            r.set_default_timeout(LONG_POLL_TIMEOUT);
         }
     );
     (
@@ -663,7 +663,6 @@ proxier! {
             let mut labels = namespaced_request!(r);
             labels.task_q(r.get_ref().task_queue.clone());
             r.extensions_mut().insert(labels);
-            r.set_default_timeout(LONG_POLL_TIMEOUT);
         }
     );
     (
@@ -1017,8 +1016,9 @@ proxier! {
         UpdateWorkflowExecutionResponse,
         |r| {
             let labels = namespaced_request!(r);
-            r.extensions_mut().insert(labels);
-            r.set_default_timeout(LONG_POLL_TIMEOUT);
+            let exts = r.extensions_mut();
+            exts.insert(labels);
+            exts.insert(IsUserLongPoll);
         }
     );
     (
@@ -1028,7 +1028,6 @@ proxier! {
         |r| {
             let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
-            r.set_default_timeout(LONG_POLL_TIMEOUT);
         }
     );
     (

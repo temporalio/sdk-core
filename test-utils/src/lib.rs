@@ -22,8 +22,8 @@ use std::{
     time::Duration,
 };
 use temporal_client::{
-    Client, ClientTlsConfig, RetryClient, TlsConfig, WfClientExt, WorkflowClientTrait,
-    WorkflowExecutionInfo, WorkflowHandle, WorkflowOptions,
+    Client, ClientTlsConfig, NamespacedClient, RetryClient, TlsConfig, WfClientExt,
+    WorkflowClientTrait, WorkflowExecutionInfo, WorkflowHandle, WorkflowOptions,
 };
 use temporal_sdk::{
     interceptors::{FailOnNondeterminismInterceptor, WorkerInterceptor},
@@ -318,21 +318,24 @@ impl CoreWfStarter {
     async fn get_or_init(&mut self) -> &InitializedWorker {
         self.initted_worker
             .get_or_init(|| async {
+                let rt = if let Some(ref rto) = self.runtime_override {
+                    rto
+                } else {
+                    INTEG_TESTS_RT.get().unwrap()
+                };
                 let cfg = self
                     .worker_config
                     .build()
                     .expect("Worker config must be valid");
                 let client = Arc::new(
                     get_integ_server_options()
-                        .connect(cfg.namespace.clone(), None)
+                        .connect(
+                            cfg.namespace.clone(),
+                            rt.telemetry().get_temporal_metric_meter(),
+                        )
                         .await
                         .expect("Must connect"),
                 );
-                let rt = if let Some(ref rto) = self.runtime_override {
-                    rto
-                } else {
-                    INTEG_TESTS_RT.get().unwrap()
-                };
                 let worker = init_worker(rt, cfg, client.clone()).expect("Worker inits cleanly");
                 InitializedWorker {
                     worker: Arc::new(worker),
