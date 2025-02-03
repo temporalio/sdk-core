@@ -109,7 +109,7 @@ impl SlotManagerImpl {
     }
 }
 
-/// Enables local workers to made themselves visible to a shared client instance.
+/// Enables local workers to make themselves visible to a shared client instance.
 /// There can only be one worker registered per namespace+queue_name+client, others will get ignored.
 /// It also provides a convenient method to find compatible slots within the collection.
 #[derive(Default, Debug)]

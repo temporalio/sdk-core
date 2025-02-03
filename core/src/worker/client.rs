@@ -3,7 +3,10 @@
 pub(crate) mod mocks;
 use parking_lot::RwLock;
 use std::sync::Arc;
-use temporal_client::{Client, Namespace, RetryClient, SlotManager, WorkflowService};
+use temporal_client::{
+    Client, IsWorkerTaskLongPoll, Namespace, NamespacedClient, RetryClient, SlotManager,
+    WorkflowService,
+};
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::QueryResult,
     temporal::api::{
@@ -23,6 +26,7 @@ use temporal_sdk_core_protos::{
     },
     TaskToken,
 };
+use tonic::IntoRequest;
 
 type Result<T, E = tonic::Status> = std::result::Result<T, E>;
 
@@ -176,13 +180,15 @@ impl WorkerClient for WorkerClientBag {
         &self,
         task_queue: TaskQueue,
     ) -> Result<PollWorkflowTaskQueueResponse> {
-        let request = PollWorkflowTaskQueueRequest {
+        let mut request = PollWorkflowTaskQueueRequest {
             namespace: self.namespace.clone(),
             task_queue: Some(task_queue),
             identity: self.identity.clone(),
             binary_checksum: self.binary_checksum(),
             worker_version_capabilities: self.worker_version_capabilities(),
-        };
+        }
+        .into_request();
+        request.extensions_mut().insert(IsWorkerTaskLongPoll);
 
         Ok(self
             .cloned_client()
@@ -196,7 +202,7 @@ impl WorkerClient for WorkerClientBag {
         task_queue: String,
         max_tasks_per_sec: Option<f64>,
     ) -> Result<PollActivityTaskQueueResponse> {
-        let request = PollActivityTaskQueueRequest {
+        let mut request = PollActivityTaskQueueRequest {
             namespace: self.namespace.clone(),
             task_queue: Some(TaskQueue {
                 name: task_queue,
@@ -208,7 +214,9 @@ impl WorkerClient for WorkerClientBag {
                 max_tasks_per_second: Some(tps),
             }),
             worker_version_capabilities: self.worker_version_capabilities(),
-        };
+        }
+        .into_request();
+        request.extensions_mut().insert(IsWorkerTaskLongPoll);
 
         Ok(self
             .cloned_client()
@@ -218,7 +226,7 @@ impl WorkerClient for WorkerClientBag {
     }
 
     async fn poll_nexus_task(&self, task_queue: String) -> Result<PollNexusTaskQueueResponse> {
-        let request = PollNexusTaskQueueRequest {
+        let mut request = PollNexusTaskQueueRequest {
             namespace: self.namespace.clone(),
             task_queue: Some(TaskQueue {
                 name: task_queue,
@@ -227,7 +235,9 @@ impl WorkerClient for WorkerClientBag {
             }),
             identity: self.identity.clone(),
             worker_version_capabilities: self.worker_version_capabilities(),
-        };
+        }
+        .into_request();
+        request.extensions_mut().insert(IsWorkerTaskLongPoll);
 
         Ok(self
             .cloned_client()
@@ -476,11 +486,13 @@ impl WorkerClient for WorkerClientBag {
     }
 
     async fn describe_namespace(&self) -> Result<DescribeNamespaceResponse> {
-        temporal_client::WorkflowClientTrait::describe_namespace(
-            &self.cloned_client(),
-            Namespace::Name(self.namespace.clone()),
-        )
-        .await
+        Ok(self
+            .cloned_client()
+            .describe_namespace(
+                Namespace::Name(self.namespace.clone()).into_describe_namespace_request(),
+            )
+            .await?
+            .into_inner())
     }
 
     async fn shutdown_worker(&self, sticky_task_queue: String) -> Result<ShutdownWorkerResponse> {
@@ -521,6 +533,16 @@ impl WorkerClient for WorkerClientBag {
         let lock = self.replaceable_client.read();
         let opts = lock.get_client().inner().options();
         (opts.client_name.clone(), opts.client_version.clone())
+    }
+}
+
+impl NamespacedClient for WorkerClientBag {
+    fn namespace(&self) -> &str {
+        &self.namespace
+    }
+
+    fn get_identity(&self) -> &str {
+        &self.identity
     }
 }
 

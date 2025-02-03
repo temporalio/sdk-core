@@ -1,26 +1,39 @@
 use assert_matches::assert_matches;
 use futures_util::{future::BoxFuture, FutureExt};
+use http_body_util::BodyExt;
+use prost::Message;
 use std::{
     collections::HashMap,
     convert::Infallible,
     env,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
     task::{Context, Poll},
     time::Duration,
 };
-use temporal_client::{Namespace, RetryConfig, WorkflowClientTrait, WorkflowService};
+use temporal_client::{
+    Namespace, RetryConfig, WorkflowClientTrait, WorkflowService, RETRYABLE_ERROR_CODES,
+};
 use temporal_sdk_core_protos::temporal::api::{
     cloud::cloudservice::v1::GetNamespaceRequest,
-    workflowservice::v1::{DescribeNamespaceRequest, GetWorkflowExecutionHistoryRequest},
+    workflowservice::v1::{
+        DescribeNamespaceRequest, GetWorkflowExecutionHistoryRequest,
+        RespondActivityTaskCanceledResponse,
+    },
 };
-use temporal_sdk_core_test_utils::{
-    get_integ_server_options, init_integ_telem, CoreWfStarter, NAMESPACE,
-};
+use temporal_sdk_core_test_utils::{get_integ_server_options, CoreWfStarter, NAMESPACE};
 use tokio::{
     net::TcpListener,
     sync::{mpsc::UnboundedSender, oneshot},
 };
 use tonic::{
-    body::BoxBody, codegen::Service, server::NamedService, transport::Server, Code, Request,
+    body::BoxBody,
+    codegen::{http::Response, Service},
+    server::NamedService,
+    transport::Server,
+    Code, Request, Status,
 };
 use tracing::info;
 
@@ -90,12 +103,16 @@ async fn per_call_timeout_respected_one_call() {
 }
 
 #[derive(Clone)]
-struct GenericService {
+struct GenericService<F> {
     header_to_parse: &'static str,
     header_tx: UnboundedSender<String>,
+    response_maker: F,
 }
-impl Service<tonic::codegen::http::Request<BoxBody>> for GenericService {
-    type Response = tonic::codegen::http::Response<BoxBody>;
+impl<F> Service<tonic::codegen::http::Request<BoxBody>> for GenericService<F>
+where
+    F: FnMut() -> Response<BoxBody>,
+{
+    type Response = Response<BoxBody>;
     type Error = Infallible;
     type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
 
@@ -115,18 +132,27 @@ impl Service<tonic::codegen::http::Request<BoxBody>> for GenericService {
                 .to_string(),
             )
             .unwrap();
-        async move { Ok(Self::Response::new(tonic::codegen::empty_body())) }.boxed()
+        let r = (self.response_maker)();
+        async move { Ok(r) }.boxed()
     }
 }
-impl NamedService for GenericService {
+impl<F> NamedService for GenericService<F> {
     const NAME: &'static str = "temporal.api.workflowservice.v1.WorkflowService";
 }
 
-#[tokio::test]
-async fn timeouts_respected_one_call_fake_server() {
-    init_integ_telem();
+struct FakeServer {
+    addr: std::net::SocketAddr,
+    shutdown_tx: oneshot::Sender<()>,
+    header_rx: tokio::sync::mpsc::UnboundedReceiver<String>,
+    server_handle: tokio::task::JoinHandle<()>,
+}
+
+async fn fake_server<F>(response_maker: F) -> FakeServer
+where
+    F: FnMut() -> Response<BoxBody> + Clone + Send + 'static,
+{
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
-    let (header_tx, mut header_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (header_tx, header_rx) = tokio::sync::mpsc::unbounded_channel();
 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -136,6 +162,7 @@ async fn timeouts_respected_one_call_fake_server() {
             .add_service(GenericService {
                 header_to_parse: "grpc-timeout",
                 header_tx,
+                response_maker,
             })
             .serve_with_incoming_shutdown(
                 tokio_stream::wrappers::TcpListenerStream::new(listener),
@@ -147,8 +174,30 @@ async fn timeouts_respected_one_call_fake_server() {
             .unwrap();
     });
 
+    FakeServer {
+        addr,
+        shutdown_tx,
+        header_rx,
+        server_handle,
+    }
+}
+
+impl FakeServer {
+    async fn shutdown(self) {
+        self.shutdown_tx.send(()).unwrap();
+        self.server_handle.await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn timeouts_respected_one_call_fake_server() {
+    let mut fs = fake_server(|| Response::new(tonic::codegen::empty_body())).await;
+    let header_rx = &mut fs.header_rx;
+
     let mut opts = get_integ_server_options();
-    let uri = format!("http://localhost:{}", addr.port()).parse().unwrap();
+    let uri = format!("http://localhost:{}", fs.addr.port())
+        .parse()
+        .unwrap();
     opts.target_url = uri;
     opts.skip_get_system_info = true;
     opts.retry_config = RetryConfig {
@@ -198,9 +247,82 @@ async fn timeouts_respected_one_call_fake_server() {
         Default::default()
     );
 
-    // Shutdown the server
-    shutdown_tx.send(()).unwrap();
-    server_handle.await.unwrap();
+    fs.shutdown().await;
+}
+
+#[tokio::test]
+async fn non_retryable_errors() {
+    for code in [
+        Code::InvalidArgument,
+        Code::NotFound,
+        Code::AlreadyExists,
+        Code::PermissionDenied,
+        Code::FailedPrecondition,
+        Code::Cancelled,
+        Code::DeadlineExceeded,
+        Code::Unauthenticated,
+        Code::Unimplemented,
+    ] {
+        let mut fs = fake_server(move || Status::new(code, "bla").into_http()).await;
+
+        let mut opts = get_integ_server_options();
+        let uri = format!("http://localhost:{}", fs.addr.port())
+            .parse()
+            .unwrap();
+        opts.target_url = uri;
+        opts.skip_get_system_info = true;
+        let client = opts.connect("ns", None).await.unwrap();
+
+        let result = client.cancel_activity_task(vec![1].into(), None).await;
+
+        // Expecting an error after a single attempt, since there was a non-retryable error.
+        assert!(result.is_err());
+        let mut all_calls = vec![];
+        fs.header_rx.recv_many(&mut all_calls, 9999).await;
+        assert_eq!(all_calls.len(), 1);
+
+        fs.shutdown().await;
+    }
+}
+
+#[tokio::test]
+async fn retryable_errors() {
+    // Take out retry exhausted since it gets a special policy which would make this take ages
+    for code in RETRYABLE_ERROR_CODES
+        .iter()
+        .copied()
+        .filter(|p| p != &Code::ResourceExhausted)
+    {
+        let count = Arc::new(AtomicUsize::new(0));
+        let mut fs = fake_server(move || {
+            dbg!("Making resp");
+            let prev = count.fetch_add(1, Ordering::Relaxed);
+            if prev < 3 {
+                Status::new(code, "bla").into_http()
+            } else {
+                make_ok_response(RespondActivityTaskCanceledResponse::default())
+            }
+        })
+        .await;
+
+        let mut opts = get_integ_server_options();
+        let uri = format!("http://localhost:{}", fs.addr.port())
+            .parse()
+            .unwrap();
+        opts.target_url = uri;
+        opts.skip_get_system_info = true;
+        let client = opts.connect("ns", None).await.unwrap();
+
+        let result = client.cancel_activity_task(vec![1].into(), None).await;
+
+        // Expecting successful response after retries
+        assert!(result.is_ok());
+        let mut all_calls = vec![];
+        fs.header_rx.recv_many(&mut all_calls, 9999).await;
+        // Should be 4 attempts
+        assert_eq!(all_calls.len(), 4);
+        fs.shutdown().await;
+    }
 }
 
 #[tokio::test]
@@ -216,6 +338,7 @@ async fn namespace_header_attached_to_relevant_calls() {
             .add_service(GenericService {
                 header_to_parse: "Temporal-Namespace",
                 header_tx,
+                response_maker: || Response::new(tonic::codegen::empty_body()),
             })
             .serve_with_incoming_shutdown(
                 tokio_stream::wrappers::TcpListenerStream::new(listener),
@@ -290,4 +413,32 @@ async fn cloud_ops_test() {
         .await
         .unwrap();
     assert_eq!(res.into_inner().namespace.unwrap().namespace, namespace);
+}
+
+fn make_ok_response<T>(message: T) -> Response<BoxBody>
+where
+    T: Message,
+{
+    // Encode the message into a byte buffer.
+    let mut buf = Vec::new();
+    message
+        .encode(&mut buf)
+        .expect("failed to encode response message");
+
+    // Props to o3-mini for giving me a cheap way to make a grpc response
+    let mut frame = Vec::with_capacity(5 + buf.len());
+    frame.push(0);
+    let len = buf.len() as u32;
+    frame.extend_from_slice(&len.to_be_bytes());
+    frame.extend_from_slice(&buf);
+    let full_body = http_body_util::Full::from(frame)
+        .map_err(|e: Infallible| -> Status { unreachable!("Infallible error: {:?}", e) });
+    let body = BoxBody::new(full_body);
+
+    // Build the HTTP response with the required gRPC headers.
+    Response::builder()
+        .status(200)
+        .header("content-type", "application/grpc")
+        .body(body)
+        .expect("failed to build response")
 }

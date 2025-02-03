@@ -620,6 +620,16 @@ async fn latency_metrics(
         }
         assert!(matching_line.contains("le=\"100\""));
     }
+
+    // Ensure poll metrics show up as long polls properly
+    let matching_lines = body
+        .lines()
+        .filter(|l| l.starts_with("temporal_long_request_latency"))
+        .collect::<Vec<_>>();
+    assert!(matching_lines.len() > 1);
+    assert!(matching_lines
+        .iter()
+        .any(|l| l.contains("PollWorkflowTaskQueue")));
 }
 
 #[tokio::test]
