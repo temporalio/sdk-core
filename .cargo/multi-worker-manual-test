@@ -1,0 +1,15 @@
+#!/bin/sh
+
+# Use this script during manual testing against a server to run multiple instances
+# of a test, thus acting like multiple workers are running concurrently
+
+# Usage: multi-worker-heavy-test <number of workers> <integ test name>
+
+# You may want to set env vars for targeting cloud first, ex (fish syntax):
+# set -gx TEMPORAL_SERVICE_ADDRESS "https://sj-poller-test.e2e.tmprl-test.cloud:7233"
+# set -gx TEMPORAL_USE_TLS 1
+# set -gx TEMPORAL_NAMESPACE sj-poller-test.e2e
+
+cargo integ-test -c "--release" -t manual_tests --just-build
+
+parallel --line-buffer --process-slot-var=PAR_JOBNUM -j $1 cargo integ-test -c "--release" -s external -t manual_tests -- --nocapture $2 ::: $(seq 1 $1)
