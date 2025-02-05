@@ -218,22 +218,6 @@ impl WorkerConfigBuilder {
             return Err("max_outstanding_* fields are mutually exclusive with `tuner`".to_owned());
         }
 
-        // TODO: Does this really matter with how slot suppliers work now?
-        // let max_wft_polls = self
-        //     .max_concurrent_wft_polls
-        //     .unwrap_or(MAX_CONCURRENT_WFT_POLLS_DEFAULT);
-        //
-        // // It wouldn't make any sense to have more outstanding polls than workflows we can possibly
-        // // cache. If we allow this at low values it's possible for sticky pollers to reserve all
-        // // available slots, crowding out the normal queue and gumming things up.
-        // if let Some(max_cache) = self.max_cached_workflows {
-        //     if max_cache > 0 && max_wft_polls > max_cache {
-        //         return Err(
-        //             "`max_concurrent_wft_polls` cannot exceed `max_cached_workflows`".to_owned(),
-        //         );
-        //     }
-        // }
-
         if self.use_worker_versioning.unwrap_or_default()
             && self
                 .worker_build_id

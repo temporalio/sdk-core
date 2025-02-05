@@ -297,7 +297,6 @@ impl PollScalerReportHandle {
                     return;
                 }
                 if let Some(scaling_decision) = res.scaling_decision() {
-                    warn!("Got sd {:?}", scaling_decision);
                     match scaling_decision.poller_delta.cmp(&0) {
                         cmp::Ordering::Less => self.change_target(
                             usize::saturating_sub,
@@ -321,8 +320,10 @@ impl PollScalerReportHandle {
             Err(e) => {
                 // We should only see (and react to) errors in autoscaling mode
                 if matches!(self.behavior, PollerBehavior::Autoscaling { .. }) {
-                    // TODO: Make debug before merge
-                    warn!("Got error from server: {:?}", e);
+                    debug!("Got error from server while polling: {:?}", e);
+                    // TODO (REVIEW): A concern here is we can bounce off of ratelimiter
+                    //  because server keeps telling us "scale up!" and then we hit ratelimit
+                    //  and halve again. Not necessarily a huge issue, but open to ideas to fix.
                     if e.code() == Code::ResourceExhausted {
                         // Scale down significantly for resource exhaustion
                         self.change_target(usize::saturating_div, 2);

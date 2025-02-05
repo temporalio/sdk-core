@@ -6,6 +6,7 @@ CLI_VERSION_OVERRIDE = "v1.3.1-priority.0"
 [alias]
 integ-test = ["run", "--package", "temporal-sdk-core", "--example", "integ_runner", "--"]
 lint = ["clippy", "--workspace", "--examples", "--all-features",
-    "--test", "integ_tests", "--test", "heavy_tests", "--", "--D", "warnings"]
+    "--test", "integ_tests", "--test", "heavy_tests", "--test", "manual_tests",
+    "--", "--D", "warnings"]
 test-lint = ["clippy", "--all", "--all-features", "--examples", "--workspace",
     "--tests", "--", "--D", "warnings"]
