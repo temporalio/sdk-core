@@ -315,6 +315,7 @@ impl PollScalerReportHandle {
                 // We want to avoid scaling down on empty polls if the server has never made any scaling
                 // decisions - otherwise we might never scale up again.
                 else if self.ever_saw_scaling_decision.load(Ordering::Relaxed) && res.is_empty() {
+                    warn!("Removing poller - empty response");
                     self.change_target(usize::saturating_sub, 1);
                 }
             }
@@ -323,6 +324,9 @@ impl PollScalerReportHandle {
                 if matches!(self.behavior, PollerBehavior::Autoscaling { .. }) {
                     // TODO: Make debug before merge
                     warn!("Got error from server: {:?}", e);
+                    // TODO (REVIEW): A concern here is we can bounce off of ratelimiter
+                    //  because server keeps telling us "scale up!" and then we hit ratelimit
+                    //  and halve again.
                     if e.code() == Code::ResourceExhausted {
                         // Scale down significantly for resource exhaustion
                         self.change_target(usize::saturating_div, 2);
