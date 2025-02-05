@@ -110,6 +110,11 @@ name = "heavy_tests"
 path = "../tests/heavy_tests.rs"
 test = false
 
+[[test]]
+name = "manual_tests"
+path = "../tests/manual_tests.rs"
+test = false
+
 [[bench]]
 name = "workflow_replay"
 harness = false
