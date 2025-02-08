@@ -118,7 +118,6 @@ async fn poller_load_spiky() {
             })
             .await;
         info!("Initial load ran for {:?}", start_processing.elapsed());
-        // TODO: Maybe send signals for round two
         ah.abort();
         // Wait a minute for poller count to drop
         tokio::time::sleep(Duration::from_secs(60)).await;
