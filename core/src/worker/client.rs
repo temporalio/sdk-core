@@ -187,12 +187,15 @@ impl WorkerClient for WorkerClientBag {
         task_queue: TaskQueue,
         no_retry: Option<NoRetryOnMatching>,
     ) -> Result<PollWorkflowTaskQueueResponse> {
+        #[allow(deprecated)] // want to list all fields explicitly
         let mut request = PollWorkflowTaskQueueRequest {
             namespace: self.namespace.clone(),
             task_queue: Some(task_queue),
             identity: self.identity.clone(),
             binary_checksum: self.binary_checksum(),
             worker_version_capabilities: self.worker_version_capabilities(),
+            // TODO: https://github.com/temporalio/sdk-core/issues/866
+            deployment_options: None,
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
@@ -213,6 +216,7 @@ impl WorkerClient for WorkerClientBag {
         max_tasks_per_sec: Option<f64>,
         no_retry: Option<NoRetryOnMatching>,
     ) -> Result<PollActivityTaskQueueResponse> {
+        #[allow(deprecated)] // want to list all fields explicitly
         let mut request = PollActivityTaskQueueRequest {
             namespace: self.namespace.clone(),
             task_queue: Some(TaskQueue {
@@ -225,6 +229,8 @@ impl WorkerClient for WorkerClientBag {
                 max_tasks_per_second: Some(tps),
             }),
             worker_version_capabilities: self.worker_version_capabilities(),
+            // TODO: https://github.com/temporalio/sdk-core/issues/866
+            deployment_options: None,
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
@@ -244,6 +250,7 @@ impl WorkerClient for WorkerClientBag {
         task_queue: String,
         no_retry: Option<NoRetryOnMatching>,
     ) -> Result<PollNexusTaskQueueResponse> {
+        #[allow(deprecated)] // want to list all fields explicitly
         let mut request = PollNexusTaskQueueRequest {
             namespace: self.namespace.clone(),
             task_queue: Some(TaskQueue {
@@ -253,6 +260,8 @@ impl WorkerClient for WorkerClientBag {
             }),
             identity: self.identity.clone(),
             worker_version_capabilities: self.worker_version_capabilities(),
+            // TODO: https://github.com/temporalio/sdk-core/issues/866
+            deployment_options: None,
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
@@ -308,6 +317,8 @@ impl WorkerClient for WorkerClientBag {
             // TODO: https://github.com/temporalio/sdk-core/issues/866
             deployment: None,
             versioning_behavior: 0,
+            // TODO: https://github.com/temporalio/sdk-core/issues/866
+            deployment_options: None,
         };
         Ok(self
             .cloned_client()
@@ -333,6 +344,7 @@ impl WorkerClient for WorkerClientBag {
                     worker_version: self.worker_version_stamp(),
                     // TODO: https://github.com/temporalio/sdk-core/issues/866
                     deployment: None,
+                    deployment_options: None,
                 },
             )
             .await?
@@ -390,6 +402,7 @@ impl WorkerClient for WorkerClientBag {
                     worker_version: self.worker_version_stamp(),
                     // TODO: https://github.com/temporalio/sdk-core/issues/866
                     deployment: None,
+                    deployment_options: None,
                 },
             )
             .await?
@@ -415,6 +428,7 @@ impl WorkerClient for WorkerClientBag {
                     worker_version: self.worker_version_stamp(),
                     // TODO: https://github.com/temporalio/sdk-core/issues/866
                     deployment: None,
+                    deployment_options: None,
                 },
             )
             .await?
@@ -439,6 +453,7 @@ impl WorkerClient for WorkerClientBag {
             worker_version: self.worker_version_stamp(),
             // TODO: https://github.com/temporalio/sdk-core/issues/866
             deployment: None,
+            deployment_options: None,
         };
         Ok(self
             .cloned_client()
