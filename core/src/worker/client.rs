@@ -194,6 +194,7 @@ impl WorkerClient for WorkerClientBag {
             identity: self.identity.clone(),
             binary_checksum: self.binary_checksum(),
             worker_version_capabilities: self.worker_version_capabilities(),
+            // TODO: https://github.com/temporalio/sdk-core/issues/866
             deployment_options: None,
         }
         .into_request();
@@ -228,6 +229,7 @@ impl WorkerClient for WorkerClientBag {
                 max_tasks_per_second: Some(tps),
             }),
             worker_version_capabilities: self.worker_version_capabilities(),
+            // TODO: https://github.com/temporalio/sdk-core/issues/866
             deployment_options: None,
         }
         .into_request();
@@ -258,6 +260,7 @@ impl WorkerClient for WorkerClientBag {
             }),
             identity: self.identity.clone(),
             worker_version_capabilities: self.worker_version_capabilities(),
+            // TODO: https://github.com/temporalio/sdk-core/issues/866
             deployment_options: None,
         }
         .into_request();
@@ -314,6 +317,7 @@ impl WorkerClient for WorkerClientBag {
             // TODO: https://github.com/temporalio/sdk-core/issues/866
             deployment: None,
             versioning_behavior: 0,
+            // TODO: https://github.com/temporalio/sdk-core/issues/866
             deployment_options: None,
         };
         Ok(self

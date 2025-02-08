@@ -24,7 +24,7 @@ use tracing::info;
 #[tokio::test]
 async fn poller_load_spiky() {
     const SIGNAME: &str = "signame";
-    let num_workflows = 250;
+    let num_workflows = 1000;
     let wf_name = "poller_load";
     let (telemopts, addr, _aborter) =
         if std::env::var("PAR_JOBNUM").unwrap_or("1".to_string()) == "1" {

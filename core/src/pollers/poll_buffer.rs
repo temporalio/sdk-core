@@ -20,8 +20,7 @@ use temporal_sdk_core_api::worker::{
     ActivitySlotKind, NexusSlotKind, PollerBehavior, SlotKind, WorkflowSlotKind,
 };
 use temporal_sdk_core_protos::temporal::api::{
-    sdk::v1::PollerScalingDecision,
-    taskqueue::v1::TaskQueue,
+    taskqueue::v1::{PollerScalingDecision, TaskQueue},
     workflowservice::v1::{
         PollActivityTaskQueueResponse, PollNexusTaskQueueResponse, PollWorkflowTaskQueueResponse,
     },
@@ -297,14 +296,16 @@ impl PollScalerReportHandle {
                     return;
                 }
                 if let Some(scaling_decision) = res.scaling_decision() {
-                    match scaling_decision.poller_delta.cmp(&0) {
+                    match scaling_decision.poll_request_delta_suggestion.cmp(&0) {
                         cmp::Ordering::Less => self.change_target(
                             usize::saturating_sub,
-                            scaling_decision.poller_delta.unsigned_abs() as usize,
+                            scaling_decision
+                                .poll_request_delta_suggestion
+                                .unsigned_abs() as usize,
                         ),
                         cmp::Ordering::Greater => self.change_target(
                             usize::saturating_add,
-                            scaling_decision.poller_delta as usize,
+                            scaling_decision.poll_request_delta_suggestion as usize,
                         ),
                         cmp::Ordering::Equal => {}
                     }
