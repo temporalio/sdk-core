@@ -217,7 +217,7 @@ impl WorkflowFuture {
                 Variant::CancelWorkflow(c) => {
                     // TODO: Cancel pending futures, etc
                     self.cancel_sender
-                        .send(Some(c.cause))
+                        .send(Some(c.reason))
                         .expect("Cancel rx not dropped");
                 }
                 Variant::SignalWorkflow(sig) => {
@@ -528,10 +528,11 @@ impl WorkflowFuture {
                                 RequestCancelLocalActivity { seq },
                             )
                         }
-                        CancellableID::ChildWorkflow(seq) => {
+                        CancellableID::ChildWorkflow { seqnum, reason } => {
                             workflow_command::Variant::CancelChildWorkflowExecution(
                                 CancelChildWorkflowExecution {
-                                    child_workflow_seq: seq,
+                                    child_workflow_seq: seqnum,
+                                    reason,
                                 },
                             )
                         }
@@ -540,14 +541,17 @@ impl WorkflowFuture {
                                 seq,
                             })
                         }
-                        CancellableID::ExternalWorkflow { seqnum, execution } => {
-                            workflow_command::Variant::RequestCancelExternalWorkflowExecution(
-                                RequestCancelExternalWorkflowExecution {
-                                    seq: seqnum,
-                                    workflow_execution: Some(execution),
-                                },
-                            )
-                        }
+                        CancellableID::ExternalWorkflow {
+                            seqnum,
+                            execution,
+                            reason,
+                        } => workflow_command::Variant::RequestCancelExternalWorkflowExecution(
+                            RequestCancelExternalWorkflowExecution {
+                                seq: seqnum,
+                                workflow_execution: Some(execution),
+                                reason,
+                            },
+                        ),
                         CancellableID::NexusOp(seq) => {
                             workflow_command::Variant::RequestCancelNexusOperation(
                                 RequestCancelNexusOperation { seq },

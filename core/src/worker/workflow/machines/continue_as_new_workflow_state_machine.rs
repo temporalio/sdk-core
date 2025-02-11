@@ -1,6 +1,6 @@
 use super::{
-    Cancellable, EventInfo, MachineResponse, NewMachineWithCommand, OnEventWrapper,
-    WFMachinesAdapter, WFMachinesError,
+    EventInfo, MachineResponse, NewMachineWithCommand, OnEventWrapper, WFMachinesAdapter,
+    WFMachinesError,
 };
 use crate::worker::workflow::machines::HistEventData;
 use rustfsm::{fsm, StateMachine, TransitionResult};
@@ -104,8 +104,6 @@ impl WFMachinesAdapter for ContinueAsNewWorkflowMachine {
         Ok(vec![])
     }
 }
-
-impl Cancellable for ContinueAsNewWorkflowMachine {}
 
 #[cfg(test)]
 mod tests {

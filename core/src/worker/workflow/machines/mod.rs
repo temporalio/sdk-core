@@ -94,13 +94,6 @@ trait TemporalStateMachine {
         event: HistEventData,
     ) -> Result<Vec<MachineResponse>, WFMachinesError>;
 
-    /// Attempt to cancel the command associated with this state machine, if it is cancellable
-    fn cancel(&mut self) -> Result<Vec<MachineResponse>, WFMachinesError>;
-
-    /// Should return true if the command was cancelled before we sent it to the server. Always
-    /// returns false for non-cancellable machines
-    fn was_cancelled_before_sent_to_server(&self) -> bool;
-
     /// Returns true if the state machine is in a final state
     fn is_final_state(&self) -> bool;
 
@@ -110,7 +103,7 @@ trait TemporalStateMachine {
 
 impl<SM> TemporalStateMachine for SM
 where
-    SM: StateMachine + WFMachinesAdapter + Cancellable + OnEventWrapper + Clone + 'static,
+    SM: StateMachine + WFMachinesAdapter + OnEventWrapper + Clone + 'static,
     <SM as StateMachine>::Event: TryFrom<HistEventData> + TryFrom<CommandType> + Display,
     WFMachinesError: From<<<SM as StateMachine>::Event as TryFrom<HistEventData>>::Error>,
     <SM as StateMachine>::Command: Debug + Display,
@@ -176,28 +169,28 @@ where
         }
     }
 
-    fn cancel(&mut self) -> Result<Vec<MachineResponse>, WFMachinesError> {
-        let res = self.cancel();
-        res.map_err(|e| match e {
-            MachineError::InvalidTransition => WFMachinesError::Fatal(format!(
-                "Invalid transition while attempting to cancel {} in {}",
-                self.name(),
-                self.state(),
-            )),
-            MachineError::Underlying(e) => e.into(),
-        })
-    }
-
-    fn was_cancelled_before_sent_to_server(&self) -> bool {
-        self.was_cancelled_before_sent_to_server()
-    }
-
     fn is_final_state(&self) -> bool {
         self.has_reached_final_state()
     }
 
     fn name(&self) -> &str {
         self.name()
+    }
+}
+
+impl Machines {
+    /// Should return true if the command was cancelled before we sent it to the server. Always
+    /// returns false for non-cancellable machines
+    fn was_cancelled_before_sent_to_server(&self) -> bool {
+        match self {
+            Machines::ActivityMachine(m) => m.was_cancelled_before_sent_to_server(),
+            Machines::ChildWorkflowMachine(m) => m.was_cancelled_before_sent_to_server(),
+            Machines::LocalActivityMachine(m) => m.was_cancelled_before_sent_to_server(),
+            Machines::SignalExternalMachine(m) => m.was_cancelled_before_sent_to_server(),
+            Machines::TimerMachine(m) => m.was_cancelled_before_sent_to_server(),
+            Machines::NexusOperationMachine(m) => m.was_cancelled_before_sent_to_server(),
+            _ => false,
+        }
     }
 }
 
@@ -252,24 +245,6 @@ struct HistEventData {
 struct EventInfo {
     event_id: i64,
     event_type: EventType,
-}
-
-trait Cancellable: StateMachine {
-    /// Cancel the machine / the command represented by the machine.
-    ///
-    /// # Panics
-    /// * If the machine is not cancellable. It's a logic error on our part to call it on such
-    ///   machines.
-    fn cancel(&mut self) -> Result<Vec<MachineResponse>, MachineError<Self::Error>> {
-        // It's a logic error on our part if this is ever called on a machine that can't actually
-        // be cancelled
-        panic!("Machine {} cannot be cancelled", self.name())
-    }
-
-    /// Should return true if the command was cancelled before we sent it to the server
-    fn was_cancelled_before_sent_to_server(&self) -> bool {
-        false
-    }
 }
 
 /// We need to wrap calls to [StateMachine::on_event] to track coverage, or anything else

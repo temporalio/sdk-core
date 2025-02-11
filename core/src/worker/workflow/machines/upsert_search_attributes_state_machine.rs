@@ -3,7 +3,7 @@ use crate::{
     internal_flags::CoreInternalFlags,
     worker::workflow::{
         machines::{
-            patch_state_machine::VERSION_SEARCH_ATTR_KEY, Cancellable, EventInfo, HistEventData,
+            patch_state_machine::VERSION_SEARCH_ATTR_KEY, EventInfo, HistEventData,
             WFMachinesAdapter,
         },
         InternalFlagsRef, WFMachinesError,
@@ -133,8 +133,6 @@ impl WFMachinesAdapter for UpsertSearchAttributesMachine {
         ))
     }
 }
-
-impl Cancellable for UpsertSearchAttributesMachine {}
 
 // Converts the generic history event with type EventType::UpsertWorkflowSearchAttributes into the
 // UpsertSearchAttributesMachine-specific event type

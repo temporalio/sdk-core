@@ -42,6 +42,7 @@ use anyhow::anyhow;
 use futures_util::{future::abortable, stream, stream::BoxStream, Stream, StreamExt};
 use itertools::Itertools;
 use prost_types::TimestampError;
+use rustfsm::MachineError;
 use std::{
     cell::RefCell,
     collections::VecDeque,
@@ -1327,6 +1328,18 @@ impl WFMachinesError {
                 ),
             ),
             force_cause: WorkflowTaskFailedCause::from(self.evict_reason()) as i32,
+        }
+    }
+}
+
+impl From<MachineError<WFMachinesError>> for WFMachinesError {
+    fn from(v: MachineError<WFMachinesError>) -> Self {
+        match v {
+            MachineError::InvalidTransition => {
+                // TODO: Get states back
+                WFMachinesError::Nondeterminism("Invalid transition in state machine".to_string())
+            }
+            MachineError::Underlying(e) => e,
         }
     }
 }

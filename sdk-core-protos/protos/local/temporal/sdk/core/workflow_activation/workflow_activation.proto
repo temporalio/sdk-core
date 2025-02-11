@@ -262,7 +262,7 @@ message QueryWorkflow {
 // Cancel a running workflow
 message CancelWorkflow {
     // User-specified reason the cancel request was issued
-    string cause = 1;
+    string reason = 1;
 }
 
 // Send a signal to a workflow
