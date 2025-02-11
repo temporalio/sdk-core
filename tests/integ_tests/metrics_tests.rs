@@ -1159,7 +1159,7 @@ async fn otel_errors_logged_as_errors() {
     let _guard = tracing::subscriber::set_default(subscriber);
 
     let opts = OtelCollectorOptionsBuilder::default()
-        .url("https://localhostt:9995/v1/metrics".parse().unwrap()) // Invalid endpoint
+        .url("https://localhost:12345/v1/metrics".parse().unwrap()) // Nothing bound on that port
         .build()
         .unwrap();
     let exporter = build_otlp_metric_exporter(opts).unwrap();
@@ -1174,7 +1174,8 @@ async fn otel_errors_logged_as_errors() {
     let _worker = starter.get_worker().await;
 
     // Wait to allow exporter to attempt sending metrics and fail.
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    // Windows takes a while to fail the network attempt for some reason so 5s.
+    tokio::time::sleep(Duration::from_secs(5)).await;
 
     let logs = logs.lock().unwrap();
     let log_str = String::from_utf8_lossy(&logs);
