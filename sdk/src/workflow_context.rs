@@ -58,7 +58,7 @@ pub struct WfContext {
     args: Arc<Vec<Payload>>,
 
     chan: Sender<RustWfCmd>,
-    am_cancelled: watch::Receiver<bool>,
+    am_cancelled: watch::Receiver<Option<String>>,
     pub(crate) shared: Arc<RwLock<WfContextSharedData>>,
 
     seq_nums: Arc<RwLock<WfCtxProtectedDat>>,
@@ -73,7 +73,7 @@ impl WfContext {
         namespace: String,
         task_queue: String,
         args: Vec<Payload>,
-        am_cancelled: watch::Receiver<bool>,
+        am_cancelled: watch::Receiver<Option<String>>,
     ) -> (Self, Receiver<RustWfCmd>) {
         // The receiving side is non-async
         let (chan, rx) = std::sync::mpsc::channel();
@@ -139,16 +139,21 @@ impl WfContext {
         self.shared.read().random_seed
     }
 
-    /// A future that resolves if/when the workflow is cancelled
-    pub async fn cancelled(&self) {
-        if *self.am_cancelled.borrow() {
-            return;
+    /// A future that resolves if/when the workflow is cancelled, with the user provided cause
+    pub async fn cancelled(&self) -> String {
+        if let Some(s) = self.am_cancelled.borrow().as_ref() {
+            return s.clone();
         }
         self.am_cancelled
             .clone()
             .changed()
             .await
             .expect("Cancelled send half not dropped");
+        self.am_cancelled
+            .borrow()
+            .as_ref()
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// Request to create a timer

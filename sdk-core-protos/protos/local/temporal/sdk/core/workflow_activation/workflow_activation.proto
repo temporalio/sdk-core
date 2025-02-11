@@ -261,8 +261,8 @@ message QueryWorkflow {
 
 // Cancel a running workflow
 message CancelWorkflow {
-    // Information from the cancellation request
-    repeated temporal.api.common.v1.Payload details = 1;
+    // User-specified reason the cancel request was issued
+    string cause = 1;
 }
 
 // Send a signal to a workflow

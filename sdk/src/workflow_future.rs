@@ -55,7 +55,7 @@ impl WorkflowFunction {
         impl Future<Output = WorkflowResult<Payload>>,
         UnboundedSender<WorkflowActivation>,
     ) {
-        let (cancel_tx, cancel_rx) = watch::channel(false);
+        let (cancel_tx, cancel_rx) = watch::channel(None);
         let (wf_context, cmd_receiver) = WfContext::new(namespace, task_queue, args, cancel_rx);
         let (tx, incoming_activations) = unbounded_channel();
         let span = info_span!(
@@ -110,7 +110,7 @@ pub(crate) struct WorkflowFuture {
     /// Commands by ID -> blocked status
     command_status: HashMap<CommandID, WFCommandFutInfo>,
     /// Use to notify workflow code of cancellation
-    cancel_sender: watch::Sender<bool>,
+    cancel_sender: watch::Sender<Option<String>>,
     /// Copy of the workflow context
     wf_ctx: WfContext,
     /// Maps signal IDs to channels to send down when they are signaled
@@ -214,10 +214,10 @@ impl WorkflowFuture {
                         q.query_type
                     );
                 }
-                Variant::CancelWorkflow(_) => {
+                Variant::CancelWorkflow(c) => {
                     // TODO: Cancel pending futures, etc
                     self.cancel_sender
-                        .send(true)
+                        .send(Some(c.cause))
                         .expect("Cancel rx not dropped");
                 }
                 Variant::SignalWorkflow(sig) => {
