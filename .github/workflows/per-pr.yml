@@ -38,7 +38,20 @@ jobs:
   test:
     name: Unit Tests
     timeout-minutes: 10
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, ubuntu-arm, macos-intel, macos-arm, windows-latest ]
+        include:
+          - os: windows-latest
+          - os: ubuntu-latest
+          - os: ubuntu-arm
+            runsOn: ubuntu-24.04-arm64-2-core
+          - os: macos-intel
+            runsOn: macos-13
+          - os: macos-arm
+            runsOn: macos-14
+    runs-on: ${{ matrix.runsOn || matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -69,7 +82,20 @@ jobs:
       TEMPORAL_CLIENT_CERT: ${{ secrets.TEMPORAL_CLIENT_CERT }}
       TEMPORAL_CLIENT_KEY: ${{ secrets.TEMPORAL_CLIENT_KEY }}
     timeout-minutes: 20
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, ubuntu-arm, macos-intel, macos-arm, windows-latest ]
+        include:
+          - os: windows-latest
+          - os: ubuntu-latest
+          - os: ubuntu-arm
+            runsOn: ubuntu-24.04-arm64-2-core
+          - os: macos-intel
+            runsOn: macos-13
+          - os: macos-arm
+            runsOn: macos-14
+    runs-on: ${{ matrix.runsOn || matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

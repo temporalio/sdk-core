@@ -1,5 +1,4 @@
-use futures_util::stream;
-use futures_util::TryStreamExt;
+use futures_util::{stream, TryStreamExt};
 use std::time::{SystemTime, UNIX_EPOCH};
 use temporal_client::{ClientOptionsBuilder, TestService, WorkflowService};
 use temporal_sdk_core::ephemeral_server::{
@@ -29,7 +28,7 @@ async fn temporal_cli_default() {
 #[tokio::test]
 async fn temporal_cli_fixed() {
     let config = TemporalDevServerConfigBuilder::default()
-        .exe(fixed_cached_download("v0.4.0"))
+        .exe(fixed_cached_download("v1.2.0"))
         .build()
         .unwrap();
     let mut server = config.start_server().await.unwrap();
@@ -81,43 +80,49 @@ async fn temporal_cli_concurrent_starts() -> Result<(), Box<dyn std::error::Erro
     Ok(())
 }
 
-#[tokio::test]
-async fn test_server_default() {
-    let config = TestServerConfigBuilder::default()
-        .exe(default_cached_download())
-        .build()
-        .unwrap();
-    let mut server = config.start_server().await.unwrap();
-    assert_ephemeral_server(&server).await;
-    server.shutdown().await.unwrap();
-}
+// Test server downloads aren't available for arm linux
+#[cfg(not(all(target_os = "linux", any(target_arch = "arm", target_arch = "aarch64"))))]
+mod test_server {
+    use super::*;
 
-#[tokio::test]
-async fn test_server_fixed() {
-    let config = TestServerConfigBuilder::default()
-        .exe(fixed_cached_download("v1.16.0"))
-        .build()
-        .unwrap();
-    let mut server = config.start_server().await.unwrap();
-    assert_ephemeral_server(&server).await;
-    server.shutdown().await.unwrap();
-}
+    #[tokio::test]
+    async fn test_server_default() {
+        let config = TestServerConfigBuilder::default()
+            .exe(default_cached_download())
+            .build()
+            .unwrap();
+        let mut server = config.start_server().await.unwrap();
+        assert_ephemeral_server(&server).await;
+        server.shutdown().await.unwrap();
+    }
 
-#[tokio::test]
-async fn test_server_shutdown_port_reuse() {
-    // Start, test shutdown, do again immediately on same port to ensure we can
-    // reuse after shutdown
-    let config = TestServerConfigBuilder::default()
-        .exe(default_cached_download())
-        .port(Some(10124))
-        .build()
-        .unwrap();
-    let mut server = config.start_server().await.unwrap();
-    assert_ephemeral_server(&server).await;
-    server.shutdown().await.unwrap();
-    let mut server = config.start_server().await.unwrap();
-    assert_ephemeral_server(&server).await;
-    server.shutdown().await.unwrap();
+    #[tokio::test]
+    async fn test_server_fixed() {
+        let config = TestServerConfigBuilder::default()
+            .exe(fixed_cached_download("v1.16.0"))
+            .build()
+            .unwrap();
+        let mut server = config.start_server().await.unwrap();
+        assert_ephemeral_server(&server).await;
+        server.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_server_shutdown_port_reuse() {
+        // Start, test shutdown, do again immediately on same port to ensure we can
+        // reuse after shutdown
+        let config = TestServerConfigBuilder::default()
+            .exe(default_cached_download())
+            .port(Some(10124))
+            .build()
+            .unwrap();
+        let mut server = config.start_server().await.unwrap();
+        assert_ephemeral_server(&server).await;
+        server.shutdown().await.unwrap();
+        let mut server = config.start_server().await.unwrap();
+        assert_ephemeral_server(&server).await;
+        server.shutdown().await.unwrap();
+    }
 }
 
 fn fixed_cached_download(version: &str) -> EphemeralExe {
