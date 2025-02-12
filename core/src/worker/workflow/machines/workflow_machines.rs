@@ -237,6 +237,24 @@ where
     }
 }
 
+/// Helper macro for invoking cancels on machines
+macro_rules! cancel_machine {
+    ($self:expr, $cmd_id:expr, $machine_variant:ident, $cancel_method:ident $(, $args:expr )* $(,)?) => {{
+        let m_key = $self.get_machine_key($cmd_id)?;
+        let machine = if let Machines::$machine_variant(ref mut m) = $self.machine_mut(m_key) {
+            m
+        } else {
+            return Err(WFMachinesError::Nondeterminism(format!(
+                "Machine was not a {} when it should have been during cancellation: {:?}",
+                stringify!($machine_variant),
+                $cmd_id
+            )));
+        };
+        let machine_resps = machine.$cancel_method($($args),*)?;
+        $self.process_machine_responses(m_key, machine_resps)?
+    }};
+}
+
 impl WorkflowMachines {
     pub(crate) fn new(basics: RunBasics, driven_wf: DrivenWorkflow) -> Self {
         let replaying = basics.history.previous_wft_started_id > 0;
@@ -1292,17 +1310,7 @@ impl WorkflowMachines {
                     );
                 }
                 WFCommandVariant::CancelTimer(attrs) => {
-                    let id = CommandID::Timer(attrs.seq);
-                    let m_key = self.get_machine_key(id)?;
-                    let mach = if let Machines::TimerMachine(m) = self.machine_mut(m_key) {
-                        m
-                    } else {
-                        return Err(WFMachinesError::Nondeterminism(format!(
-                            "Machine was not a timer machine when it should have been: {id:?}"
-                        )));
-                    };
-                    let machine_resps = mach.cancel()?;
-                    self.process_machine_responses(m_key, machine_resps)?;
+                    cancel_machine!(self, CommandID::Timer(attrs.seq), TimerMachine, cancel);
                 }
                 WFCommandVariant::AddActivity(attrs) => {
                     let seq = attrs.seq;
@@ -1341,30 +1349,20 @@ impl WorkflowMachines {
                     self.process_machine_responses(machkey, mach_resp)?;
                 }
                 WFCommandVariant::RequestCancelActivity(attrs) => {
-                    let id = CommandID::Activity(attrs.seq);
-                    let m_key = self.get_machine_key(id)?;
-                    let mach = if let Machines::ActivityMachine(m) = self.machine_mut(m_key) {
-                        m
-                    } else {
-                        return Err(WFMachinesError::Nondeterminism(format!(
-                            "Machine was not an activity machine when it should have been: {id:?}"
-                        )));
-                    };
-                    let machine_resps = mach.cancel()?;
-                    self.process_machine_responses(m_key, machine_resps)?;
+                    cancel_machine!(
+                        self,
+                        CommandID::Activity(attrs.seq),
+                        ActivityMachine,
+                        cancel
+                    );
                 }
                 WFCommandVariant::RequestCancelLocalActivity(attrs) => {
-                    let id = CommandID::LocalActivity(attrs.seq);
-                    let m_key = self.get_machine_key(id)?;
-                    let mach = if let Machines::LocalActivityMachine(m) = self.machine_mut(m_key) {
-                        m
-                    } else {
-                        return Err(WFMachinesError::Nondeterminism(format!(
-                            "Machine was not a local activity machine when it should have been: {id:?}"
-                        )));
-                    };
-                    let machine_resps = mach.cancel()?;
-                    self.process_machine_responses(m_key, machine_resps)?;
+                    cancel_machine!(
+                        self,
+                        CommandID::LocalActivity(attrs.seq),
+                        LocalActivityMachine,
+                        cancel
+                    );
                 }
                 WFCommandVariant::CompleteWorkflow(attrs) => {
                     self.add_terminal_command(complete_workflow(attrs), cmd.metadata);
@@ -1434,17 +1432,13 @@ impl WorkflowMachines {
                     );
                 }
                 WFCommandVariant::CancelChild(attrs) => {
-                    let id = CommandID::ChildWorkflowStart(attrs.child_workflow_seq);
-                    let m_key = self.get_machine_key(id)?;
-                    let mach = if let Machines::ChildWorkflowMachine(m) = self.machine_mut(m_key) {
-                        m
-                    } else {
-                        return Err(WFMachinesError::Nondeterminism(format!(
-                            "Machine was not a child workflow machine when it should have been: {id:?}"
-                        )));
-                    };
-                    let machine_resps = mach.cancel(attrs.reason)?;
-                    self.process_machine_responses(m_key, machine_resps)?
+                    cancel_machine!(
+                        self,
+                        CommandID::ChildWorkflowStart(attrs.child_workflow_seq),
+                        ChildWorkflowMachine,
+                        cancel,
+                        attrs.reason
+                    );
                 }
                 WFCommandVariant::RequestCancelExternalWorkflow(attrs) => {
                     let we = attrs.workflow_execution.ok_or_else(|| {
@@ -1476,18 +1470,12 @@ impl WorkflowMachines {
                     );
                 }
                 WFCommandVariant::CancelSignalWorkflow(attrs) => {
-                    let id = CommandID::SignalExternal(attrs.seq);
-                    let m_key = self.get_machine_key(id)?;
-                    let mach = if let Machines::SignalExternalMachine(m) = self.machine_mut(m_key) {
-                        m
-                    } else {
-                        return Err(WFMachinesError::Nondeterminism(format!(
-                            "Machine was not a signal external workflow machine when it should \
-                             have been: {id:?}"
-                        )));
-                    };
-                    let machine_resps = mach.cancel()?;
-                    self.process_machine_responses(m_key, machine_resps)?;
+                    cancel_machine!(
+                        self,
+                        CommandID::SignalExternal(attrs.seq),
+                        SignalExternalMachine,
+                        cancel
+                    );
                 }
                 WFCommandVariant::QueryResponse(_) => {
                     // Nothing to do here, queries are handled above the machine level
@@ -1523,18 +1511,12 @@ impl WorkflowMachines {
                     );
                 }
                 WFCommandVariant::RequestCancelNexusOperation(attrs) => {
-                    let id = CommandID::NexusOperation(attrs.seq);
-                    let m_key = self.get_machine_key(id)?;
-                    let mach = if let Machines::NexusOperationMachine(m) = self.machine_mut(m_key) {
-                        m
-                    } else {
-                        return Err(WFMachinesError::Nondeterminism(format!(
-                            "Machine was not a nexus operation machine when it should \
-                            have been: {id:?}"
-                        )));
-                    };
-                    let machine_resps = mach.cancel()?;
-                    self.process_machine_responses(m_key, machine_resps)?
+                    cancel_machine!(
+                        self,
+                        CommandID::NexusOperation(attrs.seq),
+                        NexusOperationMachine,
+                        cancel
+                    );
                 }
                 WFCommandVariant::NoCommandsFromLang => (),
             }
