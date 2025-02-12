@@ -237,6 +237,24 @@ where
     }
 }
 
+/// Helper macro for invoking cancels on machines
+macro_rules! cancel_machine {
+    ($self:expr, $cmd_id:expr, $machine_variant:ident, $cancel_method:ident $(, $args:expr )* $(,)?) => {{
+        let m_key = $self.get_machine_key($cmd_id)?;
+        let machine = if let Machines::$machine_variant(ref mut m) = $self.machine_mut(m_key) {
+            m
+        } else {
+            return Err(WFMachinesError::Nondeterminism(format!(
+                "Machine was not a {} when it should have been during cancellation: {:?}",
+                stringify!($machine_variant),
+                $cmd_id
+            )));
+        };
+        let machine_resps = machine.$cancel_method($($args),*)?;
+        $self.process_machine_responses(m_key, machine_resps)?
+    }};
+}
+
 impl WorkflowMachines {
     pub(crate) fn new(basics: RunBasics, driven_wf: DrivenWorkflow) -> Self {
         let replaying = basics.history.previous_wft_started_id > 0;
@@ -1110,14 +1128,6 @@ impl WorkflowMachines {
             trace!(responses = %machine_responses.display(), machine_name = %sm.name(),
                    "Machine produced responses");
         }
-        self.process_machine_resps_impl(smk, machine_responses)
-    }
-
-    fn process_machine_resps_impl(
-        &mut self,
-        smk: MachineKey,
-        machine_responses: Vec<MachineResponse>,
-    ) -> Result<()> {
         for response in machine_responses {
             match response {
                 MachineResponse::PushWFJob(a) => {
@@ -1300,7 +1310,7 @@ impl WorkflowMachines {
                     );
                 }
                 WFCommandVariant::CancelTimer(attrs) => {
-                    self.process_cancellation(CommandID::Timer(attrs.seq))?;
+                    cancel_machine!(self, CommandID::Timer(attrs.seq), TimerMachine, cancel);
                 }
                 WFCommandVariant::AddActivity(attrs) => {
                     let seq = attrs.seq;
@@ -1339,10 +1349,20 @@ impl WorkflowMachines {
                     self.process_machine_responses(machkey, mach_resp)?;
                 }
                 WFCommandVariant::RequestCancelActivity(attrs) => {
-                    self.process_cancellation(CommandID::Activity(attrs.seq))?;
+                    cancel_machine!(
+                        self,
+                        CommandID::Activity(attrs.seq),
+                        ActivityMachine,
+                        cancel
+                    );
                 }
                 WFCommandVariant::RequestCancelLocalActivity(attrs) => {
-                    self.process_cancellation(CommandID::LocalActivity(attrs.seq))?;
+                    cancel_machine!(
+                        self,
+                        CommandID::LocalActivity(attrs.seq),
+                        LocalActivityMachine,
+                        cancel
+                    );
                 }
                 WFCommandVariant::CompleteWorkflow(attrs) => {
                     self.add_terminal_command(complete_workflow(attrs), cmd.metadata);
@@ -1411,9 +1431,15 @@ impl WorkflowMachines {
                         CommandID::ChildWorkflowStart(seq).into(),
                     );
                 }
-                WFCommandVariant::CancelChild(attrs) => self.process_cancellation(
-                    CommandID::ChildWorkflowStart(attrs.child_workflow_seq),
-                )?,
+                WFCommandVariant::CancelChild(attrs) => {
+                    cancel_machine!(
+                        self,
+                        CommandID::ChildWorkflowStart(attrs.child_workflow_seq),
+                        ChildWorkflowMachine,
+                        cancel,
+                        attrs.reason
+                    );
+                }
                 WFCommandVariant::RequestCancelExternalWorkflow(attrs) => {
                     let we = attrs.workflow_execution.ok_or_else(|| {
                         WFMachinesError::Fatal(
@@ -1426,7 +1452,10 @@ impl WorkflowMachines {
                             attrs.seq,
                             we,
                             false,
-                            format!("Cancel requested by workflow with run id {}", self.run_id),
+                            format!(
+                                "Cancel requested by workflow with run id {} with reason: {}",
+                                self.run_id, attrs.reason
+                            ),
                         ),
                         cmd.metadata,
                         CommandID::CancelExternal(attrs.seq).into(),
@@ -1441,7 +1470,12 @@ impl WorkflowMachines {
                     );
                 }
                 WFCommandVariant::CancelSignalWorkflow(attrs) => {
-                    self.process_cancellation(CommandID::SignalExternal(attrs.seq))?;
+                    cancel_machine!(
+                        self,
+                        CommandID::SignalExternal(attrs.seq),
+                        SignalExternalMachine,
+                        cancel
+                    );
                 }
                 WFCommandVariant::QueryResponse(_) => {
                     // Nothing to do here, queries are handled above the machine level
@@ -1456,17 +1490,17 @@ impl WorkflowMachines {
                 }
                 WFCommandVariant::UpdateResponse(ur) => {
                     let m_key = self.get_machine_by_msg(&ur.protocol_instance_id)?;
-                    let mach = self.machine_mut(m_key);
-                    if let Machines::UpdateMachine(m) = mach {
-                        let resps = m.handle_response(ur)?;
-                        self.process_machine_responses(m_key, resps)?;
+                    let m = if let Machines::UpdateMachine(m) = self.machine_mut(m_key) {
+                        m
                     } else {
                         return Err(WFMachinesError::Nondeterminism(format!(
                             "Tried to handle an update response for \
                              update with instance id {} but it was not found!",
                             &ur.protocol_instance_id
                         )));
-                    }
+                    };
+                    let resps = m.handle_response(ur)?;
+                    self.process_machine_responses(m_key, resps)?;
                 }
                 WFCommandVariant::ScheduleNexusOperation(attrs) => {
                     let seq = attrs.seq;
@@ -1477,23 +1511,17 @@ impl WorkflowMachines {
                     );
                 }
                 WFCommandVariant::RequestCancelNexusOperation(attrs) => {
-                    self.process_cancellation(CommandID::NexusOperation(attrs.seq))?
+                    cancel_machine!(
+                        self,
+                        CommandID::NexusOperation(attrs.seq),
+                        NexusOperationMachine,
+                        cancel
+                    );
                 }
                 WFCommandVariant::NoCommandsFromLang => (),
             }
         }
         Ok(())
-    }
-
-    /// Given a command id to attempt to cancel, try to cancel it and return any jobs that should
-    /// be included in the activation
-    fn process_cancellation(&mut self, id: CommandID) -> Result<()> {
-        let m_key = self.get_machine_key(id)?;
-        let mach = self.machine_mut(m_key);
-        let machine_resps = mach.cancel()?;
-        debug!(machine_responses = %machine_resps.display(), cmd_id = ?id,
-               "Cancel request responses");
-        self.process_machine_resps_impl(m_key, machine_resps)
     }
 
     fn get_machine_key(&self, id: CommandID) -> Result<MachineKey> {
@@ -1511,6 +1539,14 @@ impl WorkflowMachines {
                     "Missing associated machine for protocol message {protocol_instance_id}"
                 ))
             })?)
+    }
+
+    fn machine(&self, m: MachineKey) -> &Machines {
+        self.all_machines.get(m).expect("Machine must exist")
+    }
+
+    fn machine_mut(&mut self, m: MachineKey) -> &mut Machines {
+        self.all_machines.get_mut(m).expect("Machine must exist")
     }
 
     fn add_terminal_command(
@@ -1566,14 +1602,6 @@ impl WorkflowMachines {
         let k = self.all_machines.insert(machine);
         self.machines_by_protocol_instance_id.insert(instance_id, k);
         k
-    }
-
-    fn machine(&self, m: MachineKey) -> &Machines {
-        self.all_machines.get(m).expect("Machine must exist")
-    }
-
-    fn machine_mut(&mut self, m: MachineKey) -> &mut Machines {
-        self.all_machines.get_mut(m).expect("Machine must exist")
     }
 
     fn augment_continue_as_new_with_current_values(

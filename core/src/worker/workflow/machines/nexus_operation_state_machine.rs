@@ -1,7 +1,7 @@
 use crate::worker::workflow::{
     machines::{
-        workflow_machines::MachineResponse, Cancellable, EventInfo, HistEventData,
-        NewMachineWithCommand, OnEventWrapper, WFMachinesAdapter,
+        workflow_machines::MachineResponse, EventInfo, HistEventData, NewMachineWithCommand,
+        OnEventWrapper, WFMachinesAdapter,
     },
     WFMachinesError,
 };
@@ -120,6 +120,21 @@ impl NexusOperationMachine {
             command: attribs.into(),
             machine: s.into(),
         }
+    }
+
+    pub(super) fn cancel(&mut self) -> Result<Vec<MachineResponse>, MachineError<WFMachinesError>> {
+        let event = NexusOperationMachineEvents::Cancel;
+        let cmds = OnEventWrapper::on_event_mut(self, event)?;
+        let mach_resps = cmds
+            .into_iter()
+            .map(|mc| self.adapt_response(mc, None))
+            .flatten_ok()
+            .try_collect()?;
+        Ok(mach_resps)
+    }
+
+    pub(super) fn was_cancelled_before_sent_to_server(&self) -> bool {
+        self.shared_state.cancelled_before_sent
     }
 }
 
@@ -491,23 +506,6 @@ impl TryFrom<CommandType> for NexusOperationMachineEvents {
             CommandType::RequestCancelNexusOperation => Self::CommandRequestCancelNexusOperation,
             _ => return Err(()),
         })
-    }
-}
-
-impl Cancellable for NexusOperationMachine {
-    fn cancel(&mut self) -> Result<Vec<MachineResponse>, MachineError<Self::Error>> {
-        let event = NexusOperationMachineEvents::Cancel;
-        let cmds = OnEventWrapper::on_event_mut(self, event)?;
-        let mach_resps = cmds
-            .into_iter()
-            .map(|mc| self.adapt_response(mc, None))
-            .flatten_ok()
-            .try_collect()?;
-        Ok(mach_resps)
-    }
-
-    fn was_cancelled_before_sent_to_server(&self) -> bool {
-        self.shared_state.cancelled_before_sent
     }
 }
 

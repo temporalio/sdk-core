@@ -1,6 +1,6 @@
 use super::{
-    workflow_machines::MachineResponse, Cancellable, EventInfo, NewMachineWithCommand,
-    OnEventWrapper, WFMachinesAdapter, WFMachinesError,
+    workflow_machines::MachineResponse, EventInfo, NewMachineWithCommand, OnEventWrapper,
+    WFMachinesAdapter, WFMachinesError,
 };
 use crate::worker::workflow::machines::HistEventData;
 use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
@@ -258,8 +258,8 @@ impl WFMachinesAdapter for SignalExternalMachine {
     }
 }
 
-impl Cancellable for SignalExternalMachine {
-    fn cancel(&mut self) -> Result<Vec<MachineResponse>, MachineError<Self::Error>> {
+impl SignalExternalMachine {
+    pub(super) fn cancel(&mut self) -> Result<Vec<MachineResponse>, MachineError<WFMachinesError>> {
         let res = OnEventWrapper::on_event_mut(self, SignalExternalMachineEvents::Cancel)?;
         let mut ret = vec![];
         match res.first() {
@@ -282,7 +282,7 @@ impl Cancellable for SignalExternalMachine {
         Ok(ret)
     }
 
-    fn was_cancelled_before_sent_to_server(&self) -> bool {
+    pub(super) fn was_cancelled_before_sent_to_server(&self) -> bool {
         // We are only ever in the cancelled state if cancelled before sent to server, there is no
         // after sent cancellation here.
         matches!(self.state(), SignalExternalMachineState::Cancelled(_))

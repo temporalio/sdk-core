@@ -1,5 +1,5 @@
 use super::{
-    workflow_machines::MachineResponse, Cancellable, EventInfo, OnEventWrapper, WFMachinesAdapter,
+    workflow_machines::MachineResponse, EventInfo, OnEventWrapper, WFMachinesAdapter,
     WFMachinesError,
 };
 use crate::{
@@ -313,6 +313,30 @@ impl LocalActivityMachine {
             })
             .collect())
     }
+
+    pub(super) fn cancel(&mut self) -> Result<Vec<MachineResponse>, MachineError<WFMachinesError>> {
+        let event = match self.shared_state.attrs.cancellation_type {
+            ct @ ActivityCancellationType::TryCancel | ct @ ActivityCancellationType::Abandon => {
+                LocalActivityMachineEvents::NoWaitCancel(ct)
+            }
+            _ => LocalActivityMachineEvents::Cancel,
+        };
+        let cmds = OnEventWrapper::on_event_mut(self, event)?;
+        let mach_resps = cmds
+            .into_iter()
+            .map(|mc| self.adapt_response(mc, None))
+            .flatten_ok()
+            .try_collect()?;
+        Ok(mach_resps)
+    }
+
+    pub(super) fn was_cancelled_before_sent_to_server(&self) -> bool {
+        // This needs to always be false because for the situation where we cancel in the same WFT,
+        // no command of any kind is created and no LA request is queued. Otherwise, the command we
+        // create to record a cancel marker *needs* to be sent to the server still, which returning
+        // true here would prevent.
+        false
+    }
 }
 
 #[derive(Clone)]
@@ -602,32 +626,6 @@ impl WaitingMarkerEventPreResolved {
         dat: CompleteLocalActivityData,
     ) -> LocalActivityMachineTransition<MarkerCommandRecorded> {
         verify_marker_dat!(shared, &dat, TransitionResult::default())
-    }
-}
-
-impl Cancellable for LocalActivityMachine {
-    fn cancel(&mut self) -> Result<Vec<MachineResponse>, MachineError<Self::Error>> {
-        let event = match self.shared_state.attrs.cancellation_type {
-            ct @ ActivityCancellationType::TryCancel | ct @ ActivityCancellationType::Abandon => {
-                LocalActivityMachineEvents::NoWaitCancel(ct)
-            }
-            _ => LocalActivityMachineEvents::Cancel,
-        };
-        let cmds = OnEventWrapper::on_event_mut(self, event)?;
-        let mach_resps = cmds
-            .into_iter()
-            .map(|mc| self.adapt_response(mc, None))
-            .flatten_ok()
-            .try_collect()?;
-        Ok(mach_resps)
-    }
-
-    fn was_cancelled_before_sent_to_server(&self) -> bool {
-        // This needs to always be false because for the situation where we cancel in the same WFT,
-        // no command of any kind is created and no LA request is queued. Otherwise, the command we
-        // create to record a cancel marker *needs* to be sent to the server still, which returning
-        // true here would prevent.
-        false
     }
 }
 

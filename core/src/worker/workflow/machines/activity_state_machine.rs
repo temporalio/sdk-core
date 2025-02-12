@@ -1,8 +1,8 @@
 #![allow(clippy::large_enum_variant)]
 
 use super::{
-    workflow_machines::MachineResponse, Cancellable, EventInfo, NewMachineWithCommand,
-    OnEventWrapper, WFMachinesAdapter, WFMachinesError,
+    workflow_machines::MachineResponse, EventInfo, NewMachineWithCommand, OnEventWrapper,
+    WFMachinesAdapter, WFMachinesError,
 };
 use crate::{
     abstractions::dbg_panic,
@@ -164,6 +164,45 @@ impl ActivityMachine {
             is_local: false,
         }
     }
+
+    pub(super) fn cancel(&mut self) -> Result<Vec<MachineResponse>, MachineError<WFMachinesError>> {
+        if matches!(
+            self.state(),
+            ActivityMachineState::Completed(_)
+                | ActivityMachineState::Canceled(_)
+                | ActivityMachineState::Failed(_)
+                | ActivityMachineState::TimedOut(_)
+        ) {
+            // Ignore attempted cancels in terminal states
+            debug!(
+                "Attempted to cancel already resolved activity (seq {})",
+                self.shared_state.attrs.seq
+            );
+            return Ok(vec![]);
+        }
+        let event = match self.shared_state.cancellation_type {
+            ActivityCancellationType::Abandon => ActivityMachineEvents::Abandon,
+            _ => ActivityMachineEvents::Cancel,
+        };
+        let vec = OnEventWrapper::on_event_mut(self, event)?;
+        let res = vec
+            .into_iter()
+            .flat_map(|amc| match amc {
+                ActivityMachineCommand::RequestCancellation(cmd) => {
+                    self.machine_responses_from_cancel_request(cmd)
+                }
+                ActivityMachineCommand::Cancel(details) => {
+                    vec![self.create_cancelation_resolve(details).into()]
+                }
+                x => panic!("Invalid cancel event response {x:?}"),
+            })
+            .collect();
+        Ok(res)
+    }
+
+    pub(super) fn was_cancelled_before_sent_to_server(&self) -> bool {
+        self.shared_state().cancelled_before_sent
+    }
 }
 
 impl TryFrom<HistEventData> for ActivityMachineEvents {
@@ -296,47 +335,6 @@ impl TryFrom<CommandType> for ActivityMachineEvents {
             CommandType::RequestCancelActivityTask => Self::CommandRequestCancelActivityTask,
             _ => return Err(()),
         })
-    }
-}
-
-impl Cancellable for ActivityMachine {
-    fn cancel(&mut self) -> Result<Vec<MachineResponse>, MachineError<Self::Error>> {
-        if matches!(
-            self.state(),
-            ActivityMachineState::Completed(_)
-                | ActivityMachineState::Canceled(_)
-                | ActivityMachineState::Failed(_)
-                | ActivityMachineState::TimedOut(_)
-        ) {
-            // Ignore attempted cancels in terminal states
-            debug!(
-                "Attempted to cancel already resolved activity (seq {})",
-                self.shared_state.attrs.seq
-            );
-            return Ok(vec![]);
-        }
-        let event = match self.shared_state.cancellation_type {
-            ActivityCancellationType::Abandon => ActivityMachineEvents::Abandon,
-            _ => ActivityMachineEvents::Cancel,
-        };
-        let vec = OnEventWrapper::on_event_mut(self, event)?;
-        let res = vec
-            .into_iter()
-            .flat_map(|amc| match amc {
-                ActivityMachineCommand::RequestCancellation(cmd) => {
-                    self.machine_responses_from_cancel_request(cmd)
-                }
-                ActivityMachineCommand::Cancel(details) => {
-                    vec![self.create_cancelation_resolve(details).into()]
-                }
-                x => panic!("Invalid cancel event response {x:?}"),
-            })
-            .collect();
-        Ok(res)
-    }
-
-    fn was_cancelled_before_sent_to_server(&self) -> bool {
-        self.shared_state().cancelled_before_sent
     }
 }
 

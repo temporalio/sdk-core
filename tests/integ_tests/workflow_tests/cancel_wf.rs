@@ -5,10 +5,16 @@ use temporal_sdk_core_protos::temporal::api::enums::v1::WorkflowExecutionStatus;
 use temporal_sdk_core_test_utils::CoreWfStarter;
 
 async fn cancelled_wf(ctx: WfContext) -> WorkflowResult<()> {
+    let mut reason = "".to_string();
     let cancelled = tokio::select! {
         _ = ctx.timer(Duration::from_secs(500)) => false,
-        _ = ctx.cancelled() => true
+        r = ctx.cancelled() => {
+            reason = r;
+            true
+        }
     };
+
+    assert_eq!(reason, "Dieee");
 
     if cancelled {
         Ok(WfExitValue::Cancelled)

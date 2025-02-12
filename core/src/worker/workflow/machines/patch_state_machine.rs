@@ -18,8 +18,8 @@
 //! | replaying, no marker         | deprecate_patch | Call allowed                                                                       |
 
 use super::{
-    workflow_machines::MachineResponse, Cancellable, EventInfo, NewMachineWithCommand,
-    OnEventWrapper, WFMachinesAdapter, WFMachinesError,
+    workflow_machines::MachineResponse, EventInfo, NewMachineWithCommand, OnEventWrapper,
+    WFMachinesAdapter, WFMachinesError,
 };
 use crate::{
     internal_flags::CoreInternalFlags,
@@ -232,8 +232,6 @@ impl WFMachinesAdapter for PatchMachine {
         panic!("Patch machine does not produce commands")
     }
 }
-
-impl Cancellable for PatchMachine {}
 
 impl TryFrom<CommandType> for PatchMachineEvents {
     type Error = ();

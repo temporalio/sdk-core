@@ -1,6 +1,6 @@
 use super::{
-    workflow_machines::MachineResponse, Cancellable, EventInfo, NewMachineWithCommand,
-    OnEventWrapper, WFMachinesAdapter, WFMachinesError,
+    workflow_machines::MachineResponse, EventInfo, NewMachineWithCommand, OnEventWrapper,
+    WFMachinesAdapter, WFMachinesError,
 };
 use crate::worker::workflow::machines::HistEventData;
 use rustfsm::{fsm, StateMachine, TransitionResult};
@@ -208,8 +208,6 @@ impl WFMachinesAdapter for CancelExternalMachine {
     }
 }
 
-impl Cancellable for CancelExternalMachine {}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -222,11 +220,14 @@ mod tests {
 
     async fn cancel_sender(ctx: WfContext) -> WorkflowResult<()> {
         let res = ctx
-            .cancel_external(NamespacedWorkflowExecution {
-                namespace: "some_namespace".to_string(),
-                workflow_id: "fake_wid".to_string(),
-                run_id: "fake_rid".to_string(),
-            })
+            .cancel_external(
+                NamespacedWorkflowExecution {
+                    namespace: "some_namespace".to_string(),
+                    workflow_id: "fake_wid".to_string(),
+                    run_id: "fake_rid".to_string(),
+                },
+                "cancel reason".to_string(),
+            )
             .await;
         if res.is_err() {
             Err(anyhow::anyhow!("Cancel fail!"))

@@ -739,40 +739,66 @@ impl Unblockable for NexusOperationResult {
 
 /// Identifier for cancellable operations
 #[derive(Debug, Clone)]
-pub enum CancellableID {
-    /// Timer sequence number
+pub(crate) enum CancellableID {
     Timer(u32),
-    /// Activity sequence number
     Activity(u32),
-    /// Activity sequence number
     LocalActivity(u32),
-    /// Start child sequence number
-    ChildWorkflow(u32),
-    /// Signal workflow
-    SignalExternalWorkflow(u32),
-    /// An external workflow identifier as may have been created by a started child workflow
-    ExternalWorkflow {
-        /// Sequence number which will be used for the cancel command
+    ChildWorkflow {
         seqnum: u32,
-        /// Identifying information about the workflow to be cancelled
+        reason: String,
+    },
+    SignalExternalWorkflow(u32),
+    ExternalWorkflow {
+        seqnum: u32,
         execution: NamespacedWorkflowExecution,
+        reason: String,
     },
     /// A nexus operation (waiting for start)
     NexusOp(u32),
 }
 
-impl CancellableID {
-    /// Returns the type-specific sequence number used for this command
-    pub fn seq_num(&self) -> u32 {
+/// Cancellation IDs that support a reason.
+pub(crate) trait SupportsCancelReason {
+    /// Returns a new version of this ID with the provided cancellation reason.
+    fn with_reason(self, reason: String) -> CancellableID;
+}
+#[derive(Debug, Clone)]
+pub(crate) enum CancellableIDWithReason {
+    ChildWorkflow {
+        seqnum: u32,
+    },
+    ExternalWorkflow {
+        seqnum: u32,
+        execution: NamespacedWorkflowExecution,
+    },
+}
+impl CancellableIDWithReason {
+    pub(crate) fn seq_num(&self) -> u32 {
         match self {
-            CancellableID::Timer(seq) => *seq,
-            CancellableID::Activity(seq) => *seq,
-            CancellableID::LocalActivity(seq) => *seq,
-            CancellableID::ChildWorkflow(seq) => *seq,
-            CancellableID::SignalExternalWorkflow(seq) => *seq,
-            CancellableID::ExternalWorkflow { seqnum, .. } => *seqnum,
-            CancellableID::NexusOp(seq) => *seq,
+            CancellableIDWithReason::ChildWorkflow { seqnum } => *seqnum,
+            CancellableIDWithReason::ExternalWorkflow { seqnum, .. } => *seqnum,
         }
+    }
+}
+impl SupportsCancelReason for CancellableIDWithReason {
+    fn with_reason(self, reason: String) -> CancellableID {
+        match self {
+            CancellableIDWithReason::ChildWorkflow { seqnum } => {
+                CancellableID::ChildWorkflow { seqnum, reason }
+            }
+            CancellableIDWithReason::ExternalWorkflow { seqnum, execution } => {
+                CancellableID::ExternalWorkflow {
+                    seqnum,
+                    execution,
+                    reason,
+                }
+            }
+        }
+    }
+}
+impl From<CancellableIDWithReason> for CancellableID {
+    fn from(v: CancellableIDWithReason) -> Self {
+        v.with_reason("".to_string())
     }
 }
 

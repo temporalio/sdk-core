@@ -267,6 +267,8 @@ message StartChildWorkflowExecution {
 message CancelChildWorkflowExecution {
     // Sequence number as given to the `StartChildWorkflowExecution` command
     uint32 child_workflow_seq = 1;
+    // A reason for the cancellation
+    string reason = 2;
 }
 
 // Request cancellation of an external workflow execution. For cancellation of a child workflow,
@@ -276,6 +278,8 @@ message RequestCancelExternalWorkflowExecution {
     uint32 seq = 1;
     // The workflow instance being targeted
     common.NamespacedWorkflowExecution workflow_execution = 2;
+    // A reason for the cancellation
+    string reason = 3;
 }
 
 // Send a signal to an external or child workflow
