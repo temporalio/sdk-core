@@ -58,7 +58,6 @@ import "temporal/api/taskqueue/v1/message.proto";
 import "temporal/api/update/v1/message.proto";
 import "temporal/api/version/v1/message.proto";
 import "temporal/api/batch/v1/message.proto";
-import "temporal/api/sdk/v1/poller_scaling.proto";
 import "temporal/api/sdk/v1/task_complete_metadata.proto";
 import "temporal/api/sdk/v1/user_metadata.proto";
 import "temporal/api/nexus/v1/message.proto";
@@ -333,7 +332,7 @@ message PollWorkflowTaskQueueResponse {
     // Protocol messages piggybacking on a WFT as a transport
     repeated temporal.api.protocol.v1.Message messages = 15;
     // Server-advised information the SDK may use to adjust its poller count.
-    temporal.api.sdk.v1.PollerScalingDecision poller_scaling_decision = 16;
+    temporal.api.taskqueue.v1.PollerScalingDecision poller_scaling_decision = 16;
 }
 
 message RespondWorkflowTaskCompletedRequest {
@@ -500,7 +499,7 @@ message PollActivityTaskQueueResponse {
     // values are not specified or exceed configured system limits.
     temporal.api.common.v1.RetryPolicy retry_policy = 17;
     // Server-advised information the SDK may use to adjust its poller count.
-    temporal.api.sdk.v1.PollerScalingDecision poller_scaling_decision = 18;
+    temporal.api.taskqueue.v1.PollerScalingDecision poller_scaling_decision = 18;
 }
 
 message RecordActivityTaskHeartbeatRequest {
@@ -1739,7 +1738,7 @@ message PollNexusTaskQueueResponse {
     // Embedded request as translated from the incoming frontend request.
     temporal.api.nexus.v1.Request request = 2;
     // Server-advised information the SDK may use to adjust its poller count.
-    temporal.api.sdk.v1.PollerScalingDecision poller_scaling_decision = 3;
+    temporal.api.taskqueue.v1.PollerScalingDecision poller_scaling_decision = 3;
 }
 
 message RespondNexusTaskCompletedRequest {
@@ -2113,7 +2112,7 @@ message ListWorkerDeploymentsResponse {
     bytes next_page_token = 1;
     // The list of worker deployments.
     repeated WorkerDeploymentSummary worker_deployments = 2;
-  
+
     // (-- api-linter: core::0123::resource-annotation=disabled --)
     // A subset of WorkerDeploymentInfo
     message WorkerDeploymentSummary {

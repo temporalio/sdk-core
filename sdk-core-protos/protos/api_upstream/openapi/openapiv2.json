@@ -11432,12 +11432,13 @@
     "v1PollerScalingDecision": {
       "type": "object",
       "properties": {
-        "pollerDelta": {
+        "pollRequestDeltaSuggestion": {
           "type": "integer",
           "format": "int32",
-          "description": "How many pollers should be added or removed, if any. As of now, server only scales up or down\nby 1. However, SDKs should allow for other values (while staying within defined min/max)."
+          "description": "How many poll requests to suggest should be added or removed, if any. As of now, server only\nscales up or down by 1. However, SDKs should allow for other values (while staying within\ndefined min/max).\n\nThe SDK is free to ignore this suggestion, EX: making more polls would not make sense because\nall slots are already occupied."
         }
-      }
+      },
+      "description": "Attached to task responses to give hints to the SDK about how it may adjust its number of\npollers."
     },
     "v1ProtocolMessageCommandAttributes": {
       "type": "object",
