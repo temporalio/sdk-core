@@ -683,8 +683,8 @@ pub mod coresdk {
         }
 
         impl From<WorkflowExecutionCancelRequestedEventAttributes> for CancelWorkflow {
-            fn from(_a: WorkflowExecutionCancelRequestedEventAttributes) -> Self {
-                Self { details: vec![] }
+            fn from(a: WorkflowExecutionCancelRequestedEventAttributes) -> Self {
+                Self { reason: a.cause }
             }
         }
 

@@ -92,7 +92,7 @@ async fn parent_cancels_child_wf(ctx: WfContext) -> WorkflowResult<()> {
         .await
         .into_started()
         .expect("Child should get started");
-    start_res.cancel(&ctx);
+    start_res.cancel(&ctx, "cancel reason".to_string());
     let stat = start_res
         .result()
         .await
@@ -157,6 +157,7 @@ async fn cancel_child_workflow_lang_thinks_not_started_but_is(
         act.run_id,
         CancelChildWorkflowExecution {
             child_workflow_seq: 1,
+            reason: "dieee".to_string(),
         }
         .into(),
     ))
@@ -215,6 +216,7 @@ async fn cancel_already_complete_child_ignored() {
         vec![
             CancelChildWorkflowExecution {
                 child_workflow_seq: 1,
+                reason: "go away!".to_string(),
             }
             .into(),
             CompleteWorkflowExecution { result: None }.into(),

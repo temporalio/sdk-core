@@ -1,9 +1,13 @@
 use anyhow::anyhow;
+use assert_matches::assert_matches;
 use std::time::Duration;
 use temporal_client::{WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{ChildWorkflowOptions, WfContext, WfExitValue, WorkflowResult};
 use temporal_sdk_core_protos::{
-    coresdk::child_workflow::{child_workflow_result, ChildWorkflowCancellationType, Success},
+    coresdk::{
+        child_workflow::{child_workflow_result, ChildWorkflowCancellationType, Success},
+        AsJsonPayloadExt,
+    },
     temporal::api::enums::v1::ParentClosePolicy,
 };
 use temporal_sdk_core_test_utils::CoreWfStarter;
@@ -82,7 +86,7 @@ async fn abandoned_child_bug_repro() {
             // Wait for cancel signal
             ctx.cancelled().await;
             // Cancel the child immediately
-            started.cancel(&ctx);
+            started.cancel(&ctx, "Die reason!".to_string());
             // Need to do something else, so we'll see the ChildWorkflowExecutionCanceled event
             ctx.timer(Duration::from_secs(1)).await;
             started.result().await;
@@ -153,7 +157,7 @@ async fn abandoned_child_resolves_post_cancel() {
             // Wait for cancel signal
             ctx.cancelled().await;
             // Cancel the child immediately
-            started.cancel(&ctx);
+            started.cancel(&ctx, "Die reason".to_string());
             // Need to do something else, so we will see the child completing
             ctx.timer(Duration::from_secs(1)).await;
             started.result().await;
@@ -190,4 +194,41 @@ async fn abandoned_child_resolves_post_cancel() {
         worker.run_until_done().await.unwrap();
     };
     tokio::join!(canceller, runner);
+}
+
+#[tokio::test]
+async fn cancelled_child_gets_reason() {
+    let wf_name = "cancelled-child-gets-reason";
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter.worker_config.no_remote_activities(true);
+    let mut worker = starter.worker().await;
+
+    worker.register_wf(wf_name.to_string(), move |ctx: WfContext| async move {
+        let child = ctx.child_workflow(ChildWorkflowOptions {
+            workflow_id: format!("{}-child", ctx.task_queue()),
+            workflow_type: CHILD_WF_TYPE.to_owned(),
+            cancel_type: ChildWorkflowCancellationType::WaitCancellationRequested,
+            ..Default::default()
+        });
+
+        let started = child
+            .start(&ctx)
+            .await
+            .into_started()
+            .expect("Child chould start OK");
+        // Cancel the child  after start
+        started.cancel(&ctx, "Die reason".to_string());
+        let r = started.result().await;
+        let out = assert_matches!(r.status,
+            Some(child_workflow_result::Status::Completed(reason)) => reason);
+        assert_eq!(out.result.unwrap(), "Die reason".as_json_payload().unwrap());
+        Ok(().into())
+    });
+    worker.register_wf(CHILD_WF_TYPE.to_string(), |c: WfContext| async move {
+        let r = c.cancelled().await;
+        Ok(r.into())
+    });
+
+    starter.start_with_worker(wf_name, &mut worker).await;
+    worker.run_until_done().await.unwrap();
 }

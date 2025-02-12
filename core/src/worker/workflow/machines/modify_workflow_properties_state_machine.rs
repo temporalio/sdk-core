@@ -1,6 +1,6 @@
 use super::{workflow_machines::MachineResponse, NewMachineWithCommand};
 use crate::worker::workflow::{
-    machines::{Cancellable, EventInfo, HistEventData, WFMachinesAdapter},
+    machines::{EventInfo, HistEventData, WFMachinesAdapter},
     WFMachinesError,
 };
 use rustfsm::{fsm, StateMachine, TransitionResult};
@@ -56,8 +56,6 @@ impl WFMachinesAdapter for ModifyWorkflowPropertiesMachine {
         ))
     }
 }
-
-impl Cancellable for ModifyWorkflowPropertiesMachine {}
 
 impl TryFrom<HistEventData> for ModifyWorkflowPropertiesMachineEvents {
     type Error = WFMachinesError;

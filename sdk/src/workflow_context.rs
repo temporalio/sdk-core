@@ -7,9 +7,10 @@ pub use options::{
 
 use crate::{
     workflow_context::options::IntoWorkflowCommand, CancelExternalWfResult, CancellableID,
-    CommandCreateRequest, CommandSubscribeChildWorkflowCompletion, IntoUpdateHandlerFunc,
-    IntoUpdateValidatorFunc, NexusStartResult, RustWfCmd, SignalExternalWfResult, TimerResult,
-    UnblockEvent, Unblockable, UpdateFunctions,
+    CancellableIDWithReason, CommandCreateRequest, CommandSubscribeChildWorkflowCompletion,
+    IntoUpdateHandlerFunc, IntoUpdateValidatorFunc, NexusStartResult, RustWfCmd,
+    SignalExternalWfResult, SupportsCancelReason, TimerResult, UnblockEvent, Unblockable,
+    UpdateFunctions,
 };
 use futures_util::{future::Shared, task::Context, FutureExt, Stream, StreamExt};
 use parking_lot::{RwLock, RwLockReadGuard};
@@ -58,7 +59,7 @@ pub struct WfContext {
     args: Arc<Vec<Payload>>,
 
     chan: Sender<RustWfCmd>,
-    am_cancelled: watch::Receiver<bool>,
+    am_cancelled: watch::Receiver<Option<String>>,
     pub(crate) shared: Arc<RwLock<WfContextSharedData>>,
 
     seq_nums: Arc<RwLock<WfCtxProtectedDat>>,
@@ -73,7 +74,7 @@ impl WfContext {
         namespace: String,
         task_queue: String,
         args: Vec<Payload>,
-        am_cancelled: watch::Receiver<bool>,
+        am_cancelled: watch::Receiver<Option<String>>,
     ) -> (Self, Receiver<RustWfCmd>) {
         // The receiving side is non-async
         let (chan, rx) = std::sync::mpsc::channel();
@@ -139,16 +140,21 @@ impl WfContext {
         self.shared.read().random_seed
     }
 
-    /// A future that resolves if/when the workflow is cancelled
-    pub async fn cancelled(&self) {
-        if *self.am_cancelled.borrow() {
-            return;
+    /// A future that resolves if/when the workflow is cancelled, with the user provided cause
+    pub async fn cancelled(&self) -> String {
+        if let Some(s) = self.am_cancelled.borrow().as_ref() {
+            return s.clone();
         }
         self.am_cancelled
             .clone()
             .changed()
             .await
             .expect("Cancelled send half not dropped");
+        self.am_cancelled
+            .borrow()
+            .as_ref()
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// Request to create a timer
@@ -322,6 +328,7 @@ impl WfContext {
     pub fn cancel_external(
         &self,
         target: NamespacedWorkflowExecution,
+        reason: String,
     ) -> impl Future<Output = CancelExternalWfResult> {
         let seq = self.seq_nums.write().next_cancel_external_wf_seq();
         let (cmd, unblocker) = WFCommandFut::new();
@@ -332,6 +339,7 @@ impl WfContext {
                         RequestCancelExternalWorkflowExecution {
                             seq,
                             workflow_execution: Some(target),
+                            reason,
                         }
                         .into(),
                     ),
@@ -520,6 +528,12 @@ pub trait CancellableFuture<T>: Future<Output = T> {
     fn cancel(&self, cx: &WfContext);
 }
 
+/// A Future that can be cancelled with a reason
+pub trait CancellableFutureWithReason<T>: CancellableFuture<T> {
+    /// Cancel this Future with a reason
+    fn cancel_with_reason(&self, cx: &WfContext, reason: String);
+}
+
 struct WFCommandFut<T, D> {
     _unused: PhantomData<T>,
     result_rx: oneshot::Receiver<UnblockEvent>,
@@ -565,20 +579,17 @@ where
     }
 }
 
-struct CancellableWFCommandFut<T, D> {
+struct CancellableWFCommandFut<T, D, ID = CancellableID> {
     cmd_fut: WFCommandFut<T, D>,
-    cancellable_id: CancellableID,
+    cancellable_id: ID,
 }
-impl<T> CancellableWFCommandFut<T, ()> {
-    fn new(cancellable_id: CancellableID) -> (Self, oneshot::Sender<UnblockEvent>) {
+impl<T, ID> CancellableWFCommandFut<T, (), ID> {
+    fn new(cancellable_id: ID) -> (Self, oneshot::Sender<UnblockEvent>) {
         Self::new_with_dat(cancellable_id, ())
     }
 }
-impl<T, D> CancellableWFCommandFut<T, D> {
-    fn new_with_dat(
-        cancellable_id: CancellableID,
-        other_dat: D,
-    ) -> (Self, oneshot::Sender<UnblockEvent>) {
+impl<T, D, ID> CancellableWFCommandFut<T, D, ID> {
+    fn new_with_dat(cancellable_id: ID, other_dat: D) -> (Self, oneshot::Sender<UnblockEvent>) {
         let (cmd_fut, sender) = WFCommandFut::new_with_dat(other_dat);
         (
             Self {
@@ -589,8 +600,8 @@ impl<T, D> CancellableWFCommandFut<T, D> {
         )
     }
 }
-impl<T, D> Unpin for CancellableWFCommandFut<T, D> where T: Unblockable<OtherDat = D> {}
-impl<T, D> Future for CancellableWFCommandFut<T, D>
+impl<T, D, ID> Unpin for CancellableWFCommandFut<T, D, ID> where T: Unblockable<OtherDat = D> {}
+impl<T, D, ID> Future for CancellableWFCommandFut<T, D, ID>
 where
     T: Unblockable<OtherDat = D>,
 {
@@ -601,12 +612,22 @@ where
     }
 }
 
-impl<T, D> CancellableFuture<T> for CancellableWFCommandFut<T, D>
+impl<T, D, ID> CancellableFuture<T> for CancellableWFCommandFut<T, D, ID>
+where
+    T: Unblockable<OtherDat = D>,
+    ID: Clone + Into<CancellableID>,
+{
+    fn cancel(&self, cx: &WfContext) {
+        cx.cancel(self.cancellable_id.clone().into());
+    }
+}
+impl<T, D> CancellableFutureWithReason<T> for CancellableWFCommandFut<T, D, CancellableIDWithReason>
 where
     T: Unblockable<OtherDat = D>,
 {
-    fn cancel(&self, cx: &WfContext) {
-        cx.cancel(self.cancellable_id.clone());
+    fn cancel_with_reason(&self, cx: &WfContext, reason: String) {
+        let new_id = self.cancellable_id.clone().with_reason(reason);
+        cx.cancel(new_id);
     }
 }
 
@@ -706,7 +727,7 @@ pub struct ChildWorkflow {
 
 pub(crate) struct ChildWfCommon {
     workflow_id: String,
-    result_future: CancellableWFCommandFut<ChildWorkflowResult, ()>,
+    result_future: CancellableWFCommandFut<ChildWorkflowResult, (), CancellableIDWithReason>,
 }
 
 /// Child workflow in pending state
@@ -739,14 +760,14 @@ pub struct StartedChildWorkflow {
 
 impl ChildWorkflow {
     /// Start the child workflow, the returned Future is cancellable.
-    pub fn start(self, cx: &WfContext) -> impl CancellableFuture<PendingChildWorkflow> {
+    pub fn start(self, cx: &WfContext) -> impl CancellableFutureWithReason<PendingChildWorkflow> {
         let child_seq = cx.seq_nums.write().next_child_workflow_seq();
         // Immediately create the command/future for the result, otherwise if the user does
         // not await the result until *after* we receive an activation for it, there will be nothing
         // to match when unblocking.
         let cancel_seq = cx.seq_nums.write().next_cancel_external_wf_seq();
         let (result_cmd, unblocker) =
-            CancellableWFCommandFut::new(CancellableID::ExternalWorkflow {
+            CancellableWFCommandFut::new(CancellableIDWithReason::ExternalWorkflow {
                 seqnum: cancel_seq,
                 execution: NamespacedWorkflowExecution {
                     workflow_id: self.opts.workflow_id.clone(),
@@ -766,8 +787,10 @@ impl ChildWorkflow {
             result_future: result_cmd,
         };
 
-        let (cmd, unblocker) =
-            CancellableWFCommandFut::new_with_dat(CancellableID::ChildWorkflow(child_seq), common);
+        let (cmd, unblocker) = CancellableWFCommandFut::new_with_dat(
+            CancellableIDWithReason::ChildWorkflow { seqnum: child_seq },
+            common,
+        );
         cx.send(
             CommandCreateRequest {
                 cmd: self.opts.into_command(child_seq),
@@ -783,15 +806,16 @@ impl ChildWorkflow {
 impl StartedChildWorkflow {
     /// Consumes self and returns a future that will wait until completion of this child workflow
     /// execution
-    pub fn result(self) -> impl CancellableFuture<ChildWorkflowResult> {
+    pub fn result(self) -> impl CancellableFutureWithReason<ChildWorkflowResult> {
         self.common.result_future
     }
 
     /// Cancel the child workflow
-    pub fn cancel(&self, cx: &WfContext) {
+    pub fn cancel(&self, cx: &WfContext, reason: String) {
         cx.send(RustWfCmd::NewNonblockingCmd(
             CancelChildWorkflowExecution {
                 child_workflow_seq: self.common.result_future.cancellable_id.seq_num(),
+                reason,
             }
             .into(),
         ));

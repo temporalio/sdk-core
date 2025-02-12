@@ -1,8 +1,8 @@
 #![allow(clippy::large_enum_variant)]
 
 use super::{
-    workflow_machines::MachineResponse, Cancellable, EventInfo, NewMachineWithCommand,
-    OnEventWrapper, WFMachinesAdapter,
+    workflow_machines::MachineResponse, EventInfo, NewMachineWithCommand, OnEventWrapper,
+    WFMachinesAdapter,
 };
 use crate::worker::workflow::{machines::HistEventData, WFMachinesError};
 use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
@@ -88,6 +88,22 @@ impl TimerMachine {
                 cancelled_before_sent: false,
             },
         )
+    }
+
+    pub(super) fn cancel(&mut self) -> Result<Vec<MachineResponse>, MachineError<WFMachinesError>> {
+        Ok(
+            match OnEventWrapper::on_event_mut(self, TimerMachineEvents::Cancel)?.pop() {
+                Some(TimerMachineCommand::IssueCancelCmd(cmd)) => {
+                    vec![MachineResponse::IssueNewCommand(cmd.into())]
+                }
+                None => vec![],
+                x => panic!("Invalid cancel event response {x:?}"),
+            },
+        )
+    }
+
+    pub(super) fn was_cancelled_before_sent_to_server(&self) -> bool {
+        self.shared_state().cancelled_before_sent
     }
 }
 
@@ -229,24 +245,6 @@ impl WFMachinesAdapter for TimerMachine {
                 vec![MachineResponse::IssueNewCommand(c.into())]
             }
         })
-    }
-}
-
-impl Cancellable for TimerMachine {
-    fn cancel(&mut self) -> Result<Vec<MachineResponse>, MachineError<Self::Error>> {
-        Ok(
-            match OnEventWrapper::on_event_mut(self, TimerMachineEvents::Cancel)?.pop() {
-                Some(TimerMachineCommand::IssueCancelCmd(cmd)) => {
-                    vec![MachineResponse::IssueNewCommand(cmd.into())]
-                }
-                None => vec![],
-                x => panic!("Invalid cancel event response {x:?}"),
-            },
-        )
-    }
-
-    fn was_cancelled_before_sent_to_server(&self) -> bool {
-        self.shared_state().cancelled_before_sent
     }
 }
 

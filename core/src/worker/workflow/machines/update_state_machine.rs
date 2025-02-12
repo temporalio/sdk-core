@@ -1,7 +1,7 @@
 use super::{workflow_machines::MachineResponse, EventInfo, WFMachinesAdapter, WFMachinesError};
 use crate::{
     protosext::protocol_messages::UpdateRequest,
-    worker::workflow::machines::{Cancellable, HistEventData, NewMachineWithResponse},
+    worker::workflow::machines::{HistEventData, NewMachineWithResponse},
 };
 use itertools::Itertools;
 use prost::EncodeError;
@@ -407,5 +407,3 @@ impl From<CompletedImmediatelyAcceptCreated> for CompletedImmediatelyCompleteCre
         CompletedImmediatelyCompleteCreated {}
     }
 }
-
-impl Cancellable for UpdateMachine {}

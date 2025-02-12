@@ -1,8 +1,6 @@
 #![allow(clippy::enum_variant_names)]
 
-use super::{
-    workflow_machines::MachineResponse, Cancellable, EventInfo, WFMachinesAdapter, WFMachinesError,
-};
+use super::{workflow_machines::MachineResponse, EventInfo, WFMachinesAdapter, WFMachinesError};
 use crate::worker::workflow::machines::HistEventData;
 use rustfsm::{fsm, StateMachine, TransitionResult};
 use std::{
@@ -158,8 +156,6 @@ impl TryFrom<CommandType> for WorkflowTaskMachineEvents {
         Err(())
     }
 }
-
-impl Cancellable for WorkflowTaskMachine {}
 
 #[derive(Debug, Clone)]
 pub(super) struct SharedState {

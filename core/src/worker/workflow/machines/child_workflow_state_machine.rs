@@ -1,6 +1,6 @@
 use super::{
-    workflow_machines::MachineResponse, Cancellable, EventInfo, NewMachineWithCommand,
-    OnEventWrapper, WFMachinesAdapter, WFMachinesError,
+    workflow_machines::MachineResponse, EventInfo, NewMachineWithCommand, OnEventWrapper,
+    WFMachinesAdapter, WFMachinesError,
 };
 use crate::{
     internal_flags::CoreInternalFlags,
@@ -54,7 +54,7 @@ fsm! {
     StartCommandCreated --(CommandStartChildWorkflowExecution) --> StartCommandCreated;
     StartCommandCreated --(StartChildWorkflowExecutionInitiated(ChildWorkflowInitiatedData),
         shared on_start_child_workflow_execution_initiated) --> StartEventRecorded;
-    StartCommandCreated --(Cancel, shared on_cancelled) --> Cancelled;
+    StartCommandCreated --(Cancel(String), shared on_cancelled) --> Cancelled;
 
     StartEventRecorded --(ChildWorkflowExecutionStarted(ChildWorkflowExecutionStartedEvent),
         shared on_child_workflow_execution_started) --> Started;
@@ -74,13 +74,13 @@ fsm! {
     // If cancelled after started, we need to issue a cancel external workflow command, and then
     // the child workflow will resolve somehow, so we want to go back to started and wait for that
     // resolution.
-    Started --(Cancel, shared on_cancelled) --> Started;
+    Started --(Cancel(String), shared on_cancelled) --> Started;
     // Abandon & try cancel modes may immediately move to cancelled
-    Started --(Cancel, shared on_cancelled) --> Cancelled;
+    Started --(Cancel(String), shared on_cancelled) --> Cancelled;
     Started --(CommandRequestCancelExternalWorkflowExecution) --> Started;
 
     // Ignore any spurious cancellations after resolution
-    Cancelled --(Cancel) --> Cancelled;
+    Cancelled --(Cancel(String)) --> Cancelled;
     Cancelled --(ChildWorkflowExecutionCancelled,
         on_child_workflow_execution_cancelled) --> Cancelled;
     // Completions of any kind after cancellation are acceptable for abandoned children
@@ -92,10 +92,10 @@ fsm! {
         shared on_child_workflow_execution_timed_out) --> Cancelled;
     Cancelled --(ChildWorkflowExecutionTerminated,
         shared on_child_workflow_execution_terminated) --> Cancelled;
-    Failed --(Cancel) --> Failed;
-    StartFailed --(Cancel) --> StartFailed;
-    TimedOut --(Cancel) --> TimedOut;
-    Completed --(Cancel) --> Completed;
+    Failed --(Cancel(String)) --> Failed;
+    StartFailed --(Cancel(String)) --> StartFailed;
+    TimedOut --(Cancel(String)) --> TimedOut;
+    Completed --(Cancel(String)) --> Completed;
 }
 
 pub(super) struct ChildWorkflowExecutionStartedEvent {
@@ -255,10 +255,14 @@ impl StartCommandCreated {
     pub(super) fn on_cancelled(
         self,
         state: &mut SharedState,
+        reason: String,
     ) -> ChildWorkflowMachineTransition<Cancelled> {
         state.cancelled_before_sent = true;
         ChildWorkflowMachineTransition::commands(vec![ChildWorkflowCommand::StartCancel(Failure {
-            message: "Child Workflow execution cancelled before scheduled".to_owned(),
+            message: format!(
+                "Child Workflow Execution cancelled before scheduled: {}",
+                reason
+            ),
             cause: Some(Box::new(Failure {
                 failure_info: Some(FailureInfo::CanceledFailureInfo(
                     failure::CanceledFailureInfo {
@@ -385,6 +389,7 @@ impl Started {
     fn on_cancelled(
         self,
         state: &mut SharedState,
+        reason: String,
     ) -> ChildWorkflowMachineTransition<StartedOrCancelled> {
         let dest = match state.cancel_type {
             ChildWorkflowCancellationType::Abandon | ChildWorkflowCancellationType::TryCancel => {
@@ -393,9 +398,7 @@ impl Started {
             _ => StartedOrCancelled::Started(Default::default()),
         };
         TransitionResult::ok(
-            [ChildWorkflowCommand::IssueCancelAfterStarted {
-                reason: "Parent workflow requested cancel".to_string(),
-            }],
+            [ChildWorkflowCommand::IssueCancelAfterStarted { reason }],
             dest,
         )
     }
@@ -482,6 +485,30 @@ impl ChildWorkflowMachine {
                 })),
             }),
         }
+    }
+
+    pub(super) fn cancel(
+        &mut self,
+        reason: String,
+    ) -> Result<Vec<MachineResponse>, MachineError<WFMachinesError>> {
+        let event = ChildWorkflowMachineEvents::Cancel(reason);
+        let vec = OnEventWrapper::on_event_mut(self, event)?;
+        let res = vec
+            .into_iter()
+            .map(|mc| match mc {
+                c @ ChildWorkflowCommand::StartCancel(_)
+                | c @ ChildWorkflowCommand::IssueCancelAfterStarted { .. } => {
+                    self.adapt_response(c, None)
+                }
+                x => panic!("Invalid cancel event response {x:?}"),
+            })
+            .flatten_ok()
+            .try_collect()?;
+        Ok(res)
+    }
+
+    pub(super) fn was_cancelled_before_sent_to_server(&self) -> bool {
+        self.shared_state.cancelled_before_sent
     }
 }
 
@@ -710,29 +737,6 @@ impl TryFrom<CommandType> for ChildWorkflowMachineEvents {
             }
             _ => return Err(()),
         })
-    }
-}
-
-impl Cancellable for ChildWorkflowMachine {
-    fn cancel(&mut self) -> Result<Vec<MachineResponse>, MachineError<Self::Error>> {
-        let event = ChildWorkflowMachineEvents::Cancel;
-        let vec = OnEventWrapper::on_event_mut(self, event)?;
-        let res = vec
-            .into_iter()
-            .map(|mc| match mc {
-                c @ ChildWorkflowCommand::StartCancel(_)
-                | c @ ChildWorkflowCommand::IssueCancelAfterStarted { .. } => {
-                    self.adapt_response(c, None)
-                }
-                x => panic!("Invalid cancel event response {x:?}"),
-            })
-            .flatten_ok()
-            .try_collect()?;
-        Ok(res)
-    }
-
-    fn was_cancelled_before_sent_to_server(&self) -> bool {
-        self.shared_state.cancelled_before_sent
     }
 }
 
@@ -988,7 +992,7 @@ mod test {
                     internal_flags: Rc::new(RefCell::new(InternalFlags::default())),
                 },
             );
-            let cmds = s.cancel().unwrap();
+            let cmds = s.cancel("cancel reason".to_string()).unwrap();
             assert_eq!(cmds.len(), 0);
             assert_eq!(discriminant(&state), discriminant(s.state()));
         }
