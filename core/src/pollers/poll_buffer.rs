@@ -1,7 +1,7 @@
 use crate::{
     abstractions::{MeteredPermitDealer, OwnedMeteredSemPermit, dbg_panic},
     pollers::{self, Poller},
-    worker::client::WorkerClient,
+    worker::client::{PollActivityOptions, PollOptions, PollWorkflowOptions, WorkerClient},
 };
 use futures_util::{FutureExt, StreamExt, future::BoxFuture, stream::FuturesUnordered};
 use governor::{Quota, RateLimiter};
@@ -20,7 +20,7 @@ use temporal_sdk_core_api::worker::{
     ActivitySlotKind, NexusSlotKind, PollerBehavior, SlotKind, WorkflowSlotKind,
 };
 use temporal_sdk_core_protos::temporal::api::{
-    taskqueue::v1::{PollerScalingDecision, TaskQueue},
+    taskqueue::v1::PollerScalingDecision,
     workflowservice::v1::{
         PollActivityTaskQueueResponse, PollNexusTaskQueueResponse, PollWorkflowTaskQueueResponse,
     },
@@ -29,6 +29,7 @@ use tokio::{
     sync::{
         Mutex, broadcast,
         mpsc::{UnboundedReceiver, unbounded_channel},
+        watch,
     },
     task::JoinHandle,
 };
@@ -54,7 +55,7 @@ where
     SK: SlotKind + 'static,
 {
     pub(crate) fn new<FT, DelayFut>(
-        poll_fn: impl Fn() -> FT + Send + Sync + 'static,
+        poll_fn: impl Fn(Option<Duration>) -> FT + Send + Sync + 'static,
         permit_dealer: MeteredPermitDealer<SK>,
         poller_behavior: PollerBehavior,
         shutdown: CancellationToken,
@@ -118,19 +119,31 @@ where
                     let pf = pf.clone();
                     let tx = tx.clone();
                     let report_handle = poll_scaler.get_report_handle();
+                    // Reduce poll timeout if we're frequently getting tasks, to avoid having many
+                    // outstanding long polls for a full minute after a burst subsides.
+                    let timeout_override =
+                        if report_handle.ingested_this_period.load(Ordering::Relaxed) > 2 {
+                            Some(Duration::from_secs(11))
+                        } else {
+                            None
+                        };
                     let poll_task = tokio::spawn(async move {
                         let r = tokio::select! {
-                            r = pf() => r,
+                            r = pf(timeout_override) => r,
                             _ = shutdown.cancelled() => return,
                         };
                         drop(active_guard);
-                        report_handle.poll_result(&r);
-                        let _ = tx.send(r.map(|r| (r, permit)));
+                        if report_handle.poll_result(&r) {
+                            let _ = tx.send(r.map(|r| (r, permit)));
+                        }
                     });
                     let _ = spawned_tx.send(poll_task);
                 }
                 drop(spawned_tx);
                 poll_task_awaiter.await.unwrap();
+                if let Some(it) = poll_scaler.ingestor_task {
+                    it.await.unwrap();
+                }
             }
             .instrument(info_span!("polling_task").or_current()),
         );
@@ -224,6 +237,7 @@ struct PollScaler<F> {
     active_tx: watch::Sender<usize>,
     active_rx: watch::Receiver<usize>,
     num_pollers_handler: Option<Arc<F>>,
+    ingestor_task: Option<JoinHandle<()>>,
 }
 
 impl<F> PollScaler<F>
@@ -247,12 +261,31 @@ where
             target: AtomicUsize::new(target),
             ever_saw_scaling_decision: AtomicBool::default(),
             behavior,
+            ingested_this_period: Default::default(),
+            ingested_last_period: Default::default(),
+            scale_up_allowed: AtomicBool::new(true),
         });
+        let rhc = report_handle.clone();
+        let join_handle = if behavior.is_autoscaling() {
+            Some(tokio::task::spawn(async move {
+                let mut interval = tokio::time::interval(Duration::from_millis(100));
+                loop {
+                    interval.tick().await;
+                    let ingested = rhc.ingested_this_period.swap(0, Ordering::Relaxed);
+                    let ingested_last = rhc.ingested_last_period.swap(ingested, Ordering::Relaxed);
+                    rhc.scale_up_allowed
+                        .store(ingested_last >= ingested, Ordering::Relaxed);
+                }
+            }))
+        } else {
+            None
+        };
         Self {
             report_handle,
             active_tx,
             active_rx,
             num_pollers_handler,
+            ingestor_task: join_handle,
         }
     }
     async fn wait_until_below_max(&mut self) {
@@ -282,18 +315,28 @@ where
 struct PollScalerReportHandle {
     max: usize,
     min: usize,
+    // TODO: Try clamping this down if the actual max number of polls we had open in the last
+    //   period is significantly less than the target
     target: AtomicUsize,
     ever_saw_scaling_decision: AtomicBool,
     behavior: PollerBehavior,
+
+    ingested_this_period: AtomicUsize,
+    ingested_last_period: AtomicUsize,
+    scale_up_allowed: AtomicBool,
 }
 
 impl PollScalerReportHandle {
-    fn poll_result(&self, res: &Result<impl TaskPollerResult, tonic::Status>) {
+    /// Returns true if the response should be passed on, false if it should be swallowed
+    fn poll_result(&self, res: &Result<impl TaskPollerResult, tonic::Status>) -> bool {
         match res {
             Ok(res) => {
                 if let PollerBehavior::SimpleMaximum(_) = self.behavior {
                     // We don't do auto-scaling with the simple max
-                    return;
+                    return true;
+                }
+                if !res.is_empty() {
+                    self.ingested_this_period.fetch_add(1, Ordering::Relaxed);
                 }
                 if let Some(scaling_decision) = res.scaling_decision() {
                     match scaling_decision.poll_request_delta_suggestion.cmp(&0) {
@@ -303,10 +346,15 @@ impl PollScalerReportHandle {
                                 .poll_request_delta_suggestion
                                 .unsigned_abs() as usize,
                         ),
-                        cmp::Ordering::Greater => self.change_target(
-                            usize::saturating_add,
-                            scaling_decision.poll_request_delta_suggestion as usize,
-                        ),
+                        cmp::Ordering::Greater => {
+                            // Only allow scale up if in the last period it increased ingestion rate
+                            if self.scale_up_allowed.load(Ordering::Relaxed) {
+                                self.change_target(
+                                    usize::saturating_add,
+                                    scaling_decision.poll_request_delta_suggestion as usize,
+                                )
+                            }
+                        }
                         cmp::Ordering::Equal => {}
                     }
                     self.ever_saw_scaling_decision
@@ -333,9 +381,11 @@ impl PollScalerReportHandle {
                         // reclaim this poller
                         self.change_target(usize::saturating_sub, 1);
                     }
+                    return false;
                 }
             }
         }
+        true
     }
 
     #[inline]
@@ -404,13 +454,14 @@ pub(crate) type PollWorkflowTaskBuffer =
     LongPollBuffer<PollWorkflowTaskQueueResponse, WorkflowSlotKind>;
 pub(crate) fn new_workflow_task_buffer(
     client: Arc<dyn WorkerClient>,
-    task_queue: TaskQueue,
+    task_queue: String,
+    sticky_queue: Option<String>,
     poller_behavior: PollerBehavior,
     permit_dealer: MeteredPermitDealer<WorkflowSlotKind>,
     shutdown: CancellationToken,
     num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
 ) -> PollWorkflowTaskBuffer {
-    let no_poll_retry = if matches!(poller_behavior, PollerBehavior::Autoscaling { .. }) {
+    let no_retry = if matches!(poller_behavior, PollerBehavior::Autoscaling { .. }) {
         Some(NoRetryOnMatching {
             predicate: poll_scaling_error_matcher,
         })
@@ -418,10 +469,22 @@ pub(crate) fn new_workflow_task_buffer(
         None
     };
     LongPollBuffer::new(
-        move || {
+        move |timeout_override| {
             let client = client.clone();
             let task_queue = task_queue.clone();
-            async move { client.poll_workflow_task(task_queue, no_poll_retry).await }
+            let sticky_queue_name = sticky_queue.clone();
+            async move {
+                client
+                    .poll_workflow_task(
+                        PollOptions {
+                            task_queue,
+                            no_retry,
+                            timeout_override,
+                        },
+                        PollWorkflowOptions { sticky_queue_name },
+                    )
+                    .await
+            }
         },
         permit_dealer,
         poller_behavior,
@@ -448,7 +511,7 @@ pub(crate) fn new_activity_task_buffer(
         Quota::with_period(Duration::from_secs_f64(ps.recip()))
             .map(|q| Arc::new(RateLimiter::direct(q)))
     });
-    let no_poll_retry = if matches!(poller_behavior, PollerBehavior::Autoscaling { .. }) {
+    let no_retry = if matches!(poller_behavior, PollerBehavior::Autoscaling { .. }) {
         Some(NoRetryOnMatching {
             predicate: poll_scaling_error_matcher,
         })
@@ -456,12 +519,21 @@ pub(crate) fn new_activity_task_buffer(
         None
     };
     LongPollBuffer::new(
-        move || {
+        move |timeout_override| {
             let client = client.clone();
             let task_queue = task_queue.clone();
             async move {
                 client
-                    .poll_activity_task(task_queue, max_tps, no_poll_retry)
+                    .poll_activity_task(
+                        PollOptions {
+                            task_queue,
+                            no_retry,
+                            timeout_override,
+                        },
+                        PollActivityOptions {
+                            max_tasks_per_sec: max_tps,
+                        },
+                    )
                     .await
             }
         },
@@ -487,7 +559,7 @@ pub(crate) fn new_nexus_task_buffer(
     shutdown: CancellationToken,
     num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
 ) -> PollNexusTaskBuffer {
-    let no_poll_retry = if matches!(poller_behavior, PollerBehavior::Autoscaling { .. }) {
+    let no_retry = if matches!(poller_behavior, PollerBehavior::Autoscaling { .. }) {
         Some(NoRetryOnMatching {
             predicate: poll_scaling_error_matcher,
         })
@@ -495,10 +567,18 @@ pub(crate) fn new_nexus_task_buffer(
         None
     };
     LongPollBuffer::new(
-        move || {
+        move |timeout_override| {
             let client = client.clone();
             let task_queue = task_queue.clone();
-            async move { client.poll_nexus_task(task_queue, no_poll_retry).await }
+            async move {
+                client
+                    .poll_nexus_task(PollOptions {
+                        task_queue,
+                        no_retry,
+                        timeout_override,
+                    })
+                    .await
+            }
         },
         semaphore,
         poller_behavior,
@@ -591,7 +671,6 @@ mod tests {
     };
     use futures_util::FutureExt;
     use std::time::Duration;
-    use temporal_sdk_core_protos::temporal::api::enums::v1::TaskQueueKind;
     use tokio::select;
 
     #[tokio::test]
@@ -610,11 +689,8 @@ mod tests {
 
         let pb = new_workflow_task_buffer(
             Arc::new(mock_client),
-            TaskQueue {
-                name: "sometq".to_string(),
-                kind: TaskQueueKind::Normal as i32,
-                normal_name: "".to_string(),
-            },
+            "sometq".to_string(),
+            None,
             PollerBehavior::SimpleMaximum(1),
             fixed_size_permit_dealer(10),
             CancellationToken::new(),

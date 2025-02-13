@@ -456,6 +456,11 @@ pub enum PollerBehavior {
 }
 
 impl PollerBehavior {
+    /// Returns true if the behavior is using autoscaling
+    pub fn is_autoscaling(&self) -> bool {
+        matches!(self, PollerBehavior::Autoscaling { .. })
+    }
+
     fn validate(&self) -> Result<(), String> {
         match self {
             PollerBehavior::SimpleMaximum(x) => {
