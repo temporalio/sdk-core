@@ -3,7 +3,11 @@ use std::{cell::Cell, sync::Arc, time::Duration};
 use temporal_client::WorkflowOptions;
 use temporal_sdk::{interceptors::WorkerInterceptor, WfContext};
 use temporal_sdk_core::{init_worker, CoreRuntime, ResourceBasedTuner, ResourceSlotOptions};
-use temporal_sdk_core_api::{errors::WorkerValidationError, worker::WorkerConfigBuilder, Worker};
+use temporal_sdk_core_api::{
+    errors::WorkerValidationError,
+    worker::{PollerBehavior, WorkerConfigBuilder},
+    Worker,
+};
 use temporal_sdk_core_protos::{
     coresdk::workflow_completion::{
         workflow_activation_completion::Status, Failure, WorkflowActivationCompletion,
@@ -121,7 +125,7 @@ async fn resource_based_few_pollers_guarantees_non_sticky_poll() {
         .clear_max_outstanding_opts()
         .no_remote_activities(true)
         // 3 pollers so the minimum slots of 2 can both be handed out to a sticky poller
-        .max_concurrent_wft_polls(3_usize);
+        .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(3_usize));
     // Set the limits to zero so it's essentially unwilling to hand out slots
     let mut tuner = ResourceBasedTuner::new(0.0, 0.0);
     tuner.with_workflow_slots_options(ResourceSlotOptions::new(2, 10, Duration::from_millis(0)));

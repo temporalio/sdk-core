@@ -6,6 +6,7 @@ use std::{
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{ActContext, ActivityOptions, WfContext, WorkflowResult};
 use temporal_sdk_core::{ResourceBasedTuner, ResourceSlotOptions};
+use temporal_sdk_core_api::worker::PollerBehavior;
 use temporal_sdk_core_protos::{
     coresdk::{workflow_commands::ActivityCancellationType, AsJsonPayloadExt},
     temporal::api::enums::v1::WorkflowIdReusePolicy,
@@ -23,7 +24,7 @@ async fn activity_load() {
         .worker_config
         .max_outstanding_workflow_tasks(CONCURRENCY)
         .max_cached_workflows(CONCURRENCY)
-        .max_concurrent_at_polls(10_usize)
+        .activity_task_poller_behavior(PollerBehavior::SimpleMaximum(10_usize))
         .max_outstanding_activities(CONCURRENCY);
     let mut worker = starter.worker().await;
 
@@ -92,8 +93,8 @@ async fn chunky_activities_resource_based() {
     starter
         .worker_config
         .clear_max_outstanding_opts()
-        .max_concurrent_wft_polls(10_usize)
-        .max_concurrent_at_polls(10_usize);
+        .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(10_usize))
+        .activity_task_poller_behavior(PollerBehavior::SimpleMaximum(10_usize));
     let mut tuner = ResourceBasedTuner::new(0.7, 0.7);
     tuner
         .with_workflow_slots_options(ResourceSlotOptions::new(
@@ -180,7 +181,7 @@ async fn workflow_load() {
         .worker_config
         .max_outstanding_workflow_tasks(5_usize)
         .max_cached_workflows(200_usize)
-        .max_concurrent_at_polls(10_usize)
+        .activity_task_poller_behavior(PollerBehavior::SimpleMaximum(10_usize))
         .max_outstanding_activities(100_usize);
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {

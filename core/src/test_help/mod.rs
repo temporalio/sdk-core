@@ -31,7 +31,7 @@ use std::{
     time::Duration,
 };
 use temporal_sdk::interceptors::FailOnNondeterminismInterceptor;
-use temporal_sdk_core_api::{errors::PollError, Worker as WorkerTrait};
+use temporal_sdk_core_api::{errors::PollError, worker::PollerBehavior, Worker as WorkerTrait};
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::{workflow_activation_job, WorkflowActivation},
@@ -65,7 +65,7 @@ pub(crate) fn test_worker_cfg() -> WorkerConfigBuilder {
         .worker_build_id("test_bin_id")
         .ignore_evicts_on_shutdown(true)
         // Serial polling since it makes mocking much easier.
-        .max_concurrent_wft_polls(1_usize);
+        .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(1_usize));
     wcb
 }
 

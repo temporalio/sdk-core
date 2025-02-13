@@ -33,8 +33,8 @@ use temporal_sdk::{ActivityOptions, CancellableFuture, TimerOptions, WfContext};
 use temporal_sdk_core_api::{
     errors::PollError,
     worker::{
-        SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext, SlotSupplier,
-        SlotSupplierPermit, WorkflowSlotKind,
+        PollerBehavior, SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext,
+        SlotSupplier, SlotSupplierPermit, WorkflowSlotKind,
     },
     Worker as WorkerTrait,
 };
@@ -2037,15 +2037,17 @@ async fn no_race_acquiring_permits() {
     // We need to allow two polls to happen by triggering two processing events in the workflow
     // stream, but then delivering the actual tasks after that
     let task_barr: &'static Barrier = Box::leak(Box::new(Barrier::new(2)));
-    mock_client.expect_poll_workflow_task().returning(move |_| {
-        let t = canned_histories::single_timer("1");
-        let poll_resp = hist_to_poll_resp(&t, wfid.to_owned(), 2.into()).resp;
-        async move {
-            task_barr.wait().await;
-            Ok(poll_resp.clone())
-        }
-        .boxed()
-    });
+    mock_client
+        .expect_poll_workflow_task()
+        .returning(move |_, _| {
+            let t = canned_histories::single_timer("1");
+            let poll_resp = hist_to_poll_resp(&t, wfid.to_owned(), 2.into()).resp;
+            async move {
+                task_barr.wait().await;
+                Ok(poll_resp.clone())
+            }
+            .boxed()
+        });
     mock_client
         .expect_complete_workflow_task()
         .returning(|_| async move { Ok(Default::default()) }.boxed());
@@ -2761,7 +2763,7 @@ async fn poller_wont_run_ahead_of_task_slots() {
     let mut mock_client = mock_workflow_client();
     mock_client
         .expect_poll_workflow_task()
-        .returning(move |_| Ok(bunch_of_first_tasks.next().unwrap()));
+        .returning(move |_, _| Ok(bunch_of_first_tasks.next().unwrap()));
     mock_client
         .expect_complete_workflow_task()
         .returning(|_| Ok(Default::default()));
@@ -2770,7 +2772,7 @@ async fn poller_wont_run_ahead_of_task_slots() {
         test_worker_cfg()
             .max_cached_workflows(10_usize)
             .max_outstanding_workflow_tasks(10_usize)
-            .max_concurrent_wft_polls(10_usize)
+            .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(10_usize))
             .no_remote_activities(true)
             .build()
             .unwrap(),
@@ -2822,10 +2824,12 @@ async fn poller_wont_poll_until_lang_polls() {
     // the WFT stream, we'll never join the tasks running the pollers and thus the error
     // gets printed but doesn't bubble up to the test. So we set this explicit expectation
     // in here to ensure it isn't called.
-    mock_client.expect_poll_workflow_task().returning(move |_| {
-        let _ = tx.send(());
-        Ok(Default::default())
-    });
+    mock_client
+        .expect_poll_workflow_task()
+        .returning(move |_, _| {
+            let _ = tx.send(());
+            Ok(Default::default())
+        });
 
     let worker = Worker::new_test(
         test_worker_cfg()
@@ -2994,7 +2998,7 @@ async fn slot_provider_cant_hand_out_more_permits_than_cache_size() {
     let mut mock_client = mock_workflow_client();
     mock_client
         .expect_poll_workflow_task()
-        .returning(move |_| Ok(bunch_of_first_tasks.next().unwrap()));
+        .returning(move |_, _| Ok(bunch_of_first_tasks.next().unwrap()));
     mock_client
         .expect_complete_workflow_task()
         .returning(|_| Ok(Default::default()));
@@ -3024,7 +3028,7 @@ async fn slot_provider_cant_hand_out_more_permits_than_cache_size() {
                     .workflow_slot_supplier(Arc::new(EndlessSupplier {}))
                     .build(),
             ))
-            .max_concurrent_wft_polls(10_usize)
+            .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(10_usize))
             .no_remote_activities(true)
             .build()
             .unwrap(),

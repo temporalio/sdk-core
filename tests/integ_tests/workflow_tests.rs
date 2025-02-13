@@ -30,7 +30,10 @@ use temporal_sdk::{
     WorkflowResult,
 };
 use temporal_sdk_core::{replay::HistoryForReplay, CoreRuntime};
-use temporal_sdk_core_api::errors::{PollError, WorkflowErrorType};
+use temporal_sdk_core_api::{
+    errors::{PollError, WorkflowErrorType},
+    worker::PollerBehavior,
+};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::ActivityExecutionResult,
@@ -48,7 +51,8 @@ use temporal_sdk_core_protos::{
 };
 use temporal_sdk_core_test_utils::{
     drain_pollers_and_shutdown, history_from_proto_binary, init_core_and_create_wf,
-    init_core_replay_preloaded, schedule_activity_cmd, CoreWfStarter, WorkerTestHelpers,
+    init_core_replay_preloaded, prom_metrics, schedule_activity_cmd, CoreWfStarter,
+    WorkerTestHelpers,
 };
 use tokio::{join, sync::Notify, time::sleep};
 use uuid::Uuid;
@@ -93,7 +97,7 @@ async fn workflow_lru_cache_evictions() {
     let mut starter = CoreWfStarter::new(wf_type);
     starter
         .worker_config
-        .max_concurrent_wft_polls(1_usize)
+        .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(1_usize))
         .no_remote_activities(true)
         .max_cached_workflows(1_usize);
     let mut worker = starter.worker().await;
@@ -396,7 +400,9 @@ async fn wft_timeout_doesnt_create_unsolvable_autocomplete() {
         // Test needs eviction on and a short timeout
         .max_cached_workflows(0_usize)
         .max_outstanding_workflow_tasks(1_usize);
-    wf_starter.worker_config.max_concurrent_wft_polls(1_usize);
+    wf_starter
+        .worker_config
+        .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(1_usize));
     wf_starter.workflow_options.task_timeout = Some(Duration::from_secs(1));
     let core = wf_starter.get_worker().await;
     let client = wf_starter.get_client().await;
@@ -689,7 +695,7 @@ async fn build_id_correct_in_wf_info() {
 async fn nondeterminism_errors_fail_workflow_when_configured_to(
     #[values(true, false)] whole_worker: bool,
 ) {
-    let (telemopts, addr, _aborter) = metrics_tests::prom_metrics(None);
+    let (telemopts, addr, _aborter) = prom_metrics(None);
     let rt = CoreRuntime::new_assume_tokio(telemopts).unwrap();
     let wf_name = "nondeterminism_errors_fail_workflow_when_configured_to";
     let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);

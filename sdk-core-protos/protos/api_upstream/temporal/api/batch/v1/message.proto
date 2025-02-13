@@ -31,6 +31,7 @@ option java_outer_classname = "MessageProto";
 option ruby_package = "Temporalio::Api::Batch::V1";
 option csharp_namespace = "Temporalio.Api.Batch.V1";
 
+import "google/protobuf/duration.proto";
 import "google/protobuf/field_mask.proto";
 import "google/protobuf/timestamp.proto";
 import "temporal/api/common/v1/message.proto";
@@ -116,4 +117,26 @@ message BatchOperationUpdateWorkflowExecutionOptions {
   // Controls which fields from `workflow_execution_options` will be applied.
   // To unset a field, set it to null and use the update mask to indicate that it should be mutated.
   google.protobuf.FieldMask update_mask = 3;
+}
+
+// BatchOperationUnpauseActivities sends unpause requests to batch workflows.
+message BatchOperationUnpauseActivities {
+  // The identity of the worker/client.
+  string identity = 1;
+
+  // The activity to unpause. If match_all is set to true, all activities will be unpaused.
+  oneof activity {
+    string type = 2;
+    bool match_all = 3;
+  }
+
+  // Providing this flag will also reset the number of attempts.
+  bool reset_attempts = 4;
+
+  // Providing this flag will also reset the heartbeat details.
+  bool reset_heartbeat = 5;
+
+  // If set, the activity will start at a random time within the specified jitter
+  // duration, introducing variability to the start time.
+  google.protobuf.Duration jitter = 6;
 }

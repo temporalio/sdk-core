@@ -56,11 +56,15 @@ use std::{
     time::Duration,
 };
 use temporal_client::{ConfiguredClient, TemporalServiceClientWithMetrics, WorkerKey};
-use temporal_sdk_core_api::errors::{CompleteNexusError, WorkerValidationError};
+use temporal_sdk_core_api::{
+    errors::{CompleteNexusError, WorkerValidationError},
+    worker::PollerBehavior,
+};
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::activity_execution_result,
         activity_task::ActivityTask,
+        nexus::{nexus_task_completion, NexusTask, NexusTaskCompletion},
         workflow_activation::{remove_from_cache::EvictionReason, WorkflowActivation},
         workflow_completion::WorkflowActivationCompletion,
         ActivityTaskCompletion,
@@ -74,10 +78,6 @@ use temporal_sdk_core_protos::{
 use tokio::sync::{mpsc::unbounded_channel, watch};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
-
-use temporal_sdk_core_protos::coresdk::nexus::{
-    nexus_task_completion, NexusTask, NexusTaskCompletion,
-};
 
 #[cfg(test)]
 use {
@@ -353,21 +353,12 @@ impl Worker {
         );
         let (wft_stream, act_poller, nexus_poller) = match task_pollers {
             TaskPollers::Real => {
-                let max_nonsticky_polls = if sticky_queue_name.is_some() {
-                    config.max_nonsticky_polls()
-                } else {
-                    config.max_concurrent_wft_polls
-                };
-                let max_sticky_polls = config.max_sticky_polls();
                 let wft_metrics = metrics.with_new_attrs([workflow_poller()]);
                 let wf_task_poll_buffer = new_workflow_task_buffer(
                     client.clone(),
-                    TaskQueue {
-                        name: config.task_queue.clone(),
-                        kind: TaskQueueKind::Normal as i32,
-                        normal_name: "".to_string(),
-                    },
-                    max_nonsticky_polls,
+                    config.task_queue.clone(),
+                    None,
+                    wft_poller_behavior(&config, false),
                     wft_slots.clone(),
                     shutdown_token.child_token(),
                     Some(move |np| {
@@ -378,12 +369,9 @@ impl Worker {
                     let sticky_metrics = metrics.with_new_attrs([workflow_sticky_poller()]);
                     new_workflow_task_buffer(
                         client.clone(),
-                        TaskQueue {
-                            name: sqn.clone(),
-                            kind: TaskQueueKind::Sticky as i32,
-                            normal_name: config.task_queue.clone(),
-                        },
-                        max_sticky_polls,
+                        config.task_queue.clone(),
+                        Some(sqn.clone()),
+                        wft_poller_behavior(&config, true),
                         wft_slots.clone().into_sticky(),
                         shutdown_token.child_token(),
                         Some(move |np| {
@@ -398,7 +386,7 @@ impl Worker {
                     let ap = new_activity_task_buffer(
                         client.clone(),
                         config.task_queue.clone(),
-                        config.max_concurrent_at_polls,
+                        config.activity_task_poller_behavior,
                         act_slots.clone(),
                         config.max_task_queue_activities_per_second,
                         shutdown_token.child_token(),
@@ -425,7 +413,7 @@ impl Worker {
                 let nexus_poll_buffer = Box::new(new_nexus_task_buffer(
                     client.clone(),
                     config.task_queue.clone(),
-                    config.max_concurrent_nexus_polls,
+                    config.nexus_task_poller_behavior,
                     nexus_slots.clone(),
                     shutdown_token.child_token(),
                     Some(move |np| np_metrics.record_num_pollers(np)),
@@ -876,6 +864,27 @@ pub(crate) enum TaskPollers {
     },
 }
 
+fn wft_poller_behavior(config: &WorkerConfig, is_sticky: bool) -> PollerBehavior {
+    fn calc_max_nonsticky(max_polls: usize, ratio: f32) -> usize {
+        ((max_polls as f32 * ratio) as usize).max(1)
+    }
+
+    if let PollerBehavior::SimpleMaximum(m) = config.workflow_task_poller_behavior {
+        if !is_sticky {
+            PollerBehavior::SimpleMaximum(calc_max_nonsticky(
+                m,
+                config.nonsticky_to_sticky_poll_ratio,
+            ))
+        } else {
+            PollerBehavior::SimpleMaximum(m.saturating_sub(
+                calc_max_nonsticky(m, config.nonsticky_to_sticky_poll_ratio).max(1),
+            ))
+        }
+    } else {
+        config.workflow_task_poller_behavior
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -883,7 +892,7 @@ mod tests {
         advance_fut, test_help::test_worker_cfg, worker::client::mocks::mock_workflow_client,
     };
     use futures_util::FutureExt;
-
+    use temporal_sdk_core_api::worker::PollerBehavior;
     use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollActivityTaskQueueResponse;
 
     #[tokio::test]
@@ -932,17 +941,23 @@ mod tests {
     #[test]
     fn max_polls_calculated_properly() {
         let cfg = test_worker_cfg()
-            .max_concurrent_wft_polls(5_usize)
+            .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(5_usize))
             .build()
             .unwrap();
-        assert_eq!(cfg.max_nonsticky_polls(), 1);
-        assert_eq!(cfg.max_sticky_polls(), 4);
+        assert_eq!(
+            wft_poller_behavior(&cfg, false),
+            PollerBehavior::SimpleMaximum(1)
+        );
+        assert_eq!(
+            wft_poller_behavior(&cfg, true),
+            PollerBehavior::SimpleMaximum(4)
+        );
     }
 
     #[test]
     fn max_polls_zero_is_err() {
         assert!(test_worker_cfg()
-            .max_concurrent_wft_polls(0_usize)
+            .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(0_usize))
             .build()
             .is_err());
     }
