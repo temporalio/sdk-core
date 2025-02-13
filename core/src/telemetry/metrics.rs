@@ -57,6 +57,7 @@ struct Instruments {
     num_pollers: Arc<dyn Gauge>,
     task_slots_available: Arc<dyn Gauge>,
     task_slots_used: Arc<dyn Gauge>,
+    task_execution_latency: Arc<dyn HistogramDuration>,
     sticky_cache_hit: Arc<dyn Counter>,
     sticky_cache_miss: Arc<dyn Counter>,
     sticky_cache_size: Arc<dyn Gauge>,
@@ -280,6 +281,13 @@ impl MetricsContext {
         self.instruments.task_slots_used.record(num, &self.kvs)
     }
 
+    /// Record time it took to execute a task
+    pub(crate) fn task_execution_latency(&self, dur: Duration) {
+        self.instruments
+            .task_execution_latency
+            .record(dur, &self.kvs);
+    }
+
     /// Record current number of pollers. Context should include poller type / task queue tag.
     pub(crate) fn record_num_pollers(&self, num: usize) {
         self.instruments.num_pollers.record(num as u64, &self.kvs);
@@ -468,6 +476,11 @@ impl Instruments {
             task_slots_used: meter.gauge(MetricParameters {
                 name: TASK_SLOTS_USED_NAME.into(),
                 description: "Current number of used slots per task type".into(),
+                unit: "".into(),
+            }),
+            task_execution_latency: meter.histogram_duration(MetricParameters {
+                name: "task_execution_latency".into(),
+                description: "Histogram of task execution latencies".into(),
                 unit: "".into(),
             }),
             sticky_cache_hit: meter.counter(MetricParameters {

@@ -7,8 +7,9 @@ use std::{
     fmt::{Debug, Formatter},
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
-        Arc,
+        Arc, OnceLock,
     },
+    time::Instant,
 };
 use temporal_sdk_core_api::worker::{
     SlotKind, SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext, SlotSupplier,
@@ -122,6 +123,7 @@ where
         let supp_c = self.supplier.clone();
         let supp_c_c = self.supplier.clone();
         let mets = self.metrics_ctx.clone();
+        let mets2 = self.metrics_ctx.clone();
         let metric_rec =
             // When being called from the drop impl, the permit isn't actually dropped yet, so
             // account for that with the `add_one` parameter.
@@ -134,6 +136,15 @@ where
                 mets.task_slots_used((ep_rx_c.borrow().saturating_sub(unused) + extra) as u64);
             };
         let mrc = metric_rec.clone();
+        // TODO: Delete or flag these new metrics
+        let use_time = Arc::new(OnceLock::<Instant>::new());
+        let ut = use_time.clone();
+        let use_time_record = move || {
+            if let Some(ut) = ut.get() {
+                mets2.task_execution_latency(ut.elapsed());
+            }
+        };
+
         mrc(false);
 
         OwnedMeteredSemPermit {
@@ -144,11 +155,13 @@ where
             },
             use_fn: Box::new(move |info| {
                 supp_c.mark_slot_used(info);
+                let _ = use_time.set(Instant::now());
                 metric_rec(false)
             }),
             release_fn: Box::new(move |info| {
                 supp_c_c.release_slot(info);
                 ep_tx_c.send_modify(|ep| *ep -= 1);
+                use_time_record();
                 mrc(true)
             }),
         }
