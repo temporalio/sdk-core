@@ -717,7 +717,7 @@ mod tests {
         mock_client
             .expect_poll_activity_task()
             .times(1)
-            .returning(move |_, _, _| {
+            .returning(move |_, _| {
                 Ok(PollActivityTaskQueueResponse {
                     task_token: vec![1],
                     activity_id: "act1".to_string(),
@@ -727,7 +727,7 @@ mod tests {
         mock_client
             .expect_poll_activity_task()
             .times(1)
-            .returning(move |_, _, _| {
+            .returning(move |_, _| {
                 Ok(PollActivityTaskQueueResponse {
                     task_token: vec![2],
                     activity_id: "act2".to_string(),
@@ -794,7 +794,7 @@ mod tests {
         mock_client
             .expect_poll_activity_task()
             .times(1)
-            .returning(move |_, _, _| {
+            .returning(move |_, _| {
                 Ok(PollActivityTaskQueueResponse {
                     task_token: vec![1],
                     activity_id: "act1".to_string(),
@@ -807,7 +807,7 @@ mod tests {
         mock_client
             .expect_poll_activity_task()
             .times(1)
-            .returning(move |_, _, _| {
+            .returning(move |_, _| {
                 Ok(PollActivityTaskQueueResponse {
                     task_token: vec![2],
                     activity_id: "act2".to_string(),
@@ -818,7 +818,7 @@ mod tests {
         mock_client
             .expect_poll_activity_task()
             .times(1)
-            .returning(move |_, _, _| {
+            .returning(move |_, _| {
                 Ok(PollActivityTaskQueueResponse {
                     task_token: vec![3],
                     activity_id: "act3".to_string(),
@@ -882,7 +882,7 @@ mod tests {
         mock_client
             .expect_poll_activity_task()
             .times(1)
-            .returning(move |_, _, _| {
+            .returning(move |_, _| {
                 Ok(PollActivityTaskQueueResponse {
                     task_token: vec![1],
                     activity_id: "act1".to_string(),
@@ -894,7 +894,7 @@ mod tests {
             });
         mock_client // We can end up polling again - just return nothing.
             .expect_poll_activity_task()
-            .returning(|_, _, _| Ok(Default::default()));
+            .returning(|_, _| Ok(Default::default()));
         mock_client
             .expect_record_activity_heartbeat()
             .times(2)
