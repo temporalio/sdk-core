@@ -266,7 +266,7 @@ async fn worker_does_not_panic_on_retry_exhaustion_of_nonfatal_net_err() {
 async fn worker_can_shutdown_after_never_polling_ok(#[values(true, false)] poll_workflow: bool) {
     let mut mock = mock_workflow_client();
     mock.expect_poll_activity_task()
-        .returning(|_, _, _| Err(tonic::Status::permission_denied("you shall not pass")));
+        .returning(|_, _| Err(tonic::Status::permission_denied("you shall not pass")));
     if poll_workflow {
         mock.expect_poll_workflow_task()
             .returning(|_, _| Err(tonic::Status::permission_denied("you shall not pass")));

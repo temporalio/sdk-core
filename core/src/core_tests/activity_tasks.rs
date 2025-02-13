@@ -90,7 +90,7 @@ async fn max_activities_respected() {
     mock_client
         .expect_poll_activity_task()
         .times(3)
-        .returning(move |_, _, _| Ok(tasks.pop_front().unwrap()));
+        .returning(move |_, _| Ok(tasks.pop_front().unwrap()));
     mock_client
         .expect_complete_activity_task()
         .returning(|_, _| Ok(RespondActivityTaskCompletedResponse::default()));
@@ -375,7 +375,7 @@ async fn many_concurrent_heartbeat_cancels() {
     let mut calls_map = HashMap::<_, i32>::new();
     mock_client
         .expect_poll_activity_task()
-        .returning(move |_, _, _| poll_resps.pop_front().unwrap());
+        .returning(move |_, _| poll_resps.pop_front().unwrap());
     mock_client
         .expect_cancel_activity_task()
         .returning(move |_, _| async move { Ok(Default::default()) }.boxed());
@@ -619,8 +619,8 @@ async fn max_tq_acts_set_passed_to_poll_properly() {
     let mut mock_client = mock_workflow_client();
     mock_client
         .expect_poll_activity_task()
-        .returning(move |_, tps, _| {
-            assert_eq!(tps, Some(rate));
+        .returning(move |_, ao| {
+            assert_eq!(ao.max_tasks_per_sec, Some(rate));
             Ok(PollActivityTaskQueueResponse {
                 task_token: vec![1],
                 ..Default::default()
@@ -1030,7 +1030,7 @@ async fn cant_complete_activity_with_unset_result_payload() {
     let mut mock_client = mock_workflow_client();
     mock_client
         .expect_poll_activity_task()
-        .returning(move |_, _, _| {
+        .returning(move |_, _| {
             Ok(PollActivityTaskQueueResponse {
                 task_token: vec![1],
                 ..Default::default()

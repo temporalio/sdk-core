@@ -356,11 +356,8 @@ impl Worker {
                 let wft_metrics = metrics.with_new_attrs([workflow_poller()]);
                 let wf_task_poll_buffer = new_workflow_task_buffer(
                     client.clone(),
-                    TaskQueue {
-                        name: config.task_queue.clone(),
-                        kind: TaskQueueKind::Normal as i32,
-                        normal_name: "".to_string(),
-                    },
+                    config.task_queue.clone(),
+                    None,
                     wft_poller_behavior(&config, false),
                     wft_slots.clone(),
                     shutdown_token.child_token(),
@@ -372,11 +369,8 @@ impl Worker {
                     let sticky_metrics = metrics.with_new_attrs([workflow_sticky_poller()]);
                     new_workflow_task_buffer(
                         client.clone(),
-                        TaskQueue {
-                            name: sqn.clone(),
-                            kind: TaskQueueKind::Sticky as i32,
-                            normal_name: config.task_queue.clone(),
-                        },
+                        config.task_queue.clone(),
+                        Some(sqn.clone()),
                         wft_poller_behavior(&config, true),
                         wft_slots.clone().into_sticky(),
                         shutdown_token.child_token(),
@@ -906,7 +900,7 @@ mod tests {
         let mut mock_client = mock_workflow_client();
         mock_client
             .expect_poll_activity_task()
-            .returning(|_, _, _| Ok(PollActivityTaskQueueResponse::default()));
+            .returning(|_, _| Ok(PollActivityTaskQueueResponse::default()));
 
         let cfg = test_worker_cfg()
             .max_outstanding_activities(5_usize)
@@ -930,7 +924,7 @@ mod tests {
         let mut mock_client = mock_workflow_client();
         mock_client
             .expect_poll_activity_task()
-            .returning(|_, _, _| Err(tonic::Status::internal("ahhh")));
+            .returning(|_, _| Err(tonic::Status::internal("ahhh")));
 
         let cfg = test_worker_cfg()
             .max_outstanding_activities(5_usize)

@@ -53,7 +53,7 @@ async fn shutdown_interrupts_both_polls() {
     mock_client
         .expect_poll_activity_task()
         .times(1)
-        .returning(move |_, _, _| {
+        .returning(move |_, _| {
             async move {
                 BARR.wait().await;
                 sleep(Duration::from_secs(1)).await;
