@@ -270,6 +270,8 @@ pub enum EphemeralExe {
         version: EphemeralExeVersion,
         /// Destination directory or the user temp directory if none set.
         dest_dir: Option<String>,
+        /// How long to cache the download for. None means forever.
+        ttl: Option<Duration>,
     },
 }
 
@@ -309,7 +311,11 @@ impl EphemeralExe {
                 }
                 Ok(path)
             }
-            EphemeralExe::CachedDownload { version, dest_dir } => {
+            EphemeralExe::CachedDownload {
+                version,
+                dest_dir,
+                ttl,
+            } => {
                 let dest_dir = dest_dir
                     .as_ref()
                     .map(PathBuf::from)
@@ -334,8 +340,7 @@ impl EphemeralExe {
                     dest.display()
                 );
 
-                // If it already exists, skip
-                if dest.exists() {
+                if dest.exists() && remove_file_past_ttl(ttl, &dest)? {
                     return Ok(dest);
                 }
 
@@ -585,12 +590,36 @@ async fn download_and_extract(
     .await?
 }
 
+/// Remove the file if it's older than the TTL. Returns true if the current file can be re-used,
+/// returns false if it was removed or should otherwise be re-downloaded.
+fn remove_file_past_ttl(ttl: &Option<Duration>, dest: &PathBuf) -> Result<bool, anyhow::Error> {
+    match ttl {
+        None => return Ok(true),
+        Some(ttl) => {
+            if let Ok(mtime) = dest.metadata().and_then(|d| d.modified()) {
+                if mtime.elapsed().unwrap_or_default().lt(ttl) {
+                    return Ok(true);
+                } else {
+                    // Remove so we can re-download
+                    std::fs::remove_file(dest)?;
+                }
+            }
+            // If we couldn't read the mtime something weird is probably up, so
+            // re-download
+        }
+    }
+    Ok(false)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::get_free_port;
+    use super::{get_free_port, remove_file_past_ttl};
     use std::{
         collections::HashSet,
+        env::temp_dir,
+        fs::File,
         net::{TcpListener, TcpStream},
+        time::{Duration, SystemTime},
     };
 
     #[test]
@@ -620,6 +649,22 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn respects_file_ttl() {
+        let rand_fname = format!("{}", rand::random::<u64>());
+        let temp_dir = temp_dir();
+
+        let dest_file_path = temp_dir.join(format!("core-test-{}", &rand_fname));
+        let dest_file = File::create(&dest_file_path).unwrap();
+        let set_time_to = SystemTime::now() - Duration::from_secs(100);
+        dest_file.set_modified(set_time_to).unwrap();
+
+        remove_file_past_ttl(&Some(Duration::from_secs(60)), &dest_file_path).unwrap();
+
+        // file should be gone
+        assert!(!dest_file_path.exists());
+    }
+
     fn try_listen_and_dial_on(host: &str, port: u16) -> std::io::Result<()> {
         let listener = TcpListener::bind((host, port))?;
         let _stream = TcpStream::connect((host, port))?;
@@ -628,7 +673,7 @@ mod tests {
         let (socket, _addr) = listener.accept()?;
 
         // Explicitly drop the socket to close the connection from the listening side first
-        std::mem::drop(socket);
+        drop(socket);
 
         Ok(())
     }

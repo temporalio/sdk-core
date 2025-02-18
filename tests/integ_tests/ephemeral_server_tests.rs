@@ -129,6 +129,7 @@ fn fixed_cached_download(version: &str) -> EphemeralExe {
     EphemeralExe::CachedDownload {
         version: EphemeralExeVersion::Fixed(version.to_string()),
         dest_dir: None,
+        ttl: None,
     }
 }
 
