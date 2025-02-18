@@ -379,6 +379,7 @@ impl EphemeralExe {
                         &info.archive_url,
                         Path::new(&info.file_to_extract),
                         &dest,
+                        false,
                     )
                     .await?
                     {
@@ -433,7 +434,7 @@ fn get_free_port(bind_ip: &str) -> io::Result<u16> {
         let (socket, _addr) = listen.accept()?;
 
         // Explicitly drop the socket to close the connection from the listening side first
-        std::mem::drop(socket);
+        drop(socket);
     }
 
     Ok(addr.port())
@@ -447,6 +448,7 @@ async fn lazy_download_exe(
     uri: &str,
     file_to_extract: &Path,
     dest: &Path,
+    already_tried_cleaning_old: bool,
 ) -> anyhow::Result<bool> {
     // If it already exists, do not extract
     if dest.exists() {
@@ -474,7 +476,16 @@ async fn lazy_download_exe(
     // This match only gets Ok if the file was downloaded and extracted to the
     // temporary path
     match file {
-        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+        Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+            // If the download lock file exists but is old, delete it and try again, since it may
+            // have been left by an abandoned process.
+            if !already_tried_cleaning_old
+                && temp_dest.metadata()?.modified()?.elapsed()?.as_secs() > 90
+            {
+                std::fs::remove_file(temp_dest)?;
+                return Box::pin(lazy_download_exe(client, uri, file_to_extract, dest, true)).await;
+            }
+
             // Since it already exists, we'll try once a second for 20 seconds
             // to wait for it to be done, then return false so the caller can
             // try again.
@@ -530,7 +541,7 @@ async fn download_and_extract(
     // We have to map the error type to an io error
     let stream = resp
         .bytes_stream()
-        .map(|item| item.map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err)));
+        .map(|item| item.map_err(|err| io::Error::new(io::ErrorKind::Other, err)));
 
     // Since our tar/zip impls use sync IO, we have to create a bridge and run
     // in a blocking closure.
