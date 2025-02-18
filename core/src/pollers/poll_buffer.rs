@@ -120,6 +120,7 @@ where
                     let report_handle = poll_scaler.get_report_handle();
                     // Reduce poll timeout if we're frequently getting tasks, to avoid having many
                     // outstanding long polls for a full minute after a burst subsides.
+                    // TODO: server is logging warnings below 20s
                     let timeout_override =
                         if report_handle.ingested_this_period.load(Ordering::Relaxed) > 2 {
                             Some(Duration::from_secs(10))
@@ -140,6 +141,7 @@ where
                 }
                 drop(spawned_tx);
                 poll_task_awaiter.await.unwrap();
+                poll_scaler.ingestor_task.await.unwrap();
             }
             .instrument(info_span!("polling_task").or_current()),
         );
@@ -233,6 +235,7 @@ struct PollScaler<F> {
     active_tx: watch::Sender<usize>,
     active_rx: watch::Receiver<usize>,
     num_pollers_handler: Option<Arc<F>>,
+    ingestor_task: JoinHandle<()>,
 }
 
 impl<F> PollScaler<F>
@@ -261,8 +264,8 @@ where
             scale_up_allowed: AtomicBool::new(true),
         });
         let rhc = report_handle.clone();
-        // TODO: Track task
-        tokio::task::spawn(async move {
+        // TODO: Track joinhandle && don't spawn if not using autoscale mode.
+        let join_handle = tokio::task::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_millis(100));
             loop {
                 interval.tick().await;
@@ -277,6 +280,7 @@ where
             active_tx,
             active_rx,
             num_pollers_handler,
+            ingestor_task: join_handle,
         }
     }
     async fn wait_until_below_max(&mut self) {
@@ -306,6 +310,8 @@ where
 struct PollScalerReportHandle {
     max: usize,
     min: usize,
+    // TODO: Try clamping this down if the actual max number of polls we had open in the last
+    //   period is significantly less than the target
     target: AtomicUsize,
     ever_saw_scaling_decision: AtomicBool,
     behavior: PollerBehavior,
