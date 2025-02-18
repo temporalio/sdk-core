@@ -687,6 +687,8 @@ pub fn default_cached_download() -> EphemeralExe {
             sdk_version: "0.1.0".to_string(),
         },
         dest_dir: None,
+        // 15 days
+        ttl: Some(Duration::from_secs(60 * 60 * 24 * 15)),
     }
 }
 
