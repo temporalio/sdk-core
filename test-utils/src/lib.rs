@@ -13,10 +13,10 @@ pub use temporal_sdk_core::replay::HistoryForReplay;
 use crate::stream::{Stream, TryStreamExt};
 use anyhow::Context;
 use assert_matches::assert_matches;
-use futures_util::{future, stream, stream::FuturesUnordered, StreamExt};
+use futures_util::{StreamExt, future, stream, stream::FuturesUnordered};
 use parking_lot::Mutex;
 use prost::Message;
-use rand::{distributions, Rng};
+use rand::{Rng, distributions};
 use std::{
     convert::TryFrom, env, future::Future, net::SocketAddr, path::PathBuf, sync::Arc,
     time::Duration,
@@ -26,40 +26,40 @@ use temporal_client::{
     WorkflowClientTrait, WorkflowExecutionInfo, WorkflowHandle, WorkflowOptions,
 };
 use temporal_sdk::{
-    interceptors::{FailOnNondeterminismInterceptor, WorkerInterceptor},
     IntoActivityFunc, Worker, WorkflowFunction,
+    interceptors::{FailOnNondeterminismInterceptor, WorkerInterceptor},
 };
 #[cfg(feature = "ephemeral-server")]
 use temporal_sdk_core::ephemeral_server::{EphemeralExe, EphemeralExeVersion};
 use temporal_sdk_core::{
-    init_replay_worker, init_worker,
+    ClientOptions, ClientOptionsBuilder, CoreRuntime, WorkerConfigBuilder, init_replay_worker,
+    init_worker,
     replay::ReplayWorkerInput,
     telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter},
-    ClientOptions, ClientOptionsBuilder, CoreRuntime, WorkerConfigBuilder,
 };
 use temporal_sdk_core_api::{
+    Worker as CoreWorker,
     errors::PollError,
     telemetry::{
-        metrics::CoreMeter, Logger, OtelCollectorOptionsBuilder, PrometheusExporterOptionsBuilder,
-        TelemetryOptions, TelemetryOptionsBuilder,
+        Logger, OtelCollectorOptionsBuilder, PrometheusExporterOptionsBuilder, TelemetryOptions,
+        TelemetryOptionsBuilder, metrics::CoreMeter,
     },
-    Worker as CoreWorker,
 };
 use temporal_sdk_core_protos::{
+    DEFAULT_ACTIVITY_TYPE,
     coresdk::{
-        workflow_activation::{workflow_activation_job, WorkflowActivation, WorkflowActivationJob},
+        FromPayloadsExt,
+        workflow_activation::{WorkflowActivation, WorkflowActivationJob, workflow_activation_job},
         workflow_commands::{
-            workflow_command, ActivityCancellationType, CompleteWorkflowExecution, QueryResult,
-            QuerySuccess, ScheduleActivity, ScheduleLocalActivity, StartTimer,
+            ActivityCancellationType, CompleteWorkflowExecution, QueryResult, QuerySuccess,
+            ScheduleActivity, ScheduleLocalActivity, StartTimer, workflow_command,
         },
         workflow_completion::WorkflowActivationCompletion,
-        FromPayloadsExt,
     },
     temporal::api::{
         common::v1::Payload, history::v1::History,
         workflowservice::v1::StartWorkflowExecutionResponse,
     },
-    DEFAULT_ACTIVITY_TYPE,
 };
 use tokio::sync::OnceCell;
 use url::Url;
@@ -799,11 +799,13 @@ where
     async fn complete_timer(&self, run_id: &str, seq: u32, duration: Duration) {
         self.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
             run_id.to_string(),
-            vec![StartTimer {
-                seq,
-                start_to_fire_timeout: Some(duration.try_into().expect("duration fits")),
-            }
-            .into()],
+            vec![
+                StartTimer {
+                    seq,
+                    start_to_fire_timeout: Some(duration.try_into().expect("duration fits")),
+                }
+                .into(),
+            ],
         ))
         .await
         .unwrap();

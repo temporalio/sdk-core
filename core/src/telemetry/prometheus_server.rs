@@ -1,5 +1,5 @@
 use http_body_util::Full;
-use hyper::{body::Bytes, header::CONTENT_TYPE, service::service_fn, Method, Request, Response};
+use hyper::{Method, Request, Response, body::Bytes, header::CONTENT_TYPE, service::service_fn};
 use hyper_util::{
     rt::{TokioExecutor, TokioIo},
     server::conn::auto,

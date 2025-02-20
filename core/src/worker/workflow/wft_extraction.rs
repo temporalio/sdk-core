@@ -4,15 +4,15 @@ use crate::{
     worker::{
         client::WorkerClient,
         workflow::{
-            history_update::HistoryPaginator, CacheMissFetchReq, HistoryUpdate, NextPageReq,
-            PermittedWFT,
+            CacheMissFetchReq, HistoryUpdate, NextPageReq, PermittedWFT,
+            history_update::HistoryPaginator,
         },
     },
 };
-use futures_util::{stream, stream::PollNext, FutureExt, Stream, StreamExt};
+use futures_util::{FutureExt, Stream, StreamExt, stream, stream::PollNext};
 use std::{future, sync::Arc};
 use temporal_sdk_core_api::worker::WorkflowSlotKind;
-use temporal_sdk_core_protos::{coresdk::WorkflowSlotInfo, TaskToken};
+use temporal_sdk_core_protos::{TaskToken, coresdk::WorkflowSlotInfo};
 use tracing::Span;
 
 /// Transforms incoming validated WFTs and history fetching requests into [PermittedWFT]s ready

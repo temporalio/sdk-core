@@ -1,7 +1,7 @@
 use crate::{
     internal_flags::CoreInternalFlags,
     replay::DEFAULT_WORKFLOW_TYPE,
-    test_help::{canned_histories, mock_sdk, mock_sdk_cfg, MockPollCfg, ResponseType},
+    test_help::{MockPollCfg, ResponseType, canned_histories, mock_sdk, mock_sdk_cfg},
     worker::client::mocks::mock_workflow_client,
 };
 use std::{
@@ -13,11 +13,11 @@ use temporal_sdk::{
     ActivityOptions, ChildWorkflowOptions, LocalActivityOptions, WfContext, WorkflowResult,
 };
 use temporal_sdk_core_protos::{
+    DEFAULT_ACTIVITY_TYPE, TestHistoryBuilder,
     temporal::api::{
         enums::v1::{EventType, WorkflowTaskFailedCause},
         failure::v1::Failure,
     },
-    TestHistoryBuilder, DEFAULT_ACTIVITY_TYPE,
 };
 
 static DID_FAIL: AtomicBool = AtomicBool::new(false);

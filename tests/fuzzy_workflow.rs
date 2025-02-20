@@ -1,5 +1,5 @@
-use futures_util::{sink, stream::FuturesUnordered, FutureExt, StreamExt};
-use rand::{prelude::Distribution, rngs::SmallRng, Rng, SeedableRng};
+use futures_util::{FutureExt, StreamExt, sink, stream::FuturesUnordered};
+use rand::{Rng, SeedableRng, prelude::Distribution, rngs::SmallRng};
 use std::{future, time::Duration};
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{

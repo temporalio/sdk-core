@@ -12,31 +12,31 @@ use temporal_sdk::{
     WfExitValue, WorkflowResult,
 };
 use temporal_sdk_core_protos::{
+    DEFAULT_ACTIVITY_TYPE, TaskToken,
     coresdk::{
+        ActivityHeartbeat, ActivityTaskCompletion, AsJsonPayloadExt, FromJsonPayloadExt,
+        IntoCompletion,
         activity_result::{
-            self, activity_resolution as act_res, ActivityExecutionResult, ActivityResolution,
+            self, ActivityExecutionResult, ActivityResolution, activity_resolution as act_res,
         },
         activity_task::activity_task as act_task,
         workflow_activation::{
-            workflow_activation_job, FireTimer, ResolveActivity, WorkflowActivationJob,
+            FireTimer, ResolveActivity, WorkflowActivationJob, workflow_activation_job,
         },
         workflow_commands::{
             ActivityCancellationType, RequestCancelActivity, ScheduleActivity, StartTimer,
         },
         workflow_completion::WorkflowActivationCompletion,
-        ActivityHeartbeat, ActivityTaskCompletion, AsJsonPayloadExt, FromJsonPayloadExt,
-        IntoCompletion,
     },
     temporal::api::{
         common::v1::{ActivityType, Payload, Payloads, RetryPolicy},
         enums::v1::RetryState,
-        failure::v1::{failure::FailureInfo, ActivityFailureInfo, Failure},
+        failure::v1::{ActivityFailureInfo, Failure, failure::FailureInfo},
     },
-    TaskToken, DEFAULT_ACTIVITY_TYPE,
 };
 use temporal_sdk_core_test_utils::{
-    drain_pollers_and_shutdown, init_core_and_create_wf, schedule_activity_cmd, CoreWfStarter,
-    WorkerTestHelpers,
+    CoreWfStarter, WorkerTestHelpers, drain_pollers_and_shutdown, init_core_and_create_wf,
+    schedule_activity_cmd,
 };
 use tokio::{join, sync::Semaphore, time::sleep};
 
@@ -458,11 +458,13 @@ async fn activity_cancellation_plus_complete_doesnt_double_resolve() {
     // another short timer
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         task.run_id,
-        vec![StartTimer {
-            seq: 2,
-            start_to_fire_timeout: Some(prost_dur!(from_millis(100))),
-        }
-        .into()],
+        vec![
+            StartTimer {
+                seq: 2,
+                start_to_fire_timeout: Some(prost_dur!(from_millis(100))),
+            }
+            .into(),
+        ],
     ))
     .await
     .unwrap();

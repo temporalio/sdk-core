@@ -10,11 +10,11 @@ use crate::{
     worker::WorkerConfig,
 };
 use temporal_sdk_core_protos::coresdk::{
+    ActivityHeartbeat, ActivityTaskCompletion,
     activity_task::ActivityTask,
     nexus::{NexusTask, NexusTaskCompletion},
     workflow_activation::WorkflowActivation,
     workflow_completion::WorkflowActivationCompletion,
-    ActivityHeartbeat, ActivityTaskCompletion,
 };
 
 /// This trait is the primary way by which language specific SDKs interact with the core SDK.

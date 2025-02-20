@@ -1,17 +1,17 @@
 use crate::{
-    abstractions::{dbg_panic, MeteredPermitDealer, OwnedMeteredSemPermit, UsedMeteredSemPermit},
+    MetricsContext, TaskToken,
+    abstractions::{MeteredPermitDealer, OwnedMeteredSemPermit, UsedMeteredSemPermit, dbg_panic},
     protosext::ValidScheduleLA,
     retry_logic::RetryPolicyExt,
     telemetry::metrics::{activity_type, workflow_type},
     worker::workflow::HeartbeatTimeoutMsg,
-    MetricsContext, TaskToken,
 };
 use futures_util::{
-    future, future::AbortRegistration, stream, stream::BoxStream, Stream, StreamExt,
+    Stream, StreamExt, future, future::AbortRegistration, stream, stream::BoxStream,
 };
 use parking_lot::{Mutex, MutexGuard};
 use std::{
-    collections::{hash_map::Entry, HashMap},
+    collections::{HashMap, hash_map::Entry},
     fmt::{Debug, Formatter},
     pin::Pin,
     task::{Context, Poll},
@@ -20,20 +20,20 @@ use std::{
 use temporal_sdk_core_api::worker::LocalActivitySlotKind;
 use temporal_sdk_core_protos::{
     coresdk::{
-        activity_result::{Cancellation, Failure as ActFail, Success},
-        activity_task::{activity_task, ActivityCancelReason, ActivityTask, Cancel, Start},
         LocalActivitySlotInfo,
+        activity_result::{Cancellation, Failure as ActFail, Success},
+        activity_task::{ActivityCancelReason, ActivityTask, Cancel, Start, activity_task},
     },
     temporal::api::{
         common::v1::WorkflowExecution,
         enums::v1::TimeoutType,
-        failure::v1::{failure, Failure as APIFailure, TimeoutFailureInfo},
+        failure::v1::{Failure as APIFailure, TimeoutFailureInfo, failure},
     },
 };
 use tokio::{
     sync::{
-        mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
         Notify,
+        mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
     },
     task::JoinHandle,
     time::sleep,
@@ -973,7 +973,7 @@ mod tests {
     use futures_util::FutureExt;
     use temporal_sdk_core_protos::temporal::api::{
         common::v1::RetryPolicy,
-        failure::v1::{failure::FailureInfo, ApplicationFailureInfo, Failure},
+        failure::v1::{ApplicationFailureInfo, Failure, failure::FailureInfo},
     };
     use tokio::task::yield_now;
 

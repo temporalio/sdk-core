@@ -169,8 +169,8 @@ mod tests {
             maximum_attempts: 10,
             non_retryable_error_types: vec!["no retry".to_string()],
         };
-        assert!(rp
-            .should_retry(
+        assert!(
+            rp.should_retry(
                 1,
                 Some(&ApplicationFailureInfo {
                     r#type: "no retry".to_string(),
@@ -178,7 +178,8 @@ mod tests {
                     ..Default::default()
                 })
             )
-            .is_none());
+            .is_none()
+        );
     }
 
     #[test]
@@ -190,8 +191,8 @@ mod tests {
             maximum_attempts: 10,
             non_retryable_error_types: vec![],
         };
-        assert!(rp
-            .should_retry(
+        assert!(
+            rp.should_retry(
                 1,
                 Some(&ApplicationFailureInfo {
                     r#type: "".to_string(),
@@ -199,7 +200,8 @@ mod tests {
                     ..Default::default()
                 })
             )
-            .is_none());
+            .is_none()
+        );
     }
 
     #[test]

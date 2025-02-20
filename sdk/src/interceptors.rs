@@ -3,7 +3,7 @@
 use crate::Worker;
 use anyhow::bail;
 use temporal_sdk_core_protos::coresdk::{
-    workflow_activation::{remove_from_cache::EvictionReason, WorkflowActivation},
+    workflow_activation::{WorkflowActivation, remove_from_cache::EvictionReason},
     workflow_completion::WorkflowActivationCompletion,
 };
 

@@ -22,17 +22,17 @@ mod integ_tests {
     use std::{env, str::FromStr, time::Duration};
     use temporal_client::{NamespacedClient, WorkflowService};
     use temporal_sdk_core::{
-        init_worker, ClientOptionsBuilder, ClientTlsConfig, CoreRuntime, TlsConfig,
-        WorkflowClientTrait,
+        ClientOptionsBuilder, ClientTlsConfig, CoreRuntime, TlsConfig, WorkflowClientTrait,
+        init_worker,
     };
     use temporal_sdk_core_api::worker::WorkerConfigBuilder;
     use temporal_sdk_core_protos::temporal::api::{
-        nexus::v1::{endpoint_target, EndpointSpec, EndpointTarget},
+        nexus::v1::{EndpointSpec, EndpointTarget, endpoint_target},
         operatorservice::v1::CreateNexusEndpointRequest,
         workflowservice::v1::ListNamespacesRequest,
     };
     use temporal_sdk_core_test_utils::{
-        get_integ_server_options, get_integ_telem_options, rand_6_chars, CoreWfStarter,
+        CoreWfStarter, get_integ_server_options, get_integ_telem_options, rand_6_chars,
     };
     use url::Url;
 

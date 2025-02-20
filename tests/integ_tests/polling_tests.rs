@@ -2,19 +2,19 @@ use assert_matches::assert_matches;
 use std::{sync::Arc, time::Duration};
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk_core::{
-    ephemeral_server::TemporalDevServerConfigBuilder, init_worker, ClientOptionsBuilder,
+    ClientOptionsBuilder, ephemeral_server::TemporalDevServerConfigBuilder, init_worker,
 };
 use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::coresdk::{
+    IntoCompletion,
     activity_task::activity_task as act_task,
-    workflow_activation::{workflow_activation_job, FireTimer, WorkflowActivationJob},
+    workflow_activation::{FireTimer, WorkflowActivationJob, workflow_activation_job},
     workflow_commands::{ActivityCancellationType, RequestCancelActivity, StartTimer},
     workflow_completion::WorkflowActivationCompletion,
-    IntoCompletion,
 };
 use temporal_sdk_core_test_utils::{
-    default_cached_download, drain_pollers_and_shutdown, init_core_and_create_wf, init_integ_telem,
-    integ_worker_config, schedule_activity_cmd, WorkerTestHelpers,
+    WorkerTestHelpers, default_cached_download, drain_pollers_and_shutdown,
+    init_core_and_create_wf, init_integ_telem, integ_worker_config, schedule_activity_cmd,
 };
 use tokio::time::timeout;
 use tracing::info;

@@ -1,9 +1,9 @@
-use super::{workflow_machines::MachineResponse, NewMachineWithCommand};
+use super::{NewMachineWithCommand, workflow_machines::MachineResponse};
 use crate::worker::workflow::{
-    machines::{EventInfo, HistEventData, WFMachinesAdapter},
     WFMachinesError,
+    machines::{EventInfo, HistEventData, WFMachinesAdapter},
 };
-use rustfsm::{fsm, StateMachine, TransitionResult};
+use rustfsm::{StateMachine, TransitionResult, fsm};
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::ModifyWorkflowProperties,
     temporal::api::enums::v1::{CommandType, EventType},
@@ -105,15 +105,15 @@ mod tests {
     use super::*;
     use crate::{
         replay::TestHistoryBuilder,
-        test_help::{build_fake_sdk, MockPollCfg},
+        test_help::{MockPollCfg, build_fake_sdk},
     };
     use temporal_sdk::WfContext;
     use temporal_sdk_core_protos::{
+        DEFAULT_WORKFLOW_TYPE,
         temporal::api::{
-            command::v1::{command, Command},
+            command::v1::{Command, command},
             common::v1::Payload,
         },
-        DEFAULT_WORKFLOW_TYPE,
     };
 
     #[tokio::test]

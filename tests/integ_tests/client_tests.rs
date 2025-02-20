@@ -1,5 +1,5 @@
 use assert_matches::assert_matches;
-use futures_util::{future::BoxFuture, FutureExt};
+use futures_util::{FutureExt, future::BoxFuture};
 use http_body_util::BodyExt;
 use prost::Message;
 use std::{
@@ -7,14 +7,14 @@ use std::{
     convert::Infallible,
     env,
     sync::{
-        atomic::{AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicUsize, Ordering},
     },
     task::{Context, Poll},
     time::Duration,
 };
 use temporal_client::{
-    Namespace, RetryConfig, WorkflowClientTrait, WorkflowService, RETRYABLE_ERROR_CODES,
+    Namespace, RETRYABLE_ERROR_CODES, RetryConfig, WorkflowClientTrait, WorkflowService,
 };
 use temporal_sdk_core_protos::temporal::api::{
     cloud::cloudservice::v1::GetNamespaceRequest,
@@ -23,17 +23,17 @@ use temporal_sdk_core_protos::temporal::api::{
         RespondActivityTaskCanceledResponse,
     },
 };
-use temporal_sdk_core_test_utils::{get_integ_server_options, CoreWfStarter, NAMESPACE};
+use temporal_sdk_core_test_utils::{CoreWfStarter, NAMESPACE, get_integ_server_options};
 use tokio::{
     net::TcpListener,
     sync::{mpsc::UnboundedSender, oneshot},
 };
 use tonic::{
+    Code, Request, Status,
     body::BoxBody,
-    codegen::{http::Response, Service},
+    codegen::{Service, http::Response},
     server::NamedService,
     transport::Server,
-    Code, Request, Status,
 };
 use tracing::info;
 

@@ -1,24 +1,24 @@
 use crate::{
+    TaskToken,
     abstractions::take_cell::TakeCell,
     worker::{activities::PendingActivityCancel, client::WorkerClient},
-    TaskToken,
 };
 use futures_util::StreamExt;
 use std::{
-    collections::{hash_map::Entry, HashMap},
+    collections::{HashMap, hash_map::Entry},
     sync::Arc,
     time::{Duration, Instant},
 };
 use temporal_sdk_core_protos::{
-    coresdk::{activity_task::ActivityCancelReason, ActivityHeartbeat, IntoPayloadsExt},
+    coresdk::{ActivityHeartbeat, IntoPayloadsExt, activity_task::ActivityCancelReason},
     temporal::api::{
         common::v1::Payload, workflowservice::v1::RecordActivityTaskHeartbeatResponse,
     },
 };
 use tokio::{
     sync::{
-        mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
         Notify,
+        mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
     },
     task::JoinHandle,
 };
@@ -67,7 +67,9 @@ enum HeartbeatExecutorAction {
 #[derive(thiserror::Error, Debug)]
 pub(crate) enum ActivityHeartbeatError {
     /// Heartbeat referenced an activity that we don't think exists. It may have completed already.
-    #[error("Heartbeat has been sent for activity that either completed or never started on this worker.")]
+    #[error(
+        "Heartbeat has been sent for activity that either completed or never started on this worker."
+    )]
     UnknownActivity,
     /// There was a set heartbeat timeout, but it was not parseable. A valid timeout is requried
     /// to heartbeat.

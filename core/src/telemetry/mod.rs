@@ -10,10 +10,10 @@ mod prometheus_server;
 
 #[cfg(feature = "otel")]
 pub use metrics::{
-    default_buckets_for, MetricsCallBuffer, ACTIVITY_EXEC_LATENCY_HISTOGRAM_NAME,
-    ACTIVITY_SCHED_TO_START_LATENCY_HISTOGRAM_NAME, WORKFLOW_E2E_LATENCY_HISTOGRAM_NAME,
+    ACTIVITY_EXEC_LATENCY_HISTOGRAM_NAME, ACTIVITY_SCHED_TO_START_LATENCY_HISTOGRAM_NAME,
+    MetricsCallBuffer, WORKFLOW_E2E_LATENCY_HISTOGRAM_NAME,
     WORKFLOW_TASK_EXECUTION_LATENCY_HISTOGRAM_NAME, WORKFLOW_TASK_REPLAY_LATENCY_HISTOGRAM_NAME,
-    WORKFLOW_TASK_SCHED_TO_START_LATENCY_HISTOGRAM_NAME,
+    WORKFLOW_TASK_SCHED_TO_START_LATENCY_HISTOGRAM_NAME, default_buckets_for,
 };
 #[cfg(feature = "otel")]
 pub use otel::{build_otlp_metric_exporter, start_prometheus_metric_exporter};
@@ -28,16 +28,16 @@ use std::{
     collections::VecDeque,
     env,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
 };
 use temporal_sdk_core_api::telemetry::{
-    metrics::{CoreMeter, MetricKeyValue, NewAttributes, TemporalMeter},
     CoreLog, CoreTelemetry, Logger, TelemetryOptions,
+    metrics::{CoreMeter, MetricKeyValue, NewAttributes, TemporalMeter},
 };
 use tracing::{Level, Subscriber};
-use tracing_subscriber::{layer::SubscriberExt, EnvFilter, Layer};
+use tracing_subscriber::{EnvFilter, Layer, layer::SubscriberExt};
 
 const TELEM_SERVICE_NAME: &str = "temporal-core-sdk";
 

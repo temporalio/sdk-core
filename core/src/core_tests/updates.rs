@@ -1,18 +1,19 @@
 use crate::{
     prost_dur,
     test_help::{
-        build_mock_pollers, hist_to_poll_resp, mock_worker, MockPollCfg, PollWFTRespExt,
-        ResponseType,
+        MockPollCfg, PollWFTRespExt, ResponseType, build_mock_pollers, hist_to_poll_resp,
+        mock_worker,
     },
     worker::client::mocks::mock_workflow_client,
 };
 use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::{
+    DEFAULT_ACTIVITY_TYPE, TestHistoryBuilder,
     coresdk::{
-        workflow_activation::{workflow_activation_job, WorkflowActivationJob},
+        workflow_activation::{WorkflowActivationJob, workflow_activation_job},
         workflow_commands::{
-            update_response::Response, CompleteWorkflowExecution, ScheduleActivity, StartTimer,
-            UpdateResponse,
+            CompleteWorkflowExecution, ScheduleActivity, StartTimer, UpdateResponse,
+            update_response::Response,
         },
         workflow_completion::WorkflowActivationCompletion,
     },
@@ -22,7 +23,6 @@ use temporal_sdk_core_protos::{
         update::v1::{Acceptance, Rejection},
         workflowservice::v1::RespondWorkflowTaskCompletedResponse,
     },
-    TestHistoryBuilder, DEFAULT_ACTIVITY_TYPE,
 };
 use temporal_sdk_core_test_utils::WorkerTestHelpers;
 

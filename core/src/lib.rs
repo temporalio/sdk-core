@@ -50,8 +50,8 @@ pub use worker::{
 use crate::{
     replay::{HistoryForReplay, ReplayWorkerInput},
     telemetry::{
-        metrics::MetricsContext, remove_trace_subscriber_for_current_thread,
-        set_trace_subscriber_for_current_thread, telemetry_init, TelemetryInstance,
+        TelemetryInstance, metrics::MetricsContext, remove_trace_subscriber_for_current_thread,
+        set_trace_subscriber_for_current_thread, telemetry_init,
     },
     worker::client::WorkerClientBag,
 };
@@ -60,9 +60,9 @@ use futures_util::Stream;
 use std::sync::Arc;
 use temporal_client::{ConfiguredClient, NamespacedClient, TemporalServiceClientWithMetrics};
 use temporal_sdk_core_api::{
+    Worker as WorkerTrait,
     errors::{CompleteActivityError, PollError},
     telemetry::TelemetryOptions,
-    Worker as WorkerTrait,
 };
 use temporal_sdk_core_protos::coresdk::ActivityHeartbeat;
 

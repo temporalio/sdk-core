@@ -8,7 +8,7 @@ use std::{
 };
 use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::{
-    coresdk::{activity_task, ActivityHeartbeat},
+    coresdk::{ActivityHeartbeat, activity_task},
     temporal::api::common::v1::{Payload, RetryPolicy, WorkflowExecution},
     utilities::TryIntoOrNone,
 };

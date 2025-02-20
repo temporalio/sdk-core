@@ -1,6 +1,6 @@
-use futures_channel::mpsc::{channel, Receiver, Sender};
+use futures_channel::mpsc::{Receiver, Sender, channel};
 use parking_lot::Mutex;
-use ringbuf::{consumer::Consumer, producer::Producer, traits::Split, HeapRb};
+use ringbuf::{HeapRb, consumer::Consumer, producer::Producer, traits::Split};
 use std::{collections::HashMap, fmt, sync::Arc, time::SystemTime};
 use temporal_sdk_core_api::telemetry::{CoreLog, CoreLogConsumer};
 use tracing_subscriber::Layer;
@@ -216,7 +216,7 @@ impl tracing::field::Visit for JsonVisitor<'_> {
 #[cfg(test)]
 mod tests {
     use crate::{
-        telemetry::{construct_filter_string, CoreLogStreamConsumer},
+        telemetry::{CoreLogStreamConsumer, construct_filter_string},
         telemetry_init,
     };
     use futures_util::stream::StreamExt;

@@ -16,23 +16,24 @@ pub(crate) use activities::{
     ExecutingLAId, LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
     NewLocalAct,
 };
-pub(crate) use workflow::{wft_poller::new_wft_poller, LEGACY_QUERY_ID};
+pub(crate) use workflow::{LEGACY_QUERY_ID, wft_poller::new_wft_poller};
 
 use crate::{
-    abstractions::{dbg_panic, MeteredPermitDealer, PermitDealerContextData},
+    ActivityHeartbeat, CompleteActivityError, PollError, WorkerTrait,
+    abstractions::{MeteredPermitDealer, PermitDealerContextData, dbg_panic},
     errors::CompleteWfError,
     pollers::{
-        new_activity_task_buffer, new_nexus_task_buffer, new_workflow_task_buffer, BoxedActPoller,
-        BoxedNexusPoller, WorkflowTaskPoller,
+        BoxedActPoller, BoxedNexusPoller, WorkflowTaskPoller, new_activity_task_buffer,
+        new_nexus_task_buffer, new_workflow_task_buffer,
     },
     protosext::validate_activity_completion,
     telemetry::{
-        metrics::{
-            activity_poller, activity_worker_type, local_activity_worker_type, nexus_poller,
-            nexus_worker_type, workflow_poller, workflow_sticky_poller, workflow_worker_type,
-            MetricsContext,
-        },
         TelemetryInstance,
+        metrics::{
+            MetricsContext, activity_poller, activity_worker_type, local_activity_worker_type,
+            nexus_poller, nexus_worker_type, workflow_poller, workflow_sticky_poller,
+            workflow_worker_type,
+        },
     },
     worker::{
         activities::{LACompleteAction, LocalActivityManager, NextPendingLAAction},
@@ -40,43 +41,42 @@ use crate::{
         nexus::NexusManager,
         workflow::{LAReqSink, LocalResolution, WorkflowBasics, Workflows},
     },
-    ActivityHeartbeat, CompleteActivityError, PollError, WorkerTrait,
 };
 use activities::WorkerActivityTasks;
-use futures_util::{stream, StreamExt};
+use futures_util::{StreamExt, stream};
 use parking_lot::Mutex;
 use slot_provider::SlotProvider;
 use std::{
     convert::TryInto,
     future,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
     time::Duration,
 };
 use temporal_client::{ConfiguredClient, TemporalServiceClientWithMetrics, WorkerKey};
 use temporal_sdk_core_api::errors::{CompleteNexusError, WorkerValidationError};
 use temporal_sdk_core_protos::{
+    TaskToken,
     coresdk::{
+        ActivityTaskCompletion,
         activity_result::activity_execution_result,
         activity_task::ActivityTask,
-        workflow_activation::{remove_from_cache::EvictionReason, WorkflowActivation},
+        workflow_activation::{WorkflowActivation, remove_from_cache::EvictionReason},
         workflow_completion::WorkflowActivationCompletion,
-        ActivityTaskCompletion,
     },
     temporal::api::{
         enums::v1::TaskQueueKind,
         taskqueue::v1::{StickyExecutionAttributes, TaskQueue},
     },
-    TaskToken,
 };
 use tokio::sync::{mpsc::unbounded_channel, watch};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
 
 use temporal_sdk_core_protos::coresdk::nexus::{
-    nexus_task_completion, NexusTask, NexusTaskCompletion,
+    NexusTask, NexusTaskCompletion, nexus_task_completion,
 };
 
 #[cfg(test)]
@@ -941,9 +941,11 @@ mod tests {
 
     #[test]
     fn max_polls_zero_is_err() {
-        assert!(test_worker_cfg()
-            .max_concurrent_wft_polls(0_usize)
-            .build()
-            .is_err());
+        assert!(
+            test_worker_cfg()
+                .max_concurrent_wft_polls(0_usize)
+                .build()
+                .is_err()
+        );
     }
 }

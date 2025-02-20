@@ -9,8 +9,8 @@ use temporal_sdk_core::ephemeral_server::{
     TemporalDevServerConfigBuilder, TestServerConfigBuilder,
 };
 use temporal_sdk_core_test_utils::{
-    default_cached_download, INTEG_SERVER_TARGET_ENV_VAR, INTEG_TEMPORAL_DEV_SERVER_USED_ENV_VAR,
-    INTEG_TEST_SERVER_USED_ENV_VAR, SEARCH_ATTR_INT, SEARCH_ATTR_TXT,
+    INTEG_SERVER_TARGET_ENV_VAR, INTEG_TEMPORAL_DEV_SERVER_USED_ENV_VAR,
+    INTEG_TEST_SERVER_USED_ENV_VAR, SEARCH_ATTR_INT, SEARCH_ATTR_TXT, default_cached_download,
 };
 use tokio::{self, process::Command};
 

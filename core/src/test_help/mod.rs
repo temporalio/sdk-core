@@ -1,21 +1,21 @@
 pub(crate) use temporal_sdk_core_test_utils::canned_histories;
 
 use crate::{
+    TaskToken, Worker, WorkerConfig, WorkerConfigBuilder,
     pollers::{BoxedPoller, MockManualPoller, MockPoller},
     protosext::ValidPollWFTQResponse,
     replay::TestHistoryBuilder,
     sticky_q_name_for_worker,
     worker::{
-        client::{
-            mocks::mock_workflow_client, MockWorkerClient, WorkerClient, WorkflowTaskCompletion,
-        },
         TaskPollers,
+        client::{
+            MockWorkerClient, WorkerClient, WorkflowTaskCompletion, mocks::mock_workflow_client,
+        },
     },
-    TaskToken, Worker, WorkerConfig, WorkerConfigBuilder,
 };
 use async_trait::async_trait;
 use bimap::BiMap;
-use futures_util::{future::BoxFuture, stream, stream::BoxStream, FutureExt, Stream, StreamExt};
+use futures_util::{FutureExt, Stream, StreamExt, future::BoxFuture, stream, stream::BoxStream};
 use mockall::TimesRange;
 use parking_lot::RwLock;
 use std::{
@@ -24,19 +24,19 @@ use std::{
     ops::{Deref, DerefMut},
     pin::Pin,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
     task::{Context, Poll},
     time::Duration,
 };
 use temporal_sdk::interceptors::FailOnNondeterminismInterceptor;
-use temporal_sdk_core_api::{errors::PollError, Worker as WorkerTrait};
+use temporal_sdk_core_api::{Worker as WorkerTrait, errors::PollError};
 use temporal_sdk_core_protos::{
     coresdk::{
-        workflow_activation::{workflow_activation_job, WorkflowActivation},
+        workflow_activation::{WorkflowActivation, workflow_activation_job},
         workflow_commands::workflow_command,
-        workflow_completion::{self, workflow_activation_completion, WorkflowActivationCompletion},
+        workflow_completion::{self, WorkflowActivationCompletion, workflow_activation_completion},
     },
     temporal::api::{
         common::v1::WorkflowExecution,
@@ -52,8 +52,8 @@ use temporal_sdk_core_protos::{
     },
     utilities::pack_any,
 };
-use temporal_sdk_core_test_utils::{TestWorker, NAMESPACE};
-use tokio::sync::{mpsc::unbounded_channel, Notify};
+use temporal_sdk_core_test_utils::{NAMESPACE, TestWorker};
+use tokio::sync::{Notify, mpsc::unbounded_channel};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
 pub(crate) const TEST_Q: &str = "q";
@@ -825,7 +825,7 @@ pub(crate) fn hist_to_poll_resp(
             return QueueResponse {
                 resp: r,
                 delay_until: None,
-            }
+            };
         }
         ResponseType::UntilResolved(fut, tn) => {
             delay_until = Some(fut);
@@ -835,7 +835,7 @@ pub(crate) fn hist_to_poll_resp(
             return QueueResponse {
                 resp: r,
                 delay_until: Some(fut),
-            }
+            };
         }
     };
     let mut resp = hist_info.as_poll_wft_response();

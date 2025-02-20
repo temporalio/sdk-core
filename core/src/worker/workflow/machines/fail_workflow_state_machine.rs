@@ -1,9 +1,9 @@
 use super::{
-    workflow_machines::MachineResponse, EventInfo, NewMachineWithCommand, OnEventWrapper,
-    WFMachinesAdapter, WFMachinesError,
+    EventInfo, NewMachineWithCommand, OnEventWrapper, WFMachinesAdapter, WFMachinesError,
+    workflow_machines::MachineResponse,
 };
 use crate::worker::workflow::machines::HistEventData;
-use rustfsm::{fsm, StateMachine, TransitionResult};
+use rustfsm::{StateMachine, TransitionResult, fsm};
 use std::convert::TryFrom;
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::FailWorkflowExecution,
@@ -87,7 +87,7 @@ impl TryFrom<HistEventData> for FailWorkflowMachineEvents {
             _ => {
                 return Err(WFMachinesError::Nondeterminism(format!(
                     "Fail workflow machine does not handle this event: {e}"
-                )))
+                )));
             }
         })
     }

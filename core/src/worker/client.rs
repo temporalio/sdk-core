@@ -8,6 +8,7 @@ use temporal_client::{
     WorkflowService,
 };
 use temporal_sdk_core_protos::{
+    TaskToken,
     coresdk::workflow_commands::QueryResult,
     temporal::api::{
         command::v1::Command,
@@ -24,7 +25,6 @@ use temporal_sdk_core_protos::{
         taskqueue::v1::{StickyExecutionAttributes, TaskQueue, TaskQueueMetadata},
         workflowservice::v1::{get_system_info_response::Capabilities, *},
     },
-    TaskToken,
 };
 use tonic::IntoRequest;
 

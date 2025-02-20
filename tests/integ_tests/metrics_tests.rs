@@ -10,40 +10,39 @@ use std::{
     time::Duration,
 };
 use temporal_client::{
-    WorkflowClientTrait, WorkflowOptions, WorkflowService, REQUEST_LATENCY_HISTOGRAM_NAME,
+    REQUEST_LATENCY_HISTOGRAM_NAME, WorkflowClientTrait, WorkflowOptions, WorkflowService,
 };
 use temporal_sdk::{
     ActContext, ActivityError, ActivityOptions, CancellableFuture, LocalActivityOptions,
     NexusOperationOptions, WfContext,
 };
 use temporal_sdk_core::{
-    init_worker,
+    CoreRuntime, TokioRuntimeBuilder, init_worker,
     telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter},
-    CoreRuntime, TokioRuntimeBuilder,
 };
 use temporal_sdk_core_api::{
+    Worker,
     errors::PollError,
     telemetry::{
-        metrics::{CoreMeter, MetricAttributes, MetricParameters},
         HistogramBucketOverrides, OtelCollectorOptionsBuilder, OtlpProtocol,
         PrometheusExporterOptions, PrometheusExporterOptionsBuilder, TelemetryOptions,
         TelemetryOptionsBuilder,
+        metrics::{CoreMeter, MetricAttributes, MetricParameters},
     },
     worker::WorkerConfigBuilder,
-    Worker,
 };
 use temporal_sdk_core_protos::{
     coresdk::{
+        ActivityTaskCompletion, AsJsonPayloadExt,
         activity_result::ActivityExecutionResult,
-        nexus::{nexus_task, nexus_task_completion, NexusTaskCompletion},
-        workflow_activation::{workflow_activation_job, WorkflowActivationJob},
+        nexus::{NexusTaskCompletion, nexus_task, nexus_task_completion},
+        workflow_activation::{WorkflowActivationJob, workflow_activation_job},
         workflow_commands::{
-            workflow_command, CancelWorkflowExecution, CompleteWorkflowExecution,
-            ContinueAsNewWorkflowExecution, FailWorkflowExecution, QueryResult, QuerySuccess,
-            ScheduleActivity, ScheduleLocalActivity,
+            CancelWorkflowExecution, CompleteWorkflowExecution, ContinueAsNewWorkflowExecution,
+            FailWorkflowExecution, QueryResult, QuerySuccess, ScheduleActivity,
+            ScheduleLocalActivity, workflow_command,
         },
         workflow_completion::WorkflowActivationCompletion,
-        ActivityTaskCompletion, AsJsonPayloadExt,
     },
     temporal::api::{
         common::v1::RetryPolicy,
@@ -51,16 +50,16 @@ use temporal_sdk_core_protos::{
         failure::v1::Failure,
         nexus,
         nexus::v1::{
-            request::Variant, start_operation_response, HandlerError, StartOperationResponse,
-            UnsuccessfulOperationError,
+            HandlerError, StartOperationResponse, UnsuccessfulOperationError, request::Variant,
+            start_operation_response,
         },
         query::v1::WorkflowQuery,
         workflowservice::v1::{DescribeNamespaceRequest, ListNamespacesRequest},
     },
 };
 use temporal_sdk_core_test_utils::{
-    get_integ_server_options, get_integ_telem_options, CoreWfStarter, NAMESPACE, OTEL_URL_ENV_VAR,
-    PROMETHEUS_QUERY_API,
+    CoreWfStarter, NAMESPACE, OTEL_URL_ENV_VAR, PROMETHEUS_QUERY_API, get_integ_server_options,
+    get_integ_telem_options,
 };
 use tokio::{join, sync::Barrier, task::AbortHandle};
 use tracing_subscriber::fmt::MakeWriter;
@@ -627,9 +626,11 @@ async fn latency_metrics(
         .filter(|l| l.starts_with("temporal_long_request_latency"))
         .collect::<Vec<_>>();
     assert!(matching_lines.len() > 1);
-    assert!(matching_lines
-        .iter()
-        .any(|l| l.contains("PollWorkflowTaskQueue")));
+    assert!(
+        matching_lines
+            .iter()
+            .any(|l| l.contains("PollWorkflowTaskQueue"))
+    );
 }
 
 #[tokio::test]
@@ -769,10 +770,12 @@ async fn docker_metrics_with_prometheus(
         assert!(!data.is_empty(), "No metrics found for query: {test_uid}");
         assert_eq!(data[0]["metric"]["exported_job"], "temporal-core-sdk");
         assert_eq!(data[0]["metric"]["job"], "otel-collector");
-        assert!(data[0]["metric"]["task_queue"]
-            .as_str()
-            .unwrap()
-            .starts_with(test_name));
+        assert!(
+            data[0]["metric"]["task_queue"]
+                .as_str()
+                .unwrap()
+                .starts_with(test_name)
+        );
     } else {
         panic!("Invalid Prometheus response: {:?}", response);
     }

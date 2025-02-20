@@ -1,20 +1,20 @@
 use super::{
-    workflow_machines::MachineResponse, EventInfo, OnEventWrapper, WFMachinesAdapter,
-    WFMachinesError,
+    EventInfo, OnEventWrapper, WFMachinesAdapter, WFMachinesError,
+    workflow_machines::MachineResponse,
 };
 use crate::{
     internal_flags::CoreInternalFlags,
     protosext::{CompleteLocalActivityData, HistoryEventExt, ValidScheduleLA},
     worker::{
-        workflow::{
-            machines::{activity_state_machine::activity_fail_info, HistEventData},
-            InternalFlagsRef,
-        },
         LocalActivityExecutionResult,
+        workflow::{
+            InternalFlagsRef,
+            machines::{HistEventData, activity_state_machine::activity_fail_info},
+        },
     },
 };
 use itertools::Itertools;
-use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
+use rustfsm::{MachineError, StateMachine, TransitionResult, fsm};
 use std::{
     convert::TryFrom,
     time::{Duration, SystemTime},
@@ -31,9 +31,9 @@ use temporal_sdk_core_protos::{
         workflow_commands::ActivityCancellationType,
     },
     temporal::api::{
-        command::v1::{command, RecordMarkerCommandAttributes},
+        command::v1::{RecordMarkerCommandAttributes, command},
         enums::v1::{CommandType, EventType, RetryState},
-        failure::v1::{failure::FailureInfo, Failure},
+        failure::v1::{Failure, failure::FailureInfo},
     },
     utilities::TryIntoOrNone,
 };
@@ -866,7 +866,7 @@ mod tests {
     use super::*;
     use crate::{
         replay::TestHistoryBuilder,
-        test_help::{build_fake_sdk, canned_histories, MockPollCfg, ResponseType},
+        test_help::{MockPollCfg, ResponseType, build_fake_sdk, canned_histories},
     };
     use anyhow::anyhow;
     use rstest::rstest;
@@ -879,14 +879,14 @@ mod tests {
         WorkflowResult,
     };
     use temporal_sdk_core_protos::{
+        DEFAULT_ACTIVITY_TYPE, DEFAULT_WORKFLOW_TYPE,
         coresdk::{
-            workflow_activation::{workflow_activation_job, WorkflowActivationJob},
             AsJsonPayloadExt,
+            workflow_activation::{WorkflowActivationJob, workflow_activation_job},
         },
         temporal::api::{
             common::v1::RetryPolicy, enums::v1::WorkflowTaskFailedCause, failure::v1::Failure,
         },
-        DEFAULT_ACTIVITY_TYPE, DEFAULT_WORKFLOW_TYPE,
     };
     use temporal_sdk_core_test_utils::interceptors::ActivationAssertionsInterceptor;
     use tokio_util::sync::CancellationToken;

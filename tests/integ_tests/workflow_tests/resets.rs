@@ -2,8 +2,8 @@ use crate::integ_tests::activity_functions::echo;
 use futures_util::StreamExt;
 use std::{
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::Duration,
 };

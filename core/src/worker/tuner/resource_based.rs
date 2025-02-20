@@ -3,8 +3,8 @@ use parking_lot::Mutex;
 use std::{
     marker::PhantomData,
     sync::{
-        atomic::{AtomicU64, AtomicUsize, Ordering},
         Arc, OnceLock,
+        atomic::{AtomicU64, AtomicUsize, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -546,8 +546,8 @@ mod tests {
     use super::*;
     use crate::{abstractions::MeteredPermitDealer, telemetry::metrics::MetricsContext};
     use std::sync::{
-        atomic::{AtomicU64, Ordering},
         Arc,
+        atomic::{AtomicU64, Ordering},
     };
     use temporal_sdk_core_api::worker::WorkflowSlotKind;
 

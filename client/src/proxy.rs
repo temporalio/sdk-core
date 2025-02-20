@@ -12,7 +12,7 @@ use std::{
 };
 use tokio::net::TcpStream;
 use tonic::transport::{Channel, Endpoint};
-use tower::{service_fn, Service};
+use tower::{Service, service_fn};
 
 /// Options for HTTP CONNECT proxy.
 #[derive(Clone, Debug)]

@@ -5,11 +5,11 @@ use temporal_client::{
     WorkflowClientTrait, WorkflowExecutionFilter,
 };
 use temporal_sdk_core_protos::coresdk::workflow_activation::{
-    workflow_activation_job, WorkflowActivationJob,
+    WorkflowActivationJob, workflow_activation_job,
 };
 use temporal_sdk_core_test_utils::{
-    drain_pollers_and_shutdown, get_integ_server_options, CoreWfStarter, WorkerTestHelpers,
-    NAMESPACE,
+    CoreWfStarter, NAMESPACE, WorkerTestHelpers, drain_pollers_and_shutdown,
+    get_integ_server_options,
 };
 use tokio::time::sleep;
 

@@ -1,14 +1,14 @@
 use crate::{
     job_assert,
     test_help::{
-        build_fake_worker, canned_histories, gen_assert_and_reply, poll_and_reply, ResponseType,
-        WorkflowCachingPolicy::NonSticky,
+        ResponseType, WorkflowCachingPolicy::NonSticky, build_fake_worker, canned_histories,
+        gen_assert_and_reply, poll_and_reply,
     },
 };
 use rstest::rstest;
 use std::time::Duration;
 use temporal_sdk_core_protos::coresdk::{
-    workflow_activation::{workflow_activation_job, WorkflowActivationJob},
+    workflow_activation::{WorkflowActivationJob, workflow_activation_job},
     workflow_commands::{
         CancelWorkflowExecution, CompleteWorkflowExecution, FailWorkflowExecution,
     },

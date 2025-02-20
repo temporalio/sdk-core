@@ -1,5 +1,5 @@
 use crate::{AttachMetricLabels, CallType};
-use futures_util::{future::BoxFuture, FutureExt};
+use futures_util::{FutureExt, future::BoxFuture};
 use std::{
     sync::Arc,
     task::{Context, Poll},
@@ -9,7 +9,7 @@ use temporal_sdk_core_api::telemetry::metrics::{
     CoreMeter, Counter, HistogramDuration, MetricAttributes, MetricKeyValue, MetricParameters,
     TemporalMeter,
 };
-use tonic::{body::BoxBody, transport::Channel, Code};
+use tonic::{Code, body::BoxBody, transport::Channel};
 use tower::Service;
 
 /// The string name (which may be prefixed) for this metric
