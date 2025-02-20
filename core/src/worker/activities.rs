@@ -352,7 +352,7 @@ impl WorkerActivityTasks {
                     aer::Status::Failed(ar::Failure { failure }) => {
                         act_metrics.act_execution_failed();
                         client
-                            .fail_activity_task(task_token.clone(), failure.map(Into::into))
+                            .fail_activity_task(task_token.clone(), failure)
                             .await
                             .err()
                     }
@@ -387,7 +387,7 @@ impl WorkerActivityTasks {
                                 None
                             };
                             client
-                                .cancel_activity_task(task_token.clone(), details.map(Into::into))
+                                .cancel_activity_task(task_token.clone(), details)
                                 .await
                                 .err()
                         }

@@ -1263,7 +1263,7 @@ pub mod coresdk {
                         schedule_to_close_timeout: r.schedule_to_close_timeout,
                         start_to_close_timeout: r.start_to_close_timeout,
                         heartbeat_timeout: r.heartbeat_timeout,
-                        retry_policy: r.retry_policy.map(Into::into),
+                        retry_policy: r.retry_policy,
                         is_local: false,
                     },
                 )),
@@ -1424,7 +1424,7 @@ pub mod coresdk {
         fn from_payloads(p: Option<Payloads>) -> Self {
             match p {
                 None => std::iter::empty().collect(),
-                Some(p) => p.payloads.into_iter().map(Into::into).collect(),
+                Some(p) => p.payloads.into_iter().collect(),
             }
         }
     }
@@ -1442,7 +1442,7 @@ pub mod coresdk {
                 None
             } else {
                 Some(Payloads {
-                    payloads: iterd.map(Into::into).collect(),
+                    payloads: iterd.collect(),
                 })
             }
         }

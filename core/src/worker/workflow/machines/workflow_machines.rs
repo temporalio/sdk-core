@@ -1029,7 +1029,7 @@ impl WorkflowMachines {
     }
 
     fn set_current_time(&mut self, time: SystemTime) -> SystemTime {
-        if self.current_wf_time.map_or(true, |t| t < time) {
+        if self.current_wf_time.is_none_or(|t| t < time) {
             self.current_wf_time = Some(time);
         }
         self.current_wf_time

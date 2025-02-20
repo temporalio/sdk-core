@@ -750,7 +750,7 @@ fn new_cancel_failure(dat: &SharedState, attrs: ActivityTaskCanceledEventAttribu
         message: "Activity cancelled".to_string(),
         cause: Some(Box::from(Failure {
             failure_info: Some(FailureInfo::CanceledFailureInfo(CanceledFailureInfo {
-                details: attrs.details.map(Into::into),
+                details: attrs.details,
             })),
             ..Default::default()
         })),

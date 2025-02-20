@@ -429,7 +429,7 @@ impl Workflows {
                     warn!(run_id=%run_id, failure=?failure, "Failing workflow task");
                     self.handle_wft_reporting_errs(&run_id, || async {
                         self.client
-                            .fail_workflow_task(tt, cause, failure.failure.map(Into::into))
+                            .fail_workflow_task(tt, cause, failure.failure)
                             .await
                     })
                     .await;
