@@ -53,7 +53,7 @@ mod workflow_future;
 
 pub use activity_context::ActContext;
 pub use temporal_client::Namespace;
-use tracing::{field, Instrument, Span};
+use tracing::{Instrument, Span, field};
 pub use workflow_context::{
     ActivityOptions, CancellableFuture, ChildWorkflow, ChildWorkflowOptions, LocalActivityOptions,
     NexusOperationOptions, PendingChildWorkflow, Signal, SignalData, SignalWorkflowOptions,
@@ -64,9 +64,9 @@ use crate::{
     interceptors::WorkerInterceptor,
     workflow_context::{ChildWfCommon, NexusUnblockData, StartedNexusOperation},
 };
-use anyhow::{anyhow, bail, Context};
+use anyhow::{Context, anyhow, bail};
 use app_data::AppData;
-use futures_util::{future::BoxFuture, FutureExt, StreamExt, TryFutureExt, TryStreamExt};
+use futures_util::{FutureExt, StreamExt, TryFutureExt, TryStreamExt, future::BoxFuture};
 use serde::Serialize;
 use std::{
     any::{Any, TypeId},
@@ -80,32 +80,33 @@ use std::{
 };
 use temporal_client::ClientOptionsBuilder;
 use temporal_sdk_core::Url;
-use temporal_sdk_core_api::{errors::PollError, Worker as CoreWorker};
+use temporal_sdk_core_api::{Worker as CoreWorker, errors::PollError};
 use temporal_sdk_core_protos::{
+    TaskToken,
     coresdk::{
+        ActivityTaskCompletion, AsJsonPayloadExt, FromJsonPayloadExt,
         activity_result::{ActivityExecutionResult, ActivityResolution},
-        activity_task::{activity_task, ActivityTask},
+        activity_task::{ActivityTask, activity_task},
         child_workflow::ChildWorkflowResult,
         common::NamespacedWorkflowExecution,
         nexus::NexusOperationResult,
         workflow_activation::{
+            WorkflowActivation,
             resolve_child_workflow_execution_start::Status as ChildWorkflowStartStatus,
-            resolve_nexus_operation_start, workflow_activation_job::Variant, WorkflowActivation,
+            resolve_nexus_operation_start, workflow_activation_job::Variant,
         },
-        workflow_commands::{workflow_command, ContinueAsNewWorkflowExecution, WorkflowCommand},
+        workflow_commands::{ContinueAsNewWorkflowExecution, WorkflowCommand, workflow_command},
         workflow_completion::WorkflowActivationCompletion,
-        ActivityTaskCompletion, AsJsonPayloadExt, FromJsonPayloadExt,
     },
     temporal::api::{
         common::v1::Payload,
         enums::v1::WorkflowTaskFailedCause,
-        failure::v1::{failure, Failure},
+        failure::v1::{Failure, failure},
     },
-    TaskToken,
 };
 use tokio::{
     sync::{
-        mpsc::{unbounded_channel, UnboundedSender},
+        mpsc::{UnboundedSender, unbounded_channel},
         oneshot,
     },
     task::JoinError,
@@ -192,7 +193,7 @@ impl Worker {
 
     /// Return a handle that can be used to initiate shutdown.
     /// TODO: Doc better after shutdown changes
-    pub fn shutdown_handle(&self) -> impl Fn() {
+    pub fn shutdown_handle(&self) -> impl Fn() + use<> {
         let w = self.common.worker.clone();
         move || w.initiate_shutdown()
     }
@@ -391,7 +392,9 @@ impl WorkflowHalf {
         completions_tx: &UnboundedSender<WorkflowActivationCompletion>,
     ) -> Result<
         Option<
-            WorkflowFutureHandle<impl Future<Output = Result<WorkflowResult<Payload>, JoinError>>>,
+            WorkflowFutureHandle<
+                impl Future<Output = Result<WorkflowResult<Payload>, JoinError>> + use<>,
+            >,
         >,
         anyhow::Error,
     > {

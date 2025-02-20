@@ -3,21 +3,23 @@
 //! users during testing.
 
 use crate::{
-    worker::{
-        client::mocks::{mock_manual_workflow_client, MockManualWorkerClient},
-        PostActivateHookData,
-    },
     Worker,
+    worker::{
+        PostActivateHookData,
+        client::mocks::{MockManualWorkerClient, mock_manual_workflow_client},
+    },
 };
 use futures_util::{FutureExt, Stream, StreamExt};
 use parking_lot::Mutex;
-use std::sync::OnceLock;
 use std::{
     pin::Pin,
-    sync::Arc,
+    sync::{Arc, OnceLock},
     task::{Context, Poll},
 };
 use temporal_sdk_core_api::worker::WorkerConfig;
+pub use temporal_sdk_core_protos::{
+    DEFAULT_WORKFLOW_TYPE, HistoryInfo, TestHistoryBuilder, default_wes_attribs,
+};
 use temporal_sdk_core_protos::{
     coresdk::workflow_activation::remove_from_cache::EvictionReason,
     temporal::api::{
@@ -28,10 +30,7 @@ use temporal_sdk_core_protos::{
         },
     },
 };
-pub use temporal_sdk_core_protos::{
-    default_wes_attribs, HistoryInfo, TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE,
-};
-use tokio::sync::{mpsc, mpsc::UnboundedSender, Mutex as TokioMutex};
+use tokio::sync::{Mutex as TokioMutex, mpsc, mpsc::UnboundedSender};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
 
@@ -202,7 +201,7 @@ impl Historator {
     /// we're ready to replay the next history, or whatever else.
     pub(crate) fn get_post_activate_hook(
         &self,
-    ) -> impl Fn(&Worker, PostActivateHookData) + Send + Sync {
+    ) -> impl Fn(&Worker, PostActivateHookData) + Send + Sync + use<> {
         let done_tx = self.replay_done_tx.clone();
         move |worker, data| {
             if !data.replaying {

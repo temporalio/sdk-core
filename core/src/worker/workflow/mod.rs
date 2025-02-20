@@ -15,15 +15,18 @@ pub(crate) use driven_workflow::DrivenWorkflow;
 pub(crate) use history_update::HistoryUpdate;
 
 use crate::{
+    MetricsContext,
     abstractions::{
-        dbg_panic, take_cell::TakeCell, MeteredPermitDealer, TrackedOwnedMeteredSemPermit,
-        UsedMeteredSemPermit,
+        MeteredPermitDealer, TrackedOwnedMeteredSemPermit, UsedMeteredSemPermit, dbg_panic,
+        take_cell::TakeCell,
     },
     internal_flags::InternalFlags,
     pollers::TrackedPermittedTqResp,
     protosext::{legacy_query_failure, protocol_messages::IncomingProtocolMessage},
-    telemetry::{set_trace_subscriber_for_current_thread, TelemetryInstance, VecDisplayer},
+    telemetry::{TelemetryInstance, VecDisplayer, set_trace_subscriber_for_current_thread},
     worker::{
+        LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
+        PostActivateHookData,
         activities::{ActivitiesFromWFTsHandle, LocalActivityManager},
         client::{WorkerClient, WorkflowTaskCompletion},
         workflow::{
@@ -33,13 +36,10 @@ use crate::{
             wft_poller::validate_wft,
             workflow_stream::{LocalInput, LocalInputs, WFStream},
         },
-        LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
-        PostActivateHookData,
     },
-    MetricsContext,
 };
 use anyhow::anyhow;
-use futures_util::{future::abortable, stream, stream::BoxStream, Stream, StreamExt};
+use futures_util::{Stream, StreamExt, future::abortable, stream, stream::BoxStream};
 use itertools::Itertools;
 use prost_types::TimestampError;
 use rustfsm::MachineError;
@@ -52,7 +52,7 @@ use std::{
     ops::DerefMut,
     rc::Rc,
     result,
-    sync::{atomic, atomic::AtomicBool, Arc},
+    sync::{Arc, atomic, atomic::AtomicBool},
     thread,
     time::{Duration, Instant},
 };
@@ -61,35 +61,35 @@ use temporal_sdk_core_api::{
     worker::{ActivitySlotKind, WorkerConfig, WorkflowSlotKind},
 };
 use temporal_sdk_core_protos::{
+    TaskToken,
     coresdk::{
         workflow_activation::{
-            remove_from_cache::EvictionReason, workflow_activation_job, QueryWorkflow,
-            WorkflowActivation, WorkflowActivationJob,
+            QueryWorkflow, WorkflowActivation, WorkflowActivationJob,
+            remove_from_cache::EvictionReason, workflow_activation_job,
         },
         workflow_commands::*,
         workflow_completion,
         workflow_completion::{
-            workflow_activation_completion, Failure, WorkflowActivationCompletion,
+            Failure, WorkflowActivationCompletion, workflow_activation_completion,
         },
     },
     temporal::api::{
-        command::v1::{command::Attributes, Command as ProtoCommand, Command},
+        command::v1::{Command as ProtoCommand, Command, command::Attributes},
         common::v1::{Memo, MeteringMetadata, RetryPolicy, SearchAttributes, WorkflowExecution},
         enums::v1::WorkflowTaskFailedCause,
         protocol::v1::Message as ProtocolMessage,
         query::v1::WorkflowQuery,
         sdk::v1::{UserMetadata, WorkflowTaskCompletedMetadata},
         taskqueue::v1::StickyExecutionAttributes,
-        workflowservice::v1::{get_system_info_response, PollActivityTaskQueueResponse},
+        workflowservice::v1::{PollActivityTaskQueueResponse, get_system_info_response},
     },
-    TaskToken,
 };
 use tokio::{
     sync::{
-        mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
+        mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
         oneshot,
     },
-    task::{spawn_blocking, LocalSet},
+    task::{LocalSet, spawn_blocking},
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
@@ -259,7 +259,7 @@ impl Workflows {
         loop {
             let al = {
                 let mut lock = self.activation_stream.lock().await;
-                let (ref mut stream, ref mut beginner) = lock.deref_mut();
+                let (stream, beginner) = lock.deref_mut();
                 if let Some(beginner) = beginner.take() {
                     let _ = beginner.send(());
                 }

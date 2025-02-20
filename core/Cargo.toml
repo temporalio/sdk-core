@@ -2,7 +2,7 @@
 name = "temporal-sdk-core"
 version = "0.1.0"
 authors = ["Spencer Judge <spencer@temporal.io>", "Vitaly Arbuzov <vitaly@temporal.io>"]
-edition = "2021"
+edition = "2024"
 license-file = { workspace = true }
 description = "Library for building new Temporal SDKs"
 homepage = "https://temporal.io/"

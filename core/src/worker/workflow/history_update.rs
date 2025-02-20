@@ -5,7 +5,7 @@ use crate::{
         workflow::{CacheMissFetchReq, PermittedWFT, PreparedWFT},
     },
 };
-use futures_util::{future::BoxFuture, FutureExt, Stream, TryFutureExt};
+use futures_util::{FutureExt, Stream, TryFutureExt, future::BoxFuture};
 use itertools::Itertools;
 use std::{
     collections::VecDeque,
@@ -20,8 +20,7 @@ use std::{
 use temporal_sdk_core_protos::temporal::api::{
     enums::v1::EventType,
     history::v1::{
-        history_event, history_event::Attributes, History, HistoryEvent,
-        WorkflowTaskCompletedEventAttributes,
+        History, HistoryEvent, WorkflowTaskCompletedEventAttributes, history_event::Attributes,
     },
 };
 use tracing::Instrument;
@@ -651,9 +650,7 @@ impl HistoryUpdate {
             .iter()
             .skip_while(|e| e.event_id < from_id)
             .find_map(|e| match &e.attributes {
-                Some(history_event::Attributes::WorkflowTaskCompletedEventAttributes(ref a)) => {
-                    Some(a)
-                }
+                Some(Attributes::WorkflowTaskCompletedEventAttributes(a)) => Some(a),
                 _ => None,
             })
     }
@@ -794,7 +791,7 @@ mod tests {
     use super::*;
     use crate::{
         replay::{HistoryInfo, TestHistoryBuilder},
-        test_help::{canned_histories, hist_to_poll_resp, mock_sdk_cfg, MockPollCfg, ResponseType},
+        test_help::{MockPollCfg, ResponseType, canned_histories, hist_to_poll_resp, mock_sdk_cfg},
         worker::client::mocks::mock_workflow_client,
     };
     use futures_util::{StreamExt, TryStreamExt};
@@ -802,11 +799,11 @@ mod tests {
     use temporal_client::WorkflowOptions;
     use temporal_sdk::WfContext;
     use temporal_sdk_core_protos::{
+        DEFAULT_WORKFLOW_TYPE,
         temporal::api::{
             common::v1::WorkflowExecution, enums::v1::WorkflowTaskFailedCause,
             workflowservice::v1::GetWorkflowExecutionHistoryResponse,
         },
-        DEFAULT_WORKFLOW_TYPE,
     };
 
     impl From<HistoryInfo> for HistoryUpdate {

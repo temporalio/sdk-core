@@ -6,13 +6,12 @@ pub use options::{
 };
 
 use crate::{
-    workflow_context::options::IntoWorkflowCommand, CancelExternalWfResult, CancellableID,
-    CancellableIDWithReason, CommandCreateRequest, CommandSubscribeChildWorkflowCompletion,
-    IntoUpdateHandlerFunc, IntoUpdateValidatorFunc, NexusStartResult, RustWfCmd,
-    SignalExternalWfResult, SupportsCancelReason, TimerResult, UnblockEvent, Unblockable,
-    UpdateFunctions,
+    CancelExternalWfResult, CancellableID, CancellableIDWithReason, CommandCreateRequest,
+    CommandSubscribeChildWorkflowCompletion, IntoUpdateHandlerFunc, IntoUpdateValidatorFunc,
+    NexusStartResult, RustWfCmd, SignalExternalWfResult, SupportsCancelReason, TimerResult,
+    UnblockEvent, Unblockable, UpdateFunctions, workflow_context::options::IntoWorkflowCommand,
 };
-use futures_util::{future::Shared, task::Context, FutureExt, Stream, StreamExt};
+use futures_util::{FutureExt, Stream, StreamExt, future::Shared, task::Context};
 use parking_lot::{RwLock, RwLockReadGuard};
 use std::{
     collections::HashMap,
@@ -21,26 +20,25 @@ use std::{
     ops::Deref,
     pin::Pin,
     sync::{
+        Arc,
         atomic::{AtomicBool, Ordering},
         mpsc::{Receiver, Sender},
-        Arc,
     },
     task::Poll,
     time::{Duration, SystemTime},
 };
 use temporal_sdk_core_protos::{
     coresdk::{
-        activity_result::{activity_resolution, ActivityResolution},
+        activity_result::{ActivityResolution, activity_resolution},
         child_workflow::ChildWorkflowResult,
         common::NamespacedWorkflowExecution,
         nexus::NexusOperationResult,
         workflow_activation::resolve_child_workflow_execution_start::Status as ChildWorkflowStartStatus,
         workflow_commands::{
-            signal_external_workflow_execution as sig_we, workflow_command,
             CancelChildWorkflowExecution, ModifyWorkflowProperties,
             RequestCancelExternalWorkflowExecution, SetPatchMarker,
             SignalExternalWorkflowExecution, StartTimer, UpsertWorkflowSearchAttributes,
-            WorkflowCommand,
+            WorkflowCommand, signal_external_workflow_execution as sig_we, workflow_command,
         },
     },
     temporal::api::{
@@ -822,11 +820,11 @@ impl StartedChildWorkflow {
     }
 
     /// Signal the child workflow
-    pub fn signal(
+    pub fn signal<'a, S: Into<Signal>>(
         &self,
-        cx: &WfContext,
-        data: impl Into<Signal>,
-    ) -> impl CancellableFuture<SignalExternalWfResult> {
+        cx: &'a WfContext,
+        data: S,
+    ) -> impl CancellableFuture<SignalExternalWfResult> + use<'a, S> {
         let target = sig_we::Target::ChildWorkflowId(self.common.workflow_id.clone());
         cx.send_signal_wf(target, data.into())
     }
