@@ -16,7 +16,7 @@ use assert_matches::assert_matches;
 use futures_util::{StreamExt, future, stream, stream::FuturesUnordered};
 use parking_lot::Mutex;
 use prost::Message;
-use rand::{Rng, distributions};
+use rand::Rng;
 use std::{
     convert::TryFrom, env, future::Future, net::SocketAddr, path::PathBuf, sync::Arc,
     time::Duration,
@@ -874,8 +874,8 @@ pub async fn drain_pollers_and_shutdown(worker: &Arc<dyn CoreWorker>) {
 }
 
 pub fn rand_6_chars() -> String {
-    rand::thread_rng()
-        .sample_iter(&distributions::Alphanumeric)
+    rand::rng()
+        .sample_iter(&rand::distr::Alphanumeric)
         .take(6)
         .map(char::from)
         .collect()

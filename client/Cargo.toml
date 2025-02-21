@@ -28,7 +28,6 @@ hyper = { version = "1.4.1" }
 hyper-util = "0.1.6"
 opentelemetry = { workspace = true, features = ["metrics"], optional = true }
 parking_lot = "0.12"
-prost-types = { workspace = true }
 slotmap = "1.0"
 thiserror = { workspace = true }
 tokio = "1.1"
