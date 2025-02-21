@@ -3,13 +3,13 @@
 //! in stable Rust. Don't do the things in here. They're bad. This is test only code, and should
 //! never ever be removed from behind `#[cfg(test)]` compilation.
 
-use dashmap::{mapref::entry::Entry, DashMap, DashSet};
+use dashmap::{DashMap, DashSet, mapref::entry::Entry};
 use std::sync::LazyLock;
 use std::{
     path::PathBuf,
     sync::{
-        mpsc::{sync_channel, SyncSender},
         Mutex,
+        mpsc::{SyncSender, sync_channel},
     },
     thread::JoinHandle,
     time::Duration,

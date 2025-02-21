@@ -904,8 +904,8 @@ mod tests {
     use super::*;
     use std::any::Any;
     use temporal_sdk_core_api::telemetry::{
-        metrics::{BufferInstrumentRef, CustomMetricAttributes},
         METRIC_PREFIX,
+        metrics::{BufferInstrumentRef, CustomMetricAttributes},
     };
     use tracing::subscriber::NoSubscriber;
 

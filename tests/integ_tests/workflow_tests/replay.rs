@@ -2,21 +2,21 @@ use crate::integ_tests::workflow_tests::patches::changes_wf;
 use assert_matches::assert_matches;
 use parking_lot::Mutex;
 use std::{collections::HashSet, sync::Arc, time::Duration};
-use temporal_sdk::{interceptors::WorkerInterceptor, WfContext, Worker, WorkflowFunction};
+use temporal_sdk::{WfContext, Worker, WorkflowFunction, interceptors::WorkerInterceptor};
 use temporal_sdk_core::replay::{HistoryFeeder, HistoryForReplay};
 use temporal_sdk_core_api::errors::PollError;
 use temporal_sdk_core_protos::{
+    DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder,
     coresdk::{
         workflow_activation::remove_from_cache::EvictionReason,
         workflow_commands::{ScheduleActivity, StartTimer},
         workflow_completion::WorkflowActivationCompletion,
     },
     temporal::api::enums::v1::EventType,
-    TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE,
 };
 use temporal_sdk_core_test_utils::{
-    canned_histories, history_from_proto_binary, init_core_replay_preloaded, replay_sdk_worker,
-    replay_sdk_worker_stream, WorkerTestHelpers,
+    WorkerTestHelpers, canned_histories, history_from_proto_binary, init_core_replay_preloaded,
+    replay_sdk_worker, replay_sdk_worker_stream,
 };
 use tokio::join;
 
@@ -39,11 +39,13 @@ async fn timer_workflow_replay() {
     let task = core.poll_workflow_activation().await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         task.run_id,
-        vec![StartTimer {
-            seq: 0,
-            start_to_fire_timeout: Some(prost_dur!(from_secs(1))),
-        }
-        .into()],
+        vec![
+            StartTimer {
+                seq: 0,
+                start_to_fire_timeout: Some(prost_dur!(from_secs(1))),
+            }
+            .into(),
+        ],
     ))
     .await
     .unwrap();
@@ -94,13 +96,15 @@ async fn workflow_nondeterministic_replay() {
     let task = core.poll_workflow_activation().await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         task.run_id,
-        vec![ScheduleActivity {
-            seq: 0,
-            activity_id: "0".to_string(),
-            activity_type: "fake_act".to_string(),
-            ..Default::default()
-        }
-        .into()],
+        vec![
+            ScheduleActivity {
+                seq: 0,
+                activity_id: "0".to_string(),
+                activity_type: "fake_act".to_string(),
+                ..Default::default()
+            }
+            .into(),
+        ],
     ))
     .await
     .unwrap();
@@ -261,13 +265,15 @@ async fn replay_ends_with_empty_wft() {
     let task = core.poll_workflow_activation().await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         task.run_id,
-        vec![ScheduleActivity {
-            seq: 1,
-            activity_id: "1".to_string(),
-            activity_type: "say_hello".to_string(),
-            ..Default::default()
-        }
-        .into()],
+        vec![
+            ScheduleActivity {
+                seq: 1,
+                activity_id: "1".to_string(),
+                activity_type: "say_hello".to_string(),
+                ..Default::default()
+            }
+            .into(),
+        ],
     ))
     .await
     .unwrap();

@@ -5,8 +5,8 @@ use temporal_client::{WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{ChildWorkflowOptions, WfContext, WfExitValue, WorkflowResult};
 use temporal_sdk_core_protos::{
     coresdk::{
-        child_workflow::{child_workflow_result, ChildWorkflowCancellationType, Success},
         AsJsonPayloadExt,
+        child_workflow::{ChildWorkflowCancellationType, Success, child_workflow_result},
     },
     temporal::api::enums::v1::ParentClosePolicy,
 };

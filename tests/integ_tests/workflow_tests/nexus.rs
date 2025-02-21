@@ -7,23 +7,23 @@ use temporal_sdk::{CancellableFuture, NexusOperationOptions, WfContext, WfExitVa
 use temporal_sdk_core_api::errors::PollError;
 use temporal_sdk_core_protos::{
     coresdk::{
-        nexus::{
-            nexus_operation_result, nexus_task, nexus_task_completion, NexusOperationResult,
-            NexusTaskCancelReason, NexusTaskCompletion,
-        },
         FromJsonPayloadExt,
+        nexus::{
+            NexusOperationResult, NexusTaskCancelReason, NexusTaskCompletion,
+            nexus_operation_result, nexus_task, nexus_task_completion,
+        },
     },
     temporal::api::{
-        common::v1::{callback, Callback},
+        common::v1::{Callback, callback},
         failure::v1::failure::FailureInfo,
         nexus,
         nexus::v1::{
-            request, start_operation_response, workflow_event_link_from_nexus,
-            CancelOperationResponse, HandlerError, StartOperationResponse,
+            CancelOperationResponse, HandlerError, StartOperationResponse, request,
+            start_operation_response, workflow_event_link_from_nexus,
         },
     },
 };
-use temporal_sdk_core_test_utils::{rand_6_chars, CoreWfStarter};
+use temporal_sdk_core_test_utils::{CoreWfStarter, rand_6_chars};
 use tokio::{join, sync::mpsc};
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]

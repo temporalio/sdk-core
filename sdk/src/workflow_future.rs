@@ -1,12 +1,12 @@
 use crate::{
-    panic_formatter, CancellableID, RustWfCmd, SignalData, TimerResult, UnblockEvent,
-    UpdateContext, UpdateFunctions, UpdateInfo, WfContext, WfExitValue, WorkflowFunction,
-    WorkflowResult,
+    CancellableID, RustWfCmd, SignalData, TimerResult, UnblockEvent, UpdateContext,
+    UpdateFunctions, UpdateInfo, WfContext, WfExitValue, WorkflowFunction, WorkflowResult,
+    panic_formatter,
 };
-use anyhow::{anyhow, bail, Context as AnyhowContext, Error};
-use futures_util::{future::BoxFuture, FutureExt};
+use anyhow::{Context as AnyhowContext, Error, anyhow, bail};
+use futures_util::{FutureExt, future::BoxFuture};
 use std::{
-    collections::{hash_map::Entry, HashMap},
+    collections::{HashMap, hash_map::Entry},
     future::Future,
     panic,
     panic::AssertUnwindSafe,
@@ -17,25 +17,26 @@ use std::{
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::{
-            workflow_activation_job::Variant, FireTimer, NotifyHasPatch, ResolveActivity,
-            ResolveChildWorkflowExecution, ResolveChildWorkflowExecutionStart, WorkflowActivation,
-            WorkflowActivationJob,
+            FireTimer, NotifyHasPatch, ResolveActivity, ResolveChildWorkflowExecution,
+            ResolveChildWorkflowExecutionStart, WorkflowActivation, WorkflowActivationJob,
+            workflow_activation_job::Variant,
         },
         workflow_commands::{
-            update_response, workflow_command, CancelChildWorkflowExecution, CancelSignalWorkflow,
-            CancelTimer, CancelWorkflowExecution, CompleteWorkflowExecution, FailWorkflowExecution,
+            CancelChildWorkflowExecution, CancelSignalWorkflow, CancelTimer,
+            CancelWorkflowExecution, CompleteWorkflowExecution, FailWorkflowExecution,
             RequestCancelActivity, RequestCancelExternalWorkflowExecution,
             RequestCancelLocalActivity, RequestCancelNexusOperation, ScheduleActivity,
-            ScheduleLocalActivity, StartTimer, UpdateResponse, WorkflowCommand,
+            ScheduleLocalActivity, StartTimer, UpdateResponse, WorkflowCommand, update_response,
+            workflow_command,
         },
         workflow_completion,
-        workflow_completion::{workflow_activation_completion, WorkflowActivationCompletion},
+        workflow_completion::{WorkflowActivationCompletion, workflow_activation_completion},
     },
     temporal::api::{common::v1::Payload, failure::v1::Failure},
     utilities::TryIntoOrNone,
 };
 use tokio::sync::{
-    mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
+    mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
     oneshot, watch,
 };
 use tracing::Instrument;
@@ -52,7 +53,7 @@ impl WorkflowFunction {
         args: Vec<Payload>,
         outgoing_completions: UnboundedSender<WorkflowActivationCompletion>,
     ) -> (
-        impl Future<Output = WorkflowResult<Payload>>,
+        impl Future<Output = WorkflowResult<Payload>> + use<>,
         UnboundedSender<WorkflowActivation>,
     ) {
         let (cancel_tx, cancel_rx) = watch::channel(None);
@@ -228,7 +229,7 @@ impl WorkflowFuture {
                             SigChanOrBuffer::Chan(chan) => {
                                 let _ = chan.send(dat);
                             }
-                            SigChanOrBuffer::Buffer(ref mut buf) => buf.push(dat),
+                            SigChanOrBuffer::Buffer(buf) => buf.push(dat),
                         },
                         Entry::Vacant(v) => {
                             v.insert(SigChanOrBuffer::Buffer(vec![dat]));
@@ -351,7 +352,7 @@ impl Future for WorkflowFuture {
                     None => {
                         return Poll::Ready(Err(anyhow!(
                             "Workflow future's activation channel was lost!"
-                        )))
+                        )));
                     }
                 },
                 Poll::Pending => return Poll::Pending,

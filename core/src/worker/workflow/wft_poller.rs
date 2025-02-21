@@ -1,10 +1,10 @@
 use crate::{
+    MetricsContext,
     abstractions::OwnedMeteredSemPermit,
     pollers::{BoxedWFPoller, Poller},
     protosext::ValidPollWFTQResponse,
-    MetricsContext,
 };
-use futures_util::{stream, Stream};
+use futures_util::{Stream, stream};
 use temporal_sdk_core_api::worker::WorkflowSlotKind;
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse;
 
@@ -78,7 +78,7 @@ mod tests {
         abstractions::tests::fixed_size_permit_dealer, pollers::MockPermittedPollBuffer,
         test_help::mock_poller,
     };
-    use futures_util::{pin_mut, StreamExt};
+    use futures_util::{StreamExt, pin_mut};
     use std::sync::Arc;
     use temporal_sdk_core_api::worker::WorkflowSlotKind;
 

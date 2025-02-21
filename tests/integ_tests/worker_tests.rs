@@ -1,17 +1,17 @@
 use assert_matches::assert_matches;
 use std::{cell::Cell, sync::Arc, time::Duration};
 use temporal_client::WorkflowOptions;
-use temporal_sdk::{interceptors::WorkerInterceptor, WfContext};
-use temporal_sdk_core::{init_worker, CoreRuntime, ResourceBasedTuner, ResourceSlotOptions};
-use temporal_sdk_core_api::{errors::WorkerValidationError, worker::WorkerConfigBuilder, Worker};
+use temporal_sdk::{WfContext, interceptors::WorkerInterceptor};
+use temporal_sdk_core::{CoreRuntime, ResourceBasedTuner, ResourceSlotOptions, init_worker};
+use temporal_sdk_core_api::{Worker, errors::WorkerValidationError, worker::WorkerConfigBuilder};
 use temporal_sdk_core_protos::{
     coresdk::workflow_completion::{
-        workflow_activation_completion::Status, Failure, WorkflowActivationCompletion,
+        Failure, WorkflowActivationCompletion, workflow_activation_completion::Status,
     },
     temporal::api::failure::v1::Failure as InnerFailure,
 };
 use temporal_sdk_core_test_utils::{
-    drain_pollers_and_shutdown, get_integ_server_options, get_integ_telem_options, CoreWfStarter,
+    CoreWfStarter, drain_pollers_and_shutdown, get_integ_server_options, get_integ_telem_options,
 };
 use tokio::sync::Notify;
 use uuid::Uuid;

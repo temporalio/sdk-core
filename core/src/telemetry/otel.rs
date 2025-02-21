@@ -1,5 +1,5 @@
 use super::{
-    default_buckets_for,
+    TELEM_SERVICE_NAME, default_buckets_for,
     metrics::{
         ACTIVITY_EXEC_LATENCY_HISTOGRAM_NAME, ACTIVITY_SCHED_TO_START_LATENCY_HISTOGRAM_NAME,
         DEFAULT_MS_BUCKETS, WORKFLOW_E2E_LATENCY_HISTOGRAM_NAME,
@@ -8,30 +8,29 @@ use super::{
         WORKFLOW_TASK_SCHED_TO_START_LATENCY_HISTOGRAM_NAME,
     },
     prometheus_server::PromServer,
-    TELEM_SERVICE_NAME,
 };
 use crate::{abstractions::dbg_panic, telemetry::metrics::DEFAULT_S_BUCKETS};
 use opentelemetry::{
-    self, global,
+    self, Key, KeyValue, Value, global,
     metrics::{Meter, MeterProvider as MeterProviderT},
-    Key, KeyValue, Value,
 };
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::{
+    Resource,
     metrics::{
-        data::Temporality, new_view, reader::TemporalitySelector, Aggregation, Instrument,
-        InstrumentKind, MeterProviderBuilder, PeriodicReader, SdkMeterProvider, View,
+        Aggregation, Instrument, InstrumentKind, MeterProviderBuilder, PeriodicReader,
+        SdkMeterProvider, View, data::Temporality, new_view, reader::TemporalitySelector,
     },
-    runtime, Resource,
+    runtime,
 };
 use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 use temporal_sdk_core_api::telemetry::{
+    HistogramBucketOverrides, MetricTemporality, OtelCollectorOptions, OtlpProtocol,
+    PrometheusExporterOptions,
     metrics::{
         CoreMeter, Counter, Gauge, GaugeF64, Histogram, HistogramDuration, HistogramF64,
         MetricAttributes, MetricParameters, NewAttributes,
     },
-    HistogramBucketOverrides, MetricTemporality, OtelCollectorOptions, OtlpProtocol,
-    PrometheusExporterOptions,
 };
 use tokio::task::AbortHandle;
 use tonic::{metadata::MetadataMap, transport::ClientTlsConfig};

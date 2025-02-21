@@ -3,13 +3,13 @@
 //! happen.
 
 use crate::{
+    Client, ConfiguredClient, InterceptedMetricsSvc, LONG_POLL_TIMEOUT, RequestExt, RetryClient,
+    TEMPORAL_NAMESPACE_HEADER_KEY, TemporalServiceClient,
     metrics::{namespace_kv, task_queue_kv},
     raw::sealed::RawClientLike,
     worker_registry::{Slot, SlotManager},
-    Client, ConfiguredClient, InterceptedMetricsSvc, RequestExt, RetryClient,
-    TemporalServiceClient, LONG_POLL_TIMEOUT, TEMPORAL_NAMESPACE_HEADER_KEY,
 };
-use futures_util::{future::BoxFuture, FutureExt, TryFutureExt};
+use futures_util::{FutureExt, TryFutureExt, future::BoxFuture};
 use std::sync::Arc;
 use temporal_sdk_core_api::telemetry::metrics::MetricKeyValue;
 use temporal_sdk_core_protos::{
@@ -23,10 +23,10 @@ use temporal_sdk_core_protos::{
     },
 };
 use tonic::{
+    Request, Response, Status,
     body::BoxBody,
     client::GrpcService,
     metadata::{AsciiMetadataValue, KeyAndValueRef},
-    Request, Response, Status,
 };
 
 pub(super) mod sealed {
@@ -1411,29 +1411,33 @@ mod tests {
     #[test]
     fn verify_all_workflow_service_methods_implemented() {
         // This is less work than trying to hook into the codegen process
-        let proto_def =
-            include_str!("../../sdk-core-protos/protos/api_upstream/temporal/api/workflowservice/v1/service.proto");
+        let proto_def = include_str!(
+            "../../sdk-core-protos/protos/api_upstream/temporal/api/workflowservice/v1/service.proto"
+        );
         verify_methods(proto_def, ALL_IMPLEMENTED_WORKFLOW_SERVICE_RPCS);
     }
 
     #[test]
     fn verify_all_operator_service_methods_implemented() {
-        let proto_def =
-            include_str!("../../sdk-core-protos/protos/api_upstream/temporal/api/operatorservice/v1/service.proto");
+        let proto_def = include_str!(
+            "../../sdk-core-protos/protos/api_upstream/temporal/api/operatorservice/v1/service.proto"
+        );
         verify_methods(proto_def, ALL_IMPLEMENTED_OPERATOR_SERVICE_RPCS);
     }
 
     #[test]
     fn verify_all_cloud_service_methods_implemented() {
-        let proto_def =
-            include_str!("../../sdk-core-protos/protos/api_cloud_upstream/temporal/api/cloud/cloudservice/v1/service.proto");
+        let proto_def = include_str!(
+            "../../sdk-core-protos/protos/api_cloud_upstream/temporal/api/cloud/cloudservice/v1/service.proto"
+        );
         verify_methods(proto_def, ALL_IMPLEMENTED_CLOUD_SERVICE_RPCS);
     }
 
     #[test]
     fn verify_all_test_service_methods_implemented() {
-        let proto_def =
-            include_str!("../../sdk-core-protos/protos/testsrv_upstream/temporal/api/testservice/v1/service.proto");
+        let proto_def = include_str!(
+            "../../sdk-core-protos/protos/testsrv_upstream/temporal/api/testservice/v1/service.proto"
+        );
         verify_methods(proto_def, ALL_IMPLEMENTED_TEST_SERVICE_RPCS);
     }
 

@@ -1,9 +1,9 @@
 pub(crate) mod protocol_messages;
 
 use crate::{
-    protosext::protocol_messages::IncomingProtocolMessage,
-    worker::{LocalActivityExecutionResult, LEGACY_QUERY_ID},
     CompleteActivityError, TaskToken,
+    protosext::protocol_messages::IncomingProtocolMessage,
+    worker::{LEGACY_QUERY_ID, LocalActivityExecutionResult},
 };
 use anyhow::anyhow;
 use itertools::Itertools;
@@ -23,11 +23,11 @@ use temporal_sdk_core_protos::{
         },
         external_data::LocalActivityMarkerData,
         workflow_activation::{
-            query_to_job, workflow_activation_job, QueryWorkflow, WorkflowActivation,
-            WorkflowActivationJob,
+            QueryWorkflow, WorkflowActivation, WorkflowActivationJob, query_to_job,
+            workflow_activation_job,
         },
         workflow_commands::{
-            query_result, ActivityCancellationType, QueryResult, ScheduleLocalActivity,
+            ActivityCancellationType, QueryResult, ScheduleLocalActivity, query_result,
         },
         workflow_completion,
     },
@@ -35,7 +35,7 @@ use temporal_sdk_core_protos::{
         common::v1::{Payload, RetryPolicy, WorkflowExecution},
         enums::v1::EventType,
         failure::v1::Failure,
-        history::v1::{history_event, History, HistoryEvent, MarkerRecordedEventAttributes},
+        history::v1::{History, HistoryEvent, MarkerRecordedEventAttributes, history_event},
         query::v1::WorkflowQuery,
         workflowservice::v1::PollWorkflowTaskQueueResponse,
     },
@@ -400,7 +400,7 @@ impl ValidScheduleLA {
                 return Err(anyhow!(
                     "One or both of schedule_to_close or start_to_close timeouts must be set for \
                      local activities"
-                ))
+                ));
             }
         };
         let retry_policy = v.retry_policy.unwrap_or_default();

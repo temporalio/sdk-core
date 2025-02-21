@@ -1,17 +1,17 @@
 use assert_matches::assert_matches;
-use futures_util::{future::join_all, stream::FuturesUnordered, FutureExt, StreamExt};
+use futures_util::{FutureExt, StreamExt, future::join_all, stream::FuturesUnordered};
 use std::time::{Duration, Instant};
 use temporal_client::WorkflowClientTrait;
 use temporal_sdk_core_protos::{
     coresdk::{
-        workflow_activation::{workflow_activation_job, WorkflowActivationJob},
+        workflow_activation::{WorkflowActivationJob, workflow_activation_job},
         workflow_commands::{QueryResult, QuerySuccess, StartTimer},
         workflow_completion::WorkflowActivationCompletion,
     },
     temporal::api::{failure::v1::Failure, query::v1::WorkflowQuery},
 };
 use temporal_sdk_core_test_utils::{
-    drain_pollers_and_shutdown, init_core_and_create_wf, CoreWfStarter, WorkerTestHelpers,
+    CoreWfStarter, WorkerTestHelpers, drain_pollers_and_shutdown, init_core_and_create_wf,
 };
 use tokio::join;
 
@@ -125,9 +125,11 @@ async fn query_after_execution_complete(#[case] do_evict: bool) {
 
             // When we see the query, handle it.
             if go_until_query {
-                if let [WorkflowActivationJob {
-                    variant: Some(workflow_activation_job::Variant::QueryWorkflow(query)),
-                }] = task.jobs.as_slice()
+                if let [
+                    WorkflowActivationJob {
+                        variant: Some(workflow_activation_job::Variant::QueryWorkflow(query)),
+                    },
+                ] = task.jobs.as_slice()
                 {
                     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
                         task.run_id,

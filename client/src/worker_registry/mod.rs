@@ -4,7 +4,7 @@
 
 use parking_lot::RwLock;
 use slotmap::SlotMap;
-use std::collections::{hash_map::Entry::Vacant, HashMap};
+use std::collections::{HashMap, hash_map::Entry::Vacant};
 
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse;
 

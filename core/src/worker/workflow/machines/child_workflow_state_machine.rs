@@ -1,13 +1,13 @@
 use super::{
-    workflow_machines::MachineResponse, EventInfo, NewMachineWithCommand, OnEventWrapper,
-    WFMachinesAdapter, WFMachinesError,
+    EventInfo, NewMachineWithCommand, OnEventWrapper, WFMachinesAdapter, WFMachinesError,
+    workflow_machines::MachineResponse,
 };
 use crate::{
     internal_flags::CoreInternalFlags,
-    worker::workflow::{machines::HistEventData, InternalFlagsRef},
+    worker::workflow::{InternalFlagsRef, machines::HistEventData},
 };
 use itertools::Itertools;
-use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
+use rustfsm::{MachineError, StateMachine, TransitionResult, fsm};
 use std::{
     convert::{TryFrom, TryInto},
     string::ToString,
@@ -15,31 +15,31 @@ use std::{
 use temporal_sdk_core_protos::{
     coresdk::{
         child_workflow::{
-            self as wfr, child_workflow_result::Status as ChildWorkflowStatus,
-            ChildWorkflowCancellationType, ChildWorkflowResult,
+            self as wfr, ChildWorkflowCancellationType, ChildWorkflowResult,
+            child_workflow_result::Status as ChildWorkflowStatus,
         },
         workflow_activation::{
-            resolve_child_workflow_execution_start, ResolveChildWorkflowExecution,
-            ResolveChildWorkflowExecutionStart, ResolveChildWorkflowExecutionStartCancelled,
-            ResolveChildWorkflowExecutionStartFailure, ResolveChildWorkflowExecutionStartSuccess,
+            ResolveChildWorkflowExecution, ResolveChildWorkflowExecutionStart,
+            ResolveChildWorkflowExecutionStartCancelled, ResolveChildWorkflowExecutionStartFailure,
+            ResolveChildWorkflowExecutionStartSuccess, resolve_child_workflow_execution_start,
         },
         workflow_commands::StartChildWorkflowExecution,
     },
     temporal::api::{
         command::v1::{
-            start_child_workflow_cmd_to_api,
             RequestCancelExternalWorkflowExecutionCommandAttributes,
+            start_child_workflow_cmd_to_api,
         },
         common::v1::{Payload, Payloads, WorkflowExecution, WorkflowType},
         enums::v1::{
             CommandType, EventType, RetryState, StartChildWorkflowExecutionFailedCause, TimeoutType,
         },
-        failure::v1::{self as failure, failure::FailureInfo, Failure},
+        failure::v1::{self as failure, Failure, failure::FailureInfo},
         history::v1::{
-            history_event, ChildWorkflowExecutionCompletedEventAttributes,
+            ChildWorkflowExecutionCompletedEventAttributes,
             ChildWorkflowExecutionFailedEventAttributes,
             ChildWorkflowExecutionStartedEventAttributes,
-            StartChildWorkflowExecutionFailedEventAttributes,
+            StartChildWorkflowExecutionFailedEventAttributes, history_event,
         },
     },
 };
@@ -626,7 +626,7 @@ impl TryFrom<HistEventData> for ChildWorkflowMachineEvents {
             _ => {
                 return Err(WFMachinesError::Nondeterminism(format!(
                     "Child workflow machine does not handle this event: {e:?}"
-                )))
+                )));
             }
         })
     }
@@ -640,59 +640,69 @@ impl WFMachinesAdapter for ChildWorkflowMachine {
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         Ok(match my_command {
             ChildWorkflowCommand::Start(we) => {
-                vec![ResolveChildWorkflowExecutionStart {
-                    seq: self.shared_state.lang_sequence_number,
-                    status: Some(resolve_child_workflow_execution_start::Status::Succeeded(
-                        ResolveChildWorkflowExecutionStartSuccess { run_id: we.run_id },
-                    )),
-                }
-                .into()]
+                vec![
+                    ResolveChildWorkflowExecutionStart {
+                        seq: self.shared_state.lang_sequence_number,
+                        status: Some(resolve_child_workflow_execution_start::Status::Succeeded(
+                            ResolveChildWorkflowExecutionStartSuccess { run_id: we.run_id },
+                        )),
+                    }
+                    .into(),
+                ]
             }
             ChildWorkflowCommand::StartFail(cause) => {
-                vec![ResolveChildWorkflowExecutionStart {
-                    seq: self.shared_state.lang_sequence_number,
-                    status: Some(resolve_child_workflow_execution_start::Status::Failed(
-                        ResolveChildWorkflowExecutionStartFailure {
-                            workflow_id: self.shared_state.workflow_id.clone(),
-                            workflow_type: self.shared_state.workflow_type.clone(),
-                            cause: cause as i32,
-                        },
-                    )),
-                }
-                .into()]
+                vec![
+                    ResolveChildWorkflowExecutionStart {
+                        seq: self.shared_state.lang_sequence_number,
+                        status: Some(resolve_child_workflow_execution_start::Status::Failed(
+                            ResolveChildWorkflowExecutionStartFailure {
+                                workflow_id: self.shared_state.workflow_id.clone(),
+                                workflow_type: self.shared_state.workflow_type.clone(),
+                                cause: cause as i32,
+                            },
+                        )),
+                    }
+                    .into(),
+                ]
             }
             ChildWorkflowCommand::StartCancel(failure) => {
-                vec![ResolveChildWorkflowExecutionStart {
-                    seq: self.shared_state.lang_sequence_number,
-                    status: Some(resolve_child_workflow_execution_start::Status::Cancelled(
-                        ResolveChildWorkflowExecutionStartCancelled {
-                            failure: Some(failure),
-                        },
-                    )),
-                }
-                .into()]
+                vec![
+                    ResolveChildWorkflowExecutionStart {
+                        seq: self.shared_state.lang_sequence_number,
+                        status: Some(resolve_child_workflow_execution_start::Status::Cancelled(
+                            ResolveChildWorkflowExecutionStartCancelled {
+                                failure: Some(failure),
+                            },
+                        )),
+                    }
+                    .into(),
+                ]
             }
             ChildWorkflowCommand::Complete(result) => {
-                vec![ResolveChildWorkflowExecution {
-                    seq: self.shared_state.lang_sequence_number,
-                    result: Some(ChildWorkflowResult {
-                        status: Some(ChildWorkflowStatus::Completed(wfr::Success {
-                            result: convert_payloads(event_info, result)?,
-                        })),
-                    }),
-                }
-                .into()]
+                vec![
+                    ResolveChildWorkflowExecution {
+                        seq: self.shared_state.lang_sequence_number,
+                        result: Some(ChildWorkflowResult {
+                            status: Some(ChildWorkflowStatus::Completed(wfr::Success {
+                                result: convert_payloads(event_info, result)?,
+                            })),
+                        }),
+                    }
+                    .into(),
+                ]
             }
             ChildWorkflowCommand::Fail(failure) => {
-                vec![ResolveChildWorkflowExecution {
-                    seq: self.shared_state.lang_sequence_number,
-                    result: Some(ChildWorkflowResult {
-                        status: Some(ChildWorkflowStatus::Failed(wfr::Failure {
-                            failure: Some(failure),
-                        })),
-                    }),
-                }
-                .into()]
+                vec![
+                    ResolveChildWorkflowExecution {
+                        seq: self.shared_state.lang_sequence_number,
+                        result: Some(ChildWorkflowResult {
+                            status: Some(ChildWorkflowStatus::Failed(wfr::Failure {
+                                failure: Some(failure),
+                            })),
+                        }),
+                    }
+                    .into(),
+                ]
             }
             ChildWorkflowCommand::Cancel => {
                 vec![self.resolve_cancelled_msg().into()]
@@ -775,19 +785,19 @@ mod test {
     use crate::{
         internal_flags::InternalFlags,
         replay::TestHistoryBuilder,
-        test_help::{build_fake_sdk, canned_histories, MockPollCfg},
+        test_help::{MockPollCfg, build_fake_sdk, canned_histories},
     };
     use anyhow::anyhow;
     use rstest::{fixture, rstest};
     use std::{cell::RefCell, mem::discriminant, rc::Rc};
     use temporal_sdk::{CancellableFuture, ChildWorkflowOptions, WfContext, WorkflowResult};
     use temporal_sdk_core_protos::{
+        DEFAULT_WORKFLOW_TYPE,
         coresdk::{
             child_workflow::child_workflow_result,
             workflow_activation::resolve_child_workflow_execution_start::Status as StartStatus,
         },
         temporal::api::history::v1::StartChildWorkflowExecutionInitiatedEventAttributes,
-        DEFAULT_WORKFLOW_TYPE,
     };
 
     #[derive(Clone, Copy)]

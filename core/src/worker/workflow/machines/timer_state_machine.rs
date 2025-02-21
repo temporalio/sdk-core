@@ -1,22 +1,22 @@
 #![allow(clippy::large_enum_variant)]
 
 use super::{
-    workflow_machines::MachineResponse, EventInfo, NewMachineWithCommand, OnEventWrapper,
-    WFMachinesAdapter,
+    EventInfo, NewMachineWithCommand, OnEventWrapper, WFMachinesAdapter,
+    workflow_machines::MachineResponse,
 };
-use crate::worker::workflow::{machines::HistEventData, WFMachinesError};
-use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
+use crate::worker::workflow::{WFMachinesError, machines::HistEventData};
+use rustfsm::{MachineError, StateMachine, TransitionResult, fsm};
 use std::convert::TryFrom;
 use temporal_sdk_core_protos::{
     coresdk::{
+        HistoryEventId,
         workflow_activation::FireTimer,
         workflow_commands::{CancelTimer, StartTimer},
-        HistoryEventId,
     },
     temporal::api::{
         command::v1::command,
         enums::v1::{CommandType, EventType},
-        history::v1::{history_event, TimerFiredEventAttributes},
+        history::v1::{TimerFiredEventAttributes, history_event},
     },
 };
 
@@ -129,7 +129,7 @@ impl TryFrom<HistEventData> for TimerMachineEvents {
             _ => {
                 return Err(WFMachinesError::Nondeterminism(format!(
                     "Timer machine does not handle this event: {e}"
-                )))
+                )));
             }
         })
     }
@@ -237,10 +237,12 @@ impl WFMachinesAdapter for TimerMachine {
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         Ok(match my_command {
             // Fire the completion
-            TimerMachineCommand::Complete => vec![FireTimer {
-                seq: self.shared_state.attrs.seq,
-            }
-            .into()],
+            TimerMachineCommand::Complete => vec![
+                FireTimer {
+                    seq: self.shared_state.attrs.seq,
+                }
+                .into(),
+            ],
             TimerMachineCommand::IssueCancelCmd(c) => {
                 vec![MachineResponse::IssueNewCommand(c.into())]
             }
@@ -253,13 +255,13 @@ mod test {
     use super::*;
     use crate::{
         replay::TestHistoryBuilder,
-        test_help::{build_fake_sdk, canned_histories, MockPollCfg},
+        test_help::{MockPollCfg, build_fake_sdk, canned_histories},
     };
     use std::{mem::discriminant, time::Duration};
     use temporal_sdk::{CancellableFuture, WfContext, WorkflowResult};
     use temporal_sdk_core_protos::{
-        temporal::api::{enums::v1::WorkflowTaskFailedCause, failure::v1::Failure},
         DEFAULT_WORKFLOW_TYPE,
+        temporal::api::{enums::v1::WorkflowTaskFailedCause, failure::v1::Failure},
     };
 
     async fn happy_timer(ctx: WfContext) -> WorkflowResult<()> {

@@ -1,10 +1,10 @@
 use crate::{
+    MetricsContext,
     telemetry::metrics::workflow_type,
     worker::workflow::{
-        managed_run::{ManagedRun, RunUpdateAct},
         HistoryUpdate, LocalActivityRequestSink, PermittedWFT, RequestEvictMsg, RunBasics,
+        managed_run::{ManagedRun, RunUpdateAct},
     },
-    MetricsContext,
 };
 use lru::LruCache;
 use std::{num::NonZeroUsize, rc::Rc, sync::Arc};

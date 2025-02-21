@@ -7,23 +7,23 @@ use std::{
 };
 use temporal_client::{WfClientExt, WorkflowOptions};
 use temporal_sdk::{
-    interceptors::WorkerInterceptor, ActContext, ActivityError, ActivityOptions, CancellableFuture,
-    LocalActivityOptions, WfContext, WorkflowResult,
+    ActContext, ActivityError, ActivityOptions, CancellableFuture, LocalActivityOptions, WfContext,
+    WorkflowResult, interceptors::WorkerInterceptor,
 };
 use temporal_sdk_core::replay::HistoryForReplay;
 use temporal_sdk_core_protos::{
+    TestHistoryBuilder,
     coresdk::{
-        workflow_commands::{workflow_command::Variant, ActivityCancellationType},
-        workflow_completion,
-        workflow_completion::{workflow_activation_completion, WorkflowActivationCompletion},
         AsJsonPayloadExt,
+        workflow_commands::{ActivityCancellationType, workflow_command::Variant},
+        workflow_completion,
+        workflow_completion::{WorkflowActivationCompletion, workflow_activation_completion},
     },
     temporal::api::{common::v1::RetryPolicy, enums::v1::TimeoutType},
-    TestHistoryBuilder,
 };
 use temporal_sdk_core_test_utils::{
-    history_from_proto_binary, replay_sdk_worker, workflows::la_problem_workflow, CoreWfStarter,
-    WorkflowHandleExt,
+    CoreWfStarter, WorkflowHandleExt, history_from_proto_binary, replay_sdk_worker,
+    workflows::la_problem_workflow,
 };
 use tokio_util::sync::CancellationToken;
 

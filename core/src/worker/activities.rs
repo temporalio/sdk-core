@@ -7,50 +7,49 @@ pub(crate) use local_activities::{
 };
 
 use crate::{
+    PollError, TaskToken,
     abstractions::{
         ClosableMeteredPermitDealer, MeteredPermitDealer, TrackedOwnedMeteredSemPermit,
         UsedMeteredSemPermit,
     },
-    pollers::{new_activity_task_poller, BoxedActPoller, PermittedTqResp, TrackedPermittedTqResp},
-    telemetry::metrics::{activity_type, eager, workflow_type, MetricsContext},
+    pollers::{BoxedActPoller, PermittedTqResp, TrackedPermittedTqResp, new_activity_task_poller},
+    telemetry::metrics::{MetricsContext, activity_type, eager, workflow_type},
     worker::{
         activities::activity_heartbeat_manager::ActivityHeartbeatError, client::WorkerClient,
     },
-    PollError, TaskToken,
 };
 use activity_heartbeat_manager::ActivityHeartbeatManager;
 use dashmap::DashMap;
 use futures_util::{
-    stream,
+    Stream, StreamExt, stream,
     stream::{BoxStream, PollNext},
-    Stream, StreamExt,
 };
 use std::{
     convert::TryInto,
     future,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
     time::{Duration, Instant, SystemTime},
 };
 use temporal_sdk_core_api::worker::ActivitySlotKind;
 use temporal_sdk_core_protos::{
     coresdk::{
+        ActivityHeartbeat, ActivitySlotInfo,
         activity_result::{self as ar, activity_execution_result as aer},
         activity_task::{ActivityCancelReason, ActivityTask},
-        ActivityHeartbeat, ActivitySlotInfo,
     },
     temporal::api::{
-        failure::v1::{failure::FailureInfo, ApplicationFailureInfo, CanceledFailureInfo, Failure},
+        failure::v1::{ApplicationFailureInfo, CanceledFailureInfo, Failure, failure::FailureInfo},
         workflowservice::v1::PollActivityTaskQueueResponse,
     },
 };
 use tokio::{
     join,
     sync::{
-        mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
         Mutex, Notify,
+        mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
     },
     task::JoinHandle,
 };
@@ -352,7 +351,7 @@ impl WorkerActivityTasks {
                     aer::Status::Failed(ar::Failure { failure }) => {
                         act_metrics.act_execution_failed();
                         client
-                            .fail_activity_task(task_token.clone(), failure.map(Into::into))
+                            .fail_activity_task(task_token.clone(), failure)
                             .await
                             .err()
                     }
@@ -387,7 +386,7 @@ impl WorkerActivityTasks {
                                 None
                             };
                             client
-                                .cancel_activity_task(task_token.clone(), details.map(Into::into))
+                                .cancel_activity_task(task_token.clone(), details)
                                 .await
                                 .err()
                         }

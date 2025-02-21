@@ -2,7 +2,7 @@
 name = "rustfsm_procmacro"
 version = "0.1.0"
 authors = ["Spencer Judge <spencer@temporal.io>"]
-edition = "2021"
+edition = "2024"
 license-file = "LICENSE.txt"
 description = "Procmacro sub-crate of the `rustfsm` crate"
 

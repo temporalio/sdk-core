@@ -18,28 +18,28 @@
 //! | replaying, no marker         | deprecate_patch | Call allowed                                                                       |
 
 use super::{
-    workflow_machines::MachineResponse, EventInfo, NewMachineWithCommand, OnEventWrapper,
-    WFMachinesAdapter, WFMachinesError,
+    EventInfo, NewMachineWithCommand, OnEventWrapper, WFMachinesAdapter, WFMachinesError,
+    workflow_machines::MachineResponse,
 };
 use crate::{
     internal_flags::CoreInternalFlags,
     protosext::HistoryEventExt,
     worker::workflow::{
-        machines::{
-            upsert_search_attributes_state_machine::MAX_SEARCH_ATTR_PAYLOAD_SIZE, HistEventData,
-        },
         InternalFlagsRef,
+        machines::{
+            HistEventData, upsert_search_attributes_state_machine::MAX_SEARCH_ATTR_PAYLOAD_SIZE,
+        },
     },
 };
 use anyhow::Context;
-use rustfsm::{fsm, StateMachine, TransitionResult};
+use rustfsm::{StateMachine, TransitionResult, fsm};
 use std::{
     collections::{BTreeSet, HashMap},
     convert::TryFrom,
 };
 use temporal_sdk_core_protos::{
     constants::PATCH_MARKER_NAME,
-    coresdk::{common::build_has_change_marker_details, AsJsonPayloadExt},
+    coresdk::{AsJsonPayloadExt, common::build_has_change_marker_details},
     temporal::api::{
         command::v1::{
             RecordMarkerCommandAttributes, UpsertWorkflowSearchAttributesCommandAttributes,
@@ -270,27 +270,27 @@ mod tests {
     use crate::{
         internal_flags::CoreInternalFlags,
         replay::TestHistoryBuilder,
-        test_help::{build_fake_sdk, MockPollCfg, ResponseType},
+        test_help::{MockPollCfg, ResponseType, build_fake_sdk},
         worker::workflow::machines::patch_state_machine::VERSION_SEARCH_ATTR_KEY,
     };
     use rstest::rstest;
     use std::{
-        collections::{hash_map::RandomState, HashSet, VecDeque},
+        collections::{HashSet, VecDeque, hash_map::RandomState},
         time::Duration,
     };
     use temporal_sdk::{ActivityOptions, WfContext};
     use temporal_sdk_core_protos::{
+        DEFAULT_WORKFLOW_TYPE,
         constants::PATCH_MARKER_NAME,
         coresdk::{
-            common::decode_change_marker_details,
-            workflow_activation::{workflow_activation_job, NotifyHasPatch, WorkflowActivationJob},
             AsJsonPayloadExt, FromJsonPayloadExt,
+            common::decode_change_marker_details,
+            workflow_activation::{NotifyHasPatch, WorkflowActivationJob, workflow_activation_job},
         },
         temporal::api::{
             command::v1::{
-                command::Attributes, RecordMarkerCommandAttributes,
-                ScheduleActivityTaskCommandAttributes,
-                UpsertWorkflowSearchAttributesCommandAttributes,
+                RecordMarkerCommandAttributes, ScheduleActivityTaskCommandAttributes,
+                UpsertWorkflowSearchAttributesCommandAttributes, command::Attributes,
             },
             common::v1::ActivityType,
             enums::v1::{CommandType, EventType},
@@ -299,7 +299,6 @@ mod tests {
                 ActivityTaskStartedEventAttributes, TimerFiredEventAttributes,
             },
         },
-        DEFAULT_WORKFLOW_TYPE,
     };
     use temporal_sdk_core_test_utils::interceptors::ActivationAssertionsInterceptor;
 

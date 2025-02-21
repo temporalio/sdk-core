@@ -13,8 +13,8 @@ mod task_token;
 
 #[cfg(feature = "history_builders")]
 pub use history_builder::{
-    default_act_sched, default_wes_attribs, TestHistoryBuilder, DEFAULT_ACTIVITY_TYPE,
-    DEFAULT_WORKFLOW_TYPE,
+    DEFAULT_ACTIVITY_TYPE, DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder, default_act_sched,
+    default_wes_attribs,
 };
 #[cfg(feature = "history_builders")]
 pub use history_info::HistoryInfo;
@@ -37,16 +37,16 @@ pub mod coresdk {
     tonic::include_proto!("coresdk");
 
     use crate::{
+        ENCODING_PAYLOAD_KEY, JSON_ENCODING_VAL,
         temporal::api::{
             common::v1::{Payload, Payloads, WorkflowExecution},
             enums::v1::{TimeoutType, WorkflowTaskFailedCause},
             failure::v1::{
-                failure::FailureInfo, ActivityFailureInfo, ApplicationFailureInfo, Failure,
-                TimeoutFailureInfo,
+                ActivityFailureInfo, ApplicationFailureInfo, Failure, TimeoutFailureInfo,
+                failure::FailureInfo,
             },
             workflowservice::v1::PollActivityTaskQueueResponse,
         },
-        ENCODING_PAYLOAD_KEY, JSON_ENCODING_VAL,
     };
     use activity_task::ActivityTask;
     use serde::{Deserialize, Serialize};
@@ -56,9 +56,9 @@ pub mod coresdk {
         fmt::{Display, Formatter},
         iter::FromIterator,
     };
-    use workflow_activation::{workflow_activation_job, WorkflowActivationJob};
-    use workflow_commands::{workflow_command, workflow_command::Variant, WorkflowCommand};
-    use workflow_completion::{workflow_activation_completion, WorkflowActivationCompletion};
+    use workflow_activation::{WorkflowActivationJob, workflow_activation_job};
+    use workflow_commands::{WorkflowCommand, workflow_command, workflow_command::Variant};
+    use workflow_completion::{WorkflowActivationCompletion, workflow_activation_completion};
 
     #[allow(clippy::module_inception)]
     pub mod activity_task {
@@ -107,7 +107,7 @@ pub mod coresdk {
         tonic::include_proto!("coresdk.activity_result");
         use super::super::temporal::api::{
             common::v1::Payload,
-            failure::v1::{failure, CanceledFailureInfo, Failure as APIFailure},
+            failure::v1::{CanceledFailureInfo, Failure as APIFailure, failure},
         };
         use crate::{
             coresdk::activity_result::activity_resolution::Status,
@@ -287,12 +287,12 @@ pub mod coresdk {
         tonic::include_proto!("coresdk.common");
         use super::external_data::LocalActivityMarkerData;
         use crate::{
+            PATCHED_MARKER_DETAILS_KEY,
             coresdk::{
-                external_data::PatchedMarkerData, AsJsonPayloadExt, FromJsonPayloadExt,
-                IntoPayloadsExt,
+                AsJsonPayloadExt, FromJsonPayloadExt, IntoPayloadsExt,
+                external_data::PatchedMarkerData,
             },
             temporal::api::common::v1::{Payload, Payloads},
-            PATCHED_MARKER_DETAILS_KEY,
         };
         use std::collections::HashMap;
 
@@ -450,10 +450,10 @@ pub mod coresdk {
     pub mod workflow_activation {
         use crate::{
             coresdk::{
-                activity_result::{activity_resolution, ActivityResolution},
+                FromPayloadsExt,
+                activity_result::{ActivityResolution, activity_resolution},
                 common::NamespacedWorkflowExecution,
                 workflow_activation::remove_from_cache::EvictionReason,
-                FromPayloadsExt,
             },
             temporal::api::{
                 enums::v1::WorkflowTaskFailedCause,
@@ -1263,7 +1263,7 @@ pub mod coresdk {
                         schedule_to_close_timeout: r.schedule_to_close_timeout,
                         start_to_close_timeout: r.start_to_close_timeout,
                         heartbeat_timeout: r.heartbeat_timeout,
-                        retry_policy: r.retry_policy.map(Into::into),
+                        retry_policy: r.retry_policy,
                         is_local: false,
                     },
                 )),
@@ -1424,7 +1424,7 @@ pub mod coresdk {
         fn from_payloads(p: Option<Payloads>) -> Self {
             match p {
                 None => std::iter::empty().collect(),
-                Some(p) => p.payloads.into_iter().map(Into::into).collect(),
+                Some(p) => p.payloads.into_iter().collect(),
             }
         }
     }
@@ -1442,7 +1442,7 @@ pub mod coresdk {
                 None
             } else {
                 Some(Payloads {
-                    payloads: iterd.map(Into::into).collect(),
+                    payloads: iterd.collect(),
                 })
             }
         }
@@ -1563,7 +1563,7 @@ pub mod temporal {
                 tonic::include_proto!("temporal.api.command.v1");
 
                 use crate::{
-                    coresdk::{workflow_commands, IntoPayloadsExt},
+                    coresdk::{IntoPayloadsExt, workflow_commands},
                     temporal::api::{
                         common::v1::{ActivityType, WorkflowType},
                         enums::v1::CommandType,
@@ -1934,7 +1934,7 @@ pub mod temporal {
         pub mod common {
             pub mod v1 {
                 use crate::{ENCODING_PAYLOAD_KEY, JSON_ENCODING_VAL};
-                use base64::{prelude::BASE64_STANDARD, Engine};
+                use base64::{Engine, prelude::BASE64_STANDARD};
                 use std::{
                     collections::HashMap,
                     fmt::{Display, Formatter},
@@ -2401,7 +2401,7 @@ pub mod temporal {
             pub mod v1 {
                 use crate::temporal::api::{
                     common,
-                    common::v1::link::{workflow_event, WorkflowEvent},
+                    common::v1::link::{WorkflowEvent, workflow_event},
                     enums::v1::EventType,
                 };
                 use anyhow::{anyhow, bail};

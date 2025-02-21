@@ -1,34 +1,33 @@
 #![allow(clippy::large_enum_variant)]
 
 use super::{
-    workflow_machines::MachineResponse, EventInfo, NewMachineWithCommand, OnEventWrapper,
-    WFMachinesAdapter, WFMachinesError,
+    EventInfo, NewMachineWithCommand, OnEventWrapper, WFMachinesAdapter, WFMachinesError,
+    workflow_machines::MachineResponse,
 };
 use crate::{
     abstractions::dbg_panic,
     internal_flags::CoreInternalFlags,
-    worker::workflow::{machines::HistEventData, InternalFlagsRef},
+    worker::workflow::{InternalFlagsRef, machines::HistEventData},
 };
-use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
+use rustfsm::{MachineError, StateMachine, TransitionResult, fsm};
 use std::convert::{TryFrom, TryInto};
 use temporal_sdk_core_protos::{
     coresdk::{
-        activity_result::{self as ar, activity_resolution, ActivityResolution, Cancellation},
+        activity_result::{self as ar, ActivityResolution, Cancellation, activity_resolution},
         workflow_activation::ResolveActivity,
         workflow_commands::{ActivityCancellationType, ScheduleActivity},
     },
     temporal::api::{
         command::v1::{
-            command, schedule_activity_cmd_to_api, Command,
-            RequestCancelActivityTaskCommandAttributes,
+            Command, RequestCancelActivityTaskCommandAttributes, command,
+            schedule_activity_cmd_to_api,
         },
         common::v1::{ActivityType, Payload, Payloads},
         enums::v1::{CommandType, EventType, RetryState},
-        failure::v1::{failure::FailureInfo, ActivityFailureInfo, CanceledFailureInfo, Failure},
+        failure::v1::{ActivityFailureInfo, CanceledFailureInfo, Failure, failure::FailureInfo},
         history::v1::{
-            history_event, ActivityTaskCanceledEventAttributes,
-            ActivityTaskCompletedEventAttributes, ActivityTaskFailedEventAttributes,
-            ActivityTaskTimedOutEventAttributes,
+            ActivityTaskCanceledEventAttributes, ActivityTaskCompletedEventAttributes,
+            ActivityTaskFailedEventAttributes, ActivityTaskTimedOutEventAttributes, history_event,
         },
     },
 };
@@ -279,7 +278,7 @@ impl TryFrom<HistEventData> for ActivityMachineEvents {
             _ => {
                 return Err(WFMachinesError::Nondeterminism(format!(
                     "Activity machine does not handle this event: {e}"
-                )))
+                )));
             }
         })
     }
@@ -293,28 +292,32 @@ impl WFMachinesAdapter for ActivityMachine {
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         Ok(match my_command {
             ActivityMachineCommand::Complete(result) => {
-                vec![ResolveActivity {
-                    seq: self.shared_state.attrs.seq,
-                    result: Some(ActivityResolution {
-                        status: Some(activity_resolution::Status::Completed(ar::Success {
-                            result: convert_payloads(event_info, result)?,
-                        })),
-                    }),
-                    is_local: false,
-                }
-                .into()]
+                vec![
+                    ResolveActivity {
+                        seq: self.shared_state.attrs.seq,
+                        result: Some(ActivityResolution {
+                            status: Some(activity_resolution::Status::Completed(ar::Success {
+                                result: convert_payloads(event_info, result)?,
+                            })),
+                        }),
+                        is_local: false,
+                    }
+                    .into(),
+                ]
             }
             ActivityMachineCommand::Fail(failure) => {
-                vec![ResolveActivity {
-                    seq: self.shared_state.attrs.seq,
-                    result: Some(ActivityResolution {
-                        status: Some(activity_resolution::Status::Failed(ar::Failure {
-                            failure: Some(failure),
-                        })),
-                    }),
-                    is_local: false,
-                }
-                .into()]
+                vec![
+                    ResolveActivity {
+                        seq: self.shared_state.attrs.seq,
+                        result: Some(ActivityResolution {
+                            status: Some(activity_resolution::Status::Failed(ar::Failure {
+                                failure: Some(failure),
+                            })),
+                        }),
+                        is_local: false,
+                    }
+                    .into(),
+                ]
             }
             ActivityMachineCommand::RequestCancellation(c) => {
                 self.machine_responses_from_cancel_request(c)
@@ -750,7 +753,7 @@ fn new_cancel_failure(dat: &SharedState, attrs: ActivityTaskCanceledEventAttribu
         message: "Activity cancelled".to_string(),
         cause: Some(Box::from(Failure {
             failure_info: Some(FailureInfo::CanceledFailureInfo(CanceledFailureInfo {
-                details: attrs.details.map(Into::into),
+                details: attrs.details,
             })),
             ..Default::default()
         })),
@@ -801,14 +804,14 @@ mod test {
     use crate::{
         internal_flags::InternalFlags,
         replay::TestHistoryBuilder,
-        test_help::{build_fake_sdk, MockPollCfg, ResponseType},
-        worker::workflow::{machines::Machines, OutgoingJob},
+        test_help::{MockPollCfg, ResponseType, build_fake_sdk},
+        worker::workflow::{OutgoingJob, machines::Machines},
     };
     use std::{cell::RefCell, mem::discriminant, rc::Rc};
     use temporal_sdk::{ActivityOptions, CancellableFuture, WfContext, WorkflowFunction};
     use temporal_sdk_core_protos::{
-        coresdk::workflow_activation::{workflow_activation_job, WorkflowActivationJob},
         DEFAULT_WORKFLOW_TYPE,
+        coresdk::workflow_activation::{WorkflowActivationJob, workflow_activation_job},
     };
     use temporal_sdk_core_test_utils::interceptors::ActivationAssertionsInterceptor;
 

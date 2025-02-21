@@ -1,7 +1,7 @@
 use crate::{
-    raw::IsUserLongPoll, Client, IsWorkerTaskLongPoll, NamespacedClient, Result, RetryConfig,
+    Client, IsWorkerTaskLongPoll, NamespacedClient, Result, RetryConfig, raw::IsUserLongPoll,
 };
-use backoff::{backoff::Backoff, exponential::ExponentialBackoff, Clock, SystemClock};
+use backoff::{Clock, SystemClock, backoff::Backoff, exponential::ExponentialBackoff};
 use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
 use std::{error::Error, fmt::Debug, future::Future, sync::Arc, time::Duration};
 use tonic::{Code, Request};

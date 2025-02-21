@@ -1,9 +1,9 @@
 use super::{
-    workflow_machines::MachineResponse, EventInfo, NewMachineWithCommand, OnEventWrapper,
-    WFMachinesAdapter, WFMachinesError,
+    EventInfo, NewMachineWithCommand, OnEventWrapper, WFMachinesAdapter, WFMachinesError,
+    workflow_machines::MachineResponse,
 };
 use crate::worker::workflow::machines::HistEventData;
-use rustfsm::{fsm, StateMachine, TransitionResult};
+use rustfsm::{StateMachine, TransitionResult, fsm};
 use std::convert::TryFrom;
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::CancelWorkflowExecution,
@@ -70,7 +70,7 @@ impl TryFrom<HistEventData> for CancelWorkflowMachineEvents {
             _ => {
                 return Err(WFMachinesError::Nondeterminism(format!(
                     "Cancel workflow machine does not handle this event: {e}"
-                )))
+                )));
             }
         })
     }
@@ -100,12 +100,12 @@ impl WFMachinesAdapter for CancelWorkflowMachine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_help::{build_fake_sdk, canned_histories, MockPollCfg};
+    use crate::test_help::{MockPollCfg, build_fake_sdk, canned_histories};
     use std::time::Duration;
     use temporal_sdk::{WfContext, WfExitValue, WorkflowResult};
     use temporal_sdk_core_protos::{
-        coresdk::workflow_activation::{workflow_activation_job, WorkflowActivationJob},
         DEFAULT_WORKFLOW_TYPE,
+        coresdk::workflow_activation::{WorkflowActivationJob, workflow_activation_job},
     };
     use temporal_sdk_core_test_utils::interceptors::ActivationAssertionsInterceptor;
 

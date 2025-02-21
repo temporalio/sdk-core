@@ -1,12 +1,11 @@
 use proc_macro::TokenStream;
 use quote::{quote, quote_spanned};
-use std::collections::{hash_map::Entry, HashMap, HashSet};
+use std::collections::{HashMap, HashSet, hash_map::Entry};
 use syn::{
-    parenthesized,
+    Error, Fields, Ident, Token, Type, Variant, Visibility, parenthesized,
     parse::{Parse, ParseStream, Result},
     parse_macro_input,
     spanned::Spanned,
-    Error, Fields, Ident, Token, Type, Variant, Visibility,
 };
 
 /// Parses a DSL for defining finite state machines, and produces code implementing the
@@ -287,7 +286,7 @@ impl Parse for Transition {
                 return Err(Error::new(
                     event.span(),
                     "Struct variants are not supported for events",
-                ))
+                ));
             }
             Fields::Unnamed(uf) => {
                 if uf.unnamed.len() != 1 {

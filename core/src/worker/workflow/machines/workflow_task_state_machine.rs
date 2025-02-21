@@ -1,8 +1,8 @@
 #![allow(clippy::enum_variant_names)]
 
-use super::{workflow_machines::MachineResponse, EventInfo, WFMachinesAdapter, WFMachinesError};
+use super::{EventInfo, WFMachinesAdapter, WFMachinesError, workflow_machines::MachineResponse};
 use crate::worker::workflow::machines::HistEventData;
-use rustfsm::{fsm, StateMachine, TransitionResult};
+use rustfsm::{StateMachine, TransitionResult, fsm};
 use std::{
     convert::{TryFrom, TryInto},
     time::SystemTime,
@@ -103,7 +103,7 @@ impl TryFrom<HistEventData> for WorkflowTaskMachineEvents {
                             return Err(WFMachinesError::Fatal(
                                 "Workflow task started event timestamp was inconvertible"
                                     .to_string(),
-                            ))
+                            ));
                         }
                     }
                 } else {
@@ -143,7 +143,7 @@ impl TryFrom<HistEventData> for WorkflowTaskMachineEvents {
             _ => {
                 return Err(WFMachinesError::Nondeterminism(format!(
                     "Event does not apply to a wf task machine: {e}"
-                )))
+                )));
             }
         })
     }

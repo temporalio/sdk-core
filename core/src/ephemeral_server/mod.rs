@@ -13,7 +13,7 @@ use std::{
 use temporal_client::ClientOptionsBuilder;
 use tokio::{
     task::spawn_blocking,
-    time::{sleep, Duration},
+    time::{Duration, sleep},
 };
 use tokio_util::io::{StreamReader, SyncIoBridge};
 use url::Url;

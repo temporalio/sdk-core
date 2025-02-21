@@ -10,10 +10,10 @@ mod workflow_cancels;
 mod workflow_tasks;
 
 use crate::{
-    errors::PollError,
-    test_help::{build_mock_pollers, canned_histories, mock_worker, test_worker_cfg, MockPollCfg},
-    worker::client::mocks::{mock_manual_workflow_client, mock_workflow_client},
     Worker,
+    errors::PollError,
+    test_help::{MockPollCfg, build_mock_pollers, canned_histories, mock_worker, test_worker_cfg},
+    worker::client::mocks::{mock_manual_workflow_client, mock_workflow_client},
 };
 use futures_util::FutureExt;
 use std::{sync::LazyLock, time::Duration};

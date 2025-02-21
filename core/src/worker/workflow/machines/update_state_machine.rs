@@ -1,25 +1,25 @@
-use super::{workflow_machines::MachineResponse, EventInfo, WFMachinesAdapter, WFMachinesError};
+use super::{EventInfo, WFMachinesAdapter, WFMachinesError, workflow_machines::MachineResponse};
 use crate::{
     protosext::protocol_messages::UpdateRequest,
     worker::workflow::machines::{HistEventData, NewMachineWithResponse},
 };
 use itertools::Itertools;
 use prost::EncodeError;
-use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
+use rustfsm::{MachineError, StateMachine, TransitionResult, fsm};
 use std::convert::TryFrom;
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::DoUpdate,
-        workflow_commands::{update_response, UpdateResponse},
+        workflow_commands::{UpdateResponse, update_response},
     },
     temporal::api::{
-        command::v1::{command, ProtocolMessageCommandAttributes},
+        command::v1::{ProtocolMessageCommandAttributes, command},
         common::v1::Payload,
         enums::v1::{CommandType, EventType},
         failure::v1::Failure,
         protocol::v1::Message as ProtocolMessage,
         update,
-        update::v1::{outcome, Acceptance, Outcome, Rejection, Response},
+        update::v1::{Acceptance, Outcome, Rejection, Response, outcome},
     },
     utilities::pack_any,
 };
@@ -122,7 +122,7 @@ impl UpdateMachine {
                 return Err(WFMachinesError::Fatal(format!(
                     "Update response for update {} had an empty result, this is a lang layer bug.",
                     &self.shared_state.meta.update_id
-                )))
+                )));
             }
             Some(update_response::Response::Accepted(_)) => {
                 self.on_event(UpdateMachineEvents::Accept)
@@ -223,7 +223,7 @@ impl TryFrom<HistEventData> for UpdateMachineEvents {
             _ => {
                 return Err(WFMachinesError::Nondeterminism(format!(
                     "Update machine does not handle this event: {e}"
-                )))
+                )));
             }
         })
     }

@@ -1,21 +1,21 @@
 use crate::{
     prost_dur,
-    replay::{default_wes_attribs, TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE},
+    replay::{DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder, default_wes_attribs},
     test_help::{
-        build_mock_pollers, hist_to_poll_resp, mock_sdk, mock_sdk_cfg, mock_worker,
-        single_hist_mock_sg, MockPollCfg, ResponseType, WorkerExt,
+        MockPollCfg, ResponseType, WorkerExt, build_mock_pollers, hist_to_poll_resp, mock_sdk,
+        mock_sdk_cfg, mock_worker, single_hist_mock_sg,
     },
-    worker::{client::mocks::mock_workflow_client, LEGACY_QUERY_ID},
+    worker::{LEGACY_QUERY_ID, client::mocks::mock_workflow_client},
 };
 use anyhow::anyhow;
 use crossbeam_queue::SegQueue;
-use futures_util::{future::join_all, FutureExt};
+use futures_util::{FutureExt, future::join_all};
 use std::{
     collections::HashMap,
     ops::Sub,
     sync::{
-        atomic::{AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicUsize, Ordering},
     },
     time::{Duration, Instant, SystemTime},
 };
@@ -23,25 +23,25 @@ use temporal_client::WorkflowOptions;
 use temporal_sdk::{
     ActContext, ActivityError, LocalActivityOptions, WfContext, WorkflowFunction, WorkflowResult,
 };
-use temporal_sdk_core_api::{errors::PollError, Worker};
+use temporal_sdk_core_api::{Worker, errors::PollError};
 use temporal_sdk_core_protos::{
+    DEFAULT_ACTIVITY_TYPE,
     coresdk::{
+        ActivityTaskCompletion, AsJsonPayloadExt,
         activity_result::ActivityExecutionResult,
-        workflow_activation::{workflow_activation_job, WorkflowActivationJob},
+        workflow_activation::{WorkflowActivationJob, workflow_activation_job},
         workflow_commands::{ActivityCancellationType, ScheduleLocalActivity},
         workflow_completion::WorkflowActivationCompletion,
-        ActivityTaskCompletion, AsJsonPayloadExt,
     },
     temporal::api::{
         common::v1::RetryPolicy,
         enums::v1::{CommandType, EventType, TimeoutType, WorkflowTaskFailedCause},
-        failure::v1::{failure::FailureInfo, Failure},
+        failure::v1::{Failure, failure::FailureInfo},
         query::v1::WorkflowQuery,
     },
-    DEFAULT_ACTIVITY_TYPE,
 };
 use temporal_sdk_core_test_utils::{
-    query_ok, schedule_local_activity_cmd, start_timer_cmd, WorkerTestHelpers,
+    WorkerTestHelpers, query_ok, schedule_local_activity_cmd, start_timer_cmd,
 };
 use tokio::{join, select, sync::Barrier};
 

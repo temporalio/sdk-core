@@ -1,9 +1,9 @@
 use super::{
-    workflow_machines::MachineResponse, EventInfo, NewMachineWithCommand, OnEventWrapper,
-    WFMachinesAdapter, WFMachinesError,
+    EventInfo, NewMachineWithCommand, OnEventWrapper, WFMachinesAdapter, WFMachinesError,
+    workflow_machines::MachineResponse,
 };
 use crate::worker::workflow::machines::HistEventData;
-use rustfsm::{fsm, StateMachine, TransitionResult};
+use rustfsm::{StateMachine, TransitionResult, fsm};
 use std::convert::TryFrom;
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -11,9 +11,9 @@ use temporal_sdk_core_protos::{
         workflow_activation::ResolveRequestCancelExternalWorkflow,
     },
     temporal::api::{
-        command::v1::{command, RequestCancelExternalWorkflowExecutionCommandAttributes},
+        command::v1::{RequestCancelExternalWorkflowExecutionCommandAttributes, command},
         enums::v1::{CancelExternalWorkflowExecutionFailedCause, CommandType, EventType},
-        failure::v1::{failure::FailureInfo, ApplicationFailureInfo, Failure},
+        failure::v1::{ApplicationFailureInfo, Failure, failure::FailureInfo},
         history::v1::history_event,
     },
 };
@@ -177,11 +177,13 @@ impl WFMachinesAdapter for CancelExternalMachine {
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         Ok(match my_command {
             CancelExternalCommand::Requested => {
-                vec![ResolveRequestCancelExternalWorkflow {
-                    seq: self.shared_state.seq,
-                    failure: None,
-                }
-                .into()]
+                vec![
+                    ResolveRequestCancelExternalWorkflow {
+                        seq: self.shared_state.seq,
+                        failure: None,
+                    }
+                    .into(),
+                ]
             }
             CancelExternalCommand::Failed(f) => {
                 let reason = match f {
@@ -189,20 +191,22 @@ impl WFMachinesAdapter for CancelExternalMachine {
                     CancelExternalWorkflowExecutionFailedCause::ExternalWorkflowExecutionNotFound
                     | CancelExternalWorkflowExecutionFailedCause::NamespaceNotFound  => "not found"
                 };
-                vec![ResolveRequestCancelExternalWorkflow {
-                    seq: self.shared_state.seq,
-                    failure: Some(Failure {
-                        message: format!("Unable to cancel external workflow because {reason}"),
-                        failure_info: Some(FailureInfo::ApplicationFailureInfo(
-                            ApplicationFailureInfo {
-                                r#type: f.to_string(),
-                                ..Default::default()
-                            },
-                        )),
-                        ..Default::default()
-                    }),
-                }
-                .into()]
+                vec![
+                    ResolveRequestCancelExternalWorkflow {
+                        seq: self.shared_state.seq,
+                        failure: Some(Failure {
+                            message: format!("Unable to cancel external workflow because {reason}"),
+                            failure_info: Some(FailureInfo::ApplicationFailureInfo(
+                                ApplicationFailureInfo {
+                                    r#type: f.to_string(),
+                                    ..Default::default()
+                                },
+                            )),
+                            ..Default::default()
+                        }),
+                    }
+                    .into(),
+                ]
             }
         })
     }
@@ -213,7 +217,7 @@ mod tests {
     use super::*;
     use crate::{
         replay::TestHistoryBuilder,
-        test_help::{build_fake_sdk, MockPollCfg},
+        test_help::{MockPollCfg, build_fake_sdk},
     };
     use temporal_sdk::{WfContext, WorkflowResult};
     use temporal_sdk_core_protos::DEFAULT_WORKFLOW_TYPE;

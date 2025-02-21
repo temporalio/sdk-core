@@ -1,17 +1,16 @@
 use crate::{
-    prost_dur,
+    PollError, prost_dur,
     test_help::{
-        build_fake_worker, build_mock_pollers, canned_histories, mock_worker, test_worker_cfg,
-        MockPollCfg, MockWorkerInputs, MocksHolder, ResponseType, WorkerExt,
+        MockPollCfg, MockWorkerInputs, MocksHolder, ResponseType, WorkerExt, build_fake_worker,
+        build_mock_pollers, canned_histories, mock_worker, test_worker_cfg,
     },
     worker::{
         self,
         client::{
-            mocks::{mock_workflow_client, DEFAULT_TEST_CAPABILITIES, DEFAULT_WORKERS_REGISTRY},
             MockWorkerClient,
+            mocks::{DEFAULT_TEST_CAPABILITIES, DEFAULT_WORKERS_REGISTRY, mock_workflow_client},
         },
     },
-    PollError,
 };
 use futures_util::{stream, stream::StreamExt};
 use std::{cell::RefCell, time::Duration};
@@ -19,15 +18,15 @@ use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::workflow_activation_job,
-        workflow_commands::{workflow_command, CompleteWorkflowExecution, StartTimer},
+        workflow_commands::{CompleteWorkflowExecution, StartTimer, workflow_command},
         workflow_completion::WorkflowActivationCompletion,
     },
     temporal::api::workflowservice::v1::{
         PollWorkflowTaskQueueResponse, RespondWorkflowTaskCompletedResponse, ShutdownWorkerResponse,
     },
 };
-use temporal_sdk_core_test_utils::{start_timer_cmd, WorkerTestHelpers};
-use tokio::sync::{watch, Barrier};
+use temporal_sdk_core_test_utils::{WorkerTestHelpers, start_timer_cmd};
+use tokio::sync::{Barrier, watch};
 
 #[tokio::test]
 async fn after_shutdown_of_worker_get_shutdown_err() {

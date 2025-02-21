@@ -1,9 +1,9 @@
 use crate::{
     test_help::{
-        build_mock_pollers, canned_histories, hist_to_poll_resp, mock_worker, single_hist_mock_sg,
-        MockPollCfg, MocksHolder, ResponseType, WorkerExt,
+        MockPollCfg, MocksHolder, ResponseType, WorkerExt, build_mock_pollers, canned_histories,
+        hist_to_poll_resp, mock_worker, single_hist_mock_sg,
     },
-    worker::{client::mocks::mock_workflow_client, LEGACY_QUERY_ID},
+    worker::{LEGACY_QUERY_ID, client::mocks::mock_workflow_client},
 };
 use futures_util::stream;
 use std::{
@@ -12,13 +12,14 @@ use std::{
 };
 use temporal_sdk_core_api::Worker as WorkerTrait;
 use temporal_sdk_core_protos::{
+    TestHistoryBuilder,
     coresdk::{
         workflow_activation::{
-            remove_from_cache::EvictionReason, workflow_activation_job, WorkflowActivationJob,
+            WorkflowActivationJob, remove_from_cache::EvictionReason, workflow_activation_job,
         },
         workflow_commands::{
-            query_result, ActivityCancellationType, CompleteWorkflowExecution,
-            ContinueAsNewWorkflowExecution, QueryResult, RequestCancelActivity,
+            ActivityCancellationType, CompleteWorkflowExecution, ContinueAsNewWorkflowExecution,
+            QueryResult, RequestCancelActivity, query_result,
         },
         workflow_completion::WorkflowActivationCompletion,
     },
@@ -26,16 +27,15 @@ use temporal_sdk_core_protos::{
         common::v1::Payload,
         enums::v1::{CommandType, EventType},
         failure::v1::Failure,
-        history::v1::{history_event, ActivityTaskCancelRequestedEventAttributes, History},
+        history::v1::{ActivityTaskCancelRequestedEventAttributes, History, history_event},
         query::v1::WorkflowQuery,
         workflowservice::v1::{
             GetWorkflowExecutionHistoryResponse, RespondWorkflowTaskCompletedResponse,
         },
     },
-    TestHistoryBuilder,
 };
 use temporal_sdk_core_test_utils::{
-    query_ok, schedule_activity_cmd, start_timer_cmd, WorkerTestHelpers,
+    WorkerTestHelpers, query_ok, schedule_activity_cmd, start_timer_cmd,
 };
 
 #[rstest::rstest]
@@ -826,7 +826,7 @@ async fn legacy_query_combined_with_timer_fire_repro() {
     assert_matches!(
         task.jobs.as_slice(),
         [WorkflowActivationJob {
-            variant: Some(workflow_activation_job::Variant::QueryWorkflow(ref q)),
+            variant: Some(workflow_activation_job::Variant::QueryWorkflow(q)),
         }]
         if q.query_id == "the-query"
     );
@@ -844,7 +844,7 @@ async fn legacy_query_combined_with_timer_fire_repro() {
     assert_matches!(
         task.jobs.as_slice(),
         [WorkflowActivationJob {
-            variant: Some(workflow_activation_job::Variant::QueryWorkflow(ref q)),
+            variant: Some(workflow_activation_job::Variant::QueryWorkflow(q)),
         }]
         if q.query_id == LEGACY_QUERY_ID
     );

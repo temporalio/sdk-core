@@ -1,6 +1,6 @@
 use crate::{
     abstractions::UsedMeteredSemPermit,
-    pollers::{new_nexus_task_poller, BoxedNexusPoller, NexusPollItem},
+    pollers::{BoxedNexusPoller, NexusPollItem, new_nexus_task_poller},
     telemetry::{
         metrics,
         metrics::{FailureReason, MetricsContext},
@@ -9,15 +9,14 @@ use crate::{
 };
 use anyhow::anyhow;
 use futures_util::{
-    stream,
+    Stream, StreamExt, stream,
     stream::{BoxStream, PollNext},
-    Stream, StreamExt,
 };
 use std::{
     collections::HashMap,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
     time::{Duration, Instant, SystemTime},
 };
@@ -26,18 +25,18 @@ use temporal_sdk_core_api::{
     worker::NexusSlotKind,
 };
 use temporal_sdk_core_protos::{
+    TaskToken,
     coresdk::{
-        nexus::{
-            nexus_task, nexus_task_completion, CancelNexusTask, NexusTask, NexusTaskCancelReason,
-        },
         NexusSlotInfo,
+        nexus::{
+            CancelNexusTask, NexusTask, NexusTaskCancelReason, nexus_task, nexus_task_completion,
+        },
     },
     temporal::api::nexus::v1::{request::Variant, response, start_operation_response},
-    TaskToken,
 };
 use tokio::{
     join,
-    sync::{mpsc::UnboundedSender, Mutex, Notify},
+    sync::{Mutex, Notify, mpsc::UnboundedSender},
     task::JoinHandle,
 };
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -154,7 +153,7 @@ impl NexusManager {
                             return Err(CompleteNexusError::MalformedNexusCompletion {
                                 reason: "Nexus completion must contain a status variant "
                                     .to_string(),
-                            })
+                            });
                         }
                     }
                     (true, client.complete_nexus_task(tt, c).await.err())

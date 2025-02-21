@@ -1,29 +1,29 @@
 use crate::worker::workflow::{
-    machines::{
-        workflow_machines::MachineResponse, EventInfo, HistEventData, NewMachineWithCommand,
-        OnEventWrapper, WFMachinesAdapter,
-    },
     WFMachinesError,
+    machines::{
+        EventInfo, HistEventData, NewMachineWithCommand, OnEventWrapper, WFMachinesAdapter,
+        workflow_machines::MachineResponse,
+    },
 };
 use itertools::Itertools;
-use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
+use rustfsm::{MachineError, StateMachine, TransitionResult, fsm};
 use temporal_sdk_core_protos::{
     coresdk::{
-        nexus::{nexus_operation_result, NexusOperationResult},
+        nexus::{NexusOperationResult, nexus_operation_result},
         workflow_activation::{
-            resolve_nexus_operation_start, ResolveNexusOperation, ResolveNexusOperationStart,
+            ResolveNexusOperation, ResolveNexusOperationStart, resolve_nexus_operation_start,
         },
         workflow_commands::ScheduleNexusOperation,
     },
     temporal::api::{
-        command::v1::{command, RequestCancelNexusOperationCommandAttributes},
+        command::v1::{RequestCancelNexusOperationCommandAttributes, command},
         common::v1::Payload,
         enums::v1::{CommandType, EventType},
-        failure::v1::{self as failure, failure::FailureInfo, Failure},
+        failure::v1::{self as failure, Failure, failure::FailureInfo},
         history::v1::{
-            history_event, NexusOperationCanceledEventAttributes,
-            NexusOperationCompletedEventAttributes, NexusOperationFailedEventAttributes,
-            NexusOperationStartedEventAttributes, NexusOperationTimedOutEventAttributes,
+            NexusOperationCanceledEventAttributes, NexusOperationCompletedEventAttributes,
+            NexusOperationFailedEventAttributes, NexusOperationStartedEventAttributes,
+            NexusOperationTimedOutEventAttributes, history_event,
         },
     },
 };
@@ -399,7 +399,7 @@ impl TryFrom<HistEventData> for NexusOperationMachineEvents {
             _ => {
                 return Err(WFMachinesError::Nondeterminism(format!(
                     "Nexus operation machine does not handle this event: {e:?}"
-                )))
+                )));
             }
         })
     }
@@ -413,13 +413,15 @@ impl WFMachinesAdapter for NexusOperationMachine {
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         Ok(match my_command {
             NexusOperationCommand::Start { operation_id } => {
-                vec![ResolveNexusOperationStart {
-                    seq: self.shared_state.lang_seq_num,
-                    status: Some(resolve_nexus_operation_start::Status::OperationId(
-                        operation_id,
-                    )),
-                }
-                .into()]
+                vec![
+                    ResolveNexusOperationStart {
+                        seq: self.shared_state.lang_seq_num,
+                        status: Some(resolve_nexus_operation_start::Status::OperationId(
+                            operation_id,
+                        )),
+                    }
+                    .into(),
+                ]
             }
             NexusOperationCommand::CancelBeforeStart => {
                 vec![
@@ -446,42 +448,50 @@ impl WFMachinesAdapter for NexusOperationMachine {
                 ]
             }
             NexusOperationCommand::Complete(c) => {
-                vec![ResolveNexusOperation {
-                    seq: self.shared_state.lang_seq_num,
-                    result: Some(NexusOperationResult {
-                        status: Some(nexus_operation_result::Status::Completed(
-                            c.unwrap_or_default(),
-                        )),
-                    }),
-                }
-                .into()]
+                vec![
+                    ResolveNexusOperation {
+                        seq: self.shared_state.lang_seq_num,
+                        result: Some(NexusOperationResult {
+                            status: Some(nexus_operation_result::Status::Completed(
+                                c.unwrap_or_default(),
+                            )),
+                        }),
+                    }
+                    .into(),
+                ]
             }
             NexusOperationCommand::Fail(f) => {
-                vec![ResolveNexusOperation {
-                    seq: self.shared_state.lang_seq_num,
-                    result: Some(NexusOperationResult {
-                        status: Some(nexus_operation_result::Status::Failed(f)),
-                    }),
-                }
-                .into()]
+                vec![
+                    ResolveNexusOperation {
+                        seq: self.shared_state.lang_seq_num,
+                        result: Some(NexusOperationResult {
+                            status: Some(nexus_operation_result::Status::Failed(f)),
+                        }),
+                    }
+                    .into(),
+                ]
             }
             NexusOperationCommand::Cancel(f) => {
-                vec![ResolveNexusOperation {
-                    seq: self.shared_state.lang_seq_num,
-                    result: Some(NexusOperationResult {
-                        status: Some(nexus_operation_result::Status::Cancelled(f)),
-                    }),
-                }
-                .into()]
+                vec![
+                    ResolveNexusOperation {
+                        seq: self.shared_state.lang_seq_num,
+                        result: Some(NexusOperationResult {
+                            status: Some(nexus_operation_result::Status::Cancelled(f)),
+                        }),
+                    }
+                    .into(),
+                ]
             }
             NexusOperationCommand::TimedOut(f) => {
-                vec![ResolveNexusOperation {
-                    seq: self.shared_state.lang_seq_num,
-                    result: Some(NexusOperationResult {
-                        status: Some(nexus_operation_result::Status::TimedOut(f)),
-                    }),
-                }
-                .into()]
+                vec![
+                    ResolveNexusOperation {
+                        seq: self.shared_state.lang_seq_num,
+                        result: Some(NexusOperationResult {
+                            status: Some(nexus_operation_result::Status::TimedOut(f)),
+                        }),
+                    }
+                    .into(),
+                ]
             }
             NexusOperationCommand::IssueCancel => {
                 vec![MachineResponse::IssueNewCommand(

@@ -1,56 +1,57 @@
 use crate::{
-    advance_fut,
+    Worker, advance_fut,
     internal_flags::CoreInternalFlags,
     job_assert,
     replay::TestHistoryBuilder,
     test_help::{
+        FakeWfResponses, MockPollCfg, MocksHolder, ResponseType, WorkerExt,
+        WorkflowCachingPolicy::{self, AfterEveryReply, NonSticky},
         build_fake_worker, build_mock_pollers, build_multihist_mock_sg, canned_histories,
         gen_assert_and_fail, gen_assert_and_reply, hist_to_poll_resp, mock_sdk, mock_sdk_cfg,
         mock_worker, poll_and_reply, poll_and_reply_clears_outstanding_evicts, single_hist_mock_sg,
-        test_worker_cfg, FakeWfResponses, MockPollCfg, MocksHolder, ResponseType, WorkerExt,
-        WorkflowCachingPolicy::{self, AfterEveryReply, NonSticky},
+        test_worker_cfg,
     },
     worker::{
-        client::mocks::{mock_manual_workflow_client, mock_workflow_client},
         TunerBuilder,
+        client::mocks::{mock_manual_workflow_client, mock_workflow_client},
     },
-    Worker,
 };
-use futures_util::{stream, FutureExt};
+use futures_util::{FutureExt, stream};
 use mockall::TimesRange;
 use rstest::{fixture, rstest};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     sync::{
+        Arc,
         atomic::{AtomicU64, AtomicUsize, Ordering},
         mpsc::sync_channel,
-        Arc,
     },
     time::Duration,
 };
 use temporal_client::WorkflowOptions;
 use temporal_sdk::{ActivityOptions, CancellableFuture, TimerOptions, WfContext};
 use temporal_sdk_core_api::{
+    Worker as WorkerTrait,
     errors::PollError,
     worker::{
         SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext, SlotSupplier,
         SlotSupplierPermit, WorkflowSlotKind,
     },
-    Worker as WorkerTrait,
 };
 use temporal_sdk_core_protos::{
+    DEFAULT_ACTIVITY_TYPE, DEFAULT_WORKFLOW_TYPE,
     coresdk::{
-        activity_result::{self as ar, activity_resolution, ActivityResolution},
+        activity_result::{self as ar, ActivityResolution, activity_resolution},
         common::VersioningIntent,
         workflow_activation::{
-            remove_from_cache::EvictionReason, workflow_activation_job, FireTimer,
-            InitializeWorkflow, ResolveActivity, UpdateRandomSeed, WorkflowActivationJob,
+            FireTimer, InitializeWorkflow, ResolveActivity, UpdateRandomSeed,
+            WorkflowActivationJob, remove_from_cache::EvictionReason, workflow_activation_job,
         },
         workflow_commands::{
-            update_response::Response, workflow_command, ActivityCancellationType, CancelTimer,
-            CompleteWorkflowExecution, ContinueAsNewWorkflowExecution, FailWorkflowExecution,
-            RequestCancelActivity, ScheduleActivity, SetPatchMarker, StartChildWorkflowExecution,
-            UpdateResponse,
+            ActivityCancellationType, CancelTimer, CompleteWorkflowExecution,
+            ContinueAsNewWorkflowExecution, FailWorkflowExecution, RequestCancelActivity,
+            ScheduleActivity, SetPatchMarker, StartChildWorkflowExecution, UpdateResponse,
+            update_response::Response, workflow_command,
         },
         workflow_completion::WorkflowActivationCompletion,
     },
@@ -61,17 +62,16 @@ use temporal_sdk_core_protos::{
         enums::v1::{CommandType, EventType, WorkflowTaskFailedCause},
         failure::v1::Failure,
         history::v1::{
-            history_event, TimerFiredEventAttributes,
-            WorkflowPropertiesModifiedExternallyEventAttributes,
+            TimerFiredEventAttributes, WorkflowPropertiesModifiedExternallyEventAttributes,
+            history_event,
         },
         sdk::v1::UserMetadata,
         workflowservice::v1::{
             GetWorkflowExecutionHistoryResponse, RespondWorkflowTaskCompletedResponse,
         },
     },
-    DEFAULT_ACTIVITY_TYPE, DEFAULT_WORKFLOW_TYPE,
 };
-use temporal_sdk_core_test_utils::{fanout_tasks, start_timer_cmd, WorkerTestHelpers};
+use temporal_sdk_core_test_utils::{WorkerTestHelpers, fanout_tasks, start_timer_cmd};
 use tokio::{
     join,
     sync::{Barrier, Semaphore},
@@ -140,11 +140,13 @@ async fn single_activity_completion(worker: Worker) {
         &[
             gen_assert_and_reply(
                 &job_assert!(workflow_activation_job::Variant::InitializeWorkflow(_)),
-                vec![ScheduleActivity {
-                    activity_id: "fake_activity".to_string(),
-                    ..default_act_sched()
-                }
-                .into()],
+                vec![
+                    ScheduleActivity {
+                        activity_id: "fake_activity".to_string(),
+                        ..default_act_sched()
+                    }
+                    .into(),
+                ],
             ),
             gen_assert_and_reply(
                 &job_assert!(workflow_activation_job::Variant::ResolveActivity(_)),
@@ -263,13 +265,15 @@ async fn scheduled_activity_cancellation_try_cancel(hist_batches: &'static [usiz
         &[
             gen_assert_and_reply(
                 &job_assert!(workflow_activation_job::Variant::InitializeWorkflow(_)),
-                vec![ScheduleActivity {
-                    seq: activity_seq,
-                    activity_id: activity_id.to_string(),
-                    cancellation_type: ActivityCancellationType::TryCancel as i32,
-                    ..default_act_sched()
-                }
-                .into()],
+                vec![
+                    ScheduleActivity {
+                        seq: activity_seq,
+                        activity_id: activity_id.to_string(),
+                        cancellation_type: ActivityCancellationType::TryCancel as i32,
+                        ..default_act_sched()
+                    }
+                    .into(),
+                ],
             ),
             gen_assert_and_reply(
                 &job_assert!(workflow_activation_job::Variant::SignalWorkflow(_)),
@@ -408,12 +412,14 @@ async fn cancelled_activity_timeout(hist_batches: &'static [usize]) {
         &[
             gen_assert_and_reply(
                 &job_assert!(workflow_activation_job::Variant::InitializeWorkflow(_)),
-                vec![ScheduleActivity {
-                    seq: activity_seq,
-                    activity_id: activity_id.to_string(),
-                    ..default_act_sched()
-                }
-                .into()],
+                vec![
+                    ScheduleActivity {
+                        seq: activity_seq,
+                        activity_id: activity_id.to_string(),
+                        ..default_act_sched()
+                    }
+                    .into(),
+                ],
             ),
             gen_assert_and_reply(
                 &job_assert!(workflow_activation_job::Variant::SignalWorkflow(_)),
@@ -560,13 +566,15 @@ async fn verify_activity_cancellation(
         &[
             gen_assert_and_reply(
                 &job_assert!(workflow_activation_job::Variant::InitializeWorkflow(_)),
-                vec![ScheduleActivity {
-                    seq: activity_seq,
-                    activity_id: activity_seq.to_string(),
-                    cancellation_type: cancel_type as i32,
-                    ..default_act_sched()
-                }
-                .into()],
+                vec![
+                    ScheduleActivity {
+                        seq: activity_seq,
+                        activity_id: activity_seq.to_string(),
+                        cancellation_type: cancel_type as i32,
+                        ..default_act_sched()
+                    }
+                    .into(),
+                ],
             ),
             gen_assert_and_reply(
                 &job_assert!(workflow_activation_job::Variant::SignalWorkflow(_)),
@@ -628,13 +636,16 @@ async fn verify_activity_cancellation_wait_for_cancellation(activity_id: u32, wo
         &[
             gen_assert_and_reply(
                 &job_assert!(workflow_activation_job::Variant::InitializeWorkflow(_)),
-                vec![ScheduleActivity {
-                    seq: activity_id,
-                    activity_id: activity_id.to_string(),
-                    cancellation_type: ActivityCancellationType::WaitCancellationCompleted as i32,
-                    ..default_act_sched()
-                }
-                .into()],
+                vec![
+                    ScheduleActivity {
+                        seq: activity_id,
+                        activity_id: activity_id.to_string(),
+                        cancellation_type: ActivityCancellationType::WaitCancellationCompleted
+                            as i32,
+                        ..default_act_sched()
+                    }
+                    .into(),
+                ],
             ),
             gen_assert_and_reply(
                 &job_assert!(workflow_activation_job::Variant::SignalWorkflow(_)),
@@ -811,13 +822,15 @@ async fn simple_timer_fail_wf_execution(hist_batches: &'static [usize]) {
             ),
             gen_assert_and_reply(
                 &job_assert!(workflow_activation_job::Variant::FireTimer(_)),
-                vec![FailWorkflowExecution {
-                    failure: Some(Failure {
-                        message: "I'm ded".to_string(),
-                        ..Default::default()
-                    }),
-                }
-                .into()],
+                vec![
+                    FailWorkflowExecution {
+                        failure: Some(Failure {
+                            message: "I'm ded".to_string(),
+                            ..Default::default()
+                        }),
+                    }
+                    .into(),
+                ],
             ),
         ],
     )
@@ -1008,13 +1021,15 @@ async fn activity_not_canceled_when_also_completed_repro(hist_batches: &'static 
         &[
             gen_assert_and_reply(
                 &job_assert!(workflow_activation_job::Variant::InitializeWorkflow(_)),
-                vec![ScheduleActivity {
-                    seq: activity_id,
-                    activity_id: "act-1".to_string(),
-                    cancellation_type: ActivityCancellationType::TryCancel as i32,
-                    ..default_act_sched()
-                }
-                .into()],
+                vec![
+                    ScheduleActivity {
+                        seq: activity_id,
+                        activity_id: "act-1".to_string(),
+                        cancellation_type: ActivityCancellationType::TryCancel as i32,
+                        ..default_act_sched()
+                    }
+                    .into(),
+                ],
             ),
             gen_assert_and_reply(
                 &job_assert!(workflow_activation_job::Variant::SignalWorkflow(_)),
@@ -1109,13 +1124,15 @@ async fn wft_timeout_repro(hist_batches: &'static [usize]) {
         &[
             gen_assert_and_reply(
                 &job_assert!(workflow_activation_job::Variant::InitializeWorkflow(_)),
-                vec![ScheduleActivity {
-                    seq: activity_id,
-                    activity_id: activity_id.to_string(),
-                    cancellation_type: ActivityCancellationType::TryCancel as i32,
-                    ..default_act_sched()
-                }
-                .into()],
+                vec![
+                    ScheduleActivity {
+                        seq: activity_id,
+                        activity_id: activity_id.to_string(),
+                        cancellation_type: ActivityCancellationType::TryCancel as i32,
+                        ..default_act_sched()
+                    }
+                    .into(),
+                ],
             ),
             gen_assert_and_reply(
                 &job_assert!(
@@ -1321,11 +1338,13 @@ async fn fail_wft_then_recover() {
     // Start an activity instead of a timer, triggering nondeterminism error
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         act.run_id.clone(),
-        vec![ScheduleActivity {
-            activity_id: "fake_activity".to_string(),
-            ..default_act_sched()
-        }
-        .into()],
+        vec![
+            ScheduleActivity {
+                activity_id: "fake_activity".to_string(),
+                ..default_act_sched()
+            }
+            .into(),
+        ],
     ))
     .await
     .unwrap();

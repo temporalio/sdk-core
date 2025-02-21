@@ -345,7 +345,7 @@ impl CustomMetricAttributes for NoOpAttributes {
 #[cfg(feature = "otel_impls")]
 mod otel_impls {
     use super::*;
-    use opentelemetry::{metrics, KeyValue};
+    use opentelemetry::{KeyValue, metrics};
 
     impl From<MetricKeyValue> for KeyValue {
         fn from(kv: MetricKeyValue) -> Self {

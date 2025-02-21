@@ -1,7 +1,7 @@
 use crate::temporal::api::{
     common::v1::WorkflowType,
     enums::v1::{EventType, TaskQueueKind},
-    history::v1::{history_event, History, HistoryEvent, WorkflowExecutionStartedEventAttributes},
+    history::v1::{History, HistoryEvent, WorkflowExecutionStartedEventAttributes, history_event},
     taskqueue::v1::TaskQueue,
     workflowservice::v1::{GetWorkflowExecutionHistoryResponse, PollWorkflowTaskQueueResponse},
 };
@@ -207,7 +207,7 @@ impl From<HistoryInfo> for GetWorkflowExecutionHistoryResponse {
 
 #[cfg(test)]
 mod tests {
-    use crate::{temporal::api::enums::v1::EventType, TestHistoryBuilder};
+    use crate::{TestHistoryBuilder, temporal::api::enums::v1::EventType};
 
     fn single_timer(timer_id: &str) -> TestHistoryBuilder {
         let mut t = TestHistoryBuilder::default();

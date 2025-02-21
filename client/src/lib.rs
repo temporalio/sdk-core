@@ -16,7 +16,7 @@ mod workflow_handle;
 
 pub use crate::{
     proxy::HttpConnectProxyOptions,
-    retry::{CallType, RetryClient, RETRYABLE_ERROR_CODES},
+    retry::{CallType, RETRYABLE_ERROR_CODES, RetryClient},
 };
 pub use metrics::{LONG_REQUEST_LATENCY_HISTOGRAM_NAME, REQUEST_LATENCY_HISTOGRAM_NAME};
 pub use raw::{CloudService, HealthService, OperatorService, TestService, WorkflowService};
@@ -36,12 +36,12 @@ pub use workflow_handle::{
 
 use crate::{
     metrics::{GrpcMetricSvc, MetricsContext},
-    raw::{sealed::RawClientLike, AttachMetricLabels},
+    raw::{AttachMetricLabels, sealed::RawClientLike},
     sealed::WfHandleClient,
     workflow_handle::UntypedWorkflowHandle,
 };
-use backoff::{exponential, ExponentialBackoff, SystemClock};
-use http::{uri::InvalidUri, Uri};
+use backoff::{ExponentialBackoff, SystemClock, exponential};
+use http::{Uri, uri::InvalidUri};
 use parking_lot::RwLock;
 use std::{
     collections::HashMap,
@@ -53,6 +53,7 @@ use std::{
 };
 use temporal_sdk_core_api::telemetry::metrics::TemporalMeter;
 use temporal_sdk_core_protos::{
+    TaskToken,
     coresdk::IntoPayloadsExt,
     grpc::health::v1::health_client::HealthClient,
     temporal::api::{
@@ -68,16 +69,15 @@ use temporal_sdk_core_protos::{
         update,
         workflowservice::v1::{workflow_service_client::WorkflowServiceClient, *},
     },
-    TaskToken,
 };
 use tonic::{
+    Code, Status,
     body::BoxBody,
     client::GrpcService,
     codegen::InterceptedService,
     metadata::{MetadataKey, MetadataMap, MetadataValue},
     service::Interceptor,
     transport::{Certificate, Channel, Endpoint, Identity},
-    Code, Status,
 };
 use tower::ServiceBuilder;
 use url::Url;

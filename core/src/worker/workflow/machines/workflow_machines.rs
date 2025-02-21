@@ -1,6 +1,7 @@
 mod local_acts;
 
 use super::{
+    Machines, NewMachineWithCommand, TemporalStateMachine,
     cancel_external_state_machine::new_external_cancel,
     cancel_workflow_state_machine::cancel_workflow,
     complete_workflow_state_machine::complete_workflow,
@@ -9,34 +10,32 @@ use super::{
     patch_state_machine::has_change, signal_external_state_machine::new_external_signal,
     timer_state_machine::new_timer, upsert_search_attributes_state_machine::upsert_search_attrs,
     workflow_machines::local_acts::LocalActivityData,
-    workflow_task_state_machine::WorkflowTaskMachine, Machines, NewMachineWithCommand,
-    TemporalStateMachine,
+    workflow_task_state_machine::WorkflowTaskMachine,
 };
 use crate::{
     abstractions::dbg_panic,
     internal_flags::{CoreInternalFlags, InternalFlags},
     protosext::{
-        protocol_messages::{IncomingProtocolMessage, IncomingProtocolMessageBody},
         CompleteLocalActivityData, HistoryEventExt, ValidScheduleLA,
+        protocol_messages::{IncomingProtocolMessage, IncomingProtocolMessageBody},
     },
-    telemetry::{metrics::MetricsContext, VecDisplayer},
+    telemetry::{VecDisplayer, metrics::MetricsContext},
     worker::{
+        ExecutingLAId, LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
         workflow::{
+            CommandID, DrivenWorkflow, HistoryUpdate, InternalFlagsRef, LocalResolution,
+            OutgoingJob, RunBasics, WFCommand, WFCommandVariant, WFMachinesError,
+            WorkflowStartedInfo,
             history_update::NextWFT,
             machines::{
-                activity_state_machine::ActivityMachine,
+                HistEventData, activity_state_machine::ActivityMachine,
                 child_workflow_state_machine::ChildWorkflowMachine,
                 modify_workflow_properties_state_machine::modify_workflow_properties,
                 nexus_operation_state_machine::NexusOperationMachine,
                 patch_state_machine::VERSION_SEARCH_ATTR_KEY, update_state_machine::UpdateMachine,
                 upsert_search_attributes_state_machine::upsert_search_attrs_internal,
-                HistEventData,
             },
-            CommandID, DrivenWorkflow, HistoryUpdate, InternalFlagsRef, LocalResolution,
-            OutgoingJob, RunBasics, WFCommand, WFCommandVariant, WFMachinesError,
-            WorkflowStartedInfo,
         },
-        ExecutingLAId, LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
     },
 };
 use anyhow::Context;
@@ -58,17 +57,17 @@ use temporal_sdk_core_protos::{
         common::{NamespacedWorkflowExecution, VersioningIntent},
         workflow_activation,
         workflow_activation::{
-            workflow_activation_job, NotifyHasPatch, UpdateRandomSeed, WorkflowActivation,
+            NotifyHasPatch, UpdateRandomSeed, WorkflowActivation, workflow_activation_job,
         },
         workflow_commands::ContinueAsNewWorkflowExecution,
     },
     temporal::api::{
         command::v1::{
-            command::Attributes as ProtoCmdAttrs, Command as ProtoCommand, CommandAttributesExt,
+            Command as ProtoCommand, CommandAttributesExt, command::Attributes as ProtoCmdAttrs,
         },
         enums::v1::EventType,
-        history::v1::{history_event, HistoryEvent},
-        protocol::v1::{message::SequencingId, Message as ProtocolMessage},
+        history::v1::{HistoryEvent, history_event},
+        protocol::v1::{Message as ProtocolMessage, message::SequencingId},
         sdk::v1::{UserMetadata, WorkflowTaskCompletedMetadata},
     },
 };
@@ -241,7 +240,7 @@ where
 macro_rules! cancel_machine {
     ($self:expr, $cmd_id:expr, $machine_variant:ident, $cancel_method:ident $(, $args:expr )* $(,)?) => {{
         let m_key = $self.get_machine_key($cmd_id)?;
-        let machine = if let Machines::$machine_variant(ref mut m) = $self.machine_mut(m_key) {
+        let machine = if let Machines::$machine_variant(m) = $self.machine_mut(m_key) {
             m
         } else {
             return Err(WFMachinesError::Nondeterminism(format!(
@@ -1029,7 +1028,7 @@ impl WorkflowMachines {
     }
 
     fn set_current_time(&mut self, time: SystemTime) -> SystemTime {
-        if self.current_wf_time.map_or(true, |t| t < time) {
+        if self.current_wf_time.is_none_or(|t| t < time) {
             self.current_wf_time = Some(time);
         }
         self.current_wf_time
@@ -1190,8 +1189,8 @@ impl WorkflowMachines {
                     }
                     c => {
                         return Err(WFMachinesError::Fatal(format!(
-                        "A machine requested to create a new command of an unsupported type: {c:?}"
-                    )))
+                            "A machine requested to create a new command of an unsupported type: {c:?}"
+                        )));
                     }
                 },
                 MachineResponse::IssueFakeLocalActivityMarker(seq) => {
@@ -1213,7 +1212,9 @@ impl WorkflowMachines {
                             let more_responses = lam.try_resolve_with_dat(preres)?;
                             self.process_machine_responses(smk, more_responses)?;
                         } else {
-                            panic!("A non local-activity machine returned a request cancel LA response");
+                            panic!(
+                                "A non local-activity machine returned a request cancel LA response"
+                            );
                         }
                     }
                     // If it's in the request queue, just rip it out.
@@ -1231,7 +1232,9 @@ impl WorkflowMachines {
                             )?;
                             self.process_machine_responses(smk, more_responses)?;
                         } else {
-                            panic!("A non local-activity machine returned a request cancel LA response");
+                            panic!(
+                                "A non local-activity machine returned a request cancel LA response"
+                            );
                         }
                     } else {
                         // Finally, if we know about the LA at all, it's currently running, so

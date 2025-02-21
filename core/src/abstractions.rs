@@ -6,8 +6,8 @@ use crate::MetricsContext;
 use std::{
     fmt::{Debug, Formatter},
     sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
 use temporal_sdk_core_api::worker::{

@@ -1,53 +1,53 @@
 use crate::{
-    advance_fut, job_assert, prost_dur,
+    ActivityHeartbeat, Worker, advance_fut, job_assert, prost_dur,
     test_help::{
-        build_fake_worker, build_mock_pollers, canned_histories, gen_assert_and_reply,
-        mock_manual_poller, mock_poller, mock_poller_from_resps, mock_sdk_cfg, mock_worker,
-        poll_and_reply, single_hist_mock_sg, test_worker_cfg, MockPollCfg, MockWorkerInputs,
-        MocksHolder, QueueResponse, ResponseType, WorkerExt, WorkflowCachingPolicy, TEST_Q,
+        MockPollCfg, MockWorkerInputs, MocksHolder, QueueResponse, ResponseType, TEST_Q, WorkerExt,
+        WorkflowCachingPolicy, build_fake_worker, build_mock_pollers, canned_histories,
+        gen_assert_and_reply, mock_manual_poller, mock_poller, mock_poller_from_resps,
+        mock_sdk_cfg, mock_worker, poll_and_reply, single_hist_mock_sg, test_worker_cfg,
     },
     worker::client::mocks::{mock_manual_workflow_client, mock_workflow_client},
-    ActivityHeartbeat, Worker,
 };
 use futures_util::FutureExt;
 use itertools::Itertools;
 use std::{
     cell::RefCell,
-    collections::{hash_map::Entry, HashMap, HashSet, VecDeque},
+    collections::{HashMap, HashSet, VecDeque, hash_map::Entry},
     future,
     rc::Rc,
     sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Duration,
 };
 use temporal_client::WorkflowOptions;
 use temporal_sdk::{ActivityOptions, WfContext};
 use temporal_sdk_core_api::{
-    errors::{CompleteActivityError, PollError},
     Worker as WorkerTrait,
+    errors::{CompleteActivityError, PollError},
 };
 use temporal_sdk_core_protos::{
+    DEFAULT_ACTIVITY_TYPE, DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder,
     coresdk::{
+        ActivityTaskCompletion,
         activity_result::{
-            activity_execution_result, activity_resolution, ActivityExecutionResult,
-            ActivityResolution, Success,
+            ActivityExecutionResult, ActivityResolution, Success, activity_execution_result,
+            activity_resolution,
         },
-        activity_task::{activity_task, ActivityCancelReason, ActivityTask, Cancel},
-        workflow_activation::{workflow_activation_job, ResolveActivity, WorkflowActivationJob},
+        activity_task::{ActivityCancelReason, ActivityTask, Cancel, activity_task},
+        workflow_activation::{ResolveActivity, WorkflowActivationJob, workflow_activation_job},
         workflow_commands::{
             ActivityCancellationType, CompleteWorkflowExecution, RequestCancelActivity,
             ScheduleActivity,
         },
         workflow_completion::WorkflowActivationCompletion,
-        ActivityTaskCompletion,
     },
     temporal::api::{
-        command::v1::{command::Attributes, ScheduleActivityTaskCommandAttributes},
+        command::v1::{ScheduleActivityTaskCommandAttributes, command::Attributes},
         enums::v1::{CommandType, EventType},
         history::v1::{
-            history_event::Attributes as EventAttributes, ActivityTaskScheduledEventAttributes,
+            ActivityTaskScheduledEventAttributes, history_event::Attributes as EventAttributes,
         },
         sdk::v1::UserMetadata,
         workflowservice::v1::{
@@ -56,9 +56,8 @@ use temporal_sdk_core_protos::{
             RespondActivityTaskFailedResponse, RespondWorkflowTaskCompletedResponse,
         },
     },
-    TestHistoryBuilder, DEFAULT_ACTIVITY_TYPE, DEFAULT_WORKFLOW_TYPE,
 };
-use temporal_sdk_core_test_utils::{fanout_tasks, start_timer_cmd, TestWorker};
+use temporal_sdk_core_test_utils::{TestWorker, fanout_tasks, start_timer_cmd};
 use tokio::{join, sync::Barrier, time::sleep};
 use tokio_util::sync::CancellationToken;
 
@@ -468,13 +467,15 @@ async fn activity_timeout_no_double_resolve() {
         &[
             gen_assert_and_reply(
                 &job_assert!(workflow_activation_job::Variant::InitializeWorkflow(_)),
-                vec![ScheduleActivity {
-                    seq: activity_id,
-                    activity_id: activity_id.to_string(),
-                    cancellation_type: ActivityCancellationType::TryCancel as i32,
-                    ..Default::default()
-                }
-                .into()],
+                vec![
+                    ScheduleActivity {
+                        seq: activity_id,
+                        activity_id: activity_id.to_string(),
+                        cancellation_type: ActivityCancellationType::TryCancel as i32,
+                        ..Default::default()
+                    }
+                    .into(),
+                ],
             ),
             gen_assert_and_reply(
                 &job_assert!(workflow_activation_job::Variant::SignalWorkflow(_)),
@@ -689,14 +690,16 @@ async fn no_eager_activities_requested_when_worker_options_disable_it(
 
     // Test start
     let wf_task = core.poll_workflow_activation().await.unwrap();
-    let cmds = vec![ScheduleActivity {
-        seq: 1,
-        activity_id: "act_id".to_string(),
-        task_queue: TEST_Q.to_string(),
-        cancellation_type: ActivityCancellationType::TryCancel as i32,
-        ..Default::default()
-    }
-    .into()];
+    let cmds = vec![
+        ScheduleActivity {
+            seq: 1,
+            activity_id: "act_id".to_string(),
+            task_queue: TEST_Q.to_string(),
+            cancellation_type: ActivityCancellationType::TryCancel as i32,
+            ..Default::default()
+        }
+        .into(),
+    ];
 
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         wf_task.run_id,

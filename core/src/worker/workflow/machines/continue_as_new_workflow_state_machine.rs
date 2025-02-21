@@ -3,7 +3,7 @@ use super::{
     WFMachinesError,
 };
 use crate::worker::workflow::machines::HistEventData;
-use rustfsm::{fsm, StateMachine, TransitionResult};
+use rustfsm::{StateMachine, TransitionResult, fsm};
 use std::convert::TryFrom;
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::ContinueAsNewWorkflowExecution,
@@ -76,7 +76,7 @@ impl TryFrom<HistEventData> for ContinueAsNewWorkflowMachineEvents {
             _ => {
                 return Err(WFMachinesError::Nondeterminism(format!(
                     "Continue as new workflow machine does not handle this event: {e}"
-                )))
+                )));
             }
         })
     }
@@ -108,7 +108,7 @@ impl WFMachinesAdapter for ContinueAsNewWorkflowMachine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_help::{build_fake_sdk, canned_histories, MockPollCfg};
+    use crate::test_help::{MockPollCfg, build_fake_sdk, canned_histories};
     use std::time::Duration;
     use temporal_sdk::{WfContext, WfExitValue, WorkflowResult};
     use temporal_sdk_core_protos::DEFAULT_WORKFLOW_TYPE;

@@ -1,24 +1,24 @@
 use super::{
-    workflow_machines::MachineResponse, EventInfo, NewMachineWithCommand, OnEventWrapper,
-    WFMachinesAdapter, WFMachinesError,
+    EventInfo, NewMachineWithCommand, OnEventWrapper, WFMachinesAdapter, WFMachinesError,
+    workflow_machines::MachineResponse,
 };
 use crate::worker::workflow::machines::HistEventData;
-use rustfsm::{fsm, MachineError, StateMachine, TransitionResult};
+use rustfsm::{MachineError, StateMachine, TransitionResult, fsm};
 use std::convert::TryFrom;
 use temporal_sdk_core_protos::{
     coresdk::{
+        IntoPayloadsExt,
         common::NamespacedWorkflowExecution,
         workflow_activation::ResolveSignalExternalWorkflow,
         workflow_commands::{
-            signal_external_workflow_execution as sig_we, SignalExternalWorkflowExecution,
+            SignalExternalWorkflowExecution, signal_external_workflow_execution as sig_we,
         },
-        IntoPayloadsExt,
     },
     temporal::api::{
-        command::v1::{command, SignalExternalWorkflowExecutionCommandAttributes},
+        command::v1::{SignalExternalWorkflowExecutionCommandAttributes, command},
         common::v1::WorkflowExecution as UpstreamWE,
         enums::v1::{CommandType, EventType, SignalExternalWorkflowExecutionFailedCause},
-        failure::v1::{failure::FailureInfo, ApplicationFailureInfo, CanceledFailureInfo, Failure},
+        failure::v1::{ApplicationFailureInfo, CanceledFailureInfo, Failure, failure::FailureInfo},
         history::v1::history_event,
     },
 };
@@ -73,7 +73,7 @@ pub(super) fn new_external_signal(
         None => {
             return Err(WFMachinesError::Fatal(
                 "Signal external workflow command had empty target field".to_string(),
-            ))
+            ));
         }
         Some(sig_we::Target::ChildWorkflowId(wfid)) => (
             NamespacedWorkflowExecution {
@@ -205,7 +205,7 @@ impl TryFrom<HistEventData> for SignalExternalMachineEvents {
             _ => {
                 return Err(WFMachinesError::Nondeterminism(format!(
                     "Signal external WF machine does not handle this event: {e}"
-                )))
+                )));
             }
         })
     }
@@ -219,11 +219,13 @@ impl WFMachinesAdapter for SignalExternalMachine {
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         Ok(match my_command {
             SignalExternalCommand::Signaled => {
-                vec![ResolveSignalExternalWorkflow {
-                    seq: self.shared_state.seq,
-                    failure: None,
-                }
-                .into()]
+                vec![
+                    ResolveSignalExternalWorkflow {
+                        seq: self.shared_state.seq,
+                        failure: None,
+                    }
+                    .into(),
+                ]
             }
             SignalExternalCommand::Failed(f) => {
                 let reason = match f {
@@ -235,21 +237,23 @@ impl WFMachinesAdapter for SignalExternalMachine {
                         "The per-workflow signal limit was exceeded"
                     }
                 };
-                vec![ResolveSignalExternalWorkflow {
-                    seq: self.shared_state.seq,
-                    // TODO: Create new failure type upstream for this
-                    failure: Some(Failure {
-                        message: format!("Unable to signal external workflow because {reason}"),
-                        failure_info: Some(FailureInfo::ApplicationFailureInfo(
-                            ApplicationFailureInfo {
-                                r#type: f.to_string(),
-                                ..Default::default()
-                            },
-                        )),
-                        ..Default::default()
-                    }),
-                }
-                .into()]
+                vec![
+                    ResolveSignalExternalWorkflow {
+                        seq: self.shared_state.seq,
+                        // TODO: Create new failure type upstream for this
+                        failure: Some(Failure {
+                            message: format!("Unable to signal external workflow because {reason}"),
+                            failure_info: Some(FailureInfo::ApplicationFailureInfo(
+                                ApplicationFailureInfo {
+                                    r#type: f.to_string(),
+                                    ..Default::default()
+                                },
+                            )),
+                            ..Default::default()
+                        }),
+                    }
+                    .into(),
+                ]
             }
             SignalExternalCommand::Cancelled => {
                 panic!("Cancelled command not expected as part of non-cancel transition")
@@ -264,17 +268,19 @@ impl SignalExternalMachine {
         let mut ret = vec![];
         match res.first() {
             Some(SignalExternalCommand::Cancelled) => {
-                ret = vec![ResolveSignalExternalWorkflow {
-                    seq: self.shared_state.seq,
-                    failure: Some(Failure {
-                        message: SIG_CANCEL_MSG.to_string(),
-                        failure_info: Some(FailureInfo::CanceledFailureInfo(CanceledFailureInfo {
-                            details: None,
-                        })),
-                        ..Default::default()
-                    }),
-                }
-                .into()];
+                ret = vec![
+                    ResolveSignalExternalWorkflow {
+                        seq: self.shared_state.seq,
+                        failure: Some(Failure {
+                            message: SIG_CANCEL_MSG.to_string(),
+                            failure_info: Some(FailureInfo::CanceledFailureInfo(
+                                CanceledFailureInfo { details: None },
+                            )),
+                            ..Default::default()
+                        }),
+                    }
+                    .into(),
+                ];
             }
             Some(_) => panic!("Signal external machine cancel produced unexpected result"),
             None => (),
@@ -294,14 +300,14 @@ mod tests {
     use super::*;
     use crate::{
         replay::TestHistoryBuilder,
-        test_help::{build_fake_sdk, MockPollCfg},
+        test_help::{MockPollCfg, build_fake_sdk},
     };
     use std::mem::discriminant;
     use temporal_sdk::{CancellableFuture, SignalWorkflowOptions, WfContext, WorkflowResult};
     use temporal_sdk_core_protos::{
-        coresdk::workflow_activation::{workflow_activation_job, WorkflowActivationJob},
-        temporal::api::command::v1::Command,
         DEFAULT_WORKFLOW_TYPE,
+        coresdk::workflow_activation::{WorkflowActivationJob, workflow_activation_job},
+        temporal::api::command::v1::Command,
     };
     use temporal_sdk_core_test_utils::interceptors::ActivationAssertionsInterceptor;
 

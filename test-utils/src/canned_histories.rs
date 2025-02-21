@@ -767,7 +767,7 @@ pub fn lots_of_big_signals(num_tasks: usize) -> TestHistoryBuilder {
     t.add_by_type(EventType::WorkflowExecutionStarted);
     t.add_full_wf_task();
 
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     for _ in 1..=num_tasks {
         let mut dat = [0_u8; 1024 * 1000];
         for _ in 1..=5 {

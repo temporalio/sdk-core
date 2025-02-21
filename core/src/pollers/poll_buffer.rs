@@ -1,16 +1,16 @@
 use crate::{
-    abstractions::{dbg_panic, MeteredPermitDealer, OwnedMeteredSemPermit},
+    abstractions::{MeteredPermitDealer, OwnedMeteredSemPermit, dbg_panic},
     pollers::{self, Poller},
     worker::client::WorkerClient,
 };
-use futures_util::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
+use futures_util::{FutureExt, StreamExt, future::BoxFuture, stream::FuturesUnordered};
 use governor::{Quota, RateLimiter};
 use std::{
     fmt::Debug,
     future::Future,
     sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -23,9 +23,8 @@ use temporal_sdk_core_protos::temporal::api::{
 };
 use tokio::{
     sync::{
-        broadcast,
-        mpsc::{unbounded_channel, UnboundedReceiver},
-        Mutex,
+        Mutex, broadcast,
+        mpsc::{UnboundedReceiver, unbounded_channel},
     },
     task::JoinHandle,
 };

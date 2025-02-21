@@ -26,20 +26,20 @@ use std::{
 };
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowExecutionResult, WorkflowOptions};
 use temporal_sdk::{
-    interceptors::WorkerInterceptor, ActivityOptions, LocalActivityOptions, WfContext,
-    WorkflowResult,
+    ActivityOptions, LocalActivityOptions, WfContext, WorkflowResult,
+    interceptors::WorkerInterceptor,
 };
-use temporal_sdk_core::{replay::HistoryForReplay, CoreRuntime};
+use temporal_sdk_core::{CoreRuntime, replay::HistoryForReplay};
 use temporal_sdk_core_api::errors::{PollError, WorkflowErrorType};
 use temporal_sdk_core_protos::{
     coresdk::{
+        ActivityTaskCompletion, AsJsonPayloadExt, IntoCompletion,
         activity_result::ActivityExecutionResult,
-        workflow_activation::{workflow_activation_job, WorkflowActivationJob},
+        workflow_activation::{WorkflowActivationJob, workflow_activation_job},
         workflow_commands::{
             ActivityCancellationType, FailWorkflowExecution, QueryResult, QuerySuccess, StartTimer,
         },
         workflow_completion::WorkflowActivationCompletion,
-        ActivityTaskCompletion, AsJsonPayloadExt, IntoCompletion,
     },
     temporal::api::{
         enums::v1::EventType, failure::v1::Failure, history::v1::history_event,
@@ -47,8 +47,8 @@ use temporal_sdk_core_protos::{
     },
 };
 use temporal_sdk_core_test_utils::{
-    drain_pollers_and_shutdown, history_from_proto_binary, init_core_and_create_wf,
-    init_core_replay_preloaded, schedule_activity_cmd, CoreWfStarter, WorkerTestHelpers,
+    CoreWfStarter, WorkerTestHelpers, drain_pollers_and_shutdown, history_from_proto_binary,
+    init_core_and_create_wf, init_core_replay_preloaded, schedule_activity_cmd,
 };
 use tokio::{join, sync::Notify, time::sleep};
 use uuid::Uuid;
@@ -200,11 +200,13 @@ async fn fail_wf_task(#[values(true, false)] replay: bool) {
     let task = core.poll_workflow_activation().await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         task.run_id,
-        vec![StartTimer {
-            seq: 0,
-            start_to_fire_timeout: Some(prost_dur!(from_millis(200))),
-        }
-        .into()],
+        vec![
+            StartTimer {
+                seq: 0,
+                start_to_fire_timeout: Some(prost_dur!(from_millis(200))),
+            }
+            .into(),
+        ],
     ))
     .await
     .unwrap();
@@ -224,10 +226,12 @@ async fn fail_workflow_execution() {
     let task = core.poll_workflow_activation().await.unwrap();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         task.run_id,
-        vec![FailWorkflowExecution {
-            failure: Some(Failure::application_failure("I'm ded".to_string(), false)),
-        }
-        .into()],
+        vec![
+            FailWorkflowExecution {
+                failure: Some(Failure::application_failure("I'm ded".to_string(), false)),
+            }
+            .into(),
+        ],
     ))
     .await
     .unwrap();
@@ -324,11 +328,13 @@ async fn signal_workflow_signal_not_handled_on_workflow_completion() {
         // Task is completed with a timer
         core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
             res.run_id,
-            vec![StartTimer {
-                seq: 0,
-                start_to_fire_timeout: Some(prost_dur!(from_millis(10))),
-            }
-            .into()],
+            vec![
+                StartTimer {
+                    seq: 0,
+                    start_to_fire_timeout: Some(prost_dur!(from_millis(10))),
+                }
+                .into(),
+            ],
         ))
         .await
         .unwrap();

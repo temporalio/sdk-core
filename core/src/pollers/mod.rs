@@ -1,7 +1,7 @@
 mod poll_buffer;
 
 pub(crate) use poll_buffer::{
-    new_activity_task_buffer, new_nexus_task_buffer, new_workflow_task_buffer, WorkflowTaskPoller,
+    WorkflowTaskPoller, new_activity_task_buffer, new_nexus_task_buffer, new_workflow_task_buffer,
 };
 pub use temporal_client::{
     Client, ClientOptions, ClientOptionsBuilder, ClientTlsConfig, RetryClient, RetryConfig,
@@ -13,7 +13,7 @@ use crate::{
     telemetry::metrics::MetricsContext,
 };
 use anyhow::{anyhow, bail};
-use futures_util::{stream, Stream};
+use futures_util::{Stream, stream};
 use std::{fmt::Debug, marker::PhantomData};
 use temporal_sdk_core_api::worker::{ActivitySlotKind, NexusSlotKind, SlotKind, WorkflowSlotKind};
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::{

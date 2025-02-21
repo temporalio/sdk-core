@@ -1,21 +1,21 @@
 use crate::{
     test_help::{
-        build_fake_sdk, build_mock_pollers, canned_histories, hist_to_poll_resp, mock_worker,
-        MockPollCfg, ResponseType,
+        MockPollCfg, ResponseType, build_fake_sdk, build_mock_pollers, canned_histories,
+        hist_to_poll_resp, mock_worker,
     },
-    worker::{client::mocks::mock_workflow_client, LEGACY_QUERY_ID},
+    worker::{LEGACY_QUERY_ID, client::mocks::mock_workflow_client},
 };
 use rstest::{fixture, rstest};
 use std::{collections::VecDeque, time::Duration};
 use temporal_sdk::{WfContext, Worker, WorkflowFunction};
 use temporal_sdk_core_api::Worker as CoreWorker;
 use temporal_sdk_core_protos::{
+    DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder,
     coresdk::{
-        workflow_activation::{workflow_activation_job, WorkflowActivationJob},
+        workflow_activation::{WorkflowActivationJob, workflow_activation_job},
         workflow_completion::WorkflowActivationCompletion,
     },
     temporal::api::{enums::v1::EventType, query::v1::WorkflowQuery},
-    TestHistoryBuilder, DEFAULT_WORKFLOW_TYPE,
 };
 use temporal_sdk_core_test_utils::{
     interceptors::ActivationAssertionsInterceptor, query_ok, start_timer_cmd,

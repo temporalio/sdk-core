@@ -1,5 +1,5 @@
-use futures_util::{sink, stream::FuturesUnordered, FutureExt, StreamExt};
-use rand::{prelude::Distribution, rngs::SmallRng, Rng, SeedableRng};
+use futures_util::{FutureExt, StreamExt, sink, stream::FuturesUnordered};
+use rand::{Rng, SeedableRng, prelude::Distribution, rngs::SmallRng};
 use std::{future, time::Duration};
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{
@@ -21,7 +21,7 @@ enum FuzzyWfAction {
 struct FuzzyWfActionSampler;
 impl Distribution<FuzzyWfAction> for FuzzyWfActionSampler {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> FuzzyWfAction {
-        let v: u8 = rng.gen_range(1..=2);
+        let v: u8 = rng.random_range(1..=2);
         match v {
             1 => FuzzyWfAction::DoAct,
             2 => FuzzyWfAction::DoLocalAct,

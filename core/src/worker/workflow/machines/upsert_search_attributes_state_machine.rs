@@ -1,19 +1,19 @@
-use super::{workflow_machines::MachineResponse, NewMachineWithCommand};
+use super::{NewMachineWithCommand, workflow_machines::MachineResponse};
 use crate::{
     internal_flags::CoreInternalFlags,
     worker::workflow::{
-        machines::{
-            patch_state_machine::VERSION_SEARCH_ATTR_KEY, EventInfo, HistEventData,
-            WFMachinesAdapter,
-        },
         InternalFlagsRef, WFMachinesError,
+        machines::{
+            EventInfo, HistEventData, WFMachinesAdapter,
+            patch_state_machine::VERSION_SEARCH_ATTR_KEY,
+        },
     },
 };
-use rustfsm::{fsm, StateMachine, TransitionResult};
+use rustfsm::{StateMachine, TransitionResult, fsm};
 use temporal_sdk_core_protos::{
     coresdk::workflow_commands::UpsertWorkflowSearchAttributes,
     temporal::api::{
-        command::v1::{command, UpsertWorkflowSearchAttributesCommandAttributes},
+        command::v1::{UpsertWorkflowSearchAttributesCommandAttributes, command},
         common::v1::SearchAttributes,
         enums::v1::CommandType,
         history::v1::history_event,
@@ -181,7 +181,7 @@ mod tests {
     use super::{super::OnEventWrapper, *};
     use crate::{
         replay::TestHistoryBuilder,
-        test_help::{build_fake_sdk, build_mock_pollers, mock_worker, MockPollCfg, ResponseType},
+        test_help::{MockPollCfg, ResponseType, build_fake_sdk, build_mock_pollers, mock_worker},
         worker::{
             client::mocks::mock_workflow_client,
             workflow::machines::patch_state_machine::VERSION_SEARCH_ATTR_KEY,
@@ -192,19 +192,19 @@ mod tests {
     use temporal_sdk::WfContext;
     use temporal_sdk_core_api::Worker;
     use temporal_sdk_core_protos::{
+        DEFAULT_WORKFLOW_TYPE,
         coresdk::{
-            workflow_activation::{workflow_activation_job, WorkflowActivationJob},
+            AsJsonPayloadExt,
+            workflow_activation::{WorkflowActivationJob, workflow_activation_job},
             workflow_commands::SetPatchMarker,
             workflow_completion::WorkflowActivationCompletion,
-            AsJsonPayloadExt,
         },
         temporal::api::{
-            command::v1::{command::Attributes, Command},
+            command::v1::{Command, command::Attributes},
             common::v1::Payload,
             enums::v1::EventType,
             history::v1::{HistoryEvent, UpsertWorkflowSearchAttributesEventAttributes},
         },
-        DEFAULT_WORKFLOW_TYPE,
     };
     use temporal_sdk_core_test_utils::WorkerTestHelpers;
 
@@ -361,11 +361,13 @@ mod tests {
         );
         let act = core.poll_workflow_activation().await.unwrap();
         let mut cmds = if with_patched_cmd {
-            vec![SetPatchMarker {
-                patch_id,
-                deprecated: false,
-            }
-            .into()]
+            vec![
+                SetPatchMarker {
+                    patch_id,
+                    deprecated: false,
+                }
+                .into(),
+            ]
         } else {
             vec![]
         };

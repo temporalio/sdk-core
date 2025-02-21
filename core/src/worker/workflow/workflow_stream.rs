@@ -1,4 +1,5 @@
 use crate::{
+    MetricsContext,
     abstractions::dbg_panic,
     worker::workflow::{
         managed_run::RunUpdateAct,
@@ -6,9 +7,8 @@ use crate::{
         wft_extraction::{HistfetchRC, HistoryFetchReq, WFTExtractorOutput},
         *,
     },
-    MetricsContext,
 };
-use futures_util::{stream, stream::PollNext, Stream, StreamExt};
+use futures_util::{Stream, StreamExt, stream, stream::PollNext};
 use std::{collections::VecDeque, fmt::Debug, future, sync::Arc};
 use temporal_sdk_core_api::errors::PollError;
 use temporal_sdk_core_protos::coresdk::workflow_activation::remove_from_cache::EvictionReason;

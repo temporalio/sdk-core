@@ -1,23 +1,23 @@
 use crate::{
+    MetricsContext,
     abstractions::dbg_panic,
     internal_flags::CoreInternalFlags,
-    protosext::{protocol_messages::IncomingProtocolMessage, WorkflowActivationExt},
+    protosext::{WorkflowActivationExt, protocol_messages::IncomingProtocolMessage},
     telemetry::metrics,
     worker::{
+        LEGACY_QUERY_ID, LocalActRequest,
         workflow::{
-            history_update::HistoryPaginator,
-            machines::{MachinesWFTResponseContent, WorkflowMachines},
             ActivationAction, ActivationCompleteOutcome, ActivationCompleteResult,
             ActivationOrAuto, BufferedTasks, DrivenWorkflow, EvictionRequestResult,
             FailedActivationWFTReport, HeartbeatTimeoutMsg, HistoryUpdate,
             LocalActivityRequestSink, LocalResolution, NextPageReq, OutstandingActivation,
             OutstandingTask, PermittedWFT, RequestEvictMsg, RunBasics,
             ServerCommandsWithWorkflowInfo, WFCommand, WFCommandVariant, WFMachinesError,
-            WFTReportStatus, WorkflowTaskInfo, WFT_HEARTBEAT_TIMEOUT_FRACTION,
+            WFT_HEARTBEAT_TIMEOUT_FRACTION, WFTReportStatus, WorkflowTaskInfo,
+            history_update::HistoryPaginator,
+            machines::{MachinesWFTResponseContent, WorkflowMachines},
         },
-        LocalActRequest, LEGACY_QUERY_ID,
     },
-    MetricsContext,
 };
 use futures_util::future::AbortHandle;
 use std::{
@@ -25,15 +25,16 @@ use std::{
     mem,
     ops::Add,
     rc::Rc,
-    sync::{mpsc::Sender, Arc},
+    sync::{Arc, mpsc::Sender},
     time::{Duration, Instant},
 };
 use temporal_sdk_core_api::{errors::WorkflowErrorType, worker::WorkerConfig};
 use temporal_sdk_core_protos::{
+    TaskToken,
     coresdk::{
         workflow_activation::{
-            create_evict_activation, query_to_job, remove_from_cache::EvictionReason,
-            workflow_activation_job, WorkflowActivation,
+            WorkflowActivation, create_evict_activation, query_to_job,
+            remove_from_cache::EvictionReason, workflow_activation_job,
         },
         workflow_commands::{FailWorkflowExecution, QueryResult},
         workflow_completion,
@@ -42,7 +43,6 @@ use temporal_sdk_core_protos::{
         command::v1::command::Attributes as CmdAttribs, enums::v1::WorkflowTaskFailedCause,
         failure::v1::Failure,
     },
-    TaskToken,
 };
 use tokio::sync::oneshot;
 use tracing::Span;
@@ -1507,7 +1507,7 @@ impl From<WFMachinesError> for RunUpdateErr {
 #[cfg(test)]
 mod tests {
     use crate::worker::workflow::{WFCommand, WFCommandVariant};
-    use std::mem::{discriminant, Discriminant};
+    use std::mem::{Discriminant, discriminant};
 
     use command_utils::*;
 

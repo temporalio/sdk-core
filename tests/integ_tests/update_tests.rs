@@ -1,10 +1,10 @@
 use anyhow::anyhow;
 use assert_matches::assert_matches;
-use futures_util::{future, future::join_all, StreamExt};
+use futures_util::{StreamExt, future, future::join_all};
 use std::{
     sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, LazyLock,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -16,15 +16,15 @@ use temporal_sdk_core::replay::HistoryForReplay;
 use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::{
     coresdk::{
+        ActivityTaskCompletion, AsJsonPayloadExt, IntoPayloadsExt,
         activity_result::ActivityExecutionResult,
         workflow_activation::{
-            remove_from_cache::EvictionReason, workflow_activation_job, WorkflowActivationJob,
+            WorkflowActivationJob, remove_from_cache::EvictionReason, workflow_activation_job,
         },
         workflow_commands::{
-            update_response, CompleteWorkflowExecution, ScheduleLocalActivity, UpdateResponse,
+            CompleteWorkflowExecution, ScheduleLocalActivity, UpdateResponse, update_response,
         },
         workflow_completion::WorkflowActivationCompletion,
-        ActivityTaskCompletion, AsJsonPayloadExt, IntoPayloadsExt,
     },
     temporal::api::{
         common::v1::WorkflowExecution,
@@ -34,8 +34,8 @@ use temporal_sdk_core_protos::{
     },
 };
 use temporal_sdk_core_test_utils::{
-    drain_pollers_and_shutdown, init_core_and_create_wf, init_core_replay_preloaded,
-    start_timer_cmd, CoreWfStarter, WorkerTestHelpers, WorkflowHandleExt,
+    CoreWfStarter, WorkerTestHelpers, WorkflowHandleExt, drain_pollers_and_shutdown,
+    init_core_and_create_wf, init_core_replay_preloaded, start_timer_cmd,
 };
 use tokio::{join, sync::Barrier};
 use uuid::Uuid;
@@ -614,11 +614,13 @@ async fn update_speculative_wft() {
         // Reject the update
         core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
             res.run_id,
-            vec![UpdateResponse {
-                protocol_instance_id: pid.to_string(),
-                response: Some(update_response::Response::Rejected("nope!".into())),
-            }
-            .into()],
+            vec![
+                UpdateResponse {
+                    protocol_instance_id: pid.to_string(),
+                    response: Some(update_response::Response::Rejected("nope!".into())),
+                }
+                .into(),
+            ],
         ))
         .await
         .unwrap();

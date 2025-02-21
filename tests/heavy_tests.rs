@@ -1,4 +1,4 @@
-use futures_util::{future::join_all, sink, stream::FuturesUnordered, StreamExt};
+use futures_util::{StreamExt, future::join_all, sink, stream::FuturesUnordered};
 use std::{
     sync::Arc,
     time::{Duration, Instant},
@@ -7,10 +7,10 @@ use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{ActContext, ActivityOptions, WfContext, WorkflowResult};
 use temporal_sdk_core::{ResourceBasedTuner, ResourceSlotOptions};
 use temporal_sdk_core_protos::{
-    coresdk::{workflow_commands::ActivityCancellationType, AsJsonPayloadExt},
+    coresdk::{AsJsonPayloadExt, workflow_commands::ActivityCancellationType},
     temporal::api::enums::v1::WorkflowIdReusePolicy,
 };
-use temporal_sdk_core_test_utils::{workflows::la_problem_workflow, CoreWfStarter};
+use temporal_sdk_core_test_utils::{CoreWfStarter, workflows::la_problem_workflow};
 
 mod fuzzy_workflow;
 
