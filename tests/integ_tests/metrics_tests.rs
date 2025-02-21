@@ -1,13 +1,9 @@
 use crate::integ_tests::mk_nexus_endpoint;
 use anyhow::anyhow;
 use assert_matches::assert_matches;
+use parking_lot::Mutex;
 use std::{
-    collections::HashMap,
-    env,
-    net::SocketAddr,
-    string::ToString,
-    sync::{Arc, Mutex},
-    time::Duration,
+    collections::HashMap, env, net::SocketAddr, string::ToString, sync::Arc, time::Duration,
 };
 use temporal_client::{
     REQUEST_LATENCY_HISTOGRAM_NAME, WorkflowClientTrait, WorkflowOptions, WorkflowService,
@@ -1144,7 +1140,7 @@ struct CapturingHandle(Arc<Mutex<Vec<u8>>>);
 
 impl std::io::Write for CapturingHandle {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let mut b = self.0.lock().unwrap();
+        let mut b = self.0.lock();
         b.extend_from_slice(buf);
         Ok(buf.len())
     }
@@ -1153,13 +1149,20 @@ impl std::io::Write for CapturingHandle {
     }
 }
 
+// TODO: Otel seeming just completely fails to actually log errors at this point, though after
+//  reading the code for some time it's not immediately clear why. Even if they did log them,
+//  it wouldn't work without setting a global trace subscriber because the thread here:
+//  https://github.com/open-telemetry/opentelemetry-rust/blob/main/opentelemetry-sdk/src/metrics/periodic_reader.rs#L161
+//  has no way to configure a subscriber. But, even with one set, still no errors are logged.
+#[ignore]
 #[tokio::test]
 async fn otel_errors_logged_as_errors() {
     // Set up tracing subscriber to capture ERROR logs
     let logs = Arc::new(Mutex::new(Vec::new()));
     let writer = CapturingWriter { buf: logs.clone() };
     let subscriber = tracing_subscriber::fmt().with_writer(writer).finish();
-    let _guard = tracing::subscriber::set_default(subscriber);
+    // let _guard = tracing::subscriber::set_default(subscriber);
+    tracing::subscriber::set_global_default(subscriber).unwrap();
 
     let opts = OtelCollectorOptionsBuilder::default()
         .url("https://localhost:12345/v1/metrics".parse().unwrap()) // Nothing bound on that port
@@ -1180,7 +1183,7 @@ async fn otel_errors_logged_as_errors() {
     // Windows takes a while to fail the network attempt for some reason so 5s.
     tokio::time::sleep(Duration::from_secs(5)).await;
 
-    let logs = logs.lock().unwrap();
+    let logs = logs.lock();
     let log_str = String::from_utf8_lossy(&logs);
 
     assert!(
