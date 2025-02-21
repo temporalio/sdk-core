@@ -11,17 +11,16 @@ use super::{
 };
 use crate::{abstractions::dbg_panic, telemetry::metrics::DEFAULT_S_BUCKETS};
 use opentelemetry::{
-    self, Key, KeyValue, Value, global,
+    self, Key, KeyValue, Value,
     metrics::{Meter, MeterProvider as MeterProviderT},
 };
-use opentelemetry_otlp::WithExportConfig;
+use opentelemetry_otlp::{MetricExporter, WithExportConfig, WithHttpConfig, WithTonicConfig};
 use opentelemetry_sdk::{
     Resource,
     metrics::{
-        Aggregation, Instrument, InstrumentKind, MeterProviderBuilder, PeriodicReader,
-        SdkMeterProvider, View, data::Temporality, new_view, reader::TemporalitySelector,
+        Aggregation, Instrument, InstrumentKind, MeterProviderBuilder, MetricResult,
+        PeriodicReader, SdkMeterProvider, Temporality, View, new_view,
     },
-    runtime,
 };
 use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 use temporal_sdk_core_api::telemetry::{
@@ -35,10 +34,7 @@ use temporal_sdk_core_api::telemetry::{
 use tokio::task::AbortHandle;
 use tonic::{metadata::MetadataMap, transport::ClientTlsConfig};
 
-fn histo_view(
-    metric_name: &'static str,
-    use_seconds: bool,
-) -> opentelemetry::metrics::Result<Box<dyn View>> {
+fn histo_view(metric_name: &'static str, use_seconds: bool) -> MetricResult<Box<dyn View>> {
     let buckets = default_buckets_for(metric_name, use_seconds);
     new_view(
         Instrument::new().name(format!("*{metric_name}")),
@@ -56,7 +52,7 @@ pub(super) fn augment_meter_provider_with_defaults(
     global_tags: &HashMap<String, String>,
     use_seconds: bool,
     bucket_overrides: HistogramBucketOverrides,
-) -> opentelemetry::metrics::Result<MeterProviderBuilder> {
+) -> MetricResult<MeterProviderBuilder> {
     // Some histograms are actually gauges, but we have to use histograms otherwise they forget
     // their value between collections since we don't use callbacks.
     let mut mpb = mpb
@@ -120,30 +116,25 @@ pub(super) fn augment_meter_provider_with_defaults(
 pub fn build_otlp_metric_exporter(
     opts: OtelCollectorOptions,
 ) -> Result<CoreOtelMeter, anyhow::Error> {
-    global::set_error_handler(|err| {
-        tracing::error!("{}", err);
-    })?;
     let exporter = match opts.protocol {
         OtlpProtocol::Grpc => {
-            let mut exporter = opentelemetry_otlp::TonicExporterBuilder::default()
+            let mut exporter = MetricExporter::builder()
+                .with_tonic()
                 .with_endpoint(opts.url.to_string());
             if opts.url.scheme() == "https" || opts.url.scheme() == "grpcs" {
                 exporter = exporter.with_tls_config(ClientTlsConfig::new().with_native_roots());
             }
             exporter
                 .with_metadata(MetadataMap::from_headers((&opts.headers).try_into()?))
-                .build_metrics_exporter(Box::new(metric_temporality_to_selector(
-                    opts.metric_temporality,
-                )))?
+                .with_temporality(metric_temporality_to_selector(opts.metric_temporality))
+                .build()?
         }
         OtlpProtocol::Http => opentelemetry_otlp::HttpExporterBuilder::default()
             .with_endpoint(opts.url.to_string())
             .with_headers(opts.headers)
-            .build_metrics_exporter(Box::new(metric_temporality_to_selector(
-                opts.metric_temporality,
-            )))?,
+            .build_metrics_exporter(metric_temporality_to_selector(opts.metric_temporality))?,
     };
-    let reader = PeriodicReader::builder(exporter, runtime::Tokio)
+    let reader = PeriodicReader::builder(exporter)
         .with_interval(opts.metric_periodicity)
         .build();
     let mp = augment_meter_provider_with_defaults(
@@ -230,7 +221,7 @@ impl CoreMeter for CoreOtelMeter {
                 .u64_counter(params.name)
                 .with_unit(params.unit)
                 .with_description(params.description)
-                .init(),
+                .build(),
         )
     }
 
@@ -240,7 +231,7 @@ impl CoreMeter for CoreOtelMeter {
                 .u64_histogram(params.name)
                 .with_unit(params.unit)
                 .with_description(params.description)
-                .init(),
+                .build(),
         )
     }
 
@@ -250,7 +241,7 @@ impl CoreMeter for CoreOtelMeter {
                 .f64_histogram(params.name)
                 .with_unit(params.unit)
                 .with_description(params.description)
-                .init(),
+                .build(),
         )
     }
 
@@ -270,7 +261,7 @@ impl CoreMeter for CoreOtelMeter {
                 .u64_gauge(params.name)
                 .with_unit(params.unit)
                 .with_description(params.description)
-                .init(),
+                .build(),
         )
     }
 
@@ -280,7 +271,7 @@ impl CoreMeter for CoreOtelMeter {
                 .f64_gauge(params.name)
                 .with_unit(params.unit)
                 .with_description(params.description)
-                .init(),
+                .build(),
         )
     }
 }
@@ -305,14 +296,13 @@ fn default_resource_instance() -> &'static Resource {
 
     static INSTANCE: OnceLock<Resource> = OnceLock::new();
     INSTANCE.get_or_init(|| {
-        let resource = Resource::default();
-        if resource.get(Key::from("service.name")) == Some(Value::from("unknown_service")) {
+        let resource = Resource::builder().build();
+        if resource.get(&Key::from("service.name")) == Some(Value::from("unknown_service")) {
             // otel spec recommends to leave service.name as unknown_service but we want to
             // maintain backwards compatability with existing library behaviour
-            return resource.merge(&Resource::new([KeyValue::new(
-                "service.name",
-                TELEM_SERVICE_NAME,
-            )]));
+            return Resource::builder()
+                .with_attribute(KeyValue::new("service.name", TELEM_SERVICE_NAME))
+                .build();
         }
         resource
     })
@@ -322,24 +312,20 @@ fn default_resource(override_values: &HashMap<String, String>) -> Resource {
     let override_kvs = override_values
         .iter()
         .map(|(k, v)| KeyValue::new(k.clone(), v.clone()));
-    default_resource_instance()
-        .clone()
-        .merge(&Resource::new(override_kvs))
+    Resource::builder()
+        .with_attributes(
+            default_resource_instance()
+                .into_iter()
+                .map(|(k, v)| KeyValue::new(k.clone(), v.clone())),
+        )
+        .with_attributes(override_kvs)
+        .build()
 }
 
-#[derive(Clone)]
-struct ConstantTemporality(Temporality);
-
-impl TemporalitySelector for ConstantTemporality {
-    fn temporality(&self, _: InstrumentKind) -> Temporality {
-        self.0
-    }
-}
-
-fn metric_temporality_to_selector(t: MetricTemporality) -> impl TemporalitySelector + Clone {
+fn metric_temporality_to_selector(t: MetricTemporality) -> Temporality {
     match t {
-        MetricTemporality::Cumulative => ConstantTemporality(Temporality::Cumulative),
-        MetricTemporality::Delta => ConstantTemporality(Temporality::Delta),
+        MetricTemporality::Cumulative => Temporality::Cumulative,
+        MetricTemporality::Delta => Temporality::Delta,
     }
 }
 
@@ -351,7 +337,7 @@ pub(crate) mod tests {
     #[test]
     pub(crate) fn default_resource_instance_service_name_default() {
         let resource = default_resource_instance();
-        let service_name = resource.get(Key::from("service.name"));
+        let service_name = resource.get(&Key::from("service.name"));
         assert_eq!(service_name, Some(Value::from(TELEM_SERVICE_NAME)));
     }
 }
