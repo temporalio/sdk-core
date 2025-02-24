@@ -708,6 +708,7 @@ mod tests {
         abstractions::tests::fixed_size_permit_dealer, pollers::new_activity_task_buffer,
         prost_dur, worker::client::mocks::mock_workflow_client,
     };
+    use temporal_sdk_core_api::worker::PollerBehavior;
     use temporal_sdk_core_protos::coresdk::activity_result::ActivityExecutionResult;
 
     #[tokio::test]
@@ -743,7 +744,8 @@ mod tests {
         let ap = new_activity_task_buffer(
             mock_client.clone(),
             "tq".to_string(),
-            5, // Lots of concurrent pollers, to ensure we don't poll to much when that's the case
+            // Lots of concurrent pollers, to ensure we don't poll to much when that's the case
+            PollerBehavior::SimpleMaximum(5),
             sem.clone(),
             None,
             shutdown_token.clone(),
@@ -832,7 +834,7 @@ mod tests {
         let ap = new_activity_task_buffer(
             mock_client.clone(),
             "tq".to_string(),
-            1,
+            PollerBehavior::SimpleMaximum(1),
             sem.clone(),
             None,
             shutdown_token.clone(),
@@ -903,7 +905,7 @@ mod tests {
         let ap = new_activity_task_buffer(
             mock_client.clone(),
             "tq".to_string(),
-            1,
+            PollerBehavior::SimpleMaximum(1),
             sem.clone(),
             None,
             shutdown_token.clone(),

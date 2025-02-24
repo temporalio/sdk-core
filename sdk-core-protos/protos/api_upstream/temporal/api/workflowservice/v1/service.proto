@@ -482,6 +482,7 @@ service WorkflowService {
 
     // ScanWorkflowExecutions is a visibility API to list large amount of workflow executions in a specific namespace without order.
     //
+    // Deprecated: Replaced with `ListWorkflowExecutions`.
     // (-- api-linter: core::0127::http-annotation=disabled
     //     aip.dev/not-precedent: HTTP users should use ListWorkflowExecutions instead. --)
     rpc ScanWorkflowExecutions (ScanWorkflowExecutionsRequest) returns (ScanWorkflowExecutionsResponse) {
@@ -774,6 +775,7 @@ service WorkflowService {
 
     // Describes a worker deployment.
     // Experimental. This API might significantly change or be removed in a future release.
+    // Deprecated. Replaced with `DescribeWorkerDeploymentVersion`.
     rpc DescribeDeployment (DescribeDeploymentRequest) returns (DescribeDeploymentResponse) {
         option (google.api.http) = {
             get: "/namespaces/{namespace}/deployments/{deployment.series_name}/{deployment.build_id}"
@@ -783,9 +785,21 @@ service WorkflowService {
         };
     }
 
+    // Describes a worker deployment version.
+    // Experimental. This API might significantly change or be removed in a future release.
+    rpc DescribeWorkerDeploymentVersion (DescribeWorkerDeploymentVersionRequest) returns (DescribeWorkerDeploymentVersionResponse) {
+        option (google.api.http) = {
+            get: "/namespaces/{namespace}/worker-deployment-versions/{version}"
+            additional_bindings {
+                get: "/api/v1/namespaces/{namespace}/worker-deployment-versions/{version}"
+            }
+        };
+    }
+
     // Lists worker deployments in the namespace. Optionally can filter based on deployment series
     // name.
     // Experimental. This API might significantly change or be removed in a future release.
+    // Deprecated. Replaced with `ListWorkerDeployments`.
     rpc ListDeployments (ListDeploymentsRequest) returns (ListDeploymentsResponse) {
         option (google.api.http) = {
             get: "/namespaces/{namespace}/deployments"
@@ -802,6 +816,7 @@ service WorkflowService {
     // cached value. In such a case, the `last_update_time` will inform you about the actual
     // reachability calculation time.
     // Experimental. This API might significantly change or be removed in a future release.
+    // Deprecated. Replaced with `DrainageInfo` returned by `DescribeWorkerDeploymentVersion`.
     rpc GetDeploymentReachability (GetDeploymentReachabilityRequest) returns (GetDeploymentReachabilityResponse) {
         option (google.api.http) = {
             get: "/namespaces/{namespace}/deployments/{deployment.series_name}/{deployment.build_id}/reachability"
@@ -813,6 +828,7 @@ service WorkflowService {
 
     // Returns the current deployment (and its info) for a given deployment series.
     // Experimental. This API might significantly change or be removed in a future release.
+    // Deprecated. Replaced by `current_version` returned by `DescribeWorkerDeployment`.
     rpc GetCurrentDeployment (GetCurrentDeploymentRequest) returns (GetCurrentDeploymentResponse) {
         option (google.api.http) = {
             get: "/namespaces/{namespace}/current-deployment/{series_name}"
@@ -825,12 +841,105 @@ service WorkflowService {
     // Sets a deployment as the current deployment for its deployment series. Can optionally update
     // the metadata of the deployment as well.
     // Experimental. This API might significantly change or be removed in a future release.
+    // Deprecated. Replaced by `SetWorkerDeploymentCurrentVersion`.
     rpc SetCurrentDeployment (SetCurrentDeploymentRequest) returns (SetCurrentDeploymentResponse) {
         option (google.api.http) = {
             post: "/namespaces/{namespace}/current-deployment/{deployment.series_name}"
             body: "*"
             additional_bindings {
                 post: "/api/v1/namespaces/{namespace}/current-deployment/{deployment.series_name}"
+                body: "*"
+            }
+        };
+    }
+
+    // Set/unset the Current Version of a Worker Deployment. Automatically unsets the Ramping
+    // Version if it is the Version being set as Current.
+    // Experimental. This API might significantly change or be removed in a future release.
+    rpc SetWorkerDeploymentCurrentVersion (SetWorkerDeploymentCurrentVersionRequest) returns (SetWorkerDeploymentCurrentVersionResponse) {
+        option (google.api.http) = {
+            post: "/namespaces/{namespace}/worker-deployments/{deployment_name}/set-current-version"
+            body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/worker-deployments/{deployment_name}/set-current-version"
+                body: "*"
+            }
+        };
+    }
+
+    // Describes a Worker Deployment.
+    // Experimental. This API might significantly change or be removed in a future release.
+    rpc DescribeWorkerDeployment (DescribeWorkerDeploymentRequest) returns (DescribeWorkerDeploymentResponse) {
+        option (google.api.http) = {
+            get: "/namespaces/{namespace}/worker-deployments/{deployment_name}"
+            additional_bindings {
+                get: "/api/v1/namespaces/{namespace}/worker-deployments/{deployment_name}"
+            }
+        };
+    }
+
+    // Deletes records of (an old) Deployment. A deployment can only be deleted if
+    // it has no Version in it.
+    // Experimental. This API might significantly change or be removed in a future release.
+    rpc DeleteWorkerDeployment (DeleteWorkerDeploymentRequest) returns (DeleteWorkerDeploymentResponse) {
+        option (google.api.http) = {
+            delete: "/namespaces/{namespace}/worker-deployments/{deployment_name}"
+            additional_bindings {
+                delete: "/api/v1/namespaces/{namespace}/worker-deployments/{deployment_name}"
+            }
+        };
+    }
+
+
+    // Used for manual deletion of Versions. User can delete a Version only when all the
+    // following conditions are met:
+    //  - It is not the Current or Ramping Version of its Deployment.
+    //  - It has no active pollers (none of the task queues in the Version have pollers)
+    //  - It is not draining (see WorkerDeploymentVersionInfo.drainage_info). This condition
+    //    can be skipped by passing `skip-drainage=true`.
+    // Experimental. This API might significantly change or be removed in a future release.
+    rpc DeleteWorkerDeploymentVersion (DeleteWorkerDeploymentVersionRequest) returns (DeleteWorkerDeploymentVersionResponse) {
+        option (google.api.http) = {
+            delete: "/namespaces/{namespace}/worker-deployment-versions/{version}"
+            additional_bindings {
+                delete: "/api/v1/namespaces/{namespace}/worker-deployment-versions/{version}"
+            }
+        };
+    }
+
+    // Set/unset the Ramping Version of a Worker Deployment and its ramp percentage. Can be used for
+    // gradual ramp to unversioned workers too.
+    // Experimental. This API might significantly change or be removed in a future release.
+    rpc SetWorkerDeploymentRampingVersion (SetWorkerDeploymentRampingVersionRequest) returns (SetWorkerDeploymentRampingVersionResponse) {
+        option (google.api.http) = {
+            post: "/namespaces/{namespace}/worker-deployments/{deployment_name}/set-ramping-version"
+            body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/worker-deployments/{deployment_name}/set-ramping-version"
+                body: "*"
+            }
+        };
+    }
+
+    // Lists all Worker Deployments that are tracked in the Namespace.
+    // Experimental. This API might significantly change or be removed in a future release.
+    rpc ListWorkerDeployments (ListWorkerDeploymentsRequest) returns (ListWorkerDeploymentsResponse) {
+        option (google.api.http) = {
+            get: "/namespaces/{namespace}/worker-deployments"
+            additional_bindings {
+                get: "/api/v1/namespaces/{namespace}/worker-deployments"
+            }
+        };
+    }
+
+    // Updates the user-given metadata attached to a Worker Deployment Version.
+    // Experimental. This API might significantly change or be removed in a future release.
+    rpc UpdateWorkerDeploymentVersionMetadata (UpdateWorkerDeploymentVersionMetadataRequest) returns (UpdateWorkerDeploymentVersionMetadataResponse) {
+        option (google.api.http) = {
+            post: "/namespaces/{namespace}/worker-deployment-versions/{version}/update-metadata"
+            body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/worker-deployment-versions/{version}/update-metadata"
                 body: "*"
             }
         };
@@ -920,15 +1029,14 @@ service WorkflowService {
     rpc RespondNexusTaskFailed(RespondNexusTaskFailedRequest) returns (RespondNexusTaskFailedResponse) {
     }
 
-    // UpdateActivityOptionsById is called by the client to update the options of an activity
-    // (-- api-linter: core::0136::prepositions=disabled
-    //     aip.dev/not-precedent: "By" is used to indicate request type. --)
-    rpc UpdateActivityOptionsById (UpdateActivityOptionsByIdRequest) returns (UpdateActivityOptionsByIdResponse) {
+    // UpdateActivityOptions is called by the client to update the options of an activity by its ID or type.
+    // If there are multiple pending activities of the provided type - all of them will be updated.
+    rpc UpdateActivityOptions (UpdateActivityOptionsRequest) returns (UpdateActivityOptionsResponse) {
         option (google.api.http) = {
-            post: "/namespaces/{namespace}/activities/update-options-by-id"
+            post: "/namespaces/{namespace}/activities/update-options"
             body: "*"
             additional_bindings {
-                post: "/api/v1/namespaces/{namespace}/activities/update-options-by-id"
+                post: "/api/v1/namespaces/{namespace}/activities/update-options"
                 body: "*"
             }
         };
@@ -946,8 +1054,8 @@ service WorkflowService {
         };
     }
 
-    // PauseActivityById pauses the execution of an activity specified by its ID.
-    // Returns a `NotFound` error if there is no pending activity with the provided ID.
+    // PauseActivity pauses the execution of an activity specified by its ID or type.
+    // If there are multiple pending activities of the provided type - all of them will be paused
     //
     // Pausing an activity means:
     // - If the activity is currently waiting for a retry or is running and subsequently fails,
@@ -960,64 +1068,68 @@ service WorkflowService {
     // For long-running activities:
     // - activities in paused state will send a cancellation with "activity_paused" set to 'true' in response to 'RecordActivityTaskHeartbeat'.
     // - The activity should respond to the cancellation accordingly.
-    // (-- api-linter: core::0136::prepositions=disabled
-    //     aip.dev/not-precedent: "By" is used to indicate request type. --)
-    rpc PauseActivityById (PauseActivityByIdRequest) returns (PauseActivityByIdResponse) {
+    //
+    // Returns a `NotFound` error if there is no pending activity with the provided ID or type
+    rpc PauseActivity (PauseActivityRequest) returns (PauseActivityResponse) {
         option (google.api.http) = {
-            post: "/namespaces/{namespace}/activities/pause-by-id"
+            post: "/namespaces/{namespace}/activities/pause"
             body: "*"
             additional_bindings {
-                post: "/api/v1/namespaces/{namespace}/activities/pause-by-id"
+                post: "/api/v1/namespaces/{namespace}/activities/pause"
                 body: "*"
             }
         };
     }
 
-    // UnpauseActivityById unpauses the execution of an activity specified by its ID.
-    // Returns a `NotFound` error if there is no pending activity with the provided ID.
-    // There are two 'modes' of unpausing an activity:
-    // 'resume' - If the activity is paused, it will be resumed and scheduled for execution.
-    //    * If the activity is currently running Unpause with 'resume' has no effect.
-    //    * if 'no_wait' flag is set and the activity is waiting, the activity will be scheduled immediately.
-    // 'reset' - If the activity is paused, it will be reset to its initial state and (depending on parameters) scheduled for execution.
-    //    * If the activity is currently running, Unpause with 'reset' will reset the number of attempts.
-    //    * if 'no_wait' flag is set, the activity will be scheduled immediately.
-    //    * if 'reset_heartbeats' flag is set, the activity heartbeat timer and heartbeats will be reset.
-    // If the activity is in waiting for retry and past it retry timeout, it will be scheduled immediately.
+    // UnpauseActivity unpauses the execution of an activity specified by its ID or type.
+    // If there are multiple pending activities of the provided type - all of them will be unpaused.
+    //
+    // If activity is not paused, this call will have no effect.
+    // If the activity was paused while waiting for retry, it will be scheduled immediately (* see 'jitter' flag).
     // Once the activity is unpaused, all timeout timers will be regenerated.
-    // (-- api-linter: core::0136::prepositions=disabled
-    //     aip.dev/not-precedent: "By" is used to indicate request type. --)
-    rpc UnpauseActivityById (UnpauseActivityByIdRequest) returns (UnpauseActivityByIdResponse) {
+    //
+    // Flags:
+    // 'jitter': the activity will be scheduled at a random time within the jitter duration.
+    // 'reset_attempts': the number of attempts will be reset.
+    // 'reset_heartbeat': the activity heartbeat timer and heartbeats will be reset.
+    //
+    // Returns a `NotFound` error if there is no pending activity with the provided ID or type
+    rpc UnpauseActivity (UnpauseActivityRequest) returns (UnpauseActivityResponse) {
         option (google.api.http) = {
-            post: "/namespaces/{namespace}/activities/unpause-by-id"
+            post: "/namespaces/{namespace}/activities/unpause"
             body: "*"
             additional_bindings {
-                post: "/api/v1/namespaces/{namespace}/activities/unpause-by-id"
+                post: "/api/v1/namespaces/{namespace}/activities/unpause"
                 body: "*"
             }
         };
     }
 
-    // ResetActivityById unpauses the execution of an activity specified by its ID.
-    // Returns a `NotFound` error if there is no pending activity with the provided ID.
+    // ResetActivity resets the execution of an activity specified by its ID or type.
+    // If there are multiple pending activities of the provided type - all of them will be reset.
+    //
     // Resetting an activity means:
     // * number of attempts will be reset to 0.
-    // * activity timeouts will be resetted.
-    // If the activity currently running:
-    // *  if 'no_wait' flag is provided, a new instance of the activity will be scheduled immediately.
-    // *  if 'no_wait' flag is not provided, a new instance of the  activity will be scheduled after current instance completes if needed.
-    // If 'reset_heartbeats' flag is set, the activity heartbeat timer and heartbeats will be reset.
-    // (-- api-linter: core::0136::prepositions=disabled
-    //     aip.dev/not-precedent: "By" is used to indicate request type. --)
-    rpc ResetActivityById (ResetActivityByIdRequest) returns (ResetActivityByIdResponse) {
+    // * activity timeouts will be reset.
+    // * if the activity is waiting for retry, and it is not paused or 'keep_paused' is not provided:
+    //    it will be scheduled immediately (* see 'jitter' flag),
+    //
+    // Flags:
+    //
+    // 'jitter': the activity will be scheduled at a random time within the jitter duration.
+    // If the activity currently paused it will be unpaused, unless 'keep_paused' flag is provided.
+    // 'reset_heartbeats': the activity heartbeat timer and heartbeats will be reset.
+    // 'keep_paused': if the activity is paused, it will remain paused.
+    //
+    // Returns a `NotFound` error if there is no pending activity with the provided ID or type.
+    rpc ResetActivity (ResetActivityRequest) returns (ResetActivityResponse) {
         option (google.api.http) = {
-            post: "/namespaces/{namespace}/activities/reset-by-id"
+            post: "/namespaces/{namespace}/activities/reset"
             body: "*"
             additional_bindings {
-                post: "/api/v1/namespaces/{namespace}/activities/reset-by-id"
+                post: "/api/v1/namespaces/{namespace}/activities/reset"
                 body: "*"
             }
         };
     }
 }
-

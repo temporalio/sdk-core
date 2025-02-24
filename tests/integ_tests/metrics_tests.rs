@@ -4,7 +4,6 @@ use assert_matches::assert_matches;
 use std::{
     collections::HashMap,
     env,
-    net::SocketAddr,
     string::ToString,
     sync::{Arc, Mutex},
     time::Duration,
@@ -17,19 +16,17 @@ use temporal_sdk::{
     NexusOperationOptions, WfContext,
 };
 use temporal_sdk_core::{
-    CoreRuntime, TokioRuntimeBuilder, init_worker,
-    telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter},
+    CoreRuntime, TokioRuntimeBuilder, init_worker, telemetry::build_otlp_metric_exporter,
 };
 use temporal_sdk_core_api::{
     Worker,
     errors::PollError,
     telemetry::{
         HistogramBucketOverrides, OtelCollectorOptionsBuilder, OtlpProtocol,
-        PrometheusExporterOptions, PrometheusExporterOptionsBuilder, TelemetryOptions,
-        TelemetryOptionsBuilder,
+        PrometheusExporterOptionsBuilder, TelemetryOptionsBuilder,
         metrics::{CoreMeter, MetricAttributes, MetricParameters},
     },
-    worker::WorkerConfigBuilder,
+    worker::{PollerBehavior, WorkerConfigBuilder},
 };
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -46,7 +43,7 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::{
         common::v1::RetryPolicy,
-        enums::v1::WorkflowIdReusePolicy,
+        enums::v1::{NexusHandlerErrorRetryBehavior, WorkflowIdReusePolicy},
         failure::v1::Failure,
         nexus,
         nexus::v1::{
@@ -58,48 +55,15 @@ use temporal_sdk_core_protos::{
     },
 };
 use temporal_sdk_core_test_utils::{
-    CoreWfStarter, NAMESPACE, OTEL_URL_ENV_VAR, PROMETHEUS_QUERY_API, get_integ_server_options,
-    get_integ_telem_options,
+    ANY_PORT, CoreWfStarter, NAMESPACE, OTEL_URL_ENV_VAR, PROMETHEUS_QUERY_API,
+    get_integ_server_options, get_integ_telem_options, prom_metrics,
 };
-use tokio::{join, sync::Barrier, task::AbortHandle};
+use tokio::{join, sync::Barrier};
 use tracing_subscriber::fmt::MakeWriter;
 use url::Url;
 
-static ANY_PORT: &str = "127.0.0.1:0";
-
 pub(crate) async fn get_text(endpoint: String) -> String {
     reqwest::get(endpoint).await.unwrap().text().await.unwrap()
-}
-
-pub(crate) struct AbortOnDrop {
-    ah: AbortHandle,
-}
-
-impl Drop for AbortOnDrop {
-    fn drop(&mut self) {
-        self.ah.abort();
-    }
-}
-
-pub(crate) fn prom_metrics(
-    options_override: Option<PrometheusExporterOptions>,
-) -> (TelemetryOptions, SocketAddr, AbortOnDrop) {
-    let prom_exp_opts = options_override.unwrap_or_else(|| {
-        PrometheusExporterOptionsBuilder::default()
-            .socket_addr(ANY_PORT.parse().unwrap())
-            .build()
-            .unwrap()
-    });
-    let mut telemopts = get_integ_telem_options();
-    let prom_info = start_prometheus_metric_exporter(prom_exp_opts).unwrap();
-    telemopts.metrics = Some(prom_info.meter as Arc<dyn CoreMeter>);
-    (
-        telemopts,
-        prom_info.bound_addr,
-        AbortOnDrop {
-            ah: prom_info.abort_handle,
-        },
-    )
 }
 
 #[rstest::rstest]
@@ -190,7 +154,7 @@ async fn one_slot_worker_reports_available_slot() {
         // Need to use two for WFTs because there are a minimum of 2 pollers b/c of sticky polling
         .max_outstanding_workflow_tasks(2_usize)
         .max_outstanding_nexus_tasks(1_usize)
-        .max_concurrent_wft_polls(1_usize)
+        .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(1_usize))
         .build()
         .unwrap();
 
@@ -1034,6 +998,7 @@ async fn nexus_metrics() {
                                     message: "handler-fail".to_string(),
                                     ..Default::default()
                                 }),
+                                retry_behavior: NexusHandlerErrorRetryBehavior::NonRetryable.into(),
                             })
                         }
                         Some(p) if p == "timeout".into() => {
