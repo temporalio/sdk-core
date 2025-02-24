@@ -42,8 +42,8 @@ use temporal_sdk_core_api::{
     errors::PollError,
     telemetry::{
         Logger, OtelCollectorOptionsBuilder, PrometheusExporterOptions,
-        PrometheusExporterOptionsBuilder, TelemetryOptions,
-        TelemetryOptionsBuilder, metrics::CoreMeter,
+        PrometheusExporterOptionsBuilder, TelemetryOptions, TelemetryOptionsBuilder,
+        metrics::CoreMeter,
     },
 };
 use temporal_sdk_core_protos::{

@@ -1,12 +1,12 @@
 use assert_matches::assert_matches;
 use std::{cell::Cell, sync::Arc, time::Duration};
 use temporal_client::WorkflowOptions;
-use temporal_sdk::{interceptors::WorkerInterceptor, WfContext};
-use temporal_sdk_core::{init_worker, CoreRuntime, ResourceBasedTuner, ResourceSlotOptions};
+use temporal_sdk::{WfContext, interceptors::WorkerInterceptor};
+use temporal_sdk_core::{CoreRuntime, ResourceBasedTuner, ResourceSlotOptions, init_worker};
 use temporal_sdk_core_api::{
+    Worker,
     errors::WorkerValidationError,
     worker::{PollerBehavior, WorkerConfigBuilder},
-    Worker,
 };
 use temporal_sdk_core_protos::{
     coresdk::workflow_completion::{
