@@ -6,8 +6,8 @@ use crate::MetricsContext;
 use std::{
     fmt::{Debug, Formatter},
     sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, OnceLock,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Instant,
 };

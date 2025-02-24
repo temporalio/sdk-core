@@ -17,7 +17,7 @@ use crate::{
 };
 use futures_util::FutureExt;
 use std::{sync::LazyLock, time::Duration};
-use temporal_sdk_core_api::{worker::PollerBehavior, Worker as WorkerTrait};
+use temporal_sdk_core_api::{Worker as WorkerTrait, worker::PollerBehavior};
 use temporal_sdk_core_protos::coresdk::workflow_completion::WorkflowActivationCompletion;
 use tokio::{sync::Barrier, time::sleep};
 

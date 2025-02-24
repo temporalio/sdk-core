@@ -31,7 +31,7 @@ use std::{
     time::Duration,
 };
 use temporal_sdk::interceptors::FailOnNondeterminismInterceptor;
-use temporal_sdk_core_api::{errors::PollError, worker::PollerBehavior, Worker as WorkerTrait};
+use temporal_sdk_core_api::{Worker as WorkerTrait, errors::PollError, worker::PollerBehavior};
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::{WorkflowActivation, workflow_activation_job},
