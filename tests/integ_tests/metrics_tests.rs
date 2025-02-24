@@ -17,10 +17,7 @@ use temporal_sdk::{
 };
 use temporal_sdk_core::{
     CoreRuntime, TokioRuntimeBuilder, init_worker,
-    telemetry::{
-        WORKFLOW_TASK_EXECUTION_LATENCY_HISTOGRAM_NAME, build_otlp_metric_exporter,
-        start_prometheus_metric_exporter,
-    },
+    telemetry::{WORKFLOW_TASK_EXECUTION_LATENCY_HISTOGRAM_NAME, build_otlp_metric_exporter},
 };
 use temporal_sdk_core_api::{
     Worker,
@@ -59,8 +56,8 @@ use temporal_sdk_core_protos::{
     },
 };
 use temporal_sdk_core_test_utils::{
-    CoreWfStarter, NAMESPACE, OTEL_URL_ENV_VAR, PROMETHEUS_QUERY_API, get_integ_server_options,
-    get_integ_telem_options,
+    ANY_PORT, CoreWfStarter, NAMESPACE, OTEL_URL_ENV_VAR, PROMETHEUS_QUERY_API,
+    get_integ_server_options, get_integ_telem_options, prom_metrics,
 };
 use tokio::{join, sync::Barrier};
 use tracing_subscriber::fmt::MakeWriter;
