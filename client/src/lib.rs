@@ -71,7 +71,7 @@ use temporal_sdk_core_protos::{
     },
 };
 use tonic::{
-    Code, Status,
+    Code,
     body::BoxBody,
     client::GrpcService,
     codegen::InterceptedService,

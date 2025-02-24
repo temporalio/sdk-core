@@ -66,7 +66,7 @@ use temporal_sdk_core_protos::{
         ActivityTaskCompletion,
         activity_result::activity_execution_result,
         activity_task::ActivityTask,
-        nexus::{nexus_task_completion, NexusTask, NexusTaskCompletion},
+        nexus::{NexusTask, NexusTaskCompletion, nexus_task_completion},
         workflow_activation::{WorkflowActivation, remove_from_cache::EvictionReason},
         workflow_completion::WorkflowActivationCompletion,
     },

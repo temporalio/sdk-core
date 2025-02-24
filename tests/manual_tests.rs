@@ -2,10 +2,10 @@
 //! load testing.
 
 use futures_util::{
+    StreamExt,
     future::{AbortHandle, Abortable},
     sink, stream,
     stream::FuturesUnordered,
-    StreamExt,
 };
 use rand::{Rng, SeedableRng};
 use std::{
@@ -18,7 +18,7 @@ use temporal_sdk::{ActContext, ActivityOptions, WfContext};
 use temporal_sdk_core::CoreRuntime;
 use temporal_sdk_core_api::{telemetry::PrometheusExporterOptionsBuilder, worker::PollerBehavior};
 use temporal_sdk_core_protos::coresdk::AsJsonPayloadExt;
-use temporal_sdk_core_test_utils::{prom_metrics, rand_6_chars, CoreWfStarter};
+use temporal_sdk_core_test_utils::{CoreWfStarter, prom_metrics, rand_6_chars};
 use tracing::info;
 
 #[tokio::test]
@@ -79,7 +79,7 @@ async fn poller_load_spiky() {
     });
     worker.register_activity("echo", |_: ActContext, echo: String| async move {
         // Add some jitter to completions
-        let rand_millis = rand::thread_rng().gen_range(0..500);
+        let rand_millis = rand::rng().random_range(0..500);
         tokio::time::sleep(Duration::from_millis(rand_millis)).await;
         Ok(echo)
     });
@@ -216,7 +216,7 @@ async fn poller_load_sustained() {
             let rs = ctx.random_seed();
             let mut rand = rand::rngs::SmallRng::seed_from_u64(rs);
             for _ in 0..100 {
-                let jitterms = rand.gen_range(1000..3000);
+                let jitterms = rand.random_range(1000..3000);
                 ctx.timer(Duration::from_millis(jitterms)).await;
             }
         };
@@ -328,7 +328,7 @@ async fn poller_load_spike_then_sustained() {
     });
     worker.register_activity("echo", |_: ActContext, echo: String| async move {
         // Add some jitter to completions
-        let rand_millis = rand::thread_rng().gen_range(0..500);
+        let rand_millis = rand::rng().random_range(0..500);
         tokio::time::sleep(Duration::from_millis(rand_millis)).await;
         Ok(echo)
     });

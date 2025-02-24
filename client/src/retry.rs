@@ -1,6 +1,6 @@
 use crate::{
-    Client, IsWorkerTaskLongPoll, NamespacedClient, NoRetryOnMatching, Result,
-    RetryConfig, raw::IsUserLongPoll,
+    Client, IsWorkerTaskLongPoll, NamespacedClient, NoRetryOnMatching, Result, RetryConfig,
+    raw::IsUserLongPoll,
 };
 use backoff::{Clock, SystemClock, backoff::Backoff, exponential::ExponentialBackoff};
 use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};

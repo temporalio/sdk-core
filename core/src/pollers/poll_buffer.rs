@@ -3,7 +3,7 @@ use crate::{
     pollers::{self, Poller},
     worker::client::{PollActivityOptions, PollOptions, PollWorkflowOptions, WorkerClient},
 };
-use futures_util::{FutureExt, StreamExt, future::BoxFuture, stream::FuturesUnordered};
+use futures_util::{FutureExt, StreamExt, future::BoxFuture};
 use governor::{Quota, RateLimiter};
 use std::{
     cmp,
@@ -297,7 +297,7 @@ where
             .await
             .expect("Poll allow does not panic");
     }
-    async fn wait_until_allowed(&mut self) -> ActiveCounter<impl Fn(usize)> {
+    async fn wait_until_allowed(&mut self) -> ActiveCounter<impl Fn(usize) + use<F>> {
         self.active_rx
             .wait_for(|v| {
                 *v < self.report_handle.max

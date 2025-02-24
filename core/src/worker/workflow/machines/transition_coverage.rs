@@ -7,7 +7,7 @@ use dashmap::{DashMap, DashSet, mapref::entry::Entry};
 use std::{
     path::PathBuf,
     sync::{
-        Mutex,
+        LazyLock, Mutex,
         mpsc::{SyncSender, sync_channel},
     },
     thread::JoinHandle,
