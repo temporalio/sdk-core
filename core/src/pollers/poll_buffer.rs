@@ -1,7 +1,10 @@
 use crate::{
     abstractions::{MeteredPermitDealer, OwnedMeteredSemPermit, dbg_panic},
     pollers::{self, Poller},
-    worker::client::{PollActivityOptions, PollOptions, PollWorkflowOptions, WorkerClient},
+    worker::{
+        WFTPollerShared,
+        client::{PollActivityOptions, PollOptions, PollWorkflowOptions, WorkerClient},
+    },
 };
 use futures_util::{FutureExt, StreamExt, future::BoxFuture};
 use governor::{Quota, RateLimiter};
@@ -49,30 +52,214 @@ pub(crate) struct LongPollBuffer<T, SK: SlotKind> {
     did_start: AtomicBool,
 }
 
+pub(crate) struct WorkflowTaskOptions {
+    pub(crate) wft_poller_shared: Arc<WFTPollerShared>,
+}
+
+pub(crate) struct ActivityTaskOptions {
+    /// Local ratelimit
+    pub(crate) max_worker_acts_per_second: Option<f64>,
+    /// Server ratelimit
+    pub(crate) max_tps: Option<f64>,
+}
+
+impl LongPollBuffer<PollWorkflowTaskQueueResponse, WorkflowSlotKind> {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_workflow_task(
+        client: Arc<dyn WorkerClient>,
+        task_queue: String,
+        sticky_queue: Option<String>,
+        poller_behavior: PollerBehavior,
+        permit_dealer: MeteredPermitDealer<WorkflowSlotKind>,
+        shutdown: CancellationToken,
+        num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
+        options: WorkflowTaskOptions,
+    ) -> Self {
+        let is_sticky = sticky_queue.is_some();
+        let poll_scaler = PollScaler::new(poller_behavior, num_pollers_handler);
+        if is_sticky {
+            options
+                .wft_poller_shared
+                .set_sticky_active(poll_scaler.active_rx.clone());
+        } else {
+            options
+                .wft_poller_shared
+                .set_non_sticky_active(poll_scaler.active_rx.clone());
+        };
+        let shared = options.wft_poller_shared.clone();
+        let pre_permit_delay = Some(move || {
+            let shared = shared.clone();
+            async move {
+                shared.wait_if_needed(is_sticky).await;
+            }
+        });
+        let post_poll_fn = Some(move |t: &PollWorkflowTaskQueueResponse| {
+            if is_sticky {
+                options
+                    .wft_poller_shared
+                    .record_sticky_backlog(t.backlog_count_hint as usize)
+            }
+        });
+        let no_retry = if matches!(poller_behavior, PollerBehavior::Autoscaling { .. }) {
+            Some(NoRetryOnMatching {
+                predicate: poll_scaling_error_matcher,
+            })
+        } else {
+            None
+        };
+        let poll_fn = move |timeout_override: Option<Duration>| {
+            let client = client.clone();
+            let task_queue = task_queue.clone();
+            let sticky_queue_name = sticky_queue.clone();
+            async move {
+                client
+                    .poll_workflow_task(
+                        PollOptions {
+                            task_queue,
+                            no_retry,
+                            timeout_override,
+                        },
+                        PollWorkflowOptions { sticky_queue_name },
+                    )
+                    .await
+            }
+        };
+        Self::new(
+            poll_fn,
+            permit_dealer,
+            shutdown,
+            poll_scaler,
+            pre_permit_delay,
+            post_poll_fn,
+        )
+    }
+}
+
+impl LongPollBuffer<PollActivityTaskQueueResponse, ActivitySlotKind> {
+    pub(crate) fn new_activity_task(
+        client: Arc<dyn WorkerClient>,
+        task_queue: String,
+        poller_behavior: PollerBehavior,
+        permit_dealer: MeteredPermitDealer<ActivitySlotKind>,
+        shutdown: CancellationToken,
+        num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
+        options: ActivityTaskOptions,
+    ) -> Self {
+        let pre_permit_delay = options
+            .max_worker_acts_per_second
+            .and_then(|ps| {
+                Quota::with_period(Duration::from_secs_f64(ps.recip()))
+                    .map(|q| Arc::new(RateLimiter::direct(q)))
+            })
+            .map(|rl| {
+                move || {
+                    let rl = rl.clone();
+                    async move { rl.until_ready().await }.boxed()
+                }
+            });
+        let no_retry = if matches!(poller_behavior, PollerBehavior::Autoscaling { .. }) {
+            Some(NoRetryOnMatching {
+                predicate: poll_scaling_error_matcher,
+            })
+        } else {
+            None
+        };
+        let poll_fn = move |timeout_override: Option<Duration>| {
+            let client = client.clone();
+            let task_queue = task_queue.clone();
+            async move {
+                client
+                    .poll_activity_task(
+                        PollOptions {
+                            task_queue,
+                            no_retry,
+                            timeout_override,
+                        },
+                        PollActivityOptions {
+                            max_tasks_per_sec: options.max_tps,
+                        },
+                    )
+                    .await
+            }
+        };
+
+        let poll_scaler = PollScaler::new(poller_behavior, num_pollers_handler);
+        Self::new(
+            poll_fn,
+            permit_dealer,
+            shutdown,
+            poll_scaler,
+            pre_permit_delay,
+            None::<fn(&PollActivityTaskQueueResponse)>,
+        )
+    }
+}
+
+impl LongPollBuffer<PollNexusTaskQueueResponse, NexusSlotKind> {
+    pub(crate) fn new_nexus_task(
+        client: Arc<dyn WorkerClient>,
+        task_queue: String,
+        poller_behavior: PollerBehavior,
+        permit_dealer: MeteredPermitDealer<NexusSlotKind>,
+        shutdown: CancellationToken,
+        num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
+    ) -> Self {
+        let no_retry = if matches!(poller_behavior, PollerBehavior::Autoscaling { .. }) {
+            Some(NoRetryOnMatching {
+                predicate: poll_scaling_error_matcher,
+            })
+        } else {
+            None
+        };
+        let poll_fn = move |timeout_override: Option<Duration>| {
+            let client = client.clone();
+            let task_queue = task_queue.clone();
+            async move {
+                client
+                    .poll_nexus_task(PollOptions {
+                        task_queue,
+                        no_retry,
+                        timeout_override,
+                    })
+                    .await
+            }
+        };
+        Self::new(
+            poll_fn,
+            permit_dealer,
+            shutdown,
+            PollScaler::new(poller_behavior, num_pollers_handler),
+            None::<fn() -> BoxFuture<'static, ()>>,
+            None::<fn(&PollNexusTaskQueueResponse)>,
+        )
+    }
+}
+
 impl<T, SK> LongPollBuffer<T, SK>
 where
     T: TaskPollerResult + Send + Debug + 'static,
     SK: SlotKind + 'static,
 {
-    pub(crate) fn new<FT, DelayFut>(
+    fn new<FT, DelayFut, F>(
         poll_fn: impl Fn(Option<Duration>) -> FT + Send + Sync + 'static,
         permit_dealer: MeteredPermitDealer<SK>,
-        poller_behavior: PollerBehavior,
         shutdown: CancellationToken,
-        num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
+        mut poll_scaler: PollScaler<F>,
         pre_permit_delay: Option<impl Fn() -> DelayFut + Send + Sync + 'static>,
+        post_poll_fn: Option<impl Fn(&T) + Send + Sync + 'static>,
     ) -> Self
     where
         FT: Future<Output = pollers::Result<T>> + Send,
         DelayFut: Future<Output = ()> + Send,
+        F: Fn(usize) + Send + Sync + 'static,
     {
         let (tx, rx) = unbounded_channel();
         let (starter, wait_for_start) = broadcast::channel(1);
         let pf = Arc::new(poll_fn);
-        let pre_permit_delay = pre_permit_delay.map(Arc::new);
+        let post_pf = Arc::new(post_poll_fn);
         let mut wait_for_start = wait_for_start.resubscribe();
         let shutdown_clone = shutdown.clone();
-        let mut poll_scaler = PollScaler::new(poller_behavior, num_pollers_handler);
+
         let poller_task = tokio::spawn(
             async move {
                 tokio::select! {
@@ -82,6 +269,8 @@ where
                 drop(wait_for_start);
 
                 let (spawned_tx, spawned_rx) = unbounded_channel();
+                // This is needed to ensure we don't exit this task before all received polls have
+                // been sent out for processing.
                 let poll_task_awaiter = tokio::spawn(async move {
                     UnboundedReceiverStream::new(spawned_rx)
                         .for_each_concurrent(None, |t| async move {
@@ -99,13 +288,6 @@ where
                             _ = shutdown_clone.cancelled() => break,
                         }
                     }
-                    // We wait until below max pollers before even attempting to acquire a permit.
-                    // This is to avoid sticky/non-sticky starving each other for WFT pollers.
-                    // TODO: See if this can be made to go away after other changes.
-                    tokio::select! {
-                        _ = poll_scaler.wait_until_below_max() => (),
-                        _ = shutdown_clone.cancelled() => break,
-                    }
                     let permit = tokio::select! {
                         p = permit_dealer.acquire_owned() => p,
                         _ = shutdown_clone.cancelled() => break,
@@ -117,6 +299,7 @@ where
                     // Spawn poll task
                     let shutdown = shutdown_clone.clone();
                     let pf = pf.clone();
+                    let post_pf = post_pf.clone();
                     let tx = tx.clone();
                     let report_handle = poll_scaler.get_report_handle();
                     // Reduce poll timeout if we're frequently getting tasks, to avoid having many
@@ -133,6 +316,11 @@ where
                             _ = shutdown.cancelled() => return,
                         };
                         drop(active_guard);
+                        if let Ok(r) = &r {
+                            if let Some(ppf) = post_pf.as_ref() {
+                                ppf(r);
+                            }
+                        }
                         if report_handle.poll_result(&r) {
                             let _ = tx.send(r.map(|r| (r, permit)));
                         }
@@ -288,15 +476,7 @@ where
             ingestor_task: join_handle,
         }
     }
-    async fn wait_until_below_max(&mut self) {
-        self.active_rx
-            .wait_for(|v| {
-                *v < self.report_handle.max
-                    && *v < self.report_handle.target.load(Ordering::Relaxed)
-            })
-            .await
-            .expect("Poll allow does not panic");
-    }
+
     async fn wait_until_allowed(&mut self) -> ActiveCounter<impl Fn(usize) + use<F>> {
         self.active_rx
             .wait_for(|v| {
@@ -307,6 +487,7 @@ where
             .expect("Poll allow does not panic");
         ActiveCounter::new(self.active_tx.clone(), self.num_pollers_handler.clone())
     }
+
     fn get_report_handle(&self) -> Arc<PollScalerReportHandle> {
         self.report_handle.clone()
     }
@@ -315,8 +496,6 @@ where
 struct PollScalerReportHandle {
     max: usize,
     min: usize,
-    // TODO: Try clamping this down if the actual max number of polls we had open in the last
-    //   period is significantly less than the target
     target: AtomicUsize,
     ever_saw_scaling_decision: AtomicBool,
     behavior: PollerBehavior,
@@ -360,8 +539,8 @@ impl PollScalerReportHandle {
                     self.ever_saw_scaling_decision
                         .store(true, Ordering::Relaxed);
                 }
-                // We want to avoid scaling down on empty polls if the server has never made any scaling
-                // decisions - otherwise we might never scale up again.
+                // We want to avoid scaling down on empty polls if the server has never made any
+                // scaling decisions - otherwise we might never scale up again.
                 else if self.ever_saw_scaling_decision.load(Ordering::Relaxed) && res.is_empty() {
                     self.change_target(usize::saturating_sub, 1);
                 }
@@ -404,6 +583,7 @@ pub(crate) struct WorkflowTaskPoller {
     normal_poller: PollWorkflowTaskBuffer,
     sticky_poller: Option<PollWorkflowTaskBuffer>,
 }
+type PollWorkflowTaskBuffer = LongPollBuffer<PollWorkflowTaskQueueResponse, WorkflowSlotKind>;
 
 #[async_trait::async_trait]
 impl
@@ -448,144 +628,6 @@ impl
         let this = *self;
         this.shutdown().await;
     }
-}
-
-pub(crate) type PollWorkflowTaskBuffer =
-    LongPollBuffer<PollWorkflowTaskQueueResponse, WorkflowSlotKind>;
-pub(crate) fn new_workflow_task_buffer(
-    client: Arc<dyn WorkerClient>,
-    task_queue: String,
-    sticky_queue: Option<String>,
-    poller_behavior: PollerBehavior,
-    permit_dealer: MeteredPermitDealer<WorkflowSlotKind>,
-    shutdown: CancellationToken,
-    num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
-) -> PollWorkflowTaskBuffer {
-    let no_retry = if matches!(poller_behavior, PollerBehavior::Autoscaling { .. }) {
-        Some(NoRetryOnMatching {
-            predicate: poll_scaling_error_matcher,
-        })
-    } else {
-        None
-    };
-    LongPollBuffer::new(
-        move |timeout_override| {
-            let client = client.clone();
-            let task_queue = task_queue.clone();
-            let sticky_queue_name = sticky_queue.clone();
-            async move {
-                client
-                    .poll_workflow_task(
-                        PollOptions {
-                            task_queue,
-                            no_retry,
-                            timeout_override,
-                        },
-                        PollWorkflowOptions { sticky_queue_name },
-                    )
-                    .await
-            }
-        },
-        permit_dealer,
-        poller_behavior,
-        shutdown,
-        num_pollers_handler,
-        None::<fn() -> BoxFuture<'static, ()>>,
-    )
-}
-
-pub(crate) type PollActivityTaskBuffer =
-    LongPollBuffer<PollActivityTaskQueueResponse, ActivitySlotKind>;
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn new_activity_task_buffer(
-    client: Arc<dyn WorkerClient>,
-    task_queue: String,
-    poller_behavior: PollerBehavior,
-    semaphore: MeteredPermitDealer<ActivitySlotKind>,
-    max_tps: Option<f64>,
-    shutdown: CancellationToken,
-    num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
-    max_worker_acts_per_sec: Option<f64>,
-) -> PollActivityTaskBuffer {
-    let rate_limiter = max_worker_acts_per_sec.and_then(|ps| {
-        Quota::with_period(Duration::from_secs_f64(ps.recip()))
-            .map(|q| Arc::new(RateLimiter::direct(q)))
-    });
-    let no_retry = if matches!(poller_behavior, PollerBehavior::Autoscaling { .. }) {
-        Some(NoRetryOnMatching {
-            predicate: poll_scaling_error_matcher,
-        })
-    } else {
-        None
-    };
-    LongPollBuffer::new(
-        move |timeout_override| {
-            let client = client.clone();
-            let task_queue = task_queue.clone();
-            async move {
-                client
-                    .poll_activity_task(
-                        PollOptions {
-                            task_queue,
-                            no_retry,
-                            timeout_override,
-                        },
-                        PollActivityOptions {
-                            max_tasks_per_sec: max_tps,
-                        },
-                    )
-                    .await
-            }
-        },
-        semaphore,
-        poller_behavior,
-        shutdown,
-        num_pollers_handler,
-        rate_limiter.map(|rl| {
-            move || {
-                let rl = rl.clone();
-                async move { rl.until_ready().await }.boxed()
-            }
-        }),
-    )
-}
-
-pub(crate) type PollNexusTaskBuffer = LongPollBuffer<PollNexusTaskQueueResponse, NexusSlotKind>;
-pub(crate) fn new_nexus_task_buffer(
-    client: Arc<dyn WorkerClient>,
-    task_queue: String,
-    poller_behavior: PollerBehavior,
-    semaphore: MeteredPermitDealer<NexusSlotKind>,
-    shutdown: CancellationToken,
-    num_pollers_handler: Option<impl Fn(usize) + Send + Sync + 'static>,
-) -> PollNexusTaskBuffer {
-    let no_retry = if matches!(poller_behavior, PollerBehavior::Autoscaling { .. }) {
-        Some(NoRetryOnMatching {
-            predicate: poll_scaling_error_matcher,
-        })
-    } else {
-        None
-    };
-    LongPollBuffer::new(
-        move |timeout_override| {
-            let client = client.clone();
-            let task_queue = task_queue.clone();
-            async move {
-                client
-                    .poll_nexus_task(PollOptions {
-                        task_queue,
-                        no_retry,
-                        timeout_override,
-                    })
-                    .await
-            }
-        },
-        semaphore,
-        poller_behavior,
-        shutdown,
-        num_pollers_handler,
-        None::<fn() -> BoxFuture<'static, ()>>,
-    )
 }
 
 /// Returns true for errors that the poller scaler wants to see
@@ -687,7 +729,7 @@ mod tests {
                 .boxed()
             });
 
-        let pb = new_workflow_task_buffer(
+        let pb = LongPollBuffer::new_workflow_task(
             Arc::new(mock_client),
             "sometq".to_string(),
             None,
@@ -695,6 +737,9 @@ mod tests {
             fixed_size_permit_dealer(10),
             CancellationToken::new(),
             None::<fn(usize)>,
+            WorkflowTaskOptions {
+                wft_poller_shared: Arc::new(WFTPollerShared::new()),
+            },
         );
 
         // Poll a bunch of times, "interrupting" it each time, we should only actually have polled

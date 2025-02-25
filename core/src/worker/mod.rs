@@ -16,30 +16,29 @@ pub(crate) use activities::{
     ExecutingLAId, LocalActRequest, LocalActivityExecutionResult, LocalActivityResolution,
     NewLocalAct,
 };
-pub(crate) use workflow::{LEGACY_QUERY_ID, wft_poller::new_wft_poller};
+pub(crate) use wft_poller::WFTPollerShared;
+pub(crate) use workflow::LEGACY_QUERY_ID;
 
 use crate::{
     ActivityHeartbeat, CompleteActivityError, PollError, WorkerTrait,
     abstractions::{MeteredPermitDealer, PermitDealerContextData, dbg_panic},
     errors::CompleteWfError,
-    pollers::{
-        BoxedActPoller, BoxedNexusPoller, WorkflowTaskPoller, new_activity_task_buffer,
-        new_nexus_task_buffer, new_workflow_task_buffer,
-    },
+    pollers::{BoxedActPoller, BoxedNexusPoller},
     protosext::validate_activity_completion,
     telemetry::{
         TelemetryInstance,
         metrics::{
             MetricsContext, activity_poller, activity_worker_type, local_activity_worker_type,
-            nexus_poller, nexus_worker_type, workflow_poller, workflow_sticky_poller,
-            workflow_worker_type,
+            nexus_poller, nexus_worker_type, workflow_worker_type,
         },
     },
     worker::{
         activities::{LACompleteAction, LocalActivityManager, NextPendingLAAction},
         client::WorkerClient,
         nexus::NexusManager,
-        workflow::{LAReqSink, LocalResolution, WorkflowBasics, Workflows},
+        workflow::{
+            LAReqSink, LocalResolution, WorkflowBasics, Workflows, wft_poller::make_wft_poller,
+        },
     },
 };
 use activities::WorkerActivityTasks;
@@ -79,6 +78,10 @@ use tokio::sync::{mpsc::unbounded_channel, watch};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
 
+use crate::{
+    pollers::{ActivityTaskOptions, LongPollBuffer},
+    worker::workflow::wft_poller,
+};
 #[cfg(test)]
 use {
     crate::{
@@ -353,53 +356,14 @@ impl Worker {
         );
         let (wft_stream, act_poller, nexus_poller) = match task_pollers {
             TaskPollers::Real => {
-                let wft_metrics = metrics.with_new_attrs([workflow_poller()]);
-                let wf_task_poll_buffer = new_workflow_task_buffer(
-                    client.clone(),
-                    config.task_queue.clone(),
-                    None,
-                    wft_poller_behavior(&config, false),
-                    wft_slots.clone(),
-                    shutdown_token.child_token(),
-                    Some(move |np| {
-                        wft_metrics.record_num_pollers(np);
-                    }),
+                let wft_stream = make_wft_poller(
+                    &config,
+                    &sticky_queue_name,
+                    &client,
+                    &metrics,
+                    &shutdown_token,
+                    &wft_slots,
                 );
-                let sticky_queue_poller = sticky_queue_name.as_ref().map(|sqn| {
-                    let sticky_metrics = metrics.with_new_attrs([workflow_sticky_poller()]);
-                    new_workflow_task_buffer(
-                        client.clone(),
-                        config.task_queue.clone(),
-                        Some(sqn.clone()),
-                        wft_poller_behavior(&config, true),
-                        wft_slots.clone().into_sticky(),
-                        shutdown_token.child_token(),
-                        Some(move |np| {
-                            sticky_metrics.record_num_pollers(np);
-                        }),
-                    )
-                });
-                let act_poll_buffer = if config.no_remote_activities {
-                    None
-                } else {
-                    let act_metrics = metrics.with_new_attrs([activity_poller()]);
-                    let ap = new_activity_task_buffer(
-                        client.clone(),
-                        config.task_queue.clone(),
-                        config.activity_task_poller_behavior,
-                        act_slots.clone(),
-                        config.max_task_queue_activities_per_second,
-                        shutdown_token.child_token(),
-                        Some(move |np| act_metrics.record_num_pollers(np)),
-                        config.max_worker_activities_per_second,
-                    );
-                    Some(Box::from(ap) as BoxedActPoller)
-                };
-                let wf_task_poll_buffer = Box::new(WorkflowTaskPoller::new(
-                    wf_task_poll_buffer,
-                    sticky_queue_poller,
-                ));
-                let wft_stream = new_wft_poller(wf_task_poll_buffer, metrics.clone());
                 let wft_stream = if !client.is_mock() {
                     // Some replay tests combine a mock client with real pollers,
                     // and they don't need to use the external stream
@@ -409,8 +373,27 @@ impl Worker {
                     wft_stream.right_stream()
                 };
 
+                let act_poll_buffer = if config.no_remote_activities {
+                    None
+                } else {
+                    let act_metrics = metrics.with_new_attrs([activity_poller()]);
+                    let ap = LongPollBuffer::new_activity_task(
+                        client.clone(),
+                        config.task_queue.clone(),
+                        config.activity_task_poller_behavior,
+                        act_slots.clone(),
+                        shutdown_token.child_token(),
+                        Some(move |np| act_metrics.record_num_pollers(np)),
+                        ActivityTaskOptions {
+                            max_worker_acts_per_second: config.max_task_queue_activities_per_second,
+                            max_tps: config.max_task_queue_activities_per_second,
+                        },
+                    );
+                    Some(Box::from(ap) as BoxedActPoller)
+                };
+
                 let np_metrics = metrics.with_new_attrs([nexus_poller()]);
-                let nexus_poll_buffer = Box::new(new_nexus_task_buffer(
+                let nexus_poll_buffer = Box::new(LongPollBuffer::new_nexus_task(
                     client.clone(),
                     config.task_queue.clone(),
                     config.nexus_task_poller_behavior,
@@ -889,7 +872,9 @@ fn wft_poller_behavior(config: &WorkerConfig, is_sticky: bool) -> PollerBehavior
 mod tests {
     use super::*;
     use crate::{
-        advance_fut, test_help::test_worker_cfg, worker::client::mocks::mock_workflow_client,
+        advance_fut,
+        test_help::test_worker_cfg,
+        worker::client::mocks::{mock_manual_workflow_client, mock_workflow_client},
     };
     use futures_util::FutureExt;
     use temporal_sdk_core_api::worker::PollerBehavior;
@@ -910,21 +895,23 @@ mod tests {
         let fut = worker.poll_activity_task();
         advance_fut!(fut);
         assert_eq!(
-            worker
-                .at_task_mgr
-                .as_ref()
-                .unwrap()
-                .remaining_activity_capacity(),
+            worker.at_task_mgr.as_ref().unwrap().unused_permits(),
             Some(5)
         );
     }
 
     #[tokio::test]
     async fn activity_errs_dont_eat_permits() {
-        let mut mock_client = mock_workflow_client();
+        // Return one error followed by simulating waiting on the poll, otherwise the poller will
+        // loop very fast and be in some indeterminate state.
+        let mut mock_client = mock_manual_workflow_client();
         mock_client
             .expect_poll_activity_task()
-            .returning(|_, _| Err(tonic::Status::internal("ahhh")));
+            .returning(|_, _| async { Err(tonic::Status::internal("ahhh")) }.boxed())
+            .times(1);
+        mock_client
+            .expect_poll_activity_task()
+            .returning(|_, _| future::pending().boxed());
 
         let cfg = test_worker_cfg()
             .max_outstanding_activities(5_usize)
@@ -932,10 +919,7 @@ mod tests {
             .unwrap();
         let worker = Worker::new_test(cfg, mock_client);
         assert!(worker.activity_poll().await.is_err());
-        assert_eq!(
-            worker.at_task_mgr.unwrap().remaining_activity_capacity(),
-            Some(5)
-        );
+        assert_eq!(worker.at_task_mgr.unwrap().unused_permits(), Some(5));
     }
 
     #[test]
