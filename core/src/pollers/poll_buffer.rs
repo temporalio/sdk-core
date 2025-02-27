@@ -305,7 +305,7 @@ where
                     // Reduce poll timeout if we're frequently getting tasks, to avoid having many
                     // outstanding long polls for a full minute after a burst subsides.
                     let timeout_override =
-                        if report_handle.ingested_this_period.load(Ordering::Relaxed) > 2 {
+                        if report_handle.ingested_this_period.load(Ordering::Relaxed) > 1 {
                             Some(Duration::from_secs(11))
                         } else {
                             None
@@ -468,8 +468,10 @@ where
                     }
                     let ingested = rhc.ingested_this_period.swap(0, Ordering::Relaxed);
                     let ingested_last = rhc.ingested_last_period.swap(ingested, Ordering::Relaxed);
-                    rhc.scale_up_allowed
-                        .store(ingested_last >= ingested, Ordering::Relaxed);
+                    rhc.scale_up_allowed.store(
+                        ingested >= (ingested_last as f64 * 1.1) as usize,
+                        Ordering::Relaxed,
+                    );
                 }
             }))
         } else {

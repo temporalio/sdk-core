@@ -43,6 +43,7 @@ async fn poller_load_spiky() {
         .worker_config
         .max_cached_workflows(5000_usize)
         .max_outstanding_workflow_tasks(1000_usize)
+        .max_outstanding_activities(1000_usize)
         .workflow_task_poller_behavior(PollerBehavior::Autoscaling {
             minimum: 1,
             maximum: 200,
