@@ -56,15 +56,15 @@ mockall::mock! {
     pub(crate) ManualWorkerClient {}
     #[allow(unused)]
     impl WorkerClient for ManualWorkerClient {
-        fn poll_workflow_task<'a, 'b>(&'a self, task_queue: TaskQueue)
+        fn poll_workflow_task<'a, 'b>(&'a self, poll_options: PollOptions, wf_options: PollWorkflowOptions)
             -> impl Future<Output = Result<PollWorkflowTaskQueueResponse>> + Send + 'b
             where 'a: 'b, Self: 'b;
 
-        fn poll_activity_task<'a, 'b>(&self, task_queue: String, max_tasks_per_sec: Option<f64>)
+        fn poll_activity_task<'a, 'b>(&self, poll_options: PollOptions, act_options: PollActivityOptions)
             -> impl Future<Output = Result<PollActivityTaskQueueResponse>> + Send + 'b
             where 'a: 'b, Self: 'b;
 
-        fn poll_nexus_task<'a, 'b>(&self, task_queue: String)
+        fn poll_nexus_task<'a, 'b>(&self, poll_options: PollOptions)
             -> impl Future<Output = Result<PollNexusTaskQueueResponse>> + Send + 'b
             where 'a: 'b, Self: 'b;
 

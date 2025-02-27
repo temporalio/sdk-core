@@ -25,6 +25,7 @@ services:
       - jaeger
 
   prometheus:
+    network_mode: host
     container_name: prometheus
     image: prom/prometheus:latest
     volumes:
