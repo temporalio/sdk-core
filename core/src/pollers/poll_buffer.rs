@@ -76,7 +76,7 @@ impl LongPollBuffer<PollWorkflowTaskQueueResponse, WorkflowSlotKind> {
         options: WorkflowTaskOptions,
     ) -> Self {
         let is_sticky = sticky_queue.is_some();
-        let poll_scaler = PollScaler::new(poller_behavior, num_pollers_handler);
+        let poll_scaler = PollScaler::new(poller_behavior, num_pollers_handler, shutdown.clone());
         if is_sticky {
             options
                 .wft_poller_shared
@@ -183,7 +183,7 @@ impl LongPollBuffer<PollActivityTaskQueueResponse, ActivitySlotKind> {
             }
         };
 
-        let poll_scaler = PollScaler::new(poller_behavior, num_pollers_handler);
+        let poll_scaler = PollScaler::new(poller_behavior, num_pollers_handler, shutdown.clone());
         Self::new(
             poll_fn,
             permit_dealer,
@@ -227,8 +227,8 @@ impl LongPollBuffer<PollNexusTaskQueueResponse, NexusSlotKind> {
         Self::new(
             poll_fn,
             permit_dealer,
-            shutdown,
-            PollScaler::new(poller_behavior, num_pollers_handler),
+            shutdown.clone(),
+            PollScaler::new(poller_behavior, num_pollers_handler, shutdown),
             None::<fn() -> BoxFuture<'static, ()>>,
             None::<fn(&PollNexusTaskQueueResponse)>,
         )
@@ -432,7 +432,11 @@ impl<F> PollScaler<F>
 where
     F: Fn(usize),
 {
-    fn new(behavior: PollerBehavior, num_pollers_handler: Option<F>) -> Self {
+    fn new(
+        behavior: PollerBehavior,
+        num_pollers_handler: Option<F>,
+        shutdown: CancellationToken,
+    ) -> Self {
         let (active_tx, active_rx) = watch::channel(0);
         let num_pollers_handler = num_pollers_handler.map(Arc::new);
         let (min, max, target) = match behavior {
@@ -454,11 +458,14 @@ where
             scale_up_allowed: AtomicBool::new(true),
         });
         let rhc = report_handle.clone();
-        let join_handle = if behavior.is_autoscaling() {
+        let ingestor_task = if behavior.is_autoscaling() {
             Some(tokio::task::spawn(async move {
                 let mut interval = tokio::time::interval(Duration::from_millis(100));
                 loop {
-                    interval.tick().await;
+                    tokio::select! {
+                        _ = interval.tick() => {}
+                        _ = shutdown.cancelled() => { break; }
+                    }
                     let ingested = rhc.ingested_this_period.swap(0, Ordering::Relaxed);
                     let ingested_last = rhc.ingested_last_period.swap(ingested, Ordering::Relaxed);
                     rhc.scale_up_allowed
@@ -473,7 +480,7 @@ where
             active_tx,
             active_rx,
             num_pollers_handler,
-            ingestor_task: join_handle,
+            ingestor_task,
         }
     }
 
@@ -632,13 +639,10 @@ impl
 
 /// Returns true for errors that the poller scaler wants to see
 fn poll_scaling_error_matcher(err: &tonic::Status) -> bool {
-    if matches!(
+    matches!(
         err.code(),
         Code::ResourceExhausted | Code::Cancelled | Code::DeadlineExceeded
-    ) {
-        return true;
-    }
-    false
+    )
 }
 
 pub(crate) trait TaskPollerResult {
