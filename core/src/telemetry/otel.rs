@@ -52,13 +52,22 @@ fn histo_view(
 }
 
 pub(super) fn augment_meter_provider_with_defaults(
-    mpb: MeterProviderBuilder,
+    mut mpb: MeterProviderBuilder,
     global_tags: &HashMap<String, String>,
     use_seconds: bool,
     bucket_overrides: HistogramBucketOverrides,
 ) -> opentelemetry::metrics::Result<MeterProviderBuilder> {
-    // Some histograms are actually gauges, but we have to use histograms otherwise they forget
-    // their value between collections since we don't use callbacks.
+    for (name, buckets) in bucket_overrides.overrides {
+        mpb = mpb.with_view(new_view(
+            Instrument::new().name(format!("*{name}")),
+            opentelemetry_sdk::metrics::Stream::new().aggregation(
+                Aggregation::ExplicitBucketHistogram {
+                    boundaries: buckets,
+                    record_min_max: true,
+                },
+            ),
+        )?)
+    }
     let mut mpb = mpb
         .with_view(histo_view(
             WORKFLOW_E2E_LATENCY_HISTOGRAM_NAME,
@@ -84,17 +93,6 @@ pub(super) fn augment_meter_provider_with_defaults(
             ACTIVITY_EXEC_LATENCY_HISTOGRAM_NAME,
             use_seconds,
         )?);
-    for (name, buckets) in bucket_overrides.overrides {
-        mpb = mpb.with_view(new_view(
-            Instrument::new().name(format!("*{name}")),
-            opentelemetry_sdk::metrics::Stream::new().aggregation(
-                Aggregation::ExplicitBucketHistogram {
-                    boundaries: buckets,
-                    record_min_max: true,
-                },
-            ),
-        )?)
-    }
     // Fallback default
     mpb = mpb.with_view(new_view(
         {

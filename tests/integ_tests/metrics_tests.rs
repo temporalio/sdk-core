@@ -18,7 +18,10 @@ use temporal_sdk::{
 };
 use temporal_sdk_core::{
     CoreRuntime, TokioRuntimeBuilder, init_worker,
-    telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter},
+    telemetry::{
+        WORKFLOW_TASK_EXECUTION_LATENCY_HISTOGRAM_NAME, build_otlp_metric_exporter,
+        start_prometheus_metric_exporter,
+    },
 };
 use temporal_sdk_core_api::{
     Worker,
@@ -585,6 +588,16 @@ async fn latency_metrics(
             .socket_addr(ANY_PORT.parse().unwrap())
             .use_seconds_for_durations(use_seconds_latency)
             .unit_suffix(show_units)
+            .histogram_bucket_overrides(HistogramBucketOverrides {
+                overrides: {
+                    let mut hm = HashMap::new();
+                    hm.insert(
+                        WORKFLOW_TASK_EXECUTION_LATENCY_HISTOGRAM_NAME.to_string(),
+                        vec![1337.0],
+                    );
+                    hm
+                },
+            })
             .build()
             .unwrap(),
     ));
@@ -619,6 +632,12 @@ async fn latency_metrics(
         }
         assert!(matching_line.contains("le=\"100\""));
     }
+
+    let matching_line = body
+        .lines()
+        .find(|l| l.starts_with("temporal_workflow_task_execution_latency"))
+        .unwrap();
+    assert!(matching_line.contains("le=\"1337\""));
 
     // Ensure poll metrics show up as long polls properly
     let matching_lines = body
