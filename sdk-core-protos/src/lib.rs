@@ -2071,17 +2071,7 @@ pub mod temporal {
         }
         pub mod enums {
             pub mod v1 {
-                use crate::camel_case_to_screaming_snake;
-
                 tonic::include_proto!("temporal.api.enums.v1");
-
-                impl EventType {
-                    pub fn from_json_str(val: &str) -> Option<EventType> {
-                        let with_prefix =
-                            format!("EVENT_TYPE_{}", camel_case_to_screaming_snake(val));
-                        EventType::from_str_name(&with_prefix)
-                    }
-                }
             }
         }
         pub mod failure {
@@ -2497,7 +2487,7 @@ pub mod temporal {
                                 }
                                 "eventType" => {
                                     eventref.event_type =
-                                        EventType::from_json_str(val).unwrap_or_default().into()
+                                        EventType::from_str_name(val).unwrap_or_default().into()
                                 }
                                 _ => continue,
                             }
