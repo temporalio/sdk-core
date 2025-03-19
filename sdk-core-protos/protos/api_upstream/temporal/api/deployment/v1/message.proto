@@ -33,12 +33,29 @@ option csharp_namespace = "Temporalio.Api.Deployment.V1";
 
 import "google/protobuf/timestamp.proto";
 
+import "temporal/api/enums/v1/deployment.proto";
 import "temporal/api/enums/v1/task_queue.proto";
 import "temporal/api/common/v1/message.proto";
+
+// Worker Deployment options set in SDK that need to be sent to server in every poll.
+// Experimental. Worker Deployments are experimental and might significantly change in the future.
+message WorkerDeploymentOptions {
+    // Required. Worker Deployment name.
+    string deployment_name = 1;
+    // The Build ID of the worker. Required when `worker_versioning_mode==VERSIONED`, in which case,
+    // the worker will be part of a Deployment Version identified by "<deployment_name>.<build_id>".
+    string build_id = 2;
+    // Required. Versioning Mode for this worker. Must be the same for all workers with the
+    // same `deployment_name` and `build_id` combination, across all Task Queues.
+    // When `worker_versioning_mode==VERSIONED`, the worker will be part of a Deployment Version
+    // identified by "<deployment_name>.<build_id>".
+    temporal.api.enums.v1.WorkerVersioningMode worker_versioning_mode = 3;
+}
 
 // `Deployment` identifies a deployment of Temporal workers. The combination of deployment series
 // name + build ID serves as the identifier. User can use `WorkerDeploymentOptions` in their worker
 // programs to specify these values.
+// Deprecated.
 message Deployment {
     // Different versions of the same worker service/application are related together by having a
     // shared series name.
@@ -54,6 +71,7 @@ message Deployment {
 // `DeploymentInfo` holds information about a deployment. Deployment information is tracked
 // automatically by server as soon as the first poll from that deployment reaches the server. There
 // can be multiple task queue workers in a single deployment which are listed in this message.
+// Deprecated.
 message DeploymentInfo {
     Deployment deployment = 1;
     google.protobuf.Timestamp create_time = 2;
@@ -73,6 +91,7 @@ message DeploymentInfo {
 }
 
 // Used as part of Deployment write APIs to update metadata attached to a deployment.
+// Deprecated.
 message UpdateDeploymentMetadata {
     map<string, temporal.api.common.v1.Payload> upsert_entries = 1;
     // List of keys to remove from the metadata.
@@ -81,9 +100,153 @@ message UpdateDeploymentMetadata {
 
 // DeploymentListInfo is an abbreviated set of fields from DeploymentInfo that's returned in
 // ListDeployments.
+// Deprecated.
 message DeploymentListInfo {
     deployment.v1.Deployment deployment = 1;
     google.protobuf.Timestamp create_time = 2;
     // If this deployment is the current deployment of its deployment series.
     bool is_current = 3;
+}
+
+
+// A Worker Deployment Version (Version, for short) represents all workers of the same 
+// code and config within a Deployment. Workers of the same Version are expected to 
+// behave exactly the same so when executions move between them there are no 
+// non-determinism issues.
+// Worker Deployment Versions are created in Temporal server automatically when 
+// their first poller arrives to the server.
+// Experimental. Worker Deployments are experimental and might significantly change in the future.
+message WorkerDeploymentVersionInfo {
+    // The fully-qualified string representation of the version, in the form "<deployment_name>.<build_id>".
+    string version = 1;
+    string deployment_name = 2;
+    google.protobuf.Timestamp create_time = 3;
+
+    // Last time `current_since_time`, `ramping_since_time, or `ramp_percentage` of this version changed.
+    google.protobuf.Timestamp routing_changed_time = 4;
+
+    // (-- api-linter: core::0140::prepositions=disabled
+    //     aip.dev/not-precedent: 'Since' captures the field semantics despite being a preposition. --)
+    // Nil if not current.
+    google.protobuf.Timestamp current_since_time = 5;
+
+    // (-- api-linter: core::0140::prepositions=disabled
+    //     aip.dev/not-precedent: 'Since' captures the field semantics despite being a preposition. --)
+    // Nil if not ramping. Updated when the version first starts ramping, not on each ramp change.
+    google.protobuf.Timestamp ramping_since_time = 6;
+
+    // Range: [0, 100]. Must be zero if the version is not ramping (i.e. `ramping_since_time` is nil).
+    // Can be in the range [0, 100] if the version is ramping.
+    float ramp_percentage = 7;
+
+    // All the Task Queues that have ever polled from this Deployment version.
+    repeated VersionTaskQueueInfo task_queue_infos = 8;
+    message VersionTaskQueueInfo {
+        string name = 1;
+        temporal.api.enums.v1.TaskQueueType type = 2;
+    }
+
+    // Helps user determine when it is safe to decommission the workers of this
+    // Version. Not present when version is current or ramping.
+    // Current limitations:
+    // - Not supported for Unversioned mode.
+    // - Periodically refreshed, may have delays up to few minutes (consult the
+    //   last_checked_time value).
+    // - Refreshed only when version is not current or ramping AND the status is not
+    //   "drained" yet.
+    // - Once the status is changed to "drained", it is not changed until the Version
+    //   becomes Current or Ramping again, at which time the drainage info is cleared.
+    //   This means if the Version is "drained" but new workflows are sent to it via
+    //   Pinned Versioning Override, the status does not account for those Pinned-override
+    //   executions and remains "drained".
+    VersionDrainageInfo drainage_info = 9;
+
+    // Arbitrary user-provided metadata attached to this version.
+    VersionMetadata metadata = 10;
+}
+
+// Information about workflow drainage to help the user determine when it is safe
+// to decommission a Version. Not present while version is current or ramping.
+// Experimental. Worker Deployments are experimental and might significantly change in the future.
+message VersionDrainageInfo {
+    // Set to DRAINING when the version first stops accepting new executions (is no longer current or ramping).
+    // Set to DRAINED when no more open pinned workflows exist on this version.
+    enums.v1.VersionDrainageStatus status = 1;
+    // Last time the drainage status changed.
+    google.protobuf.Timestamp last_changed_time = 2;
+    // Last time the system checked for drainage of this version.
+    google.protobuf.Timestamp last_checked_time = 3;
+}
+
+// A Worker Deployment (Deployment, for short) represents all workers serving 
+// a shared set of Task Queues. Typically, a Deployment represents one service or 
+// application.
+// A Deployment contains multiple Deployment Versions, each representing a different 
+// version of workers. (see documentation of WorkerDeploymentVersionInfo)
+// Deployment records are created in Temporal server automatically when their
+// first poller arrives to the server.
+// Experimental. Worker Deployments are experimental and might significantly change in the future.
+message WorkerDeploymentInfo {
+    // Identifies a Worker Deployment. Must be unique within the namespace.
+    string name = 1;
+
+    // Deployment Versions that are currently tracked in this Deployment. A DeploymentVersion will be
+    // cleaned up automatically if all the following conditions meet:
+    // - It does not receive new executions (is not current or ramping)
+    // - It has no active pollers (see WorkerDeploymentVersionInfo.pollers_status) 
+    // - It is drained (see WorkerDeploymentVersionInfo.drainage_status) 
+    repeated WorkerDeploymentVersionSummary version_summaries = 2;
+
+    google.protobuf.Timestamp create_time = 3;
+
+    RoutingConfig routing_config = 4;
+
+    // Identity of the last client who modified the configuration of this Deployment. Set to the
+    // `identity` value sent by APIs such as `SetWorkerDeploymentCurrentVersion` and
+    // `SetWorkerDeploymentRampingVersion`.
+    string last_modifier_identity = 5;
+
+    message WorkerDeploymentVersionSummary {
+        // The fully-qualified string representation of the version, in the form "<deployment_name>.<build_id>".
+        string version = 1;
+        google.protobuf.Timestamp create_time = 2;
+        enums.v1.VersionDrainageStatus drainage_status = 3;
+    }
+}
+
+message VersionMetadata {
+    // Arbitrary key-values.
+    map<string, temporal.api.common.v1.Payload> entries = 1;
+}
+
+message RoutingConfig {
+    // Always present. Specifies which Deployment Version should should receive new workflow
+    // executions and tasks of existing unversioned or AutoUpgrade workflows.
+    // Can be one of the following:
+    // - A Deployment Version identifier in the form "<deployment_name>.<build_id>".
+    // - Or, the "__unversioned__" special value, to represent all the unversioned workers (those
+    //   with `UNVERSIONED` (or unspecified) `WorkerVersioningMode`.)
+    // Note: Current Version is overridden by the Ramping Version for a portion of traffic when a ramp
+    // is set (see `ramping_version`.)
+    string current_version = 1;
+    // When present, it means the traffic is being shifted from the Current Version to the Ramping
+    // Version.
+    // Must always be different from Current Version. Can be one of the following:
+    // - A Deployment Version identifier in the form "<deployment_name>.<build_id>".
+    // - Or, the "__unversioned__" special value, to represent all the unversioned workers (those
+    //   with `UNVERSIONED` (or unspecified) `WorkerVersioningMode`.)
+    // Note that it is possible to ramp from one Version to another Version, or from unversioned
+    // workers to a particular Version, or from a particular Version to unversioned workers.
+    string ramping_version = 2;
+    // Percentage of tasks that are routed to the Ramping Version instead of the Current Version.
+    // Valid range: [0, 100]. A 100% value means the Ramping Version is receiving full traffic but
+    // not yet "promoted" to be the Current Version, likely due to pending validations.
+    float ramping_version_percentage = 3;
+    // Last time current version was changed.
+    google.protobuf.Timestamp current_version_changed_time = 4;
+    // Last time ramping version was changed. Not updated if only the ramp percentage changes.
+    google.protobuf.Timestamp ramping_version_changed_time = 5;
+    // Last time ramping version percentage was changed.
+    // If ramping version is changed, this is also updated, even if the percentage stays the same.
+    google.protobuf.Timestamp ramping_version_percentage_changed_time = 6;
 }
