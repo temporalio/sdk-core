@@ -1,5 +1,6 @@
 use assert_matches::assert_matches;
 use futures_util::{FutureExt, StreamExt, future::join_all, stream::FuturesUnordered};
+use prost::Message;
 use std::time::{Duration, Instant};
 use temporal_client::WorkflowClientTrait;
 use temporal_sdk_core_protos::{
@@ -8,12 +9,15 @@ use temporal_sdk_core_protos::{
         workflow_commands::{QueryResult, QuerySuccess, StartTimer},
         workflow_completion::WorkflowActivationCompletion,
     },
-    temporal::api::{failure::v1::Failure, query::v1::WorkflowQuery},
+    temporal::api::{
+        errordetails::v1::QueryFailedFailure, failure::v1::Failure, query::v1::WorkflowQuery,
+    },
 };
 use temporal_sdk_core_test_utils::{
     CoreWfStarter, WorkerTestHelpers, drain_pollers_and_shutdown, init_core_and_create_wf,
 };
 use tokio::join;
+use tonic_types::StatusExt;
 
 #[tokio::test]
 async fn simple_query_legacy() {
@@ -257,6 +261,7 @@ async fn fail_legacy_query() {
             task.run_id,
             Failure {
                 message: query_err.to_string(),
+                source: "src".to_string(),
                 ..Default::default()
             },
             None,
@@ -267,6 +272,13 @@ async fn fail_legacy_query() {
     let (q_resp, _) = join!(query_fut, query_responder);
     // Ensure query response is a failure and has the right message
     assert_eq!(q_resp.message(), query_err);
+    // Ensure proto Failure is encoded into details w/ correct info
+    dbg!(&q_resp);
+    dbg!(q_resp.check_error_details_vec());
+    // let errordeets = q_resp.get_error_details();
+    // dbg!(errordeets);
+    // assert_eq!(failure.message, query_err);
+    // assert_eq!(failure.source, "src");
 }
 
 #[tokio::test]

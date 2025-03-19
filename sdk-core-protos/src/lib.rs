@@ -803,7 +803,7 @@ pub mod coresdk {
     pub mod workflow_commands {
         tonic::include_proto!("coresdk.workflow_commands");
 
-        use crate::temporal::api::{common::v1::Payloads, enums::v1::QueryResultType};
+        use crate::temporal::api::{common::v1::Payloads, enums::v1::QueryResultType, failure};
         use std::fmt::{Display, Formatter};
 
         impl Display for WorkflowCommand {
@@ -973,7 +973,15 @@ pub mod coresdk {
 
         impl QueryResult {
             /// Helper to construct the Temporal API query result types.
-            pub fn into_components(self) -> (String, QueryResultType, Option<Payloads>, String) {
+            pub fn into_components(
+                self,
+            ) -> (
+                String,
+                QueryResultType,
+                Option<Payloads>,
+                String,
+                Option<failure::v1::Failure>,
+            ) {
                 match self {
                     QueryResult {
                         variant: Some(query_result::Variant::Succeeded(qs)),
@@ -983,11 +991,18 @@ pub mod coresdk {
                         QueryResultType::Answered,
                         qs.response.map(Into::into),
                         "".to_string(),
+                        None,
                     ),
                     QueryResult {
                         variant: Some(query_result::Variant::Failed(err)),
                         query_id,
-                    } => (query_id, QueryResultType::Failed, None, err.message),
+                    } => (
+                        query_id,
+                        QueryResultType::Failed,
+                        None,
+                        err.message.clone(),
+                        Some(err),
+                    ),
                     QueryResult {
                         variant: None,
                         query_id,
@@ -996,6 +1011,7 @@ pub mod coresdk {
                         QueryResultType::Failed,
                         None,
                         "Query response was empty".to_string(),
+                        None,
                     ),
                 }
             }
@@ -2072,6 +2088,11 @@ pub mod temporal {
         pub mod enums {
             pub mod v1 {
                 tonic::include_proto!("temporal.api.enums.v1");
+            }
+        }
+        pub mod errordetails {
+            pub mod v1 {
+                tonic::include_proto!("temporal.api.errordetails.v1");
             }
         }
         pub mod failure {

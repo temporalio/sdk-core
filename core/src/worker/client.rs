@@ -265,15 +265,15 @@ impl WorkerClient for WorkerClientBag {
                 .query_responses
                 .into_iter()
                 .map(|qr| {
-                    let (id, completed_type, query_result, error_message) = qr.into_components();
+                    let (id, completed_type, query_result, error_message, failure) =
+                        qr.into_components();
                     (
                         id,
                         WorkflowQueryResult {
                             result_type: completed_type as i32,
                             answer: query_result,
                             error_message,
-                            // TODO: https://github.com/temporalio/sdk-core/issues/867
-                            failure: None,
+                            failure,
                         },
                     )
                 })
@@ -469,7 +469,8 @@ impl WorkerClient for WorkerClientBag {
         task_token: TaskToken,
         query_result: QueryResult,
     ) -> Result<RespondQueryTaskCompletedResponse> {
-        let (_, completed_type, query_result, error_message) = query_result.into_components();
+        let (_, completed_type, query_result, error_message, failure) =
+            query_result.into_components();
         Ok(self
             .cloned_client()
             .respond_query_task_completed(RespondQueryTaskCompletedRequest {
@@ -478,8 +479,7 @@ impl WorkerClient for WorkerClientBag {
                 query_result,
                 error_message,
                 namespace: self.namespace.clone(),
-                // TODO: https://github.com/temporalio/sdk-core/issues/867
-                failure: None,
+                failure,
             })
             .await?
             .into_inner())
