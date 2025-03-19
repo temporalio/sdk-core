@@ -420,6 +420,12 @@ where
     }
 }
 
+/// The PollScaler is responsible for managing the number of pollers based on the current load.
+///
+/// It does so by receiving suggestions from the server about whether to scale up or down. It will
+/// always respect scale down decisions (until the number of pollers reaches the minimum), but may
+/// choose to ignore scale up decisions if it appears that adding more pollers is not contributing
+/// to increased task throughput. See more detailed comments in the implementation.
 struct PollScaler<F> {
     report_handle: Arc<PollScalerReportHandle>,
     active_tx: watch::Sender<usize>,
@@ -459,6 +465,12 @@ where
         });
         let rhc = report_handle.clone();
         let ingestor_task = if behavior.is_autoscaling() {
+            // Here we spawn a task to periodically check if we should permit increasing the
+            // poller count further. We do this by comparing the number of ingested items in the
+            // current period with the number of ingested items in the previous period. If we
+            // are successfully ingesting more items, then it makes sense to allow scaling up.
+            // If we aren't, then we're probably limited by how fast we can process the tasks
+            // and it's not worth increasing the poller count further.
             Some(tokio::task::spawn(async move {
                 let mut interval = tokio::time::interval(Duration::from_millis(100));
                 loop {
@@ -558,9 +570,6 @@ impl PollScalerReportHandle {
                 // We should only see (and react to) errors in autoscaling mode
                 if matches!(self.behavior, PollerBehavior::Autoscaling { .. }) {
                     debug!("Got error from server while polling: {:?}", e);
-                    // TODO (REVIEW): A concern here is we can bounce off of ratelimiter
-                    //  because server keeps telling us "scale up!" and then we hit ratelimit
-                    //  and halve again. Not necessarily a huge issue, but open to ideas to fix.
                     if e.code() == Code::ResourceExhausted {
                         // Scale down significantly for resource exhaustion
                         self.change_target(usize::saturating_div, 2);
