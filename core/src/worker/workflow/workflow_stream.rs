@@ -343,6 +343,9 @@ impl WFStream {
                 !report.is_autocomplete || matches!(act, OutstandingActivation::Autocomplete)
             })
         }) {
+            // TODO: This and related code wasn't cleaned up since the changes to make evictions
+            //  always be in their own activation. We should throw errors if any completion of
+            //  an eviction is nonempty.
             if should_evict {
                 debug!(run_id=%run_id, "Evicting run");
                 self.runs.remove(run_id);

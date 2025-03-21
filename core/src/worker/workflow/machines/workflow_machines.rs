@@ -1072,7 +1072,7 @@ impl WorkflowMachines {
                     ur,
                     self.replaying,
                 );
-                let mk = self.add_new_protocol_machine(um.machine, message.protocol_instance_id);
+                let mk = self.add_new_protocol_machine(um.machine, message.protocol_instance_id)?;
                 self.process_machine_responses(mk, vec![um.response])?;
             }
         }
@@ -1601,10 +1601,23 @@ impl WorkflowMachines {
         }
     }
 
-    fn add_new_protocol_machine(&mut self, machine: Machines, instance_id: String) -> MachineKey {
+    fn add_new_protocol_machine(
+        &mut self,
+        machine: Machines,
+        instance_id: String,
+    ) -> Result<MachineKey> {
+        if self
+            .machines_by_protocol_instance_id
+            .contains_key(&instance_id)
+        {
+            return Err(WFMachinesError::Fatal(format!(
+                "Machine with protocol instance id {} already exists! This is a bug.",
+                instance_id
+            )));
+        }
         let k = self.all_machines.insert(machine);
         self.machines_by_protocol_instance_id.insert(instance_id, k);
-        k
+        Ok(k)
     }
 
     fn augment_continue_as_new_with_current_values(
