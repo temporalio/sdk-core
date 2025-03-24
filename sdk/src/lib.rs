@@ -403,7 +403,7 @@ impl WorkflowHalf {
 
         // If the activation is to init a workflow, create a new workflow driver for it,
         // using the function associated with that workflow id
-        if let Some(mut sw) = activation.jobs.iter_mut().find_map(|j| match j.variant {
+        if let Some(sw) = activation.jobs.iter_mut().find_map(|j| match j.variant {
             Some(Variant::InitializeWorkflow(ref mut sw)) => Some(sw),
             _ => None,
         }) {
@@ -425,7 +425,7 @@ impl WorkflowHalf {
             let (wff, activations) = wf_function.start_workflow(
                 common.worker.get_config().namespace.clone(),
                 common.task_queue.clone(),
-                std::mem::take(&mut sw),
+                std::mem::take(sw),
                 completions_tx.clone(),
             );
             let jh = tokio::spawn(async move {
