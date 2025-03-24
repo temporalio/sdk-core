@@ -184,6 +184,15 @@ message InitializeWorkflow {
     temporal.api.common.v1.SearchAttributes search_attributes = 22;
     // When the workflow execution started event was first written
     google.protobuf.Timestamp start_time = 23;
+    // Contains information about the root workflow execution. It is possible for the namespace to
+    // be different than this workflow if using OSS and cross-namespace children, but this
+    // information is not retained. Users should take care to track it by other means in such
+    // situations.
+    // The root workflow execution is defined as follows:
+    //   1. A workflow without parent workflow is its own root workflow.
+    //   2. A workflow that has a parent workflow has the same root workflow as its parent workflow.
+    // See field in WorkflowExecutionStarted for more detail.
+    temporal.api.common.v1.WorkflowExecution root_workflow = 24;
 }
 
 // Notify a workflow that a timer has fired
