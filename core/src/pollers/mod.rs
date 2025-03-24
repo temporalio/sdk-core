@@ -1,7 +1,7 @@
 mod poll_buffer;
 
 pub(crate) use poll_buffer::{
-    WorkflowTaskPoller, new_activity_task_buffer, new_nexus_task_buffer, new_workflow_task_buffer,
+    ActivityTaskOptions, LongPollBuffer, WorkflowTaskOptions, WorkflowTaskPoller,
 };
 pub use temporal_client::{
     Client, ClientOptions, ClientOptionsBuilder, ClientTlsConfig, RetryClient, RetryConfig,

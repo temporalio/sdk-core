@@ -5,6 +5,7 @@ use std::{
 };
 use temporal_client::WorkflowOptions;
 use temporal_sdk::{WfContext, WorkflowResult};
+use temporal_sdk_core_api::worker::PollerBehavior;
 use temporal_sdk_core_test_utils::CoreWfStarter;
 use tokio::sync::Barrier;
 
@@ -61,8 +62,8 @@ async fn cache_miss_ok() {
         .worker_config
         .no_remote_activities(true)
         .max_outstanding_workflow_tasks(2_usize)
-        .max_cached_workflows(0_usize);
-    starter.worker_config.max_concurrent_wft_polls(1_usize);
+        .max_cached_workflows(0_usize)
+        .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(1_usize));
     let mut worker = starter.worker().await;
 
     let barr: &'static Barrier = Box::leak(Box::new(Barrier::new(2)));

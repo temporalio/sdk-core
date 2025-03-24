@@ -29,6 +29,10 @@ struct Cli {
     #[arg(short, long, allow_hyphen_values(true))]
     cargo_test_args: Vec<String>,
 
+    #[arg(long)]
+    /// If set, only run the build, not any tests
+    just_build: bool,
+
     /// The rest of the arguments will be passed through to the test harness
     harness_args: Vec<String>,
 }
@@ -49,6 +53,7 @@ async fn main() -> Result<(), anyhow::Error> {
         test_name,
         server_kind,
         cargo_test_args,
+        just_build,
         harness_args,
     } = Cli::parse();
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
@@ -70,6 +75,9 @@ async fn main() -> Result<(), anyhow::Error> {
         .await?;
     if !status.success() {
         bail!("Building integration tests failed!");
+    }
+    if just_build {
+        return Ok(());
     }
 
     let (server, envs) = match server_kind {
