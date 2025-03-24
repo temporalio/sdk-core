@@ -388,7 +388,7 @@ impl WorkflowHalf {
         &self,
         common: &CommonWorker,
         shutdown_token: CancellationToken,
-        activation: WorkflowActivation,
+        mut activation: WorkflowActivation,
         completions_tx: &UnboundedSender<WorkflowActivationCompletion>,
     ) -> Result<
         Option<
@@ -403,8 +403,8 @@ impl WorkflowHalf {
 
         // If the activation is to init a workflow, create a new workflow driver for it,
         // using the function associated with that workflow id
-        if let Some(sw) = activation.jobs.iter().find_map(|j| match j.variant {
-            Some(Variant::InitializeWorkflow(ref sw)) => Some(sw),
+        if let Some(mut sw) = activation.jobs.iter_mut().find_map(|j| match j.variant {
+            Some(Variant::InitializeWorkflow(ref mut sw)) => Some(sw),
             _ => None,
         }) {
             let workflow_type = &sw.workflow_type;
@@ -425,9 +425,7 @@ impl WorkflowHalf {
             let (wff, activations) = wf_function.start_workflow(
                 common.worker.get_config().namespace.clone(),
                 common.task_queue.clone(),
-                workflow_type,
-                // NOTE: Don't clone args if this gets ported to be a non-test rust worker
-                sw.arguments.clone(),
+                std::mem::take(&mut sw),
                 completions_tx.clone(),
             );
             let jh = tokio::spawn(async move {
@@ -459,11 +457,11 @@ impl WorkflowHalf {
                 .send(activation)
                 .expect("Workflow should exist if we're sending it an activation");
         } else {
-            // When we failed to start a workflow, we never inserted it into the cache.
-            // But core sends us a `RemoveFromCache` job when we mark the StartWorkflow workflow activation
-            // as a failure, which we need to complete.
-            // Other SDKs add the workflow to the cache even when the workflow type is unknown/not found.
-            // To circumvent this, we simply mark any RemoveFromCache job for workflows that are not in the cache as complete.
+            // When we failed to start a workflow, we never inserted it into the cache. But core
+            // sends us a `RemoveFromCache` job when we mark the StartWorkflow workflow activation
+            // as a failure, which we need to complete. Other SDKs add the workflow to the cache
+            // even when the workflow type is unknown/not found. To circumvent this, we simply mark
+            // any RemoveFromCache job for workflows that are not in the cache as complete.
             if activation.jobs.len() == 1
                 && matches!(
                     activation.jobs.first().map(|j| &j.variant),

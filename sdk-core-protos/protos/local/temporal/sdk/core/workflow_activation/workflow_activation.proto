@@ -188,9 +188,11 @@ message InitializeWorkflow {
     // be different than this workflow if using OSS and cross-namespace children, but this
     // information is not retained. Users should take care to track it by other means in such
     // situations.
+    //
     // The root workflow execution is defined as follows:
     //   1. A workflow without parent workflow is its own root workflow.
     //   2. A workflow that has a parent workflow has the same root workflow as its parent workflow.
+    //
     // See field in WorkflowExecutionStarted for more detail.
     temporal.api.common.v1.WorkflowExecution root_workflow = 24;
 }
