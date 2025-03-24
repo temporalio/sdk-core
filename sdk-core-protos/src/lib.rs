@@ -725,6 +725,7 @@ pub mod coresdk {
                 memo: attrs.memo,
                 search_attributes: attrs.search_attributes,
                 start_time: Some(start_time),
+                root_workflow: attrs.root_workflow_execution,
             }
         }
     }

@@ -33,7 +33,10 @@ use temporal_sdk_core_protos::{
         child_workflow::ChildWorkflowResult,
         common::NamespacedWorkflowExecution,
         nexus::NexusOperationResult,
-        workflow_activation::resolve_child_workflow_execution_start::Status as ChildWorkflowStartStatus,
+        workflow_activation::{
+            InitializeWorkflow,
+            resolve_child_workflow_execution_start::Status as ChildWorkflowStartStatus,
+        },
         workflow_commands::{
             CancelChildWorkflowExecution, ModifyWorkflowProperties,
             RequestCancelExternalWorkflowExecution, SetPatchMarker,
@@ -54,7 +57,7 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 pub struct WfContext {
     namespace: String,
     task_queue: String,
-    args: Arc<Vec<Payload>>,
+    inital_information: Arc<InitializeWorkflow>,
 
     chan: Sender<RustWfCmd>,
     am_cancelled: watch::Receiver<Option<String>>,
@@ -71,7 +74,7 @@ impl WfContext {
     pub(super) fn new(
         namespace: String,
         task_queue: String,
-        args: Vec<Payload>,
+        init_workflow_job: InitializeWorkflow,
         am_cancelled: watch::Receiver<Option<String>>,
     ) -> (Self, Receiver<RustWfCmd>) {
         // The receiving side is non-async
@@ -80,10 +83,17 @@ impl WfContext {
             Self {
                 namespace,
                 task_queue,
-                args: Arc::new(args),
+                shared: Arc::new(RwLock::new(WfContextSharedData {
+                    random_seed: init_workflow_job.randomness_seed,
+                    search_attributes: init_workflow_job
+                        .search_attributes
+                        .clone()
+                        .unwrap_or_default(),
+                    ..Default::default()
+                })),
+                inital_information: Arc::new(init_workflow_job),
                 chan,
                 am_cancelled,
-                shared: Arc::new(RwLock::new(Default::default())),
                 seq_nums: Arc::new(RwLock::new(WfCtxProtectedDat {
                     next_timer_sequence_number: 1,
                     next_activity_sequence_number: 1,
@@ -109,7 +119,7 @@ impl WfContext {
 
     /// Get the arguments provided to the workflow upon execution start
     pub fn get_args(&self) -> &[Payload] {
-        self.args.as_slice()
+        self.inital_information.arguments.as_slice()
     }
 
     /// Return the current time according to the workflow (which is not wall-clock time).
@@ -136,6 +146,12 @@ impl WfContext {
     /// Return the workflow's randomness seed
     pub fn random_seed(&self) -> u64 {
         self.shared.read().random_seed
+    }
+
+    /// Return various information that the workflow was initialized with. Will eventually become
+    /// a proper non-proto workflow info struct.
+    pub fn workflow_initial_info(&self) -> &InitializeWorkflow {
+        &self.inital_information
     }
 
     /// A future that resolves if/when the workflow is cancelled, with the user provided cause

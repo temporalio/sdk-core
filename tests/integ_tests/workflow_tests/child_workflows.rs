@@ -16,7 +16,19 @@ use tokio::sync::Barrier;
 static PARENT_WF_TYPE: &str = "parent_wf";
 static CHILD_WF_TYPE: &str = "child_wf";
 
-async fn child_wf(_ctx: WfContext) -> WorkflowResult<()> {
+async fn child_wf(ctx: WfContext) -> WorkflowResult<()> {
+    assert_eq!(
+        ctx.workflow_initial_info()
+            .parent_workflow_info
+            .as_ref()
+            .unwrap()
+            .workflow_id,
+        ctx.workflow_initial_info()
+            .root_workflow
+            .as_ref()
+            .unwrap()
+            .workflow_id
+    );
     Ok(().into())
 }
 

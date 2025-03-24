@@ -17,9 +17,9 @@ use std::{
 use temporal_sdk_core_protos::{
     coresdk::{
         workflow_activation::{
-            FireTimer, NotifyHasPatch, ResolveActivity, ResolveChildWorkflowExecution,
-            ResolveChildWorkflowExecutionStart, WorkflowActivation, WorkflowActivationJob,
-            workflow_activation_job::Variant,
+            FireTimer, InitializeWorkflow, NotifyHasPatch, ResolveActivity,
+            ResolveChildWorkflowExecution, ResolveChildWorkflowExecutionStart, WorkflowActivation,
+            WorkflowActivationJob, workflow_activation_job::Variant,
         },
         workflow_commands::{
             CancelChildWorkflowExecution, CancelSignalWorkflow, CancelTimer,
@@ -44,26 +44,25 @@ use tracing::Instrument;
 impl WorkflowFunction {
     /// Start a workflow function, returning a future that will resolve when the workflow does,
     /// and a channel that can be used to send it activations.
-    #[doc(hidden)]
-    pub fn start_workflow(
+    pub(crate) fn start_workflow(
         &self,
         namespace: String,
         task_queue: String,
-        workflow_type: &str,
-        args: Vec<Payload>,
+        init_workflow_job: InitializeWorkflow,
         outgoing_completions: UnboundedSender<WorkflowActivationCompletion>,
     ) -> (
         impl Future<Output = WorkflowResult<Payload>> + use<>,
         UnboundedSender<WorkflowActivation>,
     ) {
         let (cancel_tx, cancel_rx) = watch::channel(None);
-        let (wf_context, cmd_receiver) = WfContext::new(namespace, task_queue, args, cancel_rx);
-        let (tx, incoming_activations) = unbounded_channel();
         let span = info_span!(
             "RunWorkflow",
-            "otel.name" = format!("RunWorkflow:{}", workflow_type),
+            "otel.name" = format!("RunWorkflow:{}", &init_workflow_job.workflow_type),
             "otel.kind" = "server"
         );
+        let (wf_context, cmd_receiver) =
+            WfContext::new(namespace, task_queue, init_workflow_job, cancel_rx);
+        let (tx, incoming_activations) = unbounded_channel();
         let inner_fut = (self.wf_func)(wf_context.clone()).instrument(span);
         (
             WorkflowFuture {
@@ -346,7 +345,7 @@ impl Future for WorkflowFuture {
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         'activations: loop {
             // WF must always receive an activation first before responding with commands
-            let mut activation = match self.incoming_activations.poll_recv(cx) {
+            let activation = match self.incoming_activations.poll_recv(cx) {
                 Poll::Ready(a) => match a {
                     Some(act) => act,
                     None => {
@@ -374,18 +373,6 @@ impl Future for WorkflowFuture {
 
             let mut die_of_eviction_when_done = false;
             let mut activation_cmds = vec![];
-            // Assign initial state from start workflow job
-            if let Some(start_info) = activation.jobs.iter_mut().find_map(|j| {
-                if let Some(Variant::InitializeWorkflow(s)) = j.variant.as_mut() {
-                    Some(s)
-                } else {
-                    None
-                }
-            }) {
-                let mut wlock = self.wf_ctx.shared.write();
-                wlock.random_seed = start_info.randomness_seed;
-                wlock.search_attributes = start_info.search_attributes.take().unwrap_or_default();
-            };
             // Lame hack to avoid hitting "unregistered" update handlers in a situation where
             // the history has no commands until an update is accepted. Will go away w/ SDK redesign
             if activation
