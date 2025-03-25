@@ -4,7 +4,7 @@ use hyper_util::{
     rt::{TokioExecutor, TokioIo},
     server::conn::auto,
 };
-use opentelemetry_prometheus::PrometheusExporter;
+use opentelemetry_prometheus::{PrometheusExporter, ResourceSelector};
 use prometheus::{Encoder, Registry, TextEncoder};
 use std::net::{SocketAddr, TcpListener};
 use temporal_sdk_core_api::telemetry::PrometheusExporterOptions;
@@ -22,7 +22,9 @@ impl PromServer {
     ) -> Result<(Self, PrometheusExporter), anyhow::Error> {
         let registry = Registry::new();
         let exporter = opentelemetry_prometheus::exporter()
-            .without_scope_info()
+            // .without_scope_info()
+            // .without_target_info()
+            .with_resource_selector(ResourceSelector::All)
             .with_registry(registry.clone());
         let exporter = if !opts.counters_total_suffix {
             exporter.without_counter_suffixes()

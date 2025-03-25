@@ -114,6 +114,10 @@ async fn prometheus_metrics_exported(
     let mut opts_builder = PrometheusExporterOptionsBuilder::default();
     opts_builder
         .socket_addr(ANY_PORT.parse().unwrap())
+        .global_tags(HashMap::from([(
+            "custom_global".to_string(),
+            "value".to_string(),
+        )]))
         .use_seconds_for_durations(use_seconds_latency);
     if custom_buckets {
         opts_builder.histogram_bucket_overrides(HistogramBucketOverrides {
@@ -139,6 +143,7 @@ async fn prometheus_metrics_exported(
         .unwrap();
 
     let body = get_text(format!("http://{addr}/metrics")).await;
+    println!("{}", &body);
     assert!(body.contains(
         "temporal_request_latency_count{operation=\"ListNamespaces\",service_name=\"temporal-core-sdk\"} 1"
     ));
@@ -173,7 +178,6 @@ async fn prometheus_metrics_exported(
         },
     );
     let body = get_text(format!("http://{addr}/metrics")).await;
-    println!("{}", &body);
     assert!(body.contains("\nmygauge 42"));
 }
 
@@ -408,6 +412,7 @@ async fn one_slot_worker_reports_available_slot() {
         act_task_barr.wait().await;
         act_task_barr.wait().await;
         let body = get_text(format!("http://{addr}/metrics")).await;
+        dbg!(&body);
         assert!(body.contains(&format!(
             "temporal_worker_task_slots_available{{namespace=\"{NAMESPACE}\",\
              service_name=\"temporal-core-sdk\",task_queue=\"one_slot_worker_tq\",\
