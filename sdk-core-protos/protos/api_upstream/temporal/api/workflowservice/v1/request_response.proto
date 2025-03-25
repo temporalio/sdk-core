@@ -206,6 +206,13 @@ message StartWorkflowExecutionRequest {
     // If set, takes precedence over the Versioning Behavior sent by the SDK on Workflow Task completion.
     // To unset the override after the workflow is running, use UpdateWorkflowExecutionOptions.
     temporal.api.workflow.v1.VersioningOverride versioning_override = 25;
+    // Defines actions to be done to the existing running workflow when the conflict policy
+    // WORKFLOW_ID_CONFLICT_POLICY_USE_EXISTING is used. If not set (ie., nil value) or set to a
+    // empty object (ie., all options with default value), it won't do anything to the existing
+    // running workflow. If set, it will add a history event to the running workflow.
+    temporal.api.workflow.v1.OnConflictOptions on_conflict_options = 26;
+    // Priority metadata
+    temporal.api.common.v1.Priority priority = 27;
 }
 
 message StartWorkflowExecutionResponse {
@@ -269,7 +276,11 @@ message PollWorkflowTaskQueueRequest {
     string binary_checksum = 4;
     // Information about this worker's build identifier and if it is choosing to use the versioning
     // feature. See the `WorkerVersionCapabilities` docstring for more.
-    temporal.api.common.v1.WorkerVersionCapabilities worker_version_capabilities = 5;
+    // Deprecated. Replaced by deployment_options.
+    temporal.api.common.v1.WorkerVersionCapabilities worker_version_capabilities = 5 [deprecated = true];
+    // Worker deployment options that user has set in the worker.
+    // Experimental. Worker Deployments are experimental and might significantly change in the future.
+    temporal.api.deployment.v1.WorkerDeploymentOptions deployment_options = 6;
 }
 
 message PollWorkflowTaskQueueResponse {
@@ -322,6 +333,8 @@ message PollWorkflowTaskQueueResponse {
     map<string, temporal.api.query.v1.WorkflowQuery> queries = 14;
     // Protocol messages piggybacking on a WFT as a transport
     repeated temporal.api.protocol.v1.Message messages = 15;
+    // Server-advised information the SDK may use to adjust its poller count.
+    temporal.api.taskqueue.v1.PollerScalingDecision poller_scaling_decision = 16;
 }
 
 message RespondWorkflowTaskCompletedRequest {
@@ -364,10 +377,13 @@ message RespondWorkflowTaskCompletedRequest {
     Capabilities capabilities = 14;
     // Deployment info of the worker that completed this task. Must be present if user has set
     // `WorkerDeploymentOptions` regardless of versioning being enabled or not.
-    temporal.api.deployment.v1.Deployment deployment = 15;
+    // Deprecated. Replaced with `deployment_options`.
+    temporal.api.deployment.v1.Deployment deployment = 15 [deprecated = true];
     // Versioning behavior of this workflow execution as set on the worker that completed this task.
     // UNSPECIFIED means versioning is not enabled in the worker.
     temporal.api.enums.v1.VersioningBehavior versioning_behavior = 16;
+    // Worker deployment options that user has set in the worker.
+    temporal.api.deployment.v1.WorkerDeploymentOptions deployment_options = 17;
 
     // SDK capability details.
     message Capabilities {
@@ -415,7 +431,10 @@ message RespondWorkflowTaskFailedRequest {
     temporal.api.common.v1.WorkerVersionStamp worker_version = 8 [deprecated = true];
     // Deployment info of the worker that completed this task. Must be present if user has set
     // `WorkerDeploymentOptions` regardless of versioning being enabled or not.
+    // Deprecated. Replaced with `deployment_options`.
     temporal.api.deployment.v1.Deployment deployment = 9;
+    // Worker deployment options that user has set in the worker.
+    temporal.api.deployment.v1.WorkerDeploymentOptions deployment_options = 10;
 }
 
 message RespondWorkflowTaskFailedResponse {
@@ -429,7 +448,10 @@ message PollActivityTaskQueueRequest {
     temporal.api.taskqueue.v1.TaskQueueMetadata task_queue_metadata = 4;
     // Information about this worker's build identifier and if it is choosing to use the versioning
     // feature. See the `WorkerVersionCapabilities` docstring for more.
-    temporal.api.common.v1.WorkerVersionCapabilities worker_version_capabilities = 5;
+    // Deprecated. Replaced by deployment_options.
+    temporal.api.common.v1.WorkerVersionCapabilities worker_version_capabilities = 5 [deprecated = true];
+    // Worker deployment options that user has set in the worker.
+    temporal.api.deployment.v1.WorkerDeploymentOptions deployment_options = 6;
 }
 
 message PollActivityTaskQueueResponse {
@@ -478,6 +500,10 @@ message PollActivityTaskQueueResponse {
     // (or not) during activity scheduling. The service can override the provided one if some
     // values are not specified or exceed configured system limits.
     temporal.api.common.v1.RetryPolicy retry_policy = 17;
+    // Server-advised information the SDK may use to adjust its poller count.
+    temporal.api.taskqueue.v1.PollerScalingDecision poller_scaling_decision = 18;
+    // Priority metadata
+    temporal.api.common.v1.Priority priority = 19;
 }
 
 message RecordActivityTaskHeartbeatRequest {
@@ -538,7 +564,10 @@ message RespondActivityTaskCompletedRequest {
     temporal.api.common.v1.WorkerVersionStamp worker_version = 5 [deprecated = true];
     // Deployment info of the worker that completed this task. Must be present if user has set
     // `WorkerDeploymentOptions` regardless of versioning being enabled or not.
-    temporal.api.deployment.v1.Deployment deployment = 6;
+    // Deprecated. Replaced with `deployment_options`.
+    temporal.api.deployment.v1.Deployment deployment = 6 [deprecated = true];
+    // Worker deployment options that user has set in the worker.
+    temporal.api.deployment.v1.WorkerDeploymentOptions deployment_options = 7;
 }
 
 message RespondActivityTaskCompletedResponse {
@@ -579,7 +608,10 @@ message RespondActivityTaskFailedRequest {
     temporal.api.common.v1.WorkerVersionStamp worker_version = 6 [deprecated = true];
     // Deployment info of the worker that completed this task. Must be present if user has set
     // `WorkerDeploymentOptions` regardless of versioning being enabled or not.
-    temporal.api.deployment.v1.Deployment deployment = 7;
+    // Deprecated. Replaced with `deployment_options`.
+    temporal.api.deployment.v1.Deployment deployment = 7 [deprecated = true];
+    // Worker deployment options that user has set in the worker.
+    temporal.api.deployment.v1.WorkerDeploymentOptions deployment_options = 8;
 }
 
 message RespondActivityTaskFailedResponse {
@@ -626,7 +658,10 @@ message RespondActivityTaskCanceledRequest {
     temporal.api.common.v1.WorkerVersionStamp worker_version = 5 [deprecated = true];
     // Deployment info of the worker that completed this task. Must be present if user has set
     // `WorkerDeploymentOptions` regardless of versioning being enabled or not.
-    temporal.api.deployment.v1.Deployment deployment = 6;
+    // Deprecated. Replaced with `deployment_options`.
+    temporal.api.deployment.v1.Deployment deployment = 6 [deprecated = true];
+    // Worker deployment options that user has set in the worker.
+    temporal.api.deployment.v1.WorkerDeploymentOptions deployment_options = 7;
 }
 
 message RespondActivityTaskCanceledResponse {
@@ -754,6 +789,8 @@ message SignalWithStartWorkflowExecutionRequest {
     // If set, takes precedence over the Versioning Behavior sent by the SDK on Workflow Task completion.
     // To unset the override after the workflow is running, use UpdateWorkflowExecutionOptions.
     temporal.api.workflow.v1.VersioningOverride versioning_override = 25;
+    // Priority metadata
+    temporal.api.common.v1.Priority priority = 26;
 }
 
 message SignalWithStartWorkflowExecutionResponse {
@@ -872,6 +909,7 @@ message ListArchivedWorkflowExecutionsResponse {
     bytes next_page_token = 2;
 }
 
+// Deprecated: Use with `ListWorkflowExecutions`.
 message ScanWorkflowExecutionsRequest {
     string namespace = 1;
     int32 page_size = 2;
@@ -879,6 +917,7 @@ message ScanWorkflowExecutionsRequest {
     string query = 4;
 }
 
+// Deprecated: Use with `ListWorkflowExecutions`.
 message ScanWorkflowExecutionsResponse {
     repeated temporal.api.workflow.v1.WorkflowExecutionInfo executions = 1;
     bytes next_page_token = 2;
@@ -1030,6 +1069,17 @@ message DescribeTaskQueueResponse {
     // This map contains Task Queue information for each Build ID. Empty string as key value means unversioned.
     // Only set in `ENHANCED` mode.
     map<string, temporal.api.taskqueue.v1.TaskQueueVersionInfo> versions_info = 3;
+
+    // Specifies which Worker Deployment Version(s) Server routes this Task Queue's tasks to.
+    // When not present, it means the tasks are routed to Unversioned workers (workers with
+    // UNVERSIONED or unspecified WorkerVersioningMode.)
+    // Task Queue Versioning info is updated indirectly by calling SetWorkerDeploymentCurrentVersion
+    // and SetWorkerDeploymentRampingVersion on Worker Deployments.
+    // Note: This information is not relevant to Pinned workflow executions and their activities as
+    // they are always routed to their Pinned Deployment Version. However, new workflow executions
+    // are typically not Pinned until they complete their first task (unless they are started with
+    // a Pinned VersioningOverride or are Child Workflows of a Pinned parent).
+    temporal.api.taskqueue.v1.TaskQueueVersioningInfo versioning_info = 4;
 }
 
 message GetClusterInfoRequest {
@@ -1252,6 +1302,7 @@ message ListSchedulesResponse {
     bytes next_page_token = 2;
 }
 
+// [cleanup-wv-pre-release]
 message UpdateWorkerBuildIdCompatibilityRequest {
     message AddNewCompatibleVersion {
         // A new id to be added to an existing compatible set.
@@ -1307,11 +1358,13 @@ message UpdateWorkerBuildIdCompatibilityRequest {
         MergeSets merge_sets = 7;
     }
 }
+// [cleanup-wv-pre-release]
 message UpdateWorkerBuildIdCompatibilityResponse {
     reserved 1;
     reserved "version_set_id";
 }
 
+// [cleanup-wv-pre-release]
 message GetWorkerBuildIdCompatibilityRequest {
     string namespace = 1;
     // Must be set, the task queue to interrogate about worker id compatibility.
@@ -1320,6 +1373,7 @@ message GetWorkerBuildIdCompatibilityRequest {
     // default major version set. 0 returns all sets.
     int32 max_sets = 3;
 }
+// [cleanup-wv-pre-release]
 message GetWorkerBuildIdCompatibilityResponse {
     // Major version sets, in order from oldest to newest. The last element of the list will always
     // be the current default major version. IE: New workflows will target the most recent version
@@ -1333,6 +1387,7 @@ message GetWorkerBuildIdCompatibilityResponse {
 //     aip.dev/not-precedent: UpdateNamespace RPC doesn't follow Google API format. --)
 // (-- api-linter: core::0134::request-resource-required=disabled
 //     aip.dev/not-precedent: GetWorkerBuildIdCompatibilityRequest RPC doesn't follow Google API format. --)
+// [cleanup-wv-pre-release]
 message UpdateWorkerVersioningRulesRequest {
     // Inserts the rule to the list of assignment rules for this Task Queue.
     // The rules are evaluated in order, starting from index 0. The first
@@ -1424,6 +1479,7 @@ message UpdateWorkerVersioningRulesRequest {
     }
 }
 
+// [cleanup-wv-pre-release]
 message UpdateWorkerVersioningRulesResponse {
     repeated temporal.api.taskqueue.v1.TimestampedBuildIdAssignmentRule assignment_rules = 1;
     repeated temporal.api.taskqueue.v1.TimestampedCompatibleBuildIdRedirectRule compatible_redirect_rules = 2;
@@ -1434,11 +1490,13 @@ message UpdateWorkerVersioningRulesResponse {
     bytes conflict_token = 3;
 }
 
+// [cleanup-wv-pre-release]
 message GetWorkerVersioningRulesRequest {
     string namespace = 1;
     string task_queue = 2;
 }
 
+// [cleanup-wv-pre-release]
 message GetWorkerVersioningRulesResponse {
     repeated temporal.api.taskqueue.v1.TimestampedBuildIdAssignmentRule assignment_rules = 1;
     repeated temporal.api.taskqueue.v1.TimestampedCompatibleBuildIdRedirectRule compatible_redirect_rules = 2;
@@ -1449,6 +1507,7 @@ message GetWorkerVersioningRulesResponse {
     bytes conflict_token = 3;
 }
 
+// [cleanup-wv-pre-release]
 // Deprecated. Use `DescribeTaskQueue`.
 message GetWorkerTaskReachabilityRequest {
     string namespace = 1;
@@ -1474,6 +1533,7 @@ message GetWorkerTaskReachabilityRequest {
     temporal.api.enums.v1.TaskReachability reachability = 4;
 }
 
+// [cleanup-wv-pre-release]
 // Deprecated. Use `DescribeTaskQueue`.
 message GetWorkerTaskReachabilityResponse {
     // Task reachability, broken down by build id and then task queue.
@@ -1564,6 +1624,7 @@ message StartBatchOperationRequest {
         temporal.api.batch.v1.BatchOperationDeletion deletion_operation = 13;
         temporal.api.batch.v1.BatchOperationReset reset_operation = 14;
         temporal.api.batch.v1.BatchOperationUpdateWorkflowExecutionOptions update_workflow_options_operation = 15;
+        temporal.api.batch.v1.BatchOperationUnpauseActivities unpause_activities_operation = 16;
     }
 }
 
@@ -1671,7 +1732,10 @@ message PollNexusTaskQueueRequest {
     temporal.api.taskqueue.v1.TaskQueue task_queue = 3;
     // Information about this worker's build identifier and if it is choosing to use the versioning
     // feature. See the `WorkerVersionCapabilities` docstring for more.
-    temporal.api.common.v1.WorkerVersionCapabilities worker_version_capabilities = 4;
+    // Deprecated. Replaced by deployment_options.
+    temporal.api.common.v1.WorkerVersionCapabilities worker_version_capabilities = 4 [deprecated = true];
+    // Worker deployment options that user has set in the worker.
+    temporal.api.deployment.v1.WorkerDeploymentOptions deployment_options = 6;
 }
 
 message PollNexusTaskQueueResponse {
@@ -1679,6 +1743,8 @@ message PollNexusTaskQueueResponse {
     bytes task_token = 1;
     // Embedded request as translated from the incoming frontend request.
     temporal.api.nexus.v1.Request request = 2;
+    // Server-advised information the SDK may use to adjust its poller count.
+    temporal.api.taskqueue.v1.PollerScalingDecision poller_scaling_decision = 3;
 }
 
 message RespondNexusTaskCompletedRequest {
@@ -1747,123 +1813,119 @@ message ExecuteMultiOperationResponse {
     }
 }
 
-message UpdateActivityOptionsByIdRequest {
+message UpdateActivityOptionsRequest {
     // Namespace of the workflow which scheduled this activity
     string namespace = 1;
-    // ID of the workflow which scheduled this activity
-    string workflow_id = 2;
-    // Run ID of the workflow which scheduled this activity
-    // if empty - latest workflow is used
-    string run_id = 3;
-    // ID of the activity we're updating
-    string activity_id = 4;
+    // Execution info of the workflow which scheduled this activity
+    temporal.api.common.v1.WorkflowExecution execution = 2;
 
     // The identity of the client who initiated this request
-    string identity = 5;
+    string identity = 3;
 
     // Activity options. Partial updates are accepted and controlled by update_mask
-    temporal.api.activity.v1.ActivityOptions activity_options = 6;
+    temporal.api.activity.v1.ActivityOptions activity_options = 4;
 
     // Controls which fields from `activity_options` will be applied
-    google.protobuf.FieldMask update_mask = 7;
+    google.protobuf.FieldMask update_mask = 5;
 
-    // Used to de-dupe requests
-    string request_id = 8;
+    // either activity id or activity type must be provided
+    oneof activity {
+        // Only activity with this ID will be updated.
+        string id = 6;
+        // Update all running activities of this type.
+        string type = 7;
+    }
 }
 
-message UpdateActivityOptionsByIdResponse {
+message UpdateActivityOptionsResponse {
     // Activity options after an update
     temporal.api.activity.v1.ActivityOptions activity_options = 1;
 }
 
-message PauseActivityByIdRequest {
+message PauseActivityRequest {
     // Namespace of the workflow which scheduled this activity.
     string namespace = 1;
-    // ID of the workflow which scheduled this activity.
-    string workflow_id = 2;
-    // Run ID of the workflow which scheduled this activity.
-    // If empty - latest workflow is used.
-    string run_id = 3;
-    // ID of the activity we're updating.
-    string activity_id = 4;
+    // Execution info of the workflow which scheduled this activity
+    temporal.api.common.v1.WorkflowExecution execution = 2;
 
     // The identity of the client who initiated this request.
-    string identity = 5;
+    string identity = 3;
 
-    // Used to de-dupe requests.
-    string request_id = 6;
-}
-
-message PauseActivityByIdResponse {
-}
-
-message UnpauseActivityByIdRequest {
-    message ResumeOperation {
-        // Indicates that if the activity is waiting to retry, it will  be scheduled immediately.
-        bool no_wait = 1;
+    // either activity id or activity type must be provided
+    oneof activity {
+        // Only the activity with this ID will be paused.
+        string id = 4;
+        // Pause all running activities of this type.
+        string type = 5;
     }
 
-    message ResetOperation {
-        // Indicates that the activity should be scheduled immediately.
-        // Note that this may run simultaneously with any existing executions of the activity.
-        bool no_wait = 1;
-        // If set, the Heartbeat Details will be cleared out to make the Activity start over from the beginning
-        bool reset_heartbeat = 2;
-    }
+}
 
+message PauseActivityResponse {
+}
+
+message UnpauseActivityRequest {
     // Namespace of the workflow which scheduled this activity.
     string namespace = 1;
-    // ID of the workflow which scheduled this activity.
-    string workflow_id = 2;
-    // Run ID of the workflow which scheduled this activity.
-    // If empty - latest workflow is used.
-    string run_id = 3;
-    // ID of the activity we're updating.
-    string activity_id = 4;
+    // Execution info of the workflow which scheduled this activity
+    temporal.api.common.v1.WorkflowExecution execution = 2;
 
     // The identity of the client who initiated this request.
-    string identity = 5;
+    string identity = 3;
 
-    // Used to de-dupe requests.
-    string request_id = 6;
-
-    // There are two options to resume the activity - with 'resume' or with 'reset'.
-    oneof operation{
-        ResumeOperation resume = 7;
-        ResetOperation reset = 8;
+    // either activity id or activity type must be provided
+    oneof activity {
+        // Only the activity with this ID will be unpaused.
+        string id = 4;
+        // Unpause all running activities with of this type.
+        string type = 5;
+        // Unpause all running activities.
+        bool unpause_all = 6;
     }
+
+    // Providing this flag will also reset the number of attempts.
+    bool reset_attempts = 7;
+
+    // Providing this flag will also reset the heartbeat details.
+    bool reset_heartbeat = 8;
+
+    // If set, the activity will start at a random time within the specified jitter duration.
+    google.protobuf.Duration jitter = 9;
 }
 
-message UnpauseActivityByIdResponse {
+message UnpauseActivityResponse {
 }
 
-message ResetActivityByIdRequest {
+message ResetActivityRequest {
     // Namespace of the workflow which scheduled this activity.
     string namespace = 1;
-    // ID of the workflow which scheduled this activity.
-    string workflow_id = 2;
-    // Run ID of the workflow which scheduled this activity.
-    // If empty - latest workflow is used.
-    string run_id = 3;
-    // ID of the activity we're updating.
-    string activity_id = 4;
+    // Execution info of the workflow which scheduled this activity
+    temporal.api.common.v1.WorkflowExecution execution = 2;
 
     // The identity of the client who initiated this request.
-    string identity = 5;
+    string identity = 3;
 
-    // Used to de-dupe requests.
-    string request_id = 6;
-
-    // Indicates that activity should be scheduled immediately.
-    // If this flag doesn't set, and activity currently running - temporal will wait until activity is completed.
-    bool no_wait = 7;
+    // either activity id or activity type must be provided
+    oneof activity {
+        // Only activity with this ID will be reset.
+        string id = 4;
+        // Reset all running activities with of this type.
+        string type = 5;
+    }
 
     // Indicates that activity should reset heartbeat details.
     // This flag will be applied only to the new instance of the activity.
-    bool reset_heartbeat = 8;
+    bool reset_heartbeat = 6;
+
+    // if activity is paused, it will remain paused after reset
+    bool keep_paused = 7;
+
+    // If set, and activity is in backoff, the activity will start at a random time within the specified jitter duration.
+    // (unless it is paused and keep_paused is set)
+    google.protobuf.Duration jitter = 8;
 }
 
-message ResetActivityByIdResponse {
+message ResetActivityResponse {
 }
 
 message UpdateWorkflowExecutionOptionsRequest {
@@ -1887,15 +1949,40 @@ message UpdateWorkflowExecutionOptionsResponse {
     temporal.api.workflow.v1.WorkflowExecutionOptions workflow_execution_options = 1;
 }
 
+// [cleanup-wv-pre-release] Pre-release deployment APIs, clean up later
 message DescribeDeploymentRequest {
     string namespace = 1;
     deployment.v1.Deployment deployment = 2;
 }
-
+// [cleanup-wv-pre-release] Pre-release deployment APIs, clean up later
 message DescribeDeploymentResponse {
     deployment.v1.DeploymentInfo deployment_info = 1;
 }
 
+message DescribeWorkerDeploymentVersionRequest {
+	string namespace = 1;
+  // Deployment Version identifier in the form "<deployment_name>.<build_id>".
+  string version = 2;
+}
+
+message DescribeWorkerDeploymentVersionResponse {
+    temporal.api.deployment.v1.WorkerDeploymentVersionInfo worker_deployment_version_info = 1;
+}
+
+message DescribeWorkerDeploymentRequest {
+    string namespace = 1;
+    string deployment_name = 2;
+}
+
+message DescribeWorkerDeploymentResponse {
+    // This value is returned so that it can be optionally passed to APIs
+    // that write to the Worker Deployment state to ensure that the state
+    // did not change between this read and a future write.
+    bytes conflict_token = 1;
+    temporal.api.deployment.v1.WorkerDeploymentInfo worker_deployment_info = 2;
+}
+
+// [cleanup-wv-pre-release] Pre-release deployment APIs, clean up later
 message ListDeploymentsRequest {
     string namespace = 1;
     int32 page_size = 2;
@@ -1904,11 +1991,13 @@ message ListDeploymentsRequest {
     string series_name = 4;
 }
 
+// [cleanup-wv-pre-release] Pre-release deployment APIs, clean up later
 message ListDeploymentsResponse {
     bytes next_page_token = 1;
     repeated temporal.api.deployment.v1.DeploymentListInfo deployments = 2;
 }
 
+// [cleanup-wv-pre-release] Pre-release deployment APIs, clean up later
 message SetCurrentDeploymentRequest {
     string namespace = 1;
     temporal.api.deployment.v1.Deployment deployment = 2;
@@ -1919,28 +2008,192 @@ message SetCurrentDeploymentRequest {
     // links to internal deployment pipelines, etc.
     temporal.api.deployment.v1.UpdateDeploymentMetadata update_metadata = 4;
 }
-
+// [cleanup-wv-pre-release] Pre-release deployment APIs, clean up later
 message SetCurrentDeploymentResponse {
     temporal.api.deployment.v1.DeploymentInfo current_deployment_info = 1;
     // Info of the deployment that was current before executing this operation.
     temporal.api.deployment.v1.DeploymentInfo previous_deployment_info = 2;
 }
 
+// Set/unset the Current Version of a Worker Deployment.
+message SetWorkerDeploymentCurrentVersionRequest {
+    string namespace = 1;
+    string deployment_name = 2;
+    // Required. Can be one of the following:
+    // - A Deployment Version identifier in the form "<deployment_name>.<build_id>".
+    // - Or, the "__unversioned__" special value, to represent all the unversioned workers (those
+    //   with `UNVERSIONED` (or unspecified) `WorkerVersioningMode`.)
+    string version = 3;
+    // Optional. This can be the value of conflict_token from a Describe, or another Worker
+    // Deployment API. Passing a non-nil conflict token will cause this request to fail if the
+    // Deployment's configuration has been modified between the API call that generated the
+    // token and this one.
+    bytes conflict_token = 4;
+    // Optional. The identity of the client who initiated this request.
+    string identity = 5;
+    // Optional. By default this request would be rejected if not all the expected Task Queues are
+    // being polled by the new Version, to protect against accidental removal of Task Queues, or
+    // worker health issues. Pass `true` here to bypass this protection.
+    // The set of expected Task Queues is the set of all the Task Queues that were ever poller by
+    // the existing Current Version of the Deployment, with the following exclusions:
+    //   - Task Queues that are not used anymore (inferred by having empty backlog and a task
+    //     add_rate of 0.)
+    //   - Task Queues that are moved to another Worker Deployment (inferred by the Task Queue
+    //     having a different Current Version than the Current Version of this deployment.)
+    // WARNING: Do not set this flag unless you are sure that the missing task queue pollers are not
+    // needed. If the request is unexpectedly rejected due to missing pollers, then that means the
+    // pollers have not reached to the server yet. Only set this if you expect those pollers to
+    // never arrive.
+    bool ignore_missing_task_queues = 6;
+}
+
+message SetWorkerDeploymentCurrentVersionResponse {
+    // This value is returned so that it can be optionally passed to APIs
+    // that write to the Worker Deployment state to ensure that the state
+    // did not change between this API call and a future write.
+    bytes conflict_token = 1;
+    // The version that was current before executing this operation, in the form
+    // "<deployment_name>.<build_id>". Can also be the `__unversioned__` special value.
+    string previous_version = 2;
+}
+
+// Set/unset the Ramping Version of a Worker Deployment and its ramp percentage.
+message SetWorkerDeploymentRampingVersionRequest {
+    string namespace = 1;
+    string deployment_name = 2;
+    // Can be one of the following:
+    // - Absent/empty value to unset the Ramping Version. Must be paired with `percentage=0`.
+    // - A Deployment Version identifier in the form "<deployment_name>.<build_id>".
+    // - Or, the "__unversioned__" special value, to represent all the unversioned workers (those
+    //   with `UNVERSIONED` (or unspecified) `WorkerVersioningMode`.)
+    string version = 3;
+    // Ramp percentage to set. Valid range: [0,100].
+    float percentage = 4;
+
+    // Optional. This can be the value of conflict_token from a Describe, or another Worker
+    // Deployment API. Passing a non-nil conflict token will cause this request to fail if the
+    // Deployment's configuration has been modified between the API call that generated the
+    // token and this one.
+    bytes conflict_token = 5;
+    // Optional. The identity of the client who initiated this request.
+    string identity = 6;
+    // Optional. By default this request would be rejected if not all the expected Task Queues are
+    // being polled by the new Version, to protect against accidental removal of Task Queues, or
+    // worker health issues. Pass `true` here to bypass this protection.
+    // The set of expected Task Queues equals to all the Task Queues ever polled from the existing
+    // Current Version of the Deployment, with the following exclusions:
+    //   - Task Queues that are not used anymore (inferred by having empty backlog and a task
+    //     add_rate of 0.)
+    //   - Task Queues that are moved to another Worker Deployment (inferred by the Task Queue
+    //     having a different Current Version than the Current Version of this deployment.)
+    // WARNING: Do not set this flag unless you are sure that the missing task queue poller are not
+    // needed. If the request is unexpectedly rejected due to missing pollers, then that means the
+    // pollers have not reached to the server yet. Only set this if you expect those pollers to
+    // never arrive.
+    // Note: this check only happens when the ramping version is about to change, not every time
+    // that the percentage changes. Also note that the check is against the deployment's Current
+    // Version, not the previous Ramping Version.
+    bool ignore_missing_task_queues = 7;
+}
+
+message SetWorkerDeploymentRampingVersionResponse {
+    // This value is returned so that it can be optionally passed to APIs
+    // that write to the Worker Deployment state to ensure that the state
+    // did not change between this API call and a future write.
+    bytes conflict_token = 1;
+    // The version that was ramping before executing this operation, in the form
+    // "<deployment_name>.<build_id>". Can also be the `__unversioned__` special value.
+    string previous_version = 2;
+    // The ramping version percentage before executing this operation.
+    float previous_percentage = 3;
+}
+
+message ListWorkerDeploymentsRequest {
+    string namespace = 1;
+    int32 page_size = 2;
+    bytes next_page_token = 3;
+}
+
+message ListWorkerDeploymentsResponse {
+    bytes next_page_token = 1;
+    // The list of worker deployments.
+    repeated WorkerDeploymentSummary worker_deployments = 2;
+
+    // (-- api-linter: core::0123::resource-annotation=disabled --)
+    // A subset of WorkerDeploymentInfo
+    message WorkerDeploymentSummary {
+        string name = 1;
+        google.protobuf.Timestamp create_time = 2;
+        temporal.api.deployment.v1.RoutingConfig routing_config = 3;
+    }
+}
+
+// Used for manual deletion of Versions. User can delete a Version only when all the
+// following conditions are met:
+//  - It is not the Current or Ramping Version of its Deployment.
+//  - It has no active pollers (none of the task queues in the Version have pollers)
+//  - It is not draining (see WorkerDeploymentVersionInfo.drainage_info). This condition
+//    can be skipped by passing `skip-drainage=true`.
+message DeleteWorkerDeploymentVersionRequest {
+    string namespace = 1;
+    // Deployment Version identifier in the form "<deployment_name>.<build_id>".
+    string version = 2;
+    // Pass to force deletion even if the Version is draining. In this case the open pinned
+    // workflows will be stuck until manually moved to another version by UpdateWorkflowExecutionOptions.
+    bool skip_drainage = 3;
+    // Optional. The identity of the client who initiated this request.
+    string identity = 4;
+}
+
+message DeleteWorkerDeploymentVersionResponse {
+}
+
+// Deletes records of (an old) Deployment. A deployment can only be deleted if
+// it has no Version in it.
+message DeleteWorkerDeploymentRequest {
+    string namespace = 1;
+    string deployment_name = 2;
+    // Optional. The identity of the client who initiated this request.
+    string identity = 3;
+}
+
+message DeleteWorkerDeploymentResponse {
+}
+
+// Used to update the user-defined metadata of a Worker Deployment Version.
+message UpdateWorkerDeploymentVersionMetadataRequest {
+    string namespace = 1;
+    // Deployment Version identifier in the form "<deployment_name>.<build_id>".
+    string version = 2;
+    map<string, temporal.api.common.v1.Payload> upsert_entries = 3;
+    // List of keys to remove from the metadata.
+    repeated string remove_entries = 4;
+}
+
+message UpdateWorkerDeploymentVersionMetadataResponse {
+    // Full metadata after performing the update.
+    temporal.api.deployment.v1.VersionMetadata metadata = 1;
+}
+
+
 // Returns the Current Deployment of a deployment series.
+// [cleanup-wv-pre-release] Pre-release deployment APIs, clean up later
 message GetCurrentDeploymentRequest {
     string namespace = 1;
     string series_name = 2;
 }
-
+// [cleanup-wv-pre-release] Pre-release deployment APIs, clean up later
 message GetCurrentDeploymentResponse {
     temporal.api.deployment.v1.DeploymentInfo current_deployment_info = 1;
 }
 
+// [cleanup-wv-pre-release] Pre-release deployment APIs, clean up later
 message GetDeploymentReachabilityRequest {
     string namespace = 1;
     temporal.api.deployment.v1.Deployment deployment = 2;
 }
 
+// [cleanup-wv-pre-release] Pre-release deployment APIs, clean up later
 message GetDeploymentReachabilityResponse {
     temporal.api.deployment.v1.DeploymentInfo deployment_info = 1;
     enums.v1.DeploymentReachability reachability = 2;

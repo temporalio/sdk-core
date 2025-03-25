@@ -133,6 +133,15 @@ message WorkflowExecutionStartedEventAttributes {
     string inherited_build_id = 32;
     // Versioning override applied to this workflow when it was started.
     temporal.api.workflow.v1.VersioningOverride versioning_override = 33;
+    // When present, it means this is a child workflow of a parent that is Pinned to this Worker
+    // Deployment Version. In this case, child workflow will start as Pinned to this Version instead
+    // of starting on the Current Version of its Task Queue.
+    // This is set only if the child workflow is starting on a Task Queue belonging to the same
+    // Worker Deployment Version.
+    string parent_pinned_worker_deployment_version = 34;
+
+    // Priority metadata
+    temporal.api.common.v1.Priority priority = 35;
 }
 
 message WorkflowExecutionCompletedEventAttributes {
@@ -251,11 +260,20 @@ message WorkflowTaskCompletedEventAttributes {
     // The deployment that completed this task. May or may not be set for unversioned workers,
     // depending on whether a value is sent by the SDK. This value updates workflow execution's
     // `versioning_info.deployment`.
-    temporal.api.deployment.v1.Deployment deployment = 7;
+    // Deprecated. Replaced with `worker_deployment_version`.
+    temporal.api.deployment.v1.Deployment deployment = 7 [deprecated = true];
     // Versioning behavior sent by the worker that completed this task for this particular workflow
     // execution. UNSPECIFIED means the task was completed by an unversioned worker. This value
     // updates workflow execution's `versioning_info.behavior`.
     temporal.api.enums.v1.VersioningBehavior versioning_behavior = 8;
+    // The Worker Deployment Version that completed this task. Must be set if `versioning_behavior`
+    // is set. This value updates workflow execution's `versioning_info.version`.
+    // Experimental. Worker Deployments are experimental and might significantly change in the future.
+    string worker_deployment_version = 9;
+    // The name of Worker Deployment that completed this task. Must be set if `versioning_behavior`
+    // is set. This value updates workflow execution's `worker_deployment_name`.
+    // Experimental. Worker Deployments are experimental and might significantly change in the future.
+    string worker_deployment_name = 10;
 }
 
 message WorkflowTaskTimedOutEventAttributes {
@@ -333,6 +351,9 @@ message ActivityTaskScheduledEventAttributes {
     // If this is set, the activity would be assigned to the Build ID of the workflow. Otherwise,
     // Assignment rules of the activity's Task Queue will be used to determine the Build ID.
     bool use_workflow_build_id = 13;
+    // Priority metadata. If this message is not present, or any fields are not
+    // present, they inherit the values from the workflow.
+    temporal.api.common.v1.Priority priority = 14;
 }
 
 message ActivityTaskStartedEventAttributes {
@@ -640,6 +661,8 @@ message StartChildWorkflowExecutionInitiatedEventAttributes {
     // If this is set, the child workflow inherits the Build ID of the parent. Otherwise, the assignment
     // rules of the child's Task Queue will be used to independently assign a Build ID to it.
     bool inherit_build_id = 19;
+    // Priority metadata
+    temporal.api.common.v1.Priority priority = 20;
 }
 
 message StartChildWorkflowExecutionFailedEventAttributes {
@@ -746,6 +769,11 @@ message WorkflowExecutionOptionsUpdatedEventAttributes {
     temporal.api.workflow.v1.VersioningOverride versioning_override = 1;
     // Versioning override removed in this event.
     bool unset_versioning_override = 2;
+    // Request ID attachedto the running workflow execution so that subsequent requests with same
+    // request ID will be deduped.
+    string attached_request_id = 3;
+    // Completion callbacks attached to the running workflow execution.
+    repeated temporal.api.common.v1.Callback attached_completion_callbacks = 4;
 }
 
 // Not used anywhere. Use case is replaced by WorkflowExecutionOptionsUpdatedEventAttributes
@@ -861,10 +889,16 @@ message NexusOperationStartedEventAttributes {
     int64 scheduled_event_id = 1;
     // The operation ID returned by the Nexus handler in the response to the StartOperation request.
     // This ID is used when canceling the operation.
+    //
+    // Deprecated: Renamed to operation_token.
     string operation_id = 3;
 
     // The request ID allocated at schedule time.
     string request_id = 4;
+
+    // The operation token returned by the Nexus handler in the response to the StartOperation request.
+    // This token is used when canceling the operation.
+    string operation_token = 5;
 }
 
 // Nexus operation completed successfully.
