@@ -1770,6 +1770,7 @@ pub mod temporal {
                             retry_policy: s.retry_policy.map(Into::into),
                             request_eager_execution: !s.do_not_eagerly_execute,
                             use_workflow_build_id,
+                            priority: s.priority,
                         },
                     )
                 }
@@ -1799,6 +1800,7 @@ pub mod temporal {
                             cron_schedule: s.cron_schedule.clone(),
                             parent_close_policy: s.parent_close_policy,
                             inherit_build_id,
+                            priority: s.priority,
                         },
                     )
                 }

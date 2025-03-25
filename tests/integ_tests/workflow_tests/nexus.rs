@@ -15,6 +15,7 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::{
         common::v1::{Callback, callback},
+        enums::v1::NexusHandlerErrorRetryBehavior,
         failure::v1::failure::FailureInfo,
         nexus,
         nexus::v1::{
@@ -112,6 +113,7 @@ async fn nexus_basic(
                                 message: "busted".to_string(),
                                 ..Default::default()
                             }),
+                            retry_behavior: NexusHandlerErrorRetryBehavior::NonRetryable.into(),
                         })),
                     })
                     .await
@@ -292,6 +294,7 @@ async fn nexus_async(
                                     start_operation_response::Async {
                                         operation_id: "op-1".to_string(),
                                         links: vec![],
+                                        operation_token: "op-1".to_string(),
                                     },
                                 )),
                             },
@@ -480,6 +483,7 @@ async fn nexus_must_complete_task_to_shutdown(#[values(true, false)] use_grace_p
                             message: "busted".to_string(),
                             ..Default::default()
                         }),
+                        retry_behavior: NexusHandlerErrorRetryBehavior::NonRetryable.into(),
                     })),
                 })
                 .await

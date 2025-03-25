@@ -49,7 +49,7 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::{
         common::v1::RetryPolicy,
-        enums::v1::WorkflowIdReusePolicy,
+        enums::v1::{NexusHandlerErrorRetryBehavior, WorkflowIdReusePolicy},
         failure::v1::Failure,
         nexus,
         nexus::v1::{
@@ -1053,6 +1053,7 @@ async fn nexus_metrics() {
                                     message: "handler-fail".to_string(),
                                     ..Default::default()
                                 }),
+                                retry_behavior: NexusHandlerErrorRetryBehavior::NonRetryable.into(),
                             })
                         }
                         Some(p) if p == "timeout".into() => {

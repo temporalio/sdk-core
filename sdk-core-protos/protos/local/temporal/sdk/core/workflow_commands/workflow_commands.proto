@@ -96,6 +96,8 @@ message ScheduleActivity {
     bool do_not_eagerly_execute = 14;
     // Whether this activity should run on a worker with a compatible build id or not.
     coresdk.common.VersioningIntent versioning_intent = 15;
+    // The Priority to use for this activity
+    temporal.api.common.v1.Priority priority = 16;
 }
 
 message ScheduleLocalActivity {
@@ -261,6 +263,8 @@ message StartChildWorkflowExecution {
     child_workflow.ChildWorkflowCancellationType cancellation_type = 18;
     // Whether this child should run on a worker with a compatible build id or not.
     coresdk.common.VersioningIntent versioning_intent = 19;
+    // The Priority to use for this activity
+    temporal.api.common.v1.Priority priority = 20;
 }
 
 // Cancel a child workflow
