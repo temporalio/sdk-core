@@ -6,7 +6,7 @@ use std::{
     process::Stdio,
 };
 use temporal_sdk_core::ephemeral_server::{
-    TemporalDevServerConfigBuilder, TestServerConfigBuilder,
+    EphemeralExe, EphemeralExeVersion, TemporalDevServerConfigBuilder, TestServerConfigBuilder,
 };
 use temporal_sdk_core_test_utils::{
     INTEG_SERVER_TARGET_ENV_VAR, INTEG_TEMPORAL_DEV_SERVER_USED_ENV_VAR,
@@ -74,8 +74,17 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let (server, envs) = match server_kind {
         ServerKind::TemporalCLI => {
+            let cli_version = if let Some(ver_override) = option_env!("CLI_VERSION_OVERRIDE") {
+                EphemeralExe::CachedDownload {
+                    version: EphemeralExeVersion::Fixed(ver_override.to_owned()),
+                    dest_dir: None,
+                    ttl: None,
+                }
+            } else {
+                default_cached_download()
+            };
             let config = TemporalDevServerConfigBuilder::default()
-                .exe(default_cached_download())
+                .exe(cli_version)
                 .extra_args(vec![
                     // TODO: Delete when temporalCLI enables it by default.
                     "--dynamic-config-value".to_string(),

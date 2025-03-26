@@ -110,6 +110,13 @@ message WorkflowExecutionInfo {
     // be versioned or unversioned, depending on `versioning_info.behavior` and `versioning_info.versioning_override`.
     // Experimental. Versioning info is experimental and might change in the future.
     WorkflowExecutionVersioningInfo versioning_info = 22;
+
+    // The name of Worker Deployment that completed the most recent workflow task.
+    // Experimental. Worker Deployments are experimental and might change in the future.
+    string worker_deployment_name = 23;
+
+    // Priority metadata
+    temporal.api.common.v1.Priority priority = 24;
 }
 
 // Holds all the extra information about workflow execution that is not part of Visibility.
@@ -131,7 +138,7 @@ message WorkflowExecutionExtendedInfo {
     google.protobuf.Timestamp original_start_time = 5;
 }
 
-// Holds all the information about versioning for a workflow execution.
+// Holds all the information about worker versioning for a particular workflow execution.
 // Experimental. Versioning info is experimental and might change in the future.
 message WorkflowExecutionVersioningInfo {
     // Versioning behavior determines how the server should treat this execution when workers are
@@ -140,6 +147,10 @@ message WorkflowExecutionVersioningInfo {
     // behaviors.
     // This field is first set after an execution completes its first workflow task on a versioned
     // worker, and set again on completion of every subsequent workflow task.
+    // For child workflows of Pinned parents, this will be set to Pinned (along with `version`) when
+    // the the child starts so that child's first workflow task goes to the same Version as the
+    // parent. After the first workflow task, it depends on the child workflow itself if it wants
+    // to stay pinned or become unpinned (according to Versioning Behavior set in the worker).
     // Note that `behavior` is overridden by `versioning_override` if the latter is present.
     temporal.api.enums.v1.VersioningBehavior behavior = 1;
     // The worker deployment that completed the last workflow task of this workflow execution. Must
@@ -148,11 +159,22 @@ message WorkflowExecutionVersioningInfo {
     // a deployment value which will be stored here, so the right way to check if an execution is
     // versioned if an execution is versioned or not is via the `behavior` field.
     // Note that `deployment` is overridden by `versioning_override` if the latter is present.
-    temporal.api.deployment.v1.Deployment deployment = 2;
+    // Deprecated. Use `version`.
+    temporal.api.deployment.v1.Deployment deployment = 2 [deprecated = true];
+    // The Worker Deployment Version that completed the last workflow task of this workflow
+    // execution, in the form "<deployment_name>.<build_id>".
+    // Must be present if and only if `behavior` is set. An absent value means no workflow task is
+    // completed, or the workflow is unversioned.
+    // For child workflows of Pinned parents, this will be set to parent's Pinned Version when the
+    // the child starts so that child's first workflow task goes to the same Version as the parent.
+    // Note that if `versioning_override.behavior` is PINNED then `versioning_override.pinned_version`
+    // will override this value.
+    string version = 5;
     // Present if user has set an execution-specific versioning override. This override takes
-    // precedence over SDK-sent `behavior` (and `deployment` when override is PINNED). An override
-    // can be set when starting a new execution, as well as afterwards by calling the
+    // precedence over SDK-sent `behavior` (and `version` when override is PINNED). An
+    // override can be set when starting a new execution, as well as afterwards by calling the
     // `UpdateWorkflowExecutionOptions` API.
+    // Pinned overrides are automatically inherited by child workflows.
     VersioningOverride versioning_override = 3;
     // When present, indicates the workflow is transitioning to a different deployment. Can
     // indicate one of the following transitions: unversioned -> versioned, versioned -> versioned
@@ -171,15 +193,46 @@ message WorkflowExecutionVersioningInfo {
     // the worker's task completion response.
     // Pending activities will not start new attempts during a transition. Once the transition is
     // completed, pending activities will start their next attempt on the new deployment.
-    DeploymentTransition deployment_transition = 4;
+    // Deprecated. Use version_transition.
+    DeploymentTransition deployment_transition = 4 [deprecated = true];
+    // When present, indicates the workflow is transitioning to a different deployment version
+    // (which may belong to the same deployment name or another). Can indicate one of the following
+    // transitions: unversioned -> versioned, versioned -> versioned
+    // on a different deployment version, or versioned -> unversioned.
+    // Not applicable to workflows with PINNED behavior.
+    // When a workflow with AUTO_UPGRADE behavior creates a new workflow task, it will automatically
+    // start a transition to the task queue's current version if the task queue's current version is
+    // different from the workflow's current deployment version.
+    // If the AUTO_UPGRADE workflow is stuck due to backlogged activity or workflow tasks, those
+    // tasks will be redirected to the task queue's current version. As soon as a poller from
+    // that deployment version is available to receive the task, the workflow will automatically
+    // start a transition to that version and continue execution there.
+    // A version transition can only exist while there is a pending or started workflow task.
+    // Once the pending workflow task completes on the transition's target version, the
+    // transition completes and the workflow's `behavior`, and `version` fields are updated per the
+    // worker's task completion response.
+    // Pending activities will not start new attempts during a transition. Once the transition is
+    // completed, pending activities will start their next attempt on the new version.
+    DeploymentVersionTransition version_transition = 6;
 }
 
 // Holds information about ongoing transition of a workflow execution from one deployment to another.
-// Experimental. Deployment transition is experimental and might change in the future.
+// Deprecated. Use DeploymentVersionTransition.
 message DeploymentTransition {
     // The target deployment of the transition. Null means a so-far-versioned workflow is
     // transitioning to unversioned workers.
     temporal.api.deployment.v1.Deployment deployment = 1;
+
+    // Later: safe transition info
+}
+
+// Holds information about ongoing transition of a workflow execution from one worker
+// deployment version to another.
+// Experimental. Might change in the future.
+message DeploymentVersionTransition {
+    // Required. The target Version of the transition. May be `__unversioned__` which means a
+    // so-far-versioned workflow is transitioning to unversioned workers.
+    string version = 1;
 
     // Later: safe transition info
 }
@@ -241,7 +294,13 @@ message PendingActivityInfo {
 
     // The deployment this activity was dispatched to most recently. Present only if the activity
     // was dispatched to a versioned worker.
-    temporal.api.deployment.v1.Deployment last_deployment = 20;
+    // Deprecated. Use `last_worker_deployment_version`.
+    temporal.api.deployment.v1.Deployment last_deployment = 20 [deprecated = true];
+    // The Worker Deployment Version this activity was dispatched to most recently.
+    string last_worker_deployment_version = 21;
+
+    // Priority metadata
+    temporal.api.common.v1.Priority priority = 22;
 }
 
 message PendingChildExecutionInfo {
@@ -320,6 +379,8 @@ message NewWorkflowExecutionInfo {
     // If set, takes precedence over the Versioning Behavior sent by the SDK on Workflow Task completion.
     // To unset the override after the workflow is running, use UpdateWorkflowExecutionOptions.
     VersioningOverride versioning_override = 15;
+    // Priority metadata
+    temporal.api.common.v1.Priority priority = 16;
 }
 
 // CallbackInfo contains the state of an attached workflow callback.
@@ -367,6 +428,8 @@ message PendingNexusOperationInfo {
     string operation = 3;
 
     // Operation ID. Only set for asynchronous operations after a successful StartOperation call.
+    //
+    // Deprecated: Renamed to operation_token.
     string operation_id = 4;
 
     // Schedule-to-close timeout for this operation.
@@ -399,6 +462,9 @@ message PendingNexusOperationInfo {
 
     // If the state is BLOCKED, blocked reason provides additional information.
     string blocked_reason = 14;
+
+    // Operation token. Only set for asynchronous operations after a successful StartOperation call.
+    string operation_token = 15;
 }
 
 // NexusOperationCancellationInfo contains the state of a nexus operation cancellation.
@@ -428,15 +494,35 @@ message WorkflowExecutionOptions {
     VersioningOverride versioning_override = 1;
 }
 
-// Used to override the versioning behavior and deployment of a specific workflow execution. If set,
-// takes precedence over the worker-sent values. See `WorkflowExecutionInfo.VersioningInfo` for more
-// information. To remove the override, call `UpdateWorkflowExecutionOptions` with a null
-// `VersioningOverride`, and use the `update_mask` to indicate that it should be mutated.
+// Used to override the versioning behavior (and pinned deployment version, if applicable) of a
+// specific workflow execution. If set, takes precedence over the worker-sent values. See
+// `WorkflowExecutionInfo.VersioningInfo` for more information. To remove the override, call
+// `UpdateWorkflowExecutionOptions` with a null `VersioningOverride`, and use the `update_mask`
+// to indicate that it should be mutated.
 message VersioningOverride {
     // Required.
     temporal.api.enums.v1.VersioningBehavior behavior = 1;
 
     // Required if behavior is `PINNED`. Must be null if behavior is `AUTO_UPGRADE`.
     // Identifies the worker deployment to pin the workflow to.
-    temporal.api.deployment.v1.Deployment deployment = 2;
+    // Deprecated. Use `pinned_version`.
+    temporal.api.deployment.v1.Deployment deployment = 2 [deprecated = true];
+
+    // Required if behavior is `PINNED`. Must be absent if behavior is not `PINNED`.
+    // Identifies the worker deployment version to pin the workflow to, in the format
+    // "<deployment_name>.<build_id>".
+    string pinned_version = 9;
+}
+
+// When StartWorkflowExecution uses the conflict policy WORKFLOW_ID_CONFLICT_POLICY_USE_EXISTING and
+// there is already an existing running workflow, OnConflictOptions defines actions to be taken on
+// the existing running workflow. In this case, it will create a WorkflowExecutionOptionsUpdatedEvent
+// history event in the running workflow with the changes requested in this object.
+message OnConflictOptions {
+    // Attaches the request ID to the running workflow.
+    bool attach_request_id = 1;
+    // Attaches the completion callbacks to the running workflow.
+    bool attach_completion_callbacks = 2;
+    // Attaches the links to the WorkflowExecutionOptionsUpdatedEvent history event.
+    bool attach_links = 3;
 }

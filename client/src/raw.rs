@@ -1178,27 +1178,27 @@ proxier! {
         }
     );
     (
-        update_activity_options_by_id,
-        UpdateActivityOptionsByIdRequest,
-        UpdateActivityOptionsByIdResponse,
+        update_activity_options,
+        UpdateActivityOptionsRequest,
+        UpdateActivityOptionsResponse,
         |r| {
             let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
     (
-        pause_activity_by_id,
-        PauseActivityByIdRequest,
-        PauseActivityByIdResponse,
+        pause_activity,
+        PauseActivityRequest,
+        PauseActivityResponse,
         |r| {
             let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
         }
     );
     (
-        unpause_activity_by_id,
-        UnpauseActivityByIdRequest,
-        UnpauseActivityByIdResponse,
+        unpause_activity,
+        UnpauseActivityRequest,
+        UnpauseActivityResponse,
         |r| {
             let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);
@@ -1214,9 +1214,81 @@ proxier! {
         }
     );
     (
-        reset_activity_by_id,
-        ResetActivityByIdRequest,
-        ResetActivityByIdResponse,
+        reset_activity,
+        ResetActivityRequest,
+        ResetActivityResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        delete_worker_deployment,
+        DeleteWorkerDeploymentRequest,
+        DeleteWorkerDeploymentResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        delete_worker_deployment_version,
+        DeleteWorkerDeploymentVersionRequest,
+        DeleteWorkerDeploymentVersionResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        describe_worker_deployment,
+        DescribeWorkerDeploymentRequest,
+        DescribeWorkerDeploymentResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        describe_worker_deployment_version,
+        DescribeWorkerDeploymentVersionRequest,
+        DescribeWorkerDeploymentVersionResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        list_worker_deployments,
+        ListWorkerDeploymentsRequest,
+        ListWorkerDeploymentsResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        set_worker_deployment_current_version,
+        SetWorkerDeploymentCurrentVersionRequest,
+        SetWorkerDeploymentCurrentVersionResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        set_worker_deployment_ramping_version,
+        SetWorkerDeploymentRampingVersionRequest,
+        SetWorkerDeploymentRampingVersionResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        update_worker_deployment_version_metadata,
+        UpdateWorkerDeploymentVersionMetadataRequest,
+        UpdateWorkerDeploymentVersionMetadataResponse,
         |r| {
             let labels = namespaced_request!(r);
             r.extensions_mut().insert(labels);

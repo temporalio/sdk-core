@@ -1,3 +1,8 @@
+[env]
+# This temporarily overrides the version of the CLI used for integration tests, locally and in CI
+# TODO: Comment out once priority is released
+CLI_VERSION_OVERRIDE = "v1.3.1-priority.0"
+
 [alias]
 integ-test = ["run", "--package", "temporal-sdk-core", "--example", "integ_runner", "--"]
 lint = ["clippy", "--workspace", "--examples", "--all-features",

@@ -534,6 +534,7 @@ impl NexusOperationMachine {
                     service: self.shared_state.service.clone(),
                     operation: self.shared_state.operation.clone(),
                     operation_id: "".to_string(),
+                    operation_token: "".to_string(),
                 },
             )),
             ..Default::default()

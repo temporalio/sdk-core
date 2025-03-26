@@ -1,6 +1,6 @@
 use std::{collections::HashMap, time::Duration};
 
-use temporal_client::WorkflowOptions;
+use temporal_client::{Priority, WorkflowOptions};
 use temporal_sdk_core_protos::{
     coresdk::{
         child_workflow::ChildWorkflowCancellationType,
@@ -68,6 +68,8 @@ pub struct ActivityOptions {
     pub retry_policy: Option<RetryPolicy>,
     /// Summary of the activity
     pub summary: Option<String>,
+    /// Priority for the activity
+    pub priority: Option<Priority>,
 }
 
 impl IntoWorkflowCommand for ActivityOptions {
@@ -95,6 +97,7 @@ impl IntoWorkflowCommand for ActivityOptions {
                     cancellation_type: self.cancellation_type as i32,
                     arguments: vec![self.input],
                     retry_policy: self.retry_policy,
+                    priority: self.priority.map(Into::into),
                     ..Default::default()
                 }
                 .into(),
@@ -252,6 +255,7 @@ impl IntoWorkflowCommand for ChildWorkflowOptions {
                     search_attributes: self.options.search_attributes.unwrap_or_default(),
                     cron_schedule: self.options.cron_schedule.unwrap_or_default(),
                     parent_close_policy: self.parent_close_policy as i32,
+                    priority: self.options.priority.map(Into::into),
                     ..Default::default()
                 }
                 .into(),

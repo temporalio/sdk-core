@@ -141,6 +141,8 @@ enum ResourceExhaustedCause {
     RESOURCE_EXHAUSTED_CAUSE_PERSISTENCE_STORAGE_LIMIT = 7;
     // Circuit breaker is open/half-open.
     RESOURCE_EXHAUSTED_CAUSE_CIRCUIT_BREAKER_OPEN = 8;
+    // Namespace exceeds operations rate limit.
+    RESOURCE_EXHAUSTED_CAUSE_OPS_LIMIT = 9;
 }
 
 enum ResourceExhaustedScope {
