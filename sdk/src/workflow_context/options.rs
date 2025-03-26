@@ -70,6 +70,8 @@ pub struct ActivityOptions {
     pub summary: Option<String>,
     /// Priority for the activity
     pub priority: Option<Priority>,
+    /// If true, disable eager execution for this activity
+    pub do_not_eagerly_execute: bool,
 }
 
 impl IntoWorkflowCommand for ActivityOptions {
@@ -98,6 +100,7 @@ impl IntoWorkflowCommand for ActivityOptions {
                     arguments: vec![self.input],
                     retry_policy: self.retry_policy,
                     priority: self.priority.map(Into::into),
+                    do_not_eagerly_execute: self.do_not_eagerly_execute,
                     ..Default::default()
                 }
                 .into(),

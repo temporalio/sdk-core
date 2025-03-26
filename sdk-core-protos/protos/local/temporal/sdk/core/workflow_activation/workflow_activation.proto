@@ -195,6 +195,8 @@ message InitializeWorkflow {
     //
     // See field in WorkflowExecutionStarted for more detail.
     temporal.api.common.v1.WorkflowExecution root_workflow = 24;
+    // Priority of this workflow execution
+    temporal.api.common.v1.Priority priority = 25;
 }
 
 // Notify a workflow that a timer has fired

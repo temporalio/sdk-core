@@ -57,6 +57,8 @@ message Start {
     // (or not) during activity scheduling as the service can override the provided one in case its
     // values are not specified or exceed configured system limits.
     temporal.api.common.v1.RetryPolicy retry_policy = 16;
+    // Priority of this activity. Local activities will always have this field set to the default.
+    temporal.api.common.v1.Priority priority = 18;
 
     // Set to true if this is a local activity. Note that heartbeating does not apply to local
     // activities.

@@ -525,6 +525,7 @@ impl LocalActivityManager {
                     .and_then(|t| t.try_into().ok()),
                 heartbeat_timeout: None,
                 retry_policy: Some(sa.retry_policy),
+                priority: Some(Default::default()),
                 is_local: true,
             })),
         }))

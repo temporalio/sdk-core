@@ -6,6 +6,7 @@ use std::{
     sync::Arc,
     time::{Duration as StdDuration, SystemTime},
 };
+use temporal_client::Priority;
 use temporal_sdk_core_api::Worker;
 use temporal_sdk_core_protos::{
     coresdk::{ActivityHeartbeat, activity_task},
@@ -48,6 +49,8 @@ pub struct ActivityInfo {
     pub current_attempt_scheduled_time: Option<SystemTime>,
     pub retry_policy: Option<RetryPolicy>,
     pub is_local: bool,
+    /// Priority of this activity. If unset uses [Priority::default]
+    pub priority: Priority,
 }
 
 impl ActContext {
@@ -79,6 +82,7 @@ impl ActContext {
             heartbeat_timeout,
             retry_policy,
             is_local,
+            priority,
         } = task;
         let deadline = calculate_deadline(
             scheduled_time.as_ref(),
@@ -113,6 +117,7 @@ impl ActContext {
                         .try_into_or_none(),
                     retry_policy,
                     is_local,
+                    priority: priority.map(Into::into).unwrap_or_default(),
                 },
             },
             first_arg,
