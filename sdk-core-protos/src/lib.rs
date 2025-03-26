@@ -726,6 +726,7 @@ pub mod coresdk {
                 search_attributes: attrs.search_attributes,
                 start_time: Some(start_time),
                 root_workflow: attrs.root_workflow_execution,
+                priority: attrs.priority,
             }
         }
     }
@@ -1265,6 +1266,7 @@ pub mod coresdk {
                         start_to_close_timeout: r.start_to_close_timeout,
                         heartbeat_timeout: r.heartbeat_timeout,
                         retry_policy: r.retry_policy,
+                        priority: r.priority,
                         is_local: false,
                     },
                 )),

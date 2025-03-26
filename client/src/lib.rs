@@ -1112,7 +1112,7 @@ pub struct WorkflowOptions {
 /// The overall semantics of Priority are:
 /// (more will be added here later)
 /// 1. First, consider "priority_key": lower number goes first.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Priority {
     /// Priority key is a positive integer from 1 to n, where smaller integers
     /// correspond to higher priorities (tasks run sooner). In general, tasks in
@@ -1131,6 +1131,14 @@ impl From<Priority> for common::v1::Priority {
     fn from(priority: Priority) -> Self {
         common::v1::Priority {
             priority_key: priority.priority_key as i32,
+        }
+    }
+}
+
+impl From<common::v1::Priority> for Priority {
+    fn from(priority: common::v1::Priority) -> Self {
+        Self {
+            priority_key: priority.priority_key as u32,
         }
     }
 }

@@ -2,7 +2,8 @@ use std::time::Duration;
 use temporal_client::{Priority, WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{ActContext, ActivityOptions, ChildWorkflowOptions, WfContext};
 use temporal_sdk_core_protos::{
-    coresdk::AsJsonPayloadExt, temporal::api::history::v1::history_event::Attributes,
+    coresdk::AsJsonPayloadExt,
+    temporal::api::{common, history::v1::history_event::Attributes},
 };
 use temporal_sdk_core_test_utils::CoreWfStarter;
 
@@ -34,16 +35,23 @@ async fn priority_values_sent_to_server() {
             input: "hello".as_json_payload().unwrap(),
             start_to_close_timeout: Some(Duration::from_secs(5)),
             priority: Some(Priority { priority_key: 5 }),
+            // Currently no priority info attached to eagerly run activities
+            do_not_eagerly_execute: true,
             ..Default::default()
         });
         started.result().await;
-        activity.await;
+        activity.await.unwrap_ok_payload();
         Ok(().into())
     });
-    worker.register_wf(child_type.to_owned(), |_ctx: WfContext| async move {
+    worker.register_wf(child_type.to_owned(), |ctx: WfContext| async move {
+        assert_eq!(
+            ctx.workflow_initial_info().priority,
+            Some(common::v1::Priority { priority_key: 4 })
+        );
         Ok(().into())
     });
-    worker.register_activity("echo", |_ctx: ActContext, echo_me: String| async move {
+    worker.register_activity("echo", |ctx: ActContext, echo_me: String| async move {
+        assert_eq!(ctx.get_info().priority, Priority { priority_key: 5 });
         Ok(echo_me)
     });
 
