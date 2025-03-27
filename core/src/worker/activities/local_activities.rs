@@ -355,7 +355,6 @@ impl LocalActivityManager {
                     }
                 }
                 LocalActRequest::CancelAllInRun(run_id) => {
-                    debug!(run_id=%run_id, "Cancelling all local activities for run");
                     let mut dlock = self.dat.lock();
                     // Even if we've got 100k+ LAs this should only take a ms or two. Not worth
                     // adding another map to keep in sync.
@@ -363,7 +362,12 @@ impl LocalActivityManager {
                         .la_info
                         .iter_mut()
                         .filter(|(id, _)| id.run_id == run_id);
+                    let mut printed = false;
                     for (laid, lainf) in las_for_run {
+                        if !printed {
+                            debug!(run_id=%run_id, "Cancelling all local activities for run");
+                            printed = true;
+                        }
                         if let Some(immediate_res) = self.cancel_one_la(laid.seq_num, lainf) {
                             immediate_resolutions.push(immediate_res);
                         }
