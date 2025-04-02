@@ -355,6 +355,7 @@ impl Workflows {
         };
 
         let mut wft_from_complete = None;
+        let completion_time = Instant::now();
         let wft_report_status = match completion_outcome.outcome {
             ActivationCompleteOutcome::ReportWFTSuccess(report) => match report {
                 ServerCommandsWithWorkflowInfo {
@@ -412,6 +413,7 @@ impl Workflows {
                     .await;
                     WFTReportStatus::Reported {
                         reset_last_started_to,
+                        completion_time,
                     }
                 }
                 ServerCommandsWithWorkflowInfo {
@@ -421,6 +423,7 @@ impl Workflows {
                     self.respond_legacy_query(task_token, *result).await;
                     WFTReportStatus::Reported {
                         reset_last_started_to: None,
+                        completion_time,
                     }
                 }
             },
@@ -435,6 +438,7 @@ impl Workflows {
                     .await;
                     WFTReportStatus::Reported {
                         reset_last_started_to: None,
+                        completion_time,
                     }
                 }
                 FailedActivationWFTReport::ReportLegacyQueryFailure(task_token, failure) => {
@@ -443,6 +447,7 @@ impl Workflows {
                         .await;
                     WFTReportStatus::Reported {
                         reset_last_started_to: None,
+                        completion_time,
                     }
                 }
             },
@@ -981,6 +986,7 @@ enum ActivationCompleteOutcome {
 enum WFTReportStatus {
     Reported {
         reset_last_started_to: Option<i64>,
+        completion_time: Instant,
     },
     /// The WFT completion was not reported when finishing the activation, because there's still
     /// work to be done. EX: Running LAs.

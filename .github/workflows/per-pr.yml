@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-and-test:
+  build-and-lint:
     name: "Format, docs, and lint"
     timeout-minutes: 10
     runs-on: ubuntu-latest

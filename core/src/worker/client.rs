@@ -2,10 +2,10 @@
 
 pub(crate) mod mocks;
 use parking_lot::RwLock;
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 use temporal_client::{
-    Client, IsWorkerTaskLongPoll, Namespace, NamespacedClient, RetryClient, SlotManager,
-    WorkflowService,
+    Client, IsWorkerTaskLongPoll, Namespace, NamespacedClient, NoRetryOnMatching, RetryClient,
+    SlotManager, WorkflowService,
 };
 use temporal_sdk_core_protos::{
     TaskToken,
@@ -104,14 +104,18 @@ impl WorkerClientBag {
 pub(crate) trait WorkerClient: Sync + Send {
     async fn poll_workflow_task(
         &self,
-        task_queue: TaskQueue,
+        poll_options: PollOptions,
+        wf_options: PollWorkflowOptions,
     ) -> Result<PollWorkflowTaskQueueResponse>;
     async fn poll_activity_task(
         &self,
-        task_queue: String,
-        max_tasks_per_sec: Option<f64>,
+        poll_options: PollOptions,
+        act_options: PollActivityOptions,
     ) -> Result<PollActivityTaskQueueResponse>;
-    async fn poll_nexus_task(&self, task_queue: String) -> Result<PollNexusTaskQueueResponse>;
+    async fn poll_nexus_task(
+        &self,
+        poll_options: PollOptions,
+    ) -> Result<PollNexusTaskQueueResponse>;
     async fn complete_workflow_task(
         &self,
         request: WorkflowTaskCompletion,
@@ -174,12 +178,42 @@ pub(crate) trait WorkerClient: Sync + Send {
     fn sdk_name_and_version(&self) -> (String, String);
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct PollOptions {
+    pub(crate) task_queue: String,
+    pub(crate) no_retry: Option<NoRetryOnMatching>,
+    pub(crate) timeout_override: Option<Duration>,
+}
+#[derive(Debug, Clone)]
+pub(crate) struct PollWorkflowOptions {
+    // If true this will be a sticky poll
+    pub(crate) sticky_queue_name: Option<String>,
+}
+#[derive(Debug, Clone)]
+pub(crate) struct PollActivityOptions {
+    pub(crate) max_tasks_per_sec: Option<f64>,
+}
+
 #[async_trait::async_trait]
 impl WorkerClient for WorkerClientBag {
     async fn poll_workflow_task(
         &self,
-        task_queue: TaskQueue,
+        poll_options: PollOptions,
+        wf_options: PollWorkflowOptions,
     ) -> Result<PollWorkflowTaskQueueResponse> {
+        let task_queue = if let Some(sticky) = wf_options.sticky_queue_name {
+            TaskQueue {
+                name: sticky,
+                kind: TaskQueueKind::Sticky.into(),
+                normal_name: poll_options.task_queue,
+            }
+        } else {
+            TaskQueue {
+                name: poll_options.task_queue,
+                kind: TaskQueueKind::Normal.into(),
+                normal_name: "".to_string(),
+            }
+        };
         #[allow(deprecated)] // want to list all fields explicitly
         let mut request = PollWorkflowTaskQueueRequest {
             namespace: self.namespace.clone(),
@@ -187,10 +221,17 @@ impl WorkerClient for WorkerClientBag {
             identity: self.identity.clone(),
             binary_checksum: self.binary_checksum(),
             worker_version_capabilities: self.worker_version_capabilities(),
+            // TODO: https://github.com/temporalio/sdk-core/issues/866
             deployment_options: None,
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
+        if let Some(nr) = poll_options.no_retry {
+            request.extensions_mut().insert(nr);
+        }
+        if let Some(to) = poll_options.timeout_override {
+            request.set_timeout(to);
+        }
 
         Ok(self
             .cloned_client()
@@ -201,26 +242,33 @@ impl WorkerClient for WorkerClientBag {
 
     async fn poll_activity_task(
         &self,
-        task_queue: String,
-        max_tasks_per_sec: Option<f64>,
+        poll_options: PollOptions,
+        act_options: PollActivityOptions,
     ) -> Result<PollActivityTaskQueueResponse> {
         #[allow(deprecated)] // want to list all fields explicitly
         let mut request = PollActivityTaskQueueRequest {
             namespace: self.namespace.clone(),
             task_queue: Some(TaskQueue {
-                name: task_queue,
+                name: poll_options.task_queue,
                 kind: TaskQueueKind::Normal as i32,
                 normal_name: "".to_string(),
             }),
             identity: self.identity.clone(),
-            task_queue_metadata: max_tasks_per_sec.map(|tps| TaskQueueMetadata {
+            task_queue_metadata: act_options.max_tasks_per_sec.map(|tps| TaskQueueMetadata {
                 max_tasks_per_second: Some(tps),
             }),
             worker_version_capabilities: self.worker_version_capabilities(),
+            // TODO: https://github.com/temporalio/sdk-core/issues/866
             deployment_options: None,
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
+        if let Some(nr) = poll_options.no_retry {
+            request.extensions_mut().insert(nr);
+        }
+        if let Some(to) = poll_options.timeout_override {
+            request.set_timeout(to);
+        }
 
         Ok(self
             .cloned_client()
@@ -229,21 +277,31 @@ impl WorkerClient for WorkerClientBag {
             .into_inner())
     }
 
-    async fn poll_nexus_task(&self, task_queue: String) -> Result<PollNexusTaskQueueResponse> {
+    async fn poll_nexus_task(
+        &self,
+        poll_options: PollOptions,
+    ) -> Result<PollNexusTaskQueueResponse> {
         #[allow(deprecated)] // want to list all fields explicitly
         let mut request = PollNexusTaskQueueRequest {
             namespace: self.namespace.clone(),
             task_queue: Some(TaskQueue {
-                name: task_queue,
+                name: poll_options.task_queue,
                 kind: TaskQueueKind::Normal as i32,
                 normal_name: "".to_string(),
             }),
             identity: self.identity.clone(),
             worker_version_capabilities: self.worker_version_capabilities(),
+            // TODO: https://github.com/temporalio/sdk-core/issues/866
             deployment_options: None,
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
+        if let Some(nr) = poll_options.no_retry {
+            request.extensions_mut().insert(nr);
+        }
+        if let Some(to) = poll_options.timeout_override {
+            request.set_timeout(to);
+        }
 
         Ok(self
             .cloned_client()
@@ -293,6 +351,7 @@ impl WorkerClient for WorkerClientBag {
             // TODO: https://github.com/temporalio/sdk-core/issues/866
             deployment: None,
             versioning_behavior: 0,
+            // TODO: https://github.com/temporalio/sdk-core/issues/866
             deployment_options: None,
         };
         Ok(self

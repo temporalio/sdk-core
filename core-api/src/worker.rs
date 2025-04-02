@@ -9,8 +9,6 @@ use temporal_sdk_core_protos::coresdk::{
     ActivitySlotInfo, LocalActivitySlotInfo, NexusSlotInfo, WorkflowSlotInfo,
 };
 
-const MAX_CONCURRENT_WFT_POLLS_DEFAULT: usize = 5;
-
 /// Defines per-worker configuration options
 #[derive(Clone, derive_builder::Builder)]
 #[builder(setter(into), build_fn(validate = "Self::validate"))]
@@ -43,23 +41,25 @@ pub struct WorkerConfig {
     /// Maximum number of concurrent poll workflow task requests we will perform at a time on this
     /// worker's task queue. See also [WorkerConfig::nonsticky_to_sticky_poll_ratio]. Must be at
     /// least 1.
-    #[builder(default = "MAX_CONCURRENT_WFT_POLLS_DEFAULT")]
-    pub max_concurrent_wft_polls: usize,
-    /// [WorkerConfig::max_concurrent_wft_polls] * this number = the number of max pollers that will
-    /// be allowed for the nonsticky queue when sticky tasks are enabled. If both defaults are used,
-    /// the sticky queue will allow 4 max pollers while the nonsticky queue will allow one. The
-    /// minimum for either poller is 1, so if `max_concurrent_wft_polls` is 1 and sticky queues are
-    /// enabled, there will be 2 concurrent polls.
+    #[builder(default = "PollerBehavior::SimpleMaximum(5)")]
+    pub workflow_task_poller_behavior: PollerBehavior,
+    /// Only applies when using [PollerBehavior::SimpleMaximum]
+    ///
+    /// (max workflow task polls * this number) = the number of max pollers that will be allowed for
+    /// the nonsticky queue when sticky tasks are enabled. If both defaults are used, the sticky
+    /// queue will allow 4 max pollers while the nonsticky queue will allow one. The minimum for
+    /// either poller is 1, so if the maximum allowed is 1 and sticky queues are enabled, there will
+    /// be 2 concurrent polls.
     #[builder(default = "0.2")]
     pub nonsticky_to_sticky_poll_ratio: f32,
     /// Maximum number of concurrent poll activity task requests we will perform at a time on this
     /// worker's task queue
-    #[builder(default = "5")]
-    pub max_concurrent_at_polls: usize,
+    #[builder(default = "PollerBehavior::SimpleMaximum(5)")]
+    pub activity_task_poller_behavior: PollerBehavior,
     /// Maximum number of concurrent poll nexus task requests we will perform at a time on this
     /// worker's task queue
-    #[builder(default = "5")]
-    pub max_concurrent_nexus_polls: usize,
+    #[builder(default = "PollerBehavior::SimpleMaximum(5)")]
+    pub nexus_task_poller_behavior: PollerBehavior,
     /// If set to true this worker will only handle workflow tasks and local activities, it will not
     /// poll for activity tasks.
     #[builder(default = "false")]
@@ -166,15 +166,6 @@ pub struct WorkerConfig {
 }
 
 impl WorkerConfig {
-    pub fn max_nonsticky_polls(&self) -> usize {
-        ((self.max_concurrent_wft_polls as f32 * self.nonsticky_to_sticky_poll_ratio) as usize)
-            .max(1)
-    }
-    pub fn max_sticky_polls(&self) -> usize {
-        self.max_concurrent_wft_polls
-            .saturating_sub(self.max_nonsticky_polls())
-            .max(1)
-    }
     /// Returns true if the configuration specifies we should fail a workflow on a certain error
     /// type rather than failing the workflow task.
     pub fn should_fail_workflow(
@@ -201,11 +192,14 @@ impl WorkerConfigBuilder {
     }
 
     fn validate(&self) -> Result<(), String> {
-        if self.max_concurrent_wft_polls == Some(0) {
-            return Err("`max_concurrent_wft_polls` must be at least 1".to_owned());
+        if let Some(b) = self.workflow_task_poller_behavior.as_ref() {
+            b.validate()?
         }
-        if self.max_concurrent_at_polls == Some(0) {
-            return Err("`max_concurrent_at_polls` must be at least 1".to_owned());
+        if let Some(b) = self.activity_task_poller_behavior.as_ref() {
+            b.validate()?
+        }
+        if let Some(b) = self.nexus_task_poller_behavior.as_ref() {
+            b.validate()?
         }
 
         if let Some(Some(ref x)) = self.max_worker_activities_per_second {
@@ -222,21 +216,6 @@ impl WorkerConfigBuilder {
                 || self.max_outstanding_local_activities.is_some())
         {
             return Err("max_outstanding_* fields are mutually exclusive with `tuner`".to_owned());
-        }
-
-        let max_wft_polls = self
-            .max_concurrent_wft_polls
-            .unwrap_or(MAX_CONCURRENT_WFT_POLLS_DEFAULT);
-
-        // It wouldn't make any sense to have more outstanding polls than workflows we can possibly
-        // cache. If we allow this at low values it's possible for sticky pollers to reserve all
-        // available slots, crowding out the normal queue and gumming things up.
-        if let Some(max_cache) = self.max_cached_workflows {
-            if max_cache > 0 && max_wft_polls > max_cache {
-                return Err(
-                    "`max_concurrent_wft_polls` cannot exceed `max_cached_workflows`".to_owned(),
-                );
-            }
         }
 
         if self.use_worker_versioning.unwrap_or_default()
@@ -453,5 +432,62 @@ impl SlotKind for NexusSlotKind {
 
     fn kind() -> SlotKindType {
         SlotKindType::Nexus
+    }
+}
+
+/// Different strategies for task polling
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PollerBehavior {
+    /// Will attempt to poll as long as a slot is available, up to the provided maximum. Cannot
+    /// be less than two for workflow tasks, or one for other tasks.
+    SimpleMaximum(usize),
+    /// Will automatically scale the number of pollers based on feedback from the server. Still
+    /// requires a slot to be available before beginning polling.
+    Autoscaling {
+        /// At least this many poll calls will always be attempted (assuming slots are available).
+        /// Cannot be less than two for workflow tasks, or one for other tasks.
+        minimum: usize,
+        /// At most this many poll calls will ever be open at once. Must be >= `minimum`.
+        maximum: usize,
+        /// This many polls will be attempted initially before scaling kicks in. Must be between
+        /// `minimum` and `maximum`.
+        initial: usize,
+    },
+}
+
+impl PollerBehavior {
+    /// Returns true if the behavior is using autoscaling
+    pub fn is_autoscaling(&self) -> bool {
+        matches!(self, PollerBehavior::Autoscaling { .. })
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        match self {
+            PollerBehavior::SimpleMaximum(x) => {
+                if *x < 1 {
+                    return Err("SimpleMaximum poller behavior must be at least 1".to_owned());
+                }
+            }
+            PollerBehavior::Autoscaling {
+                minimum,
+                maximum,
+                initial,
+            } => {
+                if *minimum < 1 {
+                    return Err("Autoscaling minimum poller behavior must be at least 1".to_owned());
+                }
+                if *maximum < *minimum {
+                    return Err(
+                        "Autoscaling maximum must be greater than or equal to minimum".to_owned(),
+                    );
+                }
+                if *initial < *minimum || *initial > *maximum {
+                    return Err(
+                        "Autoscaling initial must be between minimum and maximum".to_owned()
+                    );
+                }
+            }
+        }
+        Ok(())
     }
 }

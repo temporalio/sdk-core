@@ -455,7 +455,7 @@ impl WorkerActivityTasks {
     }
 
     #[cfg(test)]
-    pub(crate) fn remaining_activity_capacity(&self) -> Option<usize> {
+    pub(crate) fn unused_permits(&self) -> Option<usize> {
         self.eager_activities_semaphore.unused_permits()
     }
 }
@@ -705,9 +705,12 @@ fn worker_shutdown_failure() -> Failure {
 mod tests {
     use super::*;
     use crate::{
-        abstractions::tests::fixed_size_permit_dealer, pollers::new_activity_task_buffer,
-        prost_dur, worker::client::mocks::mock_workflow_client,
+        abstractions::tests::fixed_size_permit_dealer,
+        pollers::{ActivityTaskOptions, LongPollBuffer},
+        prost_dur,
+        worker::client::mocks::mock_workflow_client,
     };
+    use temporal_sdk_core_api::worker::PollerBehavior;
     use temporal_sdk_core_protos::coresdk::activity_result::ActivityExecutionResult;
 
     #[tokio::test]
@@ -740,15 +743,18 @@ mod tests {
         let mock_client = Arc::new(mock_client);
         let sem = fixed_size_permit_dealer(10);
         let shutdown_token = CancellationToken::new();
-        let ap = new_activity_task_buffer(
+        let ap = LongPollBuffer::new_activity_task(
             mock_client.clone(),
             "tq".to_string(),
-            5, // Lots of concurrent pollers, to ensure we don't poll to much when that's the case
+            // Lots of concurrent pollers, to ensure we don't poll to much when that's the case
+            PollerBehavior::SimpleMaximum(5),
             sem.clone(),
-            None,
             shutdown_token.clone(),
             None::<fn(usize)>,
-            Some(2.0),
+            ActivityTaskOptions {
+                max_worker_acts_per_second: Some(2.0),
+                max_tps: None,
+            },
         );
         let atm = WorkerActivityTasks::new(
             sem.clone(),
@@ -829,15 +835,17 @@ mod tests {
         let mock_client = Arc::new(mock_client);
         let sem = fixed_size_permit_dealer(1);
         let shutdown_token = CancellationToken::new();
-        let ap = new_activity_task_buffer(
+        let ap = LongPollBuffer::new_activity_task(
             mock_client.clone(),
             "tq".to_string(),
-            1,
+            PollerBehavior::SimpleMaximum(1),
             sem.clone(),
-            None,
             shutdown_token.clone(),
             None::<fn(usize)>,
-            None,
+            ActivityTaskOptions {
+                max_worker_acts_per_second: None,
+                max_tps: None,
+            },
         );
         let atm = WorkerActivityTasks::new(
             sem.clone(),
@@ -900,15 +908,17 @@ mod tests {
         let mock_client = Arc::new(mock_client);
         let sem = fixed_size_permit_dealer(1);
         let shutdown_token = CancellationToken::new();
-        let ap = new_activity_task_buffer(
+        let ap = LongPollBuffer::new_activity_task(
             mock_client.clone(),
             "tq".to_string(),
-            1,
+            PollerBehavior::SimpleMaximum(1),
             sem.clone(),
-            None,
             shutdown_token.clone(),
             None::<fn(usize)>,
-            None,
+            ActivityTaskOptions {
+                max_worker_acts_per_second: None,
+                max_tps: None,
+            },
         );
         let atm = WorkerActivityTasks::new(
             sem.clone(),

@@ -26,6 +26,7 @@ use temporal_sdk::{ActivityOptions, WfContext};
 use temporal_sdk_core_api::{
     Worker as WorkerTrait,
     errors::{CompleteActivityError, PollError},
+    worker::PollerBehavior,
 };
 use temporal_sdk_core_protos::{
     DEFAULT_ACTIVITY_TYPE, DEFAULT_WORKFLOW_TYPE, TestHistoryBuilder,
@@ -408,7 +409,7 @@ async fn many_concurrent_heartbeat_cancels() {
         test_worker_cfg()
             .max_outstanding_activities(CONCURRENCY_NUM)
             // Only 1 poll at a time to avoid over-polling and running out of responses
-            .max_concurrent_at_polls(1_usize)
+            .activity_task_poller_behavior(PollerBehavior::SimpleMaximum(1_usize))
             .build()
             .unwrap(),
         mock_client,
@@ -618,8 +619,8 @@ async fn max_tq_acts_set_passed_to_poll_properly() {
     let mut mock_client = mock_workflow_client();
     mock_client
         .expect_poll_activity_task()
-        .returning(move |_, tps| {
-            assert_eq!(tps, Some(rate));
+        .returning(move |_, ao| {
+            assert_eq!(ao.max_tasks_per_sec, Some(rate));
             Ok(PollActivityTaskQueueResponse {
                 task_token: vec![1],
                 ..Default::default()
@@ -627,7 +628,7 @@ async fn max_tq_acts_set_passed_to_poll_properly() {
         });
 
     let cfg = test_worker_cfg()
-        .max_concurrent_at_polls(1_usize)
+        .activity_task_poller_behavior(PollerBehavior::SimpleMaximum(1_usize))
         .max_task_queue_activities_per_second(rate)
         .build()
         .unwrap();
@@ -1081,7 +1082,7 @@ async fn graceful_shutdown(#[values(true, false)] at_max_outstanding: bool) {
         config: test_worker_cfg()
             .graceful_shutdown_period(grace_period)
             .max_outstanding_activities(max_outstanding)
-            .max_concurrent_at_polls(1_usize) // Makes test logic simple
+            .activity_task_poller_behavior(PollerBehavior::SimpleMaximum(1_usize)) // Makes test logic simple
             .build()
             .unwrap(),
         ..Default::default()
@@ -1165,7 +1166,7 @@ async fn activities_must_be_flushed_to_server_on_shutdown(#[values(true, false)]
         act_poller: Some(Box::from(mock_act_poller)),
         config: test_worker_cfg()
             .graceful_shutdown_period(grace_period)
-            .max_concurrent_at_polls(1_usize) // Makes test logic simple
+            .activity_task_poller_behavior(PollerBehavior::SimpleMaximum(1_usize)) // Makes test logic simple
             .build()
             .unwrap(),
         ..Default::default()

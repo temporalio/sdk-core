@@ -71,7 +71,7 @@ use temporal_sdk_core_protos::{
     },
 };
 use tonic::{
-    Code, Status,
+    Code,
     body::BoxBody,
     client::GrpcService,
     codegen::InterceptedService,
@@ -82,11 +82,6 @@ use tonic::{
 use tower::ServiceBuilder;
 use url::Url;
 use uuid::Uuid;
-
-/// A request extension that, when set, should make the [RetryClient] consider this call to be a
-/// [CallType::TaskLongPoll]
-#[derive(Copy, Clone, Debug)]
-pub struct IsWorkerTaskLongPoll;
 
 static CLIENT_NAME_HEADER_KEY: &str = "client-name";
 static CLIENT_VERSION_HEADER_KEY: &str = "client-version";
@@ -259,6 +254,18 @@ impl RetryConfig {
         }
     }
 
+    /// A retry policy that never retires
+    pub const fn no_retries() -> Self {
+        Self {
+            initial_interval: Duration::from_secs(0),
+            randomization_factor: 0.0,
+            multiplier: 1.0,
+            max_interval: Duration::from_secs(0),
+            max_elapsed_time: None,
+            max_retries: 1,
+        }
+    }
+
     pub(crate) fn into_exp_backoff<C>(self, clock: C) -> exponential::ExponentialBackoff<C> {
         exponential::ExponentialBackoff {
             current_interval: self.initial_interval,
@@ -277,6 +284,20 @@ impl From<RetryConfig> for ExponentialBackoff {
     fn from(c: RetryConfig) -> Self {
         c.into_exp_backoff(SystemClock::default())
     }
+}
+
+/// A request extension that, when set, should make the [RetryClient] consider this call to be a
+/// [CallType::TaskLongPoll]
+#[derive(Copy, Clone, Debug)]
+pub struct IsWorkerTaskLongPoll;
+
+/// A request extension that, when set, and a call is being processed by a [RetryClient], allows the
+/// caller to request certain matching errors to short-circuit-return immediately and not follow
+/// normal retry logic.
+#[derive(Copy, Clone, Debug)]
+pub struct NoRetryOnMatching {
+    /// Return true if the passed-in gRPC error should be immediately returned to the caller
+    pub predicate: fn(&tonic::Status) -> bool,
 }
 
 impl Debug for ClientTlsConfig {
@@ -514,7 +535,10 @@ pub struct ServiceCallInterceptor {
 impl Interceptor for ServiceCallInterceptor {
     /// This function will get called on each outbound request. Returning a `Status` here will
     /// cancel the request and have that status returned to the caller.
-    fn call(&mut self, mut request: tonic::Request<()>) -> Result<tonic::Request<()>, Status> {
+    fn call(
+        &mut self,
+        mut request: tonic::Request<()>,
+    ) -> Result<tonic::Request<()>, tonic::Status> {
         let metadata = request.metadata_mut();
         if !metadata.contains_key(CLIENT_NAME_HEADER_KEY) {
             metadata.insert(
