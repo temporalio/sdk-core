@@ -40,7 +40,8 @@ use temporal_sdk_core_protos::{
         workflow_completion,
     },
     temporal::api::{
-        command::v1::command::Attributes as CmdAttribs, enums::v1::WorkflowTaskFailedCause,
+        command::v1::command::Attributes as CmdAttribs,
+        enums::v1::{VersioningBehavior, WorkflowTaskFailedCause},
         failure::v1::Failure,
     },
 };
@@ -374,6 +375,7 @@ impl ManagedRun {
         &mut self,
         mut commands: Vec<WFCommand>,
         used_flags: Vec<u32>,
+        versioning_behavior: VersioningBehavior,
         resp_chan: Option<oneshot::Sender<ActivationCompleteResult>>,
         is_forced_failure: bool,
     ) -> Result<RunUpdateAct, Box<NextPageReq>> {
@@ -450,6 +452,7 @@ impl ManagedRun {
                 used_flags,
                 resp_chan,
                 is_forced_failure,
+                versioning_behavior,
             };
 
             // Verify we can actually apply the next workflow task, which will happen as part of
@@ -620,6 +623,7 @@ impl ManagedRun {
                             metadata: None,
                         }],
                         vec![],
+                        VersioningBehavior::Unspecified, // Doesn't matter since we're failing wf
                         resp_chan,
                         true,
                     )
@@ -692,6 +696,7 @@ impl ManagedRun {
             has_pending_query: completion.has_pending_query,
             activation_was_eviction: completion.activation_was_eviction,
             is_forced_failure: completion.is_forced_failure,
+            versioning_behavior: completion.versioning_behavior,
         };
 
         self.wfm.machines.add_lang_used_flags(completion.used_flags);
@@ -1141,6 +1146,7 @@ impl ManagedRun {
                     messages,
                     query_responses,
                     sdk_metadata: machines_wft_response.metadata_for_complete(),
+                    versioning_behavior: data.versioning_behavior,
                 },
             })
         } else {
@@ -1339,6 +1345,7 @@ struct CompletionDataForWFT {
     has_pending_query: bool,
     activation_was_eviction: bool,
     is_forced_failure: bool,
+    versioning_behavior: VersioningBehavior,
 }
 
 /// Manages an instance of a [WorkflowMachines], which is not thread-safe, as well as other data
@@ -1483,6 +1490,7 @@ struct RunActivationCompletion {
     /// Used to notify the worker when the completion is done processing and the completion can
     /// unblock. Must always be `Some` when initialized.
     resp_chan: Option<oneshot::Sender<ActivationCompleteResult>>,
+    versioning_behavior: VersioningBehavior,
 }
 #[derive(Debug, derive_more::From)]
 enum ActOrFulfill {

@@ -10,7 +10,7 @@ use std::{
     collections::{HashMap, VecDeque},
     time::Duration,
 };
-use temporal_sdk_core_api::Worker as WorkerTrait;
+use temporal_sdk_core_api::{Worker as WorkerTrait, worker::WorkerVersioningStrategy};
 use temporal_sdk_core_protos::{
     TestHistoryBuilder,
     coresdk::{
@@ -881,7 +881,9 @@ async fn build_id_set_properly_on_query_on_first_task() {
     let mut mock = build_mock_pollers(mh);
     mock.worker_cfg(|wc| {
         wc.max_cached_workflows = 10;
-        wc.worker_build_id = "1.0".to_string();
+        wc.versioning_strategy = WorkerVersioningStrategy::None {
+            build_id: "1.0".to_owned(),
+        }
     });
     let core = mock_worker(mock);
 

@@ -6,7 +6,7 @@ use temporal_sdk_core::{CoreRuntime, ResourceBasedTuner, ResourceSlotOptions, in
 use temporal_sdk_core_api::{
     Worker,
     errors::WorkerValidationError,
-    worker::{PollerBehavior, WorkerConfigBuilder},
+    worker::{PollerBehavior, WorkerConfigBuilder, WorkerVersioningStrategy},
 };
 use temporal_sdk_core_protos::{
     coresdk::workflow_completion::{
@@ -34,7 +34,9 @@ async fn worker_validation_fails_on_nonexistent_namespace() {
         WorkerConfigBuilder::default()
             .namespace("i_dont_exist")
             .task_queue("Wheee!")
-            .worker_build_id("blah")
+            .versioning_strategy(WorkerVersioningStrategy::None {
+                build_id: "blah".to_owned(),
+            })
             .build()
             .unwrap(),
         retrying_client,

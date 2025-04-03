@@ -32,7 +32,7 @@ use temporal_sdk_core_protos::{
         workflow_completion,
         workflow_completion::{WorkflowActivationCompletion, workflow_activation_completion},
     },
-    temporal::api::{common::v1::Payload, failure::v1::Failure},
+    temporal::api::{common::v1::Payload, enums::v1::VersioningBehavior, failure::v1::Failure},
     utilities::TryIntoOrNone,
 };
 use tokio::sync::{
@@ -160,6 +160,7 @@ impl WorkflowFuture {
                     workflow_completion::Success {
                         commands: activation_cmds,
                         used_internal_flags: vec![],
+                        versioning_behavior: VersioningBehavior::Unspecified.into(),
                     },
                 )),
             })

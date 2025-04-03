@@ -45,6 +45,7 @@ use temporal_sdk_core_api::{
         PrometheusExporterOptionsBuilder, TelemetryOptions, TelemetryOptionsBuilder,
         metrics::CoreMeter,
     },
+    worker::WorkerVersioningStrategy,
 };
 use temporal_sdk_core_protos::{
     DEFAULT_ACTIVITY_TYPE,
@@ -109,7 +110,9 @@ pub fn integ_worker_config(tq: &str) -> WorkerConfigBuilder {
         .max_outstanding_activities(100_usize)
         .max_outstanding_local_activities(100_usize)
         .max_outstanding_workflow_tasks(100_usize)
-        .worker_build_id("test_build_id");
+        .versioning_strategy(WorkerVersioningStrategy::None {
+            build_id: "test_build_id".to_owned(),
+        });
     b
 }
 

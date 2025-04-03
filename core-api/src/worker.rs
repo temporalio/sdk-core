@@ -5,8 +5,9 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use temporal_sdk_core_protos::coresdk::{
-    ActivitySlotInfo, LocalActivitySlotInfo, NexusSlotInfo, WorkflowSlotInfo,
+use temporal_sdk_core_protos::{
+    coresdk::{ActivitySlotInfo, LocalActivitySlotInfo, NexusSlotInfo, WorkflowSlotInfo},
+    temporal::api::enums::v1::VersioningBehavior,
 };
 
 /// Defines per-worker configuration options
@@ -19,9 +20,6 @@ pub struct WorkerConfig {
     /// What task queue will this worker poll from? This task queue name will be used for both
     /// workflow and activity polling.
     pub task_queue: String,
-    /// A string that should be unique to the set of code this worker uses. IE: All the workflow,
-    /// activity, interceptor, and data converter code.
-    pub worker_build_id: String,
     /// A human-readable string that can identify this worker. Using something like sdk version
     /// and host name is a good default. If set, overrides the identity set (if any) on the client
     /// used by this worker.
@@ -96,13 +94,6 @@ pub struct WorkerConfig {
     #[builder(default)]
     pub max_worker_activities_per_second: Option<f64>,
 
-    /// # UNDER DEVELOPMENT
-    /// If set to true this worker will opt-in to the whole-worker versioning feature.
-    /// `worker_build_id` will be used as the version.
-    /// todo: link to feature docs
-    #[builder(default = "false")]
-    pub use_worker_versioning: bool,
-
     /// If set false (default), shutdown will not finish until all pending evictions have been
     /// issued and replied to. If set true shutdown will be considered complete when the only
     /// remaining work is pending evictions.
@@ -163,6 +154,9 @@ pub struct WorkerConfig {
     /// Mutually exclusive with `tuner`
     #[builder(setter(into, strip_option), default)]
     pub max_outstanding_nexus_tasks: Option<usize>,
+
+    /// A versioning strategy for this worker.
+    pub versioning_strategy: WorkerVersioningStrategy,
 }
 
 impl WorkerConfig {
@@ -179,6 +173,10 @@ impl WorkerConfig {
                 .get(workflow_type)
                 .map(|s| s.contains(error_type))
                 .unwrap_or(false)
+    }
+
+    pub fn build_id(&self) -> &str {
+        self.versioning_strategy.build_id()
     }
 }
 
@@ -218,18 +216,31 @@ impl WorkerConfigBuilder {
             return Err("max_outstanding_* fields are mutually exclusive with `tuner`".to_owned());
         }
 
-        if self.use_worker_versioning.unwrap_or_default()
-            && self
-                .worker_build_id
-                .as_ref()
-                .map(|s| s.is_empty())
-                .unwrap_or_default()
-        {
-            return Err(
-                "`worker_build_id` must be non-empty when `use_worker_versioning` is true"
-                    .to_owned(),
-            );
+        if let Some(wv) = self.versioning_strategy.as_ref() {
+            match wv {
+                WorkerVersioningStrategy::None { .. } => {}
+                WorkerVersioningStrategy::WorkerDeploymentBased(d) => {
+                    if d.use_worker_versioning
+                        && (d.version.build_id.is_empty() || d.version.deployment_name.is_empty())
+                    {
+                        return Err(
+                            "WorkerDeploymentVersion must have a non-empty build_id and \
+                     deployment_name when deployment based versioning is enabled"
+                                .to_owned(),
+                        );
+                    }
+                }
+                WorkerVersioningStrategy::LegcayBuildIdBased { build_id } => {
+                    if build_id.is_empty() {
+                        return Err(
+                            "Legacy build id based versioning must have a non-empty build_id"
+                                .to_owned(),
+                        );
+                    }
+                }
+            }
         }
+
         Ok(())
     }
 }
@@ -490,4 +501,62 @@ impl PollerBehavior {
         }
         Ok(())
     }
+}
+
+#[derive(Clone, Debug)]
+pub enum WorkerVersioningStrategy {
+    /// Don't enable any versioning
+    None {
+        /// Build ID may still be passed as a way to identify the worker, or may be left empty.
+        build_id: String,
+    },
+    /// Maybe use the modern deployment-based versioning, or just pass a deployment version.
+    WorkerDeploymentBased(WorkerDeploymentOptions),
+    /// Use the legacy build-id-based whole worker versioning.
+    LegcayBuildIdBased {
+        /// A Build ID to use, must be non-empty.
+        build_id: String,
+    },
+}
+
+impl Default for WorkerVersioningStrategy {
+    fn default() -> Self {
+        WorkerVersioningStrategy::None {
+            build_id: String::new(),
+        }
+    }
+}
+
+impl WorkerVersioningStrategy {
+    pub fn build_id(&self) -> &str {
+        match self {
+            WorkerVersioningStrategy::None { build_id } => build_id,
+            WorkerVersioningStrategy::WorkerDeploymentBased(opts) => &opts.version.build_id,
+            WorkerVersioningStrategy::LegcayBuildIdBased { build_id } => build_id,
+        }
+    }
+
+    pub fn uses_build_id_based(&self) -> bool {
+        matches!(self, WorkerVersioningStrategy::LegcayBuildIdBased { .. })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub struct WorkerDeploymentOptions {
+    /// The deployment version of this worker.
+    pub version: WorkerDeploymentVersion,
+    /// If set, opts in to the Worker Deployment Versioning feature, meaning this worker will only
+    /// receive tasks for workflows it claims to be compatible with.
+    pub use_worker_versioning: bool,
+    /// The default versioning behavior to use for workflows that do not pass one to Core.
+    /// It is a startup-time error to specify `Some(Unspecified)` here.
+    pub default_versioning_behavior: Option<VersioningBehavior>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub struct WorkerDeploymentVersion {
+    /// Name of the deployment
+    pub deployment_name: String,
+    /// Build ID for the worker.
+    pub build_id: String,
 }

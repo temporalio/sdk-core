@@ -27,7 +27,7 @@ use temporal_sdk_core_api::{
         PrometheusExporterOptionsBuilder, TelemetryOptionsBuilder,
         metrics::{CoreMeter, MetricAttributes, MetricParameters},
     },
-    worker::{PollerBehavior, WorkerConfigBuilder},
+    worker::{PollerBehavior, WorkerConfigBuilder, WorkerVersioningStrategy},
 };
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -148,7 +148,9 @@ async fn one_slot_worker_reports_available_slot() {
     let worker_cfg = WorkerConfigBuilder::default()
         .namespace(NAMESPACE)
         .task_queue(tq)
-        .worker_build_id("test_build_id")
+        .versioning_strategy(WorkerVersioningStrategy::None {
+            build_id: "test_build_id".to_owned(),
+        })
         .max_cached_workflows(2_usize)
         .max_outstanding_activities(1_usize)
         .max_outstanding_local_activities(1_usize)
