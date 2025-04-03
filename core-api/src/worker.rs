@@ -225,15 +225,15 @@ impl WorkerConfigBuilder {
                     {
                         return Err(
                             "WorkerDeploymentVersion must have a non-empty build_id and \
-                     deployment_name when deployment based versioning is enabled"
+                     deployment_name when deployment-based versioning is enabled"
                                 .to_owned(),
                         );
                     }
                 }
-                WorkerVersioningStrategy::LegcayBuildIdBased { build_id } => {
+                WorkerVersioningStrategy::LegacyBuildIdBased { build_id } => {
                     if build_id.is_empty() {
                         return Err(
-                            "Legacy build id based versioning must have a non-empty build_id"
+                            "Legacy build id-based versioning must have a non-empty build_id"
                                 .to_owned(),
                         );
                     }
@@ -513,7 +513,7 @@ pub enum WorkerVersioningStrategy {
     /// Maybe use the modern deployment-based versioning, or just pass a deployment version.
     WorkerDeploymentBased(WorkerDeploymentOptions),
     /// Use the legacy build-id-based whole worker versioning.
-    LegcayBuildIdBased {
+    LegacyBuildIdBased {
         /// A Build ID to use, must be non-empty.
         build_id: String,
     },
@@ -532,12 +532,12 @@ impl WorkerVersioningStrategy {
         match self {
             WorkerVersioningStrategy::None { build_id } => build_id,
             WorkerVersioningStrategy::WorkerDeploymentBased(opts) => &opts.version.build_id,
-            WorkerVersioningStrategy::LegcayBuildIdBased { build_id } => build_id,
+            WorkerVersioningStrategy::LegacyBuildIdBased { build_id } => build_id,
         }
     }
 
     pub fn uses_build_id_based(&self) -> bool {
-        matches!(self, WorkerVersioningStrategy::LegcayBuildIdBased { .. })
+        matches!(self, WorkerVersioningStrategy::LegacyBuildIdBased { .. })
     }
 
     pub fn default_versioning_behavior(&self) -> Option<VersioningBehavior> {
