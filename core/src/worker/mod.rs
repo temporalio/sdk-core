@@ -490,6 +490,9 @@ impl Worker {
                     server_capabilities: client.capabilities().unwrap_or_default(),
                     sdk_name: sdk_name_and_ver.0,
                     sdk_version: sdk_name_and_ver.1,
+                    default_versioning_behavior: config
+                        .versioning_strategy
+                        .default_versioning_behavior(),
                 },
                 sticky_queue_name.map(|sq| StickyExecutionAttributes {
                     worker_task_queue: Some(TaskQueue {

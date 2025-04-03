@@ -736,12 +736,7 @@ async fn nondeterminism_errors_fail_workflow_when_configured_to(
     let stopper = async {
         // Wait for the timer to show up in history and then stop the worker
         loop {
-            let hist = client
-                .get_workflow_execution_history(wf_id.clone(), None, vec![])
-                .await
-                .unwrap()
-                .history
-                .unwrap();
+            let hist = starter.get_history().await;
             let has_timer_event = hist
                 .events
                 .iter()

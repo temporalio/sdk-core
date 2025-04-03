@@ -125,6 +125,7 @@ pub(crate) struct Workflows {
     wft_semaphore: MeteredPermitDealer<WorkflowSlotKind>,
     local_act_mgr: Arc<LocalActivityManager>,
     ever_polled: AtomicBool,
+    default_versioning_behavior: Option<VersioningBehavior>,
 }
 
 pub(crate) struct WorkflowBasics {
@@ -134,6 +135,7 @@ pub(crate) struct WorkflowBasics {
     pub(crate) server_capabilities: get_system_info_response::Capabilities,
     pub(crate) sdk_name: String,
     pub(crate) sdk_version: String,
+    pub(crate) default_versioning_behavior: Option<VersioningBehavior>,
 }
 
 pub(crate) struct RunBasics<'a> {
@@ -166,6 +168,7 @@ impl Workflows {
         let (fetch_tx, fetch_rx) = unbounded_channel();
         let shutdown_tok = basics.shutdown_token.clone();
         let task_queue = basics.worker_config.task_queue.clone();
+        let default_versioning_behavior = basics.default_versioning_behavior;
         let extracted_wft_stream = WFTExtractor::build(
             client.clone(),
             basics.worker_config.fetching_concurrency,
@@ -251,6 +254,7 @@ impl Workflows {
             wft_semaphore,
             local_act_mgr,
             ever_polled: AtomicBool::new(false),
+            default_versioning_behavior,
         }
     }
 
@@ -367,7 +371,7 @@ impl Workflows {
                             query_responses,
                             force_new_wft,
                             sdk_metadata,
-                            versioning_behavior,
+                            mut versioning_behavior,
                         },
                 } => {
                     let reserved_act_permits =
@@ -375,6 +379,11 @@ impl Workflows {
                     debug!(commands=%commands.display(), query_responses=%query_responses.display(),
                            messages=%messages.display(), force_new_wft,
                            "Sending responses to server");
+                    if let Some(default_vb) = self.default_versioning_behavior.as_ref() {
+                        if versioning_behavior == VersioningBehavior::Unspecified {
+                            versioning_behavior = *default_vb;
+                        }
+                    }
                     let mut completion = WorkflowTaskCompletion {
                         task_token,
                         commands,

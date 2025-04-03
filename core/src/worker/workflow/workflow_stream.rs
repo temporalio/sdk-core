@@ -40,11 +40,11 @@ impl WFStream {
     /// Constructs workflow state management and returns a stream which outputs activations.
     ///
     /// * `wft_stream` is a stream of validated poll responses and fetched history pages as returned
-    ///    by a poller (or mock), via [WFTExtractor].
+    ///   by a poller (or mock), via [WFTExtractor].
     /// * `local_rx` is a stream of actions that workflow state needs to see. Things like
-    ///    completions, local activities finishing, etc. See [LocalInputs].
+    ///   completions, local activities finishing, etc. See [LocalInputs].
     /// * `local_activity_request_sink` is used to handle outgoing requests to start or cancel
-    ///    local activities, and may return resolutions that need to be handled immediately.
+    ///   local activities, and may return resolutions that need to be handled immediately.
     ///
     /// The stream inputs are combined into a stream of [WFActStreamInput]s. The stream processor
     /// then takes action on those inputs, mutating the [WFStream] state, and then may yield

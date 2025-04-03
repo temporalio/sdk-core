@@ -539,6 +539,15 @@ impl WorkerVersioningStrategy {
     pub fn uses_build_id_based(&self) -> bool {
         matches!(self, WorkerVersioningStrategy::LegcayBuildIdBased { .. })
     }
+
+    pub fn default_versioning_behavior(&self) -> Option<VersioningBehavior> {
+        match self {
+            WorkerVersioningStrategy::WorkerDeploymentBased(opts) => {
+                opts.default_versioning_behavior
+            }
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
