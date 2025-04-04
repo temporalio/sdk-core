@@ -99,6 +99,12 @@ async fn main() -> Result<(), anyhow::Error> {
                     "system.enableEagerWorkflowStart=true".to_string(),
                     "--dynamic-config-value".to_string(),
                     "system.enableNexus=true".to_string(),
+                    "--dynamic-config-value".to_owned(),
+                    "frontend.workerVersioningWorkflowAPIs=true".to_owned(),
+                    "--dynamic-config-value".to_owned(),
+                    "frontend.workerVersioningDataAPIs=true".to_owned(),
+                    "--dynamic-config-value".to_owned(),
+                    "system.enableDeploymentVersions=true".to_owned(),
                     "--http-port".to_string(),
                     "7243".to_string(),
                     "--search-attribute".to_string(),
@@ -108,7 +114,7 @@ async fn main() -> Result<(), anyhow::Error> {
                 ])
                 .ui(true)
                 .build()?;
-            println!("Using temporal CLI");
+            println!("Using temporal CLI: {:?}", config);
             (
                 Some(
                     config
