@@ -445,8 +445,8 @@ impl WorkflowMachines {
         let build_id_for_current_task = if is_replaying {
             self.current_wft_build_id.clone().unwrap_or_default()
         } else {
-            self.current_wft_build_id = Some(self.worker_config.worker_build_id.clone());
-            self.worker_config.worker_build_id.clone()
+            self.current_wft_build_id = Some(self.worker_config.build_id().to_owned());
+            self.worker_config.build_id().to_owned()
         };
         WorkflowActivation {
             timestamp: self.current_wf_time.map(Into::into),
@@ -479,8 +479,8 @@ impl WorkflowMachines {
         // If this worker has a build ID and we're completing the task, we want to say our ID is the
         // current build ID, so that if we get a query before any new history, we properly can
         // report that our ID was the one used for the completion.
-        if !self.worker_config.worker_build_id.is_empty() {
-            self.current_wft_build_id = Some(self.worker_config.worker_build_id.clone());
+        if !self.worker_config.build_id().is_empty() {
+            self.current_wft_build_id = Some(self.worker_config.build_id().to_owned());
         }
         (*self.observed_internal_flags)
             .borrow_mut()

@@ -33,7 +33,7 @@ use temporal_sdk::{
 use temporal_sdk_core::{CoreRuntime, replay::HistoryForReplay};
 use temporal_sdk_core_api::{
     errors::{PollError, WorkflowErrorType},
-    worker::PollerBehavior,
+    worker::{PollerBehavior, WorkerVersioningStrategy},
 };
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -566,7 +566,9 @@ async fn build_id_correct_in_wf_info() {
     let mut starter = CoreWfStarter::new(wf_type);
     starter
         .worker_config
-        .worker_build_id("1.0")
+        .versioning_strategy(WorkerVersioningStrategy::None {
+            build_id: "1.0".to_owned(),
+        })
         .no_remote_activities(true);
     let core = starter.get_worker().await;
     starter.start_wf().await;
@@ -629,7 +631,12 @@ async fn build_id_correct_in_wf_info() {
         .unwrap();
 
     let mut starter = starter.clone_no_worker();
-    starter.worker_config.worker_build_id("2.0");
+    starter
+        .worker_config
+        .versioning_strategy(WorkerVersioningStrategy::None {
+            build_id: "2.0".to_owned(),
+        });
+
     let core = starter.get_worker().await;
 
     let query_fut = async {
@@ -729,12 +736,7 @@ async fn nondeterminism_errors_fail_workflow_when_configured_to(
     let stopper = async {
         // Wait for the timer to show up in history and then stop the worker
         loop {
-            let hist = client
-                .get_workflow_execution_history(wf_id.clone(), None, vec![])
-                .await
-                .unwrap()
-                .history
-                .unwrap();
+            let hist = starter.get_history().await;
             let has_timer_event = hist
                 .events
                 .iter()

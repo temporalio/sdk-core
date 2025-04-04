@@ -35,7 +35,7 @@ use temporal_sdk_core_api::{
     errors::PollError,
     worker::{
         PollerBehavior, SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext,
-        SlotSupplier, SlotSupplierPermit, WorkflowSlotKind,
+        SlotSupplier, SlotSupplierPermit, WorkerVersioningStrategy, WorkflowSlotKind,
     },
 };
 use temporal_sdk_core_protos::{
@@ -2977,7 +2977,9 @@ async fn sets_build_id_from_wft_complete() {
     let mut worker = mock_sdk_cfg(
         MockPollCfg::from_resp_batches(wfid, t, [ResponseType::AllHistory], mock),
         |cfg| {
-            cfg.worker_build_id = "fierce-predator".to_string();
+            cfg.versioning_strategy = WorkerVersioningStrategy::None {
+                build_id: "fierce-predator".to_string(),
+            };
             cfg.max_cached_workflows = 1;
         },
     );

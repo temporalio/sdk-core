@@ -7,6 +7,7 @@ use temporal_client::{
     Client, IsWorkerTaskLongPoll, Namespace, NamespacedClient, NoRetryOnMatching, RetryClient,
     SlotManager, WorkflowService,
 };
+use temporal_sdk_core_api::worker::WorkerVersioningStrategy;
 use temporal_sdk_core_protos::{
     TaskToken,
     coresdk::workflow_commands::QueryResult,
@@ -16,7 +17,10 @@ use temporal_sdk_core_protos::{
             MeteringMetadata, Payloads, WorkerVersionCapabilities, WorkerVersionStamp,
             WorkflowExecution,
         },
-        enums::v1::{TaskQueueKind, WorkflowTaskFailedCause},
+        deployment,
+        enums::v1::{
+            TaskQueueKind, VersioningBehavior, WorkerVersioningMode, WorkflowTaskFailedCause,
+        },
         failure::v1::Failure,
         nexus,
         protocol::v1::Message as ProtocolMessage,
@@ -35,8 +39,7 @@ pub(crate) struct WorkerClientBag {
     replaceable_client: RwLock<RetryClient<Client>>,
     namespace: String,
     identity: String,
-    worker_build_id: String,
-    use_versioning: bool,
+    worker_versioning_strategy: WorkerVersioningStrategy,
 }
 
 impl WorkerClientBag {
@@ -44,15 +47,13 @@ impl WorkerClientBag {
         client: RetryClient<Client>,
         namespace: String,
         identity: String,
-        worker_build_id: String,
-        use_versioning: bool,
+        worker_versioning_strategy: WorkerVersioningStrategy,
     ) -> Self {
         Self {
             replaceable_client: RwLock::new(client),
             namespace,
             identity,
-            worker_build_id,
-            use_versioning,
+            worker_versioning_strategy,
         }
     }
 
@@ -68,16 +69,34 @@ impl WorkerClientBag {
         if self.default_capabilities().build_id_based_versioning {
             "".to_string()
         } else {
-            self.worker_build_id.clone()
+            self.worker_versioning_strategy.build_id().to_owned()
+        }
+    }
+
+    fn deployment_options(&self) -> Option<deployment::v1::WorkerDeploymentOptions> {
+        match &self.worker_versioning_strategy {
+            WorkerVersioningStrategy::WorkerDeploymentBased(dopts) => {
+                Some(deployment::v1::WorkerDeploymentOptions {
+                    deployment_name: dopts.version.deployment_name.clone(),
+                    build_id: dopts.version.build_id.clone(),
+                    worker_versioning_mode: if dopts.use_worker_versioning {
+                        WorkerVersioningMode::Versioned.into()
+                    } else {
+                        WorkerVersioningMode::Unversioned.into()
+                    },
+                })
+            }
+            _ => None,
         }
     }
 
     fn worker_version_capabilities(&self) -> Option<WorkerVersionCapabilities> {
         if self.default_capabilities().build_id_based_versioning {
             Some(WorkerVersionCapabilities {
-                build_id: self.worker_build_id.clone(),
-                use_versioning: self.use_versioning,
-                // TODO: https://github.com/temporalio/sdk-core/issues/866
+                build_id: self.worker_versioning_strategy.build_id().to_owned(),
+                use_versioning: self.worker_versioning_strategy.uses_build_id_based(),
+                // This will never be used, as it is the v3 version that we never supported in
+                // Core SDKs.
                 deployment_series_name: "".to_string(),
             })
         } else {
@@ -88,8 +107,8 @@ impl WorkerClientBag {
     fn worker_version_stamp(&self) -> Option<WorkerVersionStamp> {
         if self.default_capabilities().build_id_based_versioning {
             Some(WorkerVersionStamp {
-                build_id: self.worker_build_id.clone(),
-                use_versioning: self.use_versioning,
+                build_id: self.worker_versioning_strategy.build_id().to_owned(),
+                use_versioning: self.worker_versioning_strategy.uses_build_id_based(),
             })
         } else {
             None
@@ -221,8 +240,7 @@ impl WorkerClient for WorkerClientBag {
             identity: self.identity.clone(),
             binary_checksum: self.binary_checksum(),
             worker_version_capabilities: self.worker_version_capabilities(),
-            // TODO: https://github.com/temporalio/sdk-core/issues/866
-            deployment_options: None,
+            deployment_options: self.deployment_options(),
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
@@ -258,8 +276,7 @@ impl WorkerClient for WorkerClientBag {
                 max_tasks_per_second: Some(tps),
             }),
             worker_version_capabilities: self.worker_version_capabilities(),
-            // TODO: https://github.com/temporalio/sdk-core/issues/866
-            deployment_options: None,
+            deployment_options: self.deployment_options(),
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
@@ -291,8 +308,7 @@ impl WorkerClient for WorkerClientBag {
             }),
             identity: self.identity.clone(),
             worker_version_capabilities: self.worker_version_capabilities(),
-            // TODO: https://github.com/temporalio/sdk-core/issues/866
-            deployment_options: None,
+            deployment_options: self.deployment_options(),
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
@@ -348,11 +364,10 @@ impl WorkerClient for WorkerClientBag {
             capabilities: Some(respond_workflow_task_completed_request::Capabilities {
                 discard_speculative_workflow_task_with_events: true,
             }),
-            // TODO: https://github.com/temporalio/sdk-core/issues/866
+            // Will never be set, deprecated.
             deployment: None,
-            versioning_behavior: 0,
-            // TODO: https://github.com/temporalio/sdk-core/issues/866
-            deployment_options: None,
+            versioning_behavior: request.versioning_behavior.into(),
+            deployment_options: self.deployment_options(),
         };
         Ok(self
             .cloned_client()
@@ -638,4 +653,6 @@ pub(crate) struct WorkflowTaskCompletion {
     pub(crate) sdk_metadata: WorkflowTaskCompletedMetadata,
     /// Metering info
     pub(crate) metering_metadata: MeteringMetadata,
+    /// Versioning behavior of the workflow, if any.
+    pub(crate) versioning_behavior: VersioningBehavior,
 }

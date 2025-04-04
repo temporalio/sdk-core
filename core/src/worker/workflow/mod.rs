@@ -76,7 +76,7 @@ use temporal_sdk_core_protos::{
     temporal::api::{
         command::v1::{Command as ProtoCommand, Command, command::Attributes},
         common::v1::{Memo, MeteringMetadata, RetryPolicy, SearchAttributes, WorkflowExecution},
-        enums::v1::WorkflowTaskFailedCause,
+        enums::v1::{VersioningBehavior, WorkflowTaskFailedCause},
         protocol::v1::Message as ProtocolMessage,
         query::v1::WorkflowQuery,
         sdk::v1::{UserMetadata, WorkflowTaskCompletedMetadata},
@@ -125,6 +125,7 @@ pub(crate) struct Workflows {
     wft_semaphore: MeteredPermitDealer<WorkflowSlotKind>,
     local_act_mgr: Arc<LocalActivityManager>,
     ever_polled: AtomicBool,
+    default_versioning_behavior: Option<VersioningBehavior>,
 }
 
 pub(crate) struct WorkflowBasics {
@@ -134,6 +135,7 @@ pub(crate) struct WorkflowBasics {
     pub(crate) server_capabilities: get_system_info_response::Capabilities,
     pub(crate) sdk_name: String,
     pub(crate) sdk_version: String,
+    pub(crate) default_versioning_behavior: Option<VersioningBehavior>,
 }
 
 pub(crate) struct RunBasics<'a> {
@@ -166,6 +168,7 @@ impl Workflows {
         let (fetch_tx, fetch_rx) = unbounded_channel();
         let shutdown_tok = basics.shutdown_token.clone();
         let task_queue = basics.worker_config.task_queue.clone();
+        let default_versioning_behavior = basics.default_versioning_behavior;
         let extracted_wft_stream = WFTExtractor::build(
             client.clone(),
             basics.worker_config.fetching_concurrency,
@@ -251,6 +254,7 @@ impl Workflows {
             wft_semaphore,
             local_act_mgr,
             ever_polled: AtomicBool::new(false),
+            default_versioning_behavior,
         }
     }
 
@@ -367,6 +371,7 @@ impl Workflows {
                             query_responses,
                             force_new_wft,
                             sdk_metadata,
+                            mut versioning_behavior,
                         },
                 } => {
                     let reserved_act_permits =
@@ -374,6 +379,11 @@ impl Workflows {
                     debug!(commands=%commands.display(), query_responses=%query_responses.display(),
                            messages=%messages.display(), force_new_wft,
                            "Sending responses to server");
+                    if let Some(default_vb) = self.default_versioning_behavior.as_ref() {
+                        if versioning_behavior == VersioningBehavior::Unspecified {
+                            versioning_behavior = *default_vb;
+                        }
+                    }
                     let mut completion = WorkflowTaskCompletion {
                         task_token,
                         commands,
@@ -389,6 +399,7 @@ impl Workflows {
                                 .get_nonfirst_attempt_count(&run_id)
                                 as u32,
                         },
+                        versioning_behavior,
                     };
                     let sticky_attrs = self.sticky_attrs.clone();
                     // Do not return new WFT if we would not cache, because returned new WFTs are
@@ -895,6 +906,7 @@ pub(crate) enum ActivationAction {
         query_responses: Vec<QueryResult>,
         force_new_wft: bool,
         sdk_metadata: WorkflowTaskCompletedMetadata,
+        versioning_behavior: VersioningBehavior,
     },
     /// We should respond to a legacy query request
     RespondLegacyQuery { result: Box<QueryResult> },
@@ -1088,6 +1100,7 @@ fn validate_completion(
                 run_id: completion.run_id,
                 commands,
                 used_flags: success.used_internal_flags,
+                versioning_behavior: success.versioning_behavior.try_into().unwrap_or_default(),
             })
         }
         Some(workflow_activation_completion::Status::Failed(failure)) => {
@@ -1111,6 +1124,7 @@ enum ValidatedCompletion {
         run_id: String,
         commands: Vec<WFCommand>,
         used_flags: Vec<u32>,
+        versioning_behavior: VersioningBehavior,
     },
     Fail {
         run_id: String,

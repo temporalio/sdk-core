@@ -11,15 +11,20 @@ pub mod workflows;
 pub use temporal_sdk_core::replay::HistoryForReplay;
 
 use crate::stream::{Stream, TryStreamExt};
-use anyhow::Context;
+use anyhow::{Context, bail};
 use assert_matches::assert_matches;
 use futures_util::{StreamExt, future, stream, stream::FuturesUnordered};
 use parking_lot::Mutex;
 use prost::Message;
 use rand::Rng;
 use std::{
-    convert::TryFrom, env, future::Future, net::SocketAddr, path::PathBuf, sync::Arc,
-    time::Duration,
+    convert::TryFrom,
+    env,
+    future::Future,
+    net::SocketAddr,
+    path::PathBuf,
+    sync::Arc,
+    time::{Duration, Instant},
 };
 use temporal_client::{
     Client, ClientTlsConfig, NamespacedClient, RetryClient, TlsConfig, WfClientExt,
@@ -45,6 +50,7 @@ use temporal_sdk_core_api::{
         PrometheusExporterOptionsBuilder, TelemetryOptions, TelemetryOptionsBuilder,
         metrics::CoreMeter,
     },
+    worker::WorkerVersioningStrategy,
 };
 use temporal_sdk_core_protos::{
     DEFAULT_ACTIVITY_TYPE,
@@ -109,7 +115,9 @@ pub fn integ_worker_config(tq: &str) -> WorkerConfigBuilder {
         .max_outstanding_activities(100_usize)
         .max_outstanding_local_activities(100_usize)
         .max_outstanding_workflow_tasks(100_usize)
-        .worker_build_id("test_build_id");
+        .versioning_strategy(WorkerVersioningStrategy::None {
+            build_id: "test_build_id".to_owned(),
+        });
     b
 }
 
@@ -248,7 +256,7 @@ impl CoreWfStarter {
 
     /// Start the workflow defined by the builder and return run id
     pub async fn start_wf(&mut self) -> String {
-        self.start_wf_with_id(self.task_queue_name.clone()).await
+        self.start_wf_with_id(self.get_wf_id().to_owned()).await
     }
 
     /// Starts the workflow using the worker
@@ -315,6 +323,20 @@ impl CoreWfStarter {
 
     pub fn get_wf_id(&self) -> &str {
         &self.task_queue_name
+    }
+
+    /// Fetch the history of the default workflow for this starter. IE: The one that would
+    /// be started by [CoreWfStarter::start_wf].
+    pub async fn get_history(&self) -> History {
+        self.initted_worker
+            .get()
+            .expect("Starter must be initialized")
+            .client
+            .get_workflow_execution_history(self.get_wf_id().to_string(), None, vec![])
+            .await
+            .unwrap()
+            .history
+            .unwrap()
     }
 
     async fn get_or_init(&mut self) -> &InitializedWorker {
@@ -915,5 +937,22 @@ pub struct AbortOnDrop {
 impl Drop for AbortOnDrop {
     fn drop(&mut self) {
         self.ah.abort();
+    }
+}
+
+pub async fn eventually<F, Fut, T, E>(func: F, timeout: Duration) -> Result<T, anyhow::Error>
+where
+    F: Fn() -> Fut,
+    Fut: Future<Output = Result<T, E>>,
+{
+    let start = Instant::now();
+    loop {
+        if start.elapsed() > timeout {
+            bail!("Eventually hit timeout");
+        }
+        if let Ok(v) = func().await {
+            return Ok(v);
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }

@@ -98,8 +98,7 @@ where
         client,
         worker_config.namespace.clone(),
         client_ident,
-        worker_config.worker_build_id.clone(),
-        worker_config.use_worker_versioning,
+        worker_config.versioning_strategy.clone(),
     ));
 
     Ok(Worker::new(

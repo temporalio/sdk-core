@@ -11,7 +11,10 @@
 //! use std::{str::FromStr, sync::Arc};
 //! use temporal_sdk::{sdk_client_options, ActContext, Worker};
 //! use temporal_sdk_core::{init_worker, Url, CoreRuntime};
-//! use temporal_sdk_core_api::{worker::WorkerConfigBuilder, telemetry::TelemetryOptionsBuilder};
+//! use temporal_sdk_core_api::{
+//!     worker::{WorkerConfigBuilder, WorkerVersioningStrategy},
+//!     telemetry::TelemetryOptionsBuilder
+//! };
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -25,7 +28,7 @@
 //!     let worker_config = WorkerConfigBuilder::default()
 //!         .namespace("default")
 //!         .task_queue("task_queue")
-//!         .worker_build_id("rust-sdk")
+//!         .versioning_strategy(WorkerVersioningStrategy::None { build_id: "rust-sdk".to_owned() })
 //!         .build()?;
 //!
 //!     let core_worker = init_worker(&runtime, worker_config, client)?;

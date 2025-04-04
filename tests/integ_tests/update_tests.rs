@@ -903,12 +903,7 @@ async fn task_failure_during_validation() {
         .await
         .unwrap();
     // Verify we did not spam task failures. There should only be one.
-    let history = client
-        .get_workflow_execution_history(wf_id, None, vec![])
-        .await
-        .unwrap()
-        .history
-        .unwrap();
+    let history = starter.get_history().await;
     assert_eq!(
         history
             .events

@@ -40,7 +40,7 @@ pub mod coresdk {
         ENCODING_PAYLOAD_KEY, JSON_ENCODING_VAL,
         temporal::api::{
             common::v1::{Payload, Payloads, WorkflowExecution},
-            enums::v1::{TimeoutType, WorkflowTaskFailedCause},
+            enums::v1::{TimeoutType, VersioningBehavior, WorkflowTaskFailedCause},
             failure::v1::{
                 ActivityFailureInfo, ApplicationFailureInfo, Failure, TimeoutFailureInfo,
                 failure::FailureInfo,
@@ -1017,6 +1017,7 @@ pub mod coresdk {
             Self {
                 commands: v,
                 used_internal_flags: vec![],
+                versioning_behavior: VersioningBehavior::Unspecified.into(),
             }
         }
     }
