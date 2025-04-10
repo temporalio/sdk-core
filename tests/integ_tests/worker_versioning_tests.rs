@@ -38,7 +38,8 @@ async fn sets_deployment_info_on_task_responses(#[values(true, false)] use_defau
                 use_worker_versioning: true,
                 default_versioning_behavior: VersioningBehavior::AutoUpgrade.into(),
             },
-        ));
+        ))
+        .no_remote_activities(true);
     let core = starter.get_worker().await;
     let client = starter.get_client().await;
 
