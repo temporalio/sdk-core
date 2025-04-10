@@ -391,9 +391,9 @@ impl WorkerClient for WorkerClientBag {
                     identity: self.identity.clone(),
                     namespace: self.namespace.clone(),
                     worker_version: self.worker_version_stamp(),
-                    // TODO: https://github.com/temporalio/sdk-core/issues/866
+                    // Will never be set, deprecated.
                     deployment: None,
-                    deployment_options: None,
+                    deployment_options: self.deployment_options(),
                 },
             )
             .await?
@@ -449,9 +449,9 @@ impl WorkerClient for WorkerClientBag {
                     identity: self.identity.clone(),
                     namespace: self.namespace.clone(),
                     worker_version: self.worker_version_stamp(),
-                    // TODO: https://github.com/temporalio/sdk-core/issues/866
+                    // Will never be set, deprecated.
                     deployment: None,
-                    deployment_options: None,
+                    deployment_options: self.deployment_options(),
                 },
             )
             .await?
@@ -475,9 +475,9 @@ impl WorkerClient for WorkerClientBag {
                     // TODO: Implement - https://github.com/temporalio/sdk-core/issues/293
                     last_heartbeat_details: None,
                     worker_version: self.worker_version_stamp(),
-                    // TODO: https://github.com/temporalio/sdk-core/issues/866
+                    // Will never be set, deprecated.
                     deployment: None,
-                    deployment_options: None,
+                    deployment_options: self.deployment_options(),
                 },
             )
             .await?
@@ -500,9 +500,9 @@ impl WorkerClient for WorkerClientBag {
             namespace: self.namespace.clone(),
             messages: vec![],
             worker_version: self.worker_version_stamp(),
-            // TODO: https://github.com/temporalio/sdk-core/issues/866
+            // Will never be set, deprecated.
             deployment: None,
-            deployment_options: None,
+            deployment_options: self.deployment_options(),
         };
         Ok(self
             .cloned_client()

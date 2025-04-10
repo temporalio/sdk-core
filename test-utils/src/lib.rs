@@ -11,7 +11,7 @@ pub mod workflows;
 pub use temporal_sdk_core::replay::HistoryForReplay;
 
 use crate::stream::{Stream, TryStreamExt};
-use anyhow::{Context, bail};
+use anyhow::{Context, Error, bail};
 use assert_matches::assert_matches;
 use futures_util::{StreamExt, future, stream, stream::FuturesUnordered};
 use parking_lot::Mutex;
@@ -27,8 +27,9 @@ use std::{
     time::{Duration, Instant},
 };
 use temporal_client::{
-    Client, ClientTlsConfig, NamespacedClient, RetryClient, TlsConfig, WfClientExt,
-    WorkflowClientTrait, WorkflowExecutionInfo, WorkflowHandle, WorkflowOptions,
+    Client, ClientTlsConfig, GetWorkflowResultOpts, NamespacedClient, RetryClient, TlsConfig,
+    WfClientExt, WorkflowClientTrait, WorkflowExecutionInfo, WorkflowExecutionResult,
+    WorkflowHandle, WorkflowOptions,
 };
 use temporal_sdk::{
     IntoActivityFunc, Worker, WorkflowFunction,
@@ -337,6 +338,18 @@ impl CoreWfStarter {
             .unwrap()
             .history
             .unwrap()
+    }
+
+    pub async fn wait_for_default_wf_finish(
+        &self,
+    ) -> Result<WorkflowExecutionResult<Vec<Payload>>, Error> {
+        self.initted_worker
+            .get()
+            .unwrap()
+            .client
+            .get_untyped_workflow_handle(self.get_wf_id().to_string(), "")
+            .get_workflow_result(GetWorkflowResultOpts { follow_runs: false })
+            .await
     }
 
     async fn get_or_init(&mut self) -> &InitializedWorker {
