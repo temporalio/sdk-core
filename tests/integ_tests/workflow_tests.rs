@@ -33,7 +33,9 @@ use temporal_sdk::{
 use temporal_sdk_core::{CoreRuntime, replay::HistoryForReplay};
 use temporal_sdk_core_api::{
     errors::{PollError, WorkflowErrorType},
-    worker::{PollerBehavior, WorkerVersioningStrategy},
+    worker::{
+        PollerBehavior, WorkerDeploymentOptions, WorkerDeploymentVersion, WorkerVersioningStrategy,
+    },
 };
 use temporal_sdk_core_protos::{
     coresdk::{
@@ -561,14 +563,27 @@ async fn slow_completes_with_small_cache() {
 }
 
 #[tokio::test]
-async fn build_id_correct_in_wf_info() {
-    let wf_type = "build_id_correct_in_wf_info";
+#[rstest::rstest]
+async fn deployment_version_correct_in_wf_info(#[values(true, false)] use_only_build_id: bool) {
+    let wf_type = "deployment_version_correct_in_wf_info";
     let mut starter = CoreWfStarter::new(wf_type);
+    let version_strat = if use_only_build_id {
+        WorkerVersioningStrategy::None {
+            build_id: "1.0".to_owned(),
+        }
+    } else {
+        WorkerVersioningStrategy::WorkerDeploymentBased(WorkerDeploymentOptions {
+            version: WorkerDeploymentVersion {
+                deployment_name: "deployment-1".to_string(),
+                build_id: "1.0".to_string(),
+            },
+            use_worker_versioning: false,
+            default_versioning_behavior: None,
+        })
+    };
     starter
         .worker_config
-        .versioning_strategy(WorkerVersioningStrategy::None {
-            build_id: "1.0".to_owned(),
-        })
+        .versioning_strategy(version_strat)
         .no_remote_activities(true);
     let core = starter.get_worker().await;
     starter.start_wf().await;
@@ -576,7 +591,21 @@ async fn build_id_correct_in_wf_info() {
     let workflow_id = starter.get_task_queue().to_string();
 
     let res = core.poll_workflow_activation().await.unwrap();
-    assert_eq!(res.build_id_for_current_task, "1.0");
+    assert_eq!(
+        res.deployment_version_for_current_task
+            .as_ref()
+            .unwrap()
+            .build_id,
+        "1.0"
+    );
+    if !use_only_build_id {
+        assert_eq!(
+            res.deployment_version_for_current_task
+                .unwrap()
+                .deployment_name,
+            "deployment-1"
+        );
+    }
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         res.run_id.clone(),
         vec![],
@@ -606,7 +635,21 @@ async fn build_id_correct_in_wf_info() {
                 variant: Some(workflow_activation_job::Variant::QueryWorkflow(q)),
             }] => q
         );
-        assert_eq!(task.build_id_for_current_task, "1.0");
+        assert_eq!(
+            task.deployment_version_for_current_task
+                .as_ref()
+                .unwrap()
+                .build_id,
+            "1.0"
+        );
+        if !use_only_build_id {
+            assert_eq!(
+                task.deployment_version_for_current_task
+                    .unwrap()
+                    .deployment_name,
+                "deployment-1"
+            );
+        }
         core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
             task.run_id,
             QueryResult {
@@ -631,11 +674,21 @@ async fn build_id_correct_in_wf_info() {
         .unwrap();
 
     let mut starter = starter.clone_no_worker();
-    starter
-        .worker_config
-        .versioning_strategy(WorkerVersioningStrategy::None {
+    let version_strat = if use_only_build_id {
+        WorkerVersioningStrategy::None {
             build_id: "2.0".to_owned(),
-        });
+        }
+    } else {
+        WorkerVersioningStrategy::WorkerDeploymentBased(WorkerDeploymentOptions {
+            version: WorkerDeploymentVersion {
+                deployment_name: "deployment-1".to_string(),
+                build_id: "2.0".to_string(),
+            },
+            use_worker_versioning: false,
+            default_versioning_behavior: None,
+        })
+    };
+    starter.worker_config.versioning_strategy(version_strat);
 
     let core = starter.get_worker().await;
 
@@ -654,7 +707,21 @@ async fn build_id_correct_in_wf_info() {
     };
     let complete_fut = async {
         let res = core.poll_workflow_activation().await.unwrap();
-        assert_eq!(res.build_id_for_current_task, "1.0");
+        assert_eq!(
+            res.deployment_version_for_current_task
+                .as_ref()
+                .unwrap()
+                .build_id,
+            "1.0"
+        );
+        if !use_only_build_id {
+            assert_eq!(
+                res.deployment_version_for_current_task
+                    .unwrap()
+                    .deployment_name,
+                "deployment-1"
+            );
+        }
         core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
             res.run_id.clone(),
             vec![],
@@ -668,7 +735,21 @@ async fn build_id_correct_in_wf_info() {
                 variant: Some(workflow_activation_job::Variant::QueryWorkflow(q)),
             }] => q
         );
-        assert_eq!(task.build_id_for_current_task, "1.0");
+        assert_eq!(
+            task.deployment_version_for_current_task
+                .as_ref()
+                .unwrap()
+                .build_id,
+            "1.0"
+        );
+        if !use_only_build_id {
+            assert_eq!(
+                task.deployment_version_for_current_task
+                    .unwrap()
+                    .deployment_name,
+                "deployment-1"
+            );
+        }
         core.complete_workflow_activation(WorkflowActivationCompletion::from_cmd(
             task.run_id,
             QueryResult {
@@ -699,7 +780,21 @@ async fn build_id_correct_in_wf_info() {
         .unwrap();
 
     let res = core.poll_workflow_activation().await.unwrap();
-    assert_eq!(res.build_id_for_current_task, "2.0");
+    assert_eq!(
+        res.deployment_version_for_current_task
+            .as_ref()
+            .unwrap()
+            .build_id,
+        "2.0"
+    );
+    if !use_only_build_id {
+        assert_eq!(
+            res.deployment_version_for_current_task
+                .unwrap()
+                .deployment_name,
+            "deployment-1"
+        );
+    }
     core.complete_execution(&res.run_id).await;
 }
 

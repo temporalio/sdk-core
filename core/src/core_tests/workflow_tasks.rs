@@ -2986,14 +2986,23 @@ async fn sets_build_id_from_wft_complete() {
 
     worker.register_wf(DEFAULT_WORKFLOW_TYPE, |ctx: WfContext| async move {
         // First task, it should be empty, since replaying and nothing in first WFT completed
-        assert_eq!(ctx.current_build_id(), None);
+        assert_eq!(ctx.current_deployment_version(), None);
         ctx.timer(Duration::from_secs(1)).await;
-        assert_eq!(ctx.current_build_id(), Some("enchi-cat".to_string()));
+        assert_eq!(
+            ctx.current_deployment_version().unwrap().build_id,
+            "enchi-cat"
+        );
         ctx.timer(Duration::from_secs(1)).await;
         // Not replaying at this point, so we should see the worker's build id
-        assert_eq!(ctx.current_build_id(), Some("fierce-predator".to_string()));
+        assert_eq!(
+            ctx.current_deployment_version().unwrap().build_id,
+            "fierce-predator"
+        );
         ctx.timer(Duration::from_secs(1)).await;
-        assert_eq!(ctx.current_build_id(), Some("fierce-predator".to_string()));
+        assert_eq!(
+            ctx.current_deployment_version().unwrap().build_id,
+            "fierce-predator"
+        );
         Ok(().into())
     });
     worker

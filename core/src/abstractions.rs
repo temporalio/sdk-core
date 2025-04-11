@@ -47,7 +47,6 @@ pub(crate) struct MeteredPermitDealer<SK: SlotKind> {
 pub(crate) struct PermitDealerContextData {
     pub(crate) task_queue: String,
     pub(crate) worker_identity: String,
-    pub(crate) worker_build_id: String,
 }
 
 impl<SK> MeteredPermitDealer<SK>
@@ -169,10 +168,6 @@ impl<SK: SlotKind> SlotReservationContext for MeteredPermitDealer<SK> {
 
     fn worker_identity(&self) -> &str {
         &self.context_data.worker_identity
-    }
-
-    fn worker_build_id(&self) -> &str {
-        &self.context_data.worker_build_id
     }
 
     fn num_issued_slots(&self) -> usize {

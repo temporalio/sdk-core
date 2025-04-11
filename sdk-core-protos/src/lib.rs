@@ -489,7 +489,7 @@ pub mod coresdk {
                 available_internal_flags: vec![],
                 history_size_bytes: 0,
                 continue_as_new_suggested: false,
-                build_id_for_current_task: "".to_string(),
+                deployment_version_for_current_task: None,
             }
         }
 
