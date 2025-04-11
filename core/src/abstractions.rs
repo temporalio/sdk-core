@@ -12,7 +12,7 @@ use std::{
 };
 use temporal_sdk_core_api::worker::{
     SlotKind, SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext, SlotSupplier,
-    SlotSupplierPermit, WorkflowSlotKind,
+    SlotSupplierPermit, WorkerDeploymentVersion, WorkflowSlotKind,
 };
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
@@ -47,6 +47,7 @@ pub(crate) struct MeteredPermitDealer<SK: SlotKind> {
 pub(crate) struct PermitDealerContextData {
     pub(crate) task_queue: String,
     pub(crate) worker_identity: String,
+    pub(crate) worker_deployment_version: Option<WorkerDeploymentVersion>,
 }
 
 impl<SK> MeteredPermitDealer<SK>
@@ -168,6 +169,10 @@ impl<SK: SlotKind> SlotReservationContext for MeteredPermitDealer<SK> {
 
     fn worker_identity(&self) -> &str {
         &self.context_data.worker_identity
+    }
+
+    fn worker_deployment_version(&self) -> &Option<WorkerDeploymentVersion> {
+        &self.context_data.worker_deployment_version
     }
 
     fn num_issued_slots(&self) -> usize {
