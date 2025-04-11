@@ -331,6 +331,9 @@ pub trait SlotReservationContext: Send + Sync {
     /// Returns the identity of the worker
     fn worker_identity(&self) -> &str;
 
+    /// Returns the deployment version of the worker, if one is set.
+    fn worker_deployment_version(&self) -> &Option<WorkerDeploymentVersion>;
+
     /// Returns the number of currently outstanding slot permits, whether used or un-used.
     fn num_issued_slots(&self) -> usize;
 
