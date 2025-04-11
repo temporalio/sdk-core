@@ -27,6 +27,7 @@ use std::{
     task::Poll,
     time::{Duration, SystemTime},
 };
+use temporal_sdk_core_api::worker::WorkerDeploymentVersion;
 use temporal_sdk_core_protos::{
     coresdk::{
         activity_result::{ActivityResolution, activity_resolution},
@@ -132,10 +133,11 @@ impl WfContext {
         self.shared.read().history_length
     }
 
-    /// Return the Build ID as it was when this point in the workflow was first reached. If this
-    /// code is being executed for the first time, return this Worker's Build ID if it has one.
-    pub fn current_build_id(&self) -> Option<String> {
-        self.shared.read().current_build_id.clone()
+    /// Return the deployment version, if any,  as it was when this point in the workflow was first
+    /// reached. If this code is being executed for the first time, return this Worker's deployment
+    /// version if it has one.
+    pub fn current_deployment_version(&self) -> Option<WorkerDeploymentVersion> {
+        self.shared.read().current_deployment_version.clone()
     }
 
     /// Return current values for workflow search attributes
@@ -499,7 +501,7 @@ pub(crate) struct WfContextSharedData {
     pub(crate) is_replaying: bool,
     pub(crate) wf_time: Option<SystemTime>,
     pub(crate) history_length: u32,
-    pub(crate) current_build_id: Option<String>,
+    pub(crate) current_deployment_version: Option<WorkerDeploymentVersion>,
     pub(crate) search_attributes: SearchAttributes,
     pub(crate) random_seed: u64,
 }

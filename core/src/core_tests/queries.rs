@@ -888,12 +888,24 @@ async fn build_id_set_properly_on_query_on_first_task() {
     let core = mock_worker(mock);
 
     let task = core.poll_workflow_activation().await.unwrap();
-    assert_eq!(task.build_id_for_current_task, "1.0");
+    assert_eq!(
+        task.deployment_version_for_current_task
+            .as_ref()
+            .unwrap()
+            .build_id,
+        "1.0"
+    );
     core.complete_workflow_activation(WorkflowActivationCompletion::empty(task.run_id))
         .await
         .unwrap();
     let task = core.poll_workflow_activation().await.unwrap();
-    assert_eq!(task.build_id_for_current_task, "1.0");
+    assert_eq!(
+        task.deployment_version_for_current_task
+            .as_ref()
+            .unwrap()
+            .build_id,
+        "1.0"
+    );
     core.complete_workflow_activation(WorkflowActivationCompletion::empty(task.run_id))
         .await
         .unwrap();

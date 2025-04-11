@@ -51,7 +51,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant, SystemTime},
 };
-use temporal_sdk_core_api::worker::WorkerConfig;
+use temporal_sdk_core_api::worker::{WorkerConfig, WorkerDeploymentVersion};
 use temporal_sdk_core_protos::{
     coresdk::{
         common::{NamespacedWorkflowExecution, VersioningIntent},
@@ -123,8 +123,9 @@ pub(crate) struct WorkflowMachines {
     history_size_bytes: u64,
     /// Set on each WFT started event
     continue_as_new_suggested: bool,
-    /// Set if the current WFT is already complete and that completion event had a build id in it.
-    current_wft_build_id: Option<String>,
+    /// Set if the current WFT is already complete and that completion event had legacy build-id
+    /// or a deployment version in it. Will use an empty deployment name if it's legacy build-id.
+    current_wft_deployment_info: Option<WorkerDeploymentVersion>,
 
     all_machines: SlotMap<MachineKey, Machines>,
     /// If a machine key is in this map, that machine was created internally by core, not as a
@@ -286,7 +287,7 @@ impl WorkflowMachines {
             observed_internal_flags: Rc::new(RefCell::new(observed_internal_flags)),
             history_size_bytes: 0,
             continue_as_new_suggested: false,
-            current_wft_build_id: None,
+            current_wft_deployment_info: None,
             all_machines: Default::default(),
             machine_is_core_created: Default::default(),
             machines_by_event_id: Default::default(),
@@ -442,11 +443,11 @@ impl WorkflowMachines {
             )
         });
         let is_replaying = self.replaying || all_query;
-        let build_id_for_current_task = if is_replaying {
-            self.current_wft_build_id.clone().unwrap_or_default()
+        let deployment_version_for_current_task = if is_replaying {
+            self.current_wft_deployment_info.clone()
         } else {
-            self.current_wft_build_id = Some(self.worker_config.build_id().to_owned());
-            self.worker_config.build_id().to_owned()
+            self.current_wft_deployment_info = self.worker_config.computed_deployment_version();
+            self.current_wft_deployment_info.clone()
         };
         WorkflowActivation {
             timestamp: self.current_wf_time.map(Into::into),
@@ -460,7 +461,8 @@ impl WorkflowMachines {
                 .collect(),
             history_size_bytes: self.history_size_bytes,
             continue_as_new_suggested: self.continue_as_new_suggested,
-            build_id_for_current_task,
+            deployment_version_for_current_task: deployment_version_for_current_task
+                .map(Into::into),
         }
     }
 
@@ -479,9 +481,7 @@ impl WorkflowMachines {
         // If this worker has a build ID and we're completing the task, we want to say our ID is the
         // current build ID, so that if we get a query before any new history, we properly can
         // report that our ID was the one used for the completion.
-        if !self.worker_config.build_id().is_empty() {
-            self.current_wft_build_id = Some(self.worker_config.build_id().to_owned());
-        }
+        self.current_wft_deployment_info = self.worker_config.computed_deployment_version();
         (*self.observed_internal_flags)
             .borrow_mut()
             .gather_for_wft_complete()
@@ -587,8 +587,23 @@ impl WorkflowMachines {
                 (*$me.observed_internal_flags)
                     .borrow_mut()
                     .add_from_complete($wtc);
+                let mut combined_ver = WorkerDeploymentVersion {
+                    deployment_name: "".to_string(),
+                    build_id: "".to_string(),
+                };
                 if let Some(bid) = $wtc.worker_version.as_ref().map(|wv| &wv.build_id) {
-                    $me.current_wft_build_id = Some(bid.to_string());
+                    combined_ver.build_id = bid.to_string();
+                }
+                if !$wtc.worker_deployment_name.is_empty() {
+                    combined_ver.deployment_name = $wtc.worker_deployment_name.clone();
+                }
+                if !$wtc.worker_deployment_version.is_empty() {
+                    if let Ok(ver) = $wtc.worker_deployment_version.parse() {
+                        combined_ver = ver;
+                    }
+                }
+                if !combined_ver.is_empty() {
+                    $me.current_wft_deployment_info = Some(combined_ver);
                 }
             }};
         }

@@ -2,10 +2,12 @@ use crate::{errors::WorkflowErrorType, telemetry::metrics::TemporalMeter};
 use std::{
     any::Any,
     collections::{HashMap, HashSet},
+    str::FromStr,
     sync::Arc,
     time::Duration,
 };
 use temporal_sdk_core_protos::{
+    coresdk,
     coresdk::{ActivitySlotInfo, LocalActivitySlotInfo, NexusSlotInfo, WorkflowSlotInfo},
     temporal::api::enums::v1::VersioningBehavior,
 };
@@ -175,8 +177,21 @@ impl WorkerConfig {
                 .unwrap_or(false)
     }
 
-    pub fn build_id(&self) -> &str {
-        self.versioning_strategy.build_id()
+    pub fn computed_deployment_version(&self) -> Option<WorkerDeploymentVersion> {
+        let wdv = match self.versioning_strategy {
+            WorkerVersioningStrategy::None { ref build_id } => WorkerDeploymentVersion {
+                deployment_name: "".to_owned(),
+                build_id: build_id.clone(),
+            },
+            WorkerVersioningStrategy::WorkerDeploymentBased(ref opts) => opts.version.clone(),
+            WorkerVersioningStrategy::LegacyBuildIdBased { ref build_id } => {
+                WorkerDeploymentVersion {
+                    deployment_name: "".to_owned(),
+                    build_id: build_id.clone(),
+                }
+            }
+        };
+        if wdv.is_empty() { None } else { Some(wdv) }
     }
 }
 
@@ -315,9 +330,6 @@ pub trait SlotReservationContext: Send + Sync {
 
     /// Returns the identity of the worker
     fn worker_identity(&self) -> &str;
-
-    /// Returns the build id of the worker
-    fn worker_build_id(&self) -> &str;
 
     /// Returns the number of currently outstanding slot permits, whether used or un-used.
     fn num_issued_slots(&self) -> usize;
@@ -568,4 +580,42 @@ pub struct WorkerDeploymentVersion {
     pub deployment_name: String,
     /// Build ID for the worker.
     pub build_id: String,
+}
+
+impl WorkerDeploymentVersion {
+    pub fn is_empty(&self) -> bool {
+        self.deployment_name.is_empty() && self.build_id.is_empty()
+    }
+}
+
+impl FromStr for WorkerDeploymentVersion {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.split_once('.') {
+            Some((name, build_id)) => Ok(WorkerDeploymentVersion {
+                deployment_name: name.to_owned(),
+                build_id: build_id.to_owned(),
+            }),
+            _ => Err(()),
+        }
+    }
+}
+
+impl From<WorkerDeploymentVersion> for coresdk::common::WorkerDeploymentVersion {
+    fn from(v: WorkerDeploymentVersion) -> coresdk::common::WorkerDeploymentVersion {
+        coresdk::common::WorkerDeploymentVersion {
+            deployment_name: v.deployment_name,
+            build_id: v.build_id,
+        }
+    }
+}
+
+impl From<coresdk::common::WorkerDeploymentVersion> for WorkerDeploymentVersion {
+    fn from(v: coresdk::common::WorkerDeploymentVersion) -> WorkerDeploymentVersion {
+        WorkerDeploymentVersion {
+            deployment_name: v.deployment_name,
+            build_id: v.build_id,
+        }
+    }
 }

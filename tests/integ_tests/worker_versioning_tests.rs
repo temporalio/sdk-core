@@ -27,14 +27,15 @@ async fn sets_deployment_info_on_task_responses(#[values(true, false)] use_defau
     let wf_type = "sets_deployment_info_on_task_responses";
     let mut starter = CoreWfStarter::new(wf_type);
     let deploy_name = format!("deployment-{}", starter.get_task_queue());
+    let version = WorkerDeploymentVersion {
+        deployment_name: deploy_name.clone(),
+        build_id: "1.0".to_string(),
+    };
     starter
         .worker_config
         .versioning_strategy(WorkerVersioningStrategy::WorkerDeploymentBased(
             WorkerDeploymentOptions {
-                version: WorkerDeploymentVersion {
-                    deployment_name: deploy_name.clone(),
-                    build_id: "1.0".to_string(),
-                },
+                version: version.clone(),
                 use_worker_versioning: true,
                 default_versioning_behavior: VersioningBehavior::AutoUpgrade.into(),
             },
@@ -47,7 +48,10 @@ async fn sets_deployment_info_on_task_responses(#[values(true, false)] use_defau
     // we can describe it and then set the current version.
     let worker_task = async {
         let res = core.poll_workflow_activation().await.unwrap();
-        assert_eq!(res.build_id_for_current_task, "1.0");
+        assert_eq!(
+            version,
+            res.deployment_version_for_current_task.unwrap().into(),
+        );
 
         let mut success_complete = workflow_completion::Success::from_variants(vec![
             CompleteWorkflowExecution { result: None }.into(),

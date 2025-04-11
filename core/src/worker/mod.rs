@@ -325,7 +325,6 @@ impl Worker {
         let slot_context_data = Arc::new(PermitDealerContextData {
             task_queue: config.task_queue.clone(),
             worker_identity: config.client_identity_override.clone().unwrap_or_default(),
-            worker_build_id: config.build_id().to_owned(),
         });
         let wft_slots = MeteredPermitDealer::new(
             tuner.workflow_task_slot_supplier(),

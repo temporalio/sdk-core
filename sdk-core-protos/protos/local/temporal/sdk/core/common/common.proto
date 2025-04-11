@@ -30,3 +30,8 @@ enum VersioningIntent {
     // build ID.
     DEFAULT = 2;
 }
+
+message WorkerDeploymentVersion {
+    string deployment_name = 1;
+    string build_id = 2;
+}
