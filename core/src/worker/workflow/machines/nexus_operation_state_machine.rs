@@ -76,6 +76,8 @@ fsm! {
 pub(super) enum NexusOperationCommand {
     #[display("Start")]
     Start { operation_id: String },
+    #[display("StartSync")]
+    StartSync,
     #[display("CancelBeforeStart")]
     CancelBeforeStart,
     #[display("Complete")]
@@ -185,9 +187,7 @@ impl ScheduledEventRecorded {
         ca: NexusOperationCompletedEventAttributes,
     ) -> NexusOperationMachineTransition<Completed> {
         NexusOperationMachineTransition::commands([
-            NexusOperationCommand::Start {
-                operation_id: String::default(),
-            },
+            NexusOperationCommand::StartSync,
             NexusOperationCommand::Complete(ca.result),
         ])
     }
@@ -197,9 +197,7 @@ impl ScheduledEventRecorded {
         fa: NexusOperationFailedEventAttributes,
     ) -> NexusOperationMachineTransition<Failed> {
         NexusOperationMachineTransition::commands([
-            NexusOperationCommand::Start {
-                operation_id: String::default(),
-            },
+            NexusOperationCommand::StartSync,
             NexusOperationCommand::Fail(fa.failure.unwrap_or_else(|| Failure {
                 message: "Nexus operation failed but failure field was not populated".to_owned(),
                 ..Default::default()
@@ -212,9 +210,7 @@ impl ScheduledEventRecorded {
         ca: NexusOperationCanceledEventAttributes,
     ) -> NexusOperationMachineTransition<Cancelled> {
         NexusOperationMachineTransition::commands([
-            NexusOperationCommand::Start {
-                operation_id: String::default(),
-            },
+            NexusOperationCommand::StartSync,
             NexusOperationCommand::Cancel(ca.failure.unwrap_or_else(|| Failure {
                 message:
                     "Nexus operation was cancelled but failure field was not populated".to_owned(),
@@ -228,9 +224,7 @@ impl ScheduledEventRecorded {
         toa: NexusOperationTimedOutEventAttributes,
     ) -> NexusOperationMachineTransition<TimedOut> {
         NexusOperationMachineTransition::commands([
-            NexusOperationCommand::Start {
-                operation_id: String::default(),
-            },
+            NexusOperationCommand::StartSync,
             NexusOperationCommand::TimedOut(toa.failure.unwrap_or_else(|| Failure {
                 message: "Nexus operation timed out but failure field was not populated".to_owned(),
                 ..Default::default()
@@ -412,6 +406,15 @@ impl WFMachinesAdapter for NexusOperationMachine {
         _: Option<EventInfo>,
     ) -> Result<Vec<MachineResponse>, WFMachinesError> {
         Ok(match my_command {
+            NexusOperationCommand::StartSync => {
+                vec![
+                    ResolveNexusOperationStart {
+                        seq: self.shared_state.lang_seq_num,
+                        status: Some(resolve_nexus_operation_start::Status::StartedSync(true)),
+                    }
+                    .into(),
+                ]
+            }
             NexusOperationCommand::Start { operation_id } => {
                 vec![
                     ResolveNexusOperationStart {
