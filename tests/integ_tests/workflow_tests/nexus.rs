@@ -62,6 +62,7 @@ async fn nexus_basic(
                 })
                 .await
                 .unwrap();
+            assert_eq!(started.operation_id, None);
             let res = started.result().await;
             Ok(res.into())
         }
