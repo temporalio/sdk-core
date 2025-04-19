@@ -53,6 +53,7 @@ import "temporal/api/protocol/v1/message.proto";
 import "temporal/api/namespace/v1/message.proto";
 import "temporal/api/query/v1/message.proto";
 import "temporal/api/replication/v1/message.proto";
+import "temporal/api/rules/v1/message.proto";
 import "temporal/api/schedule/v1/message.proto";
 import "temporal/api/taskqueue/v1/message.proto";
 import "temporal/api/update/v1/message.proto";
@@ -1859,6 +1860,8 @@ message PauseActivityRequest {
         string type = 5;
     }
 
+    // Reason to pause the activity.
+    string reason = 6;
 }
 
 message PauseActivityResponse {
@@ -2200,4 +2203,80 @@ message GetDeploymentReachabilityResponse {
     // Reachability level might come from server cache. This timestamp specifies when the value
     // was actually calculated.
     google.protobuf.Timestamp last_update_time = 3;
+}
+
+message CreateWorkflowRuleRequest {
+    string namespace = 1;
+
+    // The rule specification .
+    temporal.api.rules.v1.WorkflowRuleSpec spec = 2;
+
+    // If true, the rule will be applied to the currently running workflows via batch job.
+    // If not set , the rule will only be applied when triggering condition is satisfied.
+    // visibility_query in the rule will be used to select the workflows to apply the rule to.
+    bool force_scan = 3;
+
+    // Used to de-dupe requests. Typically should be UUID.
+    string request_id = 4;
+}
+
+message CreateWorkflowRuleResponse {
+    // Created rule.
+    temporal.api.rules.v1.WorkflowRule  rule = 1;
+
+    // Batch Job ID if force-scan flag was provided. Otherwise empty.
+    string job_id = 2;
+}
+
+message DescribeWorkflowRuleRequest {
+    string namespace = 1;
+    // User-specified ID of the rule to read. Unique within the namespace.
+    string rule_id = 2;
+}
+
+message DescribeWorkflowRuleResponse {
+    // The rule that was read.
+    temporal.api.rules.v1.WorkflowRule rule = 1;
+}
+
+message DeleteWorkflowRuleRequest {
+    string namespace = 1;
+
+    // ID of the rule to delete. Unique within the namespace.
+    string rule_id = 2;
+}
+
+message DeleteWorkflowRuleResponse {
+}
+
+message ListWorkflowRulesRequest {
+    string namespace = 1;
+    bytes next_page_token = 2;
+}
+
+message ListWorkflowRulesResponse {
+    repeated temporal.api.rules.v1.WorkflowRule rules = 1;
+    bytes next_page_token = 2;
+}
+
+message TriggerWorkflowRuleRequest {
+    string namespace = 1;
+
+    // Execution info of the workflow which scheduled this activity
+    temporal.api.common.v1.WorkflowExecution execution = 2;
+
+    // Either provide id of existing rule, or rule specification
+    oneof rule {
+        string id = 4;
+        // Note: Rule ID and expiration date are not used in the trigger request.
+        temporal.api.rules.v1.WorkflowRuleSpec spec = 5;
+    }
+
+    // The identity of the client who initiated this request
+    string identity = 3;
+}
+
+message TriggerWorkflowRuleResponse {
+    // True is the rule was applied, based on the rule conditions (predicate/visibility_query).
+    bool applied = 1;
 }

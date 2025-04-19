@@ -37,16 +37,14 @@ pub mod coresdk {
     tonic::include_proto!("coresdk");
 
     use crate::{
-        ENCODING_PAYLOAD_KEY, JSON_ENCODING_VAL,
         temporal::api::{
             common::v1::{Payload, Payloads, WorkflowExecution},
-            enums::v1::{TimeoutType, VersioningBehavior, WorkflowTaskFailedCause},
+            enums::v1::{ApplicationErrorCategory, TimeoutType, VersioningBehavior, WorkflowTaskFailedCause},
             failure::v1::{
-                ActivityFailureInfo, ApplicationFailureInfo, Failure, TimeoutFailureInfo,
-                failure::FailureInfo,
+                failure::FailureInfo, ActivityFailureInfo, ApplicationFailureInfo, Failure, TimeoutFailureInfo
             },
             workflowservice::v1::PollActivityTaskQueueResponse,
-        },
+        }, ENCODING_PAYLOAD_KEY, JSON_ENCODING_VAL
     };
     use activity_task::ActivityTask;
     use serde::{Deserialize, Serialize};
@@ -1346,6 +1344,14 @@ pub mod coresdk {
                 None
             }
         }
+
+        // Checks if a failure is an ApplicationFailure with Benign category.
+        pub fn is_benign_application_failure(&self) -> bool {
+            self.maybe_application_failure()
+                .map_or(false, |app_info| {
+                    app_info.category() == ApplicationErrorCategory::Benign
+                })
+        }
     }
 
     impl Display for Failure {
@@ -2191,6 +2197,8 @@ pub mod temporal {
                                 Attributes::NexusOperationTimedOutEventAttributes(a) => Some(a.scheduled_event_id),
                                 Attributes::NexusOperationCanceledEventAttributes(a) => Some(a.scheduled_event_id),
                                 Attributes::NexusOperationCancelRequestedEventAttributes(a) => Some(a.scheduled_event_id),
+                                Attributes::NexusOperationCancelRequestCompletedEventAttributes(a) => Some(a.scheduled_event_id),
+                                Attributes::NexusOperationCancelRequestFailedEventAttributes(a) => Some(a.scheduled_event_id),
                                 _ => None
                             }
                         })
@@ -2299,6 +2307,8 @@ pub mod temporal {
                             Attributes::NexusOperationTimedOutEventAttributes(_) => { EventType::NexusOperationTimedOut }
                             Attributes::NexusOperationCancelRequestedEventAttributes(_) => { EventType::NexusOperationCancelRequested }
                             Attributes::WorkflowExecutionOptionsUpdatedEventAttributes(_) => { EventType::WorkflowExecutionOptionsUpdated }
+                            Attributes::NexusOperationCancelRequestCompletedEventAttributes(_) => { EventType::NexusOperationCancelRequestCompleted }
+                            Attributes::NexusOperationCancelRequestFailedEventAttributes(_) => { EventType::NexusOperationCancelRequestFailed }
                         }
                     }
                 }
@@ -2334,6 +2344,11 @@ pub mod temporal {
         pub mod replication {
             pub mod v1 {
                 tonic::include_proto!("temporal.api.replication.v1");
+            }
+        }
+        pub mod rules {
+            pub mod v1 {
+                tonic::include_proto!("temporal.api.rules.v1");
             }
         }
         pub mod schedule {

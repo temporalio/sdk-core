@@ -104,3 +104,18 @@ enum NexusOperationCancellationState {
     // Cancellation request is blocked (eg: by circuit breaker).
     NEXUS_OPERATION_CANCELLATION_STATE_BLOCKED = 6;
 }
+
+enum WorkflowRuleActionScope {
+    // Default value, unspecified scope.
+    WORKFLOW_RULE_ACTION_SCOPE_UNSPECIFIED = 0;
+    // The action will be applied to the entire workflow.
+    WORKFLOW_RULE_ACTION_SCOPE_WORKFLOW = 1;
+    // The action will be applied to a specific activity.
+    WORKFLOW_RULE_ACTION_SCOPE_ACTIVITY = 2;
+}
+
+enum ApplicationErrorCategory {
+    APPLICATION_ERROR_CATEGORY_UNSPECIFIED = 0;
+    // Expected application error with little/no severity.
+    APPLICATION_ERROR_CATEGORY_BENIGN = 1;
+}

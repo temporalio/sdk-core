@@ -136,6 +136,9 @@ message WorkflowExecutionExtendedInfo {
 
     // Original workflow start time.
     google.protobuf.Timestamp original_start_time = 5;
+
+    // Reset Run ID points to the new run when this execution is reset. If the execution is reset multiple times, it points to the latest run.
+    string reset_run_id = 6;
 }
 
 // Holds all the information about worker versioning for a particular workflow execution.
@@ -301,6 +304,27 @@ message PendingActivityInfo {
 
     // Priority metadata
     temporal.api.common.v1.Priority priority = 22;
+
+    message PauseInfo {
+        // The time when the activity was paused.
+        google.protobuf.Timestamp pause_time = 1;
+
+        message Manual {
+            // The identity of the actor that paused the activity.
+            string identity = 1;
+            // Reason for pausing the activity.
+            string reason = 2;
+        }
+        oneof paused_by {
+            // activity was paused by the manual intervention
+            Manual manual = 2;
+
+            // Id of the rule that paused the activity.
+            string rule_id = 3;
+        }
+    }
+
+    PauseInfo pause_info = 23;
 }
 
 message PendingChildExecutionInfo {
