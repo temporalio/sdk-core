@@ -848,6 +848,51 @@ proxier! {
         }
     );
     (
+        create_workflow_rule,
+        CreateWorkflowRuleRequest,
+        CreateWorkflowRuleResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        describe_workflow_rule,
+        DescribeWorkflowRuleRequest,
+        DescribeWorkflowRuleResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        delete_workflow_rule,
+        DeleteWorkflowRuleRequest,
+        DeleteWorkflowRuleResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        list_workflow_rules,
+        ListWorkflowRulesRequest,
+        ListWorkflowRulesResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
+        trigger_workflow_rule,
+        TriggerWorkflowRuleRequest,
+        TriggerWorkflowRuleResponse,
+        |r| {
+            let labels = namespaced_request!(r);
+            r.extensions_mut().insert(labels);
+        }
+    );
+    (
         get_search_attributes,
         GetSearchAttributesRequest,
         GetSearchAttributesResponse
