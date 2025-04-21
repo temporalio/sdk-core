@@ -37,14 +37,18 @@ pub mod coresdk {
     tonic::include_proto!("coresdk");
 
     use crate::{
+        ENCODING_PAYLOAD_KEY, JSON_ENCODING_VAL,
         temporal::api::{
             common::v1::{Payload, Payloads, WorkflowExecution},
-            enums::v1::{ApplicationErrorCategory, TimeoutType, VersioningBehavior, WorkflowTaskFailedCause},
+            enums::v1::{
+                ApplicationErrorCategory, TimeoutType, VersioningBehavior, WorkflowTaskFailedCause,
+            },
             failure::v1::{
-                failure::FailureInfo, ActivityFailureInfo, ApplicationFailureInfo, Failure, TimeoutFailureInfo
+                ActivityFailureInfo, ApplicationFailureInfo, Failure, TimeoutFailureInfo,
+                failure::FailureInfo,
             },
             workflowservice::v1::PollActivityTaskQueueResponse,
-        }, ENCODING_PAYLOAD_KEY, JSON_ENCODING_VAL
+        },
     };
     use activity_task::ActivityTask;
     use serde::{Deserialize, Serialize};
@@ -1348,9 +1352,7 @@ pub mod coresdk {
         // Checks if a failure is an ApplicationFailure with Benign category.
         pub fn is_benign_application_failure(&self) -> bool {
             self.maybe_application_failure()
-                .map_or(false, |app_info| {
-                    app_info.category() == ApplicationErrorCategory::Benign
-                })
+                .is_some_and(|app_info| app_info.category() == ApplicationErrorCategory::Benign)
         }
     }
 

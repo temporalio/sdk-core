@@ -594,12 +594,10 @@ pub(super) const TASK_SLOTS_USED_NAME: &str = "worker_task_slots_used";
 pub(super) const STICKY_CACHE_SIZE_NAME: &str = "sticky_cache_size";
 
 /// Track a failure metric if the failure is not a benign application failure.
-pub(crate) fn should_record_failure_metric(
-    failure: &Option<Failure>,
-) -> bool {
+pub(crate) fn should_record_failure_metric(failure: &Option<Failure>) -> bool {
     !failure
         .as_ref()
-        .map_or(false, |f| f.is_benign_application_failure())
+        .is_some_and(|f| f.is_benign_application_failure())
 }
 
 /// Helps define buckets once in terms of millis, but also generates a seconds version

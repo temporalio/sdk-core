@@ -13,7 +13,9 @@ use crate::{
         UsedMeteredSemPermit,
     },
     pollers::{BoxedActPoller, PermittedTqResp, TrackedPermittedTqResp, new_activity_task_poller},
-    telemetry::metrics::{MetricsContext, activity_type, eager, workflow_type, should_record_failure_metric},
+    telemetry::metrics::{
+        MetricsContext, activity_type, eager, should_record_failure_metric, workflow_type,
+    },
     worker::{
         activities::activity_heartbeat_manager::ActivityHeartbeatError, client::WorkerClient,
     },

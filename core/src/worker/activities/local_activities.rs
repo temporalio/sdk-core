@@ -3,7 +3,7 @@ use crate::{
     abstractions::{MeteredPermitDealer, OwnedMeteredSemPermit, UsedMeteredSemPermit, dbg_panic},
     protosext::ValidScheduleLA,
     retry_logic::RetryPolicyExt,
-    telemetry::metrics::{activity_type, workflow_type, should_record_failure_metric},
+    telemetry::metrics::{activity_type, should_record_failure_metric, workflow_type},
     worker::workflow::HeartbeatTimeoutMsg,
 };
 use futures_util::{
