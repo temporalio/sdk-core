@@ -13,7 +13,7 @@ use crate::{
         UsedMeteredSemPermit,
     },
     pollers::{BoxedActPoller, PermittedTqResp, TrackedPermittedTqResp, new_activity_task_poller},
-    telemetry::metrics::{MetricsContext, activity_type, eager, workflow_type, record_failure_metric},
+    telemetry::metrics::{MetricsContext, activity_type, eager, workflow_type, should_record_failure_metric},
     worker::{
         activities::activity_heartbeat_manager::ActivityHeartbeatError, client::WorkerClient,
     },
@@ -349,7 +349,9 @@ impl WorkerActivityTasks {
                             .err()
                     }
                     aer::Status::Failed(ar::Failure { failure }) => {
-                        record_failure_metric(&failure, || act_metrics.act_execution_failed());
+                        if should_record_failure_metric(&failure) {
+                            act_metrics.act_execution_failed();
+                        }
                         client
                             .fail_activity_task(task_token.clone(), failure)
                             .await

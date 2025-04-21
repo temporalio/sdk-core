@@ -1126,7 +1126,9 @@ impl ManagedRun {
                         self.metrics.wf_completed();
                     }
                     Some(CmdAttribs::FailWorkflowExecutionCommandAttributes(attrs)) => {
-                        metrics::record_failure_metric(&attrs.failure, || self.metrics.wf_failed());
+                        if metrics::should_record_failure_metric(&attrs.failure) {
+                            self.metrics.wf_failed();
+                        }
                     }
                     Some(CmdAttribs::ContinueAsNewWorkflowExecutionCommandAttributes(_)) => {
                         self.metrics.wf_continued_as_new();
