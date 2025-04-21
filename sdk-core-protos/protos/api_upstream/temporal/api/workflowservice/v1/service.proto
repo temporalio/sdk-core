@@ -1132,4 +1132,67 @@ service WorkflowService {
             }
         };
     }
+
+    // Create a new workflow rule. The rules are used to control the workflow execution.
+    // The rule will be applied to all running and new workflows in the namespace.
+    // If the rule with such ID already exist this call will fail
+    // Note: the rules are part of namespace configuration and will be stored in the namespace config.
+    // Namespace config is eventually consistent.
+    rpc CreateWorkflowRule (CreateWorkflowRuleRequest) returns (CreateWorkflowRuleResponse) {
+        option (google.api.http) = {
+            post: "/namespaces/{namespace}/workflow-rules"
+            body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/workflow-rules"
+                body: "*"
+            }
+        };
+    }
+
+    // DescribeWorkflowRule return the rule specification for existing rule id.
+    // If there is no rule with such id - NOT FOUND error will be returned.
+    rpc DescribeWorkflowRule (DescribeWorkflowRuleRequest) returns (DescribeWorkflowRuleResponse) {
+        option (google.api.http) = {
+            get: "/namespaces/{namespace}/workflow-rules/{rule_id}"
+            additional_bindings {
+                get: "/api/v1/namespaces/{namespace}/workflow-rules/{rule_id}"
+            }
+        };
+    }
+
+    // Delete rule by rule id
+    rpc DeleteWorkflowRule (DeleteWorkflowRuleRequest) returns (DeleteWorkflowRuleResponse) {
+        option (google.api.http) = {
+            delete: "/namespaces/{namespace}/workflow-rules/{rule_id}"
+            additional_bindings {
+                delete: "/api/v1/namespaces/{namespace}/workflow-rules/{rule_id}"
+            }
+        };
+    }
+
+    // Return all namespace workflow rules
+    rpc ListWorkflowRules (ListWorkflowRulesRequest) returns (ListWorkflowRulesResponse) {
+        option (google.api.http) = {
+            get: "/namespaces/{namespace}/workflow-rules"
+            additional_bindings {
+                get: "/api/v1/namespaces/{namespace}/workflow-rules"
+            }
+        };
+    }
+
+    // TriggerWorkflowRule allows to:
+    //  * trigger existing rule for a specific workflow execution;
+    //  * trigger rule for a specific workflow execution without creating a rule;
+    // This is useful for one-off operations.
+    rpc TriggerWorkflowRule (TriggerWorkflowRuleRequest) returns (TriggerWorkflowRuleResponse) {
+        option (google.api.http) = {
+            post: "/namespaces/{namespace}/workflows/{execution.workflow_id}/trigger-rule"
+            body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/workflows/{execution.workflow_id}/trigger-rule"
+                body: "*"
+            }
+        };
+    }
+
 }

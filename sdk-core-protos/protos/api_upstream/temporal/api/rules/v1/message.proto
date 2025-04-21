@@ -1,0 +1,102 @@
+// The MIT License
+//
+// Copyright (c) 2025 Temporal Technologies Inc.  All rights reserved.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+
+syntax = "proto3";
+
+package temporal.api.rules.v1;
+
+option go_package = "go.temporal.io/api/rules/v1;rules";
+option java_package = "io.temporal.api.rules.v1";
+option java_multiple_files = true;
+option java_outer_classname = "MessageProto";
+option ruby_package = "Temporalio::Api::Rules::V1";
+option csharp_namespace = "Temporalio.Api.Rules.V1";
+
+
+import "google/protobuf/timestamp.proto";
+
+message WorkflowRuleAction {
+  message ActionActivityPause {
+  }
+
+  // Supported actions.
+  oneof variant  {
+    ActionActivityPause activity_pause = 1;
+  }
+}
+
+message WorkflowRuleSpec {
+  // The id of the new workflow rule. Must be unique within the namespace.
+  // Can be set by the user, and can have business meaning.
+  string id = 1;
+
+  // Activity trigger will be triggered when an activity is about to start.
+  message ActivityStartingTrigger {
+    // Activity predicate is a SQL-like string filter parameter.
+    // It is used to match against workflow data.
+    // The following activity attributes are supported as part of the predicate:
+    // - ActivityType: An Activity Type is the mapping of a name to an Activity Definition..
+    // - ActivityId: The ID of the activity.
+    // - ActivityAttempt: The number attempts of the activity.
+    // - BackoffInterval: The current amount of time between scheduled attempts of the activity.
+    // - ActivityStatus: The status of the activity. Can be one of "Scheduled", "Started", "Paused".
+    // - TaskQueue: The name of the task queue the workflow specified that the activity should run on.
+    // Activity predicate support the following operators:
+    //  * =, !=, >, >=, <, <=
+    //  * AND, OR, ()
+    //  * BETWEEN ... AND
+    //    STARTS_WITH
+    string predicate = 1;
+  }
+
+  // Specifies how the rule should be triggered and evaluated.
+  // Currently, only "activity start" type is supported.
+  oneof trigger {
+    ActivityStartingTrigger activity_start = 2;
+  }
+
+  // Restricted Visibility query.
+  // This query is used to filter workflows in this namespace to which this rule should apply.
+  // It is applied to any running workflow each time a triggering event occurs, before the trigger predicate is evaluated.
+  // The following workflow attributes are supported:
+  // - WorkflowType
+  // - WorkflowId
+  // - StartTime
+  // - ExecutionStatus
+  string visibility_query = 3;
+
+  // WorkflowRuleAction to be taken when the rule is triggered and predicate is matched.
+  repeated WorkflowRuleAction actions = 4;
+
+  // Expiration time of the rule. After this time, the rule will be deleted.
+  // Can be empty if the rule should never expire.
+  google.protobuf.Timestamp expiration_time = 5;
+}
+
+// WorkflowRule describes a rule that can be applied to any workflow in this namespace.
+message WorkflowRule {
+  // Rule creation time.
+  google.protobuf.Timestamp create_time = 1;
+
+  // Rule specification
+  WorkflowRuleSpec spec = 2;
+}

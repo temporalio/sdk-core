@@ -3,7 +3,7 @@ use crate::{
     abstractions::{MeteredPermitDealer, OwnedMeteredSemPermit, UsedMeteredSemPermit, dbg_panic},
     protosext::ValidScheduleLA,
     retry_logic::RetryPolicyExt,
-    telemetry::metrics::{activity_type, workflow_type},
+    telemetry::metrics::{activity_type, should_record_failure_metric, workflow_type},
     worker::workflow::HeartbeatTimeoutMsg,
 };
 use futures_util::{
@@ -583,7 +583,9 @@ impl LocalActivityManager {
             la_metrics.la_exec_latency(runtime);
             let outcome = match &status {
                 LocalActivityExecutionResult::Failed(fail) => {
-                    la_metrics.la_execution_failed();
+                    if should_record_failure_metric(&fail.failure) {
+                        la_metrics.la_execution_failed()
+                    }
                     Outcome::FailurePath {
                         backoff: calc_backoff!(fail),
                     }

@@ -37,6 +37,7 @@ import "google/protobuf/timestamp.proto";
 import "temporal/api/common/v1/message.proto";
 import "temporal/api/enums/v1/batch_operation.proto";
 import "temporal/api/enums/v1/reset.proto";
+import "temporal/api/rules/v1/message.proto";
 import "temporal/api/workflow/v1/message.proto";
 
 message BatchOperationInfo {
@@ -139,4 +140,17 @@ message BatchOperationUnpauseActivities {
   // If set, the activity will start at a random time within the specified jitter
   // duration, introducing variability to the start time.
   google.protobuf.Duration jitter = 6;
+}
+
+// BatchOperationTriggerWorkflowRule sends TriggerWorkflowRule requests to batch workflows.
+message BatchOperationTriggerWorkflowRule {
+  // The identity of the worker/client.
+  string identity = 1;
+
+  oneof rule {
+    // ID of existing rule.
+    string id = 2;
+    // Rule specification to be applied to the workflow without creating a new rule.
+    temporal.api.rules.v1.WorkflowRuleSpec spec = 3;
+  }
 }

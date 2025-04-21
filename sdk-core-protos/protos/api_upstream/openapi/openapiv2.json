@@ -2186,6 +2186,155 @@
         ]
       }
     },
+    "/api/v1/namespaces/{namespace}/workflow-rules": {
+      "get": {
+        "summary": "Return all namespace workflow rules",
+        "operationId": "ListWorkflowRules2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListWorkflowRulesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "nextPageToken",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "byte"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      },
+      "post": {
+        "summary": "Create a new workflow rule. The rules are used to control the workflow execution.\nThe rule will be applied to all running and new workflows in the namespace.\nIf the rule with such ID already exist this call will fail\nNote: the rules are part of namespace configuration and will be stored in the namespace config.\nNamespace config is eventually consistent.",
+        "operationId": "CreateWorkflowRule2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1CreateWorkflowRuleResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceCreateWorkflowRuleBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/workflow-rules/{ruleId}": {
+      "get": {
+        "summary": "DescribeWorkflowRule return the rule specification for existing rule id.\nIf there is no rule with such id - NOT FOUND error will be returned.",
+        "operationId": "DescribeWorkflowRule2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1DescribeWorkflowRuleResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ruleId",
+            "description": "User-specified ID of the rule to read. Unique within the namespace.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      },
+      "delete": {
+        "summary": "Delete rule by rule id",
+        "operationId": "DeleteWorkflowRule2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1DeleteWorkflowRuleResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ruleId",
+            "description": "ID of the rule to delete. Unique within the namespace.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
     "/api/v1/namespaces/{namespace}/workflows": {
       "get": {
         "summary": "ListWorkflowExecutions is a visibility API to list workflow executions in a specific namespace.",
@@ -2505,6 +2654,51 @@
             "required": true,
             "schema": {
               "$ref": "#/definitions/WorkflowServiceQueryWorkflowBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/api/v1/namespaces/{namespace}/workflows/{execution.workflowId}/trigger-rule": {
+      "post": {
+        "summary": "TriggerWorkflowRule allows to:\n * trigger existing rule for a specific workflow execution;\n * trigger rule for a specific workflow execution without creating a rule;\nThis is useful for one-off operations.",
+        "operationId": "TriggerWorkflowRule2",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1TriggerWorkflowRuleResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "execution.workflowId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceTriggerWorkflowRuleBody"
             }
           }
         ],
@@ -5466,6 +5660,155 @@
         ]
       }
     },
+    "/namespaces/{namespace}/workflow-rules": {
+      "get": {
+        "summary": "Return all namespace workflow rules",
+        "operationId": "ListWorkflowRules",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListWorkflowRulesResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "nextPageToken",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "byte"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      },
+      "post": {
+        "summary": "Create a new workflow rule. The rules are used to control the workflow execution.\nThe rule will be applied to all running and new workflows in the namespace.\nIf the rule with such ID already exist this call will fail\nNote: the rules are part of namespace configuration and will be stored in the namespace config.\nNamespace config is eventually consistent.",
+        "operationId": "CreateWorkflowRule",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1CreateWorkflowRuleResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceCreateWorkflowRuleBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/namespaces/{namespace}/workflow-rules/{ruleId}": {
+      "get": {
+        "summary": "DescribeWorkflowRule return the rule specification for existing rule id.\nIf there is no rule with such id - NOT FOUND error will be returned.",
+        "operationId": "DescribeWorkflowRule",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1DescribeWorkflowRuleResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ruleId",
+            "description": "User-specified ID of the rule to read. Unique within the namespace.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      },
+      "delete": {
+        "summary": "Delete rule by rule id",
+        "operationId": "DeleteWorkflowRule",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1DeleteWorkflowRuleResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "ruleId",
+            "description": "ID of the rule to delete. Unique within the namespace.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
     "/namespaces/{namespace}/workflows": {
       "get": {
         "summary": "ListWorkflowExecutions is a visibility API to list workflow executions in a specific namespace.",
@@ -5785,6 +6128,51 @@
             "required": true,
             "schema": {
               "$ref": "#/definitions/WorkflowServiceQueryWorkflowBody"
+            }
+          }
+        ],
+        "tags": [
+          "WorkflowService"
+        ]
+      }
+    },
+    "/namespaces/{namespace}/workflows/{execution.workflowId}/trigger-rule": {
+      "post": {
+        "summary": "TriggerWorkflowRule allows to:\n * trigger existing rule for a specific workflow execution;\n * trigger rule for a specific workflow execution without creating a rule;\nThis is useful for one-off operations.",
+        "operationId": "TriggerWorkflowRule",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1TriggerWorkflowRuleResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "execution.workflowId",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/WorkflowServiceTriggerWorkflowRuleBody"
             }
           }
         ],
@@ -6368,6 +6756,37 @@
         }
       }
     },
+    "PauseInfoManual": {
+      "type": "object",
+      "properties": {
+        "identity": {
+          "type": "string",
+          "description": "The identity of the actor that paused the activity."
+        },
+        "reason": {
+          "type": "string",
+          "description": "Reason for pausing the activity."
+        }
+      }
+    },
+    "PendingActivityInfoPauseInfo": {
+      "type": "object",
+      "properties": {
+        "pauseTime": {
+          "type": "string",
+          "format": "date-time",
+          "description": "The time when the activity was paused."
+        },
+        "manual": {
+          "$ref": "#/definitions/PauseInfoManual",
+          "title": "activity was paused by the manual intervention"
+        },
+        "ruleId": {
+          "type": "string",
+          "description": "Id of the rule that paused the activity."
+        }
+      }
+    },
     "StartOperationResponseAsync": {
       "type": "object",
       "properties": {
@@ -6556,6 +6975,19 @@
         }
       }
     },
+    "WorkflowRuleActionActionActivityPause": {
+      "type": "object"
+    },
+    "WorkflowRuleSpecActivityStartingTrigger": {
+      "type": "object",
+      "properties": {
+        "predicate": {
+          "type": "string",
+          "title": "Activity predicate is a SQL-like string filter parameter.\nIt is used to match against workflow data.\nThe following activity attributes are supported as part of the predicate:\n- ActivityType: An Activity Type is the mapping of a name to an Activity Definition..\n- ActivityId: The ID of the activity.\n- ActivityAttempt: The number attempts of the activity.\n- BackoffInterval: The current amount of time between scheduled attempts of the activity.\n- ActivityStatus: The status of the activity. Can be one of \"Scheduled\", \"Started\", \"Paused\".\n- TaskQueue: The name of the task queue the workflow specified that the activity should run on.\nActivity predicate support the following operators:\n * =, !=, >, >=, <, <=\n * AND, OR, ()\n * BETWEEN ... AND\n   STARTS_WITH"
+        }
+      },
+      "description": "Activity trigger will be triggered when an activity is about to start."
+    },
     "WorkflowServiceCreateScheduleBody": {
       "type": "object",
       "properties": {
@@ -6581,6 +7013,23 @@
         },
         "searchAttributes": {
           "$ref": "#/definitions/v1SearchAttributes"
+        }
+      }
+    },
+    "WorkflowServiceCreateWorkflowRuleBody": {
+      "type": "object",
+      "properties": {
+        "spec": {
+          "$ref": "#/definitions/v1WorkflowRuleSpec",
+          "description": "The rule specification ."
+        },
+        "forceScan": {
+          "type": "boolean",
+          "description": "If true, the rule will be applied to the currently running workflows via batch job.\nIf not set , the rule will only be applied when triggering condition is satisfied.\nvisibility_query in the rule will be used to select the workflows to apply the rule to."
+        },
+        "requestId": {
+          "type": "string",
+          "description": "Used to de-dupe requests. Typically should be UUID."
         }
       }
     },
@@ -6631,6 +7080,10 @@
         "type": {
           "type": "string",
           "description": "Pause all running activities of this type."
+        },
+        "reason": {
+          "type": "string",
+          "description": "Reason to pause the activity."
         }
       }
     },
@@ -7405,6 +7858,31 @@
         }
       }
     },
+    "WorkflowServiceTriggerWorkflowRuleBody": {
+      "type": "object",
+      "properties": {
+        "execution": {
+          "type": "object",
+          "properties": {
+            "runId": {
+              "type": "string"
+            }
+          },
+          "title": "Execution info of the workflow which scheduled this activity"
+        },
+        "id": {
+          "type": "string"
+        },
+        "spec": {
+          "$ref": "#/definitions/v1WorkflowRuleSpec",
+          "description": "Note: Rule ID and expiration date are not used in the trigger request."
+        },
+        "identity": {
+          "type": "string",
+          "title": "The identity of the client who initiated this request"
+        }
+      }
+    },
     "WorkflowServiceUnpauseActivityBody": {
       "type": "object",
       "properties": {
@@ -8092,6 +8570,15 @@
       },
       "description": "Alert contains notification and severity."
     },
+    "v1ApplicationErrorCategory": {
+      "type": "string",
+      "enum": [
+        "APPLICATION_ERROR_CATEGORY_UNSPECIFIED",
+        "APPLICATION_ERROR_CATEGORY_BENIGN"
+      ],
+      "default": "APPLICATION_ERROR_CATEGORY_UNSPECIFIED",
+      "description": " - APPLICATION_ERROR_CATEGORY_BENIGN: Expected application error with little/no severity."
+    },
     "v1ApplicationFailureInfo": {
       "type": "object",
       "properties": {
@@ -8107,6 +8594,9 @@
         "nextRetryDelay": {
           "type": "string",
           "description": "next_retry_delay can be used by the client to override the activity\nretry interval calculated by the retry policy. Retry attempts will\nstill be subject to the maximum retries limit and total time limit\ndefined by the policy."
+        },
+        "category": {
+          "$ref": "#/definitions/v1ApplicationErrorCategory"
         }
       }
     },
@@ -9030,6 +9520,19 @@
         }
       }
     },
+    "v1CreateWorkflowRuleResponse": {
+      "type": "object",
+      "properties": {
+        "rule": {
+          "$ref": "#/definitions/v1WorkflowRule",
+          "description": "Created rule."
+        },
+        "jobId": {
+          "type": "string",
+          "description": "Batch Job ID if force-scan flag was provided. Otherwise empty."
+        }
+      }
+    },
     "v1DataBlob": {
       "type": "object",
       "properties": {
@@ -9064,6 +9567,9 @@
       "type": "object"
     },
     "v1DeleteWorkflowExecutionResponse": {
+      "type": "object"
+    },
+    "v1DeleteWorkflowRuleResponse": {
       "type": "object"
     },
     "v1Deployment": {
@@ -9379,6 +9885,15 @@
         }
       }
     },
+    "v1DescribeWorkflowRuleResponse": {
+      "type": "object",
+      "properties": {
+        "rule": {
+          "$ref": "#/definitions/v1WorkflowRule",
+          "description": "The rule that was read."
+        }
+      }
+    },
     "v1EncodingType": {
       "type": "string",
       "enum": [
@@ -9509,10 +10024,12 @@
         "EVENT_TYPE_NEXUS_OPERATION_CANCELED",
         "EVENT_TYPE_NEXUS_OPERATION_TIMED_OUT",
         "EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUESTED",
-        "EVENT_TYPE_WORKFLOW_EXECUTION_OPTIONS_UPDATED"
+        "EVENT_TYPE_WORKFLOW_EXECUTION_OPTIONS_UPDATED",
+        "EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUEST_COMPLETED",
+        "EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUEST_FAILED"
       ],
       "default": "EVENT_TYPE_UNSPECIFIED",
-      "description": "- EVENT_TYPE_UNSPECIFIED: Place holder and should never appear in a Workflow execution history\n - EVENT_TYPE_WORKFLOW_EXECUTION_STARTED: Workflow execution has been triggered/started\nIt contains Workflow execution inputs, as well as Workflow timeout configurations\n - EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED: Workflow execution has successfully completed and contains Workflow execution results\n - EVENT_TYPE_WORKFLOW_EXECUTION_FAILED: Workflow execution has unsuccessfully completed and contains the Workflow execution error\n - EVENT_TYPE_WORKFLOW_EXECUTION_TIMED_OUT: Workflow execution has timed out by the Temporal Server\nUsually due to the Workflow having not been completed within timeout settings\n - EVENT_TYPE_WORKFLOW_TASK_SCHEDULED: Workflow Task has been scheduled and the SDK client should now be able to process any new history events\n - EVENT_TYPE_WORKFLOW_TASK_STARTED: Workflow Task has started and the SDK client has picked up the Workflow Task and is processing new history events\n - EVENT_TYPE_WORKFLOW_TASK_COMPLETED: Workflow Task has completed\nThe SDK client picked up the Workflow Task and processed new history events\nSDK client may or may not ask the Temporal Server to do additional work, such as:\nEVENT_TYPE_ACTIVITY_TASK_SCHEDULED\nEVENT_TYPE_TIMER_STARTED\nEVENT_TYPE_UPSERT_WORKFLOW_SEARCH_ATTRIBUTES\nEVENT_TYPE_MARKER_RECORDED\nEVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED\nEVENT_TYPE_REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED\nEVENT_TYPE_SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED\nEVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED\nEVENT_TYPE_WORKFLOW_EXECUTION_FAILED\nEVENT_TYPE_WORKFLOW_EXECUTION_CANCELED\nEVENT_TYPE_WORKFLOW_EXECUTION_CONTINUED_AS_NEW\n - EVENT_TYPE_WORKFLOW_TASK_TIMED_OUT: Workflow Task encountered a timeout\nEither an SDK client with a local cache was not available at the time, or it took too long for the SDK client to process the task\n - EVENT_TYPE_WORKFLOW_TASK_FAILED: Workflow Task encountered a failure\nUsually this means that the Workflow was non-deterministic\nHowever, the Workflow reset functionality also uses this event\n - EVENT_TYPE_ACTIVITY_TASK_SCHEDULED: Activity Task was scheduled\nThe SDK client should pick up this activity task and execute\nThis event type contains activity inputs, as well as activity timeout configurations\n - EVENT_TYPE_ACTIVITY_TASK_STARTED: Activity Task has started executing\nThe SDK client has picked up the Activity Task and is processing the Activity invocation\n - EVENT_TYPE_ACTIVITY_TASK_COMPLETED: Activity Task has finished successfully\nThe SDK client has picked up and successfully completed the Activity Task\nThis event type contains Activity execution results\n - EVENT_TYPE_ACTIVITY_TASK_FAILED: Activity Task has finished unsuccessfully\nThe SDK picked up the Activity Task but unsuccessfully completed it\nThis event type contains Activity execution errors\n - EVENT_TYPE_ACTIVITY_TASK_TIMED_OUT: Activity has timed out according to the Temporal Server\nActivity did not complete within the timeout settings\n - EVENT_TYPE_ACTIVITY_TASK_CANCEL_REQUESTED: A request to cancel the Activity has occurred\nThe SDK client will be able to confirm cancellation of an Activity during an Activity heartbeat\n - EVENT_TYPE_ACTIVITY_TASK_CANCELED: Activity has been cancelled\n - EVENT_TYPE_TIMER_STARTED: A timer has started\n - EVENT_TYPE_TIMER_FIRED: A timer has fired\n - EVENT_TYPE_TIMER_CANCELED: A time has been cancelled\n - EVENT_TYPE_WORKFLOW_EXECUTION_CANCEL_REQUESTED: A request has been made to cancel the Workflow execution\n - EVENT_TYPE_WORKFLOW_EXECUTION_CANCELED: SDK client has confirmed the cancellation request and the Workflow execution has been cancelled\n - EVENT_TYPE_REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED: Workflow has requested that the Temporal Server try to cancel another Workflow\n - EVENT_TYPE_REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_FAILED: Temporal Server could not cancel the targeted Workflow\nThis is usually because the target Workflow could not be found\n - EVENT_TYPE_EXTERNAL_WORKFLOW_EXECUTION_CANCEL_REQUESTED: Temporal Server has successfully requested the cancellation of the target Workflow\n - EVENT_TYPE_MARKER_RECORDED: A marker has been recorded.\nThis event type is transparent to the Temporal Server\nThe Server will only store it and will not try to understand it.\n - EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED: Workflow has received a Signal event\nThe event type contains the Signal name, as well as a Signal payload\n - EVENT_TYPE_WORKFLOW_EXECUTION_TERMINATED: Workflow execution has been forcefully terminated\nThis is usually because the terminate Workflow API was called\n - EVENT_TYPE_WORKFLOW_EXECUTION_CONTINUED_AS_NEW: Workflow has successfully completed and a new Workflow has been started within the same transaction\nContains last Workflow execution results as well as new Workflow execution inputs\n - EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED: Temporal Server will try to start a child Workflow\n - EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_FAILED: Child Workflow execution cannot be started/triggered\nUsually due to a child Workflow ID collision\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_STARTED: Child Workflow execution has successfully started/triggered\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_COMPLETED: Child Workflow execution has successfully completed\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_FAILED: Child Workflow execution has unsuccessfully completed\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_CANCELED: Child Workflow execution has been cancelled\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_TIMED_OUT: Child Workflow execution has timed out by the Temporal Server\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_TERMINATED: Child Workflow execution has been terminated\n - EVENT_TYPE_SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED: Temporal Server will try to Signal the targeted Workflow\nContains the Signal name, as well as a Signal payload\n - EVENT_TYPE_SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_FAILED: Temporal Server cannot Signal the targeted Workflow\nUsually because the Workflow could not be found\n - EVENT_TYPE_EXTERNAL_WORKFLOW_EXECUTION_SIGNALED: Temporal Server has successfully Signaled the targeted Workflow\n - EVENT_TYPE_UPSERT_WORKFLOW_SEARCH_ATTRIBUTES: Workflow search attributes should be updated and synchronized with the visibility store\n - EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_ADMITTED: An update was admitted. Note that not all admitted updates result in this\nevent. See UpdateAdmittedEventOrigin for situations in which this event\nis created.\n - EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_ACCEPTED: An update was accepted (i.e. passed validation, perhaps because no validator was defined)\n - EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_REJECTED: This event is never written to history.\n - EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_COMPLETED: An update completed\n - EVENT_TYPE_WORKFLOW_PROPERTIES_MODIFIED_EXTERNALLY: Some property or properties of the workflow as a whole have changed by non-workflow code.\nThe distinction of external vs. command-based modification is important so the SDK can\nmaintain determinism when using the command-based approach.\n - EVENT_TYPE_ACTIVITY_PROPERTIES_MODIFIED_EXTERNALLY: Some property or properties of an already-scheduled activity have changed by non-workflow code.\nThe distinction of external vs. command-based modification is important so the SDK can\nmaintain determinism when using the command-based approach.\n - EVENT_TYPE_WORKFLOW_PROPERTIES_MODIFIED: Workflow properties modified by user workflow code\n - EVENT_TYPE_NEXUS_OPERATION_SCHEDULED: A Nexus operation was scheduled using a ScheduleNexusOperation command.\n - EVENT_TYPE_NEXUS_OPERATION_STARTED: An asynchronous Nexus operation was started by a Nexus handler.\n - EVENT_TYPE_NEXUS_OPERATION_COMPLETED: A Nexus operation completed successfully.\n - EVENT_TYPE_NEXUS_OPERATION_FAILED: A Nexus operation failed.\n - EVENT_TYPE_NEXUS_OPERATION_CANCELED: A Nexus operation completed as canceled.\n - EVENT_TYPE_NEXUS_OPERATION_TIMED_OUT: A Nexus operation timed out.\n - EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUESTED: A Nexus operation was requested to be canceled using a RequestCancelNexusOperation command.\n - EVENT_TYPE_WORKFLOW_EXECUTION_OPTIONS_UPDATED: Workflow execution options updated by user.",
+      "description": "- EVENT_TYPE_UNSPECIFIED: Place holder and should never appear in a Workflow execution history\n - EVENT_TYPE_WORKFLOW_EXECUTION_STARTED: Workflow execution has been triggered/started\nIt contains Workflow execution inputs, as well as Workflow timeout configurations\n - EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED: Workflow execution has successfully completed and contains Workflow execution results\n - EVENT_TYPE_WORKFLOW_EXECUTION_FAILED: Workflow execution has unsuccessfully completed and contains the Workflow execution error\n - EVENT_TYPE_WORKFLOW_EXECUTION_TIMED_OUT: Workflow execution has timed out by the Temporal Server\nUsually due to the Workflow having not been completed within timeout settings\n - EVENT_TYPE_WORKFLOW_TASK_SCHEDULED: Workflow Task has been scheduled and the SDK client should now be able to process any new history events\n - EVENT_TYPE_WORKFLOW_TASK_STARTED: Workflow Task has started and the SDK client has picked up the Workflow Task and is processing new history events\n - EVENT_TYPE_WORKFLOW_TASK_COMPLETED: Workflow Task has completed\nThe SDK client picked up the Workflow Task and processed new history events\nSDK client may or may not ask the Temporal Server to do additional work, such as:\nEVENT_TYPE_ACTIVITY_TASK_SCHEDULED\nEVENT_TYPE_TIMER_STARTED\nEVENT_TYPE_UPSERT_WORKFLOW_SEARCH_ATTRIBUTES\nEVENT_TYPE_MARKER_RECORDED\nEVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED\nEVENT_TYPE_REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED\nEVENT_TYPE_SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED\nEVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED\nEVENT_TYPE_WORKFLOW_EXECUTION_FAILED\nEVENT_TYPE_WORKFLOW_EXECUTION_CANCELED\nEVENT_TYPE_WORKFLOW_EXECUTION_CONTINUED_AS_NEW\n - EVENT_TYPE_WORKFLOW_TASK_TIMED_OUT: Workflow Task encountered a timeout\nEither an SDK client with a local cache was not available at the time, or it took too long for the SDK client to process the task\n - EVENT_TYPE_WORKFLOW_TASK_FAILED: Workflow Task encountered a failure\nUsually this means that the Workflow was non-deterministic\nHowever, the Workflow reset functionality also uses this event\n - EVENT_TYPE_ACTIVITY_TASK_SCHEDULED: Activity Task was scheduled\nThe SDK client should pick up this activity task and execute\nThis event type contains activity inputs, as well as activity timeout configurations\n - EVENT_TYPE_ACTIVITY_TASK_STARTED: Activity Task has started executing\nThe SDK client has picked up the Activity Task and is processing the Activity invocation\n - EVENT_TYPE_ACTIVITY_TASK_COMPLETED: Activity Task has finished successfully\nThe SDK client has picked up and successfully completed the Activity Task\nThis event type contains Activity execution results\n - EVENT_TYPE_ACTIVITY_TASK_FAILED: Activity Task has finished unsuccessfully\nThe SDK picked up the Activity Task but unsuccessfully completed it\nThis event type contains Activity execution errors\n - EVENT_TYPE_ACTIVITY_TASK_TIMED_OUT: Activity has timed out according to the Temporal Server\nActivity did not complete within the timeout settings\n - EVENT_TYPE_ACTIVITY_TASK_CANCEL_REQUESTED: A request to cancel the Activity has occurred\nThe SDK client will be able to confirm cancellation of an Activity during an Activity heartbeat\n - EVENT_TYPE_ACTIVITY_TASK_CANCELED: Activity has been cancelled\n - EVENT_TYPE_TIMER_STARTED: A timer has started\n - EVENT_TYPE_TIMER_FIRED: A timer has fired\n - EVENT_TYPE_TIMER_CANCELED: A time has been cancelled\n - EVENT_TYPE_WORKFLOW_EXECUTION_CANCEL_REQUESTED: A request has been made to cancel the Workflow execution\n - EVENT_TYPE_WORKFLOW_EXECUTION_CANCELED: SDK client has confirmed the cancellation request and the Workflow execution has been cancelled\n - EVENT_TYPE_REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED: Workflow has requested that the Temporal Server try to cancel another Workflow\n - EVENT_TYPE_REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_FAILED: Temporal Server could not cancel the targeted Workflow\nThis is usually because the target Workflow could not be found\n - EVENT_TYPE_EXTERNAL_WORKFLOW_EXECUTION_CANCEL_REQUESTED: Temporal Server has successfully requested the cancellation of the target Workflow\n - EVENT_TYPE_MARKER_RECORDED: A marker has been recorded.\nThis event type is transparent to the Temporal Server\nThe Server will only store it and will not try to understand it.\n - EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED: Workflow has received a Signal event\nThe event type contains the Signal name, as well as a Signal payload\n - EVENT_TYPE_WORKFLOW_EXECUTION_TERMINATED: Workflow execution has been forcefully terminated\nThis is usually because the terminate Workflow API was called\n - EVENT_TYPE_WORKFLOW_EXECUTION_CONTINUED_AS_NEW: Workflow has successfully completed and a new Workflow has been started within the same transaction\nContains last Workflow execution results as well as new Workflow execution inputs\n - EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED: Temporal Server will try to start a child Workflow\n - EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_FAILED: Child Workflow execution cannot be started/triggered\nUsually due to a child Workflow ID collision\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_STARTED: Child Workflow execution has successfully started/triggered\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_COMPLETED: Child Workflow execution has successfully completed\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_FAILED: Child Workflow execution has unsuccessfully completed\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_CANCELED: Child Workflow execution has been cancelled\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_TIMED_OUT: Child Workflow execution has timed out by the Temporal Server\n - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_TERMINATED: Child Workflow execution has been terminated\n - EVENT_TYPE_SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED: Temporal Server will try to Signal the targeted Workflow\nContains the Signal name, as well as a Signal payload\n - EVENT_TYPE_SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_FAILED: Temporal Server cannot Signal the targeted Workflow\nUsually because the Workflow could not be found\n - EVENT_TYPE_EXTERNAL_WORKFLOW_EXECUTION_SIGNALED: Temporal Server has successfully Signaled the targeted Workflow\n - EVENT_TYPE_UPSERT_WORKFLOW_SEARCH_ATTRIBUTES: Workflow search attributes should be updated and synchronized with the visibility store\n - EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_ADMITTED: An update was admitted. Note that not all admitted updates result in this\nevent. See UpdateAdmittedEventOrigin for situations in which this event\nis created.\n - EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_ACCEPTED: An update was accepted (i.e. passed validation, perhaps because no validator was defined)\n - EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_REJECTED: This event is never written to history.\n - EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_COMPLETED: An update completed\n - EVENT_TYPE_WORKFLOW_PROPERTIES_MODIFIED_EXTERNALLY: Some property or properties of the workflow as a whole have changed by non-workflow code.\nThe distinction of external vs. command-based modification is important so the SDK can\nmaintain determinism when using the command-based approach.\n - EVENT_TYPE_ACTIVITY_PROPERTIES_MODIFIED_EXTERNALLY: Some property or properties of an already-scheduled activity have changed by non-workflow code.\nThe distinction of external vs. command-based modification is important so the SDK can\nmaintain determinism when using the command-based approach.\n - EVENT_TYPE_WORKFLOW_PROPERTIES_MODIFIED: Workflow properties modified by user workflow code\n - EVENT_TYPE_NEXUS_OPERATION_SCHEDULED: A Nexus operation was scheduled using a ScheduleNexusOperation command.\n - EVENT_TYPE_NEXUS_OPERATION_STARTED: An asynchronous Nexus operation was started by a Nexus handler.\n - EVENT_TYPE_NEXUS_OPERATION_COMPLETED: A Nexus operation completed successfully.\n - EVENT_TYPE_NEXUS_OPERATION_FAILED: A Nexus operation failed.\n - EVENT_TYPE_NEXUS_OPERATION_CANCELED: A Nexus operation completed as canceled.\n - EVENT_TYPE_NEXUS_OPERATION_TIMED_OUT: A Nexus operation timed out.\n - EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUESTED: A Nexus operation was requested to be canceled using a RequestCancelNexusOperation command.\n - EVENT_TYPE_WORKFLOW_EXECUTION_OPTIONS_UPDATED: Workflow execution options updated by user.\n - EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUEST_COMPLETED: A cancellation request for a Nexus operation was successfully delivered to the Nexus handler.\n - EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUEST_FAILED: A cancellation request for a Nexus operation resulted in an error.",
       "title": "Whenever this list of events is changed do change the function shouldBufferEvent in mutableStateBuilder.go to make sure to do the correct event ordering"
     },
     "v1ExecuteMultiOperationResponse": {
@@ -10083,6 +10600,12 @@
         },
         "workflowExecutionOptionsUpdatedEventAttributes": {
           "$ref": "#/definitions/v1WorkflowExecutionOptionsUpdatedEventAttributes"
+        },
+        "nexusOperationCancelRequestCompletedEventAttributes": {
+          "$ref": "#/definitions/v1NexusOperationCancelRequestCompletedEventAttributes"
+        },
+        "nexusOperationCancelRequestFailedEventAttributes": {
+          "$ref": "#/definitions/v1NexusOperationCancelRequestFailedEventAttributes"
         }
       },
       "description": "History events are the method by which Temporal SDKs advance (or recreate) workflow state.\nSee the `EventType` enum for more info about what each event is for."
@@ -10369,6 +10892,22 @@
           "items": {
             "type": "object",
             "$ref": "#/definitions/v1WorkflowExecutionInfo"
+          }
+        },
+        "nextPageToken": {
+          "type": "string",
+          "format": "byte"
+        }
+      }
+    },
+    "v1ListWorkflowRulesResponse": {
+      "type": "object",
+      "properties": {
+        "rules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1WorkflowRule"
           }
         },
         "nextPageToken": {
@@ -10682,6 +11221,50 @@
         "retryBehavior": {
           "$ref": "#/definitions/v1NexusHandlerErrorRetryBehavior",
           "description": "Retry behavior, defaults to the retry behavior of the error type as defined in the spec."
+        }
+      }
+    },
+    "v1NexusOperationCancelRequestCompletedEventAttributes": {
+      "type": "object",
+      "properties": {
+        "requestedEventId": {
+          "type": "string",
+          "format": "int64",
+          "description": "The ID of the `NEXUS_OPERATION_CANCEL_REQUESTED` event."
+        },
+        "workflowTaskCompletedEventId": {
+          "type": "string",
+          "format": "int64",
+          "description": "The `WORKFLOW_TASK_COMPLETED` event that the corresponding RequestCancelNexusOperation command was reported\nwith."
+        },
+        "scheduledEventId": {
+          "type": "string",
+          "format": "int64",
+          "description": "The id of the `NEXUS_OPERATION_SCHEDULED` event this cancel request corresponds to."
+        }
+      }
+    },
+    "v1NexusOperationCancelRequestFailedEventAttributes": {
+      "type": "object",
+      "properties": {
+        "requestedEventId": {
+          "type": "string",
+          "format": "int64",
+          "description": "The ID of the `NEXUS_OPERATION_CANCEL_REQUESTED` event."
+        },
+        "workflowTaskCompletedEventId": {
+          "type": "string",
+          "format": "int64",
+          "description": "The `WORKFLOW_TASK_COMPLETED` event that the corresponding RequestCancelNexusOperation command was reported\nwith."
+        },
+        "failure": {
+          "$ref": "#/definitions/apifailurev1Failure",
+          "description": "Failure details. A NexusOperationFailureInfo wrapping a CanceledFailureInfo."
+        },
+        "scheduledEventId": {
+          "type": "string",
+          "format": "int64",
+          "description": "The id of the `NEXUS_OPERATION_SCHEDULED` event this cancel request corresponds to."
         }
       }
     },
@@ -11077,6 +11660,9 @@
         "priority": {
           "$ref": "#/definitions/v1Priority",
           "title": "Priority metadata"
+        },
+        "pauseInfo": {
+          "$ref": "#/definitions/PendingActivityInfoPauseInfo"
         }
       }
     },
@@ -11086,9 +11672,12 @@
         "PENDING_ACTIVITY_STATE_UNSPECIFIED",
         "PENDING_ACTIVITY_STATE_SCHEDULED",
         "PENDING_ACTIVITY_STATE_STARTED",
-        "PENDING_ACTIVITY_STATE_CANCEL_REQUESTED"
+        "PENDING_ACTIVITY_STATE_CANCEL_REQUESTED",
+        "PENDING_ACTIVITY_STATE_PAUSED",
+        "PENDING_ACTIVITY_STATE_PAUSE_REQUESTED"
       ],
-      "default": "PENDING_ACTIVITY_STATE_UNSPECIFIED"
+      "default": "PENDING_ACTIVITY_STATE_UNSPECIFIED",
+      "title": "- PENDING_ACTIVITY_STATE_PAUSED: PAUSED means activity is paused on the server, and is not running in the worker\n - PENDING_ACTIVITY_STATE_PAUSE_REQUESTED: PAUSE_REQUESTED means activity is currently running on the worker, but paused on the server"
     },
     "v1PendingChildExecutionInfo": {
       "type": "object",
@@ -13572,6 +14161,15 @@
         }
       }
     },
+    "v1TriggerWorkflowRuleResponse": {
+      "type": "object",
+      "properties": {
+        "applied": {
+          "type": "boolean",
+          "description": "True is the rule was applied, based on the rule conditions (predicate/visibility_query)."
+        }
+      }
+    },
     "v1UnpauseActivityResponse": {
       "type": "object"
     },
@@ -14244,6 +14842,10 @@
           "type": "string",
           "format": "date-time",
           "description": "Original workflow start time."
+        },
+        "resetRunId": {
+          "type": "string",
+          "description": "Reset Run ID points to the new run when this execution is reset. If the execution is reset multiple times, it points to the latest run."
         }
       },
       "description": "Holds all the extra information about workflow execution that is not part of Visibility."
@@ -14558,7 +15160,7 @@
         },
         "rootWorkflowExecution": {
           "$ref": "#/definitions/v1WorkflowExecution",
-          "description": "Contains information about the root workflow execution.\nThe root workflow execution is defined as follows:\n1. A workflow without parent workflow is its own root workflow.\n2. A workflow that has a parent workflow has the same root workflow as its parent workflow.\nNote: workflows continued as new or reseted may or may not have parents, check examples below.\n\nExamples:\n  Scenario 1: Workflow W1 starts child workflow W2, and W2 starts child workflow W3.\n    - The root workflow of all three workflows is W1.\n  Scenario 2: Workflow W1 starts child workflow W2, and W2 continued as new W3.\n    - The root workflow of all three workflows is W1.\n  Scenario 3: Workflow W1 continued as new W2.\n    - The root workflow of W1 is W1 and the root workflow of W2 is W2.\n  Scenario 4: Workflow W1 starts child workflow W2, and W2 is reseted, creating W3\n    - The root workflow of all three workflows is W1.\n  Scenario 5: Workflow W1 is reseted, creating W2.\n    - The root workflow of W1 is W1 and the root workflow of W2 is W2."
+          "description": "Contains information about the root workflow execution.\nThe root workflow execution is defined as follows:\n  1. A workflow without parent workflow is its own root workflow.\n  2. A workflow that has a parent workflow has the same root workflow as its parent workflow.\nWhen the workflow is its own root workflow, then root_workflow_execution is nil.\nNote: workflows continued as new or reseted may or may not have parents, check examples below.\n\nExamples:\n  Scenario 1: Workflow W1 starts child workflow W2, and W2 starts child workflow W3.\n    - The root workflow of all three workflows is W1.\n    - W1 has root_workflow_execution set to nil.\n    - W2 and W3 have root_workflow_execution set to W1.\n  Scenario 2: Workflow W1 starts child workflow W2, and W2 continued as new W3.\n    - The root workflow of all three workflows is W1.\n    - W1 has root_workflow_execution set to nil.\n    - W2 and W3 have root_workflow_execution set to W1.\n  Scenario 3: Workflow W1 continued as new W2.\n    - The root workflow of W1 is W1 and the root workflow of W2 is W2.\n    - W1 and W2 have root_workflow_execution set to nil.\n  Scenario 4: Workflow W1 starts child workflow W2, and W2 is reseted, creating W3\n    - The root workflow of all three workflows is W1.\n    - W1 has root_workflow_execution set to nil.\n    - W2 and W3 have root_workflow_execution set to W1.\n  Scenario 5: Workflow W1 is reseted, creating W2.\n    - The root workflow of W1 is W1 and the root workflow of W2 is W2.\n    - W1 and W2 have root_workflow_execution set to nil."
         },
         "inheritedBuildId": {
           "type": "string",
@@ -14833,6 +15435,58 @@
         }
       },
       "title": "Answer to a `WorkflowQuery`"
+    },
+    "v1WorkflowRule": {
+      "type": "object",
+      "properties": {
+        "createTime": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Rule creation time."
+        },
+        "spec": {
+          "$ref": "#/definitions/v1WorkflowRuleSpec",
+          "title": "Rule specification"
+        }
+      },
+      "description": "WorkflowRule describes a rule that can be applied to any workflow in this namespace."
+    },
+    "v1WorkflowRuleAction": {
+      "type": "object",
+      "properties": {
+        "activityPause": {
+          "$ref": "#/definitions/WorkflowRuleActionActionActivityPause"
+        }
+      }
+    },
+    "v1WorkflowRuleSpec": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The id of the new workflow rule. Must be unique within the namespace.\nCan be set by the user, and can have business meaning."
+        },
+        "activityStart": {
+          "$ref": "#/definitions/WorkflowRuleSpecActivityStartingTrigger"
+        },
+        "visibilityQuery": {
+          "type": "string",
+          "title": "Restricted Visibility query.\nThis query is used to filter workflows in this namespace to which this rule should apply.\nIt is applied to any running workflow each time a triggering event occurs, before the trigger predicate is evaluated.\nThe following workflow attributes are supported:\n- WorkflowType\n- WorkflowId\n- StartTime\n- ExecutionStatus"
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1WorkflowRuleAction"
+          },
+          "description": "WorkflowRuleAction to be taken when the rule is triggered and predicate is matched."
+        },
+        "expirationTime": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Expiration time of the rule. After this time, the rule will be deleted.\nCan be empty if the rule should never expire."
+        }
+      }
     },
     "v1WorkflowTaskCompletedEventAttributes": {
       "type": "object",

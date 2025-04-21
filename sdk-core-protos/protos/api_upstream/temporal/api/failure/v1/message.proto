@@ -34,6 +34,7 @@ option csharp_namespace = "Temporalio.Api.Failure.V1";
 import "temporal/api/common/v1/message.proto";
 import "temporal/api/enums/v1/workflow.proto";
 import "temporal/api/enums/v1/nexus.proto";
+import "temporal/api/enums/v1/common.proto";
 
 import "google/protobuf/duration.proto";
 
@@ -46,6 +47,7 @@ message ApplicationFailureInfo {
     // still be subject to the maximum retries limit and total time limit
     // defined by the policy.
     google.protobuf.Duration next_retry_delay = 4;
+    temporal.api.enums.v1.ApplicationErrorCategory category = 5;
 }
 
 message TimeoutFailureInfo {

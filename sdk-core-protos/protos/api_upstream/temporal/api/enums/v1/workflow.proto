@@ -106,6 +106,10 @@ enum PendingActivityState {
     PENDING_ACTIVITY_STATE_SCHEDULED = 1;
     PENDING_ACTIVITY_STATE_STARTED = 2;
     PENDING_ACTIVITY_STATE_CANCEL_REQUESTED = 3;
+    // PAUSED means activity is paused on the server, and is not running in the worker
+    PENDING_ACTIVITY_STATE_PAUSED = 4;
+    // PAUSE_REQUESTED means activity is currently running on the worker, but paused on the server
+    PENDING_ACTIVITY_STATE_PAUSE_REQUESTED = 5;
 }
 
 enum PendingWorkflowTaskState {

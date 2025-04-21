@@ -1951,6 +1951,134 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
+  /api/v1/namespaces/{namespace}/workflow-rules:
+    get:
+      tags:
+        - WorkflowService
+      description: Return all namespace workflow rules
+      operationId: ListWorkflowRules
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: nextPageToken
+          in: query
+          schema:
+            type: string
+            format: bytes
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListWorkflowRulesResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        Create a new workflow rule. The rules are used to control the workflow execution.
+         The rule will be applied to all running and new workflows in the namespace.
+         If the rule with such ID already exist this call will fail
+         Note: the rules are part of namespace configuration and will be stored in the namespace config.
+         Namespace config is eventually consistent.
+      operationId: CreateWorkflowRule
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWorkflowRuleRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateWorkflowRuleResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /api/v1/namespaces/{namespace}/workflow-rules/{ruleId}:
+    get:
+      tags:
+        - WorkflowService
+      description: |-
+        DescribeWorkflowRule return the rule specification for existing rule id.
+         If there is no rule with such id - NOT FOUND error will be returned.
+      operationId: DescribeWorkflowRule
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: ruleId
+          in: path
+          description: User-specified ID of the rule to read. Unique within the namespace.
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DescribeWorkflowRuleResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+    delete:
+      tags:
+        - WorkflowService
+      description: Delete rule by rule id
+      operationId: DeleteWorkflowRule
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: ruleId
+          in: path
+          description: ID of the rule to delete. Unique within the namespace.
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteWorkflowRuleResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
   /api/v1/namespaces/{namespace}/workflows:
     get:
       tags:
@@ -2227,6 +2355,46 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/QueryWorkflowResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /api/v1/namespaces/{namespace}/workflows/{execution.workflow_id}/trigger-rule:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        TriggerWorkflowRule allows to:
+          * trigger existing rule for a specific workflow execution;
+          * trigger rule for a specific workflow execution without creating a rule;
+         This is useful for one-off operations.
+      operationId: TriggerWorkflowRule
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: execution.workflow_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TriggerWorkflowRuleRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TriggerWorkflowRuleResponse'
         default:
           description: Default error response
           content:
@@ -4870,6 +5038,134 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
+  /namespaces/{namespace}/workflow-rules:
+    get:
+      tags:
+        - WorkflowService
+      description: Return all namespace workflow rules
+      operationId: ListWorkflowRules
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: nextPageToken
+          in: query
+          schema:
+            type: string
+            format: bytes
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListWorkflowRulesResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        Create a new workflow rule. The rules are used to control the workflow execution.
+         The rule will be applied to all running and new workflows in the namespace.
+         If the rule with such ID already exist this call will fail
+         Note: the rules are part of namespace configuration and will be stored in the namespace config.
+         Namespace config is eventually consistent.
+      operationId: CreateWorkflowRule
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWorkflowRuleRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateWorkflowRuleResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /namespaces/{namespace}/workflow-rules/{ruleId}:
+    get:
+      tags:
+        - WorkflowService
+      description: |-
+        DescribeWorkflowRule return the rule specification for existing rule id.
+         If there is no rule with such id - NOT FOUND error will be returned.
+      operationId: DescribeWorkflowRule
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: ruleId
+          in: path
+          description: User-specified ID of the rule to read. Unique within the namespace.
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DescribeWorkflowRuleResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+    delete:
+      tags:
+        - WorkflowService
+      description: Delete rule by rule id
+      operationId: DeleteWorkflowRule
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: ruleId
+          in: path
+          description: ID of the rule to delete. Unique within the namespace.
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteWorkflowRuleResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
   /namespaces/{namespace}/workflows:
     get:
       tags:
@@ -5146,6 +5442,46 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/QueryWorkflowResponse'
+        default:
+          description: Default error response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+  /namespaces/{namespace}/workflows/{execution.workflow_id}/trigger-rule:
+    post:
+      tags:
+        - WorkflowService
+      description: |-
+        TriggerWorkflowRule allows to:
+          * trigger existing rule for a specific workflow execution;
+          * trigger rule for a specific workflow execution without creating a rule;
+         This is useful for one-off operations.
+      operationId: TriggerWorkflowRule
+      parameters:
+        - name: namespace
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: execution.workflow_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TriggerWorkflowRuleRequest'
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TriggerWorkflowRuleResponse'
         default:
           description: Default error response
           content:
@@ -5853,6 +6189,12 @@ components:
              retry interval calculated by the retry policy. Retry attempts will
              still be subject to the maximum retries limit and total time limit
              defined by the policy.
+        category:
+          enum:
+            - APPLICATION_ERROR_CATEGORY_UNSPECIFIED
+            - APPLICATION_ERROR_CATEGORY_BENIGN
+          type: string
+          format: enum
     BackfillRequest:
       type: object
       properties:
@@ -6554,6 +6896,34 @@ components:
         conflictToken:
           type: string
           format: bytes
+    CreateWorkflowRuleRequest:
+      type: object
+      properties:
+        namespace:
+          type: string
+        spec:
+          allOf:
+            - $ref: '#/components/schemas/WorkflowRuleSpec'
+          description: The rule specification .
+        forceScan:
+          type: boolean
+          description: |-
+            If true, the rule will be applied to the currently running workflows via batch job.
+             If not set , the rule will only be applied when triggering condition is satisfied.
+             visibility_query in the rule will be used to select the workflows to apply the rule to.
+        requestId:
+          type: string
+          description: Used to de-dupe requests. Typically should be UUID.
+    CreateWorkflowRuleResponse:
+      type: object
+      properties:
+        rule:
+          allOf:
+            - $ref: '#/components/schemas/WorkflowRule'
+          description: Created rule.
+        jobId:
+          type: string
+          description: Batch Job ID if force-scan flag was provided. Otherwise empty.
     DataBlob:
       type: object
       properties:
@@ -6577,6 +6947,9 @@ components:
       type: object
       properties: {}
     DeleteWorkerDeploymentVersionResponse:
+      type: object
+      properties: {}
+    DeleteWorkflowRuleResponse:
       type: object
       properties: {}
     Deployment:
@@ -6868,6 +7241,13 @@ components:
             $ref: '#/components/schemas/PendingNexusOperationInfo'
         workflowExtendedInfo:
           $ref: '#/components/schemas/WorkflowExecutionExtendedInfo'
+    DescribeWorkflowRuleResponse:
+      type: object
+      properties:
+        rule:
+          allOf:
+            - $ref: '#/components/schemas/WorkflowRule'
+          description: The rule that was read.
     Endpoint:
       type: object
       properties:
@@ -7386,6 +7766,8 @@ components:
             - EVENT_TYPE_NEXUS_OPERATION_TIMED_OUT
             - EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUESTED
             - EVENT_TYPE_WORKFLOW_EXECUTION_OPTIONS_UPDATED
+            - EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUEST_COMPLETED
+            - EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUEST_FAILED
           type: string
           format: enum
         version:
@@ -7528,6 +7910,10 @@ components:
           $ref: '#/components/schemas/NexusOperationCancelRequestedEventAttributes'
         workflowExecutionOptionsUpdatedEventAttributes:
           $ref: '#/components/schemas/WorkflowExecutionOptionsUpdatedEventAttributes'
+        nexusOperationCancelRequestCompletedEventAttributes:
+          $ref: '#/components/schemas/NexusOperationCancelRequestCompletedEventAttributes'
+        nexusOperationCancelRequestFailedEventAttributes:
+          $ref: '#/components/schemas/NexusOperationCancelRequestFailedEventAttributes'
       description: |-
         History events are the method by which Temporal SDKs advance (or recreate) workflow state.
          See the `EventType` enum for more info about what each event is for.
@@ -7738,6 +8124,16 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/WorkflowExecutionInfo'
+        nextPageToken:
+          type: string
+          format: bytes
+    ListWorkflowRulesResponse:
+      type: object
+      properties:
+        rules:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowRule'
         nextPageToken:
           type: string
           format: bytes
@@ -7996,6 +8392,38 @@ components:
           type: string
           description: Retry behavior, defaults to the retry behavior of the error type as defined in the spec.
           format: enum
+    NexusOperationCancelRequestCompletedEventAttributes:
+      type: object
+      properties:
+        requestedEventId:
+          type: string
+          description: The ID of the `NEXUS_OPERATION_CANCEL_REQUESTED` event.
+        workflowTaskCompletedEventId:
+          type: string
+          description: |-
+            The `WORKFLOW_TASK_COMPLETED` event that the corresponding RequestCancelNexusOperation command was reported
+             with.
+        scheduledEventId:
+          type: string
+          description: The id of the `NEXUS_OPERATION_SCHEDULED` event this cancel request corresponds to.
+    NexusOperationCancelRequestFailedEventAttributes:
+      type: object
+      properties:
+        requestedEventId:
+          type: string
+          description: The ID of the `NEXUS_OPERATION_CANCEL_REQUESTED` event.
+        workflowTaskCompletedEventId:
+          type: string
+          description: |-
+            The `WORKFLOW_TASK_COMPLETED` event that the corresponding RequestCancelNexusOperation command was reported
+             with.
+        failure:
+          allOf:
+            - $ref: '#/components/schemas/Failure'
+          description: Failure details. A NexusOperationFailureInfo wrapping a CanceledFailureInfo.
+        scheduledEventId:
+          type: string
+          description: The id of the `NEXUS_OPERATION_SCHEDULED` event this cancel request corresponds to.
     NexusOperationCancelRequestedEventAttributes:
       type: object
       properties:
@@ -8270,9 +8698,21 @@ components:
         type:
           type: string
           description: Pause all running activities of this type.
+        reason:
+          type: string
+          description: Reason to pause the activity.
     PauseActivityResponse:
       type: object
       properties: {}
+    PauseInfo_Manual:
+      type: object
+      properties:
+        identity:
+          type: string
+          description: The identity of the actor that paused the activity.
+        reason:
+          type: string
+          description: Reason for pausing the activity.
     Payload:
       description: |-
         Represents some binary (byte array) data (ex: activity input parameters or workflow result) with
@@ -8299,6 +8739,8 @@ components:
             - PENDING_ACTIVITY_STATE_SCHEDULED
             - PENDING_ACTIVITY_STATE_STARTED
             - PENDING_ACTIVITY_STATE_CANCEL_REQUESTED
+            - PENDING_ACTIVITY_STATE_PAUSED
+            - PENDING_ACTIVITY_STATE_PAUSE_REQUESTED
           type: string
           format: enum
         heartbeatDetails:
@@ -8373,6 +8815,22 @@ components:
           allOf:
             - $ref: '#/components/schemas/Priority'
           description: Priority metadata
+        pauseInfo:
+          $ref: '#/components/schemas/PendingActivityInfo_PauseInfo'
+    PendingActivityInfo_PauseInfo:
+      type: object
+      properties:
+        pauseTime:
+          type: string
+          description: The time when the activity was paused.
+          format: date-time
+        manual:
+          allOf:
+            - $ref: '#/components/schemas/PauseInfo_Manual'
+          description: activity was paused by the manual intervention
+        ruleId:
+          type: string
+          description: Id of the rule that paused the activity.
     PendingChildExecutionInfo:
       type: object
       properties:
@@ -10866,6 +11324,30 @@ components:
           type: string
           description: If set, override overlap policy for this one request.
           format: enum
+    TriggerWorkflowRuleRequest:
+      type: object
+      properties:
+        namespace:
+          type: string
+        execution:
+          allOf:
+            - $ref: '#/components/schemas/WorkflowExecution'
+          description: Execution info of the workflow which scheduled this activity
+        id:
+          type: string
+        spec:
+          allOf:
+            - $ref: '#/components/schemas/WorkflowRuleSpec'
+          description: 'Note: Rule ID and expiration date are not used in the trigger request.'
+        identity:
+          type: string
+          description: The identity of the client who initiated this request
+    TriggerWorkflowRuleResponse:
+      type: object
+      properties:
+        applied:
+          type: boolean
+          description: True is the rule was applied, based on the rule conditions (predicate/visibility_query).
     UnpauseActivityRequest:
       type: object
       properties:
@@ -11562,6 +12044,8 @@ components:
             - EVENT_TYPE_NEXUS_OPERATION_TIMED_OUT
             - EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUESTED
             - EVENT_TYPE_WORKFLOW_EXECUTION_OPTIONS_UPDATED
+            - EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUEST_COMPLETED
+            - EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUEST_FAILED
           type: string
           format: enum
     WorkflowExecution:
@@ -11712,6 +12196,9 @@ components:
           type: string
           description: Original workflow start time.
           format: date-time
+        resetRunId:
+          type: string
+          description: Reset Run ID points to the new run when this execution is reset. If the execution is reset multiple times, it points to the latest run.
       description: Holds all the extra information about workflow execution that is not part of Visibility.
     WorkflowExecutionFailedEventAttributes:
       type: object
@@ -12039,21 +12526,30 @@ components:
           description: |-
             Contains information about the root workflow execution.
              The root workflow execution is defined as follows:
-             1. A workflow without parent workflow is its own root workflow.
-             2. A workflow that has a parent workflow has the same root workflow as its parent workflow.
+               1. A workflow without parent workflow is its own root workflow.
+               2. A workflow that has a parent workflow has the same root workflow as its parent workflow.
+             When the workflow is its own root workflow, then root_workflow_execution is nil.
              Note: workflows continued as new or reseted may or may not have parents, check examples below.
 
              Examples:
                Scenario 1: Workflow W1 starts child workflow W2, and W2 starts child workflow W3.
                  - The root workflow of all three workflows is W1.
+                 - W1 has root_workflow_execution set to nil.
+                 - W2 and W3 have root_workflow_execution set to W1.
                Scenario 2: Workflow W1 starts child workflow W2, and W2 continued as new W3.
                  - The root workflow of all three workflows is W1.
+                 - W1 has root_workflow_execution set to nil.
+                 - W2 and W3 have root_workflow_execution set to W1.
                Scenario 3: Workflow W1 continued as new W2.
                  - The root workflow of W1 is W1 and the root workflow of W2 is W2.
+                 - W1 and W2 have root_workflow_execution set to nil.
                Scenario 4: Workflow W1 starts child workflow W2, and W2 is reseted, creating W3
                  - The root workflow of all three workflows is W1.
+                 - W1 has root_workflow_execution set to nil.
+                 - W2 and W3 have root_workflow_execution set to W1.
                Scenario 5: Workflow W1 is reseted, creating W2.
                  - The root workflow of W1 is W1 and the root workflow of W2 is W2.
+                 - W1 and W2 have root_workflow_execution set to nil.
         inheritedBuildId:
           type: string
           description: |-
@@ -12332,6 +12828,79 @@ components:
             Headers that were passed by the caller of the query and copied by temporal
              server into the workflow task.
       description: See https://docs.temporal.io/docs/concepts/queries/
+    WorkflowRule:
+      type: object
+      properties:
+        createTime:
+          type: string
+          description: Rule creation time.
+          format: date-time
+        spec:
+          allOf:
+            - $ref: '#/components/schemas/WorkflowRuleSpec'
+          description: Rule specification
+      description: WorkflowRule describes a rule that can be applied to any workflow in this namespace.
+    WorkflowRuleAction:
+      type: object
+      properties:
+        activityPause:
+          $ref: '#/components/schemas/WorkflowRuleAction_ActionActivityPause'
+    WorkflowRuleAction_ActionActivityPause:
+      type: object
+      properties: {}
+    WorkflowRuleSpec:
+      type: object
+      properties:
+        id:
+          type: string
+          description: |-
+            The id of the new workflow rule. Must be unique within the namespace.
+             Can be set by the user, and can have business meaning.
+        activityStart:
+          $ref: '#/components/schemas/WorkflowRuleSpec_ActivityStartingTrigger'
+        visibilityQuery:
+          type: string
+          description: |-
+            Restricted Visibility query.
+             This query is used to filter workflows in this namespace to which this rule should apply.
+             It is applied to any running workflow each time a triggering event occurs, before the trigger predicate is evaluated.
+             The following workflow attributes are supported:
+             - WorkflowType
+             - WorkflowId
+             - StartTime
+             - ExecutionStatus
+        actions:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkflowRuleAction'
+          description: WorkflowRuleAction to be taken when the rule is triggered and predicate is matched.
+        expirationTime:
+          type: string
+          description: |-
+            Expiration time of the rule. After this time, the rule will be deleted.
+             Can be empty if the rule should never expire.
+          format: date-time
+    WorkflowRuleSpec_ActivityStartingTrigger:
+      type: object
+      properties:
+        predicate:
+          type: string
+          description: |-
+            Activity predicate is a SQL-like string filter parameter.
+             It is used to match against workflow data.
+             The following activity attributes are supported as part of the predicate:
+             - ActivityType: An Activity Type is the mapping of a name to an Activity Definition..
+             - ActivityId: The ID of the activity.
+             - ActivityAttempt: The number attempts of the activity.
+             - BackoffInterval: The current amount of time between scheduled attempts of the activity.
+             - ActivityStatus: The status of the activity. Can be one of "Scheduled", "Started", "Paused".
+             - TaskQueue: The name of the task queue the workflow specified that the activity should run on.
+             Activity predicate support the following operators:
+              * =, !=, >, >=, <, <=
+              * AND, OR, ()
+              * BETWEEN ... AND
+                STARTS_WITH
+      description: Activity trigger will be triggered when an activity is about to start.
     WorkflowTaskCompletedEventAttributes:
       type: object
       properties:

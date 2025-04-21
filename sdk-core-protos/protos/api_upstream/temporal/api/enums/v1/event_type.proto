@@ -187,4 +187,8 @@ enum EventType {
     EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUESTED = 54;
     // Workflow execution options updated by user.
     EVENT_TYPE_WORKFLOW_EXECUTION_OPTIONS_UPDATED = 55;
+    // A cancellation request for a Nexus operation was successfully delivered to the Nexus handler.
+    EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUEST_COMPLETED = 56;
+    // A cancellation request for a Nexus operation resulted in an error.
+    EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUEST_FAILED = 57;
 }
