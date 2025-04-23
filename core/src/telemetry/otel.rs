@@ -130,10 +130,12 @@ pub fn build_otlp_metric_exporter(
                 .with_temporality(metric_temporality_to_temporality(opts.metric_temporality))
                 .build()?
         }
-        OtlpProtocol::Http => opentelemetry_otlp::HttpExporterBuilder::default()
+        OtlpProtocol::Http => opentelemetry_otlp::MetricExporter::builder()
+            .with_http()
             .with_endpoint(opts.url.to_string())
             .with_headers(opts.headers)
-            .build_metrics_exporter(metric_temporality_to_temporality(opts.metric_temporality))?,
+            .with_temporality(metric_temporality_to_temporality(opts.metric_temporality))
+            .build()?,
     };
     let reader = PeriodicReader::builder(exporter)
         .with_interval(opts.metric_periodicity)
@@ -301,20 +303,13 @@ fn default_resource_instance() -> &'static Resource {
         if resource.get(&Key::from("service.name")) == Some(Value::from("unknown_service")) {
             // otel spec recommends to leave service.name as unknown_service but we want to
             // maintain backwards compatability with existing library behaviour
-            let compat = Resource::builder()
-                .with_attribute(KeyValue::new("service.name", TELEM_SERVICE_NAME))
-                .build();
             return Resource::builder_empty()
                 .with_attributes(
                     resource
                         .iter()
                         .map(|(k, v)| KeyValue::new(k.clone(), v.clone())),
                 )
-                .with_attributes(
-                    compat
-                        .iter()
-                        .map(|(k, v)| KeyValue::new(k.clone(), v.clone())),
-                )
+                .with_attribute(KeyValue::new("service.name", TELEM_SERVICE_NAME))
                 .build();
         }
         resource
@@ -325,7 +320,9 @@ fn default_resource(override_values: &HashMap<String, String>) -> Resource {
     let override_kvs = override_values
         .iter()
         .map(|(k, v)| KeyValue::new(k.clone(), v.clone()));
-    let override_resource = Resource::builder().with_attributes(override_kvs).build();
+    let override_resource = Resource::builder_empty()
+        .with_attributes(override_kvs)
+        .build();
     Resource::builder_empty()
         .with_attributes(
             default_resource_instance()
