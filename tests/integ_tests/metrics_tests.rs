@@ -5,7 +5,7 @@ use std::{
     collections::HashMap,
     env,
     string::ToString,
-    sync::{Arc, Mutex},
+    sync::Arc,
     time::Duration,
 };
 use temporal_client::{
@@ -60,7 +60,6 @@ use temporal_sdk_core_test_utils::{
     get_integ_server_options, get_integ_telem_options, prom_metrics,
 };
 use tokio::{join, sync::Barrier};
-use tracing_subscriber::fmt::MakeWriter;
 use url::Url;
 
 pub(crate) async fn get_text(endpoint: String) -> String {
@@ -1110,29 +1109,4 @@ async fn evict_on_complete_does_not_count_as_forced_eviction() {
     let body = get_text(format!("http://{addr}/metrics")).await;
     // Metric shouldn't show up at all, since it's zero the whole time.
     assert!(!body.contains("temporal_sticky_cache_total_forced_eviction"));
-}
-
-struct CapturingWriter {
-    buf: Arc<Mutex<Vec<u8>>>,
-}
-
-impl MakeWriter<'_> for CapturingWriter {
-    type Writer = CapturingHandle;
-
-    fn make_writer(&self) -> Self::Writer {
-        CapturingHandle(self.buf.clone())
-    }
-}
-
-struct CapturingHandle(Arc<Mutex<Vec<u8>>>);
-
-impl std::io::Write for CapturingHandle {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let mut b = self.0.lock().unwrap();
-        b.extend_from_slice(buf);
-        Ok(buf.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
 }
