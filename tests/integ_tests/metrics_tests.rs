@@ -1,13 +1,7 @@
 use crate::integ_tests::mk_nexus_endpoint;
 use anyhow::anyhow;
 use assert_matches::assert_matches;
-use std::{
-    collections::HashMap,
-    env,
-    string::ToString,
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::HashMap, env, string::ToString, sync::Arc, time::Duration};
 use temporal_client::{
     REQUEST_LATENCY_HISTOGRAM_NAME, WorkflowClientTrait, WorkflowOptions, WorkflowService,
 };

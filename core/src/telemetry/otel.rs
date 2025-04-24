@@ -317,12 +317,6 @@ fn default_resource_instance() -> &'static Resource {
 }
 
 fn default_resource(override_values: &HashMap<String, String>) -> Resource {
-    let override_kvs = override_values
-        .iter()
-        .map(|(k, v)| KeyValue::new(k.clone(), v.clone()));
-    let override_resource = Resource::builder_empty()
-        .with_attributes(override_kvs)
-        .build();
     Resource::builder_empty()
         .with_attributes(
             default_resource_instance()
@@ -330,7 +324,7 @@ fn default_resource(override_values: &HashMap<String, String>) -> Resource {
                 .map(|(k, v)| KeyValue::new(k.clone(), v.clone())),
         )
         .with_attributes(
-            override_resource
+            override_values
                 .iter()
                 .map(|(k, v)| KeyValue::new(k.clone(), v.clone())),
         )
