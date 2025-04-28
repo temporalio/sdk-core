@@ -1146,3 +1146,78 @@ async fn update_after_empty_wft() {
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn update_lost_on_activity_mismatch() {
+    let wf_name = "update_lost_on_activity_mismatch";
+    let mut starter = CoreWfStarter::new(wf_name);
+    let mut worker = starter.worker().await;
+    let client = starter.get_client().await;
+
+    static CAN_RUN: AtomicBool = AtomicBool::new(true);
+    static DID_FAIL: AtomicBool = AtomicBool::new(false);
+    worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| async move {
+        ctx.update_handler(
+            "update",
+            |_: &_, _: ()| Ok(()),
+            move |_: UpdateContext, _: ()| async move {
+                dbg!("Running update!!");
+                CAN_RUN.store(true, Ordering::Relaxed);
+                Ok(())
+            },
+        );
+        for i in 1..=3 {
+            ctx.wait_condition(|| CAN_RUN.load(Ordering::Relaxed)).await;
+            if i == 2 {
+                ctx.force_task_fail(anyhow!("Fail on purpose"));
+                DID_FAIL.store(true, Ordering::Relaxed);
+            }
+            ctx.activity(ActivityOptions {
+                activity_type: "echo".to_string(),
+                input: "hi!".as_json_payload().expect("serializes fine"),
+                start_to_close_timeout: Some(Duration::from_secs(2)),
+                ..Default::default()
+            })
+            .await;
+            CAN_RUN.store(false, Ordering::Release);
+        }
+        Ok(().into())
+    });
+    worker.register_activity("echo", |_ctx: ActContext, echo_me: String| async move {
+        Ok(echo_me)
+    });
+
+    let handle = starter.start_with_worker(wf_name, &mut worker).await;
+
+    let wf_id = starter.get_task_queue().to_string();
+    let update = async {
+        for _ in 1..=2 {
+            // TODO: Without this, hangs, verify it doesn't after fix
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            let res = client
+                .update_workflow_execution(
+                    wf_id.clone(),
+                    "".to_string(),
+                    "update".to_string(),
+                    WaitPolicy {
+                        lifecycle_stage: UpdateWorkflowExecutionLifecycleStage::Completed as i32,
+                    },
+                    [().as_json_payload().unwrap()].into_payloads(),
+                )
+                .await
+                .unwrap();
+            assert!(res.outcome.unwrap().is_success());
+        }
+    };
+    let runner = async {
+        worker.run_until_done().await.unwrap();
+    };
+    join!(update, runner);
+    // This triggers the NDE before bugfix
+    CAN_RUN.store(true, Ordering::Relaxed);
+    dbg!("Replaying");
+    handle
+        .fetch_history_and_replay(worker.inner_mut())
+        .await
+        .unwrap();
+}

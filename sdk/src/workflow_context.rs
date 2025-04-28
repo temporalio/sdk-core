@@ -15,6 +15,7 @@ use futures_util::{FutureExt, Stream, StreamExt, future::Shared, task::Context};
 use parking_lot::{RwLock, RwLockReadGuard};
 use std::{
     collections::HashMap,
+    future,
     future::Future,
     marker::PhantomData,
     ops::Deref,
@@ -409,6 +410,17 @@ impl WfContext {
             .into(),
         );
         cmd
+    }
+
+    /// Wait for some condition to become true, yielding the workflow if it is not.
+    pub fn wait_condition(&self, condition: impl Fn() -> bool) -> impl Future<Output = ()> {
+        future::poll_fn(move |_cx: &mut Context<'_>| {
+            if condition() {
+                Poll::Ready(())
+            } else {
+                Poll::Pending
+            }
+        })
     }
 
     /// Buffer a command to be sent in the activation reply
