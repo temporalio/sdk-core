@@ -695,7 +695,8 @@ fn find_end_index_of_next_wft_seq(
         return NextWFTSeqEndIndex::Incomplete(0);
     }
     let mut last_index = 0;
-    let mut saw_any_command_event = false;
+    let mut saw_command_or_started = false;
+    let mut saw_command = false;
     let mut wft_started_event_id_to_index = vec![];
     for (ix, e) in events.iter().enumerate() {
         last_index = ix;
@@ -706,8 +707,11 @@ fn find_end_index_of_next_wft_seq(
             continue;
         }
 
-        if e.is_command_event() || e.event_type() == EventType::WorkflowExecutionStarted {
-            saw_any_command_event = true;
+        if e.is_command_event() {
+            saw_command = true;
+            if e.event_type() == EventType::WorkflowExecutionStarted {
+                saw_command_or_started = true;
+            }
         }
         if e.is_final_wf_execution_event() {
             return NextWFTSeqEndIndex::Complete(last_index);
@@ -728,13 +732,14 @@ fn find_end_index_of_next_wft_seq(
                         | EventType::WorkflowExecutionCanceled
                 ) {
                     continue;
-                }
-                // If we've never seen an interesting event and the next two events are a completion
-                // followed immediately again by scheduled, then this is a WFT heartbeat and also
-                // doesn't conclude the sequence.
-                else if next_event_type == EventType::WorkflowTaskCompleted {
+                } else if next_event_type == EventType::WorkflowTaskCompleted {
                     if let Some(next_next_event) = events.get(ix + 2) {
-                        if next_next_event.event_type() == EventType::WorkflowTaskScheduled {
+                        if !saw_command
+                            && next_next_event.event_type() == EventType::WorkflowTaskScheduled
+                        {
+                            // If we've never seen an interesting event and the next two events are
+                            // a completion followed immediately again by scheduled, then this is a
+                            // WFT heartbeat and also doesn't conclude the sequence.
                             continue;
                         } else {
                             // If we see an update accepted command after WFT completed, we want to
@@ -766,18 +771,18 @@ fn find_end_index_of_next_wft_seq(
                             }
                             return NextWFTSeqEndIndex::Complete(ix);
                         }
-                    } else if !has_last_wft && !saw_any_command_event {
+                    } else if !has_last_wft && !saw_command_or_started {
                         // Don't have enough events to look ahead of the WorkflowTaskCompleted. Need
                         // to fetch more.
                         continue;
                     }
                 }
-            } else if !has_last_wft && !saw_any_command_event {
+            } else if !has_last_wft && !saw_command_or_started {
                 // Don't have enough events to look ahead of the WorkflowTaskStarted. Need to fetch
                 // more.
                 continue;
             }
-            if saw_any_command_event {
+            if saw_command_or_started {
                 return NextWFTSeqEndIndex::Complete(ix);
             }
         }
@@ -921,7 +926,9 @@ mod tests {
         let seq = next_check_peek(&mut update, 0);
         assert_eq!(seq.len(), 6);
         let seq = next_check_peek(&mut update, 6);
-        assert_eq!(seq.len(), 13);
+        assert_eq!(seq.len(), 4);
+        let seq = next_check_peek(&mut update, 10);
+        assert_eq!(seq.len(), 9);
         let seq = next_check_peek(&mut update, 19);
         assert_eq!(seq.len(), 4);
         let seq = next_check_peek(&mut update, 23);

@@ -151,6 +151,11 @@ impl WfContext {
         self.shared.read().random_seed
     }
 
+    /// Returns true if the current workflow task is happening under replay
+    pub fn is_replaying(&self) -> bool {
+        self.shared.read().is_replaying
+    }
+
     /// Return various information that the workflow was initialized with. Will eventually become
     /// a proper non-proto workflow info struct.
     pub fn workflow_initial_info(&self) -> &InitializeWorkflow {

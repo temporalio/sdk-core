@@ -1,9 +1,10 @@
 use std::{
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     time::Duration,
 };
-use temporal_sdk::{ActivityOptions, WfContext, WorkflowResult};
-use temporal_sdk_core_test_utils::CoreWfStarter;
+use temporal_sdk::{ActContext, ActivityOptions, WfContext, WorkflowResult};
+use temporal_sdk_core_protos::coresdk::AsJsonPayloadExt;
+use temporal_sdk_core_test_utils::{CoreWfStarter, WorkflowHandleExt};
 
 static RUN_CT: AtomicUsize = AtomicUsize::new(1);
 
@@ -44,4 +45,41 @@ async fn test_determinism_error_then_recovers() {
     worker.run_until_done().await.unwrap();
     // 4 because we still add on the 3rd and final attempt
     assert_eq!(RUN_CT.load(Ordering::Relaxed), 4);
+}
+
+#[tokio::test]
+async fn task_fail_causes_replay_unset_too_soon() {
+    let wf_name = "task_fail_causes_replay_unset_too_soon";
+    let mut starter = CoreWfStarter::new(wf_name);
+    let mut worker = starter.worker().await;
+
+    static DID_FAIL: AtomicBool = AtomicBool::new(false);
+    worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| async move {
+        if DID_FAIL.load(Ordering::Relaxed) {
+            assert!(ctx.is_replaying());
+        }
+        ctx.activity(ActivityOptions {
+            activity_type: "echo".to_string(),
+            input: "hi!".as_json_payload().expect("serializes fine"),
+            start_to_close_timeout: Some(Duration::from_secs(2)),
+            ..Default::default()
+        })
+        .await;
+        if !DID_FAIL.load(Ordering::Relaxed) {
+            DID_FAIL.store(true, Ordering::Relaxed);
+            panic!("Die on purpose");
+        }
+        Ok(().into())
+    });
+    worker.register_activity("echo", |_ctx: ActContext, echo_me: String| async move {
+        Ok(echo_me)
+    });
+
+    let handle = starter.start_with_worker(wf_name, &mut worker).await;
+
+    worker.run_until_done().await.unwrap();
+    handle
+        .fetch_history_and_replay(worker.inner_mut())
+        .await
+        .unwrap();
 }

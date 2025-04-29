@@ -1154,24 +1154,23 @@ async fn update_lost_on_activity_mismatch() {
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
 
-    static CAN_RUN: AtomicBool = AtomicBool::new(true);
-    static DID_FAIL: AtomicBool = AtomicBool::new(false);
     worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| async move {
+        let can_run = Arc::new(AtomicUsize::new(1));
+        let cr = can_run.clone();
         ctx.update_handler(
             "update",
             |_: &_, _: ()| Ok(()),
-            move |_: UpdateContext, _: ()| async move {
-                dbg!("Running update!!");
-                CAN_RUN.store(true, Ordering::Relaxed);
-                Ok(())
+            move |_: UpdateContext, _: ()| {
+                let cr = cr.clone();
+                async move {
+                    cr.fetch_add(1, Ordering::Relaxed);
+                    Ok(())
+                }
             },
         );
-        for i in 1..=3 {
-            ctx.wait_condition(|| CAN_RUN.load(Ordering::Relaxed)).await;
-            if i == 2 {
-                ctx.force_task_fail(anyhow!("Fail on purpose"));
-                DID_FAIL.store(true, Ordering::Relaxed);
-            }
+        for _ in 1..=3 {
+            let cr = can_run.clone();
+            ctx.wait_condition(|| cr.load(Ordering::Relaxed) > 0).await;
             ctx.activity(ActivityOptions {
                 activity_type: "echo".to_string(),
                 input: "hi!".as_json_payload().expect("serializes fine"),
@@ -1179,7 +1178,7 @@ async fn update_lost_on_activity_mismatch() {
                 ..Default::default()
             })
             .await;
-            CAN_RUN.store(false, Ordering::Release);
+            can_run.fetch_sub(1, Ordering::Release);
         }
         Ok(().into())
     });
@@ -1187,13 +1186,16 @@ async fn update_lost_on_activity_mismatch() {
         Ok(echo_me)
     });
 
+    let core_worker = worker.core_worker.clone();
     let handle = starter.start_with_worker(wf_name, &mut worker).await;
 
     let wf_id = starter.get_task_queue().to_string();
     let update = async {
+        // Need time to get to condition
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        // Evict wf
+        core_worker.request_workflow_eviction(handle.info().run_id.as_ref().unwrap());
         for _ in 1..=2 {
-            // TODO: Without this, hangs, verify it doesn't after fix
-            tokio::time::sleep(Duration::from_millis(500)).await;
             let res = client
                 .update_workflow_execution(
                     wf_id.clone(),
@@ -1213,9 +1215,6 @@ async fn update_lost_on_activity_mismatch() {
         worker.run_until_done().await.unwrap();
     };
     join!(update, runner);
-    // This triggers the NDE before bugfix
-    CAN_RUN.store(true, Ordering::Relaxed);
-    dbg!("Replaying");
     handle
         .fetch_history_and_replay(worker.inner_mut())
         .await

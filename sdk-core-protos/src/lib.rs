@@ -647,8 +647,8 @@ pub mod coresdk {
                     workflow_activation_job::Variant::ResolveRequestCancelExternalWorkflow(_) => {
                         write!(f, "ResolveRequestCancelExternalWorkflow")
                     }
-                    workflow_activation_job::Variant::DoUpdate(_) => {
-                        write!(f, "DoUpdate")
+                    workflow_activation_job::Variant::DoUpdate(u) => {
+                        write!(f, "DoUpdate({})", u.id)
                     }
                     workflow_activation_job::Variant::ResolveNexusOperationStart(_) => {
                         write!(f, "ResolveNexusOperationStart")
