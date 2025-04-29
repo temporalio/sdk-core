@@ -1241,3 +1241,149 @@ async fn pass_activity_summary_to_metadata() {
         .unwrap();
     worker.run_until_done().await.unwrap();
 }
+
+#[tokio::test]
+async fn heartbeat_response_can_be_paused() {
+    let mut mock_client = mock_workflow_client();
+    // First heartbeat returns pause only
+    mock_client
+        .expect_record_activity_heartbeat()
+        .times(1)
+        .returning(|_, _| {
+            Ok(RecordActivityTaskHeartbeatResponse {
+                cancel_requested: false,
+                activity_paused: true,
+            })
+        });
+    // Second heartbeat returns cancel only
+    mock_client
+        .expect_record_activity_heartbeat()
+        .times(1)
+        .returning(|_, _| {
+            Ok(RecordActivityTaskHeartbeatResponse {
+                cancel_requested: true,
+                activity_paused: false,
+            })
+        });
+    // Third heartbeat returns both
+    mock_client
+        .expect_record_activity_heartbeat()
+        .times(1)
+        .returning(|_, _| {
+            Ok(RecordActivityTaskHeartbeatResponse {
+                cancel_requested: true,
+                activity_paused: true,
+            })
+        });
+    mock_client
+        .expect_cancel_activity_task()
+        .times(3)
+        .returning(|_, _| Ok(RespondActivityTaskCanceledResponse::default()));
+
+    let core = mock_worker(MocksHolder::from_client_with_activities(
+        mock_client,
+        [
+            PollActivityTaskQueueResponse {
+                task_token: vec![1],
+                activity_id: "act1".to_string(),
+                heartbeat_timeout: Some(prost_dur!(from_millis(1))),
+                ..Default::default()
+            }
+            .into(),
+            PollActivityTaskQueueResponse {
+                task_token: vec![2],
+                activity_id: "act2".to_string(),
+                heartbeat_timeout: Some(prost_dur!(from_millis(1))),
+                ..Default::default()
+            }
+            .into(),
+            PollActivityTaskQueueResponse {
+                task_token: vec![3],
+                activity_id: "act3".to_string(),
+                heartbeat_timeout: Some(prost_dur!(from_millis(1))),
+                ..Default::default()
+            }
+            .into(),
+        ],
+    ));
+
+    // Test pause only
+    let act = core.poll_activity_task().await.unwrap();
+    core.record_activity_heartbeat(ActivityHeartbeat {
+        task_token: act.task_token.clone(),
+        details: vec![vec![1_u8, 2, 3].into()],
+    });
+    sleep(Duration::from_millis(10)).await;
+    let act = core.poll_activity_task().await.unwrap();
+    assert_matches!(
+        &act,
+        ActivityTask {
+            task_token,
+            variant: Some(activity_task::Variant::Cancel(Cancel { reason })),
+            ..
+        } => { 
+            task_token == &vec![1] && 
+            *reason == ActivityCancelReason::Paused as i32
+        }
+    );
+    core.complete_activity_task(ActivityTaskCompletion {
+        task_token: act.task_token,
+        result: Some(ActivityExecutionResult::cancel_from_details(None)),
+    })
+    .await
+    .unwrap();
+
+    // Test cancel only
+    let act = core.poll_activity_task().await.unwrap();
+    core.record_activity_heartbeat(ActivityHeartbeat {
+        task_token: act.task_token.clone(),
+        details: vec![vec![1_u8, 2, 3].into()],
+    });
+    sleep(Duration::from_millis(10)).await;
+    let act = core.poll_activity_task().await.unwrap();
+    assert_matches!(
+        &act,
+        ActivityTask {
+            task_token,
+            variant: Some(activity_task::Variant::Cancel(Cancel { reason })),
+            ..
+        } => { 
+            task_token == &vec![2] && 
+            *reason == ActivityCancelReason::Cancelled as i32
+        }
+    );
+    core.complete_activity_task(ActivityTaskCompletion {
+        task_token: act.task_token,
+        result: Some(ActivityExecutionResult::cancel_from_details(None)),
+    })
+    .await
+    .unwrap();
+
+    // Test both pause and cancel (should prioritize cancel)
+    let act = core.poll_activity_task().await.unwrap();
+    core.record_activity_heartbeat(ActivityHeartbeat {
+        task_token: act.task_token.clone(),
+        details: vec![vec![1_u8, 2, 3].into()],
+    });
+    sleep(Duration::from_millis(10)).await;
+    let act = core.poll_activity_task().await.unwrap();
+    assert_matches!(
+        &act,
+        ActivityTask {
+            task_token,
+            variant: Some(activity_task::Variant::Cancel(Cancel { reason })),
+            ..
+        } => { 
+            task_token == &vec![3] && 
+            *reason == ActivityCancelReason::Cancelled as i32
+        }
+    );
+    core.complete_activity_task(ActivityTaskCompletion {
+        task_token: act.task_token,
+        result: Some(ActivityExecutionResult::cancel_from_details(None)),
+    })
+    .await
+    .unwrap();
+
+    core.drain_activity_poller_and_shutdown().await;
+}

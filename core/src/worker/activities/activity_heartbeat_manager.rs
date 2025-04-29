@@ -142,12 +142,13 @@ impl ActivityHeartbeatManager {
                                     .record_activity_heartbeat(tt.clone(), details.into_payloads())
                                     .await
                                 {
-                                    Ok(RecordActivityTaskHeartbeatResponse { cancel_requested, activity_paused: _ }) => {
-                                        if cancel_requested {
+                                    Ok(RecordActivityTaskHeartbeatResponse { cancel_requested, activity_paused }) => {
+                                        if cancel_requested || activity_paused {
+                                            let reason = if cancel_requested { ActivityCancelReason::Cancelled } else { ActivityCancelReason::Paused};
                                             cancels_tx
                                                 .send(PendingActivityCancel::new(
                                                     tt.clone(),
-                                                    ActivityCancelReason::Cancelled,
+                                                    reason,
                                                 ))
                                                 .expect(
                                                     "Receive half of heartbeat cancels not blocked",
