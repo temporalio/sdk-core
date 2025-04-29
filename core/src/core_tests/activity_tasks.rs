@@ -1307,6 +1307,20 @@ async fn heartbeat_response_can_be_paused() {
         ],
     ));
 
+    // The general testing pattern for each of these cases is:
+    // 1. Poll for activity task
+    // 2. Record activity heartbeat, get mocked heartbeat response
+    // 3. Sleep for 10ms (waiting for heartbeat request to be flushed)
+    // (i.e. sleep enough for the heartbeat flush interval to have elapsed)
+    // 4. Poll for activity task.
+    // We expect a cancellation activity task as they are prioritized (i.e. ordered before)
+    // regular activity tasks.
+    // 5. Assert that the received activity task is indeed a cancellation, with the reason
+    // we expect.
+    // 6. Complete the activity with a cancellation result.
+    //
+    // Repeat for subsequent test case(s).
+
     // Test pause only
     let act = core.poll_activity_task().await.unwrap();
     core.record_activity_heartbeat(ActivityHeartbeat {
