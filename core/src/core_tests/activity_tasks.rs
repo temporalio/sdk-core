@@ -1335,8 +1335,8 @@ async fn heartbeat_response_can_be_paused() {
             task_token,
             variant: Some(activity_task::Variant::Cancel(Cancel { reason })),
             ..
-        } => { 
-            task_token == &vec![1] && 
+        } => {
+            task_token == &vec![1] &&
             *reason == ActivityCancelReason::Paused as i32
         }
     );
@@ -1361,8 +1361,8 @@ async fn heartbeat_response_can_be_paused() {
             task_token,
             variant: Some(activity_task::Variant::Cancel(Cancel { reason })),
             ..
-        } => { 
-            task_token == &vec![2] && 
+        } => {
+            task_token == &vec![2] &&
             *reason == ActivityCancelReason::Cancelled as i32
         }
     );
@@ -1387,8 +1387,8 @@ async fn heartbeat_response_can_be_paused() {
             task_token,
             variant: Some(activity_task::Variant::Cancel(Cancel { reason })),
             ..
-        } => { 
-            task_token == &vec![3] && 
+        } => {
+            task_token == &vec![3] &&
             *reason == ActivityCancelReason::Cancelled as i32
         }
     );
