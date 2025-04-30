@@ -10,7 +10,10 @@ use std::{
     time::{Duration, Instant},
 };
 use temporal_sdk_core_protos::{
-    coresdk::{ActivityHeartbeat, IntoPayloadsExt, activity_task::ActivityCancelReason},
+    coresdk::{
+        ActivityHeartbeat, IntoPayloadsExt,
+        activity_task::{ActivityCancelReason, ActivityCancellationDetails, ActivityTask},
+    },
     temporal::api::{
         common::v1::Payload, workflowservice::v1::RecordActivityTaskHeartbeatResponse,
     },
@@ -144,11 +147,17 @@ impl ActivityHeartbeatManager {
                                 {
                                     Ok(RecordActivityTaskHeartbeatResponse { cancel_requested, activity_paused }) => {
                                         if cancel_requested || activity_paused {
+                                            // Prioritize Cancel over Pause
                                             let reason = if cancel_requested { ActivityCancelReason::Cancelled } else { ActivityCancelReason::Paused};
                                             cancels_tx
                                                 .send(PendingActivityCancel::new(
                                                     tt.clone(),
                                                     reason,
+                                                    ActivityCancellationDetails {
+                                                        is_cancelled: cancel_requested,
+                                                        is_paused: activity_paused,
+                                                        ..Default::default()
+                                                    }
                                                 ))
                                                 .expect(
                                                     "Receive half of heartbeat cancels not blocked",
@@ -165,6 +174,7 @@ impl ActivityHeartbeatManager {
                                             .send(PendingActivityCancel::new(
                                                 tt.clone(),
                                                 ActivityCancelReason::NotFound,
+                                                ActivityTask::primary_reason_to_cancellation_details(ActivityCancelReason::NotFound)
                                             ))
                                             .expect("Receive half of heartbeat cancels not blocked");
                                     }

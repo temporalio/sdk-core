@@ -1105,8 +1105,9 @@ async fn graceful_shutdown(#[values(true, false)] at_max_outstanding: bool) {
         assert_matches!(
             cancel.variant,
             Some(activity_task::Variant::Cancel(Cancel {
-                reason: r
-            })) if r == ActivityCancelReason::WorkerShutdown as i32
+                reason,
+                details
+            })) if reason == ActivityCancelReason::WorkerShutdown as i32 && details.as_ref().is_some_and(|d| d.is_worker_shutdown)
         );
         seen_tts.insert(cancel.task_token);
     }
@@ -1316,7 +1317,7 @@ async fn heartbeat_response_can_be_paused() {
     // We expect a cancellation activity task as they are prioritized (i.e. ordered before)
     // regular activity tasks.
     // 5. Assert that the received activity task is indeed a cancellation, with the reason
-    // we expect.
+    // and details we expect.
     // 6. Complete the activity with a cancellation result.
     //
     // Repeat for subsequent test case(s).
@@ -1333,12 +1334,12 @@ async fn heartbeat_response_can_be_paused() {
         &act,
         ActivityTask {
             task_token,
-            variant: Some(activity_task::Variant::Cancel(Cancel { reason })),
-            ..
-        } => {
+            variant: Some(activity_task::Variant::Cancel(Cancel { reason, details })),
+        } if
             task_token == &vec![1] &&
-            *reason == ActivityCancelReason::Paused as i32
-        }
+            *reason == ActivityCancelReason::Paused as i32 &&
+            details.as_ref().is_some_and(|d| d.is_paused) &&
+            details.as_ref().is_some_and(|d| d.is_cancelled == false)
     );
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: act.task_token,
@@ -1359,12 +1360,12 @@ async fn heartbeat_response_can_be_paused() {
         &act,
         ActivityTask {
             task_token,
-            variant: Some(activity_task::Variant::Cancel(Cancel { reason })),
-            ..
-        } => {
+            variant: Some(activity_task::Variant::Cancel(Cancel { reason, details })),
+        } if
             task_token == &vec![2] &&
-            *reason == ActivityCancelReason::Cancelled as i32
-        }
+            *reason == ActivityCancelReason::Cancelled as i32 &&
+            details.as_ref().is_some_and(|d| d.is_paused == false) &&
+            details.as_ref().is_some_and(|d| d.is_cancelled)
     );
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: act.task_token,
@@ -1385,12 +1386,12 @@ async fn heartbeat_response_can_be_paused() {
         &act,
         ActivityTask {
             task_token,
-            variant: Some(activity_task::Variant::Cancel(Cancel { reason })),
-            ..
-        } => {
+            variant: Some(activity_task::Variant::Cancel(Cancel { reason, details })),
+        } if
             task_token == &vec![3] &&
-            *reason == ActivityCancelReason::Cancelled as i32
-        }
+            *reason == ActivityCancelReason::Cancelled as i32 &&
+            details.as_ref().is_some_and(|d| d.is_paused) &&
+            details.as_ref().is_some_and(|d| d.is_cancelled)
     );
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: act.task_token,

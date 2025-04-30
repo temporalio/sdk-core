@@ -22,7 +22,7 @@ use temporal_sdk_core_protos::{
     coresdk::{
         LocalActivitySlotInfo,
         activity_result::{Cancellation, Failure as ActFail, Success},
-        activity_task::{ActivityCancelReason, ActivityTask, Cancel, Start, activity_task},
+        activity_task::{ActivityCancelReason, ActivityTask, Start, activity_task},
     },
     temporal::api::{
         common::v1::WorkflowExecution,
@@ -629,12 +629,13 @@ impl LocalActivityManager {
             };
             // We want to generate a cancel task if the reason for failure was a timeout.
             let task = if is_timeout {
-                Some(ActivityTask {
-                    task_token: task_token.clone().0,
-                    variant: Some(activity_task::Variant::Cancel(Cancel {
-                        reason: ActivityCancelReason::TimedOut as i32,
-                    })),
-                })
+                Some(ActivityTask::cancel_from_ids(
+                    task_token.clone().0,
+                    ActivityCancelReason::TimedOut,
+                    ActivityTask::primary_reason_to_cancellation_details(
+                        ActivityCancelReason::TimedOut,
+                    ),
+                ))
             } else {
                 None
             };
@@ -786,12 +787,13 @@ impl LocalActivityManager {
         }
 
         self.cancels_req_tx
-            .send(CancelOrTimeout::Cancel(ActivityTask {
-                task_token: lai.task_token.0.clone(),
-                variant: Some(activity_task::Variant::Cancel(Cancel {
-                    reason: ActivityCancelReason::Cancelled as i32,
-                })),
-            }))
+            .send(CancelOrTimeout::Cancel(ActivityTask::cancel_from_ids(
+                lai.task_token.0.clone(),
+                ActivityCancelReason::Cancelled,
+                ActivityTask::primary_reason_to_cancellation_details(
+                    ActivityCancelReason::Cancelled,
+                ),
+            )))
             .expect("Receive half of LA cancel channel cannot be dropped");
         None
     }
