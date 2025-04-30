@@ -148,7 +148,11 @@ impl ActivityHeartbeatManager {
                                     Ok(RecordActivityTaskHeartbeatResponse { cancel_requested, activity_paused }) => {
                                         if cancel_requested || activity_paused {
                                             // Prioritize Cancel over Pause
-                                            let reason = if cancel_requested { ActivityCancelReason::Cancelled } else { ActivityCancelReason::Paused};
+                                            let reason = if cancel_requested {
+                                                ActivityCancelReason::Cancelled
+                                            } else {
+                                                ActivityCancelReason::Paused
+                                            };
                                             cancels_tx
                                                 .send(PendingActivityCancel::new(
                                                     tt.clone(),
