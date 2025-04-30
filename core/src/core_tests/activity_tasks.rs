@@ -1339,7 +1339,7 @@ async fn heartbeat_response_can_be_paused() {
             task_token == &vec![1] &&
             *reason == ActivityCancelReason::Paused as i32 &&
             details.as_ref().is_some_and(|d| d.is_paused) &&
-            details.as_ref().is_some_and(|d| d.is_cancelled == false)
+            details.as_ref().is_some_and(|d| !d.is_cancelled)
     );
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: act.task_token,
@@ -1364,7 +1364,7 @@ async fn heartbeat_response_can_be_paused() {
         } if
             task_token == &vec![2] &&
             *reason == ActivityCancelReason::Cancelled as i32 &&
-            details.as_ref().is_some_and(|d| d.is_paused == false) &&
+            details.as_ref().is_some_and(|d| !d.is_paused) &&
             details.as_ref().is_some_and(|d| d.is_cancelled)
     );
     core.complete_activity_task(ActivityTaskCompletion {
