@@ -67,7 +67,18 @@ message Start {
 
 // Attempt to cancel a running activity
 message Cancel {
+    // Primary cancellation reason
     ActivityCancelReason reason = 1;
+    // Activity cancellation details, surfaces all cancellation reasons.
+    ActivityCancellationDetails details = 2;
+}
+
+message ActivityCancellationDetails {
+    bool is_not_found = 1;
+    bool is_cancelled = 2;
+    bool is_paused = 3;
+    bool is_timed_out = 4;
+    bool is_worker_shutdown = 5;
 }
 
 enum ActivityCancelReason {
@@ -79,6 +90,8 @@ enum ActivityCancelReason {
     TIMED_OUT = 2;
     // Core is shutting down and the graceful timeout has elapsed
     WORKER_SHUTDOWN = 3;
+    // Activity was paused
+    PAUSED = 4;
 }
 
 

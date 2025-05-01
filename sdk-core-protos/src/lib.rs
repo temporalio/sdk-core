@@ -69,21 +69,40 @@ pub mod coresdk {
         tonic::include_proto!("coresdk.activity_task");
 
         impl ActivityTask {
-            pub fn cancel_from_ids(task_token: Vec<u8>, reason: ActivityCancelReason) -> Self {
+            pub fn cancel_from_ids(
+                task_token: Vec<u8>,
+                reason: ActivityCancelReason,
+                details: ActivityCancellationDetails,
+            ) -> Self {
                 Self {
                     task_token,
                     variant: Some(activity_task::Variant::Cancel(Cancel {
                         reason: reason as i32,
+                        details: Some(details),
                     })),
                 }
             }
 
+            // Checks if both the primary reason or details have a timeout cancellation.
             pub fn is_timeout(&self) -> bool {
                 match &self.variant {
-                    Some(activity_task::Variant::Cancel(Cancel { reason })) => {
+                    Some(activity_task::Variant::Cancel(Cancel { reason, details })) => {
                         *reason == ActivityCancelReason::TimedOut as i32
+                            || details.as_ref().is_some_and(|d| d.is_timed_out)
                     }
                     _ => false,
+                }
+            }
+
+            pub fn primary_reason_to_cancellation_details(
+                reason: ActivityCancelReason,
+            ) -> ActivityCancellationDetails {
+                ActivityCancellationDetails {
+                    is_not_found: reason == ActivityCancelReason::NotFound,
+                    is_cancelled: reason == ActivityCancelReason::Cancelled,
+                    is_paused: reason == ActivityCancelReason::Paused,
+                    is_timed_out: reason == ActivityCancelReason::TimedOut,
+                    is_worker_shutdown: reason == ActivityCancelReason::WorkerShutdown,
                 }
             }
         }

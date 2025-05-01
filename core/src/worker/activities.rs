@@ -40,7 +40,7 @@ use temporal_sdk_core_protos::{
     coresdk::{
         ActivityHeartbeat, ActivitySlotInfo,
         activity_result::{self as ar, activity_execution_result as aer},
-        activity_task::{ActivityCancelReason, ActivityTask},
+        activity_task::{ActivityCancelReason, ActivityCancellationDetails, ActivityTask},
     },
     temporal::api::{
         failure::v1::{ApplicationFailureInfo, CanceledFailureInfo, Failure, failure::FailureInfo},
@@ -65,16 +65,19 @@ type OutstandingActMap = Arc<DashMap<TaskToken, RemoteInFlightActInfo>>;
 struct PendingActivityCancel {
     task_token: TaskToken,
     reason: ActivityCancelReason,
-    /// Set true if we should assume the server has already forgotten about this activity
-    consider_not_found: bool,
+    details: ActivityCancellationDetails,
 }
 
 impl PendingActivityCancel {
-    fn new(task_token: TaskToken, reason: ActivityCancelReason) -> Self {
+    fn new(
+        task_token: TaskToken,
+        reason: ActivityCancelReason,
+        details: ActivityCancellationDetails,
+    ) -> Self {
         Self {
             task_token,
             reason,
-            consider_not_found: false,
+            details,
         }
     }
 }
@@ -508,13 +511,14 @@ where
                             } else {
                                 details.issued_cancel_to_lang = Some(next_pc.reason);
                                 if next_pc.reason == ActivityCancelReason::NotFound
-                                    || next_pc.consider_not_found
+                                    || next_pc.details.is_not_found
                                 {
                                     details.known_not_found = true;
                                 }
                                 Some(Ok(ActivityTask::cancel_from_ids(
                                     next_pc.task_token.0,
                                     next_pc.reason,
+                                    next_pc.details,
                                 )))
                             }
                         } else {
@@ -566,6 +570,9 @@ where
                                 let _ = cancels_tx.send(PendingActivityCancel::new(
                                     tt,
                                     ActivityCancelReason::WorkerShutdown,
+                                    ActivityTask::primary_reason_to_cancellation_details(
+                                        ActivityCancelReason::WorkerShutdown,
+                                    ),
                                 ));
                             } else {
                                 // Fire off task to keep track of local timeouts. We do this so that
@@ -611,11 +618,15 @@ where
                                                 "Timing out activity due to elapsed local \
                                                  {timeout_type} timer"
                                             );
-                                            let _ = cancel_tx.send(PendingActivityCancel {
-                                                task_token: tt,
-                                                reason: ActivityCancelReason::TimedOut,
-                                                consider_not_found: true,
-                                            });
+                                            let _ = cancel_tx.send(PendingActivityCancel::new(
+                                                tt,
+                                                ActivityCancelReason::TimedOut,
+                                                ActivityCancellationDetails {
+                                                    is_not_found: true,
+                                                    is_timed_out: true,
+                                                    ..Default::default()
+                                                },
+                                            ));
                                         }));
                                     outstanding_info.timeout_resetter = resetter;
                                 }
@@ -639,6 +650,9 @@ where
                             let _ = self.cancels_tx.send(PendingActivityCancel::new(
                                 mapref.key().clone(),
                                 ActivityCancelReason::WorkerShutdown,
+                                ActivityTask::primary_reason_to_cancellation_details(
+                                    ActivityCancelReason::WorkerShutdown,
+                                ),
                             ));
                         }
                     }
