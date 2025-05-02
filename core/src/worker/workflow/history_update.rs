@@ -709,9 +709,10 @@ fn find_end_index_of_next_wft_seq(
 
         if e.is_command_event() {
             saw_command = true;
-            if e.event_type() == EventType::WorkflowExecutionStarted {
-                saw_command_or_started = true;
-            }
+            saw_command_or_started = true;
+        }
+        if e.event_type() == EventType::WorkflowExecutionStarted {
+            saw_command_or_started = true;
         }
         if e.is_final_wf_execution_event() {
             return NextWFTSeqEndIndex::Complete(last_index);
@@ -1069,12 +1070,16 @@ mod tests {
         t
     }
 
+    #[rstest::rstest]
     #[tokio::test]
-    async fn needs_fetch_if_ending_in_middle_of_wft_seq() {
+    async fn needs_fetch_if_ending_in_middle_of_wft_seq(
+        // These values test points truncation could've occurred in the middle of the heartbeat
+        #[values(18, 19, 20, 21)] truncate_at: usize,
+    ) {
         let t = three_wfts_then_heartbeats();
         let mut ends_in_middle_of_seq = t.as_history_update().events;
-        ends_in_middle_of_seq.truncate(19);
-        // The update should contain the first two complete WFTs, ending on the 8th event which
+        ends_in_middle_of_seq.truncate(truncate_at);
+        // The update should contain the first three complete WFTs, ending on the 11th event which
         // is WFT started. The remaining events should be returned. False flags means the creator
         // knows there are more events, so we should return need fetch
         let (mut update, remaining) = HistoryUpdate::from_events(
@@ -1085,38 +1090,15 @@ mod tests {
                 .workflow_task_started_event_id(),
             false,
         );
-        assert_eq!(remaining[0].event_id, 8);
-        assert_eq!(remaining.last().unwrap().event_id, 19);
-        let seq = update.take_next_wft_sequence(0).unwrap_events();
-        assert_eq!(seq.last().unwrap().event_id, 3);
-        let seq = update.take_next_wft_sequence(3).unwrap_events();
-        assert_eq!(seq.last().unwrap().event_id, 7);
-        let next = update.take_next_wft_sequence(7);
-        assert_matches!(next, NextWFT::NeedFetch);
-    }
-
-    // Like the above, but if the history happens to be cut off at a wft boundary, (even though
-    // there may have been many heartbeats after we have no way of knowing about)
-    #[tokio::test]
-    async fn needs_fetch_after_complete_seq_with_heartbeats() {
-        let t = three_wfts_then_heartbeats();
-        let mut ends_in_middle_of_seq = t.as_history_update().events;
-        ends_in_middle_of_seq.truncate(20);
-        let (mut update, _) = HistoryUpdate::from_events(
-            ends_in_middle_of_seq,
-            0,
-            t.get_full_history_info()
-                .unwrap()
-                .workflow_task_started_event_id(),
-            false,
-        );
+        assert_eq!(remaining[0].event_id, 12);
+        assert_eq!(remaining.last().unwrap().event_id, truncate_at as i64);
         let seq = update.take_next_wft_sequence(0).unwrap_events();
         assert_eq!(seq.last().unwrap().event_id, 3);
         let seq = update.take_next_wft_sequence(3).unwrap_events();
         assert_eq!(seq.last().unwrap().event_id, 7);
         let seq = update.take_next_wft_sequence(7).unwrap_events();
-        assert_eq!(seq.last().unwrap().event_id, 20);
-        let next = update.take_next_wft_sequence(20);
+        assert_eq!(seq.last().unwrap().event_id, 11);
+        let next = update.take_next_wft_sequence(11);
         assert_matches!(next, NextWFT::NeedFetch);
     }
 
@@ -1153,6 +1135,8 @@ mod tests {
         let seq = update.take_next_wft_sequence(3).unwrap_events();
         assert_eq!(seq.last().unwrap().event_id, 7);
         let seq = update.take_next_wft_sequence(7).unwrap_events();
+        assert_eq!(seq.last().unwrap().event_id, 11);
+        let seq = update.take_next_wft_sequence(11).unwrap_events();
         assert_eq!(seq.last().unwrap().event_id, 158);
         let seq = update.take_next_wft_sequence(158).unwrap_events();
         assert_eq!(seq.last().unwrap().event_id, 160);
