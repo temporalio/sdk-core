@@ -2,24 +2,31 @@ use crate::integ_tests::activity_functions::echo;
 use anyhow::anyhow;
 use futures_util::future::join_all;
 use std::{
-    sync::atomic::{AtomicU8, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicU8, AtomicUsize, Ordering},
+    },
     time::Duration,
 };
-use temporal_client::{WfClientExt, WorkflowOptions};
+use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{
-    ActContext, ActivityError, ActivityOptions, CancellableFuture, LocalActivityOptions, WfContext,
-    WorkflowResult, interceptors::WorkerInterceptor,
+    ActContext, ActivityError, ActivityOptions, CancellableFuture, LocalActivityOptions,
+    UpdateContext, WfContext, WorkflowResult, interceptors::WorkerInterceptor,
 };
 use temporal_sdk_core::replay::HistoryForReplay;
 use temporal_sdk_core_protos::{
     TestHistoryBuilder,
     coresdk::{
-        AsJsonPayloadExt,
+        AsJsonPayloadExt, IntoPayloadsExt,
         workflow_commands::{ActivityCancellationType, workflow_command::Variant},
         workflow_completion,
         workflow_completion::{WorkflowActivationCompletion, workflow_activation_completion},
     },
-    temporal::api::{common::v1::RetryPolicy, enums::v1::TimeoutType},
+    temporal::api::{
+        common::v1::RetryPolicy,
+        enums::v1::{TimeoutType, UpdateWorkflowExecutionLifecycleStage},
+        update::v1::WaitPolicy,
+    },
 };
 use temporal_sdk_core_test_utils::{
     CoreWfStarter, WorkflowHandleExt, history_from_proto_binary, replay_sdk_worker,
@@ -747,4 +754,84 @@ async fn la_resolve_same_time_as_other_cancel() {
         .fetch_history_and_replay(worker.inner_mut())
         .await
         .unwrap();
+}
+
+#[rstest::rstest]
+#[tokio::test]
+async fn long_local_activity_with_update(
+    #[values(200, 2000)] update_interval_ms: u64,
+    #[values(0, 2000)] update_inner_timer: u64,
+) {
+    let wf_name = "long_local_activity_with_update";
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter.workflow_options.task_timeout = Some(Duration::from_secs(1));
+    let mut worker = starter.worker().await;
+    let client = starter.get_client().await;
+
+    worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| async move {
+        let update_counter = Arc::new(AtomicUsize::new(1));
+        let uc = update_counter.clone();
+        ctx.update_handler(
+            "update",
+            |_: &_, _: ()| Ok(()),
+            move |u: UpdateContext, _: ()| {
+                let uc = uc.clone();
+                async move {
+                    if update_inner_timer != 0 {
+                        u.wf_ctx
+                            .timer(Duration::from_millis(update_inner_timer))
+                            .await;
+                    }
+                    uc.fetch_add(1, Ordering::Relaxed);
+                    Ok(())
+                }
+            },
+        );
+        ctx.local_activity(LocalActivityOptions {
+            activity_type: "delay".to_string(),
+            input: "hi".as_json_payload().expect("serializes fine"),
+            ..Default::default()
+        })
+        .await;
+        dbg!(update_counter.load(Ordering::Relaxed));
+        Ok(().into())
+    });
+    worker.register_activity("delay", |_: ActContext, _: String| async {
+        tokio::time::sleep(Duration::from_secs(6)).await;
+        Ok(())
+    });
+
+    let handle = starter.start_with_worker(wf_name, &mut worker).await;
+
+    let wf_id = starter.get_task_queue().to_string();
+    let update = async {
+        loop {
+            tokio::time::sleep(Duration::from_millis(update_interval_ms)).await;
+            let _ = client
+                .update_workflow_execution(
+                    wf_id.clone(),
+                    "".to_string(),
+                    "update".to_string(),
+                    WaitPolicy {
+                        lifecycle_stage: UpdateWorkflowExecutionLifecycleStage::Completed as i32,
+                    },
+                    [().as_json_payload().unwrap()].into_payloads(),
+                )
+                .await;
+        }
+    };
+    let runner = async {
+        worker.run_until_done().await.unwrap();
+    };
+    tokio::select!(_ = update => {}, _ = runner => {});
+    let res = handle
+        .get_workflow_result(Default::default())
+        .await
+        .unwrap()
+        .unwrap_success();
+    let replay_res = handle
+        .fetch_history_and_replay(worker.inner_mut())
+        .await
+        .unwrap();
+    assert_eq!(res[0], replay_res.unwrap());
 }

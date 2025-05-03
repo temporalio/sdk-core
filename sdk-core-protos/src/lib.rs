@@ -1164,18 +1164,22 @@ pub mod coresdk {
 
         /// Returns true if the activation contains a complete workflow execution command
         pub fn has_complete_workflow_execution(&self) -> bool {
+            self.complete_workflow_execution_value().is_some()
+        }
+
+        /// Returns the completed execution result value, if any
+        pub fn complete_workflow_execution_value(&self) -> Option<&Payload> {
             if let Some(workflow_activation_completion::Status::Successful(s)) = &self.status {
-                return s.commands.iter().any(|wfc| {
-                    matches!(
-                        wfc,
-                        WorkflowCommand {
-                            variant: Some(workflow_command::Variant::CompleteWorkflowExecution(_)),
-                            ..
-                        },
-                    )
-                });
+                s.commands.iter().find_map(|wfc| match wfc {
+                    WorkflowCommand {
+                        variant: Some(workflow_command::Variant::CompleteWorkflowExecution(v)),
+                        ..
+                    } => v.result.as_ref(),
+                    _ => None,
+                })
+            } else {
+                None
             }
-            false
         }
 
         /// Returns true if the activation completion is a success with no commands
