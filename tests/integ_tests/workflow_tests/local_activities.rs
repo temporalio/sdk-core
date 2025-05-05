@@ -5,7 +5,7 @@ use rstest::Context;
 use std::{
     sync::{
         Arc,
-        atomic::{AtomicU8, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
     },
     time::Duration,
 };
@@ -858,4 +858,53 @@ async fn long_local_activity_with_update(
     inner_worker.with_new_core_worker(replay_worker);
     inner_worker.set_worker_interceptor(FailOnNondeterminismInterceptor {});
     inner_worker.run().await.unwrap();
+}
+
+#[tokio::test]
+async fn local_activity_with_heartbeat_only_causes_one_wakeup() {
+    let wf_name = "local_activity_with_heartbeat_only_causes_one_wakeup";
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter.workflow_options.task_timeout = Some(Duration::from_secs(1));
+    let mut worker = starter.worker().await;
+
+    worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| async move {
+        let mut wakeup_counter = 1;
+        let la_resolved = AtomicBool::new(false);
+        tokio::join!(
+            async {
+                ctx.local_activity(LocalActivityOptions {
+                    activity_type: "delay".to_string(),
+                    input: "hi".as_json_payload().expect("serializes fine"),
+                    ..Default::default()
+                })
+                .await;
+                la_resolved.store(true, Ordering::Relaxed);
+            },
+            async {
+                ctx.wait_condition(|| {
+                    wakeup_counter += 1;
+                    la_resolved.load(Ordering::Relaxed)
+                })
+                .await;
+            }
+        );
+        Ok(().into())
+    });
+    worker.register_activity("delay", |_: ActContext, _: String| async {
+        tokio::time::sleep(Duration::from_secs(6)).await;
+        Ok(())
+    });
+
+    let handle = starter.start_with_worker(wf_name, &mut worker).await;
+    worker.run_until_done().await.unwrap();
+    let res = handle
+        .get_workflow_result(Default::default())
+        .await
+        .unwrap()
+        .unwrap_success();
+    let replay_res = handle
+        .fetch_history_and_replay(worker.inner_mut())
+        .await
+        .unwrap();
+    assert_eq!(res[0], replay_res.unwrap());
 }

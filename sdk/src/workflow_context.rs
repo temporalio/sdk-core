@@ -418,7 +418,7 @@ impl WfContext {
     }
 
     /// Wait for some condition to become true, yielding the workflow if it is not.
-    pub fn wait_condition(&self, condition: impl Fn() -> bool) -> impl Future<Output = ()> {
+    pub fn wait_condition(&self, mut condition: impl FnMut() -> bool) -> impl Future<Output = ()> {
         future::poll_fn(move |_cx: &mut Context<'_>| {
             if condition() {
                 Poll::Ready(())
