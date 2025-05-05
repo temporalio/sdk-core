@@ -1,6 +1,7 @@
 use crate::integ_tests::activity_functions::echo;
 use anyhow::anyhow;
 use futures_util::future::join_all;
+use rstest::Context;
 use std::{
     sync::{
         Arc,
@@ -11,7 +12,8 @@ use std::{
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{
     ActContext, ActivityError, ActivityOptions, CancellableFuture, LocalActivityOptions,
-    UpdateContext, WfContext, WorkflowResult, interceptors::WorkerInterceptor,
+    UpdateContext, WfContext, WorkflowResult,
+    interceptors::{FailOnNondeterminismInterceptor, WorkerInterceptor},
 };
 use temporal_sdk_core::replay::HistoryForReplay;
 use temporal_sdk_core_protos::{
@@ -29,8 +31,8 @@ use temporal_sdk_core_protos::{
     },
 };
 use temporal_sdk_core_test_utils::{
-    CoreWfStarter, WorkflowHandleExt, history_from_proto_binary, replay_sdk_worker,
-    workflows::la_problem_workflow,
+    CoreWfStarter, WorkflowHandleExt, history_from_proto_binary, init_core_replay_preloaded,
+    replay_sdk_worker, workflows::la_problem_workflow,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -757,13 +759,18 @@ async fn la_resolve_same_time_as_other_cancel() {
 }
 
 #[rstest::rstest]
+#[case(200, 0)]
+#[case(200, 2000)]
+#[case(2000, 0)]
+#[case(2000, 2000)]
 #[tokio::test]
 async fn long_local_activity_with_update(
-    #[values(200, 2000)] update_interval_ms: u64,
-    #[values(0, 2000)] update_inner_timer: u64,
+    #[context] ctx: Context,
+    #[case] update_interval_ms: u64,
+    #[case] update_inner_timer: u64,
 ) {
-    let wf_name = "long_local_activity_with_update";
-    let mut starter = CoreWfStarter::new(wf_name);
+    let wf_name = format!("{}-{}", ctx.name, ctx.case.unwrap());
+    let mut starter = CoreWfStarter::new(&wf_name);
     starter.workflow_options.task_timeout = Some(Duration::from_secs(1));
     let mut worker = starter.worker().await;
     let client = starter.get_client().await;
@@ -793,7 +800,7 @@ async fn long_local_activity_with_update(
             ..Default::default()
         })
         .await;
-        dbg!(update_counter.load(Ordering::Relaxed));
+        update_counter.load(Ordering::Relaxed);
         Ok(().into())
     });
     worker.register_activity("delay", |_: ActContext, _: String| async {
@@ -801,7 +808,9 @@ async fn long_local_activity_with_update(
         Ok(())
     });
 
-    let handle = starter.start_with_worker(wf_name, &mut worker).await;
+    let handle = starter
+        .start_with_worker(wf_name.clone(), &mut worker)
+        .await;
 
     let wf_id = starter.get_task_queue().to_string();
     let update = async {
@@ -834,4 +843,19 @@ async fn long_local_activity_with_update(
         .await
         .unwrap();
     assert_eq!(res[0], replay_res.unwrap());
+
+    // Load histories from pre-fix version and ensure compat
+    let replay_worker = init_core_replay_preloaded(
+        starter.get_task_queue(),
+        [HistoryForReplay::new(
+            history_from_proto_binary(&format!("histories/{}_history.bin", wf_name))
+                .await
+                .unwrap(),
+            "fake".to_owned(),
+        )],
+    );
+    let inner_worker = worker.inner_mut();
+    inner_worker.with_new_core_worker(replay_worker);
+    inner_worker.set_worker_interceptor(FailOnNondeterminismInterceptor {});
+    inner_worker.run().await.unwrap();
 }

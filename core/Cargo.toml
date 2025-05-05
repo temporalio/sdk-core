@@ -92,7 +92,7 @@ assert_matches = "1.4"
 bimap = "0.6.1"
 clap = { version = "4.0", features = ["derive"] }
 criterion = "0.5"
-rstest = "0.24"
+rstest = "0.25"
 temporal-sdk-core-test-utils = { path = "../test-utils" }
 temporal-sdk = { path = "../sdk" }
 tokio-stream = { version = "0.1", features = ["net"] }
