@@ -64,12 +64,12 @@ You can run it using:
 
 ## Debugging
 
-The crate uses [tracing](https://github.com/tokio-rs/tracing) to help with debugging. To enable
-it for a test, insert the below snippet at the start of the test. By default, tracing data is output
-to stdout in a (reasonably) pretty manner.
+The crate uses [tracing](https://github.com/tokio-rs/tracing) to help with debugging. To enable it
+globally for tests, insert the below snippet at the start of the test. By default, tracing data is
+output to stdout in a (reasonably) pretty manner.
 
 ```rust
-crate::telemetry::test_telem_console();
+crate::telemetry::telemetry_init_fallback();
 ```
 
 The passed in options to initialization can be customized to export to an OTel collector, etc.

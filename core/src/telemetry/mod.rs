@@ -33,7 +33,7 @@ use std::{
     },
 };
 use temporal_sdk_core_api::telemetry::{
-    CoreLog, CoreTelemetry, Logger, TelemetryOptions,
+    CoreLog, CoreTelemetry, Logger, TelemetryOptions, TelemetryOptionsBuilder,
     metrics::{CoreMeter, MetricKeyValue, NewAttributes, TemporalMeter},
 };
 use tracing::{Level, Subscriber};
@@ -173,54 +173,59 @@ pub fn telemetry_init(opts: TelemetryOptions) -> Result<TelemetryInstance, anyho
     let mut forward_layer = None;
     // ===================================
 
-    let tracing_sub = opts.logging.map(|logger| {
-        match logger {
-            Logger::Console { filter } => {
-                // This is silly dupe but can't be avoided without boxing.
-                if env::var("TEMPORAL_CORE_PRETTY_LOGS").is_ok() {
-                    console_pretty_layer = Some(
-                        tracing_subscriber::fmt::layer()
-                            .with_target(false)
-                            .event_format(
-                                tracing_subscriber::fmt::format()
-                                    .pretty()
-                                    .with_source_location(false),
-                            )
-                            .with_filter(EnvFilter::new(filter)),
-                    )
-                } else {
-                    console_compact_layer = Some(
-                        tracing_subscriber::fmt::layer()
-                            .with_target(false)
-                            .event_format(
-                                tracing_subscriber::fmt::format()
-                                    .compact()
-                                    .with_source_location(false),
-                            )
-                            .with_filter(EnvFilter::new(filter)),
-                    )
+    let tracing_sub = if let Some(ts) = opts.subscriber_override {
+        Some(ts)
+    } else {
+        opts.logging.map(|logger| {
+            match logger {
+                Logger::Console { filter } => {
+                    // This is silly dupe but can't be avoided without boxing.
+                    if env::var("TEMPORAL_CORE_PRETTY_LOGS").is_ok() {
+                        console_pretty_layer = Some(
+                            tracing_subscriber::fmt::layer()
+                                .with_target(false)
+                                .event_format(
+                                    tracing_subscriber::fmt::format()
+                                        .pretty()
+                                        .with_source_location(false),
+                                )
+                                .with_filter(EnvFilter::new(filter)),
+                        )
+                    } else {
+                        console_compact_layer = Some(
+                            tracing_subscriber::fmt::layer()
+                                .with_target(false)
+                                .event_format(
+                                    tracing_subscriber::fmt::format()
+                                        .compact()
+                                        .with_source_location(false),
+                                )
+                                .with_filter(EnvFilter::new(filter)),
+                        )
+                    }
                 }
-            }
-            Logger::Forward { filter } => {
-                let (export_layer, lo) =
-                    CoreLogConsumerLayer::new_buffered(FORWARD_LOG_BUFFER_SIZE);
-                logs_out = Some(Mutex::new(lo));
-                forward_layer = Some(export_layer.with_filter(EnvFilter::new(filter)));
-            }
-            Logger::Push { filter, consumer } => {
-                forward_layer =
-                    Some(CoreLogConsumerLayer::new(consumer).with_filter(EnvFilter::new(filter)));
-            }
-        };
-        let reg = tracing_subscriber::registry()
-            .with(console_pretty_layer)
-            .with(console_compact_layer)
-            .with(forward_layer);
+                Logger::Forward { filter } => {
+                    let (export_layer, lo) =
+                        CoreLogConsumerLayer::new_buffered(FORWARD_LOG_BUFFER_SIZE);
+                    logs_out = Some(Mutex::new(lo));
+                    forward_layer = Some(export_layer.with_filter(EnvFilter::new(filter)));
+                }
+                Logger::Push { filter, consumer } => {
+                    forward_layer = Some(
+                        CoreLogConsumerLayer::new(consumer).with_filter(EnvFilter::new(filter)),
+                    );
+                }
+            };
+            let reg = tracing_subscriber::registry()
+                .with(console_pretty_layer)
+                .with(console_compact_layer)
+                .with(forward_layer);
 
-        #[cfg(feature = "tokio-console")]
-        let reg = reg.with(console_subscriber::spawn());
-        Arc::new(reg) as Arc<dyn Subscriber + Send + Sync>
-    });
+            #[cfg(feature = "tokio-console")]
+            let reg = reg.with(console_subscriber::spawn());
+            Arc::new(reg) as Arc<dyn Subscriber + Send + Sync>
+        })
+    };
 
     Ok(TelemetryInstance::new(
         tracing_sub,
@@ -231,6 +236,9 @@ pub fn telemetry_init(opts: TelemetryOptions) -> Result<TelemetryInstance, anyho
     ))
 }
 
+/// WARNING: Calling can cause panics because of https://github.com/tokio-rs/tracing/issues/1656
+/// Lang must not start using until resolved
+///
 /// Initialize telemetry/tracing globally. Useful for testing. Only takes affect when called
 /// the first time. Subsequent calls are ignored.
 pub fn telemetry_init_global(opts: TelemetryOptions) -> Result<(), anyhow::Error> {
@@ -247,8 +255,23 @@ pub fn telemetry_init_global(opts: TelemetryOptions) -> Result<(), anyhow::Error
     Ok(())
 }
 
-#[cfg(test)]
-pub use test_initters::*;
+/// WARNING: Calling can cause panics because of https://github.com/tokio-rs/tracing/issues/1656
+/// Lang must not start using until resolved
+///
+/// Initialize the fallback global handler. All lang SDKs should call this somewhere, once, at
+/// startup, as it initializes a fallback handler for any dependencies (looking at you, otel) that
+/// don't provide good ways to customize their tracing usage. It sets a WARN-level global filter
+/// that uses the default console logger.
+pub fn telemetry_init_fallback() -> Result<(), anyhow::Error> {
+    telemetry_init_global(
+        TelemetryOptionsBuilder::default()
+            .logging(Logger::Console {
+                filter: construct_filter_string(Level::DEBUG, Level::WARN),
+            })
+            .build()?,
+    )?;
+    Ok(())
+}
 
 /// A trait for using [Display] on the contents of vecs, etc, which don't implement it.
 ///
@@ -273,26 +296,5 @@ where
 {
     fn display(&self) -> String {
         format!("[{}]", self.iter().format(","))
-    }
-}
-
-/// Helpers for test initialization
-#[cfg(test)]
-pub mod test_initters {
-    use super::*;
-    use temporal_sdk_core_api::telemetry::TelemetryOptionsBuilder;
-
-    /// Turn on logging to the console
-    #[allow(dead_code)] // Not always used, called to enable for debugging when needed
-    pub fn test_telem_console() {
-        telemetry_init_global(
-            TelemetryOptionsBuilder::default()
-                .logging(Logger::Console {
-                    filter: construct_filter_string(Level::DEBUG, Level::WARN),
-                })
-                .build()
-                .unwrap(),
-        )
-        .unwrap();
     }
 }

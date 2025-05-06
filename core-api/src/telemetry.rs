@@ -3,12 +3,12 @@ pub mod metrics;
 use crate::telemetry::metrics::CoreMeter;
 use std::{
     collections::HashMap,
-    fmt::Debug,
+    fmt::{Debug, Formatter},
     net::SocketAddr,
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tracing_core::Level;
+use tracing_core::{Level, Subscriber};
 use url::Url;
 
 pub static METRIC_PREFIX: &str = "temporal_";
@@ -27,7 +27,7 @@ pub trait CoreTelemetry {
 }
 
 /// Telemetry configuration options. Construct with [TelemetryOptionsBuilder]
-#[derive(Debug, Clone, derive_builder::Builder)]
+#[derive(Clone, derive_builder::Builder)]
 #[non_exhaustive]
 pub struct TelemetryOptions {
     /// Optional logger - set as None to disable.
@@ -45,6 +45,39 @@ pub struct TelemetryOptions {
     /// A prefix to be applied to all core-created metrics. Defaults to "temporal_".
     #[builder(default = "METRIC_PREFIX.to_string()")]
     pub metric_prefix: String,
+    /// If provided, logging config will be ignored and this explicit subscriber will be used for
+    /// all logging and traces.
+    #[builder(setter(strip_option), default)]
+    pub subscriber_override: Option<Arc<dyn Subscriber + Send + Sync>>,
+}
+impl Debug for TelemetryOptions {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        #[derive(Debug)]
+        #[allow(dead_code)]
+        struct TelemetryOptions<'a> {
+            logging: &'a Option<Logger>,
+            metrics: &'a Option<Arc<dyn CoreMeter>>,
+            attach_service_name: &'a bool,
+            metric_prefix: &'a str,
+        }
+        let Self {
+            logging,
+            metrics,
+            attach_service_name,
+            metric_prefix,
+            ..
+        } = self;
+
+        Debug::fmt(
+            &TelemetryOptions {
+                logging,
+                metrics,
+                attach_service_name,
+                metric_prefix,
+            },
+            f,
+        )
+    }
 }
 
 /// Options for exporting to an OpenTelemetry Collector
