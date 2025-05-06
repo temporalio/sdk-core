@@ -718,6 +718,11 @@ fn find_end_index_of_next_wft_seq(
             return NextWFTSeqEndIndex::Complete(last_index);
         }
 
+        // TODO: Emergency undo for boundary calculation change. Remove if no problems after a bit.
+        if std::env::var("TEMPORAL_NO_WFT_BOUNDARY_CHANGE").is_ok() {
+            saw_command = false;
+        }
+
         if e.event_type() == EventType::WorkflowTaskStarted {
             wft_started_event_id_to_index.push((e.event_id, ix));
             if let Some(next_event) = events.get(ix + 1) {
