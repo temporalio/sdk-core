@@ -46,7 +46,7 @@ path = "../core-api"
 [dev-dependencies]
 assert_matches = "1"
 mockall = "0.13"
-rstest = "0.24"
+rstest = "0.25"
 
 [lints]
 workspace = true

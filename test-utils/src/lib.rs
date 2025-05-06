@@ -33,7 +33,10 @@ use temporal_client::{
 };
 use temporal_sdk::{
     IntoActivityFunc, Worker, WorkflowFunction,
-    interceptors::{FailOnNondeterminismInterceptor, WorkerInterceptor},
+    interceptors::{
+        FailOnNondeterminismInterceptor, InterceptorWithNext, ReturnWorkflowExitValueInterceptor,
+        WorkerInterceptor,
+    },
 };
 #[cfg(feature = "ephemeral-server")]
 use temporal_sdk_core::ephemeral_server::{EphemeralExe, EphemeralExeVersion};
@@ -866,7 +869,10 @@ where
 
 #[async_trait::async_trait(?Send)]
 pub trait WorkflowHandleExt {
-    async fn fetch_history_and_replay(&self, worker: &mut Worker) -> Result<(), anyhow::Error>;
+    async fn fetch_history_and_replay(
+        &self,
+        worker: &mut Worker,
+    ) -> Result<Option<Payload>, anyhow::Error>;
 }
 
 #[async_trait::async_trait(?Send)]
@@ -874,7 +880,10 @@ impl<R> WorkflowHandleExt for WorkflowHandle<RetryClient<Client>, R>
 where
     R: FromPayloadsExt,
 {
-    async fn fetch_history_and_replay(&self, worker: &mut Worker) -> Result<(), anyhow::Error> {
+    async fn fetch_history_and_replay(
+        &self,
+        worker: &mut Worker,
+    ) -> Result<Option<Payload>, anyhow::Error> {
         let wf_id = self.info().workflow_id.clone();
         let run_id = self.info().run_id.clone();
         let history = self
@@ -886,9 +895,13 @@ where
         let with_id = HistoryForReplay::new(history, wf_id);
         let replay_worker = init_core_replay_preloaded(worker.task_queue(), [with_id]);
         worker.with_new_core_worker(replay_worker);
-        worker.set_worker_interceptor(FailOnNondeterminismInterceptor {});
+        let retval_icept = ReturnWorkflowExitValueInterceptor::default();
+        let retval_handle = retval_icept.get_result_handle();
+        let mut top_icept = InterceptorWithNext::new(Box::new(FailOnNondeterminismInterceptor {}));
+        top_icept.set_next(Box::new(retval_icept));
+        worker.set_worker_interceptor(top_icept);
         worker.run().await?;
-        Ok(())
+        Ok(retval_handle.get().cloned())
     }
 }
 

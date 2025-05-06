@@ -15,6 +15,7 @@ use futures_util::{FutureExt, Stream, StreamExt, future::Shared, task::Context};
 use parking_lot::{RwLock, RwLockReadGuard};
 use std::{
     collections::HashMap,
+    future,
     future::Future,
     marker::PhantomData,
     ops::Deref,
@@ -148,6 +149,11 @@ impl WfContext {
     /// Return the workflow's randomness seed
     pub fn random_seed(&self) -> u64 {
         self.shared.read().random_seed
+    }
+
+    /// Returns true if the current workflow task is happening under replay
+    pub fn is_replaying(&self) -> bool {
+        self.shared.read().is_replaying
     }
 
     /// Return various information that the workflow was initialized with. Will eventually become
@@ -409,6 +415,17 @@ impl WfContext {
             .into(),
         );
         cmd
+    }
+
+    /// Wait for some condition to become true, yielding the workflow if it is not.
+    pub fn wait_condition(&self, mut condition: impl FnMut() -> bool) -> impl Future<Output = ()> {
+        future::poll_fn(move |_cx: &mut Context<'_>| {
+            if condition() {
+                Poll::Ready(())
+            } else {
+                Poll::Pending
+            }
+        })
     }
 
     /// Buffer a command to be sent in the activation reply

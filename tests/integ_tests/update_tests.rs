@@ -1146,3 +1146,77 @@ async fn update_after_empty_wft() {
         .await
         .unwrap();
 }
+
+#[tokio::test]
+async fn update_lost_on_activity_mismatch() {
+    let wf_name = "update_lost_on_activity_mismatch";
+    let mut starter = CoreWfStarter::new(wf_name);
+    let mut worker = starter.worker().await;
+    let client = starter.get_client().await;
+
+    worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| async move {
+        let can_run = Arc::new(AtomicUsize::new(1));
+        let cr = can_run.clone();
+        ctx.update_handler(
+            "update",
+            |_: &_, _: ()| Ok(()),
+            move |_: UpdateContext, _: ()| {
+                let cr = cr.clone();
+                async move {
+                    cr.fetch_add(1, Ordering::Relaxed);
+                    Ok(())
+                }
+            },
+        );
+        for _ in 1..=3 {
+            let cr = can_run.clone();
+            ctx.wait_condition(|| cr.load(Ordering::Relaxed) > 0).await;
+            ctx.activity(ActivityOptions {
+                activity_type: "echo".to_string(),
+                input: "hi!".as_json_payload().expect("serializes fine"),
+                start_to_close_timeout: Some(Duration::from_secs(2)),
+                ..Default::default()
+            })
+            .await;
+            can_run.fetch_sub(1, Ordering::Release);
+        }
+        Ok(().into())
+    });
+    worker.register_activity("echo", |_ctx: ActContext, echo_me: String| async move {
+        Ok(echo_me)
+    });
+
+    let core_worker = worker.core_worker.clone();
+    let handle = starter.start_with_worker(wf_name, &mut worker).await;
+
+    let wf_id = starter.get_task_queue().to_string();
+    let update = async {
+        // Need time to get to condition
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        // Evict wf
+        core_worker.request_workflow_eviction(handle.info().run_id.as_ref().unwrap());
+        for _ in 1..=2 {
+            let res = client
+                .update_workflow_execution(
+                    wf_id.clone(),
+                    "".to_string(),
+                    "update".to_string(),
+                    WaitPolicy {
+                        lifecycle_stage: UpdateWorkflowExecutionLifecycleStage::Completed as i32,
+                    },
+                    [().as_json_payload().unwrap()].into_payloads(),
+                )
+                .await
+                .unwrap();
+            assert!(res.outcome.unwrap().is_success());
+        }
+    };
+    let runner = async {
+        worker.run_until_done().await.unwrap();
+    };
+    join!(update, runner);
+    handle
+        .fetch_history_and_replay(worker.inner_mut())
+        .await
+        .unwrap();
+}
