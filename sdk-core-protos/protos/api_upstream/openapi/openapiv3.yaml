@@ -6508,6 +6508,13 @@ components:
           $ref: '#/components/schemas/Callback_Nexus'
         internal:
           $ref: '#/components/schemas/Callback_Internal'
+        links:
+          type: array
+          items:
+            $ref: '#/components/schemas/Link'
+          description: |-
+            Links associated with the callback. It can be used to link to underlying resources of the
+             callback.
       description: Callback to attach to various events in the system, e.g. workflow run completion.
     CallbackInfo:
       type: object
@@ -6914,6 +6921,12 @@ components:
         requestId:
           type: string
           description: Used to de-dupe requests. Typically should be UUID.
+        identity:
+          type: string
+          description: Identity of the actor who created the rule. Will be stored with the rule.
+        description:
+          type: string
+          description: Rule description.Will be stored with the rule.
     CreateWorkflowRuleResponse:
       type: object
       properties:
@@ -7374,6 +7387,13 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ExecuteMultiOperationResponse_Response'
+      description: |-
+        IMPORTANT: For [StartWorkflow, UpdateWorkflow] combination ("Update-with-Start") when both
+           1. the workflow update for the requested update ID has already completed, and
+           2. the workflow for the requested workflow ID has already been closed,
+         then you'll receive
+           - an update response containing the update's outcome, and
+           - a start response with a `status` field that reflects the workflow's current state.
     ExecuteMultiOperationResponse_Response:
       type: object
       properties:
@@ -7986,6 +8006,8 @@ components:
           type: string
         eventRef:
           $ref: '#/components/schemas/WorkflowEvent_EventReference'
+        requestIdRef:
+          $ref: '#/components/schemas/WorkflowEvent_RequestIdReference'
     ListArchivedWorkflowExecutionsResponse:
       type: object
       properties:
@@ -8713,6 +8735,18 @@ components:
         reason:
           type: string
           description: Reason for pausing the activity.
+    PauseInfo_Rule:
+      type: object
+      properties:
+        ruleId:
+          type: string
+          description: The rule that paused the activity.
+        identity:
+          type: string
+          description: The identity of the actor that created the rule.
+        reason:
+          type: string
+          description: Reason why rule was created. Populated from rule description.
     Payload:
       description: |-
         Represents some binary (byte array) data (ex: activity input parameters or workflow result) with
@@ -8828,9 +8862,10 @@ components:
           allOf:
             - $ref: '#/components/schemas/PauseInfo_Manual'
           description: activity was paused by the manual intervention
-        ruleId:
-          type: string
-          description: Id of the rule that paused the activity.
+        rule:
+          allOf:
+            - $ref: '#/components/schemas/PauseInfo_Rule'
+          description: activity was paused by the rule
     PendingChildExecutionInfo:
       type: object
       properties:
@@ -9401,6 +9436,84 @@ components:
     RequestCancelWorkflowExecutionResponse:
       type: object
       properties: {}
+    RequestIdInfo:
+      type: object
+      properties:
+        eventType:
+          enum:
+            - EVENT_TYPE_UNSPECIFIED
+            - EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
+            - EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
+            - EVENT_TYPE_WORKFLOW_EXECUTION_FAILED
+            - EVENT_TYPE_WORKFLOW_EXECUTION_TIMED_OUT
+            - EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+            - EVENT_TYPE_WORKFLOW_TASK_STARTED
+            - EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+            - EVENT_TYPE_WORKFLOW_TASK_TIMED_OUT
+            - EVENT_TYPE_WORKFLOW_TASK_FAILED
+            - EVENT_TYPE_ACTIVITY_TASK_SCHEDULED
+            - EVENT_TYPE_ACTIVITY_TASK_STARTED
+            - EVENT_TYPE_ACTIVITY_TASK_COMPLETED
+            - EVENT_TYPE_ACTIVITY_TASK_FAILED
+            - EVENT_TYPE_ACTIVITY_TASK_TIMED_OUT
+            - EVENT_TYPE_ACTIVITY_TASK_CANCEL_REQUESTED
+            - EVENT_TYPE_ACTIVITY_TASK_CANCELED
+            - EVENT_TYPE_TIMER_STARTED
+            - EVENT_TYPE_TIMER_FIRED
+            - EVENT_TYPE_TIMER_CANCELED
+            - EVENT_TYPE_WORKFLOW_EXECUTION_CANCEL_REQUESTED
+            - EVENT_TYPE_WORKFLOW_EXECUTION_CANCELED
+            - EVENT_TYPE_REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED
+            - EVENT_TYPE_REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_FAILED
+            - EVENT_TYPE_EXTERNAL_WORKFLOW_EXECUTION_CANCEL_REQUESTED
+            - EVENT_TYPE_MARKER_RECORDED
+            - EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED
+            - EVENT_TYPE_WORKFLOW_EXECUTION_TERMINATED
+            - EVENT_TYPE_WORKFLOW_EXECUTION_CONTINUED_AS_NEW
+            - EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED
+            - EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_FAILED
+            - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_STARTED
+            - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_COMPLETED
+            - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_FAILED
+            - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_CANCELED
+            - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_TIMED_OUT
+            - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_TERMINATED
+            - EVENT_TYPE_SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED
+            - EVENT_TYPE_SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_FAILED
+            - EVENT_TYPE_EXTERNAL_WORKFLOW_EXECUTION_SIGNALED
+            - EVENT_TYPE_UPSERT_WORKFLOW_SEARCH_ATTRIBUTES
+            - EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_ADMITTED
+            - EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_ACCEPTED
+            - EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_REJECTED
+            - EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_COMPLETED
+            - EVENT_TYPE_WORKFLOW_PROPERTIES_MODIFIED_EXTERNALLY
+            - EVENT_TYPE_ACTIVITY_PROPERTIES_MODIFIED_EXTERNALLY
+            - EVENT_TYPE_WORKFLOW_PROPERTIES_MODIFIED
+            - EVENT_TYPE_NEXUS_OPERATION_SCHEDULED
+            - EVENT_TYPE_NEXUS_OPERATION_STARTED
+            - EVENT_TYPE_NEXUS_OPERATION_COMPLETED
+            - EVENT_TYPE_NEXUS_OPERATION_FAILED
+            - EVENT_TYPE_NEXUS_OPERATION_CANCELED
+            - EVENT_TYPE_NEXUS_OPERATION_TIMED_OUT
+            - EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUESTED
+            - EVENT_TYPE_WORKFLOW_EXECUTION_OPTIONS_UPDATED
+            - EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUEST_COMPLETED
+            - EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUEST_FAILED
+          type: string
+          description: The event type of the history event generated by the request.
+          format: enum
+        eventId:
+          type: string
+          description: |-
+            The event id of the history event generated by the request. It's possible the event ID is not
+             known (unflushed buffered event). In this case, the value will be zero or a negative value,
+             representing an invalid ID.
+        buffered:
+          type: boolean
+          description: |-
+            Indicate if the request is still buffered. If so, the event ID is not known and its value
+             will be an invalid event ID.
+      description: RequestIdInfo contains details of a request ID.
     ResetActivityRequest:
       type: object
       properties:
@@ -10912,6 +11025,21 @@ components:
         started:
           type: boolean
           description: If true, a new workflow was started.
+        status:
+          enum:
+            - WORKFLOW_EXECUTION_STATUS_UNSPECIFIED
+            - WORKFLOW_EXECUTION_STATUS_RUNNING
+            - WORKFLOW_EXECUTION_STATUS_COMPLETED
+            - WORKFLOW_EXECUTION_STATUS_FAILED
+            - WORKFLOW_EXECUTION_STATUS_CANCELED
+            - WORKFLOW_EXECUTION_STATUS_TERMINATED
+            - WORKFLOW_EXECUTION_STATUS_CONTINUED_AS_NEW
+            - WORKFLOW_EXECUTION_STATUS_TIMED_OUT
+          type: string
+          description: |-
+            Current execution status of the workflow. Typically remains WORKFLOW_EXECUTION_STATUS_RUNNING
+             unless a de-dupe occurs or in specific scenarios handled within the ExecuteMultiOperation (refer to its docs).
+          format: enum
         eagerWorkflowTask:
           allOf:
             - $ref: '#/components/schemas/PollWorkflowTaskQueueResponse'
@@ -10919,6 +11047,10 @@ components:
             When `request_eager_execution` is set on the `StartWorkflowExecutionRequest`, the server - if supported - will
              return the first workflow task to be eagerly executed.
              The caller is expected to have a worker available to process the task.
+        link:
+          allOf:
+            - $ref: '#/components/schemas/Link'
+          description: Link to the workflow event.
     Status:
       type: object
       properties:
@@ -12048,6 +12180,75 @@ components:
             - EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUEST_FAILED
           type: string
           format: enum
+      description: EventReference is a direct reference to a history event through the event ID.
+    WorkflowEvent_RequestIdReference:
+      type: object
+      properties:
+        requestId:
+          type: string
+        eventType:
+          enum:
+            - EVENT_TYPE_UNSPECIFIED
+            - EVENT_TYPE_WORKFLOW_EXECUTION_STARTED
+            - EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
+            - EVENT_TYPE_WORKFLOW_EXECUTION_FAILED
+            - EVENT_TYPE_WORKFLOW_EXECUTION_TIMED_OUT
+            - EVENT_TYPE_WORKFLOW_TASK_SCHEDULED
+            - EVENT_TYPE_WORKFLOW_TASK_STARTED
+            - EVENT_TYPE_WORKFLOW_TASK_COMPLETED
+            - EVENT_TYPE_WORKFLOW_TASK_TIMED_OUT
+            - EVENT_TYPE_WORKFLOW_TASK_FAILED
+            - EVENT_TYPE_ACTIVITY_TASK_SCHEDULED
+            - EVENT_TYPE_ACTIVITY_TASK_STARTED
+            - EVENT_TYPE_ACTIVITY_TASK_COMPLETED
+            - EVENT_TYPE_ACTIVITY_TASK_FAILED
+            - EVENT_TYPE_ACTIVITY_TASK_TIMED_OUT
+            - EVENT_TYPE_ACTIVITY_TASK_CANCEL_REQUESTED
+            - EVENT_TYPE_ACTIVITY_TASK_CANCELED
+            - EVENT_TYPE_TIMER_STARTED
+            - EVENT_TYPE_TIMER_FIRED
+            - EVENT_TYPE_TIMER_CANCELED
+            - EVENT_TYPE_WORKFLOW_EXECUTION_CANCEL_REQUESTED
+            - EVENT_TYPE_WORKFLOW_EXECUTION_CANCELED
+            - EVENT_TYPE_REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED
+            - EVENT_TYPE_REQUEST_CANCEL_EXTERNAL_WORKFLOW_EXECUTION_FAILED
+            - EVENT_TYPE_EXTERNAL_WORKFLOW_EXECUTION_CANCEL_REQUESTED
+            - EVENT_TYPE_MARKER_RECORDED
+            - EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED
+            - EVENT_TYPE_WORKFLOW_EXECUTION_TERMINATED
+            - EVENT_TYPE_WORKFLOW_EXECUTION_CONTINUED_AS_NEW
+            - EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_INITIATED
+            - EVENT_TYPE_START_CHILD_WORKFLOW_EXECUTION_FAILED
+            - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_STARTED
+            - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_COMPLETED
+            - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_FAILED
+            - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_CANCELED
+            - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_TIMED_OUT
+            - EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_TERMINATED
+            - EVENT_TYPE_SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_INITIATED
+            - EVENT_TYPE_SIGNAL_EXTERNAL_WORKFLOW_EXECUTION_FAILED
+            - EVENT_TYPE_EXTERNAL_WORKFLOW_EXECUTION_SIGNALED
+            - EVENT_TYPE_UPSERT_WORKFLOW_SEARCH_ATTRIBUTES
+            - EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_ADMITTED
+            - EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_ACCEPTED
+            - EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_REJECTED
+            - EVENT_TYPE_WORKFLOW_EXECUTION_UPDATE_COMPLETED
+            - EVENT_TYPE_WORKFLOW_PROPERTIES_MODIFIED_EXTERNALLY
+            - EVENT_TYPE_ACTIVITY_PROPERTIES_MODIFIED_EXTERNALLY
+            - EVENT_TYPE_WORKFLOW_PROPERTIES_MODIFIED
+            - EVENT_TYPE_NEXUS_OPERATION_SCHEDULED
+            - EVENT_TYPE_NEXUS_OPERATION_STARTED
+            - EVENT_TYPE_NEXUS_OPERATION_COMPLETED
+            - EVENT_TYPE_NEXUS_OPERATION_FAILED
+            - EVENT_TYPE_NEXUS_OPERATION_CANCELED
+            - EVENT_TYPE_NEXUS_OPERATION_TIMED_OUT
+            - EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUESTED
+            - EVENT_TYPE_WORKFLOW_EXECUTION_OPTIONS_UPDATED
+            - EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUEST_COMPLETED
+            - EVENT_TYPE_NEXUS_OPERATION_CANCEL_REQUEST_FAILED
+          type: string
+          format: enum
+      description: RequestIdReference is a indirect reference to a history event through the request ID.
     WorkflowExecution:
       type: object
       properties:
@@ -12199,6 +12400,15 @@ components:
         resetRunId:
           type: string
           description: Reset Run ID points to the new run when this execution is reset. If the execution is reset multiple times, it points to the latest run.
+        requestIdInfos:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/RequestIdInfo'
+          description: |-
+            Request ID information (eg: history event information associated with the request ID).
+             Note: It only contains request IDs from StartWorkflowExecution requests, including indirect
+             calls (eg: if SignalWithStartWorkflowExecution starts a new workflow, then the request ID is
+             used in the StartWorkflowExecution request).
       description: Holds all the extra information about workflow execution that is not part of Visibility.
     WorkflowExecutionFailedEventAttributes:
       type: object
@@ -12839,6 +13049,17 @@ components:
           allOf:
             - $ref: '#/components/schemas/WorkflowRuleSpec'
           description: Rule specification
+        createdByIdentity:
+          type: string
+          description: |-
+            Identity of the actor that created the rule
+             (-- api-linter: core::0140::prepositions=disabled
+                 aip.dev/not-precedent: It is better reflect the intent this way, we will also have updated_by. --)
+             (-- api-linter: core::0142::time-field-names=disabled
+                 aip.dev/not-precedent: Same as above. All other options sounds clumsy --)
+        description:
+          type: string
+          description: Rule description.
       description: WorkflowRule describes a rule that can be applied to any workflow in this namespace.
     WorkflowRuleAction:
       type: object
