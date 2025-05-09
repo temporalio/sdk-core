@@ -221,10 +221,15 @@ message StartWorkflowExecutionResponse {
     string run_id = 1;
     // If true, a new workflow was started.
     bool started = 3;
+    // Current execution status of the workflow. Typically remains WORKFLOW_EXECUTION_STATUS_RUNNING
+    // unless a de-dupe occurs or in specific scenarios handled within the ExecuteMultiOperation (refer to its docs).
+    temporal.api.enums.v1.WorkflowExecutionStatus status = 5;
     // When `request_eager_execution` is set on the `StartWorkflowExecutionRequest`, the server - if supported - will
     // return the first workflow task to be eagerly executed.
     // The caller is expected to have a worker available to process the task.
     PollWorkflowTaskQueueResponse eager_workflow_task = 2;
+    // Link to the workflow event.
+    temporal.api.common.v1.Link link = 4;
 }
 
 message GetWorkflowExecutionHistoryRequest {
@@ -1803,6 +1808,12 @@ message ExecuteMultiOperationRequest {
     }
 }
 
+// IMPORTANT: For [StartWorkflow, UpdateWorkflow] combination ("Update-with-Start") when both
+//   1. the workflow update for the requested update ID has already completed, and
+//   2. the workflow for the requested workflow ID has already been closed,
+// then you'll receive
+//   - an update response containing the update's outcome, and
+//   - a start response with a `status` field that reflects the workflow's current state.
 message ExecuteMultiOperationResponse {
     repeated Response responses = 1;
 
@@ -2218,6 +2229,12 @@ message CreateWorkflowRuleRequest {
 
     // Used to de-dupe requests. Typically should be UUID.
     string request_id = 4;
+
+    // Identity of the actor who created the rule. Will be stored with the rule.
+    string identity = 5;
+
+    // Rule description.Will be stored with the rule.
+    string description = 6;
 }
 
 message CreateWorkflowRuleResponse {

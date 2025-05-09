@@ -13,6 +13,8 @@ breaking:
     - WIRE_JSON
   ignore:
     - google
+    # TODO (yuri) remove this
+    - temporal/api/workflow/v1/message.proto
 lint:
   use:
     - DEFAULT

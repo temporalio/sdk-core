@@ -258,6 +258,13 @@ async fn nexus_async(
                 // Get the next start request
                 nt = core_worker.poll_nexus_task().await.unwrap().unwrap_task();
             }
+            let links = start_req
+                .links
+                .iter()
+                .map(workflow_event_link_from_nexus)
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+
             // Start the workflow which will act like the nexus handler and complete the async
             // operation
             submitter
@@ -266,18 +273,15 @@ async fn nexus_async(
                     "async_completer",
                     vec![],
                     WorkflowOptions {
-                        links: start_req
-                            .links
-                            .iter()
-                            .map(workflow_event_link_from_nexus)
-                            .collect::<Result<Vec<_>, _>>()
-                            .unwrap(),
                         completion_callbacks: vec![Callback {
                             variant: Some(callback::Variant::Nexus(callback::Nexus {
                                 url: start_req.callback,
                                 header: start_req.callback_header,
                             })),
+                            links: links.clone(),
                         }],
+                        // Also send links in the root of the workflow options for older servers.
+                        links,
                         ..Default::default()
                     },
                 )
