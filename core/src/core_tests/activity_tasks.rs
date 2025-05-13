@@ -147,6 +147,7 @@ async fn heartbeats_report_cancels_only_once() {
             Ok(RecordActivityTaskHeartbeatResponse {
                 cancel_requested: true,
                 activity_paused: false,
+                activity_reset: false,
             })
         });
     mock_client
@@ -273,6 +274,7 @@ async fn activity_cancel_interrupts_poll() {
                 Ok(RecordActivityTaskHeartbeatResponse {
                     cancel_requested: true,
                     activity_paused: false,
+                    activity_reset: false,
                 })
             }
             .boxed()
@@ -394,11 +396,13 @@ async fn many_concurrent_heartbeat_cancels() {
                     Ok(RecordActivityTaskHeartbeatResponse {
                         cancel_requested: false,
                         activity_paused: false,
+                        activity_reset: false,
                     })
                 } else {
                     Ok(RecordActivityTaskHeartbeatResponse {
                         cancel_requested: true,
                         activity_paused: false,
+                        activity_reset: false,
                     })
                 }
             }
@@ -520,6 +524,7 @@ async fn can_heartbeat_acts_during_shutdown() {
             Ok(RecordActivityTaskHeartbeatResponse {
                 cancel_requested: false,
                 activity_paused: false,
+                activity_reset: false,
             })
         });
     mock_client
@@ -574,6 +579,7 @@ async fn complete_act_with_fail_flushes_heartbeat() {
             Ok(RecordActivityTaskHeartbeatResponse {
                 cancel_requested: false,
                 activity_paused: false,
+                activity_reset: false,
             })
         });
     mock_client
@@ -1254,6 +1260,7 @@ async fn heartbeat_response_can_be_paused() {
             Ok(RecordActivityTaskHeartbeatResponse {
                 cancel_requested: false,
                 activity_paused: true,
+                activity_reset: false,
             })
         });
     // Second heartbeat returns cancel only
@@ -1264,9 +1271,10 @@ async fn heartbeat_response_can_be_paused() {
             Ok(RecordActivityTaskHeartbeatResponse {
                 cancel_requested: true,
                 activity_paused: false,
+                activity_reset: false,
             })
         });
-    // Third heartbeat returns both
+    // Third heartbeat does all 3
     mock_client
         .expect_record_activity_heartbeat()
         .times(1)
@@ -1274,6 +1282,7 @@ async fn heartbeat_response_can_be_paused() {
             Ok(RecordActivityTaskHeartbeatResponse {
                 cancel_requested: true,
                 activity_paused: true,
+                activity_reset: true,
             })
         });
     mock_client
@@ -1391,7 +1400,8 @@ async fn heartbeat_response_can_be_paused() {
             task_token == &vec![3] &&
             *reason == ActivityCancelReason::Cancelled as i32 &&
             details.as_ref().is_some_and(|d| d.is_paused) &&
-            details.as_ref().is_some_and(|d| d.is_cancelled)
+            details.as_ref().is_some_and(|d| d.is_cancelled) &&
+            details.as_ref().is_some_and(|d| d.is_reset)
     );
     core.complete_activity_task(ActivityTaskCompletion {
         task_token: act.task_token,

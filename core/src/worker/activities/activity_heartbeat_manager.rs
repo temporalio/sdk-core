@@ -145,11 +145,15 @@ impl ActivityHeartbeatManager {
                                     .record_activity_heartbeat(tt.clone(), details.into_payloads())
                                     .await
                                 {
-                                    Ok(RecordActivityTaskHeartbeatResponse { cancel_requested, activity_paused }) => {
-                                        if cancel_requested || activity_paused {
-                                            // Prioritize Cancel over Pause
+                                    Ok(RecordActivityTaskHeartbeatResponse {
+                                           cancel_requested, activity_paused, activity_reset
+                                       }) => {
+                                        if cancel_requested || activity_paused || activity_reset {
+                                            // Prioritize Cancel / reset over pause
                                             let reason = if cancel_requested {
                                                 ActivityCancelReason::Cancelled
+                                            } else if activity_reset {
+                                                ActivityCancelReason::Reset
                                             } else {
                                                 ActivityCancelReason::Paused
                                             };
@@ -160,6 +164,7 @@ impl ActivityHeartbeatManager {
                                                     ActivityCancellationDetails {
                                                         is_cancelled: cancel_requested,
                                                         is_paused: activity_paused,
+                                                        is_reset: activity_reset,
                                                         ..Default::default()
                                                     }
                                                 ))

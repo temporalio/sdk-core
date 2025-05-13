@@ -9,6 +9,7 @@ use std::{
 use temporal_sdk_core_protos::{
     coresdk,
     coresdk::{ActivitySlotInfo, LocalActivitySlotInfo, NexusSlotInfo, WorkflowSlotInfo},
+    temporal,
     temporal::api::enums::v1::VersioningBehavior,
 };
 
@@ -628,6 +629,15 @@ impl From<WorkerDeploymentVersion> for coresdk::common::WorkerDeploymentVersion 
 impl From<coresdk::common::WorkerDeploymentVersion> for WorkerDeploymentVersion {
     fn from(v: coresdk::common::WorkerDeploymentVersion) -> WorkerDeploymentVersion {
         WorkerDeploymentVersion {
+            deployment_name: v.deployment_name,
+            build_id: v.build_id,
+        }
+    }
+}
+
+impl From<temporal::api::deployment::v1::WorkerDeploymentVersion> for WorkerDeploymentVersion {
+    fn from(v: temporal::api::deployment::v1::WorkerDeploymentVersion) -> Self {
+        Self {
             deployment_name: v.deployment_name,
             build_id: v.build_id,
         }

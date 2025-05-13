@@ -1,25 +1,3 @@
-// The MIT License
-//
-// Copyright (c) 2020 Temporal Technologies Inc.  All rights reserved.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in
-// all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-// THE SOFTWARE.
-
 syntax = "proto3";
 
 package temporal.api.history.v1;
@@ -147,7 +125,15 @@ message WorkflowExecutionStartedEventAttributes {
     // of starting on the Current Version of its Task Queue.
     // This is set only if the child workflow is starting on a Task Queue belonging to the same
     // Worker Deployment Version.
-    string parent_pinned_worker_deployment_version = 34;
+    // Deprecated. Use `parent_pinned_deployment_version`.
+    string parent_pinned_worker_deployment_version = 34 [deprecated = true];
+
+    // When present, it means this is a child workflow of a parent that is Pinned to this Worker
+    // Deployment Version. In this case, child workflow will start as Pinned to this Version instead
+    // of starting on the Current Version of its Task Queue.
+    // This is set only if the child workflow is starting on a Task Queue belonging to the same
+    // Worker Deployment Version.
+    temporal.api.deployment.v1.WorkerDeploymentVersion parent_pinned_deployment_version = 36;
 
     // Priority metadata
     temporal.api.common.v1.Priority priority = 35;
@@ -238,11 +224,11 @@ message WorkflowTaskStartedEventAttributes {
     int64 history_size_bytes = 5;
     // Version info of the worker to whom this task was dispatched.
     // Deprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]
-    temporal.api.common.v1.WorkerVersionStamp worker_version = 6;
+    temporal.api.common.v1.WorkerVersionStamp worker_version = 6 [deprecated = true];
     // Used by server internally to properly reapply build ID redirects to an execution
     // when rebuilding it from events.
     // Deprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]
-    int64 build_id_redirect_counter = 7;
+    int64 build_id_redirect_counter = 7 [deprecated = true];
 }
 
 message WorkflowTaskCompletedEventAttributes {
@@ -253,12 +239,13 @@ message WorkflowTaskCompletedEventAttributes {
     // Identity of the worker who completed this task
     string identity = 3;
     // Binary ID of the worker who completed this task
-    string binary_checksum = 4;
+    // Deprecated. Replaced with `deployment_version`.
+    string binary_checksum = 4 [deprecated = true];
     // Version info of the worker who processed this workflow task. If present, the `build_id` field
     // within is also used as `binary_checksum`, which may be omitted in that case (it may also be
     // populated to preserve compatibility).
-    // Deprecated. Use `deployment` and `versioning_behavior` instead.
-    temporal.api.common.v1.WorkerVersionStamp worker_version = 5;
+    // Deprecated. Use `deployment_version` and `versioning_behavior` instead.
+    temporal.api.common.v1.WorkerVersionStamp worker_version = 5 [deprecated = true];
     // Data the SDK wishes to record for itself, but server need not interpret, and does not
     // directly impact workflow state.
     temporal.api.sdk.v1.WorkflowTaskCompletedMetadata sdk_metadata = 6;
@@ -269,7 +256,7 @@ message WorkflowTaskCompletedEventAttributes {
     // The deployment that completed this task. May or may not be set for unversioned workers,
     // depending on whether a value is sent by the SDK. This value updates workflow execution's
     // `versioning_info.deployment`.
-    // Deprecated. Replaced with `worker_deployment_version`.
+    // Deprecated. Replaced with `deployment_version`.
     temporal.api.deployment.v1.Deployment deployment = 7 [deprecated = true];
     // Versioning behavior sent by the worker that completed this task for this particular workflow
     // execution. UNSPECIFIED means the task was completed by an unversioned worker. This value
@@ -278,11 +265,16 @@ message WorkflowTaskCompletedEventAttributes {
     // The Worker Deployment Version that completed this task. Must be set if `versioning_behavior`
     // is set. This value updates workflow execution's `versioning_info.version`.
     // Experimental. Worker Deployments are experimental and might significantly change in the future.
-    string worker_deployment_version = 9;
+    // Deprecated. Replaced with `deployment_version`.
+    string worker_deployment_version = 9 [deprecated = true];
     // The name of Worker Deployment that completed this task. Must be set if `versioning_behavior`
     // is set. This value updates workflow execution's `worker_deployment_name`.
     // Experimental. Worker Deployments are experimental and might significantly change in the future.
     string worker_deployment_name = 10;
+    // The Worker Deployment Version that completed this task. Must be set if `versioning_behavior`
+    // is set. This value updates workflow execution's `versioning_info.deployment_version`.
+    // Experimental. Worker Deployments are experimental and might significantly change in the future.
+    temporal.api.deployment.v1.WorkerDeploymentVersion deployment_version = 11;
 }
 
 message WorkflowTaskTimedOutEventAttributes {
@@ -309,14 +301,14 @@ message WorkflowTaskFailedEventAttributes {
     string new_run_id = 7;
     // TODO: ?
     int64 fork_event_version = 8;
-    // DEPRECATED since 1.21 - use `worker_version` instead.
+    // DEPRECATED since 1.21 - This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]
     // If a worker explicitly failed this task, its binary id
-    string binary_checksum = 9;
+    string binary_checksum = 9 [deprecated = true];
     // Version info of the worker who processed this workflow task. If present, the `build_id` field
     // within is also used as `binary_checksum`, which may be omitted in that case (it may also be
     // populated to preserve compatibility).
-    // Deprecated. Use the info inside the corresponding WorkflowTaskStartedEvent
-    temporal.api.common.v1.WorkerVersionStamp worker_version = 10;
+    // Deprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]
+    temporal.api.common.v1.WorkerVersionStamp worker_version = 10 [deprecated = true];
 }
 
 message ActivityTaskScheduledEventAttributes {
@@ -359,7 +351,8 @@ message ActivityTaskScheduledEventAttributes {
     temporal.api.common.v1.RetryPolicy retry_policy = 12;
     // If this is set, the activity would be assigned to the Build ID of the workflow. Otherwise,
     // Assignment rules of the activity's Task Queue will be used to determine the Build ID.
-    bool use_workflow_build_id = 13;
+    // Deprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]
+    bool use_workflow_build_id = 13 [deprecated = true];
     // Priority metadata. If this message is not present, or any fields are not
     // present, they inherit the values from the workflow.
     temporal.api.common.v1.Priority priority = 14;
@@ -379,11 +372,11 @@ message ActivityTaskStartedEventAttributes {
     temporal.api.failure.v1.Failure last_failure = 5;
     // Version info of the worker to whom this task was dispatched.
     // Deprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]
-    temporal.api.common.v1.WorkerVersionStamp worker_version = 6;
+    temporal.api.common.v1.WorkerVersionStamp worker_version = 6 [deprecated = true];
     // Used by server internally to properly reapply build ID redirects to an execution
     // when rebuilding it from events.
     // Deprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]
-    int64 build_id_redirect_counter = 7;
+    int64 build_id_redirect_counter = 7 [deprecated = true];
 }
 
 message ActivityTaskCompletedEventAttributes {
@@ -396,8 +389,8 @@ message ActivityTaskCompletedEventAttributes {
     // id of the worker that completed this task
     string identity = 4;
     // Version info of the worker who processed this workflow task.
-    // Deprecated. Use the info inside the corresponding ActivityTaskStartedEvent
-    temporal.api.common.v1.WorkerVersionStamp worker_version = 5;
+    // Deprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]
+    temporal.api.common.v1.WorkerVersionStamp worker_version = 5 [deprecated = true];
 }
 
 message ActivityTaskFailedEventAttributes {
@@ -411,8 +404,8 @@ message ActivityTaskFailedEventAttributes {
     string identity = 4;
     temporal.api.enums.v1.RetryState retry_state = 5;
     // Version info of the worker who processed this workflow task.
-    // Deprecated. Use the info inside the corresponding ActivityTaskStartedEvent
-    temporal.api.common.v1.WorkerVersionStamp worker_version = 6;
+    // Deprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]
+    temporal.api.common.v1.WorkerVersionStamp worker_version = 6 [deprecated = true];
 }
 
 message ActivityTaskTimedOutEventAttributes {
@@ -446,8 +439,8 @@ message ActivityTaskCanceledEventAttributes {
     // id of the worker who canceled this activity
     string identity = 5;
     // Version info of the worker who processed this workflow task.
-    // Deprecated. Use the info inside the corresponding ActivityTaskStartedEvent
-    temporal.api.common.v1.WorkerVersionStamp worker_version = 6;
+    // Deprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]
+    temporal.api.common.v1.WorkerVersionStamp worker_version = 6 [deprecated = true];;
 }
 
 message TimerStartedEventAttributes {

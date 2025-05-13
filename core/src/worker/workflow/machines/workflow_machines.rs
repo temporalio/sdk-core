@@ -591,16 +591,21 @@ impl WorkflowMachines {
                     deployment_name: "".to_string(),
                     build_id: "".to_string(),
                 };
+                #[allow(deprecated)]
                 if let Some(bid) = $wtc.worker_version.as_ref().map(|wv| &wv.build_id) {
                     combined_ver.build_id = bid.to_string();
                 }
                 if !$wtc.worker_deployment_name.is_empty() {
                     combined_ver.deployment_name = $wtc.worker_deployment_name.clone();
                 }
+                #[allow(deprecated)]
                 if !$wtc.worker_deployment_version.is_empty() {
                     if let Ok(ver) = $wtc.worker_deployment_version.parse() {
                         combined_ver = ver;
                     }
+                }
+                if let Some(dv) = $wtc.deployment_version.as_ref() {
+                    combined_ver = dv.clone().into();
                 }
                 if !combined_ver.is_empty() {
                     $me.current_wft_deployment_info = Some(combined_ver);

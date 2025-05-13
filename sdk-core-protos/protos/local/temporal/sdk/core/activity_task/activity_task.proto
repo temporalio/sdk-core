@@ -79,6 +79,7 @@ message ActivityCancellationDetails {
     bool is_paused = 3;
     bool is_timed_out = 4;
     bool is_worker_shutdown = 5;
+    bool is_reset = 6;
 }
 
 enum ActivityCancelReason {
@@ -92,6 +93,8 @@ enum ActivityCancelReason {
     WORKER_SHUTDOWN = 3;
     // Activity was paused
     PAUSED = 4;
+    // Activity was reset
+    RESET = 5;
 }
 
 

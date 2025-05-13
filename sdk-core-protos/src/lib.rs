@@ -103,6 +103,7 @@ pub mod coresdk {
                     is_paused: reason == ActivityCancelReason::Paused,
                     is_timed_out: reason == ActivityCancelReason::TimedOut,
                     is_worker_shutdown: reason == ActivityCancelReason::WorkerShutdown,
+                    is_reset: reason == ActivityCancelReason::Reset,
                 }
             }
         }
