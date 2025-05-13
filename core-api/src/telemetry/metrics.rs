@@ -2,6 +2,7 @@ use std::{
     any::Any,
     borrow::Cow,
     fmt::Debug,
+    ops::Deref,
     sync::{Arc, OnceLock},
     time::Duration,
 };
@@ -61,6 +62,13 @@ impl From<&'static str> for MetricParameters {
 pub struct TemporalMeter {
     pub inner: Arc<dyn CoreMeter>,
     pub default_attribs: NewAttributes,
+}
+
+impl Deref for TemporalMeter {
+    type Target = dyn CoreMeter;
+    fn deref(&self) -> &Self::Target {
+        self.inner.as_ref()
+    }
 }
 
 impl CoreMeter for Arc<dyn CoreMeter> {

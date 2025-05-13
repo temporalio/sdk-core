@@ -262,6 +262,9 @@ where
     type SlotKind = SK;
 
     async fn reserve_slot(&self, ctx: &dyn SlotReservationContext) -> SlotSupplierPermit {
+        if let Some(m) = ctx.get_metrics_meter() {
+            self.inner.attach_metrics(m);
+        }
         loop {
             if let Some(value) = self.issue_if_below_minimums(ctx) {
                 return value;
@@ -282,6 +285,9 @@ where
     }
 
     fn try_reserve_slot(&self, ctx: &dyn SlotReservationContext) -> Option<SlotSupplierPermit> {
+        if let Some(m) = ctx.get_metrics_meter() {
+            self.inner.attach_metrics(m);
+        }
         if let v @ Some(_) = self.issue_if_below_minimums(ctx) {
             return v;
         }
@@ -395,10 +401,6 @@ impl<MI: SystemResourceInfo + Sync + Send + 'static> WorkerTuner for ResourceBas
     ) -> Arc<dyn SlotSupplier<SlotKind = NexusSlotKind> + Send + Sync> {
         let o = self.nexus_opts.unwrap_or(DEFAULT_NEXUS_SLOT_OPTS);
         self.slots.as_kind(o)
-    }
-
-    fn attach_metrics(&self, metrics: TemporalMeter) {
-        self.slots.attach_metrics(metrics);
     }
 }
 
@@ -596,6 +598,7 @@ mod tests {
             MetricsContext::no_op(),
             None,
             Arc::new(Default::default()),
+            None,
         );
         let pd_s = pd.clone().into_sticky();
         // Start with too high usage
@@ -625,6 +628,7 @@ mod tests {
             MetricsContext::no_op(),
             None,
             Arc::new(Default::default()),
+            None,
         );
         // Start with too high usage
         used.store(90_000, Ordering::Release);
@@ -649,6 +653,7 @@ mod tests {
             MetricsContext::no_op(),
             None,
             Arc::new(Default::default()),
+            None,
         );
         let pd_s = pd.clone().into_sticky();
         let order = crossbeam_queue::ArrayQueue::new(2);
@@ -684,6 +689,7 @@ mod tests {
             MetricsContext::no_op(),
             None,
             Arc::new(Default::default()),
+            None,
         );
         let order = crossbeam_queue::ArrayQueue::new(2);
         let waits_free = async {
@@ -713,6 +719,7 @@ mod tests {
             MetricsContext::no_op(),
             None,
             Arc::new(Default::default()),
+            None,
         );
         used.store(90_000, Ordering::Release);
         let _p1 = pd.try_acquire_owned().unwrap();

@@ -7,13 +7,10 @@ pub use resource_based::{
     ResourceSlotOptions,
 };
 
-use std::sync::{Arc, OnceLock};
-use temporal_sdk_core_api::{
-    telemetry::metrics::TemporalMeter,
-    worker::{
-        ActivitySlotKind, LocalActivitySlotKind, NexusSlotKind, SlotKind, SlotSupplier,
-        WorkerConfig, WorkerTuner, WorkflowSlotKind,
-    },
+use std::sync::Arc;
+use temporal_sdk_core_api::worker::{
+    ActivitySlotKind, LocalActivitySlotKind, NexusSlotKind, SlotKind, SlotSupplier, WorkerConfig,
+    WorkerTuner, WorkflowSlotKind,
 };
 
 /// Allows for the composition of different slot suppliers into a [WorkerTuner]
@@ -22,7 +19,6 @@ pub struct TunerHolder {
     act_supplier: Arc<dyn SlotSupplier<SlotKind = ActivitySlotKind> + Send + Sync>,
     la_supplier: Arc<dyn SlotSupplier<SlotKind = LocalActivitySlotKind> + Send + Sync>,
     nexus_supplier: Arc<dyn SlotSupplier<SlotKind = NexusSlotKind> + Send + Sync>,
-    metrics: OnceLock<TemporalMeter>,
 }
 
 /// Can be used to construct a [TunerHolder] without needing to manually construct each
@@ -245,7 +241,6 @@ impl TunerBuilder {
                 .nexus_slot_supplier
                 .clone()
                 .unwrap_or_else(|| Arc::new(FixedSizeSlotSupplier::new(100))),
-            metrics: OnceLock::new(),
         }
     }
 }
@@ -273,9 +268,5 @@ impl WorkerTuner for TunerHolder {
         &self,
     ) -> Arc<dyn SlotSupplier<SlotKind = NexusSlotKind> + Send + Sync> {
         self.nexus_supplier.clone()
-    }
-
-    fn attach_metrics(&self, m: TemporalMeter) {
-        let _ = self.metrics.set(m);
     }
 }

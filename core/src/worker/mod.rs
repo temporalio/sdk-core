@@ -318,9 +318,6 @@ impl Worker {
             .unwrap_or_else(|| Arc::new(TunerBuilder::from_config(&config).build()));
 
         metrics.worker_registered();
-        if let Some(meter) = meter {
-            tuner.attach_metrics(meter.clone());
-        }
         let shutdown_token = CancellationToken::new();
         let slot_context_data = Arc::new(PermitDealerContextData {
             task_queue: config.task_queue.clone(),
@@ -338,6 +335,7 @@ impl Worker {
                 None
             },
             slot_context_data.clone(),
+            meter.clone(),
         );
         let wft_permits = wft_slots.get_extant_count_rcv();
         let act_slots = MeteredPermitDealer::new(
@@ -345,6 +343,7 @@ impl Worker {
             metrics.with_new_attrs([activity_worker_type()]),
             None,
             slot_context_data.clone(),
+            meter.clone(),
         );
         let act_permits = act_slots.get_extant_count_rcv();
         let (external_wft_tx, external_wft_rx) = unbounded_channel();
@@ -353,6 +352,7 @@ impl Worker {
             metrics.with_new_attrs([nexus_worker_type()]),
             None,
             slot_context_data.clone(),
+            meter.clone(),
         );
         let (wft_stream, act_poller, nexus_poller) = match task_pollers {
             TaskPollers::Real => {
@@ -438,6 +438,7 @@ impl Worker {
             metrics.with_new_attrs([local_activity_worker_type()]),
             None,
             slot_context_data,
+            meter.clone(),
         );
         let la_permits = la_pemit_dealer.get_extant_count_rcv();
         let local_act_mgr = Arc::new(LocalActivityManager::new(

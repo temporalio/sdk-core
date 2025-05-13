@@ -282,10 +282,6 @@ pub trait WorkerTuner {
     fn nexus_task_slot_supplier(
         &self,
     ) -> Arc<dyn SlotSupplier<SlotKind = NexusSlotKind> + Send + Sync>;
-
-    /// Core will call this at worker initialization time, allowing the implementation to hook up to
-    /// metrics if any are configured. If not, it will not be called.
-    fn attach_metrics(&self, metrics: TemporalMeter);
 }
 
 /// Implementing this trait allows users to customize how many tasks of certain kinds the worker
@@ -339,6 +335,11 @@ pub trait SlotReservationContext: Send + Sync {
 
     /// Returns true iff this is a sticky poll for a workflow task
     fn is_sticky(&self) -> bool;
+
+    /// Returns the metrics meter if metrics are enabled
+    fn get_metrics_meter(&self) -> Option<TemporalMeter> {
+        None
+    }
 }
 
 pub trait SlotMarkUsedContext: Send + Sync {
@@ -347,6 +348,11 @@ pub trait SlotMarkUsedContext: Send + Sync {
     fn permit(&self) -> &SlotSupplierPermit;
     /// Returns the info of slot that was marked as used
     fn info(&self) -> &<Self::SlotKind as SlotKind>::Info;
+
+    /// Returns the metrics meter if metrics are enabled
+    fn get_metrics_meter(&self) -> Option<TemporalMeter> {
+        None
+    }
 }
 
 pub trait SlotReleaseContext: Send + Sync {
@@ -355,6 +361,11 @@ pub trait SlotReleaseContext: Send + Sync {
     fn permit(&self) -> &SlotSupplierPermit;
     /// Returns the info of slot that was released, if it was used
     fn info(&self) -> Option<&<Self::SlotKind as SlotKind>::Info>;
+
+    /// Returns the metrics meter if metrics are enabled
+    fn get_metrics_meter(&self) -> Option<TemporalMeter> {
+        None
+    }
 }
 
 #[derive(Default, Debug)]

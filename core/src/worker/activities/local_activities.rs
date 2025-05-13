@@ -255,6 +255,7 @@ impl LocalActivityManager {
                 MetricsContext::no_op(),
                 None,
                 Arc::new(Default::default()),
+                None,
             ),
             hb_tx,
             MetricsContext::no_op(),
