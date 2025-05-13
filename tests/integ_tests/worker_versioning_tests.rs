@@ -85,6 +85,7 @@ async fn sets_deployment_info_on_task_responses(#[values(true, false)] use_defau
         .unwrap()
         .into_inner();
 
+        #[allow(deprecated)]
         client
             .get_client()
             .clone()
@@ -130,10 +131,13 @@ async fn sets_deployment_info_on_task_responses(#[values(true, false)] use_defau
         );
     }
     assert_eq!(wft_complete.worker_deployment_name, deploy_name);
-    assert_eq!(
-        wft_complete.worker_deployment_version,
-        format!("{}.1.0", deploy_name)
-    );
+    #[allow(deprecated)] // odd looking hack since can't put attr macro on macro
+    {
+        assert_eq!(
+            wft_complete.worker_deployment_version,
+            format!("{}.1.0", deploy_name)
+        );
+    }
 }
 
 #[tokio::test]
@@ -187,6 +191,7 @@ async fn activity_has_deployment_stamp() {
         .unwrap()
         .into_inner();
 
+        #[allow(deprecated)]
         client
             .get_client()
             .clone()

@@ -2949,6 +2949,7 @@ async fn use_compatible_version_flag(
     worker.shutdown().await;
 }
 
+#[allow(deprecated)]
 #[tokio::test]
 async fn sets_build_id_from_wft_complete() {
     let wfid = "fake_wf_id";
