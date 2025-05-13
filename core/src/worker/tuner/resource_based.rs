@@ -452,7 +452,7 @@ impl<MI: SystemResourceInfo + Sync + Send> ResourceController<MI> {
             && cpu_output > self.options.cpu_output_threshold
     }
 
-    pub(crate) fn attach_metrics(&self, metrics: TemporalMeter) {
+    fn attach_metrics(&self, metrics: TemporalMeter) {
         // Launch a task to periodically emit metrics
         self.metrics.get_or_init(move || {
             let m = MetricInstruments::new(metrics);
