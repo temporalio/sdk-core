@@ -1732,7 +1732,7 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}/worker-deployment-versions/{version}": {
+    "/api/v1/namespaces/{namespace}/worker-deployment-versions/{deploymentVersion.deploymentName}/{deploymentVersion.buildId}": {
       "get": {
         "summary": "Describes a worker deployment version.\nExperimental. This API might significantly change or be removed in a future release.",
         "operationId": "DescribeWorkerDeploymentVersion2",
@@ -1758,10 +1758,24 @@
             "type": "string"
           },
           {
-            "name": "version",
-            "description": "Deployment Version identifier in the form \"<deployment_name>.<build_id>\".",
+            "name": "deploymentVersion.deploymentName",
+            "description": "Identifies the Worker Deployment this Version is part of.",
             "in": "path",
             "required": true,
+            "type": "string"
+          },
+          {
+            "name": "deploymentVersion.buildId",
+            "description": "A unique identifier for this Version within the Deployment it is a part of.\nNot necessarily unique within the namespace.\nThe combination of `deployment_name` and `build_id` uniquely identifies this\nVersion within the namespace, because Deployment names are unique within a namespace.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "version",
+            "description": "Deprecated. Use `deployment_version`.",
+            "in": "query",
+            "required": false,
             "type": "string"
           }
         ],
@@ -1794,10 +1808,24 @@
             "type": "string"
           },
           {
-            "name": "version",
-            "description": "Deployment Version identifier in the form \"<deployment_name>.<build_id>\".",
+            "name": "deploymentVersion.deploymentName",
+            "description": "Identifies the Worker Deployment this Version is part of.",
             "in": "path",
             "required": true,
+            "type": "string"
+          },
+          {
+            "name": "deploymentVersion.buildId",
+            "description": "A unique identifier for this Version within the Deployment it is a part of.\nNot necessarily unique within the namespace.\nThe combination of `deployment_name` and `build_id` uniquely identifies this\nVersion within the namespace, because Deployment names are unique within a namespace.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "version",
+            "description": "Deprecated. Use `deployment_version`.",
+            "in": "query",
+            "required": false,
             "type": "string"
           },
           {
@@ -1820,7 +1848,7 @@
         ]
       }
     },
-    "/api/v1/namespaces/{namespace}/worker-deployment-versions/{version}/update-metadata": {
+    "/api/v1/namespaces/{namespace}/worker-deployment-versions/{deploymentVersion.deploymentName}/{deploymentVersion.buildId}/update-metadata": {
       "post": {
         "summary": "Updates the user-given metadata attached to a Worker Deployment Version.\nExperimental. This API might significantly change or be removed in a future release.",
         "operationId": "UpdateWorkerDeploymentVersionMetadata2",
@@ -1846,8 +1874,15 @@
             "type": "string"
           },
           {
-            "name": "version",
-            "description": "Deployment Version identifier in the form \"<deployment_name>.<build_id>\".",
+            "name": "deploymentVersion.deploymentName",
+            "description": "Identifies the Worker Deployment this Version is part of.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "deploymentVersion.buildId",
+            "description": "A unique identifier for this Version within the Deployment it is a part of.\nNot necessarily unique within the namespace.\nThe combination of `deployment_name` and `build_id` uniquely identifies this\nVersion within the namespace, because Deployment names are unique within a namespace.",
             "in": "path",
             "required": true,
             "type": "string"
@@ -5206,7 +5241,7 @@
         ]
       }
     },
-    "/namespaces/{namespace}/worker-deployment-versions/{version}": {
+    "/namespaces/{namespace}/worker-deployment-versions/{deploymentVersion.deploymentName}/{deploymentVersion.buildId}": {
       "get": {
         "summary": "Describes a worker deployment version.\nExperimental. This API might significantly change or be removed in a future release.",
         "operationId": "DescribeWorkerDeploymentVersion",
@@ -5232,10 +5267,24 @@
             "type": "string"
           },
           {
-            "name": "version",
-            "description": "Deployment Version identifier in the form \"<deployment_name>.<build_id>\".",
+            "name": "deploymentVersion.deploymentName",
+            "description": "Identifies the Worker Deployment this Version is part of.",
             "in": "path",
             "required": true,
+            "type": "string"
+          },
+          {
+            "name": "deploymentVersion.buildId",
+            "description": "A unique identifier for this Version within the Deployment it is a part of.\nNot necessarily unique within the namespace.\nThe combination of `deployment_name` and `build_id` uniquely identifies this\nVersion within the namespace, because Deployment names are unique within a namespace.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "version",
+            "description": "Deprecated. Use `deployment_version`.",
+            "in": "query",
+            "required": false,
             "type": "string"
           }
         ],
@@ -5268,10 +5317,24 @@
             "type": "string"
           },
           {
-            "name": "version",
-            "description": "Deployment Version identifier in the form \"<deployment_name>.<build_id>\".",
+            "name": "deploymentVersion.deploymentName",
+            "description": "Identifies the Worker Deployment this Version is part of.",
             "in": "path",
             "required": true,
+            "type": "string"
+          },
+          {
+            "name": "deploymentVersion.buildId",
+            "description": "A unique identifier for this Version within the Deployment it is a part of.\nNot necessarily unique within the namespace.\nThe combination of `deployment_name` and `build_id` uniquely identifies this\nVersion within the namespace, because Deployment names are unique within a namespace.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "version",
+            "description": "Deprecated. Use `deployment_version`.",
+            "in": "query",
+            "required": false,
             "type": "string"
           },
           {
@@ -5294,7 +5357,7 @@
         ]
       }
     },
-    "/namespaces/{namespace}/worker-deployment-versions/{version}/update-metadata": {
+    "/namespaces/{namespace}/worker-deployment-versions/{deploymentVersion.deploymentName}/{deploymentVersion.buildId}/update-metadata": {
       "post": {
         "summary": "Updates the user-given metadata attached to a Worker Deployment Version.\nExperimental. This API might significantly change or be removed in a future release.",
         "operationId": "UpdateWorkerDeploymentVersionMetadata",
@@ -5320,8 +5383,15 @@
             "type": "string"
           },
           {
-            "name": "version",
-            "description": "Deployment Version identifier in the form \"<deployment_name>.<build_id>\".",
+            "name": "deploymentVersion.deploymentName",
+            "description": "Identifies the Worker Deployment this Version is part of.",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          },
+          {
+            "name": "deploymentVersion.buildId",
+            "description": "A unique identifier for this Version within the Deployment it is a part of.\nNot necessarily unique within the namespace.\nThe combination of `deployment_name` and `build_id` uniquely identifies this\nVersion within the namespace, because Deployment names are unique within a namespace.",
             "in": "path",
             "required": true,
             "type": "string"
@@ -6807,6 +6877,46 @@
         }
       }
     },
+    "PostResetOperationSignalWorkflow": {
+      "type": "object",
+      "properties": {
+        "signalName": {
+          "type": "string",
+          "description": "The workflow author-defined name of the signal to send to the workflow."
+        },
+        "input": {
+          "$ref": "#/definitions/v1Payloads",
+          "description": "Serialized value(s) to provide with the signal."
+        },
+        "header": {
+          "$ref": "#/definitions/v1Header",
+          "description": "Headers that are passed with the signal to the processing workflow."
+        },
+        "links": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/apicommonv1Link"
+          },
+          "description": "Links to be associated with the WorkflowExecutionSignaled event."
+        }
+      },
+      "description": "SignalWorkflow represents sending a signal after a workflow reset.\nKeep the parameter in sync with temporal.api.workflowservice.v1.SignalWorkflowExecutionRequest."
+    },
+    "PostResetOperationUpdateWorkflowOptions": {
+      "type": "object",
+      "properties": {
+        "workflowExecutionOptions": {
+          "$ref": "#/definitions/v1WorkflowExecutionOptions",
+          "description": "Update Workflow options that were originally specified via StartWorkflowExecution. Partial updates are accepted and controlled by update_mask."
+        },
+        "updateMask": {
+          "type": "string",
+          "description": "Controls which fields from `workflow_execution_options` will be applied.\nTo unset a field, set it to null and use the update mask to indicate that it should be mutated."
+        }
+      },
+      "description": "UpdateWorkflowOptions represents updating workflow execution options after a workflow reset.\nKeep the parameters in sync with temporal.api.workflowservice.v1.UpdateWorkflowExecutionOptionsRequest."
+    },
     "StartOperationResponseAsync": {
       "type": "object",
       "properties": {
@@ -6956,12 +7066,38 @@
       },
       "description": "Replaces the routing rule with the given source Build ID."
     },
+    "VersioningOverridePinnedOverride": {
+      "type": "object",
+      "properties": {
+        "behavior": {
+          "$ref": "#/definitions/VersioningOverridePinnedOverrideBehavior",
+          "description": "Defaults to PINNED_OVERRIDE_BEHAVIOR_UNSPECIFIED.\nSee `PinnedOverrideBehavior` for details."
+        },
+        "version": {
+          "$ref": "#/definitions/v1WorkerDeploymentVersion",
+          "description": "Required."
+        }
+      }
+    },
+    "VersioningOverridePinnedOverrideBehavior": {
+      "type": "string",
+      "enum": [
+        "PINNED_OVERRIDE_BEHAVIOR_UNSPECIFIED",
+        "PINNED_OVERRIDE_BEHAVIOR_PINNED"
+      ],
+      "default": "PINNED_OVERRIDE_BEHAVIOR_UNSPECIFIED",
+      "description": "Used to specify different sub-types of Pinned override that we plan to add in the future.\n\n - PINNED_OVERRIDE_BEHAVIOR_UNSPECIFIED: Unspecified.\n - PINNED_OVERRIDE_BEHAVIOR_PINNED: Override workflow behavior to be Pinned."
+    },
     "WorkerDeploymentInfoWorkerDeploymentVersionSummary": {
       "type": "object",
       "properties": {
         "version": {
           "type": "string",
-          "description": "The fully-qualified string representation of the version, in the form \"<deployment_name>.<build_id>\"."
+          "description": "Deprecated. Use `deployment_version`."
+        },
+        "deploymentVersion": {
+          "$ref": "#/definitions/v1WorkerDeploymentVersion",
+          "description": "Required."
         },
         "createTime": {
           "type": "string",
@@ -7309,6 +7445,14 @@
             "$ref": "#/definitions/v1ResetReapplyExcludeType"
           },
           "title": "Event types not to be reapplied"
+        },
+        "postResetOperations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1PostResetOperation"
+          },
+          "title": "Operations to perform after the workflow has been reset. These operations will be applied\nto the *new* run of the workflow execution in the order they are provided.\nAll operations are applied to the workflow before the first new workflow task is generated"
         }
       }
     },
@@ -7330,7 +7474,7 @@
         },
         "workerVersion": {
           "$ref": "#/definitions/v1WorkerVersionStamp",
-          "description": "Version info of the worker who processed this task. This message's `build_id` field should\nalways be set by SDKs. Workers opting into versioning will also set the `use_versioning`\nfield to true. See message docstrings for more.\nDeprecated. Use `deployment` instead."
+          "description": "Version info of the worker who processed this task. This message's `build_id` field should\nalways be set by SDKs. Workers opting into versioning will also set the `use_versioning`\nfield to true. See message docstrings for more.\nDeprecated. Use `deployment_options` instead."
         },
         "deployment": {
           "$ref": "#/definitions/v1Deployment",
@@ -7364,6 +7508,10 @@
         "identity": {
           "type": "string",
           "title": "The identity of the worker/client"
+        },
+        "deploymentOptions": {
+          "$ref": "#/definitions/v1WorkerDeploymentOptions",
+          "description": "Worker deployment options that user has set in the worker."
         }
       }
     },
@@ -7385,7 +7533,7 @@
         },
         "workerVersion": {
           "$ref": "#/definitions/v1WorkerVersionStamp",
-          "description": "Version info of the worker who processed this task. This message's `build_id` field should\nalways be set by SDKs. Workers opting into versioning will also set the `use_versioning`\nfield to true. See message docstrings for more.\nDeprecated. Use `deployment` instead."
+          "description": "Version info of the worker who processed this task. This message's `build_id` field should\nalways be set by SDKs. Workers opting into versioning will also set the `use_versioning`\nfield to true. See message docstrings for more.\nDeprecated. Use `deployment_options` instead."
         },
         "deployment": {
           "$ref": "#/definitions/v1Deployment",
@@ -7444,7 +7592,7 @@
         },
         "workerVersion": {
           "$ref": "#/definitions/v1WorkerVersionStamp",
-          "description": "Version info of the worker who processed this task. This message's `build_id` field should\nalways be set by SDKs. Workers opting into versioning will also set the `use_versioning`\nfield to true. See message docstrings for more.\nDeprecated. Use `deployment` instead."
+          "description": "Version info of the worker who processed this task. This message's `build_id` field should\nalways be set by SDKs. Workers opting into versioning will also set the `use_versioning`\nfield to true. See message docstrings for more.\nDeprecated. Use `deployment_options` instead."
         },
         "deployment": {
           "$ref": "#/definitions/v1Deployment",
@@ -7514,7 +7662,11 @@
       "properties": {
         "version": {
           "type": "string",
-          "title": "Required. Can be one of the following:\n- A Deployment Version identifier in the form \"<deployment_name>.<build_id>\".\n- Or, the \"__unversioned__\" special value, to represent all the unversioned workers (those\n  with `UNVERSIONED` (or unspecified) `WorkerVersioningMode`.)"
+          "description": "Deprecated. Use `build_id`."
+        },
+        "buildId": {
+          "type": "string",
+          "title": "The build id of the Version that you want to set as Current.\nPass an empty value to set the Current Version to nil.\nA nil Current Version represents all the unversioned workers (those with `UNVERSIONED` (or unspecified) `WorkerVersioningMode`.)"
         },
         "conflictToken": {
           "type": "string",
@@ -7537,7 +7689,11 @@
       "properties": {
         "version": {
           "type": "string",
-          "title": "Can be one of the following:\n- Absent/empty value to unset the Ramping Version. Must be paired with `percentage=0`.\n- A Deployment Version identifier in the form \"<deployment_name>.<build_id>\".\n- Or, the \"__unversioned__\" special value, to represent all the unversioned workers (those\n  with `UNVERSIONED` (or unspecified) `WorkerVersioningMode`.)"
+          "description": "Deprecated. Use `build_id`."
+        },
+        "buildId": {
+          "type": "string",
+          "title": "The build id of the Version that you want to ramp traffic to.\nPass an empty value to set the Ramping Version to nil.\nA nil Ramping Version represents all the unversioned workers (those with `UNVERSIONED` (or unspecified) `WorkerVersioningMode`.)"
         },
         "percentage": {
           "type": "number",
@@ -7693,7 +7849,8 @@
           },
           "description": "Links to be associated with the WorkflowExecutionSignaled event."
         }
-      }
+      },
+      "description": "Keep the parameters in sync with:\n  - temporal.api.batch.v1.BatchOperationSignal.\n  - temporal.api.workflow.v1.PostResetOperation.SignalWorkflow."
     },
     "WorkflowServiceStartBatchOperationBody": {
       "type": "object",
@@ -8043,6 +8200,15 @@
     "WorkflowServiceUpdateWorkerDeploymentVersionMetadataBody": {
       "type": "object",
       "properties": {
+        "version": {
+          "type": "string",
+          "description": "Deprecated. Use `deployment_version`."
+        },
+        "deploymentVersion": {
+          "type": "object",
+          "description": "Required.",
+          "title": "Required."
+        },
         "upsertEntries": {
           "type": "object",
           "additionalProperties": {
@@ -8126,7 +8292,8 @@
           "type": "string",
           "description": "Controls which fields from `workflow_execution_options` will be applied.\nTo unset a field, set it to null and use the update mask to indicate that it should be mutated."
         }
-      }
+      },
+      "description": "Keep the parameters in sync with:\n  - temporal.api.batch.v1.BatchOperationUpdateWorkflowExecutionOptions.\n  - temporal.api.workflow.v1.PostResetOperation.UpdateWorkflowOptions."
     },
     "apicommonv1Link": {
       "type": "object",
@@ -8411,7 +8578,7 @@
         },
         "workerVersion": {
           "$ref": "#/definitions/v1WorkerVersionStamp",
-          "title": "Version info of the worker who processed this workflow task.\nDeprecated. Use the info inside the corresponding ActivityTaskStartedEvent"
+          "title": "Version info of the worker who processed this workflow task.\nDeprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]"
         }
       }
     },
@@ -8438,7 +8605,7 @@
         },
         "workerVersion": {
           "$ref": "#/definitions/v1WorkerVersionStamp",
-          "title": "Version info of the worker who processed this workflow task.\nDeprecated. Use the info inside the corresponding ActivityTaskStartedEvent"
+          "title": "Version info of the worker who processed this workflow task.\nDeprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]"
         }
       }
     },
@@ -8468,7 +8635,7 @@
         },
         "workerVersion": {
           "$ref": "#/definitions/v1WorkerVersionStamp",
-          "title": "Version info of the worker who processed this workflow task.\nDeprecated. Use the info inside the corresponding ActivityTaskStartedEvent"
+          "title": "Version info of the worker who processed this workflow task.\nDeprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]"
         }
       }
     },
@@ -8518,7 +8685,7 @@
         },
         "useWorkflowBuildId": {
           "type": "boolean",
-          "description": "If this is set, the activity would be assigned to the Build ID of the workflow. Otherwise,\nAssignment rules of the activity's Task Queue will be used to determine the Build ID."
+          "title": "If this is set, the activity would be assigned to the Build ID of the workflow. Otherwise,\nAssignment rules of the activity's Task Queue will be used to determine the Build ID.\nDeprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]"
         },
         "priority": {
           "$ref": "#/definitions/v1Priority",
@@ -8755,6 +8922,14 @@
         "resetReapplyType": {
           "$ref": "#/definitions/v1ResetReapplyType",
           "description": "History event reapply options (deprecated, use `options`)."
+        },
+        "postResetOperations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1PostResetOperation"
+          },
+          "title": "Operations to perform after the workflow has been reset. These operations will be applied\nto the *new* run of the workflow execution in the order they are provided.\nAll operations are applied to the workflow before the first new workflow task is generated"
         }
       },
       "description": "BatchOperationReset sends reset requests to batch workflows.\nKeep the parameter in sync with temporal.api.workflowservice.v1.ResetWorkflowExecutionRequest."
@@ -8855,7 +9030,7 @@
         },
         "workflowExecutionOptions": {
           "$ref": "#/definitions/v1WorkflowExecutionOptions",
-          "description": "Workflow Execution options. Partial updates are accepted and controlled by update_mask."
+          "description": "Update Workflow options that were originally specified via StartWorkflowExecution. Partial updates are accepted and controlled by update_mask."
         },
         "updateMask": {
           "type": "string",
@@ -9709,7 +9884,11 @@
       "properties": {
         "version": {
           "type": "string",
-          "description": "Required. The target Version of the transition. May be `__unversioned__` which means a\nso-far-versioned workflow is transitioning to unversioned workers."
+          "description": "Deprecated. Use `deployment_version`."
+        },
+        "deploymentVersion": {
+          "$ref": "#/definitions/v1WorkerDeploymentVersion",
+          "description": "The target Version of the transition.\nIf nil, a so-far-versioned workflow is transitioning to unversioned workers."
         }
       },
       "description": "Holds information about ongoing transition of a workflow execution from one worker\ndeployment version to another.\nExperimental. Might change in the future."
@@ -11701,11 +11880,15 @@
         },
         "lastDeployment": {
           "$ref": "#/definitions/v1Deployment",
-          "description": "The deployment this activity was dispatched to most recently. Present only if the activity\nwas dispatched to a versioned worker.\nDeprecated. Use `last_worker_deployment_version`."
+          "description": "The deployment this activity was dispatched to most recently. Present only if the activity\nwas dispatched to a versioned worker.\nDeprecated. Use `last_deployment_version`."
         },
         "lastWorkerDeploymentVersion": {
           "type": "string",
-          "description": "The Worker Deployment Version this activity was dispatched to most recently."
+          "description": "The Worker Deployment Version this activity was dispatched to most recently.\nDeprecated. Use `last_deployment_version`."
+        },
+        "lastDeploymentVersion": {
+          "$ref": "#/definitions/v1WorkerDeploymentVersion",
+          "description": "The Worker Deployment Version this activity was dispatched to most recently.\nIf nil, the activity has not yet been dispatched or was last dispatched to an unversioned worker."
         },
         "priority": {
           "$ref": "#/definitions/v1Priority",
@@ -11713,6 +11896,10 @@
         },
         "pauseInfo": {
           "$ref": "#/definitions/PendingActivityInfoPauseInfo"
+        },
+        "activityOptions": {
+          "$ref": "#/definitions/v1ActivityOptions",
+          "description": "Current activity options. May be different from the one used to start the activity."
         }
       }
     },
@@ -12103,6 +12290,18 @@
       },
       "description": "Attached to task responses to give hints to the SDK about how it may adjust its number of\npollers."
     },
+    "v1PostResetOperation": {
+      "type": "object",
+      "properties": {
+        "signalWorkflow": {
+          "$ref": "#/definitions/PostResetOperationSignalWorkflow"
+        },
+        "updateWorkflowOptions": {
+          "$ref": "#/definitions/PostResetOperationUpdateWorkflowOptions"
+        }
+      },
+      "description": "PostResetOperation represents an operation to be performed on the new workflow execution after a workflow reset."
+    },
     "v1Priority": {
       "type": "object",
       "properties": {
@@ -12203,6 +12402,10 @@
         "activityPaused": {
           "type": "boolean",
           "description": "Will be set to true if the activity is paused."
+        },
+        "activityReset": {
+          "type": "boolean",
+          "description": "Will be set to true if the activity was reset.\nApplies only to the current run."
         }
       }
     },
@@ -12216,6 +12419,10 @@
         "activityPaused": {
           "type": "boolean",
           "description": "Will be set to true if the activity is paused."
+        },
+        "activityReset": {
+          "type": "boolean",
+          "description": "Will be set to true if the activity was reset.\nApplies only to the current run."
         }
       }
     },
@@ -12732,18 +12939,26 @@
     "v1RoutingConfig": {
       "type": "object",
       "properties": {
+        "currentDeploymentVersion": {
+          "$ref": "#/definitions/v1WorkerDeploymentVersion",
+          "description": "Specifies which Deployment Version should receive new workflow executions and tasks of\nexisting unversioned or AutoUpgrade workflows.\nNil value means no Version in this Deployment (except Ramping Version, if present) receives traffic other than tasks of previously Pinned workflows. In absence of a Current Version, remaining traffic after any ramp (if set)  goes to unversioned workers (those with `UNVERSIONED` (or unspecified) `WorkerVersioningMode`.). \nNote: Current Version is overridden by the Ramping Version for a portion of traffic when ramp percentage\nis non-zero (see `ramping_deployment_version` and `ramping_version_percentage`)."
+        },
         "currentVersion": {
           "type": "string",
-          "title": "Always present. Specifies which Deployment Version should should receive new workflow\nexecutions and tasks of existing unversioned or AutoUpgrade workflows.\nCan be one of the following:\n- A Deployment Version identifier in the form \"<deployment_name>.<build_id>\".\n- Or, the \"__unversioned__\" special value, to represent all the unversioned workers (those\n  with `UNVERSIONED` (or unspecified) `WorkerVersioningMode`.)\nNote: Current Version is overridden by the Ramping Version for a portion of traffic when a ramp\nis set (see `ramping_version`.)"
+          "description": "Deprecated. Use `current_deployment_version`."
+        },
+        "rampingDeploymentVersion": {
+          "$ref": "#/definitions/v1WorkerDeploymentVersion",
+          "description": "When ramp percentage is non-zero, that portion of traffic is shifted from the Current Version to the Ramping Version.\nMust always be different from `current_deployment_version` unless both are nil.\nNil value represents all the unversioned workers (those with `UNVERSIONED` (or unspecified) `WorkerVersioningMode`.)\nNote that it is possible to ramp from one Version to another Version, or from unversioned\nworkers to a particular Version, or from a particular Version to unversioned workers."
         },
         "rampingVersion": {
           "type": "string",
-          "description": "When present, it means the traffic is being shifted from the Current Version to the Ramping\nVersion.\nMust always be different from Current Version. Can be one of the following:\n- A Deployment Version identifier in the form \"<deployment_name>.<build_id>\".\n- Or, the \"__unversioned__\" special value, to represent all the unversioned workers (those\n  with `UNVERSIONED` (or unspecified) `WorkerVersioningMode`.)\nNote that it is possible to ramp from one Version to another Version, or from unversioned\nworkers to a particular Version, or from a particular Version to unversioned workers."
+          "description": "Deprecated. Use `ramping_deployment_version`."
         },
         "rampingVersionPercentage": {
           "type": "number",
           "format": "float",
-          "description": "Percentage of tasks that are routed to the Ramping Version instead of the Current Version.\nValid range: [0, 100]. A 100% value means the Ramping Version is receiving full traffic but\nnot yet \"promoted\" to be the Current Version, likely due to pending validations."
+          "description": "Percentage of tasks that are routed to the Ramping Version instead of the Current Version.\nValid range: [0, 100]. A 100% value means the Ramping Version is receiving full traffic but\nnot yet \"promoted\" to be the Current Version, likely due to pending validations.\nA 0% value means the Ramping Version is receiving no traffic."
         },
         "currentVersionChangedTime": {
           "type": "string",
@@ -13229,7 +13444,11 @@
         },
         "previousVersion": {
           "type": "string",
-          "description": "The version that was current before executing this operation, in the form\n\"<deployment_name>.<build_id>\". Can also be the `__unversioned__` special value."
+          "description": "Deprecated. Use `previous_deployment_version`."
+        },
+        "previousDeploymentVersion": {
+          "$ref": "#/definitions/v1WorkerDeploymentVersion",
+          "description": "The version that was current before executing this operation."
         }
       }
     },
@@ -13243,7 +13462,11 @@
         },
         "previousVersion": {
           "type": "string",
-          "description": "The version that was ramping before executing this operation, in the form\n\"<deployment_name>.<build_id>\". Can also be the `__unversioned__` special value."
+          "description": "Deprecated. Use `previous_deployment_version`."
+        },
+        "previousDeploymentVersion": {
+          "$ref": "#/definitions/v1WorkerDeploymentVersion",
+          "description": "The version that was ramping before executing this operation."
         },
         "previousPercentage": {
           "type": "number",
@@ -14089,18 +14312,26 @@
     "v1TaskQueueVersioningInfo": {
       "type": "object",
       "properties": {
+        "currentDeploymentVersion": {
+          "$ref": "#/definitions/v1WorkerDeploymentVersion",
+          "description": "Specifies which Deployment Version should receive new workflow executions and tasks of\nexisting unversioned or AutoUpgrade workflows.\nNil value represents all the unversioned workers (those with `UNVERSIONED` (or unspecified) `WorkerVersioningMode`.)\nNote: Current Version is overridden by the Ramping Version for a portion of traffic when ramp percentage\nis non-zero (see `ramping_deployment_version` and `ramping_version_percentage`)."
+        },
         "currentVersion": {
           "type": "string",
-          "title": "Always present. Specifies which Deployment Version should receive new workflow\nexecutions and tasks of existing unversioned or AutoUpgrade workflows.\nCan be one of the following:\n- A Deployment Version identifier in the form \"<deployment_name>.<build_id>\".\n- Or, the \"__unversioned__\" special value, to represent all the unversioned workers (those\n  with `UNVERSIONED` (or unspecified) `WorkerVersioningMode`.)\nNote: Current Version is overridden by the Ramping Version for a portion of traffic when a ramp\nis set (see `ramping_version`.)"
+          "description": "Deprecated. Use `current_deployment_version`."
+        },
+        "rampingDeploymentVersion": {
+          "$ref": "#/definitions/v1WorkerDeploymentVersion",
+          "description": "When ramp percentage is non-zero, that portion of traffic is shifted from the Current Version to the Ramping Version.\nMust always be different from `current_deployment_version` unless both are nil.\nNil value represents all the unversioned workers (those with `UNVERSIONED` (or unspecified) `WorkerVersioningMode`.)\nNote that it is possible to ramp from one Version to another Version, or from unversioned\nworkers to a particular Version, or from a particular Version to unversioned workers."
         },
         "rampingVersion": {
           "type": "string",
-          "description": "When present, it means the traffic is being shifted from the Current Version to the Ramping\nVersion.\nMust always be different from `current_version`. Can be one of the following:\n- A Deployment Version identifier in the form \"<deployment_name>.<build_id>\".\n- Or, the \"__unversioned__\" special value, to represent all the unversioned workers (those\n  with `UNVERSIONED` (or unspecified) `WorkerVersioningMode`.)\nNote that it is possible to ramp from one Version to another Version, or from unversioned\nworkers to a particular Version, or from a particular Version to unversioned workers."
+          "description": "Deprecated. Use `ramping_deployment_version`."
         },
         "rampingVersionPercentage": {
           "type": "number",
           "format": "float",
-          "description": "Percentage of tasks that are routed to the Ramping Version instead of the Current Version.\nValid range: [0, 100]. A 100% value means the Ramping Version is receiving full traffic but\nnot yet \"promoted\" to be the Current Version, likely due to pending validations."
+          "description": "Percentage of tasks that are routed to the Ramping Version instead of the Current Version.\nValid range: [0, 100]. A 100% value means the Ramping Version is receiving full traffic but\nnot yet \"promoted\" to be the Current Version, likely due to pending validations.\nA 0% value means the Ramping Version is receiving no traffic."
         },
         "updateTime": {
           "type": "string",
@@ -14582,17 +14813,25 @@
     "v1VersioningOverride": {
       "type": "object",
       "properties": {
+        "pinned": {
+          "$ref": "#/definitions/VersioningOverridePinnedOverride",
+          "description": "Send the next workflow task to the Version specified in the override."
+        },
+        "autoUpgrade": {
+          "type": "boolean",
+          "description": "Send the next workflow task to the Current Deployment Version\nof its Task Queue when the next workflow task is dispatched."
+        },
         "behavior": {
           "$ref": "#/definitions/v1VersioningBehavior",
-          "description": "Required."
+          "description": "Required.\nDeprecated. Use `override`."
         },
         "deployment": {
           "$ref": "#/definitions/v1Deployment",
-          "description": "Required if behavior is `PINNED`. Must be null if behavior is `AUTO_UPGRADE`.\nIdentifies the worker deployment to pin the workflow to.\nDeprecated. Use `pinned_version`."
+          "description": "Required if behavior is `PINNED`. Must be null if behavior is `AUTO_UPGRADE`.\nIdentifies the worker deployment to pin the workflow to.\nDeprecated. Use `override.pinned.version`."
         },
         "pinnedVersion": {
           "type": "string",
-          "description": "Required if behavior is `PINNED`. Must be absent if behavior is not `PINNED`.\nIdentifies the worker deployment version to pin the workflow to, in the format\n\"<deployment_name>.<build_id>\"."
+          "description": "Required if behavior is `PINNED`. Must be absent if behavior is not `PINNED`.\nIdentifies the worker deployment version to pin the workflow to, in the format\n\"<deployment_name>.<build_id>\".\nDeprecated. Use `override.pinned.version`."
         }
       },
       "description": "Used to override the versioning behavior (and pinned deployment version, if applicable) of a\nspecific workflow execution. If set, takes precedence over the worker-sent values. See\n`WorkflowExecutionInfo.VersioningInfo` for more information. To remove the override, call\n`UpdateWorkflowExecutionOptions` with a null `VersioningOverride`, and use the `update_mask`\nto indicate that it should be mutated."
@@ -14645,21 +14884,39 @@
         },
         "buildId": {
           "type": "string",
-          "description": "The Build ID of the worker. Required when `worker_versioning_mode==VERSIONED`, in which case,\nthe worker will be part of a Deployment Version identified by \"<deployment_name>.<build_id>\"."
+          "description": "The Build ID of the worker. Required when `worker_versioning_mode==VERSIONED`, in which case,\nthe worker will be part of a Deployment Version."
         },
         "workerVersioningMode": {
           "$ref": "#/definitions/v1WorkerVersioningMode",
-          "description": "Required. Versioning Mode for this worker. Must be the same for all workers with the\nsame `deployment_name` and `build_id` combination, across all Task Queues.\nWhen `worker_versioning_mode==VERSIONED`, the worker will be part of a Deployment Version\nidentified by \"<deployment_name>.<build_id>\"."
+          "description": "Required. Versioning Mode for this worker. Must be the same for all workers with the\nsame `deployment_name` and `build_id` combination, across all Task Queues.\nWhen `worker_versioning_mode==VERSIONED`, the worker will be part of a Deployment Version."
         }
       },
       "description": "Worker Deployment options set in SDK that need to be sent to server in every poll.\nExperimental. Worker Deployments are experimental and might significantly change in the future."
+    },
+    "v1WorkerDeploymentVersion": {
+      "type": "object",
+      "properties": {
+        "buildId": {
+          "type": "string",
+          "description": "A unique identifier for this Version within the Deployment it is a part of.\nNot necessarily unique within the namespace.\nThe combination of `deployment_name` and `build_id` uniquely identifies this\nVersion within the namespace, because Deployment names are unique within a namespace."
+        },
+        "deploymentName": {
+          "type": "string",
+          "description": "Identifies the Worker Deployment this Version is part of."
+        }
+      },
+      "description": "A Worker Deployment Version (Version, for short) represents a\nversion of workers within a Worker Deployment. (see documentation of WorkerDeploymentVersionInfo)\nVersion records are created in Temporal server automatically when their\nfirst poller arrives to the server.\nExperimental. Worker Deployment Versions are experimental and might significantly change in the future."
     },
     "v1WorkerDeploymentVersionInfo": {
       "type": "object",
       "properties": {
         "version": {
           "type": "string",
-          "description": "The fully-qualified string representation of the version, in the form \"<deployment_name>.<build_id>\"."
+          "description": "Deprecated. Use `deployment_version`."
+        },
+        "deploymentVersion": {
+          "$ref": "#/definitions/v1WorkerDeploymentVersion",
+          "description": "Required."
         },
         "deploymentName": {
           "type": "string"
@@ -15256,6 +15513,10 @@
         },
         "parentPinnedWorkerDeploymentVersion": {
           "type": "string",
+          "description": "When present, it means this is a child workflow of a parent that is Pinned to this Worker\nDeployment Version. In this case, child workflow will start as Pinned to this Version instead\nof starting on the Current Version of its Task Queue.\nThis is set only if the child workflow is starting on a Task Queue belonging to the same\nWorker Deployment Version.\nDeprecated. Use `parent_pinned_deployment_version`."
+        },
+        "parentPinnedDeploymentVersion": {
+          "$ref": "#/definitions/v1WorkerDeploymentVersion",
           "description": "When present, it means this is a child workflow of a parent that is Pinned to this Worker\nDeployment Version. In this case, child workflow will start as Pinned to this Version instead\nof starting on the Current Version of its Task Queue.\nThis is set only if the child workflow is starting on a Task Queue belonging to the same\nWorker Deployment Version."
         },
         "priority": {
@@ -15396,11 +15657,15 @@
         },
         "deployment": {
           "$ref": "#/definitions/v1Deployment",
-          "description": "The worker deployment that completed the last workflow task of this workflow execution. Must\nbe present if `behavior` is set. Absent value means no workflow task is completed, or the\nlast workflow task was completed by an unversioned worker. Unversioned workers may still send\na deployment value which will be stored here, so the right way to check if an execution is\nversioned if an execution is versioned or not is via the `behavior` field.\nNote that `deployment` is overridden by `versioning_override` if the latter is present.\nDeprecated. Use `version`."
+          "description": "The worker deployment that completed the last workflow task of this workflow execution. Must\nbe present if `behavior` is set. Absent value means no workflow task is completed, or the\nlast workflow task was completed by an unversioned worker. Unversioned workers may still send\na deployment value which will be stored here, so the right way to check if an execution is\nversioned if an execution is versioned or not is via the `behavior` field.\nNote that `deployment` is overridden by `versioning_override` if the latter is present.\nDeprecated. Use `deployment_version`."
         },
         "version": {
           "type": "string",
-          "description": "The Worker Deployment Version that completed the last workflow task of this workflow\nexecution, in the form \"<deployment_name>.<build_id>\".\nMust be present if and only if `behavior` is set. An absent value means no workflow task is\ncompleted, or the workflow is unversioned.\nFor child workflows of Pinned parents, this will be set to parent's Pinned Version when the\nthe child starts so that child's first workflow task goes to the same Version as the parent.\nNote that if `versioning_override.behavior` is PINNED then `versioning_override.pinned_version`\nwill override this value."
+          "description": "Deprecated. Use `deployment_version`."
+        },
+        "deploymentVersion": {
+          "$ref": "#/definitions/v1WorkerDeploymentVersion",
+          "description": "The Worker Deployment Version that completed the last workflow task of this workflow execution.\nAn absent value means no workflow task is completed, or the workflow is unversioned.\nIf present, and `behavior` is UNSPECIFIED, the last task of this workflow execution was completed\nby a worker that is not using versioning but _is_ passing Deployment Name and Build ID.\n\nFor child workflows of Pinned parents, this will be set to the parent's Pinned Version when\nthe child starts, so that the child's first workflow task goes to the same Version as the parent.\nNote that if `versioning_override.behavior` is PINNED then `versioning_override.pinned_version`\nwill override this value."
         },
         "versioningOverride": {
           "$ref": "#/definitions/v1VersioningOverride",
@@ -15599,11 +15864,11 @@
         },
         "binaryChecksum": {
           "type": "string",
-          "title": "Binary ID of the worker who completed this task"
+          "description": "Binary ID of the worker who completed this task\nDeprecated. Replaced with `deployment_version`."
         },
         "workerVersion": {
           "$ref": "#/definitions/v1WorkerVersionStamp",
-          "description": "Version info of the worker who processed this workflow task. If present, the `build_id` field\nwithin is also used as `binary_checksum`, which may be omitted in that case (it may also be\npopulated to preserve compatibility).\nDeprecated. Use `deployment` and `versioning_behavior` instead."
+          "description": "Version info of the worker who processed this workflow task. If present, the `build_id` field\nwithin is also used as `binary_checksum`, which may be omitted in that case (it may also be\npopulated to preserve compatibility).\nDeprecated. Use `deployment_version` and `versioning_behavior` instead."
         },
         "sdkMetadata": {
           "$ref": "#/definitions/v1WorkflowTaskCompletedMetadata",
@@ -15615,7 +15880,7 @@
         },
         "deployment": {
           "$ref": "#/definitions/v1Deployment",
-          "description": "The deployment that completed this task. May or may not be set for unversioned workers,\ndepending on whether a value is sent by the SDK. This value updates workflow execution's\n`versioning_info.deployment`.\nDeprecated. Replaced with `worker_deployment_version`."
+          "description": "The deployment that completed this task. May or may not be set for unversioned workers,\ndepending on whether a value is sent by the SDK. This value updates workflow execution's\n`versioning_info.deployment`.\nDeprecated. Replaced with `deployment_version`."
         },
         "versioningBehavior": {
           "$ref": "#/definitions/v1VersioningBehavior",
@@ -15623,11 +15888,15 @@
         },
         "workerDeploymentVersion": {
           "type": "string",
-          "description": "The Worker Deployment Version that completed this task. Must be set if `versioning_behavior`\nis set. This value updates workflow execution's `versioning_info.version`.\nExperimental. Worker Deployments are experimental and might significantly change in the future."
+          "description": "The Worker Deployment Version that completed this task. Must be set if `versioning_behavior`\nis set. This value updates workflow execution's `versioning_info.version`.\nExperimental. Worker Deployments are experimental and might significantly change in the future.\nDeprecated. Replaced with `deployment_version`."
         },
         "workerDeploymentName": {
           "type": "string",
           "description": "The name of Worker Deployment that completed this task. Must be set if `versioning_behavior`\nis set. This value updates workflow execution's `worker_deployment_name`.\nExperimental. Worker Deployments are experimental and might significantly change in the future."
+        },
+        "deploymentVersion": {
+          "$ref": "#/definitions/v1WorkerDeploymentVersion",
+          "description": "The Worker Deployment Version that completed this task. Must be set if `versioning_behavior`\nis set. This value updates workflow execution's `versioning_info.deployment_version`.\nExperimental. Worker Deployments are experimental and might significantly change in the future."
         }
       }
     },
@@ -15743,11 +16012,11 @@
         },
         "binaryChecksum": {
           "type": "string",
-          "title": "DEPRECATED since 1.21 - use `worker_version` instead.\nIf a worker explicitly failed this task, its binary id"
+          "title": "DEPRECATED since 1.21 - This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]\nIf a worker explicitly failed this task, its binary id"
         },
         "workerVersion": {
           "$ref": "#/definitions/v1WorkerVersionStamp",
-          "title": "Version info of the worker who processed this workflow task. If present, the `build_id` field\nwithin is also used as `binary_checksum`, which may be omitted in that case (it may also be\npopulated to preserve compatibility).\nDeprecated. Use the info inside the corresponding WorkflowTaskStartedEvent"
+          "title": "Version info of the worker who processed this workflow task. If present, the `build_id` field\nwithin is also used as `binary_checksum`, which may be omitted in that case (it may also be\npopulated to preserve compatibility).\nDeprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]"
         }
       }
     },

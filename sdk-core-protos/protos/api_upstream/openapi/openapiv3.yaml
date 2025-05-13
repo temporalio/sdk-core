@@ -1537,7 +1537,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/worker-deployment-versions/{version}:
+  /api/v1/namespaces/{namespace}/worker-deployment-versions/{deployment_version.deployment_name}/{deployment_version.build_id}:
     get:
       tags:
         - WorkflowService
@@ -1551,10 +1551,33 @@ paths:
           required: true
           schema:
             type: string
-        - name: version
+        - name: deployment_version.deployment_name
           in: path
-          description: Deployment Version identifier in the form "<deployment_name>.<build_id>".
           required: true
+          schema:
+            type: string
+        - name: deployment_version.build_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: version
+          in: query
+          description: Deprecated. Use `deployment_version`.
+          schema:
+            type: string
+        - name: deploymentVersion.buildId
+          in: query
+          description: |-
+            A unique identifier for this Version within the Deployment it is a part of.
+             Not necessarily unique within the namespace.
+             The combination of `deployment_name` and `build_id` uniquely identifies this
+             Version within the namespace, because Deployment names are unique within a namespace.
+          schema:
+            type: string
+        - name: deploymentVersion.deploymentName
+          in: query
+          description: Identifies the Worker Deployment this Version is part of.
           schema:
             type: string
       responses:
@@ -1588,10 +1611,33 @@ paths:
           required: true
           schema:
             type: string
-        - name: version
+        - name: deployment_version.deployment_name
           in: path
-          description: Deployment Version identifier in the form "<deployment_name>.<build_id>".
           required: true
+          schema:
+            type: string
+        - name: deployment_version.build_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: version
+          in: query
+          description: Deprecated. Use `deployment_version`.
+          schema:
+            type: string
+        - name: deploymentVersion.buildId
+          in: query
+          description: |-
+            A unique identifier for this Version within the Deployment it is a part of.
+             Not necessarily unique within the namespace.
+             The combination of `deployment_name` and `build_id` uniquely identifies this
+             Version within the namespace, because Deployment names are unique within a namespace.
+          schema:
+            type: string
+        - name: deploymentVersion.deploymentName
+          in: query
+          description: Identifies the Worker Deployment this Version is part of.
           schema:
             type: string
         - name: skipDrainage
@@ -1619,8 +1665,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /api/v1/namespaces/{namespace}/worker-deployment-versions/{version}/update-metadata:
-    post:
+  ? /api/v1/namespaces/{namespace}/worker-deployment-versions/{deployment_version.deployment_name}/{deployment_version.build_id}/update-metadata
+  : post:
       tags:
         - WorkflowService
       description: |-
@@ -1633,9 +1679,13 @@ paths:
           required: true
           schema:
             type: string
-        - name: version
+        - name: deployment_version.deployment_name
           in: path
-          description: Deployment Version identifier in the form "<deployment_name>.<build_id>".
+          required: true
+          schema:
+            type: string
+        - name: deployment_version.build_id
+          in: path
           required: true
           schema:
             type: string
@@ -4624,7 +4674,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /namespaces/{namespace}/worker-deployment-versions/{version}:
+  /namespaces/{namespace}/worker-deployment-versions/{deployment_version.deployment_name}/{deployment_version.build_id}:
     get:
       tags:
         - WorkflowService
@@ -4638,10 +4688,33 @@ paths:
           required: true
           schema:
             type: string
-        - name: version
+        - name: deployment_version.deployment_name
           in: path
-          description: Deployment Version identifier in the form "<deployment_name>.<build_id>".
           required: true
+          schema:
+            type: string
+        - name: deployment_version.build_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: version
+          in: query
+          description: Deprecated. Use `deployment_version`.
+          schema:
+            type: string
+        - name: deploymentVersion.buildId
+          in: query
+          description: |-
+            A unique identifier for this Version within the Deployment it is a part of.
+             Not necessarily unique within the namespace.
+             The combination of `deployment_name` and `build_id` uniquely identifies this
+             Version within the namespace, because Deployment names are unique within a namespace.
+          schema:
+            type: string
+        - name: deploymentVersion.deploymentName
+          in: query
+          description: Identifies the Worker Deployment this Version is part of.
           schema:
             type: string
       responses:
@@ -4675,10 +4748,33 @@ paths:
           required: true
           schema:
             type: string
-        - name: version
+        - name: deployment_version.deployment_name
           in: path
-          description: Deployment Version identifier in the form "<deployment_name>.<build_id>".
           required: true
+          schema:
+            type: string
+        - name: deployment_version.build_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: version
+          in: query
+          description: Deprecated. Use `deployment_version`.
+          schema:
+            type: string
+        - name: deploymentVersion.buildId
+          in: query
+          description: |-
+            A unique identifier for this Version within the Deployment it is a part of.
+             Not necessarily unique within the namespace.
+             The combination of `deployment_name` and `build_id` uniquely identifies this
+             Version within the namespace, because Deployment names are unique within a namespace.
+          schema:
+            type: string
+        - name: deploymentVersion.deploymentName
+          in: query
+          description: Identifies the Worker Deployment this Version is part of.
           schema:
             type: string
         - name: skipDrainage
@@ -4706,8 +4802,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Status'
-  /namespaces/{namespace}/worker-deployment-versions/{version}/update-metadata:
-    post:
+  ? /namespaces/{namespace}/worker-deployment-versions/{deployment_version.deployment_name}/{deployment_version.build_id}/update-metadata
+  : post:
       tags:
         - WorkflowService
       description: |-
@@ -4720,9 +4816,13 @@ paths:
           required: true
           schema:
             type: string
-        - name: version
+        - name: deployment_version.deployment_name
           in: path
-          description: Deployment Version identifier in the form "<deployment_name>.<build_id>".
+          required: true
+          schema:
+            type: string
+        - name: deployment_version.build_id
+          in: path
           required: true
           schema:
             type: string
@@ -5963,7 +6063,7 @@ components:
             - $ref: '#/components/schemas/WorkerVersionStamp'
           description: |-
             Version info of the worker who processed this workflow task.
-             Deprecated. Use the info inside the corresponding ActivityTaskStartedEvent
+             Deprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]
     ActivityTaskCompletedEventAttributes:
       type: object
       properties:
@@ -5985,7 +6085,7 @@ components:
             - $ref: '#/components/schemas/WorkerVersionStamp'
           description: |-
             Version info of the worker who processed this workflow task.
-             Deprecated. Use the info inside the corresponding ActivityTaskStartedEvent
+             Deprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]
     ActivityTaskFailedEventAttributes:
       type: object
       properties:
@@ -6019,7 +6119,7 @@ components:
             - $ref: '#/components/schemas/WorkerVersionStamp'
           description: |-
             Version info of the worker who processed this workflow task.
-             Deprecated. Use the info inside the corresponding ActivityTaskStartedEvent
+             Deprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]
     ActivityTaskScheduledEventAttributes:
       type: object
       properties:
@@ -6083,6 +6183,7 @@ components:
           description: |-
             If this is set, the activity would be assigned to the Build ID of the workflow. Otherwise,
              Assignment rules of the activity's Task Queue will be used to determine the Build ID.
+             Deprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]
         priority:
           allOf:
             - $ref: '#/components/schemas/Priority'
@@ -6309,6 +6410,14 @@ components:
           type: string
           description: History event reapply options (deprecated, use `options`).
           format: enum
+        postResetOperations:
+          type: array
+          items:
+            $ref: '#/components/schemas/PostResetOperation'
+          description: |-
+            Operations to perform after the workflow has been reset. These operations will be applied
+             to the *new* run of the workflow execution in the order they are provided.
+             All operations are applied to the workflow before the first new workflow task is generated
       description: |-
         BatchOperationReset sends reset requests to batch workflows.
          Keep the parameter in sync with temporal.api.workflowservice.v1.ResetWorkflowExecutionRequest.
@@ -6380,7 +6489,7 @@ components:
         workflowExecutionOptions:
           allOf:
             - $ref: '#/components/schemas/WorkflowExecutionOptions'
-          description: Workflow Execution options. Partial updates are accepted and controlled by update_mask.
+          description: Update Workflow options that were originally specified via StartWorkflowExecution. Partial updates are accepted and controlled by update_mask.
         updateMask:
           type: string
           description: |-
@@ -7062,9 +7171,13 @@ components:
       properties:
         version:
           type: string
+          description: Deprecated. Use `deployment_version`.
+        deploymentVersion:
+          allOf:
+            - $ref: '#/components/schemas/WorkerDeploymentVersion'
           description: |-
-            Required. The target Version of the transition. May be `__unversioned__` which means a
-             so-far-versioned workflow is transitioning to unversioned workers.
+            The target Version of the transition.
+             If nil, a so-far-versioned workflow is transitioning to unversioned workers.
       description: |-
         Holds information about ongoing transition of a workflow execution from one worker
          deployment version to another.
@@ -8841,16 +8954,28 @@ components:
           description: |-
             The deployment this activity was dispatched to most recently. Present only if the activity
              was dispatched to a versioned worker.
-             Deprecated. Use `last_worker_deployment_version`.
+             Deprecated. Use `last_deployment_version`.
         lastWorkerDeploymentVersion:
           type: string
-          description: The Worker Deployment Version this activity was dispatched to most recently.
+          description: |-
+            The Worker Deployment Version this activity was dispatched to most recently.
+             Deprecated. Use `last_deployment_version`.
+        lastDeploymentVersion:
+          allOf:
+            - $ref: '#/components/schemas/WorkerDeploymentVersion'
+          description: |-
+            The Worker Deployment Version this activity was dispatched to most recently.
+             If nil, the activity has not yet been dispatched or was last dispatched to an unversioned worker.
         priority:
           allOf:
             - $ref: '#/components/schemas/Priority'
           description: Priority metadata
         pauseInfo:
           $ref: '#/components/schemas/PendingActivityInfo_PauseInfo'
+        activityOptions:
+          allOf:
+            - $ref: '#/components/schemas/ActivityOptions'
+          description: Current activity options. May be different from the one used to start the activity.
     PendingActivityInfo_PauseInfo:
       type: object
       properties:
@@ -9115,6 +9240,52 @@ components:
       description: |-
         Attached to task responses to give hints to the SDK about how it may adjust its number of
          pollers.
+    PostResetOperation:
+      type: object
+      properties:
+        signalWorkflow:
+          $ref: '#/components/schemas/PostResetOperation_SignalWorkflow'
+        updateWorkflowOptions:
+          $ref: '#/components/schemas/PostResetOperation_UpdateWorkflowOptions'
+      description: PostResetOperation represents an operation to be performed on the new workflow execution after a workflow reset.
+    PostResetOperation_SignalWorkflow:
+      type: object
+      properties:
+        signalName:
+          type: string
+          description: The workflow author-defined name of the signal to send to the workflow.
+        input:
+          allOf:
+            - $ref: '#/components/schemas/Payloads'
+          description: Serialized value(s) to provide with the signal.
+        header:
+          allOf:
+            - $ref: '#/components/schemas/Header'
+          description: Headers that are passed with the signal to the processing workflow.
+        links:
+          type: array
+          items:
+            $ref: '#/components/schemas/Link'
+          description: Links to be associated with the WorkflowExecutionSignaled event.
+      description: |-
+        SignalWorkflow represents sending a signal after a workflow reset.
+         Keep the parameter in sync with temporal.api.workflowservice.v1.SignalWorkflowExecutionRequest.
+    PostResetOperation_UpdateWorkflowOptions:
+      type: object
+      properties:
+        workflowExecutionOptions:
+          allOf:
+            - $ref: '#/components/schemas/WorkflowExecutionOptions'
+          description: Update Workflow options that were originally specified via StartWorkflowExecution. Partial updates are accepted and controlled by update_mask.
+        updateMask:
+          type: string
+          description: |-
+            Controls which fields from `workflow_execution_options` will be applied.
+             To unset a field, set it to null and use the update mask to indicate that it should be mutated.
+          format: field-mask
+      description: |-
+        UpdateWorkflowOptions represents updating workflow execution options after a workflow reset.
+         Keep the parameters in sync with temporal.api.workflowservice.v1.UpdateWorkflowExecutionOptionsRequest.
     Priority:
       type: object
       properties:
@@ -9254,6 +9425,11 @@ components:
         activityPaused:
           type: boolean
           description: Will be set to true if the activity is paused.
+        activityReset:
+          type: boolean
+          description: |-
+            Will be set to true if the activity was reset.
+             Applies only to the current run.
     RecordActivityTaskHeartbeatRequest:
       type: object
       properties:
@@ -9281,6 +9457,11 @@ components:
         activityPaused:
           type: boolean
           description: Will be set to true if the activity is paused.
+        activityReset:
+          type: boolean
+          description: |-
+            Will be set to true if the activity was reset.
+             Applies only to the current run.
     RegisterNamespaceRequest:
       type: object
       properties:
@@ -9682,6 +9863,14 @@ components:
             type: string
             format: enum
           description: Event types not to be reapplied
+        postResetOperations:
+          type: array
+          items:
+            $ref: '#/components/schemas/PostResetOperation'
+          description: |-
+            Operations to perform after the workflow has been reset. These operations will be applied
+             to the *new* run of the workflow execution in the order they are provided.
+             All operations are applied to the workflow before the first new workflow task is generated
     ResetWorkflowExecutionResponse:
       type: object
       properties:
@@ -9714,6 +9903,10 @@ components:
         identity:
           type: string
           description: The identity of the worker/client
+        deploymentOptions:
+          allOf:
+            - $ref: '#/components/schemas/WorkerDeploymentOptions'
+          description: Worker deployment options that user has set in the worker.
     RespondActivityTaskCanceledByIdResponse:
       type: object
       properties: {}
@@ -9740,7 +9933,7 @@ components:
             Version info of the worker who processed this task. This message's `build_id` field should
              always be set by SDKs. Workers opting into versioning will also set the `use_versioning`
              field to true. See message docstrings for more.
-             Deprecated. Use `deployment` instead.
+             Deprecated. Use `deployment_options` instead.
         deployment:
           allOf:
             - $ref: '#/components/schemas/Deployment'
@@ -9803,7 +9996,7 @@ components:
             Version info of the worker who processed this task. This message's `build_id` field should
              always be set by SDKs. Workers opting into versioning will also set the `use_versioning`
              field to true. See message docstrings for more.
-             Deprecated. Use `deployment` instead.
+             Deprecated. Use `deployment_options` instead.
         deployment:
           allOf:
             - $ref: '#/components/schemas/Deployment'
@@ -9881,7 +10074,7 @@ components:
             Version info of the worker who processed this task. This message's `build_id` field should
              always be set by SDKs. Workers opting into versioning will also set the `use_versioning`
              field to true. See message docstrings for more.
-             Deprecated. Use `deployment` instead.
+             Deprecated. Use `deployment_options` instead.
         deployment:
           allOf:
             - $ref: '#/components/schemas/Deployment'
@@ -9940,34 +10133,32 @@ components:
     RoutingConfig:
       type: object
       properties:
+        currentDeploymentVersion:
+          allOf:
+            - $ref: '#/components/schemas/WorkerDeploymentVersion'
+          description: "Specifies which Deployment Version should receive new workflow executions and tasks of\n existing unversioned or AutoUpgrade workflows.\n Nil value means no Version in this Deployment (except Ramping Version, if present) receives traffic other than tasks of previously Pinned workflows. In absence of a Current Version, remaining traffic after any ramp (if set)  goes to unversioned workers (those with `UNVERSIONED` (or unspecified) `WorkerVersioningMode`.). \n Note: Current Version is overridden by the Ramping Version for a portion of traffic when ramp percentage\n is non-zero (see `ramping_deployment_version` and `ramping_version_percentage`)."
         currentVersion:
           type: string
+          description: Deprecated. Use `current_deployment_version`.
+        rampingDeploymentVersion:
+          allOf:
+            - $ref: '#/components/schemas/WorkerDeploymentVersion'
           description: |-
-            Always present. Specifies which Deployment Version should should receive new workflow
-             executions and tasks of existing unversioned or AutoUpgrade workflows.
-             Can be one of the following:
-             - A Deployment Version identifier in the form "<deployment_name>.<build_id>".
-             - Or, the "__unversioned__" special value, to represent all the unversioned workers (those
-               with `UNVERSIONED` (or unspecified) `WorkerVersioningMode`.)
-             Note: Current Version is overridden by the Ramping Version for a portion of traffic when a ramp
-             is set (see `ramping_version`.)
-        rampingVersion:
-          type: string
-          description: |-
-            When present, it means the traffic is being shifted from the Current Version to the Ramping
-             Version.
-             Must always be different from Current Version. Can be one of the following:
-             - A Deployment Version identifier in the form "<deployment_name>.<build_id>".
-             - Or, the "__unversioned__" special value, to represent all the unversioned workers (those
-               with `UNVERSIONED` (or unspecified) `WorkerVersioningMode`.)
+            When ramp percentage is non-zero, that portion of traffic is shifted from the Current Version to the Ramping Version.
+             Must always be different from `current_deployment_version` unless both are nil.
+             Nil value represents all the unversioned workers (those with `UNVERSIONED` (or unspecified) `WorkerVersioningMode`.)
              Note that it is possible to ramp from one Version to another Version, or from unversioned
              workers to a particular Version, or from a particular Version to unversioned workers.
+        rampingVersion:
+          type: string
+          description: Deprecated. Use `ramping_deployment_version`.
         rampingVersionPercentage:
           type: number
           description: |-
             Percentage of tasks that are routed to the Ramping Version instead of the Current Version.
              Valid range: [0, 100]. A 100% value means the Ramping Version is receiving full traffic but
              not yet "promoted" to be the Current Version, likely due to pending validations.
+             A 0% value means the Ramping Version is receiving no traffic.
           format: float
         currentVersionChangedTime:
           type: string
@@ -10385,11 +10576,13 @@ components:
           type: string
         version:
           type: string
+          description: Deprecated. Use `build_id`.
+        buildId:
+          type: string
           description: |-
-            Required. Can be one of the following:
-             - A Deployment Version identifier in the form "<deployment_name>.<build_id>".
-             - Or, the "__unversioned__" special value, to represent all the unversioned workers (those
-               with `UNVERSIONED` (or unspecified) `WorkerVersioningMode`.)
+            The build id of the Version that you want to set as Current.
+             Pass an empty value to set the Current Version to nil.
+             A nil Current Version represents all the unversioned workers (those with `UNVERSIONED` (or unspecified) `WorkerVersioningMode`.)
         conflictToken:
           type: string
           description: |-
@@ -10430,9 +10623,11 @@ components:
           format: bytes
         previousVersion:
           type: string
-          description: |-
-            The version that was current before executing this operation, in the form
-             "<deployment_name>.<build_id>". Can also be the `__unversioned__` special value.
+          description: Deprecated. Use `previous_deployment_version`.
+        previousDeploymentVersion:
+          allOf:
+            - $ref: '#/components/schemas/WorkerDeploymentVersion'
+          description: The version that was current before executing this operation.
     SetWorkerDeploymentRampingVersionRequest:
       type: object
       properties:
@@ -10442,12 +10637,13 @@ components:
           type: string
         version:
           type: string
+          description: Deprecated. Use `build_id`.
+        buildId:
+          type: string
           description: |-
-            Can be one of the following:
-             - Absent/empty value to unset the Ramping Version. Must be paired with `percentage=0`.
-             - A Deployment Version identifier in the form "<deployment_name>.<build_id>".
-             - Or, the "__unversioned__" special value, to represent all the unversioned workers (those
-               with `UNVERSIONED` (or unspecified) `WorkerVersioningMode`.)
+            The build id of the Version that you want to ramp traffic to.
+             Pass an empty value to set the Ramping Version to nil.
+             A nil Ramping Version represents all the unversioned workers (those with `UNVERSIONED` (or unspecified) `WorkerVersioningMode`.)
         percentage:
           type: number
           description: 'Ramp percentage to set. Valid range: [0,100].'
@@ -10495,9 +10691,11 @@ components:
           format: bytes
         previousVersion:
           type: string
-          description: |-
-            The version that was ramping before executing this operation, in the form
-             "<deployment_name>.<build_id>". Can also be the `__unversioned__` special value.
+          description: Deprecated. Use `previous_deployment_version`.
+        previousDeploymentVersion:
+          allOf:
+            - $ref: '#/components/schemas/WorkerDeploymentVersion'
+          description: The version that was ramping before executing this operation.
         previousPercentage:
           type: number
           description: The ramping version percentage before executing this operation.
@@ -10722,6 +10920,10 @@ components:
           items:
             $ref: '#/components/schemas/Link'
           description: Links to be associated with the WorkflowExecutionSignaled event.
+      description: |-
+        Keep the parameters in sync with:
+           - temporal.api.batch.v1.BatchOperationSignal.
+           - temporal.api.workflow.v1.PostResetOperation.SignalWorkflow.
     SignalWorkflowExecutionResponse:
       type: object
       properties: {}
@@ -11303,34 +11505,37 @@ components:
     TaskQueueVersioningInfo:
       type: object
       properties:
+        currentDeploymentVersion:
+          allOf:
+            - $ref: '#/components/schemas/WorkerDeploymentVersion'
+          description: |-
+            Specifies which Deployment Version should receive new workflow executions and tasks of
+             existing unversioned or AutoUpgrade workflows.
+             Nil value represents all the unversioned workers (those with `UNVERSIONED` (or unspecified) `WorkerVersioningMode`.)
+             Note: Current Version is overridden by the Ramping Version for a portion of traffic when ramp percentage
+             is non-zero (see `ramping_deployment_version` and `ramping_version_percentage`).
         currentVersion:
           type: string
+          description: Deprecated. Use `current_deployment_version`.
+        rampingDeploymentVersion:
+          allOf:
+            - $ref: '#/components/schemas/WorkerDeploymentVersion'
           description: |-
-            Always present. Specifies which Deployment Version should receive new workflow
-             executions and tasks of existing unversioned or AutoUpgrade workflows.
-             Can be one of the following:
-             - A Deployment Version identifier in the form "<deployment_name>.<build_id>".
-             - Or, the "__unversioned__" special value, to represent all the unversioned workers (those
-               with `UNVERSIONED` (or unspecified) `WorkerVersioningMode`.)
-             Note: Current Version is overridden by the Ramping Version for a portion of traffic when a ramp
-             is set (see `ramping_version`.)
-        rampingVersion:
-          type: string
-          description: |-
-            When present, it means the traffic is being shifted from the Current Version to the Ramping
-             Version.
-             Must always be different from `current_version`. Can be one of the following:
-             - A Deployment Version identifier in the form "<deployment_name>.<build_id>".
-             - Or, the "__unversioned__" special value, to represent all the unversioned workers (those
-               with `UNVERSIONED` (or unspecified) `WorkerVersioningMode`.)
+            When ramp percentage is non-zero, that portion of traffic is shifted from the Current Version to the Ramping Version.
+             Must always be different from `current_deployment_version` unless both are nil.
+             Nil value represents all the unversioned workers (those with `UNVERSIONED` (or unspecified) `WorkerVersioningMode`.)
              Note that it is possible to ramp from one Version to another Version, or from unversioned
              workers to a particular Version, or from a particular Version to unversioned workers.
+        rampingVersion:
+          type: string
+          description: Deprecated. Use `ramping_deployment_version`.
         rampingVersionPercentage:
           type: number
           description: |-
             Percentage of tasks that are routed to the Ramping Version instead of the Current Version.
              Valid range: [0, 100]. A 100% value means the Ramping Version is receiving full traffic but
              not yet "promoted" to be the Current Version, likely due to pending validations.
+             A 0% value means the Ramping Version is receiving no traffic.
           format: float
         updateTime:
           type: string
@@ -11695,7 +11900,11 @@ components:
           type: string
         version:
           type: string
-          description: Deployment Version identifier in the form "<deployment_name>.<build_id>".
+          description: Deprecated. Use `deployment_version`.
+        deploymentVersion:
+          allOf:
+            - $ref: '#/components/schemas/WorkerDeploymentVersion'
+          description: Required.
         upsertEntries:
           type: object
           additionalProperties:
@@ -11736,6 +11945,10 @@ components:
             Controls which fields from `workflow_execution_options` will be applied.
              To unset a field, set it to null and use the update mask to indicate that it should be mutated.
           format: field-mask
+      description: |-
+        Keep the parameters in sync with:
+           - temporal.api.batch.v1.BatchOperationUpdateWorkflowExecutionOptions.
+           - temporal.api.workflow.v1.PostResetOperation.UpdateWorkflowOptions.
     UpdateWorkflowExecutionOptionsResponse:
       type: object
       properties:
@@ -11893,13 +12106,24 @@ components:
     VersioningOverride:
       type: object
       properties:
+        pinned:
+          allOf:
+            - $ref: '#/components/schemas/VersioningOverride_PinnedOverride'
+          description: Send the next workflow task to the Version specified in the override.
+        autoUpgrade:
+          type: boolean
+          description: |-
+            Send the next workflow task to the Current Deployment Version
+             of its Task Queue when the next workflow task is dispatched.
         behavior:
           enum:
             - VERSIONING_BEHAVIOR_UNSPECIFIED
             - VERSIONING_BEHAVIOR_PINNED
             - VERSIONING_BEHAVIOR_AUTO_UPGRADE
           type: string
-          description: Required.
+          description: |-
+            Required.
+             Deprecated. Use `override`.
           format: enum
         deployment:
           allOf:
@@ -11907,19 +12131,36 @@ components:
           description: |-
             Required if behavior is `PINNED`. Must be null if behavior is `AUTO_UPGRADE`.
              Identifies the worker deployment to pin the workflow to.
-             Deprecated. Use `pinned_version`.
+             Deprecated. Use `override.pinned.version`.
         pinnedVersion:
           type: string
           description: |-
             Required if behavior is `PINNED`. Must be absent if behavior is not `PINNED`.
              Identifies the worker deployment version to pin the workflow to, in the format
              "<deployment_name>.<build_id>".
+             Deprecated. Use `override.pinned.version`.
       description: |-
         Used to override the versioning behavior (and pinned deployment version, if applicable) of a
          specific workflow execution. If set, takes precedence over the worker-sent values. See
          `WorkflowExecutionInfo.VersioningInfo` for more information. To remove the override, call
          `UpdateWorkflowExecutionOptions` with a null `VersioningOverride`, and use the `update_mask`
          to indicate that it should be mutated.
+    VersioningOverride_PinnedOverride:
+      type: object
+      properties:
+        behavior:
+          enum:
+            - PINNED_OVERRIDE_BEHAVIOR_UNSPECIFIED
+            - PINNED_OVERRIDE_BEHAVIOR_PINNED
+          type: string
+          description: |-
+            Defaults to PINNED_OVERRIDE_BEHAVIOR_UNSPECIFIED.
+             See `PinnedOverrideBehavior` for details.
+          format: enum
+        version:
+          allOf:
+            - $ref: '#/components/schemas/WorkerDeploymentVersion'
+          description: Required.
     WaitPolicy:
       type: object
       properties:
@@ -11966,7 +12207,11 @@ components:
       properties:
         version:
           type: string
-          description: The fully-qualified string representation of the version, in the form "<deployment_name>.<build_id>".
+          description: Deprecated. Use `deployment_version`.
+        deploymentVersion:
+          allOf:
+            - $ref: '#/components/schemas/WorkerDeploymentVersion'
+          description: Required.
         createTime:
           type: string
           format: date-time
@@ -11987,7 +12232,7 @@ components:
           type: string
           description: |-
             The Build ID of the worker. Required when `worker_versioning_mode==VERSIONED`, in which case,
-             the worker will be part of a Deployment Version identified by "<deployment_name>.<build_id>".
+             the worker will be part of a Deployment Version.
         workerVersioningMode:
           enum:
             - WORKER_VERSIONING_MODE_UNSPECIFIED
@@ -11997,18 +12242,40 @@ components:
           description: |-
             Required. Versioning Mode for this worker. Must be the same for all workers with the
              same `deployment_name` and `build_id` combination, across all Task Queues.
-             When `worker_versioning_mode==VERSIONED`, the worker will be part of a Deployment Version
-             identified by "<deployment_name>.<build_id>".
+             When `worker_versioning_mode==VERSIONED`, the worker will be part of a Deployment Version.
           format: enum
       description: |-
         Worker Deployment options set in SDK that need to be sent to server in every poll.
          Experimental. Worker Deployments are experimental and might significantly change in the future.
+    WorkerDeploymentVersion:
+      type: object
+      properties:
+        buildId:
+          type: string
+          description: |-
+            A unique identifier for this Version within the Deployment it is a part of.
+             Not necessarily unique within the namespace.
+             The combination of `deployment_name` and `build_id` uniquely identifies this
+             Version within the namespace, because Deployment names are unique within a namespace.
+        deploymentName:
+          type: string
+          description: Identifies the Worker Deployment this Version is part of.
+      description: |-
+        A Worker Deployment Version (Version, for short) represents a
+         version of workers within a Worker Deployment. (see documentation of WorkerDeploymentVersionInfo)
+         Version records are created in Temporal server automatically when their
+         first poller arrives to the server.
+         Experimental. Worker Deployment Versions are experimental and might significantly change in the future.
     WorkerDeploymentVersionInfo:
       type: object
       properties:
         version:
           type: string
-          description: The fully-qualified string representation of the version, in the form "<deployment_name>.<build_id>".
+          description: Deprecated. Use `deployment_version`.
+        deploymentVersion:
+          allOf:
+            - $ref: '#/components/schemas/WorkerDeploymentVersion'
+          description: Required.
         deploymentName:
           type: string
         createTime:
@@ -12777,6 +13044,16 @@ components:
              of starting on the Current Version of its Task Queue.
              This is set only if the child workflow is starting on a Task Queue belonging to the same
              Worker Deployment Version.
+             Deprecated. Use `parent_pinned_deployment_version`.
+        parentPinnedDeploymentVersion:
+          allOf:
+            - $ref: '#/components/schemas/WorkerDeploymentVersion'
+          description: |-
+            When present, it means this is a child workflow of a parent that is Pinned to this Worker
+             Deployment Version. In this case, child workflow will start as Pinned to this Version instead
+             of starting on the Current Version of its Task Queue.
+             This is set only if the child workflow is starting on a Task Queue belonging to the same
+             Worker Deployment Version.
         priority:
           allOf:
             - $ref: '#/components/schemas/Priority'
@@ -12917,16 +13194,21 @@ components:
              a deployment value which will be stored here, so the right way to check if an execution is
              versioned if an execution is versioned or not is via the `behavior` field.
              Note that `deployment` is overridden by `versioning_override` if the latter is present.
-             Deprecated. Use `version`.
+             Deprecated. Use `deployment_version`.
         version:
           type: string
+          description: Deprecated. Use `deployment_version`.
+        deploymentVersion:
+          allOf:
+            - $ref: '#/components/schemas/WorkerDeploymentVersion'
           description: |-
-            The Worker Deployment Version that completed the last workflow task of this workflow
-             execution, in the form "<deployment_name>.<build_id>".
-             Must be present if and only if `behavior` is set. An absent value means no workflow task is
-             completed, or the workflow is unversioned.
-             For child workflows of Pinned parents, this will be set to parent's Pinned Version when the
-             the child starts so that child's first workflow task goes to the same Version as the parent.
+            The Worker Deployment Version that completed the last workflow task of this workflow execution.
+             An absent value means no workflow task is completed, or the workflow is unversioned.
+             If present, and `behavior` is UNSPECIFIED, the last task of this workflow execution was completed
+             by a worker that is not using versioning but _is_ passing Deployment Name and Build ID.
+
+             For child workflows of Pinned parents, this will be set to the parent's Pinned Version when
+             the child starts, so that the child's first workflow task goes to the same Version as the parent.
              Note that if `versioning_override.behavior` is PINNED then `versioning_override.pinned_version`
              will override this value.
         versioningOverride:
@@ -13136,7 +13418,9 @@ components:
           description: Identity of the worker who completed this task
         binaryChecksum:
           type: string
-          description: Binary ID of the worker who completed this task
+          description: |-
+            Binary ID of the worker who completed this task
+             Deprecated. Replaced with `deployment_version`.
         workerVersion:
           allOf:
             - $ref: '#/components/schemas/WorkerVersionStamp'
@@ -13144,7 +13428,7 @@ components:
             Version info of the worker who processed this workflow task. If present, the `build_id` field
              within is also used as `binary_checksum`, which may be omitted in that case (it may also be
              populated to preserve compatibility).
-             Deprecated. Use `deployment` and `versioning_behavior` instead.
+             Deprecated. Use `deployment_version` and `versioning_behavior` instead.
         sdkMetadata:
           allOf:
             - $ref: '#/components/schemas/WorkflowTaskCompletedMetadata'
@@ -13162,7 +13446,7 @@ components:
             The deployment that completed this task. May or may not be set for unversioned workers,
              depending on whether a value is sent by the SDK. This value updates workflow execution's
              `versioning_info.deployment`.
-             Deprecated. Replaced with `worker_deployment_version`.
+             Deprecated. Replaced with `deployment_version`.
         versioningBehavior:
           enum:
             - VERSIONING_BEHAVIOR_UNSPECIFIED
@@ -13180,11 +13464,19 @@ components:
             The Worker Deployment Version that completed this task. Must be set if `versioning_behavior`
              is set. This value updates workflow execution's `versioning_info.version`.
              Experimental. Worker Deployments are experimental and might significantly change in the future.
+             Deprecated. Replaced with `deployment_version`.
         workerDeploymentName:
           type: string
           description: |-
             The name of Worker Deployment that completed this task. Must be set if `versioning_behavior`
              is set. This value updates workflow execution's `worker_deployment_name`.
+             Experimental. Worker Deployments are experimental and might significantly change in the future.
+        deploymentVersion:
+          allOf:
+            - $ref: '#/components/schemas/WorkerDeploymentVersion'
+          description: |-
+            The Worker Deployment Version that completed this task. Must be set if `versioning_behavior`
+             is set. This value updates workflow execution's `versioning_info.deployment_version`.
              Experimental. Worker Deployments are experimental and might significantly change in the future.
     WorkflowTaskCompletedMetadata:
       type: object
@@ -13309,7 +13601,7 @@ components:
         binaryChecksum:
           type: string
           description: |-
-            DEPRECATED since 1.21 - use `worker_version` instead.
+            DEPRECATED since 1.21 - This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]
              If a worker explicitly failed this task, its binary id
         workerVersion:
           allOf:
@@ -13318,7 +13610,7 @@ components:
             Version info of the worker who processed this workflow task. If present, the `build_id` field
              within is also used as `binary_checksum`, which may be omitted in that case (it may also be
              populated to preserve compatibility).
-             Deprecated. Use the info inside the corresponding WorkflowTaskStartedEvent
+             Deprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]
     WorkflowTaskScheduledEventAttributes:
       type: object
       properties:

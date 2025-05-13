@@ -1,25 +1,3 @@
-// The MIT License
-//
-// Copyright (c) 2020 Temporal Technologies Inc.  All rights reserved.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in
-// all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-// THE SOFTWARE.
-
 syntax = "proto3";
 
 package temporal.api.deployment.v1;
@@ -43,12 +21,11 @@ message WorkerDeploymentOptions {
     // Required. Worker Deployment name.
     string deployment_name = 1;
     // The Build ID of the worker. Required when `worker_versioning_mode==VERSIONED`, in which case,
-    // the worker will be part of a Deployment Version identified by "<deployment_name>.<build_id>".
+    // the worker will be part of a Deployment Version.
     string build_id = 2;
     // Required. Versioning Mode for this worker. Must be the same for all workers with the
     // same `deployment_name` and `build_id` combination, across all Task Queues.
-    // When `worker_versioning_mode==VERSIONED`, the worker will be part of a Deployment Version
-    // identified by "<deployment_name>.<build_id>".
+    // When `worker_versioning_mode==VERSIONED`, the worker will be part of a Deployment Version.
     temporal.api.enums.v1.WorkerVersioningMode worker_versioning_mode = 3;
 }
 
@@ -117,8 +94,11 @@ message DeploymentListInfo {
 // their first poller arrives to the server.
 // Experimental. Worker Deployments are experimental and might significantly change in the future.
 message WorkerDeploymentVersionInfo {
-    // The fully-qualified string representation of the version, in the form "<deployment_name>.<build_id>".
-    string version = 1;
+    // Deprecated. Use `deployment_version`.
+    string version = 1 [deprecated = true];
+
+    // Required.
+    WorkerDeploymentVersion deployment_version = 11;
     string deployment_name = 2;
     google.protobuf.Timestamp create_time = 3;
 
@@ -207,11 +187,30 @@ message WorkerDeploymentInfo {
     string last_modifier_identity = 5;
 
     message WorkerDeploymentVersionSummary {
-        // The fully-qualified string representation of the version, in the form "<deployment_name>.<build_id>".
-        string version = 1;
+        // Deprecated. Use `deployment_version`.
+        string version = 1 [deprecated = true];
+
+        // Required.
+        WorkerDeploymentVersion deployment_version = 4;
         google.protobuf.Timestamp create_time = 2;
         enums.v1.VersionDrainageStatus drainage_status = 3;
     }
+}
+
+// A Worker Deployment Version (Version, for short) represents a
+// version of workers within a Worker Deployment. (see documentation of WorkerDeploymentVersionInfo)
+// Version records are created in Temporal server automatically when their
+// first poller arrives to the server.
+// Experimental. Worker Deployment Versions are experimental and might significantly change in the future.
+message WorkerDeploymentVersion {
+    // A unique identifier for this Version within the Deployment it is a part of.
+    // Not necessarily unique within the namespace.
+    // The combination of `deployment_name` and `build_id` uniquely identifies this
+    // Version within the namespace, because Deployment names are unique within a namespace.
+    string build_id = 1;
+
+    // Identifies the Worker Deployment this Version is part of.
+    string deployment_name = 2;
 }
 
 message VersionMetadata {
@@ -220,27 +219,28 @@ message VersionMetadata {
 }
 
 message RoutingConfig {
-    // Always present. Specifies which Deployment Version should should receive new workflow
-    // executions and tasks of existing unversioned or AutoUpgrade workflows.
-    // Can be one of the following:
-    // - A Deployment Version identifier in the form "<deployment_name>.<build_id>".
-    // - Or, the "__unversioned__" special value, to represent all the unversioned workers (those
-    //   with `UNVERSIONED` (or unspecified) `WorkerVersioningMode`.)
-    // Note: Current Version is overridden by the Ramping Version for a portion of traffic when a ramp
-    // is set (see `ramping_version`.)
-    string current_version = 1;
-    // When present, it means the traffic is being shifted from the Current Version to the Ramping
-    // Version.
-    // Must always be different from Current Version. Can be one of the following:
-    // - A Deployment Version identifier in the form "<deployment_name>.<build_id>".
-    // - Or, the "__unversioned__" special value, to represent all the unversioned workers (those
-    //   with `UNVERSIONED` (or unspecified) `WorkerVersioningMode`.)
+    // Specifies which Deployment Version should receive new workflow executions and tasks of
+    // existing unversioned or AutoUpgrade workflows.
+    // Nil value means no Version in this Deployment (except Ramping Version, if present) receives traffic other than tasks of previously Pinned workflows. In absence of a Current Version, remaining traffic after any ramp (if set)  goes to unversioned workers (those with `UNVERSIONED` (or unspecified) `WorkerVersioningMode`.). 
+    // Note: Current Version is overridden by the Ramping Version for a portion of traffic when ramp percentage
+    // is non-zero (see `ramping_deployment_version` and `ramping_version_percentage`).
+    temporal.api.deployment.v1.WorkerDeploymentVersion current_deployment_version = 7;
+    // Deprecated. Use `current_deployment_version`.
+    string current_version = 1 [deprecated = true];
+
+    // When ramp percentage is non-zero, that portion of traffic is shifted from the Current Version to the Ramping Version.
+    // Must always be different from `current_deployment_version` unless both are nil.
+    // Nil value represents all the unversioned workers (those with `UNVERSIONED` (or unspecified) `WorkerVersioningMode`.)
     // Note that it is possible to ramp from one Version to another Version, or from unversioned
     // workers to a particular Version, or from a particular Version to unversioned workers.
-    string ramping_version = 2;
+    temporal.api.deployment.v1.WorkerDeploymentVersion ramping_deployment_version = 9;
+    // Deprecated. Use `ramping_deployment_version`.
+    string ramping_version = 2 [deprecated = true];
+
     // Percentage of tasks that are routed to the Ramping Version instead of the Current Version.
     // Valid range: [0, 100]. A 100% value means the Ramping Version is receiving full traffic but
     // not yet "promoted" to be the Current Version, likely due to pending validations.
+    // A 0% value means the Ramping Version is receiving no traffic.
     float ramping_version_percentage = 3;
     // Last time current version was changed.
     google.protobuf.Timestamp current_version_changed_time = 4;
