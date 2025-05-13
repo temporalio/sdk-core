@@ -10,9 +10,12 @@ use std::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
-use temporal_sdk_core_api::worker::{
-    SlotKind, SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext, SlotSupplier,
-    SlotSupplierPermit, WorkerDeploymentVersion, WorkflowSlotKind,
+use temporal_sdk_core_api::{
+    telemetry::metrics::TemporalMeter,
+    worker::{
+        SlotKind, SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext, SlotSupplier,
+        SlotSupplierPermit, WorkerDeploymentVersion, WorkflowSlotKind,
+    },
 };
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
@@ -36,6 +39,7 @@ pub(crate) struct MeteredPermitDealer<SK: SlotKind> {
     /// there will need to be some associated refactoring.
     max_permits: Option<usize>,
     metrics_ctx: MetricsContext,
+    meter: Option<TemporalMeter>,
     /// Only applies to permit dealers for workflow tasks. True if this permit dealer is associated
     /// with a sticky queue poller.
     is_sticky_poller: bool,
@@ -59,12 +63,14 @@ where
         metrics_ctx: MetricsContext,
         max_permits: Option<usize>,
         context_data: Arc<PermitDealerContextData>,
+        meter: Option<TemporalMeter>,
     ) -> Self {
         Self {
             supplier,
             unused_claimants: Arc::new(AtomicUsize::new(0)),
             extant_permits: watch::channel(0),
             metrics_ctx,
+            meter,
             max_permits,
             is_sticky_poller: false,
             context_data,
@@ -141,6 +147,7 @@ where
             release_ctx: ReleaseCtx {
                 permit: res,
                 stored_info: None,
+                meter: self.meter.clone(),
             },
             use_fn: Box::new(move |info| {
                 supp_c.mark_slot_used(info);
@@ -182,11 +189,16 @@ impl<SK: SlotKind> SlotReservationContext for MeteredPermitDealer<SK> {
     fn is_sticky(&self) -> bool {
         self.is_sticky_poller
     }
+
+    fn get_metrics_meter(&self) -> Option<TemporalMeter> {
+        self.meter.clone()
+    }
 }
 
 struct UseCtx<'a, SK: SlotKind> {
     stored_info: &'a SK::Info,
     permit: &'a SlotSupplierPermit,
+    meter: Option<TemporalMeter>,
 }
 
 impl<SK: SlotKind> SlotMarkUsedContext for UseCtx<'_, SK> {
@@ -199,11 +211,16 @@ impl<SK: SlotKind> SlotMarkUsedContext for UseCtx<'_, SK> {
     fn info(&self) -> &<Self::SlotKind as SlotKind>::Info {
         self.stored_info
     }
+
+    fn get_metrics_meter(&self) -> Option<TemporalMeter> {
+        self.meter.clone()
+    }
 }
 
 struct ReleaseCtx<SK: SlotKind> {
     permit: SlotSupplierPermit,
     stored_info: Option<SK::Info>,
+    meter: Option<TemporalMeter>,
 }
 
 impl<SK: SlotKind> SlotReleaseContext for ReleaseCtx<SK> {
@@ -215,6 +232,10 @@ impl<SK: SlotKind> SlotReleaseContext for ReleaseCtx<SK> {
 
     fn info(&self) -> Option<&<Self::SlotKind as SlotKind>::Info> {
         self.stored_info.as_ref()
+    }
+
+    fn get_metrics_meter(&self) -> Option<TemporalMeter> {
+        self.meter.clone()
     }
 }
 
@@ -353,6 +374,7 @@ impl<SK: SlotKind> OwnedMeteredSemPermit<SK> {
         let ctx = UseCtx {
             stored_info: &info,
             permit: &self.release_ctx.permit,
+            meter: self.release_ctx.meter.clone(),
         };
         (self.use_fn)(&ctx);
         self.release_ctx.stored_info = Some(info);
@@ -386,6 +408,7 @@ pub(crate) mod tests {
             MetricsContext::no_op(),
             None,
             Arc::new(Default::default()),
+            None,
         )
     }
 
