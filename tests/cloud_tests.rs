@@ -1,7 +1,9 @@
 use std::env;
 use std::str::FromStr;
+use temporal_client::{
+    Client, ClientOptionsBuilder, ClientTlsConfig, RetryClient, TlsConfig, WorkflowClientTrait,
+};
 use url::Url;
-use temporal_client::{Client, ClientOptionsBuilder, ClientTlsConfig, RetryClient, TlsConfig, WorkflowClientTrait};
 
 async fn get_client() -> RetryClient<Client> {
     let cloud_addr = env::var("TEMPORAL_CLOUD_ADDRESS").unwrap();
@@ -25,13 +27,12 @@ async fn get_client() -> RetryClient<Client> {
         })
         .build()
         .unwrap();
-    sgo
-        .connect(
-            env::var("TEMPORAL_CLOUD_NAMESPACE").expect("TEMPORAL_CLOUD_NAMESPACE must be set"),
-            None,
-        )
-        .await
-        .unwrap()
+    sgo.connect(
+        env::var("TEMPORAL_CLOUD_NAMESPACE").expect("TEMPORAL_CLOUD_NAMESPACE must be set"),
+        None,
+    )
+    .await
+    .unwrap()
 }
 
 #[tokio::test]

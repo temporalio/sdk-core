@@ -20,12 +20,9 @@ mod integ_tests {
     mod worker_versioning_tests;
     mod workflow_tests;
 
-    use std::{env, str::FromStr, time::Duration};
+    use std::time::Duration;
     use temporal_client::{NamespacedClient, WorkflowService};
-    use temporal_sdk_core::{
-        ClientOptionsBuilder, ClientTlsConfig, CoreRuntime, TlsConfig, WorkflowClientTrait,
-        init_worker,
-    };
+    use temporal_sdk_core::{CoreRuntime, init_worker};
     use temporal_sdk_core_api::worker::WorkerConfigBuilder;
     use temporal_sdk_core_protos::temporal::api::{
         nexus::v1::{EndpointSpec, EndpointTarget, endpoint_target},
@@ -35,7 +32,6 @@ mod integ_tests {
     use temporal_sdk_core_test_utils::{
         CoreWfStarter, get_integ_server_options, get_integ_telem_options, rand_6_chars,
     };
-    use url::Url;
 
     // Create a worker like a bridge would (unwraps aside)
     #[tokio::test]
