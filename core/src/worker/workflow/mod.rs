@@ -57,6 +57,7 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+use temporal_client::MESSAGE_TOO_LARGE_KEY;
 use temporal_sdk_core_api::{
     errors::{CompleteWfError, PollError},
     worker::{ActivitySlotKind, WorkerConfig, WorkflowSlotKind},
@@ -78,6 +79,7 @@ use temporal_sdk_core_protos::{
         command::v1::{Command as ProtoCommand, Command, command::Attributes},
         common::v1::{Memo, MeteringMetadata, RetryPolicy, SearchAttributes, WorkflowExecution},
         enums::v1::{VersioningBehavior, WorkflowTaskFailedCause},
+        failure::v1::{ApplicationFailureInfo, failure::FailureInfo},
         protocol::v1::Message as ProtocolMessage,
         query::v1::WorkflowQuery,
         sdk::v1::{UserMetadata, WorkflowTaskCompletedMetadata},
@@ -388,11 +390,18 @@ impl Workflows {
                                 response.activity_tasks,
                             );
                         }
-                        Err(e) if e.metadata().contains_key("message-too-large") => {
+                        Err(e) if e.metadata().contains_key(MESSAGE_TOO_LARGE_KEY) => {
                             let failure = Failure {
                                 failure: Some(
                                     temporal_sdk_core_protos::temporal::api::failure::v1::Failure {
                                         message: "GRPC Message too large".to_string(),
+                                        failure_info: Some(FailureInfo::ApplicationFailureInfo(
+                                            ApplicationFailureInfo {
+                                                r#type: "GrpcMessageTooLarge".to_string(),
+                                                non_retryable: true,
+                                                ..Default::default()
+                                            },
+                                        )),
                                         ..Default::default()
                                     },
                                 ),

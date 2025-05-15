@@ -1,6 +1,6 @@
 use crate::{
-    Client, IsWorkerTaskLongPoll, NamespacedClient, NoRetryOnMatching, Result, RetryConfig,
-    raw::IsUserLongPoll,
+    Client, IsWorkerTaskLongPoll, MESSAGE_TOO_LARGE_KEY, NamespacedClient, NoRetryOnMatching,
+    Result, RetryConfig, raw::IsUserLongPoll,
 };
 use backoff::{Clock, SystemClock, backoff::Backoff, exponential::ExponentialBackoff};
 use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
@@ -219,14 +219,19 @@ where
 
         // Short circuit if message is too large - this is not retryable
         if e.code() == Code::ResourceExhausted
-            && (e.message()
-                .starts_with("grpc: received message larger than max") ||
-                e.message().starts_with("grpc: message after decompression larger than max") ||
-                e.message().starts_with("grpc: received message after decompression larger than max")
+            && (e
+                .message()
+                .starts_with("grpc: received message larger than max")
+                || e.message()
+                    .starts_with("grpc: message after decompression larger than max")
+                || e.message()
+                    .starts_with("grpc: received message after decompression larger than max"))
         {
             // Leave a marker so we don't have duplicate detection logic in the workflow
-            e.metadata_mut()
-                .insert("message-too-large", tonic::metadata::MetadataValue::from(0));
+            e.metadata_mut().insert(
+                MESSAGE_TOO_LARGE_KEY,
+                tonic::metadata::MetadataValue::from(0),
+            );
             return RetryPolicy::ForwardError(e);
         }
 
@@ -455,7 +460,28 @@ mod tests {
         );
         let result = err_handler.handle(
             1,
-            Status::new(Code::ResourceExhausted, "received message larger than max"),
+            Status::new(
+                Code::ResourceExhausted,
+                "grpc: received message larger than max",
+            ),
+        );
+        assert_matches!(result, RetryPolicy::ForwardError(_));
+
+        let result = err_handler.handle(
+            1,
+            Status::new(
+                Code::ResourceExhausted,
+                "grpc: message after decompression larger than max",
+            ),
+        );
+        assert_matches!(result, RetryPolicy::ForwardError(_));
+
+        let result = err_handler.handle(
+            1,
+            Status::new(
+                Code::ResourceExhausted,
+                "grpc: received message after decompression larger than max",
+            ),
         );
         assert_matches!(result, RetryPolicy::ForwardError(_));
     }

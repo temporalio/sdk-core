@@ -86,6 +86,10 @@ use uuid::Uuid;
 static CLIENT_NAME_HEADER_KEY: &str = "client-name";
 static CLIENT_VERSION_HEADER_KEY: &str = "client-version";
 static TEMPORAL_NAMESPACE_HEADER_KEY: &str = "temporal-namespace";
+
+/// Key used to communicate when a GRPC message is too large
+pub static MESSAGE_TOO_LARGE_KEY: &str = "message-too-large";
+
 /// The server times out polls after 60 seconds. Set our timeout to be slightly beyond that.
 const LONG_POLL_TIMEOUT: Duration = Duration::from_secs(70);
 const OTHER_CALL_TIMEOUT: Duration = Duration::from_secs(30);

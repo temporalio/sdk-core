@@ -159,7 +159,6 @@ async fn resource_based_few_pollers_guarantees_non_sticky_poll() {
     worker.run_until_done().await.unwrap();
 }
 
-static OVERSIZE_GRPC_MESSAGE_RUN: AtomicBool = AtomicBool::new(false);
 #[tokio::test]
 async fn oversize_grpc_message() {
     let wf_name = "oversize_grpc_message";
@@ -167,6 +166,7 @@ async fn oversize_grpc_message() {
     starter.worker_config.no_remote_activities(true);
     let mut core = starter.worker().await;
 
+    static OVERSIZE_GRPC_MESSAGE_RUN: AtomicBool = AtomicBool::new(false);
     core.register_wf(wf_name.to_owned(), |_ctx: WfContext| async move {
         if OVERSIZE_GRPC_MESSAGE_RUN.load(Relaxed) {
             Ok(vec![].into())
