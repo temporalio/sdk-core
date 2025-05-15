@@ -137,4 +137,4 @@ jobs:
         with:
           compose-file: ./docker/docker-compose-ci.yaml
       - uses: Swatinem/rust-cache@v2
-      - run: cargo integ-test test_docker_
+      - run: cargo integ-test docker_
