@@ -16,6 +16,8 @@ use temporal_sdk::{
     interceptors::{FailOnNondeterminismInterceptor, WorkerInterceptor},
 };
 use temporal_sdk_core::replay::HistoryForReplay;
+use temporal_sdk_core_protos::temporal::api::failure::v1::failure::FailureInfo::TimeoutFailureInfo;
+use temporal_sdk_core_protos::temporal::api::history::v1::history_event;
 use temporal_sdk_core_protos::{
     TestHistoryBuilder,
     coresdk::{
@@ -26,7 +28,7 @@ use temporal_sdk_core_protos::{
     },
     temporal::api::{
         common::v1::RetryPolicy,
-        enums::v1::{TimeoutType, UpdateWorkflowExecutionLifecycleStage},
+        enums::v1::{EventType, TimeoutType, UpdateWorkflowExecutionLifecycleStage},
         update::v1::WaitPolicy,
     },
 };
@@ -34,6 +36,8 @@ use temporal_sdk_core_test_utils::{
     CoreWfStarter, WorkflowHandleExt, history_from_proto_binary, init_core_replay_preloaded,
     replay_sdk_worker, workflows::la_problem_workflow,
 };
+use tokio::join;
+use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 
 pub(crate) async fn one_local_activity_wf(ctx: WfContext) -> WorkflowResult<()> {
@@ -143,6 +147,83 @@ pub(crate) async fn local_act_fanout_wf(ctx: WfContext) -> WorkflowResult<()> {
     ctx.timer(Duration::from_secs(1)).await;
     join_all(las).await;
     Ok(().into())
+}
+
+#[tokio::test]
+async fn local_activity_timeout_marker() {
+    let wf_name = "local_activity_timeout_marker";
+    let mut starter = CoreWfStarter::new(wf_name);
+    let mut worker = starter.worker().await;
+    static ACTS_STARTED: Semaphore = Semaphore::const_new(0);
+
+    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+        let local_activity = ctx.local_activity(LocalActivityOptions {
+            schedule_to_close_timeout: Some(Duration::from_millis(200)),
+            activity_type: "stop_activity".to_string(),
+            input: "hi!".as_json_payload().expect("serializes fine"),
+            ..Default::default()
+        });
+        local_activity.await;
+        Ok(().into())
+    });
+
+    worker.register_activity(
+        "stop_activity",
+        |_ctx: ActContext, _: String| async move {
+            ACTS_STARTED.add_permits(1);
+            Result::<(), _>::Err(anyhow!("Oh no I failed!").into())
+        },
+    );
+
+    let run_id = worker
+        .submit_wf(
+            wf_name.to_owned(),
+            wf_name.to_owned(),
+            vec![],
+            WorkflowOptions {
+                execution_timeout: Some(Duration::from_secs(1)),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    let handle = worker.inner_mut().shutdown_handle();
+    let shutdowner = async {
+        let _ = ACTS_STARTED.acquire().await;
+        handle();
+    };
+    let runner = async {
+        worker.run_until_done().await.unwrap();
+    };
+    join!(shutdowner, runner);
+
+    let client = starter.get_client().await;
+    let history = client
+        .get_workflow_execution_history(wf_name.to_owned(), Some(run_id), vec![])
+        .await
+        .unwrap()
+        .history
+        .unwrap();
+    let marker = history
+        .events
+        .iter()
+        .find(|he| he.event_type() == EventType::MarkerRecorded)
+        .expect("expected marker recorded event");
+
+    if let Some(history_event::Attributes::MarkerRecordedEventAttributes(attr)) =
+        marker.clone().attributes
+    {
+        let failure = attr.failure.unwrap().failure_info.unwrap();
+        match failure {
+            TimeoutFailureInfo(failure) => {
+                assert_eq!(failure.timeout_type(), TimeoutType::ScheduleToClose);
+            }
+            _ => panic!("Expected a timeout failure"),
+        }
+    } else {
+        unreachable!("We already assert MarkerRecorded event type");
+    }
 }
 
 #[tokio::test]
