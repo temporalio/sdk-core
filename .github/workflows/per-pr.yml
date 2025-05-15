@@ -129,7 +129,7 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --test cloud-tests
+      - run: cargo test --test cloud_tests
 
   docker-integ-tests:
     name: Docker integ tests
