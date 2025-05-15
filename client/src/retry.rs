@@ -219,8 +219,10 @@ where
 
         // Short circuit if message is too large - this is not retryable
         if e.code() == Code::ResourceExhausted
-            && e.message()
-                .contains("grpc: received message larger than max")
+            && (e.message()
+                .starts_with("grpc: received message larger than max") ||
+                e.message().starts_with("grpc: message after decompression larger than max") ||
+                e.message().starts_with("grpc: received message after decompression larger than max")
         {
             // Leave a marker so we don't have duplicate detection logic in the workflow
             e.metadata_mut()
