@@ -211,6 +211,7 @@ impl CoreWfStarter {
     }
 
     pub fn new_with_client(test_name: &str, client: RetryClient<Client>) -> Self {
+        init_integ_telem();
         Self::_new(test_name, None, Some(client))
     }
 
