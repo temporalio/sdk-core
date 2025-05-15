@@ -35,7 +35,7 @@ async fn get_client(client_name: &str) -> RetryClient<Client> {
         .build()
         .unwrap();
     sgo.connect(
-        env::var("TEMPORAL_CLOUD_NAMESPACE").expect("TEMPORAL_CLOUD_NAMESPACE must be set"),
+        env::var("TEMPORAL_NAMESPACE").expect("TEMPORAL_NAMESPACE must be set"),
         None,
     )
     .await
