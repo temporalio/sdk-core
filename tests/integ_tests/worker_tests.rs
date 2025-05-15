@@ -1,4 +1,6 @@
 use assert_matches::assert_matches;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering::Relaxed;
 use std::{cell::Cell, sync::Arc, time::Duration};
 use temporal_client::WorkflowOptions;
 use temporal_sdk::{WfContext, interceptors::WorkerInterceptor};
@@ -8,6 +10,9 @@ use temporal_sdk_core_api::{
     errors::WorkerValidationError,
     worker::{PollerBehavior, WorkerConfigBuilder, WorkerVersioningStrategy},
 };
+use temporal_sdk_core_protos::temporal::api::enums::v1::EventType;
+use temporal_sdk_core_protos::temporal::api::enums::v1::WorkflowTaskFailedCause::WorkflowWorkerUnhandledFailure;
+use temporal_sdk_core_protos::temporal::api::history::v1::history_event::Attributes::WorkflowTaskFailedEventAttributes;
 use temporal_sdk_core_protos::{
     coresdk::workflow_completion::{
         Failure, WorkflowActivationCompletion, workflow_activation_completion::Status,
@@ -152,4 +157,36 @@ async fn resource_based_few_pollers_guarantees_non_sticky_poll() {
             .unwrap();
     }
     worker.run_until_done().await.unwrap();
+}
+
+#[tokio::test]
+async fn oversize_grpc_message() {
+    let wf_name = "oversize_grpc_message";
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter.worker_config.no_remote_activities(true);
+    let mut core = starter.worker().await;
+
+    static OVERSIZE_GRPC_MESSAGE_RUN: AtomicBool = AtomicBool::new(false);
+    core.register_wf(wf_name.to_owned(), |_ctx: WfContext| async move {
+        if OVERSIZE_GRPC_MESSAGE_RUN.load(Relaxed) {
+            Ok(vec![].into())
+        } else {
+            OVERSIZE_GRPC_MESSAGE_RUN.store(true, Relaxed);
+            let result: Vec<u8> = vec![0; 5000000];
+            Ok(result.into())
+        }
+    });
+    starter.start_with_worker(wf_name, &mut core).await;
+    core.run_until_done().await.unwrap();
+
+    assert!(starter.get_history().await.events.iter().any(|e| {
+        e.event_type == EventType::WorkflowTaskFailed as i32
+            && if let WorkflowTaskFailedEventAttributes(attr) = e.attributes.as_ref().unwrap() {
+                // TODO tim: Change to custom cause
+                attr.cause == WorkflowWorkerUnhandledFailure as i32
+                    && attr.failure.as_ref().unwrap().message == "GRPC Message too large"
+            } else {
+                false
+            }
+    }))
 }

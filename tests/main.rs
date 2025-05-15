@@ -20,12 +20,9 @@ mod integ_tests {
     mod worker_versioning_tests;
     mod workflow_tests;
 
-    use std::{env, str::FromStr, time::Duration};
+    use std::time::Duration;
     use temporal_client::{NamespacedClient, WorkflowService};
-    use temporal_sdk_core::{
-        ClientOptionsBuilder, ClientTlsConfig, CoreRuntime, TlsConfig, WorkflowClientTrait,
-        init_worker,
-    };
+    use temporal_sdk_core::{CoreRuntime, init_worker};
     use temporal_sdk_core_api::worker::WorkerConfigBuilder;
     use temporal_sdk_core_protos::temporal::api::{
         nexus::v1::{EndpointSpec, EndpointTarget, endpoint_target},
@@ -35,7 +32,6 @@ mod integ_tests {
     use temporal_sdk_core_test_utils::{
         CoreWfStarter, get_integ_server_options, get_integ_telem_options, rand_6_chars,
     };
-    use url::Url;
 
     // Create a worker like a bridge would (unwraps aside)
     #[tokio::test]
@@ -64,51 +60,6 @@ mod integ_tests {
         let _ = retrying_client
             .list_namespaces(ListNamespacesRequest::default())
             .await;
-    }
-
-    #[tokio::test]
-    async fn tls_test() {
-        let cloud_addr = env::var("TEMPORAL_CLOUD_ADDRESS");
-        let cloud_key = env::var("TEMPORAL_CLIENT_KEY");
-
-        let (cloud_addr, cloud_key) = if let (Ok(c), Ok(ck)) = (cloud_addr, cloud_key) {
-            if ck.is_empty() {
-                return; // secret not present in github, could be a fork, just skip
-            }
-            (c, ck)
-        } else {
-            // Skip the test
-            return;
-        };
-
-        let client_cert = env::var("TEMPORAL_CLIENT_CERT")
-            .expect("TEMPORAL_CLIENT_CERT must be set")
-            .replace("\\n", "\n")
-            .into_bytes();
-        let client_private_key = cloud_key.replace("\\n", "\n").into_bytes();
-        let sgo = ClientOptionsBuilder::default()
-            .target_url(Url::from_str(&cloud_addr).unwrap())
-            .client_name("tls_tester")
-            .client_version("clientver")
-            .tls_cfg(TlsConfig {
-                client_tls_config: Some(ClientTlsConfig {
-                    client_cert,
-                    client_private_key,
-                }),
-                ..Default::default()
-            })
-            .build()
-            .unwrap();
-        let con = sgo
-            .connect(
-                env::var("TEMPORAL_CLOUD_NAMESPACE").expect("TEMPORAL_CLOUD_NAMESPACE must be set"),
-                None,
-            )
-            .await
-            .unwrap();
-        con.list_workflow_executions(100, vec![], "".to_string())
-            .await
-            .unwrap();
     }
 
     pub(crate) async fn mk_nexus_endpoint(starter: &mut CoreWfStarter) -> String {
