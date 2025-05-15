@@ -5,6 +5,7 @@ CLI_VERSION_OVERRIDE = "v1.3.1-priority.0"
 
 [alias]
 integ-test = ["run", "--package", "temporal-sdk-core", "--example", "integ_runner", "--"]
+cloud-test = ["run", "--package", "temporal-sdk-core", "--example", "integ_runner", "--", "--test-name", "cloud_tests"]
 lint = ["clippy", "--workspace", "--examples", "--all-features",
     "--test", "integ_tests", "--test", "heavy_tests", "--test", "manual_tests",
     "--", "--D", "warnings"]
