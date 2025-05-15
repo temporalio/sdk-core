@@ -193,6 +193,7 @@ pub struct CoreWfStarter {
     pub workflow_options: WorkflowOptions,
     initted_worker: OnceCell<InitializedWorker>,
     runtime_override: Option<Arc<CoreRuntime>>,
+    client_override: Option<Arc<RetryClient<Client>>>,
 }
 struct InitializedWorker {
     worker: Arc<dyn CoreWorker>,
@@ -202,14 +203,18 @@ struct InitializedWorker {
 impl CoreWfStarter {
     pub fn new(test_name: &str) -> Self {
         init_integ_telem();
-        Self::_new(test_name, None)
+        Self::_new(test_name, None, None)
     }
 
     pub fn new_with_runtime(test_name: &str, runtime: CoreRuntime) -> Self {
-        Self::_new(test_name, Some(runtime))
+        Self::_new(test_name, Some(runtime), None)
     }
 
-    fn _new(test_name: &str, runtime_override: Option<CoreRuntime>) -> Self {
+    pub fn new_with_client(test_name: &str, client: RetryClient<Client>) -> Self {
+        Self::_new(test_name, None, Some(client))
+    }
+    
+    fn _new(test_name: &str, runtime_override: Option<CoreRuntime>, client_override: Option<RetryClient<Client>>) -> Self {
         let task_q_salt = rand_6_chars();
         let task_queue = format!("{test_name}_{task_q_salt}");
         let mut worker_config = integ_worker_config(&task_queue);
@@ -222,6 +227,7 @@ impl CoreWfStarter {
             initted_worker: OnceCell::new(),
             workflow_options: Default::default(),
             runtime_override: runtime_override.map(Arc::new),
+            client_override: client_override.map(Arc::new),
         }
     }
 
@@ -233,6 +239,7 @@ impl CoreWfStarter {
             worker_config: self.worker_config.clone(),
             workflow_options: self.workflow_options.clone(),
             runtime_override: self.runtime_override.clone(),
+            client_override: self.client_override.clone(),
             initted_worker: Default::default(),
         }
     }
@@ -367,15 +374,17 @@ impl CoreWfStarter {
                     .worker_config
                     .build()
                     .expect("Worker config must be valid");
-                let client = Arc::new(
+                let client = if let Some(client) = self.client_override.take() {
+                    client
+                } else { Arc::new(
                     get_integ_server_options()
                         .connect(
                             cfg.namespace.clone(),
                             rt.telemetry().get_temporal_metric_meter(),
                         )
                         .await
-                        .expect("Must connect"),
-                );
+                        .expect("Must connect")
+                )};
                 let worker = init_worker(rt, cfg, client.clone()).expect("Worker inits cleanly");
                 InitializedWorker {
                     worker: Arc::new(worker),
