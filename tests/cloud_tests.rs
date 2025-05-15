@@ -5,12 +5,12 @@ use std::sync::atomic::Ordering::Relaxed;
 use temporal_client::{
     Client, ClientOptionsBuilder, ClientTlsConfig, RetryClient, TlsConfig, WorkflowClientTrait,
 };
-use url::Url;
 use temporal_sdk::WfContext;
 use temporal_sdk_core_protos::temporal::api::enums::v1::EventType;
 use temporal_sdk_core_protos::temporal::api::enums::v1::WorkflowTaskFailedCause::WorkflowWorkerUnhandledFailure;
 use temporal_sdk_core_protos::temporal::api::history::v1::history_event::Attributes::WorkflowTaskFailedEventAttributes;
 use temporal_sdk_core_test_utils::CoreWfStarter;
+use url::Url;
 
 async fn get_client(client_name: &str) -> RetryClient<Client> {
     let cloud_addr = env::var("TEMPORAL_CLOUD_ADDRESS").unwrap();
@@ -53,7 +53,8 @@ async fn tls_test() {
 #[tokio::test]
 async fn grpc_message_too_large_test() {
     let wf_name = "oversize_grpc_message";
-    let mut starter = CoreWfStarter::new_with_client(wf_name,  get_client("grpc_message_too_large").await);
+    let mut starter =
+        CoreWfStarter::new_with_client(wf_name, get_client("grpc_message_too_large").await);
     starter.worker_config.no_remote_activities(true);
     let mut core = starter.worker().await;
 
@@ -73,11 +74,11 @@ async fn grpc_message_too_large_test() {
     assert!(starter.get_history().await.events.iter().any(|e| {
         e.event_type == EventType::WorkflowTaskFailed as i32
             && if let WorkflowTaskFailedEventAttributes(attr) = e.attributes.as_ref().unwrap() {
-            // TODO tim: Change to custom cause
-            attr.cause == WorkflowWorkerUnhandledFailure as i32
-                && attr.failure.as_ref().unwrap().message == "GRPC Message too large"
-        } else {
-            false
-        }
+                // TODO tim: Change to custom cause
+                attr.cause == WorkflowWorkerUnhandledFailure as i32
+                    && attr.failure.as_ref().unwrap().message == "GRPC Message too large"
+            } else {
+                false
+            }
     }))
 }

@@ -213,8 +213,12 @@ impl CoreWfStarter {
     pub fn new_with_client(test_name: &str, client: RetryClient<Client>) -> Self {
         Self::_new(test_name, None, Some(client))
     }
-    
-    fn _new(test_name: &str, runtime_override: Option<CoreRuntime>, client_override: Option<RetryClient<Client>>) -> Self {
+
+    fn _new(
+        test_name: &str,
+        runtime_override: Option<CoreRuntime>,
+        client_override: Option<RetryClient<Client>>,
+    ) -> Self {
         let task_q_salt = rand_6_chars();
         let task_queue = format!("{test_name}_{task_q_salt}");
         let mut worker_config = integ_worker_config(&task_queue);
@@ -376,15 +380,17 @@ impl CoreWfStarter {
                     .expect("Worker config must be valid");
                 let client = if let Some(client) = self.client_override.take() {
                     client
-                } else { Arc::new(
-                    get_integ_server_options()
-                        .connect(
-                            cfg.namespace.clone(),
-                            rt.telemetry().get_temporal_metric_meter(),
-                        )
-                        .await
-                        .expect("Must connect")
-                )};
+                } else {
+                    Arc::new(
+                        get_integ_server_options()
+                            .connect(
+                                cfg.namespace.clone(),
+                                rt.telemetry().get_temporal_metric_meter(),
+                            )
+                            .await
+                            .expect("Must connect"),
+                    )
+                };
                 let worker = init_worker(rt, cfg, client.clone()).expect("Worker inits cleanly");
                 InitializedWorker {
                     worker: Arc::new(worker),
