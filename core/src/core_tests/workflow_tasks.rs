@@ -2528,7 +2528,7 @@ async fn post_terminal_commands_are_retained_when_not_replaying() {
     ]);
     _do_post_terminal_commands_test(
         commands_sent_by_lang,
-        [ResponseType::ToTaskNum(1), ResponseType::AllHistory],
+        [ResponseType::ToTaskNum(1)],
         expected_command_types_emitted,
         t,
     )
@@ -2602,7 +2602,6 @@ async fn _do_post_terminal_commands_test(
 
     let act = core.poll_workflow_activation().await.unwrap();
 
-    core.initiate_shutdown();
     core.complete_workflow_activation(WorkflowActivationCompletion::from_cmds(
         act.run_id,
         commands_sent_by_lang,
@@ -2610,6 +2609,7 @@ async fn _do_post_terminal_commands_test(
     .await
     .unwrap();
 
+    core.initiate_shutdown();
     let act = core.poll_workflow_activation().await;
     assert_matches!(act.unwrap_err(), PollError::ShutDown);
     core.shutdown().await;
