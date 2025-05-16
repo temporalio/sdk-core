@@ -40,6 +40,9 @@ cargo integ-test       # integration tests (starts ephemeral server by default)
 cargo test --test heavy_tests  # load tests -- agents do not need to run this and should not
 ```
 
+Rust compilation can take some time. Do not interrupt builds or tests unless they are taking more
+than 10 minutes.
+
 Additional checks:
 
 ```bash
@@ -63,6 +66,8 @@ Documentation can be generated with `cargo doc`.
 Reviewers will look for:
 
 - All builds, tests, and lints passing in CI
+    - Note that some tests cause intentional panics. That does not mean the test failed. You should
+      only consider tests that have failed according to the harness to be a real problem.
 - New tests covering behavior changes
 - Clear and concise code following existing style (see `README.md` for error handling guidance)
 - Documentation updates for any public API changes
