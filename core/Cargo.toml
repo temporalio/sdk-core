@@ -129,11 +129,16 @@ test = false
 name = "workflow_replay"
 harness = false
 
-# This is maybe a bit hacky, but we call the runner an "example" because that gets it compiling with
-# the dev-dependencies, which we want.
-[[example]]
+# The integration test runner should compile with the same configuration as the
+# rest of the integration tests so that artifacts are shared and no additional
+# compilation is required when switching between using the runner and running
+# tests directly.
+[[test]]
 name = "integ_runner"
 path = "../tests/runner.rs"
+harness = false
+test = false
+required-features = ["temporal-sdk-core-protos/serde_serialize"]
 
 [lints]
 workspace = true
