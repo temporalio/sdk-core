@@ -43,32 +43,29 @@ async fn fuzzy_wf_def(ctx: WfContext) -> WorkflowResult<()> {
 
     sigchan
         .take_until(done.cancelled())
-        .for_each_concurrent(None, |action| {
-            let fut = match action {
-                FuzzyWfAction::DoAct => ctx
-                    .activity(ActivityOptions {
-                        activity_type: "echo_activity".to_string(),
-                        start_to_close_timeout: Some(Duration::from_secs(5)),
-                        input: "hi!".as_json_payload().expect("serializes fine"),
-                        ..Default::default()
-                    })
-                    .map(|_| ())
-                    .boxed(),
-                FuzzyWfAction::DoLocalAct => ctx
-                    .local_activity(LocalActivityOptions {
-                        activity_type: "echo_activity".to_string(),
-                        start_to_close_timeout: Some(Duration::from_secs(5)),
-                        input: "hi!".as_json_payload().expect("serializes fine"),
-                        ..Default::default()
-                    })
-                    .map(|_| ())
-                    .boxed(),
-                FuzzyWfAction::Shutdown => {
-                    done_setter.cancel();
-                    future::ready(()).boxed()
-                }
-            };
-            fut
+        .for_each_concurrent(None, |action| match action {
+            FuzzyWfAction::DoAct => ctx
+                .activity(ActivityOptions {
+                    activity_type: "echo_activity".to_string(),
+                    start_to_close_timeout: Some(Duration::from_secs(5)),
+                    input: "hi!".as_json_payload().expect("serializes fine"),
+                    ..Default::default()
+                })
+                .map(|_| ())
+                .boxed(),
+            FuzzyWfAction::DoLocalAct => ctx
+                .local_activity(LocalActivityOptions {
+                    activity_type: "echo_activity".to_string(),
+                    start_to_close_timeout: Some(Duration::from_secs(5)),
+                    input: "hi!".as_json_payload().expect("serializes fine"),
+                    ..Default::default()
+                })
+                .map(|_| ())
+                .boxed(),
+            FuzzyWfAction::Shutdown => {
+                done_setter.cancel();
+                future::ready(()).boxed()
+            }
         })
         .await;
 
