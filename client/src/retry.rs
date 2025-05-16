@@ -1,6 +1,6 @@
 use crate::{
-    Client, IsWorkerTaskLongPoll, NamespacedClient, NoRetryOnMatching, Result, RetryConfig,
-    raw::IsUserLongPoll,
+    Client, IsWorkerTaskLongPoll, MESSAGE_TOO_LARGE_KEY, NamespacedClient, NoRetryOnMatching,
+    Result, RetryConfig, raw::IsUserLongPoll,
 };
 use backoff::{Clock, SystemClock, backoff::Backoff, exponential::ExponentialBackoff};
 use futures_retry::{ErrorHandler, FutureRetry, RetryPolicy};
@@ -201,7 +201,11 @@ where
 {
     type OutError = tonic::Status;
 
-    fn handle(&mut self, current_attempt: usize, e: tonic::Status) -> RetryPolicy<tonic::Status> {
+    fn handle(
+        &mut self,
+        current_attempt: usize,
+        mut e: tonic::Status,
+    ) -> RetryPolicy<tonic::Status> {
         // 0 max retries means unlimited retries
         if self.max_retries > 0 && current_attempt >= self.max_retries {
             return RetryPolicy::ForwardError(e);
@@ -211,6 +215,24 @@ where
             if (sc.predicate)(&e) {
                 return RetryPolicy::ForwardError(e);
             }
+        }
+
+        // Short circuit if message is too large - this is not retryable
+        if e.code() == Code::ResourceExhausted
+            && (e
+                .message()
+                .starts_with("grpc: received message larger than max")
+                || e.message()
+                    .starts_with("grpc: message after decompression larger than max")
+                || e.message()
+                    .starts_with("grpc: received message after decompression larger than max"))
+        {
+            // Leave a marker so we don't have duplicate detection logic in the workflow
+            e.metadata_mut().insert(
+                MESSAGE_TOO_LARGE_KEY,
+                tonic::metadata::MetadataValue::from(0),
+            );
+            return RetryPolicy::ForwardError(e);
         }
 
         // Task polls are OK with being cancelled or running into the timeout because there's
@@ -421,6 +443,47 @@ mod tests {
         );
         let result = err_handler.handle(1, Status::new(Code::ResourceExhausted, "leave me alone"));
         assert_matches!(result, RetryPolicy::ForwardError(_))
+    }
+
+    #[tokio::test]
+    async fn message_too_large_not_retried() {
+        let mut err_handler = TonicErrorHandler::new_with_clock(
+            CallInfo {
+                call_type: CallType::TaskLongPoll,
+                call_name: POLL_WORKFLOW_METH_NAME,
+                retry_cfg: TEST_RETRY_CONFIG,
+                retry_short_circuit: None,
+            },
+            TEST_RETRY_CONFIG,
+            FixedClock(Instant::now()),
+            FixedClock(Instant::now()),
+        );
+        let result = err_handler.handle(
+            1,
+            Status::new(
+                Code::ResourceExhausted,
+                "grpc: received message larger than max",
+            ),
+        );
+        assert_matches!(result, RetryPolicy::ForwardError(_));
+
+        let result = err_handler.handle(
+            1,
+            Status::new(
+                Code::ResourceExhausted,
+                "grpc: message after decompression larger than max",
+            ),
+        );
+        assert_matches!(result, RetryPolicy::ForwardError(_));
+
+        let result = err_handler.handle(
+            1,
+            Status::new(
+                Code::ResourceExhausted,
+                "grpc: received message after decompression larger than max",
+            ),
+        );
+        assert_matches!(result, RetryPolicy::ForwardError(_));
     }
 
     #[rstest::rstest]

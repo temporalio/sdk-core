@@ -14,6 +14,7 @@ mod workflow_stream;
 pub(crate) use driven_workflow::DrivenWorkflow;
 pub(crate) use history_update::HistoryUpdate;
 
+use crate::protosext::ValidPollWFTQResponse;
 use crate::{
     MetricsContext,
     abstractions::{
@@ -56,6 +57,7 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+use temporal_client::MESSAGE_TOO_LARGE_KEY;
 use temporal_sdk_core_api::{
     errors::{CompleteWfError, PollError},
     worker::{ActivitySlotKind, WorkerConfig, WorkflowSlotKind},
@@ -77,6 +79,7 @@ use temporal_sdk_core_protos::{
         command::v1::{Command as ProtoCommand, Command, command::Attributes},
         common::v1::{Memo, MeteringMetadata, RetryPolicy, SearchAttributes, WorkflowExecution},
         enums::v1::{VersioningBehavior, WorkflowTaskFailedCause},
+        failure::v1::{ApplicationFailureInfo, failure::FailureInfo},
         protocol::v1::Message as ProtocolMessage,
         query::v1::WorkflowQuery,
         sdk::v1::{UserMetadata, WorkflowTaskCompletedMetadata},
@@ -317,6 +320,187 @@ impl Workflows {
         }
     }
 
+    async fn handle_activation_completed_success(
+        &self,
+        run_id: &str,
+        wft_from_complete: &mut Option<ValidPollWFTQResponse>,
+        completion_time: Instant,
+        report: ServerCommandsWithWorkflowInfo,
+    ) -> WFTReportStatus {
+        match report {
+            ServerCommandsWithWorkflowInfo {
+                task_token,
+                action:
+                    ActivationAction::WftComplete {
+                        mut commands,
+                        messages,
+                        query_responses,
+                        force_new_wft,
+                        sdk_metadata,
+                        mut versioning_behavior,
+                    },
+            } => {
+                let reserved_act_permits =
+                    self.reserve_activity_slots_for_outgoing_commands(commands.as_mut_slice());
+                debug!(commands=%commands.display(), query_responses=%query_responses.display(),
+                           messages=%messages.display(), force_new_wft,
+                           "Sending responses to server");
+                if let Some(default_vb) = self.default_versioning_behavior.as_ref() {
+                    if versioning_behavior == VersioningBehavior::Unspecified {
+                        versioning_behavior = *default_vb;
+                    }
+                }
+                let mut completion = WorkflowTaskCompletion {
+                    task_token: task_token.clone(),
+                    commands,
+                    messages,
+                    query_responses,
+                    sticky_attributes: None,
+                    return_new_workflow_task: true,
+                    force_create_new_workflow_task: force_new_wft,
+                    sdk_metadata,
+                    metering_metadata: MeteringMetadata {
+                        nonfirst_local_activity_execution_attempts: self
+                            .local_act_mgr
+                            .get_nonfirst_attempt_count(run_id)
+                            as u32,
+                    },
+                    versioning_behavior,
+                };
+                let sticky_attrs = self.sticky_attrs.clone();
+                // Do not return new WFT if we would not cache, because returned new WFTs are
+                // always partial.
+                if sticky_attrs.is_none() {
+                    completion.return_new_workflow_task = false;
+                }
+                completion.sticky_attributes = sticky_attrs;
+
+                let mut reset_last_started_to = None;
+                self.handle_wft_reporting_errs(run_id, || async {
+                    match self.client.complete_workflow_task(completion).await {
+                        Ok(response) => {
+                            if response.reset_history_event_id > 0 {
+                                reset_last_started_to = Some(response.reset_history_event_id);
+                            }
+                            if let Some(wft) = response.workflow_task {
+                                *wft_from_complete = Some(validate_wft(wft)?);
+                            }
+                            self.handle_eager_activities(
+                                reserved_act_permits,
+                                response.activity_tasks,
+                            );
+                        }
+                        Err(e) if e.metadata().contains_key(MESSAGE_TOO_LARGE_KEY) => {
+                            let failure = Failure {
+                                failure: Some(
+                                    temporal_sdk_core_protos::temporal::api::failure::v1::Failure {
+                                        message: "GRPC Message too large".to_string(),
+                                        failure_info: Some(FailureInfo::ApplicationFailureInfo(
+                                            ApplicationFailureInfo {
+                                                r#type: "GrpcMessageTooLarge".to_string(),
+                                                non_retryable: true,
+                                                ..Default::default()
+                                            },
+                                        )),
+                                        ..Default::default()
+                                    },
+                                ),
+                                force_cause: 0,
+                            };
+                            // TODO: tim - Update workflow cause when API is ready
+                            let new_outcome = FailedActivationWFTReport::Report(
+                                task_token,
+                                WorkflowTaskFailedCause::WorkflowWorkerUnhandledFailure,
+                                failure,
+                            );
+                            self.handle_activation_failed(run_id, completion_time, new_outcome)
+                                .await;
+                        }
+                        e => {
+                            e?;
+                        }
+                    };
+
+                    Ok(())
+                })
+                .await;
+                WFTReportStatus::Reported {
+                    reset_last_started_to,
+                    completion_time,
+                }
+            }
+            ServerCommandsWithWorkflowInfo {
+                task_token,
+                action: ActivationAction::RespondLegacyQuery { result },
+            } => {
+                self.respond_legacy_query(task_token, *result).await;
+                WFTReportStatus::Reported {
+                    reset_last_started_to: None,
+                    completion_time,
+                }
+            }
+        }
+    }
+
+    async fn handle_activation_failed(
+        &self,
+        run_id: &str,
+        completion_time: Instant,
+        outcome: FailedActivationWFTReport,
+    ) -> WFTReportStatus {
+        match outcome {
+            FailedActivationWFTReport::Report(tt, cause, failure) => {
+                warn!(run_id=%run_id, failure=?failure, "Failing workflow task");
+                self.handle_wft_reporting_errs(run_id, || async {
+                    self.client
+                        .fail_workflow_task(tt, cause, failure.failure)
+                        .await
+                })
+                .await;
+                WFTReportStatus::Reported {
+                    reset_last_started_to: None,
+                    completion_time,
+                }
+            }
+            FailedActivationWFTReport::ReportLegacyQueryFailure(task_token, failure) => {
+                warn!(run_id=%run_id, failure=?failure, "Failing legacy query request");
+                self.respond_legacy_query(task_token, legacy_query_failure(failure))
+                    .await;
+                WFTReportStatus::Reported {
+                    reset_last_started_to: None,
+                    completion_time,
+                }
+            }
+        }
+    }
+
+    async fn handle_activation_completed_result(
+        &self,
+        run_id: &str,
+        wft_from_complete: &mut Option<ValidPollWFTQResponse>,
+        completion_outcome: ActivationCompleteResult,
+    ) -> WFTReportStatus {
+        let completion_time = Instant::now();
+
+        match completion_outcome.outcome {
+            ActivationCompleteOutcome::ReportWFTSuccess(report) => {
+                self.handle_activation_completed_success(
+                    run_id,
+                    wft_from_complete,
+                    completion_time,
+                    report,
+                )
+                .await
+            }
+            ActivationCompleteOutcome::ReportWFTFail(outcome) => {
+                self.handle_activation_failed(run_id, completion_time, outcome)
+                    .await
+            }
+            ActivationCompleteOutcome::WFTFailedDontReport => WFTReportStatus::DropWft,
+            ActivationCompleteOutcome::DoNothing => WFTReportStatus::NotReported,
+        }
+    }
+
     /// Queue an activation completion for processing, returning a future that will resolve with
     /// the outcome of that completion. See [ActivationCompletedOutcome].
     ///
@@ -357,114 +541,12 @@ impl Workflows {
             );
             return Ok(());
         };
+        let replaying = completion_outcome.replaying;
 
         let mut wft_from_complete = None;
-        let completion_time = Instant::now();
-        let wft_report_status = match completion_outcome.outcome {
-            ActivationCompleteOutcome::ReportWFTSuccess(report) => match report {
-                ServerCommandsWithWorkflowInfo {
-                    task_token,
-                    action:
-                        ActivationAction::WftComplete {
-                            mut commands,
-                            messages,
-                            query_responses,
-                            force_new_wft,
-                            sdk_metadata,
-                            mut versioning_behavior,
-                        },
-                } => {
-                    let reserved_act_permits =
-                        self.reserve_activity_slots_for_outgoing_commands(commands.as_mut_slice());
-                    debug!(commands=%commands.display(), query_responses=%query_responses.display(),
-                           messages=%messages.display(), force_new_wft,
-                           "Sending responses to server");
-                    if let Some(default_vb) = self.default_versioning_behavior.as_ref() {
-                        if versioning_behavior == VersioningBehavior::Unspecified {
-                            versioning_behavior = *default_vb;
-                        }
-                    }
-                    let mut completion = WorkflowTaskCompletion {
-                        task_token,
-                        commands,
-                        messages,
-                        query_responses,
-                        sticky_attributes: None,
-                        return_new_workflow_task: true,
-                        force_create_new_workflow_task: force_new_wft,
-                        sdk_metadata,
-                        metering_metadata: MeteringMetadata {
-                            nonfirst_local_activity_execution_attempts: self
-                                .local_act_mgr
-                                .get_nonfirst_attempt_count(&run_id)
-                                as u32,
-                        },
-                        versioning_behavior,
-                    };
-                    let sticky_attrs = self.sticky_attrs.clone();
-                    // Do not return new WFT if we would not cache, because returned new WFTs are
-                    // always partial.
-                    if sticky_attrs.is_none() {
-                        completion.return_new_workflow_task = false;
-                    }
-                    completion.sticky_attributes = sticky_attrs;
-
-                    let mut reset_last_started_to = None;
-                    self.handle_wft_reporting_errs(&run_id, || async {
-                        let response = self.client.complete_workflow_task(completion).await?;
-                        if response.reset_history_event_id > 0 {
-                            reset_last_started_to = Some(response.reset_history_event_id);
-                        }
-                        if let Some(wft) = response.workflow_task {
-                            wft_from_complete = Some(validate_wft(wft)?);
-                        }
-                        self.handle_eager_activities(reserved_act_permits, response.activity_tasks);
-                        Ok(())
-                    })
-                    .await;
-                    WFTReportStatus::Reported {
-                        reset_last_started_to,
-                        completion_time,
-                    }
-                }
-                ServerCommandsWithWorkflowInfo {
-                    task_token,
-                    action: ActivationAction::RespondLegacyQuery { result },
-                } => {
-                    self.respond_legacy_query(task_token, *result).await;
-                    WFTReportStatus::Reported {
-                        reset_last_started_to: None,
-                        completion_time,
-                    }
-                }
-            },
-            ActivationCompleteOutcome::ReportWFTFail(outcome) => match outcome {
-                FailedActivationWFTReport::Report(tt, cause, failure) => {
-                    warn!(run_id=%run_id, failure=?failure, "Failing workflow task");
-                    self.handle_wft_reporting_errs(&run_id, || async {
-                        self.client
-                            .fail_workflow_task(tt, cause, failure.failure)
-                            .await
-                    })
-                    .await;
-                    WFTReportStatus::Reported {
-                        reset_last_started_to: None,
-                        completion_time,
-                    }
-                }
-                FailedActivationWFTReport::ReportLegacyQueryFailure(task_token, failure) => {
-                    warn!(run_id=%run_id, failure=?failure, "Failing legacy query request");
-                    self.respond_legacy_query(task_token, legacy_query_failure(failure))
-                        .await;
-                    WFTReportStatus::Reported {
-                        reset_last_started_to: None,
-                        completion_time,
-                    }
-                }
-            },
-            ActivationCompleteOutcome::WFTFailedDontReport => WFTReportStatus::DropWft,
-            ActivationCompleteOutcome::DoNothing => WFTReportStatus::NotReported,
-        };
+        let wft_report_status = self
+            .handle_activation_completed_result(&run_id, &mut wft_from_complete, completion_outcome)
+            .await;
 
         let maybe_pwft = if let Some(wft) = wft_from_complete {
             match HistoryPaginator::from_poll(wft, self.client.clone()).await {
@@ -485,7 +567,7 @@ impl Workflows {
         if let Some(h) = post_activate_hook {
             h(PostActivateHookData {
                 run_id: &run_id,
-                replaying: completion_outcome.replaying,
+                replaying,
             });
         }
 

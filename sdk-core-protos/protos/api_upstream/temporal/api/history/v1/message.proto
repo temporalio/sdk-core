@@ -35,7 +35,7 @@ message WorkflowExecutionStartedEventAttributes {
     // Contains information about parent workflow execution that initiated the child workflow these attributes belong to.
     // If the workflow these attributes belong to is not a child workflow of any other execution, this field will not be populated.
     temporal.api.common.v1.WorkflowExecution parent_workflow_execution = 3;
-    // EventID of the child execution initiated event in parent workflow 
+    // EventID of the child execution initiated event in parent workflow
     int64 parent_initiated_event_id = 4;
     temporal.api.taskqueue.v1.TaskQueue task_queue = 5;
     // SDK will deserialize this and provide it as arguments to the workflow function
@@ -440,7 +440,7 @@ message ActivityTaskCanceledEventAttributes {
     string identity = 5;
     // Version info of the worker who processed this workflow task.
     // Deprecated. This field should be cleaned up when versioning-2 API is removed. [cleanup-experimental-wv]
-    temporal.api.common.v1.WorkerVersionStamp worker_version = 6 [deprecated = true];;
+    temporal.api.common.v1.WorkerVersionStamp worker_version = 6 [deprecated = true];
 }
 
 message TimerStartedEventAttributes {
@@ -475,8 +475,8 @@ message TimerCanceledEventAttributes {
 
 message WorkflowExecutionCancelRequestedEventAttributes {
     // User provided reason for requesting cancellation
-    // TODO: shall we create a new field with name "reason" and deprecate this one? 
-    string cause = 1; 
+    // TODO: shall we create a new field with name "reason" and deprecate this one?
+    string cause = 1;
     // TODO: Is this the ID of the event in the workflow which initiated this cancel, if there was one?
     int64 external_initiated_event_id = 2;
     temporal.api.common.v1.WorkflowExecution external_workflow_execution = 3;
@@ -509,7 +509,7 @@ message WorkflowExecutionSignaledEventAttributes {
     temporal.api.common.v1.Payloads input = 2;
     // id of the worker/client who sent this signal
     string identity = 3;
-    // Headers that were passed by the sender of the signal and copied by temporal 
+    // Headers that were passed by the sender of the signal and copied by temporal
     // server into the workflow task.
     temporal.api.common.v1.Header header = 4;
     // This field is deprecated and never respected. It should always be set to false.
