@@ -1,6 +1,7 @@
 # Contributor Guidance for `sdk-core`
 
-This repository provides a Rust workspace for the Temporal Core SDK and related crates. Use this document as your quick reference when submitting pull requests.
+This repository provides a Rust workspace for the Temporal Core SDK and related crates. Use this
+document as your quick reference when submitting pull requests.
 
 ## Where Things Are
 
@@ -18,12 +19,13 @@ This repository provides a Rust workspace for the Temporal Core SDK and related 
 ## Repo Specific Utilities
 
 - `.cargo/config.toml` defines useful cargo aliases:
-  - `cargo lint` – run clippy on workspace crates
-  - `cargo test-lint` – run clippy on tests
-  - `cargo integ-test` – run the integration test runner
+    - `cargo lint` – run clippy on workspace crates
+    - `cargo test-lint` – run clippy on tests
+    - `cargo integ-test` – run the integration test runner
 - `cargo-tokio-console.sh` – run any cargo command with the `tokio-console` feature
 - `integ-with-otel.sh` – run integration tests with OpenTelemetry enabled
-- `.cargo/multi-worker-manual-test` – helper script for spawning multiple workers during manual testing
+- `.cargo/multi-worker-manual-test` – helper script for spawning multiple workers during manual
+  testing
 
 ## Building and Testing
 
@@ -33,7 +35,7 @@ The following commands are enforced for each pull request (see `README.md`):
 cargo build            # build all crates
 cargo test             # run unit tests
 cargo integ-test       # integration tests (starts ephemeral server by default)
-cargo test --test heavy_tests  # load tests
+cargo test --test heavy_tests  # load tests -- agents do not need to run this and should not
 ```
 
 Additional checks:
@@ -48,7 +50,8 @@ Documentation can be generated with `cargo doc`.
 ## Expectations for Pull Requests
 
 - Format and lint your code before submitting.
-- Ensure all tests pass locally. Integration tests may require a running Temporal server or the ephemeral server started by `cargo integ-test`.
+- Ensure all tests pass locally. Integration tests may require a running Temporal server or the
+  ephemeral server started by `cargo integ-test`.
 - Keep commit messages short and in the imperative mood.
 - Provide a clear PR description outlining what changed and why.
 - Reviewers expect new features or fixes to include corresponding tests when applicable.
@@ -64,5 +67,7 @@ Reviewers will look for:
 
 ## Notes
 
-- Fetch workflow histories with `cargo run --bin histfetch <workflow_id> [run_id]` (binary lives in `test-utils`).
-- Protobuf files under `sdk-core-protos/protos/api_upstream` are a git subtree; see `README.md` for update instructions.
+- Fetch workflow histories with `cargo run --bin histfetch <workflow_id> [run_id]` (binary lives in
+  `test-utils`).
+- Protobuf files under `sdk-core-protos/protos/api_upstream` are a git subtree; see `README.md` for
+  update instructions.

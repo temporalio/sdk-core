@@ -260,6 +260,7 @@ pub(crate) struct CompleteLocalActivityData {
     pub(crate) result: Result<Payload, Failure>,
 }
 
+#[allow(clippy::result_large_err)]
 pub(crate) fn validate_activity_completion(
     status: &activity_execution_result::Status,
 ) -> Result<(), CompleteActivityError> {

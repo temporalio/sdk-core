@@ -739,7 +739,7 @@ impl WorkflowMachines {
 
         // Needed to delay mutation of self until after we've iterated over peeked events.
         enum DelayedAction {
-            WakeLa(MachineKey, CompleteLocalActivityData),
+            WakeLa(MachineKey, Box<CompleteLocalActivityData>),
             ProtocolMessage(IncomingProtocolMessage),
         }
         let mut delayed_actions = vec![];
@@ -775,7 +775,7 @@ impl WorkflowMachines {
                     if let Ok(mk) =
                         self.get_machine_key(CommandID::LocalActivity(la_dat.marker_dat.seq))
                     {
-                        delayed_actions.push(DelayedAction::WakeLa(mk, la_dat));
+                        delayed_actions.push(DelayedAction::WakeLa(mk, Box::new(la_dat)));
                     } else {
                         self.local_activity_data.insert_peeked_marker(la_dat);
                     }
@@ -807,10 +807,10 @@ impl WorkflowMachines {
                     let mach = self.machine_mut(mk);
                     if let Machines::LocalActivityMachine(ref mut lam) = *mach {
                         if lam.will_accept_resolve_marker() {
-                            let resps = lam.try_resolve_with_dat(la_dat.into())?;
+                            let resps = lam.try_resolve_with_dat((*la_dat).into())?;
                             self.process_machine_responses(mk, resps)?;
                         } else {
-                            self.local_activity_data.insert_peeked_marker(la_dat);
+                            self.local_activity_data.insert_peeked_marker(*la_dat);
                         }
                     }
                 }

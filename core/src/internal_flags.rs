@@ -40,6 +40,7 @@ pub(crate) enum CoreInternalFlags {
     TooHigh = u32::MAX,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum InternalFlags {
     Enabled {
