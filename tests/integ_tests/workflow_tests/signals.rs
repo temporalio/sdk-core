@@ -1,6 +1,6 @@
-use std::collections::HashMap;
-
 use futures_util::StreamExt;
+use std::collections::HashMap;
+use std::time::Duration;
 use temporal_client::{SignalWithStartOptions, WorkflowClientTrait, WorkflowOptions};
 use temporal_sdk::{
     ChildWorkflowOptions, Signal, SignalWorkflowOptions, WfContext, WfExitValue, WorkflowResult,
@@ -165,15 +165,18 @@ async fn sends_signal_to_child() {
 }
 
 async fn drain_sigchan_wf(ctx: WfContext) -> WorkflowResult<()> {
-    let mut sigchan = ctx.make_signal_channel(SIGNAME);
+    let sigchan = ctx.make_signal_channel(SIGNAME);
 
-    // If we drain the channel with drain_all, we get no signals and the workflow stays stuck.
+    // If we drain the channel with drain_all here, we get no signals and the workflow stays stuck.
+    // let signals = sigchan.drain_all();
+    // info!("Signals received: {:?}", signals);
+
+    // If we add this timer, the workflow gets unstuck (even without drain_all).
+    ctx.timer(Duration::from_secs(0)).await;
+
+    // If we drain the channel with drain_all here, *after* the timer, we get signals and the workflow is not stuck.
     let signals = sigchan.drain_all();
     info!("Signals received: {:?}", signals);
-
-    // If we drain it with .next(), we get a signal and the workflow gets unstuck.
-    // let signal = sigchan.next().await.unwrap();
-    // info!("Signal received: {:?}", signal);
 
     Ok(WfExitValue::Normal(()))
 }
