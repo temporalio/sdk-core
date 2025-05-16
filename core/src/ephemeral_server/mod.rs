@@ -546,7 +546,7 @@ async fn download_and_extract(
     // We have to map the error type to an io error
     let stream = resp
         .bytes_stream()
-        .map(|item| item.map_err(|err| io::Error::new(io::ErrorKind::Other, err)));
+        .map(|item| item.map_err(io::Error::other));
 
     // Since our tar/zip impls use sync IO, we have to create a bridge and run
     // in a blocking closure.

@@ -893,6 +893,7 @@ impl TimeoutBag {
     /// as request to schedule it arrives.
     ///
     /// Returns error in the event the activity is *already* timed out
+    #[allow(clippy::result_large_err)]
     fn new(
         new_la: &NewLocalAct,
         cancel_chan: UnboundedSender<CancelOrTimeout>,

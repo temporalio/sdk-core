@@ -1014,7 +1014,8 @@ impl ManagedRun {
             }
             Err(fail) => {
                 self.am_broken = true;
-                let rur = if let Some(resp_chan) = fail.complete_resp_chan {
+
+                if let Some(resp_chan) = fail.complete_resp_chan {
                     // Automatically fail the workflow task in the event we couldn't update machines
                     let fail_cause = if matches!(&fail.source, WFMachinesError::Nondeterminism(_)) {
                         WorkflowTaskFailedCause::NonDeterministicError
@@ -1034,8 +1035,7 @@ impl ManagedRun {
                         run_id: self.run_id().to_owned(),
                         machines_err: fail.source,
                     })
-                };
-                rur
+                }
             }
         }
     }

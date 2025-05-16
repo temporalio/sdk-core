@@ -71,7 +71,7 @@ impl NexusManager {
         let task_stream_input = stream::select_with_strategy(
             UnboundedReceiverStream::new(cancels_rx).map(TaskStreamInput::from),
             source_stream
-                .map(TaskStreamInput::from)
+                .map(|p| TaskStreamInput::from(Box::new(p)))
                 .chain(stream::once(async move { TaskStreamInput::SourceComplete })),
             |_: &mut ()| PollNext::Left,
         );
@@ -244,82 +244,85 @@ where
         self.source_stream
             .filter_map(move |t| {
                 let res = match t {
-                    TaskStreamInput::Poll(Ok(t)) => {
-                        if let Some(dur) = t.resp.sched_to_start() {
-                            self.metrics.nexus_task_sched_to_start_latency(dur);
-                        };
+                    TaskStreamInput::Poll(t) => match *t {
+                        Ok(t) => {
+                            if let Some(dur) = t.resp.sched_to_start() {
+                                self.metrics.nexus_task_sched_to_start_latency(dur);
+                            };
 
-                        let tt = TaskToken(t.resp.task_token.clone());
-                        let mut timeout_task = None;
-                        if let Some(timeout_str) = t
-                            .resp
-                            .request
-                            .as_ref()
-                            .and_then(|r| r.header.get(REQUEST_TIMEOUT_HEADER))
-                        {
-                            if let Ok(timeout_dur) = parse_request_timeout(timeout_str) {
-                                let tt_clone = tt.clone();
-                                let cancels_tx = self.cancels_tx.clone();
-                                timeout_task = Some(tokio::task::spawn(async move {
-                                    tokio::time::sleep(timeout_dur).await;
-                                    debug!(
+                            let tt = TaskToken(t.resp.task_token.clone());
+                            let mut timeout_task = None;
+                            if let Some(timeout_str) = t
+                                .resp
+                                .request
+                                .as_ref()
+                                .and_then(|r| r.header.get(REQUEST_TIMEOUT_HEADER))
+                            {
+                                if let Ok(timeout_dur) = parse_request_timeout(timeout_str) {
+                                    let tt_clone = tt.clone();
+                                    let cancels_tx = self.cancels_tx.clone();
+                                    timeout_task = Some(tokio::task::spawn(async move {
+                                        tokio::time::sleep(timeout_dur).await;
+                                        debug!(
                                         task_token=%tt_clone,
                                         "Timing out nexus task due to elapsed local timeout timer"
                                     );
-                                    let _ = cancels_tx.send(CancelNexusTask {
-                                        task_token: tt_clone.0,
-                                        reason: NexusTaskCancelReason::TimedOut.into(),
-                                    });
-                                }));
-                            } else {
-                                // This could auto-respond and fail the nexus task, but given that
-                                // the server is going to try to parse this as well, and all we're
-                                // doing with this parsing is notifying the handler of a local
-                                // timeout, it seems reasonable to rely on server to handle this.
-                                warn!(
+                                        let _ = cancels_tx.send(CancelNexusTask {
+                                            task_token: tt_clone.0,
+                                            reason: NexusTaskCancelReason::TimedOut.into(),
+                                        });
+                                    }));
+                                } else {
+                                    // This could auto-respond and fail the nexus task, but given that
+                                    // the server is going to try to parse this as well, and all we're
+                                    // doing with this parsing is notifying the handler of a local
+                                    // timeout, it seems reasonable to rely on server to handle this.
+                                    warn!(
                                     "Failed to parse nexus timeout header value '{}'",
                                     timeout_str
                                 );
+                                }
                             }
-                        }
 
-                        let (service, operation, request_kind) = t
-                            .resp
-                            .request
-                            .as_ref()
-                            .and_then(|r| r.variant.as_ref())
-                            .map(|v| match v {
-                                Variant::StartOperation(s) => (
-                                    s.service.to_owned(),
-                                    s.operation.to_owned(),
-                                    RequestKind::Start,
-                                ),
-                                Variant::CancelOperation(c) => (
-                                    c.service.to_owned(),
-                                    c.operation.to_owned(),
-                                    RequestKind::Cancel,
-                                ),
-                            })
-                            .unwrap_or_default();
-                        self.outstanding_task_map.lock().insert(
-                            tt,
-                            NexusInFlightTask {
-                                request_kind,
-                                timeout_task,
-                                scheduled_time: t
-                                    .resp
-                                    .request
-                                    .as_ref()
-                                    .and_then(|r| r.scheduled_time)
-                                    .and_then(|t| t.try_into().ok()),
-                                start_time: Instant::now(),
-                                _permit: t.permit.into_used(NexusSlotInfo { service, operation }),
-                            },
-                        );
-                        Some(Ok(NexusTask {
-                            variant: Some(nexus_task::Variant::Task(t.resp)),
-                        }))
-                    }
+                            let (service, operation, request_kind) = t
+                                .resp
+                                .request
+                                .as_ref()
+                                .and_then(|r| r.variant.as_ref())
+                                .map(|v| match v {
+                                    Variant::StartOperation(s) => (
+                                        s.service.to_owned(),
+                                        s.operation.to_owned(),
+                                        RequestKind::Start,
+                                    ),
+                                    Variant::CancelOperation(c) => (
+                                        c.service.to_owned(),
+                                        c.operation.to_owned(),
+                                        RequestKind::Cancel,
+                                    ),
+                                })
+                                .unwrap_or_default();
+                            self.outstanding_task_map.lock().insert(
+                                tt,
+                                NexusInFlightTask {
+                                    request_kind,
+                                    timeout_task,
+                                    scheduled_time: t
+                                        .resp
+                                        .request
+                                        .as_ref()
+                                        .and_then(|r| r.scheduled_time)
+                                        .and_then(|t| t.try_into().ok()),
+                                    start_time: Instant::now(),
+                                    _permit: t.permit.into_used(NexusSlotInfo { service, operation }),
+                                },
+                            );
+                            Some(Ok(NexusTask {
+                                variant: Some(nexus_task::Variant::Task(t.resp)),
+                            }))
+                        },
+                        Err(e) => Some(Err(PollError::TonicError(e)))
+                    },
                     TaskStreamInput::Cancel(c) => Some(Ok(NexusTask {
                         variant: Some(nexus_task::Variant::CancelTask(c)),
                     })),
@@ -327,7 +330,6 @@ where
                         source_done.cancel();
                         None
                     }
-                    TaskStreamInput::Poll(Err(e)) => Some(Err(PollError::TonicError(e))),
                 };
                 async move { res }
             })
@@ -379,7 +381,7 @@ enum RequestKind {
 
 #[derive(derive_more::From)]
 enum TaskStreamInput {
-    Poll(NexusPollItem),
+    Poll(Box<NexusPollItem>),
     Cancel(CancelNexusTask),
     SourceComplete,
 }

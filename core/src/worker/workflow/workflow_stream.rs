@@ -118,9 +118,9 @@ impl WFStream {
                         }
                         match local_input.input {
                             LocalInputs::Completion(completion) => {
-                                activations.extend(
-                                    state.process_completion(NewOrFetchedComplete::New(completion)),
-                                );
+                                activations.extend(state.process_completion(
+                                    NewOrFetchedComplete::New(Box::new(completion)),
+                                ));
                                 None // completions can return more than one activation
                             }
                             LocalInputs::FetchedPageCompletion { paginator, update } => {
@@ -712,7 +712,7 @@ impl From<Result<WFTExtractorOutput, tonic::Status>> for ExternalPollerInputs {
 }
 #[derive(Debug)]
 enum NewOrFetchedComplete {
-    New(WFActCompleteMsg),
+    New(Box<WFActCompleteMsg>),
     Fetched(HistoryUpdate, Box<HistoryPaginator>),
 }
 impl NewOrFetchedComplete {

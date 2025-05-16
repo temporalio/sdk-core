@@ -175,7 +175,7 @@ pub(crate) struct WorkerActivityTasks {
 #[derive(derive_more::From)]
 enum ActivityTaskSource {
     PendingCancel(PendingActivityCancel),
-    PendingStart(Result<(PermittedTqResp<PollActivityTaskQueueResponse>, bool), PollError>),
+    PendingStart(Box<Result<(PermittedTqResp<PollActivityTaskQueueResponse>, bool), PollError>>),
 }
 
 impl WorkerActivityTasks {
@@ -209,7 +209,7 @@ impl WorkerActivityTasks {
         let complete_notify = Arc::new(Notify::new());
         let source_stream = stream::select_with_strategy(
             UnboundedReceiverStream::new(cancels_rx).map(ActivityTaskSource::from),
-            starts_stream.map(ActivityTaskSource::from),
+            starts_stream.map(|a| ActivityTaskSource::from(Box::new(a))),
             |_: &mut ()| PollNext::Left,
         );
 

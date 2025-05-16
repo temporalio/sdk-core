@@ -182,6 +182,7 @@ fn new_wft_poller(
     })
 }
 
+#[allow(clippy::result_large_err)]
 pub(crate) fn validate_wft(
     wft: PollWorkflowTaskQueueResponse,
 ) -> Result<ValidPollWFTQResponse, tonic::Status> {
