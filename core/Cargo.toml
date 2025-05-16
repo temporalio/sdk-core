@@ -120,6 +120,11 @@ name = "global_metric_tests"
 path = "../tests/global_metric_tests.rs"
 test = false
 
+[[test]]
+name = "cloud_tests"
+path = "../tests/cloud_tests.rs"
+test = false
+
 [[bench]]
 name = "workflow_replay"
 harness = false
