@@ -50,7 +50,6 @@ use std::{
     collections::VecDeque,
     fmt::Debug,
     future::Future,
-    mem,
     ops::DerefMut,
     rc::Rc,
     result,
@@ -1100,8 +1099,7 @@ struct BufferedTasks {
     /// current one has been processed).
     query_only_tasks: VecDeque<PermittedWFT>,
     /// These are query-only tasks for the *buffered* wft, if any. They will all be discarded if
-    /// a buffered wft is replaced before being handled. They move to `query_only_tasks` once the
-    /// buffered task is taken.
+    /// a buffered wft is replaced before being handled.
     query_only_tasks_for_buffered: VecDeque<PermittedWFT>,
 }
 
@@ -1136,9 +1134,13 @@ impl BufferedTasks {
         if let Some(q) = self.query_only_tasks.pop_front() {
             return Some(q);
         }
-        if let Some(t) = self.wft.take() {
-            self.query_only_tasks = mem::take(&mut self.query_only_tasks_for_buffered);
-            return Some(t);
+        if self.wft.is_some() {
+            if let Some(q) = self.query_only_tasks_for_buffered.pop_front() {
+                return Some(q);
+            }
+            if let Some(t) = self.wft.take() {
+                return Some(t);
+            }
         }
         None
     }
