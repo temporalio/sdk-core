@@ -65,6 +65,14 @@ use temporal_sdk_core_api::{
     telemetry::TelemetryOptions,
 };
 use temporal_sdk_core_protos::coresdk::ActivityHeartbeat;
+/// Expose [WorkerClient] symbols
+pub use crate::worker::client::{
+    WorkerClient,
+    PollOptions,
+    PollWorkflowOptions,
+    PollActivityOptions,
+    WorkflowTaskCompletion
+};
 
 /// Initialize a worker bound to a task queue.
 ///
