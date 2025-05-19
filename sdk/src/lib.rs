@@ -410,6 +410,15 @@ impl WorkflowHalf {
             Some(Variant::InitializeWorkflow(ref mut sw)) => Some(sw),
             _ => None,
         }) {
+            if self.workflows.borrow().contains_key(&run_id) {
+                // Duplicate init for the same run. Forward to existing workflow.
+                if let Some(dat) = self.workflows.borrow_mut().get_mut(&run_id) {
+                    dat.activation_chan
+                        .send(activation)
+                        .expect("Workflow should exist if we're sending it an activation");
+                }
+                return Ok(None);
+            }
             let workflow_type = &sw.workflow_type;
             let wf_fns_borrow = self.workflow_fns.borrow();
             let Some(wf_function) = wf_fns_borrow.get(workflow_type) else {
