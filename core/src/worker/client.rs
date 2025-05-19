@@ -210,7 +210,7 @@ pub trait WorkerClient: Sync + Send {
     fn capabilities(&self) -> Option<Capabilities>;
     /// Return workers using this client
     fn workers(&self) -> Arc<SlotManager>;
-    /// Indicates if this is a mock client 
+    /// Indicates if this is a mock client
     fn is_mock(&self) -> bool;
     /// Return name and version of the SDK
     fn sdk_name_and_version(&self) -> (String, String);

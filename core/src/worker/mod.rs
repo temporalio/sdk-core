@@ -261,7 +261,7 @@ impl WorkerTrait for Worker {
     }
 }
 
-impl Worker { 
+impl Worker {
     /// Creates a new [Worker] from a [WorkerClient] instance with real task pollers and optional telemetry.
     ///
     /// This is a convenience constructor that logs initialization and delegates to
