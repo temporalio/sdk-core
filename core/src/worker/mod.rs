@@ -262,7 +262,11 @@ impl WorkerTrait for Worker {
 }
 
 impl Worker {
-    pub(crate) fn new(
+    /// Creates a new [Worker] from a [WorkerClient] instance with real task pollers and optional telemetry.
+    ///
+    /// This is a convenience constructor that logs initialization and delegates to
+    /// [Worker::new_with_pollers()] using [TaskPollers::Real].
+    pub fn new(
         config: WorkerConfig,
         sticky_queue_name: Option<String>,
         client: Arc<dyn WorkerClient>,

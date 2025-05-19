@@ -120,97 +120,123 @@ impl WorkerClientBag {
 /// minimal mocking surface. Delegates to [WorkflowClientTrait] so see that for details.
 #[cfg_attr(test, mockall::automock)]
 #[async_trait::async_trait]
-pub(crate) trait WorkerClient: Sync + Send {
+pub trait WorkerClient: Sync + Send {
+    /// Poll workflow tasks
     async fn poll_workflow_task(
         &self,
         poll_options: PollOptions,
         wf_options: PollWorkflowOptions,
     ) -> Result<PollWorkflowTaskQueueResponse>;
+    /// Poll activity tasks
     async fn poll_activity_task(
         &self,
         poll_options: PollOptions,
         act_options: PollActivityOptions,
     ) -> Result<PollActivityTaskQueueResponse>;
+    /// Poll Nexus tasks
     async fn poll_nexus_task(
         &self,
         poll_options: PollOptions,
     ) -> Result<PollNexusTaskQueueResponse>;
+    /// Complete a workflow task
     async fn complete_workflow_task(
         &self,
         request: WorkflowTaskCompletion,
     ) -> Result<RespondWorkflowTaskCompletedResponse>;
+    /// Complete an activity task
     async fn complete_activity_task(
         &self,
         task_token: TaskToken,
         result: Option<Payloads>,
     ) -> Result<RespondActivityTaskCompletedResponse>;
+    /// Complete a Nexus task
     async fn complete_nexus_task(
         &self,
         task_token: TaskToken,
         response: nexus::v1::Response,
     ) -> Result<RespondNexusTaskCompletedResponse>;
+    /// Record an activity heartbeat
     async fn record_activity_heartbeat(
         &self,
         task_token: TaskToken,
         details: Option<Payloads>,
     ) -> Result<RecordActivityTaskHeartbeatResponse>;
+    /// Cancel an activity task
     async fn cancel_activity_task(
         &self,
         task_token: TaskToken,
         details: Option<Payloads>,
     ) -> Result<RespondActivityTaskCanceledResponse>;
+    /// Fail an activity task
     async fn fail_activity_task(
         &self,
         task_token: TaskToken,
         failure: Option<Failure>,
     ) -> Result<RespondActivityTaskFailedResponse>;
+    /// Fail a workflow task
     async fn fail_workflow_task(
         &self,
         task_token: TaskToken,
         cause: WorkflowTaskFailedCause,
         failure: Option<Failure>,
     ) -> Result<RespondWorkflowTaskFailedResponse>;
+    /// Fail a Nexus task
     async fn fail_nexus_task(
         &self,
         task_token: TaskToken,
         error: nexus::v1::HandlerError,
     ) -> Result<RespondNexusTaskFailedResponse>;
+    /// Get the workflow execution history
     async fn get_workflow_execution_history(
         &self,
         workflow_id: String,
         run_id: Option<String>,
         page_token: Vec<u8>,
     ) -> Result<GetWorkflowExecutionHistoryResponse>;
+    /// Respond to a legacy query
     async fn respond_legacy_query(
         &self,
         task_token: TaskToken,
         query_result: QueryResult,
     ) -> Result<RespondQueryTaskCompletedResponse>;
+    /// Describe the namespace
     async fn describe_namespace(&self) -> Result<DescribeNamespaceResponse>;
+    /// Shutdown the worker
     async fn shutdown_worker(&self, sticky_task_queue: String) -> Result<ShutdownWorkerResponse>;
 
+    /// Replace the underlying client
     fn replace_client(&self, new_client: RetryClient<Client>);
+    /// Return server capabilities
     fn capabilities(&self) -> Option<Capabilities>;
+    /// Return workers using this client
     fn workers(&self) -> Arc<SlotManager>;
+    /// Indicates if this is a mock client
     fn is_mock(&self) -> bool;
-    /// Return (sdk_name, sdk_version) from the underlying client configuration
+    /// Return name and version of the SDK
     fn sdk_name_and_version(&self) -> (String, String);
 }
 
+/// Configuration options shared by workflow, activity, and Nexus polling calls
 #[derive(Debug, Clone)]
-pub(crate) struct PollOptions {
-    pub(crate) task_queue: String,
-    pub(crate) no_retry: Option<NoRetryOnMatching>,
-    pub(crate) timeout_override: Option<Duration>,
+pub struct PollOptions {
+    /// The name of the task queue to poll
+    pub task_queue: String,
+    /// Prevents retrying on specific gRPC statuses
+    pub no_retry: Option<NoRetryOnMatching>,
+    /// Overrides the default RPC timeout for the poll request
+    pub timeout_override: Option<Duration>,
 }
+/// Additional options specific to workflow task polling
 #[derive(Debug, Clone)]
-pub(crate) struct PollWorkflowOptions {
-    // If true this will be a sticky poll
-    pub(crate) sticky_queue_name: Option<String>,
+pub struct PollWorkflowOptions {
+    /// Optional sticky queue name for session‐based workflow polling
+    pub sticky_queue_name: Option<String>,
 }
+/// Additional options specific to activity task polling
 #[derive(Debug, Clone)]
-pub(crate) struct PollActivityOptions {
-    pub(crate) max_tasks_per_sec: Option<f64>,
+pub struct PollActivityOptions {
+    /// Optional rate limit (tasks per second) for activity polling
+    pub max_tasks_per_sec: Option<f64>,
 }
 
 #[async_trait::async_trait]
@@ -634,25 +660,25 @@ impl NamespacedClient for WorkerClientBag {
 /// A version of [RespondWorkflowTaskCompletedRequest] that will finish being filled out by the
 /// server client
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct WorkflowTaskCompletion {
+pub struct WorkflowTaskCompletion {
     /// The task token that would've been received from polling for a workflow activation
-    pub(crate) task_token: TaskToken,
+    pub task_token: TaskToken,
     /// A list of new commands to send to the server, such as starting a timer.
-    pub(crate) commands: Vec<Command>,
+    pub commands: Vec<Command>,
     /// A list of protocol messages to send to the server.
-    pub(crate) messages: Vec<ProtocolMessage>,
+    pub messages: Vec<ProtocolMessage>,
     /// If set, indicate that next task should be queued on sticky queue with given attributes.
-    pub(crate) sticky_attributes: Option<StickyExecutionAttributes>,
+    pub sticky_attributes: Option<StickyExecutionAttributes>,
     /// Responses to queries in the `queries` field of the workflow task.
-    pub(crate) query_responses: Vec<QueryResult>,
+    pub query_responses: Vec<QueryResult>,
     /// Indicate that the task completion should return a new WFT if one is available
-    pub(crate) return_new_workflow_task: bool,
+    pub return_new_workflow_task: bool,
     /// Force a new WFT to be created after this completion
-    pub(crate) force_create_new_workflow_task: bool,
+    pub force_create_new_workflow_task: bool,
     /// SDK-specific metadata to send
-    pub(crate) sdk_metadata: WorkflowTaskCompletedMetadata,
+    pub sdk_metadata: WorkflowTaskCompletedMetadata,
     /// Metering info
-    pub(crate) metering_metadata: MeteringMetadata,
+    pub metering_metadata: MeteringMetadata,
     /// Versioning behavior of the workflow, if any.
-    pub(crate) versioning_behavior: VersioningBehavior,
+    pub versioning_behavior: VersioningBehavior,
 }
