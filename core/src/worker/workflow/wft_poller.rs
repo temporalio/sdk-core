@@ -7,13 +7,10 @@ use crate::{
     worker::{client::WorkerClient, wft_poller_behavior},
 };
 use futures_util::{Stream, stream};
-use std::sync::{
-    Arc, OnceLock,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::{Arc, OnceLock};
 use temporal_sdk_core_api::worker::{WorkerConfig, WorkflowSlotKind};
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse;
-use tokio::sync::{Notify, watch};
+use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
 pub(crate) fn make_wft_poller(
@@ -81,8 +78,6 @@ pub(crate) struct WFTPollerShared {
     last_seen_sticky_backlog: (watch::Receiver<usize>, watch::Sender<usize>),
     sticky_active: OnceLock<watch::Receiver<usize>>,
     non_sticky_active: OnceLock<watch::Receiver<usize>>,
-    wait_for_first_nonsticky_poll: Notify,
-    have_done_first_poll: AtomicBool,
 }
 impl WFTPollerShared {
     pub(crate) fn new() -> Self {
@@ -91,8 +86,6 @@ impl WFTPollerShared {
             last_seen_sticky_backlog: (rx, tx),
             sticky_active: OnceLock::new(),
             non_sticky_active: OnceLock::new(),
-            wait_for_first_nonsticky_poll: Notify::new(),
-            have_done_first_poll: AtomicBool::new(false),
         }
     }
     pub(crate) fn set_sticky_active(&self, rx: watch::Receiver<usize>) {
@@ -104,10 +97,6 @@ impl WFTPollerShared {
     /// Makes either the sticky or non-sticky poller wait pre-permit-acquisition so that we can
     /// balance which kind of queue we poll appropriately.
     pub(crate) async fn wait_if_needed(&self, is_sticky: bool) {
-        // Sticky shouldn't start polling until after the first non-sticky poll has been allowed
-        if is_sticky && !self.have_done_first_poll.load(Ordering::Relaxed) {
-            self.wait_for_first_nonsticky_poll.notified().await;
-        }
         // If there's a sticky backlog, prioritize it.
         if !is_sticky {
             let backlog = *self.last_seen_sticky_backlog.0.borrow();
@@ -135,14 +124,9 @@ impl WFTPollerShared {
                 loop {
                     let num_sticky_active = *sticky_active.borrow_and_update();
                     let num_non_sticky_active = *non_sticky_active.borrow_and_update();
-                    if is_sticky && num_sticky_active <= num_non_sticky_active {
-                        break;
-                    } else if !is_sticky
-                        && (num_non_sticky_active < num_sticky_active
-                            || !self.have_done_first_poll.load(Ordering::Relaxed))
+                    if (is_sticky && num_sticky_active <= num_non_sticky_active)
+                        || (!is_sticky && (num_non_sticky_active < num_sticky_active))
                     {
-                        self.have_done_first_poll.store(true, Ordering::Relaxed);
-                        self.wait_for_first_nonsticky_poll.notify_waiters();
                         break;
                     }
                     tokio::select! {
