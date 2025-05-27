@@ -126,21 +126,25 @@ impl WFTPollerShared {
             if let Some((sticky_active, non_sticky_active)) =
                 self.sticky_active.get().zip(self.non_sticky_active.get())
             {
-                if is_sticky {
-                    let _ = sticky_active
-                        .clone()
-                        .wait_for(|v| *v <= *non_sticky_active.borrow())
-                        .await;
-                } else {
-                    let _ = non_sticky_active
-                        .clone()
-                        .wait_for(|v| {
-                            *v < *sticky_active.borrow()
-                                || !self.have_done_first_poll.load(Ordering::Relaxed)
-                        })
-                        .await;
-                    self.have_done_first_poll.store(true, Ordering::Relaxed);
-                    self.wait_for_first_nonsticky_poll.notify_waiters();
+                let mut sticky_active = sticky_active.clone();
+                let mut non_sticky_active = non_sticky_active.clone();
+                loop {
+                    let num_sticky_active = *sticky_active.borrow_and_update();
+                    let num_non_sticky_active = *non_sticky_active.borrow_and_update();
+                    if is_sticky && num_sticky_active <= num_non_sticky_active {
+                        break;
+                    } else if !is_sticky
+                        && (num_non_sticky_active < num_sticky_active
+                            || !self.have_done_first_poll.load(Ordering::Relaxed))
+                    {
+                        self.have_done_first_poll.store(true, Ordering::Relaxed);
+                        self.wait_for_first_nonsticky_poll.notify_waiters();
+                        break;
+                    }
+                    tokio::select! {
+                        _ = sticky_active.changed() => (),
+                        _ = non_sticky_active.changed() => (),
+                    }
                 }
             }
         }

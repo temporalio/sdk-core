@@ -99,7 +99,7 @@ async fn workflow_lru_cache_evictions() {
     let mut starter = CoreWfStarter::new(wf_type);
     starter
         .worker_config
-        .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(1_usize))
+        .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(2_usize))
         .no_remote_activities(true)
         .max_cached_workflows(1_usize);
     let mut worker = starter.worker().await;

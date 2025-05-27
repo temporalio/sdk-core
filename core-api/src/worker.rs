@@ -40,8 +40,8 @@ pub struct WorkerConfig {
     #[builder(setter(into = false, strip_option), default)]
     pub tuner: Option<Arc<dyn WorkerTuner + Send + Sync>>,
     /// Maximum number of concurrent poll workflow task requests we will perform at a time on this
-    /// worker's task queue. See also [WorkerConfig::nonsticky_to_sticky_poll_ratio]. Must be at
-    /// least 1.
+    /// worker's task queue. See also [WorkerConfig::nonsticky_to_sticky_poll_ratio].
+    /// If using SimpleMaximum, Must be at least 2 when `max_cached_workflows` > 0, or is an error.
     #[builder(default = "PollerBehavior::SimpleMaximum(5)")]
     pub workflow_task_poller_behavior: PollerBehavior,
     /// Only applies when using [PollerBehavior::SimpleMaximum]
@@ -135,7 +135,8 @@ pub struct WorkerConfig {
 
     /// The maximum allowed number of workflow tasks that will ever be given to this worker at one
     /// time. Note that one workflow task may require multiple activations - so the WFT counts as
-    /// "outstanding" until all activations it requires have been completed.
+    /// "outstanding" until all activations it requires have been completed. Must be at least 2 if
+    /// `max_cached_workflows` is > 0, or is an error.
     ///
     /// Mutually exclusive with `tuner`
     #[builder(setter(into, strip_option), default)]
@@ -224,6 +225,28 @@ impl WorkerConfigBuilder {
             }
         }
 
+        if let Some(cache) = self.max_cached_workflows.as_ref() {
+            if *cache > 0 {
+                if let Some(Some(max_wft)) = self.max_outstanding_workflow_tasks.as_ref() {
+                    if *max_wft < 2 {
+                        return Err(
+                            "`max_cached_workflows` > 0 requires `max_outstanding_workflow_tasks` >= 2"
+                                .to_owned(),
+                        );
+                    }
+                }
+                if let Some(b) = self.workflow_task_poller_behavior.as_ref() {
+                    if matches!(b, PollerBehavior::SimpleMaximum(u) if *u < 2) {
+                        return Err(
+                            "`max_cached_workflows` > 0 requires `workflow_task_poller_behavior` to be at least 2"
+                                .to_owned(),
+                        );
+                    }
+                    b.validate()?
+                }
+            }
+        }
+
         if self.tuner.is_some()
             && (self.max_outstanding_workflow_tasks.is_some()
                 || self.max_outstanding_activities.is_some()
@@ -264,7 +287,9 @@ impl WorkerConfigBuilder {
 /// This trait allows users to customize the performance characteristics of workers dynamically.
 /// For more, see the docstrings of the traits in the return types of its functions.
 pub trait WorkerTuner {
-    /// Return a [SlotSupplier] for workflow tasks
+    /// Return a [SlotSupplier] for workflow tasks. Note that workflow task slot suppliers must be
+    /// willing to hand out a minimum of two slots if workflow caching is enabled, otherwise the
+    /// worker may fail to process new tasks.
     fn workflow_task_slot_supplier(
         &self,
     ) -> Arc<dyn SlotSupplier<SlotKind = WorkflowSlotKind> + Send + Sync>;

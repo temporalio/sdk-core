@@ -24,7 +24,7 @@ use tokio_util::sync::CancellationToken;
 /// as handling associated metrics tracking.
 #[derive(Clone)]
 pub(crate) struct MeteredPermitDealer<SK: SlotKind> {
-    pub(crate) supplier: Arc<dyn SlotSupplier<SlotKind = SK> + Send + Sync>,
+    supplier: Arc<dyn SlotSupplier<SlotKind = SK> + Send + Sync>,
     /// The number of permit owners who have acquired a permit, but are not yet meaningfully using
     /// that permit. This is useful for giving a more semantically accurate count of used task
     /// slots, since we typically wait for a permit first before polling, but that slot isn't used
