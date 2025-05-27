@@ -31,8 +31,11 @@ pub(crate) fn make_wft_poller(
 > + Sized
 + 'static {
     let wft_metrics = metrics.with_new_attrs([workflow_poller()]);
+    let poller_behavior = wft_poller_behavior(config, false);
     let wft_poller_shared = if sticky_queue_name.is_some() {
-        Some(Arc::new(WFTPollerShared::new()))
+        Some(Arc::new(WFTPollerShared::new(
+            poller_behavior.is_autoscaling(),
+        )))
     } else {
         None
     };
@@ -40,7 +43,7 @@ pub(crate) fn make_wft_poller(
         client.clone(),
         config.task_queue.clone(),
         None,
-        wft_poller_behavior(config, false),
+        poller_behavior,
         wft_slots.clone(),
         shutdown_token.child_token(),
         Some(move |np| {
@@ -78,14 +81,16 @@ pub(crate) struct WFTPollerShared {
     last_seen_sticky_backlog: (watch::Receiver<usize>, watch::Sender<usize>),
     sticky_active: OnceLock<watch::Receiver<usize>>,
     non_sticky_active: OnceLock<watch::Receiver<usize>>,
+    using_autoscaling: bool,
 }
 impl WFTPollerShared {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(using_autoscaling: bool) -> Self {
         let (tx, rx) = watch::channel(0);
         Self {
             last_seen_sticky_backlog: (rx, tx),
             sticky_active: OnceLock::new(),
             non_sticky_active: OnceLock::new(),
+            using_autoscaling,
         }
     }
     pub(crate) fn set_sticky_active(&self, rx: watch::Receiver<usize>) {
@@ -99,23 +104,20 @@ impl WFTPollerShared {
     pub(crate) async fn wait_if_needed(&self, is_sticky: bool) {
         // If there's a sticky backlog, prioritize it.
         if !is_sticky {
-            let backlog = *self.last_seen_sticky_backlog.0.borrow();
-            if backlog >= 1 {
-                let _ = self
-                    .last_seen_sticky_backlog
-                    .0
-                    .clone()
-                    .wait_for(|v| *v == 0)
-                    .await;
-            }
+            let _ = self
+                .last_seen_sticky_backlog
+                .0
+                .clone()
+                .wait_for(|v| *v == 0)
+                .await;
         }
 
-        // If there's no sticky backlog, balance poller counts. This logic allows the poller
-        // to proceed if it has the same or fewer pollers as it's opposite. There is a preference
-        // for the sticky poller when counts are equal. This does not mean we always have equal
-        // numbers of pollers, as later on the scaler will also prevent polling based on the scaling
-        // information provided independently by the sticky/nonsticky queues.
-        if *self.last_seen_sticky_backlog.0.borrow() == 0 {
+        // Unless autoscaling, if there's no sticky backlog, balance poller counts. This logic
+        // allows the poller to proceed if it has the same or fewer pollers as it's opposite. There
+        // is a preference for the sticky poller when counts are equal. This does not mean we always
+        // have equal numbers of pollers, as later on the scaler will also prevent polling based on
+        // the scaling information provided independently by the sticky/nonsticky queues.
+        if !self.using_autoscaling && *self.last_seen_sticky_backlog.0.borrow() == 0 {
             if let Some((sticky_active, non_sticky_active)) =
                 self.sticky_active.get().zip(self.non_sticky_active.get())
             {

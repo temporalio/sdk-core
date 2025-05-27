@@ -724,7 +724,7 @@ mod tests {
             CancellationToken::new(),
             None::<fn(usize)>,
             WorkflowTaskOptions {
-                wft_poller_shared: Some(Arc::new(WFTPollerShared::new())),
+                wft_poller_shared: Some(Arc::new(WFTPollerShared::new(false))),
             },
         );
 
