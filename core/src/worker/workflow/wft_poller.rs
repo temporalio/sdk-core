@@ -101,7 +101,7 @@ impl WFTPollerShared {
     /// balance which kind of queue we poll appropriately.
     pub(crate) async fn wait_if_needed(&self, is_sticky: bool) {
         // Sticky shouldn't start polling until after the first non-sticky poll has been allowed
-        if is_sticky {
+        if is_sticky && !self.have_done_first_poll.load(Ordering::Relaxed) {
             self.wait_for_first_nonsticky_poll.notified().await;
         }
         // If there's a sticky backlog, prioritize it.
@@ -112,13 +112,13 @@ impl WFTPollerShared {
                     .last_seen_sticky_backlog
                     .0
                     .clone()
-                    .wait_for(|v| *v < 1)
+                    .wait_for(|v| *v == 0)
                     .await;
             }
         }
 
-        // If there's no meaningful sticky backlog, balance poller counts
-        if *self.last_seen_sticky_backlog.0.borrow() <= 1 {
+        // If there's no sticky backlog, balance poller counts
+        if *self.last_seen_sticky_backlog.0.borrow() == 0 {
             if let Some((sticky_active, non_sticky_active)) =
                 self.sticky_active.get().zip(self.non_sticky_active.get())
             {
@@ -135,6 +135,8 @@ impl WFTPollerShared {
                                 || !self.have_done_first_poll.load(Ordering::Relaxed)
                         })
                         .await;
+                    self.have_done_first_poll.store(true, Ordering::Relaxed);
+                    self.wait_for_first_nonsticky_poll.notify_waiters();
                 }
             }
         }

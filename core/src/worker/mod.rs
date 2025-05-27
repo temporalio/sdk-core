@@ -867,9 +867,10 @@ fn wft_poller_behavior(config: &WorkerConfig, is_sticky: bool) -> PollerBehavior
                 config.nonsticky_to_sticky_poll_ratio,
             ))
         } else {
-            PollerBehavior::SimpleMaximum(m.saturating_sub(
-                calc_max_nonsticky(m, config.nonsticky_to_sticky_poll_ratio).max(1),
-            ))
+            PollerBehavior::SimpleMaximum(
+                m.saturating_sub(calc_max_nonsticky(m, config.nonsticky_to_sticky_poll_ratio))
+                    .max(1),
+            )
         }
     } else {
         config.workflow_task_poller_behavior
