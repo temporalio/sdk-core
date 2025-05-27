@@ -1,5 +1,5 @@
 use crate::{
-    abstractions::{MeteredPermitDealer, OwnedMeteredSemPermit, dbg_panic},
+    abstractions::{ActiveCounter, MeteredPermitDealer, OwnedMeteredSemPermit, dbg_panic},
     pollers::{self, Poller},
     worker::{
         WFTPollerShared,
@@ -388,35 +388,6 @@ async fn handle_task_panic(t: JoinHandle<()>) {
                 as_panic
             );
         }
-    }
-}
-
-struct ActiveCounter<F: Fn(usize)>(watch::Sender<usize>, Option<Arc<F>>);
-impl<F> ActiveCounter<F>
-where
-    F: Fn(usize),
-{
-    fn new(a: watch::Sender<usize>, change_fn: Option<Arc<F>>) -> Self {
-        a.send_modify(|v| {
-            *v += 1;
-            if let Some(cfn) = change_fn.as_ref() {
-                cfn(*v);
-            }
-        });
-        Self(a, change_fn)
-    }
-}
-impl<F> Drop for ActiveCounter<F>
-where
-    F: Fn(usize),
-{
-    fn drop(&mut self) {
-        self.0.send_modify(|v| {
-            *v -= 1;
-            if let Some(cfn) = self.1.as_ref() {
-                cfn(*v)
-            };
-        });
     }
 }
 

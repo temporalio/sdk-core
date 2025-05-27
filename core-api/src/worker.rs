@@ -389,6 +389,11 @@ impl SlotSupplierPermit {
     pub fn user_data_mut<T: Any + Send + Sync>(&mut self) -> Option<&mut T> {
         self.user_data.as_mut().and_then(|b| b.downcast_mut())
     }
+
+    /// Deconstruct this permit and return the inner data
+    pub fn into_user_data(self) -> Option<Box<dyn Any + Send + Sync>> {
+        self.user_data
+    }
 }
 
 #[derive(Debug, Copy, Clone, derive_more::Display, Eq, PartialEq)]

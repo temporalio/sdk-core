@@ -7,10 +7,13 @@ use crate::{
     worker::{client::WorkerClient, wft_poller_behavior},
 };
 use futures_util::{Stream, stream};
-use std::sync::{Arc, OnceLock};
+use std::sync::{
+    Arc, OnceLock,
+    atomic::{AtomicBool, Ordering},
+};
 use temporal_sdk_core_api::worker::{WorkerConfig, WorkflowSlotKind};
 use temporal_sdk_core_protos::temporal::api::workflowservice::v1::PollWorkflowTaskQueueResponse;
-use tokio::sync::watch;
+use tokio::sync::{Notify, watch};
 use tokio_util::sync::CancellationToken;
 
 pub(crate) fn make_wft_poller(
@@ -74,6 +77,8 @@ pub(crate) struct WFTPollerShared {
     last_seen_sticky_backlog: (watch::Receiver<usize>, watch::Sender<usize>),
     sticky_active: OnceLock<watch::Receiver<usize>>,
     non_sticky_active: OnceLock<watch::Receiver<usize>>,
+    wait_for_first_nonsticky_poll: Notify,
+    have_done_first_poll: AtomicBool,
 }
 impl WFTPollerShared {
     pub(crate) fn new() -> Self {
@@ -82,6 +87,8 @@ impl WFTPollerShared {
             last_seen_sticky_backlog: (rx, tx),
             sticky_active: OnceLock::new(),
             non_sticky_active: OnceLock::new(),
+            wait_for_first_nonsticky_poll: Notify::new(),
+            have_done_first_poll: AtomicBool::new(false),
         }
     }
     pub(crate) fn set_sticky_active(&self, rx: watch::Receiver<usize>) {
@@ -93,15 +100,24 @@ impl WFTPollerShared {
     /// Makes either the sticky or non-sticky poller wait pre-permit-acquisition so that we can
     /// balance which kind of queue we poll appropriately.
     pub(crate) async fn wait_if_needed(&self, is_sticky: bool) {
+        // Sticky shouldn't start polling until after the first non-sticky poll has been allowed
+        if is_sticky {
+            self.wait_for_first_nonsticky_poll.notified().await;
+        }
+        info!(
+            "Waiting if needed. Sticky: {} / backlog {}",
+            is_sticky,
+            *self.last_seen_sticky_backlog.0.borrow()
+        );
         // If there's a sticky backlog, prioritize it.
         if !is_sticky {
             let backlog = *self.last_seen_sticky_backlog.0.borrow();
-            if backlog > 1 {
+            if backlog >= 1 {
                 let _ = self
                     .last_seen_sticky_backlog
                     .0
                     .clone()
-                    .wait_for(|v| *v <= 1)
+                    .wait_for(|v| *v < 1)
                     .await;
             }
         }
@@ -111,6 +127,12 @@ impl WFTPollerShared {
             if let Some((sticky_active, non_sticky_active)) =
                 self.sticky_active.get().zip(self.non_sticky_active.get())
             {
+                info!(
+                    "Balance (sticky {}), non-sticky {} sticky {}",
+                    is_sticky,
+                    *non_sticky_active.borrow(),
+                    *sticky_active.borrow()
+                );
                 if is_sticky {
                     let _ = sticky_active
                         .clone()
@@ -119,9 +141,13 @@ impl WFTPollerShared {
                 } else {
                     let _ = non_sticky_active
                         .clone()
-                        .wait_for(|v| *v <= *sticky_active.borrow())
+                        .wait_for(|v| {
+                            *v < *sticky_active.borrow()
+                                || !self.have_done_first_poll.load(Ordering::Relaxed)
+                        })
                         .await;
                 }
+                info!("Done balance (sticky {})", is_sticky);
             }
         }
     }

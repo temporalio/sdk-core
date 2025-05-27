@@ -24,7 +24,7 @@ use tokio_util::sync::CancellationToken;
 /// as handling associated metrics tracking.
 #[derive(Clone)]
 pub(crate) struct MeteredPermitDealer<SK: SlotKind> {
-    supplier: Arc<dyn SlotSupplier<SlotKind = SK> + Send + Sync>,
+    pub(crate) supplier: Arc<dyn SlotSupplier<SlotKind = SK> + Send + Sync>,
     /// The number of permit owners who have acquired a permit, but are not yet meaningfully using
     /// that permit. This is useful for giving a more semantically accurate count of used task
     /// slots, since we typically wait for a permit first before polling, but that slot isn't used
@@ -392,6 +392,35 @@ macro_rules! dbg_panic {
   };
 }
 pub(crate) use dbg_panic;
+
+pub(crate) struct ActiveCounter<F: Fn(usize)>(watch::Sender<usize>, Option<Arc<F>>);
+impl<F> ActiveCounter<F>
+where
+    F: Fn(usize),
+{
+    pub(crate) fn new(a: watch::Sender<usize>, change_fn: Option<Arc<F>>) -> Self {
+        a.send_modify(|v| {
+            *v += 1;
+            if let Some(cfn) = change_fn.as_ref() {
+                cfn(*v);
+            }
+        });
+        Self(a, change_fn)
+    }
+}
+impl<F> Drop for ActiveCounter<F>
+where
+    F: Fn(usize),
+{
+    fn drop(&mut self) {
+        self.0.send_modify(|v| {
+            *v -= 1;
+            if let Some(cfn) = self.1.as_ref() {
+                cfn(*v)
+            };
+        });
+    }
+}
 
 #[cfg(test)]
 pub(crate) mod tests {

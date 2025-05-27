@@ -1,19 +1,21 @@
+use crate::integ_tests::activity_functions::echo;
 use assert_matches::assert_matches;
 use std::{sync::Arc, time::Duration};
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
+use temporal_sdk::{ActivityOptions, WfContext};
 use temporal_sdk_core::{
     ClientOptionsBuilder, ephemeral_server::TemporalDevServerConfigBuilder, init_worker,
 };
-use temporal_sdk_core_api::Worker;
+use temporal_sdk_core_api::{Worker, worker::PollerBehavior};
 use temporal_sdk_core_protos::coresdk::{
-    IntoCompletion,
+    AsJsonPayloadExt, IntoCompletion,
     activity_task::activity_task as act_task,
     workflow_activation::{FireTimer, WorkflowActivationJob, workflow_activation_job},
     workflow_commands::{ActivityCancellationType, RequestCancelActivity, StartTimer},
     workflow_completion::WorkflowActivationCompletion,
 };
 use temporal_sdk_core_test_utils::{
-    WorkerTestHelpers, default_cached_download, drain_pollers_and_shutdown,
+    CoreWfStarter, WorkerTestHelpers, default_cached_download, drain_pollers_and_shutdown,
     init_core_and_create_wf, init_integ_telem, integ_worker_config, schedule_activity_cmd,
 };
 use tokio::time::timeout;
@@ -205,4 +207,42 @@ async fn switching_worker_client_changes_poll() {
     drain_pollers_and_shutdown(&(Arc::new(worker) as Arc<dyn Worker>)).await;
     server1.shutdown().await.unwrap();
     server2.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn only_one_workflow_slot_and_two_pollers() {
+    let wf_name = "only_one_workflow_slot_and_two_pollers";
+    let mut starter = CoreWfStarter::new(wf_name);
+    starter
+        .worker_config
+        .max_outstanding_workflow_tasks(2_usize)
+        .max_outstanding_local_activities(1_usize)
+        .activity_task_poller_behavior(PollerBehavior::SimpleMaximum(1))
+        .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(2))
+        .max_outstanding_activities(1_usize);
+    let mut worker = starter.worker().await;
+    worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
+        for _ in 0..3 {
+            ctx.activity(ActivityOptions {
+                activity_type: "echo_activity".to_string(),
+                start_to_close_timeout: Some(Duration::from_secs(5)),
+                input: "hi!".as_json_payload().expect("serializes fine"),
+                ..Default::default()
+            })
+            .await;
+        }
+        Ok(().into())
+    });
+    worker.register_activity("echo_activity", echo);
+    worker
+        .submit_wf(
+            wf_name.to_string(),
+            wf_name.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+    // If we don't fail the workflow on nondeterminism, we'll get stuck here retrying the WFT
+    worker.run_until_done().await.unwrap();
 }
