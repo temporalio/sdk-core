@@ -121,7 +121,11 @@ impl WFTPollerShared {
             }
         }
 
-        // If there's no sticky backlog, balance poller counts
+        // If there's no sticky backlog, balance poller counts. This logic allows the poller
+        // to proceed if it has the same or fewer pollers as it's opposite. There is a preference
+        // for the sticky poller when counts are equal. This does not mean we always have equal
+        // numbers of pollers, as later on the scaler will also prevent polling based on the scaling
+        // information provided independently by the sticky/nonsticky queues.
         if *self.last_seen_sticky_backlog.0.borrow() == 0 {
             if let Some((sticky_active, non_sticky_active)) =
                 self.sticky_active.get().zip(self.non_sticky_active.get())
