@@ -212,16 +212,29 @@ async fn switching_worker_client_changes_poll() {
     server2.shutdown().await.unwrap();
 }
 
+#[rstest::rstest]
 #[tokio::test]
-async fn small_workflow_slots_and_pollers() {
+async fn small_workflow_slots_and_pollers(#[values(false, true)] use_autoscaling: bool) {
     let wf_name = "only_one_workflow_slot_and_two_pollers";
     let mut starter = CoreWfStarter::new(wf_name);
+    if use_autoscaling {
+        starter
+            .worker_config
+            .workflow_task_poller_behavior(PollerBehavior::Autoscaling {
+                minimum: 1,
+                maximum: 5,
+                initial: 1,
+            });
+    } else {
+        starter
+            .worker_config
+            .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(2));
+    }
     starter
         .worker_config
         .max_outstanding_workflow_tasks(2_usize)
         .max_outstanding_local_activities(1_usize)
         .activity_task_poller_behavior(PollerBehavior::SimpleMaximum(1))
-        .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(2))
         .max_outstanding_activities(1_usize);
     let mut worker = starter.worker().await;
     worker.register_wf(wf_name.to_owned(), |ctx: WfContext| async move {
@@ -246,9 +259,10 @@ async fn small_workflow_slots_and_pollers() {
         )
         .await
         .unwrap();
+    let wf2id = format!("{}-2", starter.get_task_queue());
     worker
         .submit_wf(
-            format!("{}-2", starter.get_task_queue()),
+            wf2id.clone(),
             wf_name.to_owned(),
             vec![],
             WorkflowOptions::default(),
@@ -259,6 +273,19 @@ async fn small_workflow_slots_and_pollers() {
     worker.run_until_done().await.unwrap();
     // Verify no task timeouts happened
     let history = starter.get_history().await;
+    let any_task_timeouts = history
+        .events
+        .iter()
+        .any(|e| e.event_type() == EventType::WorkflowTaskTimedOut);
+    assert!(!any_task_timeouts);
+    let history = starter
+        .get_client()
+        .await
+        .get_workflow_execution_history(wf2id, None, vec![])
+        .await
+        .unwrap()
+        .history
+        .unwrap();
     let any_task_timeouts = history
         .events
         .iter()

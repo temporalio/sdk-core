@@ -521,7 +521,7 @@ pub enum PollerBehavior {
     /// requires a slot to be available before beginning polling.
     Autoscaling {
         /// At least this many poll calls will always be attempted (assuming slots are available).
-        /// Cannot be less than two for workflow tasks, or one for other tasks.
+        /// Cannot be zero.
         minimum: usize,
         /// At most this many poll calls will ever be open at once. Must be >= `minimum`.
         maximum: usize,

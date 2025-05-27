@@ -34,7 +34,7 @@ pub(crate) fn make_wft_poller(
     let poller_behavior = wft_poller_behavior(config, false);
     let wft_poller_shared = if sticky_queue_name.is_some() {
         Some(Arc::new(WFTPollerShared::new(
-            poller_behavior.is_autoscaling(),
+            wft_slots.available_permits(),
         )))
     } else {
         None
@@ -81,16 +81,16 @@ pub(crate) struct WFTPollerShared {
     last_seen_sticky_backlog: (watch::Receiver<usize>, watch::Sender<usize>),
     sticky_active: OnceLock<watch::Receiver<usize>>,
     non_sticky_active: OnceLock<watch::Receiver<usize>>,
-    using_autoscaling: bool,
+    max_slots: Option<usize>,
 }
 impl WFTPollerShared {
-    pub(crate) fn new(using_autoscaling: bool) -> Self {
+    pub(crate) fn new(max_slots: Option<usize>) -> Self {
         let (tx, rx) = watch::channel(0);
         Self {
             last_seen_sticky_backlog: (rx, tx),
             sticky_active: OnceLock::new(),
             non_sticky_active: OnceLock::new(),
-            using_autoscaling,
+            max_slots,
         }
     }
     pub(crate) fn set_sticky_active(&self, rx: watch::Receiver<usize>) {
@@ -112,12 +112,10 @@ impl WFTPollerShared {
                 .await;
         }
 
-        // Unless autoscaling, if there's no sticky backlog, balance poller counts. This logic
-        // allows the poller to proceed if it has the same or fewer pollers as it's opposite. There
-        // is a preference for the sticky poller when counts are equal. This does not mean we always
-        // have equal numbers of pollers, as later on the scaler will also prevent polling based on
-        // the scaling information provided independently by the sticky/nonsticky queues.
-        if !self.using_autoscaling && *self.last_seen_sticky_backlog.0.borrow() == 0 {
+        // We need to make sure there's at least one poller of both kinds available. So, we check
+        // that we won't end up using every available permit with one kind of poller. In practice
+        // this is only ever likely to be an issue with very small numbers of slots.
+        if let Some(max_slots) = self.max_slots {
             if let Some((sticky_active, non_sticky_active)) =
                 self.sticky_active.get().zip(self.non_sticky_active.get())
             {
@@ -126,10 +124,19 @@ impl WFTPollerShared {
                 loop {
                     let num_sticky_active = *sticky_active.borrow_and_update();
                     let num_non_sticky_active = *non_sticky_active.borrow_and_update();
-                    if (is_sticky && num_sticky_active <= num_non_sticky_active)
-                        || (!is_sticky && (num_non_sticky_active < num_sticky_active))
-                    {
-                        break;
+                    let both_are_zero = num_sticky_active == 0 && num_non_sticky_active == 0;
+                    if both_are_zero {
+                        if !is_sticky {
+                            break;
+                        }
+                    } else {
+                        let would_exceed_max_slots =
+                            (num_sticky_active + num_non_sticky_active + 1) >= max_slots;
+                        let must_wait = would_exceed_max_slots
+                            && (num_sticky_active == 0 || num_non_sticky_active == 0);
+                        if !must_wait {
+                            break;
+                        }
                     }
                     tokio::select! {
                         _ = sticky_active.changed() => (),
@@ -139,6 +146,7 @@ impl WFTPollerShared {
             }
         }
     }
+
     pub(crate) fn record_sticky_backlog(&self, v: usize) {
         let _ = self.last_seen_sticky_backlog.1.send(v);
     }
