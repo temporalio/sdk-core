@@ -104,11 +104,6 @@ impl WFTPollerShared {
         if is_sticky {
             self.wait_for_first_nonsticky_poll.notified().await;
         }
-        info!(
-            "Waiting if needed. Sticky: {} / backlog {}",
-            is_sticky,
-            *self.last_seen_sticky_backlog.0.borrow()
-        );
         // If there's a sticky backlog, prioritize it.
         if !is_sticky {
             let backlog = *self.last_seen_sticky_backlog.0.borrow();
@@ -127,12 +122,6 @@ impl WFTPollerShared {
             if let Some((sticky_active, non_sticky_active)) =
                 self.sticky_active.get().zip(self.non_sticky_active.get())
             {
-                info!(
-                    "Balance (sticky {}), non-sticky {} sticky {}",
-                    is_sticky,
-                    *non_sticky_active.borrow(),
-                    *sticky_active.borrow()
-                );
                 if is_sticky {
                     let _ = sticky_active
                         .clone()
@@ -147,7 +136,6 @@ impl WFTPollerShared {
                         })
                         .await;
                 }
-                info!("Done balance (sticky {})", is_sticky);
             }
         }
     }
