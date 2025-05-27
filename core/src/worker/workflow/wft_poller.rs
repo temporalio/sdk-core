@@ -34,7 +34,11 @@ pub(crate) fn make_wft_poller(
 > + Sized
 + 'static {
     let wft_metrics = metrics.with_new_attrs([workflow_poller()]);
-    let wft_poller_shared = Arc::new(WFTPollerShared::new());
+    let wft_poller_shared = if sticky_queue_name.is_some() {
+        Some(Arc::new(WFTPollerShared::new()))
+    } else {
+        None
+    };
     let wf_task_poll_buffer = LongPollBuffer::new_workflow_task(
         client.clone(),
         config.task_queue.clone(),
