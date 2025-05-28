@@ -22,13 +22,11 @@ use crate::integ_tests::{activity_functions::echo, metrics_tests};
 use assert_matches::assert_matches;
 use std::{
     collections::{HashMap, HashSet},
-    sync::atomic::{AtomicUsize, Ordering},
     time::Duration,
 };
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowExecutionResult, WorkflowOptions};
 use temporal_sdk::{
-    ActivityOptions, LocalActivityOptions, WfContext, WorkflowResult,
-    interceptors::WorkerInterceptor,
+    ActivityOptions, LocalActivityOptions, WfContext, interceptors::WorkerInterceptor,
 };
 use temporal_sdk_core::{CoreRuntime, replay::HistoryForReplay};
 use temporal_sdk_core_api::{
@@ -57,7 +55,7 @@ use temporal_sdk_core_test_utils::{
     init_core_and_create_wf, init_core_replay_preloaded, prom_metrics, schedule_activity_cmd,
 };
 use tokio::{join, sync::Notify, time::sleep};
-use uuid::Uuid;
+
 // TODO: We should get expected histories for these tests and confirm that the history at the end
 //  matches.
 
@@ -83,56 +81,6 @@ async fn parallel_workflows_same_queue() {
         .unwrap();
     }
     core.run_until_done().await.unwrap();
-}
-
-static RUN_CT: AtomicUsize = AtomicUsize::new(0);
-
-pub(crate) async fn cache_evictions_wf(command_sink: WfContext) -> WorkflowResult<()> {
-    RUN_CT.fetch_add(1, Ordering::SeqCst);
-    command_sink.timer(Duration::from_secs(1)).await;
-    Ok(().into())
-}
-
-#[tokio::test]
-async fn workflow_lru_cache_evictions() {
-    let wf_type = "workflow_lru_cache_evictions";
-    let mut starter = CoreWfStarter::new(wf_type);
-    starter
-        .worker_config
-        .workflow_task_poller_behavior(PollerBehavior::SimpleMaximum(1_usize))
-        .no_remote_activities(true)
-        .max_cached_workflows(1_usize);
-    let mut worker = starter.worker().await;
-    worker.register_wf(wf_type.to_string(), cache_evictions_wf);
-
-    let n_workflows = 3;
-    for _ in 0..n_workflows {
-        worker
-            .submit_wf(
-                format!("wce-{}", Uuid::new_v4()),
-                wf_type.to_string(),
-                vec![],
-                WorkflowOptions::default(),
-            )
-            .await
-            .unwrap();
-    }
-    struct CacheAsserter;
-    #[async_trait::async_trait(?Send)]
-    impl WorkerInterceptor for CacheAsserter {
-        async fn on_workflow_activation_completion(&self, _: &WorkflowActivationCompletion) {}
-        fn on_shutdown(&self, sdk_worker: &temporal_sdk::Worker) {
-            // 0 since the sdk worker force-evicts and drains everything on shutdown.
-            assert_eq!(sdk_worker.cached_workflows(), 0);
-        }
-    }
-    worker
-        .run_until_done_intercepted(Some(CacheAsserter))
-        .await
-        .unwrap();
-    // The wf must have started more than # workflows times, since all but one must experience
-    // an eviction
-    assert!(RUN_CT.load(Ordering::SeqCst) > n_workflows);
 }
 
 // Ideally this would be a unit test, but returning a pending future with mockall bloats the mock

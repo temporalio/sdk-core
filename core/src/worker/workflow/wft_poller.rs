@@ -31,12 +31,19 @@ pub(crate) fn make_wft_poller(
 > + Sized
 + 'static {
     let wft_metrics = metrics.with_new_attrs([workflow_poller()]);
-    let wft_poller_shared = Arc::new(WFTPollerShared::new());
+    let poller_behavior = wft_poller_behavior(config, false);
+    let wft_poller_shared = if sticky_queue_name.is_some() {
+        Some(Arc::new(WFTPollerShared::new(
+            wft_slots.available_permits(),
+        )))
+    } else {
+        None
+    };
     let wf_task_poll_buffer = LongPollBuffer::new_workflow_task(
         client.clone(),
         config.task_queue.clone(),
         None,
-        wft_poller_behavior(config, false),
+        poller_behavior,
         wft_slots.clone(),
         shutdown_token.child_token(),
         Some(move |np| {
@@ -74,14 +81,16 @@ pub(crate) struct WFTPollerShared {
     last_seen_sticky_backlog: (watch::Receiver<usize>, watch::Sender<usize>),
     sticky_active: OnceLock<watch::Receiver<usize>>,
     non_sticky_active: OnceLock<watch::Receiver<usize>>,
+    max_slots: Option<usize>,
 }
 impl WFTPollerShared {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(max_slots: Option<usize>) -> Self {
         let (tx, rx) = watch::channel(0);
         Self {
             last_seen_sticky_backlog: (rx, tx),
             sticky_active: OnceLock::new(),
             non_sticky_active: OnceLock::new(),
+            max_slots,
         }
     }
     pub(crate) fn set_sticky_active(&self, rx: watch::Receiver<usize>) {
@@ -95,36 +104,49 @@ impl WFTPollerShared {
     pub(crate) async fn wait_if_needed(&self, is_sticky: bool) {
         // If there's a sticky backlog, prioritize it.
         if !is_sticky {
-            let backlog = *self.last_seen_sticky_backlog.0.borrow();
-            if backlog > 1 {
-                let _ = self
-                    .last_seen_sticky_backlog
-                    .0
-                    .clone()
-                    .wait_for(|v| *v <= 1)
-                    .await;
-            }
+            let _ = self
+                .last_seen_sticky_backlog
+                .0
+                .clone()
+                .wait_for(|v| *v == 0)
+                .await;
         }
 
-        // If there's no meaningful sticky backlog, balance poller counts
-        if *self.last_seen_sticky_backlog.0.borrow() <= 1 {
+        // We need to make sure there's at least one poller of both kinds available. So, we check
+        // that we won't end up using every available permit with one kind of poller. In practice
+        // this is only ever likely to be an issue with very small numbers of slots.
+        if let Some(max_slots) = self.max_slots {
             if let Some((sticky_active, non_sticky_active)) =
                 self.sticky_active.get().zip(self.non_sticky_active.get())
             {
-                if is_sticky {
-                    let _ = sticky_active
-                        .clone()
-                        .wait_for(|v| *v <= *non_sticky_active.borrow())
-                        .await;
-                } else {
-                    let _ = non_sticky_active
-                        .clone()
-                        .wait_for(|v| *v <= *sticky_active.borrow())
-                        .await;
+                let mut sticky_active = sticky_active.clone();
+                let mut non_sticky_active = non_sticky_active.clone();
+                loop {
+                    let num_sticky_active = *sticky_active.borrow_and_update();
+                    let num_non_sticky_active = *non_sticky_active.borrow_and_update();
+                    let both_are_zero = num_sticky_active == 0 && num_non_sticky_active == 0;
+                    if both_are_zero {
+                        if !is_sticky {
+                            break;
+                        }
+                    } else {
+                        let would_exceed_max_slots =
+                            (num_sticky_active + num_non_sticky_active + 1) >= max_slots;
+                        let must_wait = would_exceed_max_slots
+                            && (num_sticky_active == 0 || num_non_sticky_active == 0);
+                        if !must_wait {
+                            break;
+                        }
+                    }
+                    tokio::select! {
+                        _ = sticky_active.changed() => (),
+                        _ = non_sticky_active.changed() => (),
+                    }
                 }
             }
         }
     }
+
     pub(crate) fn record_sticky_backlog(&self, v: usize) {
         let _ = self.last_seen_sticky_backlog.1.send(v);
     }

@@ -1,5 +1,5 @@
 use crate::{
-    abstractions::{MeteredPermitDealer, OwnedMeteredSemPermit, dbg_panic},
+    abstractions::{ActiveCounter, MeteredPermitDealer, OwnedMeteredSemPermit, dbg_panic},
     pollers::{self, Poller},
     worker::{
         WFTPollerShared,
@@ -53,7 +53,7 @@ pub(crate) struct LongPollBuffer<T, SK: SlotKind> {
 }
 
 pub(crate) struct WorkflowTaskOptions {
-    pub(crate) wft_poller_shared: Arc<WFTPollerShared>,
+    pub(crate) wft_poller_shared: Option<Arc<WFTPollerShared>>,
 }
 
 pub(crate) struct ActivityTaskOptions {
@@ -77,27 +77,27 @@ impl LongPollBuffer<PollWorkflowTaskQueueResponse, WorkflowSlotKind> {
     ) -> Self {
         let is_sticky = sticky_queue.is_some();
         let poll_scaler = PollScaler::new(poller_behavior, num_pollers_handler, shutdown.clone());
-        if is_sticky {
-            options
-                .wft_poller_shared
-                .set_sticky_active(poll_scaler.active_rx.clone());
-        } else {
-            options
-                .wft_poller_shared
-                .set_non_sticky_active(poll_scaler.active_rx.clone());
-        };
-        let shared = options.wft_poller_shared.clone();
-        let pre_permit_delay = Some(move || {
-            let shared = shared.clone();
-            async move {
-                shared.wait_if_needed(is_sticky).await;
+        if let Some(wftps) = options.wft_poller_shared.as_ref() {
+            if is_sticky {
+                wftps.set_sticky_active(poll_scaler.active_rx.clone());
+            } else {
+                wftps.set_non_sticky_active(poll_scaler.active_rx.clone());
+            };
+        }
+        let pre_permit_delay = options.wft_poller_shared.clone().map(|wftps| {
+            move || {
+                let shared = wftps.clone();
+                async move {
+                    shared.wait_if_needed(is_sticky).await;
+                }
             }
         });
-        let post_poll_fn = Some(move |t: &PollWorkflowTaskQueueResponse| {
-            if is_sticky {
-                options
-                    .wft_poller_shared
-                    .record_sticky_backlog(t.backlog_count_hint as usize)
+
+        let post_poll_fn = options.wft_poller_shared.clone().map(|wftps| {
+            move |t: &PollWorkflowTaskQueueResponse| {
+                if is_sticky {
+                    wftps.record_sticky_backlog(t.backlog_count_hint as usize)
+                }
             }
         });
         let no_retry = if matches!(poller_behavior, PollerBehavior::Autoscaling { .. }) {
@@ -388,35 +388,6 @@ async fn handle_task_panic(t: JoinHandle<()>) {
                 as_panic
             );
         }
-    }
-}
-
-struct ActiveCounter<F: Fn(usize)>(watch::Sender<usize>, Option<Arc<F>>);
-impl<F> ActiveCounter<F>
-where
-    F: Fn(usize),
-{
-    fn new(a: watch::Sender<usize>, change_fn: Option<Arc<F>>) -> Self {
-        a.send_modify(|v| {
-            *v += 1;
-            if let Some(cfn) = change_fn.as_ref() {
-                cfn(*v);
-            }
-        });
-        Self(a, change_fn)
-    }
-}
-impl<F> Drop for ActiveCounter<F>
-where
-    F: Fn(usize),
-{
-    fn drop(&mut self) {
-        self.0.send_modify(|v| {
-            *v -= 1;
-            if let Some(cfn) = self.1.as_ref() {
-                cfn(*v)
-            };
-        });
     }
 }
 
@@ -753,7 +724,7 @@ mod tests {
             CancellationToken::new(),
             None::<fn(usize)>,
             WorkflowTaskOptions {
-                wft_poller_shared: Arc::new(WFTPollerShared::new()),
+                wft_poller_shared: Some(Arc::new(WFTPollerShared::new(Some(10)))),
             },
         );
 
