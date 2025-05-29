@@ -20,9 +20,10 @@ backoff = "0.4"
 base64 = "0.22"
 derive_builder = { workspace = true }
 derive_more = { workspace = true }
+bytes = "1.10"
 futures-util = { version = "0.3", default-features = false }
 futures-retry = "0.6.0"
-http = "1.1.0"
+http = "1.1"
 http-body-util = "0.1"
 hyper = { version = "1.4.1" }
 hyper-util = "0.1.6"
@@ -31,7 +32,7 @@ parking_lot = "0.12"
 slotmap = "1.0"
 thiserror = { workspace = true }
 tokio = "1.1"
-tonic = { workspace = true, features = ["tls", "tls-roots"] }
+tonic = { workspace = true, features = ["tls-ring", "tls-native-roots"] }
 tower = { version = "0.5", features = ["util"] }
 tracing = "0.1"
 url = "2.2"
