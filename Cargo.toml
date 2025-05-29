@@ -10,9 +10,9 @@ license-file = "LICENSE.txt"
 derive_builder = "0.20"
 derive_more = { version = "2.0", features = ["constructor", "display", "from", "into", "debug"] }
 thiserror = "2"
-tonic = "0.12"
-tonic-build = "0.12"
-opentelemetry = { version = "0.29", features = ["metrics"] }
+tonic = "0.13"
+tonic-build = "0.13"
+opentelemetry = { version = "0.30", features = ["metrics"] }
 prost = "0.13"
 prost-types = "0.13"
 

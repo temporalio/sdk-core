@@ -16,10 +16,10 @@ use opentelemetry::{
 };
 use opentelemetry_otlp::{WithExportConfig, WithHttpConfig, WithTonicConfig};
 use opentelemetry_sdk::{
-    Resource,
+    Resource, metrics,
     metrics::{
-        Aggregation, Instrument, InstrumentKind, MeterProviderBuilder, MetricError, PeriodicReader,
-        SdkMeterProvider, Temporality, View, new_view,
+        Aggregation, Instrument, InstrumentKind, MeterProviderBuilder, PeriodicReader,
+        SdkMeterProvider, Temporality,
     },
 };
 use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
@@ -34,20 +34,24 @@ use temporal_sdk_core_api::telemetry::{
 use tokio::task::AbortHandle;
 use tonic::{metadata::MetadataMap, transport::ClientTlsConfig};
 
-/// A specialized `Result` type for metric operations.
-type Result<T> = std::result::Result<T, MetricError>;
-
-fn histo_view(metric_name: &'static str, use_seconds: bool) -> Result<Box<dyn View>> {
+fn histo_view(
+    metric_name: &'static str,
+    use_seconds: bool,
+) -> Result<Box<dyn Fn(&Instrument) -> Option<metrics::Stream>>, anyhow::Error> {
     let buckets = default_buckets_for(metric_name, use_seconds);
-    new_view(
-        Instrument::new().name(format!("*{metric_name}")),
-        opentelemetry_sdk::metrics::Stream::new().aggregation(
-            Aggregation::ExplicitBucketHistogram {
-                boundaries: buckets.to_vec(),
-                record_min_max: true,
-            },
-        ),
-    )
+    let stream = metrics::Stream::builder()
+        .with_aggregation(Aggregation::ExplicitBucketHistogram {
+            boundaries: buckets.to_vec(),
+            record_min_max: true,
+        })
+        .build()?;
+    Ok(Box::new(move |ins: &Instrument| {
+        if ins.name().ends_with(metric_name) {
+            Some(stream)
+        } else {
+            None
+        }
+    }))
 }
 
 pub(super) fn augment_meter_provider_with_defaults(
@@ -55,7 +59,7 @@ pub(super) fn augment_meter_provider_with_defaults(
     global_tags: &HashMap<String, String>,
     use_seconds: bool,
     bucket_overrides: HistogramBucketOverrides,
-) -> Result<MeterProviderBuilder> {
+) -> Result<MeterProviderBuilder, anyhow::Error> {
     for (name, buckets) in bucket_overrides.overrides {
         mpb = mpb.with_view(new_view(
             Instrument::new().name(format!("*{name}")),
