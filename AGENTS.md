@@ -15,6 +15,7 @@ document as your quick reference when submitting pull requests.
 - `tests/` – integration, heavy, and manual tests
 - `arch_docs/` – architectural design documents
 - Contributor guide: `README.md`
+- `target/` - This contains compiled files. You never need to look in here.
 
 ## Repo Specific Utilities
 
