@@ -9,7 +9,7 @@ use temporal_sdk_core_api::telemetry::metrics::{
     CoreMeter, Counter, HistogramDuration, MetricAttributes, MetricKeyValue, MetricParameters,
     TemporalMeter,
 };
-use tonic::{Code, body::BoxBody, transport::Channel};
+use tonic::{Code, body::Body, transport::Channel};
 use tower::Service;
 
 /// The string name (which may be prefixed) for this metric
@@ -177,8 +177,8 @@ pub struct GrpcMetricSvc {
     pub(crate) disable_errcode_label: bool,
 }
 
-impl Service<http::Request<BoxBody>> for GrpcMetricSvc {
-    type Response = http::Response<BoxBody>;
+impl Service<http::Request<Body>> for GrpcMetricSvc {
+    type Response = http::Response<Body>;
     type Error = tonic::transport::Error;
     type Future = BoxFuture<'static, Result<Self::Response, Self::Error>>;
 
@@ -186,7 +186,7 @@ impl Service<http::Request<BoxBody>> for GrpcMetricSvc {
         self.inner.poll_ready(cx).map_err(Into::into)
     }
 
-    fn call(&mut self, mut req: http::Request<BoxBody>) -> Self::Future {
+    fn call(&mut self, mut req: http::Request<Body>) -> Self::Future {
         let metrics = self
             .metrics
             .clone()
