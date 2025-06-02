@@ -25,7 +25,7 @@ use temporal_sdk_core_protos::{
         },
     },
 };
-use temporal_sdk_core_test_utils::{CoreWfStarter, rand_6_chars};
+use temporal_sdk_core_test_utils::{CoreWfStarter, WorkflowHandleExt, rand_6_chars};
 use tokio::sync::watch;
 use tokio::{join, sync::mpsc};
 
@@ -69,7 +69,7 @@ async fn nexus_basic(
             Ok(res.into())
         }
     });
-    starter.start_with_worker(wf_name, &mut worker).await;
+    let wf_handle = starter.start_with_worker(wf_name, &mut worker).await;
 
     let client = starter.get_client().await.get_client().clone();
     let nexus_task_handle = async {
@@ -165,6 +165,10 @@ async fn nexus_basic(
         }
         _ => unreachable!(),
     }
+    wf_handle
+        .fetch_history_and_replay(worker.inner_mut())
+        .await
+        .unwrap();
 }
 
 #[rstest::rstest]
@@ -234,7 +238,7 @@ async fn nexus_async(
         },
     );
     let submitter = worker.get_submitter_handle();
-    starter.start_with_worker(wf_name, &mut worker).await;
+    let wf_handle = starter.start_with_worker(wf_name, &mut worker).await;
 
     let client = starter.get_client().await.get_client().clone();
     let nexus_task_handle = async {
@@ -388,6 +392,10 @@ async fn nexus_async(
             assert_eq!(f.cause.unwrap().message, "operation timed out");
         }
     }
+    wf_handle
+        .fetch_history_and_replay(worker.inner_mut())
+        .await
+        .unwrap();
 }
 #[tokio::test]
 async fn nexus_cancel_before_start() {
@@ -420,9 +428,14 @@ async fn nexus_cancel_before_start() {
             Ok(().into())
         }
     });
-    starter.start_with_worker(wf_name, &mut worker).await;
+    let handle = starter.start_with_worker(wf_name, &mut worker).await;
 
     worker.run_until_done().await.unwrap();
+
+    handle
+        .fetch_history_and_replay(worker.inner_mut())
+        .await
+        .unwrap();
 }
 
 #[rstest::rstest]
@@ -510,6 +523,11 @@ async fn nexus_must_complete_task_to_shutdown(#[values(true, false)] use_grace_p
 
     // The first thing to finish needs to have been the nexus task completion
     assert_eq!(complete_order_rx.recv().await.unwrap(), "t");
+
+    handle
+        .fetch_history_and_replay(worker.inner_mut())
+        .await
+        .unwrap();
 }
 
 #[rstest::rstest]
@@ -749,4 +767,9 @@ async fn nexus_cancellation_types(
             assert_eq!(f.cause.unwrap().message, "operation canceled");
         }
     }
+
+    wf_handle
+        .fetch_history_and_replay(worker.inner_mut())
+        .await
+        .unwrap();
 }
