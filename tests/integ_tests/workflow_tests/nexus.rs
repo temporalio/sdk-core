@@ -558,7 +558,7 @@ async fn nexus_cancellation_types(
             started.cancel(&ctx);
 
             // We need to wait slightly so that the workflow is not complete at the same time
-            // cancellation is invoked
+            // cancellation is invoked. If it does, the caller workflow will close and the server won't attempt to send the cancellation to the handler
             ctx.timer(Duration::from_millis(1)).await;
             Ok(res.into())
         }
@@ -645,7 +645,10 @@ async fn nexus_cancellation_types(
                 assert!(!*cancel_call_completion_rx.borrow());
             }
             NexusOperationCancellationType::Abandon | NexusOperationCancellationType::TryCancel => {
-                wf_handle.get_workflow_result(Default::default()).await.unwrap();
+                wf_handle
+                    .get_workflow_result(Default::default())
+                    .await
+                    .unwrap();
                 assert!(*cancel_call_completion_rx.borrow())
             }
         }
@@ -681,7 +684,10 @@ async fn nexus_cancellation_types(
 
             // It only completes after the handler WF terminates
             cancellation_wait_tx.send(true).unwrap();
-            wf_handle.get_workflow_result(Default::default()).await.unwrap();
+            wf_handle
+                .get_workflow_result(Default::default())
+                .await
+                .unwrap();
             assert!(*cancel_call_completion_rx.borrow());
         }
 
