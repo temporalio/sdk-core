@@ -69,3 +69,15 @@ enum NexusTaskCancelReason {
     // The worker is shutting down
     WORKER_SHUTDOWN = 1;
 }
+
+// Controls at which point to report back to lang when a nexus operation is cancelled
+enum NexusOperationCancellationType {
+    // Do not request cancellation of the nexus operation if already scheduled
+    ABANDON = 0;
+    // Initiate a cancellation request and immediately report cancellation to the parent.
+    TRY_CANCEL = 1;
+    // Wait for operation cancellation completion.
+    WAIT_CANCELLATION_COMPLETED = 2;
+    // Request cancellation of the operation and wait for confirmation that the request was received.
+    WAIT_CANCELLATION_REQUESTED = 3;
+}
