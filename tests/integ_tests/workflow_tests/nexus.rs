@@ -197,14 +197,13 @@ async fn nexus_async(
     worker.register_wf(wf_name.to_owned(), move |ctx: WfContext| {
         let endpoint = endpoint.clone();
         async move {
-            let options = NexusOperationOptions {
+            let started = ctx.start_nexus_operation(NexusOperationOptions {
                 endpoint,
                 service: "svc".to_string(),
                 operation: "op".to_string(),
                 schedule_to_close_timeout,
                 ..Default::default()
-            };
-            let started = ctx.start_nexus_operation(options);
+            });
             if outcome == Outcome::CancelAfterRecordedBeforeStarted {
                 ctx.timer(Duration::from_millis(1)).await;
                 started.cancel(&ctx);
@@ -219,7 +218,6 @@ async fn nexus_async(
             let res = result.await;
             // Make sure cancel after completion doesn't cause problems
             started.cancel(&ctx);
-
             Ok(res.into())
         }
     });

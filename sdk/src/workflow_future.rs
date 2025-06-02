@@ -178,7 +178,6 @@ impl WorkflowFuture {
         variant: Option<Variant>,
         outgoing_cmds: &mut Vec<WorkflowCommand>,
     ) -> Result<bool, Error> {
-        info!("Job variant {:?}", variant);
         if let Some(v) = variant {
             match v {
                 Variant::InitializeWorkflow(_) => {
