@@ -3,9 +3,7 @@ use anyhow::bail;
 use assert_matches::assert_matches;
 use std::time::Duration;
 use temporal_client::{WfClientExt, WorkflowClientTrait, WorkflowOptions};
-use temporal_sdk::{
-    CancellableFuture, NexusOperationOptions, WfContext, WfExitValue
-};
+use temporal_sdk::{CancellableFuture, NexusOperationOptions, WfContext, WfExitValue};
 use temporal_sdk_core_api::errors::PollError;
 use temporal_sdk_core_protos::coresdk::nexus::NexusOperationCancellationType;
 use temporal_sdk_core_protos::{
@@ -524,7 +522,7 @@ async fn nexus_cancellation_types(
         NexusOperationCancellationType::Abandon,
         NexusOperationCancellationType::TryCancel,
         NexusOperationCancellationType::WaitCancellationRequested,
-        NexusOperationCancellationType::WaitCancellationCompleted,
+        NexusOperationCancellationType::WaitCancellationCompleted
     )]
     cancellation_type: NexusOperationCancellationType,
 ) {
@@ -647,7 +645,8 @@ async fn nexus_cancellation_types(
         // Ensure the workflow gets a chance to proceed
         sleep(Duration::from_millis(100)).await;
         match cancellation_type {
-            NexusOperationCancellationType::WaitCancellationCompleted | NexusOperationCancellationType::WaitCancellationRequested => {
+            NexusOperationCancellationType::WaitCancellationCompleted
+            | NexusOperationCancellationType::WaitCancellationRequested => {
                 assert!(!*cancel_call_completion_rx.borrow());
             }
             NexusOperationCancellationType::Abandon | NexusOperationCancellationType::TryCancel => {
