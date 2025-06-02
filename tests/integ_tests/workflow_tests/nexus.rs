@@ -524,7 +524,7 @@ async fn nexus_cancellation_types(
         NexusOperationCancellationType::Abandon,
         NexusOperationCancellationType::TryCancel,
         NexusOperationCancellationType::WaitCancellationRequested,
-        NexusOperationCancellationType::WaitCancellationCompleted
+        NexusOperationCancellationType::WaitCancellationCompleted,
     )]
     cancellation_type: NexusOperationCancellationType,
 ) {

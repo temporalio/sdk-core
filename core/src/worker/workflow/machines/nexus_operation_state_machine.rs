@@ -137,7 +137,6 @@ impl NexusOperationMachine {
     }
 
     pub(super) fn cancel(&mut self) -> Result<Vec<MachineResponse>, MachineError<WFMachinesError>> {
-        info!("Cancel at state {}", self.state.as_ref().unwrap());
         let event = NexusOperationMachineEvents::Cancel;
         let cmds = OnEventWrapper::on_event_mut(self, event)?;
         let mach_resps = cmds
@@ -263,7 +262,6 @@ impl Started {
         &self,
         ss: &mut SharedState,
     ) -> NexusOperationMachineTransition<StartedOrCancelled> {
-        info!("Cancellation");
         if !ss.cancel_sent {
             ss.cancel_sent = true;
             let dest = if matches!(
@@ -562,7 +560,6 @@ impl WFMachinesAdapter for NexusOperationMachine {
                 ]
             }
             NexusOperationCommand::IssueCancel => {
-                info!("Issue cancel command");
                 let mut resps = vec![];
                 if self.shared_state.cancel_type != NexusOperationCancellationType::Abandon {
                     resps.push(MachineResponse::IssueNewCommand(

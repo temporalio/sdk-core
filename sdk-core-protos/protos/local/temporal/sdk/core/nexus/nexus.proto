@@ -74,10 +74,13 @@ enum NexusTaskCancelReason {
 enum NexusOperationCancellationType {
     // Do not request cancellation of the nexus operation if already scheduled
     ABANDON = 0;
-    // Initiate a cancellation request and immediately report cancellation to the parent.
+
+    // Initiate a cancellation request for the Nexus operation and immediately report cancellation
+    // to the caller. Note that it doesn't guarantee that cancellation is delivered to the operation if calling workflow exits before the delivery is done.
+    // If you want to ensure that cancellation is delivered to the operation, use WAIT_CANCELLATION_REQUESTED.
     TRY_CANCEL = 1;
-    // Wait for operation cancellation completion.
-    WAIT_CANCELLATION_COMPLETED = 2;
     // Request cancellation of the operation and wait for confirmation that the request was received.
-    WAIT_CANCELLATION_REQUESTED = 3;
+    WAIT_CANCELLATION_REQUESTED = 2;
+    // Wait for operation cancellation completion. Default.
+    WAIT_CANCELLATION_COMPLETED = 3;
 }
