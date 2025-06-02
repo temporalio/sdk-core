@@ -27,7 +27,6 @@ use temporal_sdk_core_protos::{
 };
 use temporal_sdk_core_test_utils::{CoreWfStarter, rand_6_chars};
 use tokio::sync::watch;
-use tokio::time::sleep;
 use tokio::{join, sync::mpsc};
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -560,13 +559,13 @@ async fn nexus_cancellation_types(
 
             // We need to wait slightly so that the workflow is not complete at the same time
             // cancellation is invoked
-            ctx.timer(Duration::from_millis(100)).await;
+            ctx.timer(Duration::from_millis(1)).await;
             Ok(res.into())
         }
     });
 
     let (cancellation_wait_tx, cancellation_wait_rx) = watch::channel(false);
-    let (cancellation_tx, cancellation_rx) = watch::channel(false);
+    let (cancellation_tx, mut cancellation_rx) = watch::channel(false);
     worker.register_wf("async_completer".to_owned(), move |ctx: WfContext| {
         let cancellation_tx = cancellation_tx.clone();
         let mut cancellation_wait_rx = cancellation_wait_rx.clone();
@@ -640,14 +639,13 @@ async fn nexus_cancellation_types(
             .await
             .unwrap();
 
-        // Ensure the workflow gets a chance to proceed
-        sleep(Duration::from_millis(100)).await;
         match cancellation_type {
             NexusOperationCancellationType::WaitCancellationCompleted
             | NexusOperationCancellationType::WaitCancellationRequested => {
                 assert!(!*cancel_call_completion_rx.borrow());
             }
             NexusOperationCancellationType::Abandon | NexusOperationCancellationType::TryCancel => {
+                wf_handle.get_workflow_result(Default::default()).await.unwrap();
                 assert!(*cancel_call_completion_rx.borrow())
             }
         }
@@ -683,7 +681,7 @@ async fn nexus_cancellation_types(
 
             // It only completes after the handler WF terminates
             cancellation_wait_tx.send(true).unwrap();
-            sleep(Duration::from_millis(100)).await;
+            wf_handle.get_workflow_result(Default::default()).await.unwrap();
             assert!(*cancel_call_completion_rx.borrow());
         }
 
@@ -702,19 +700,21 @@ async fn nexus_cancellation_types(
                 .get_workflow_result(Default::default())
                 .await
                 .unwrap();
+            if cancellation_type == NexusOperationCancellationType::TryCancel {
+                cancellation_rx.changed().await.unwrap();
+            }
             shutdown_handle();
         }
     );
 
-    let cancelled = *cancellation_rx.borrow();
     match cancellation_type {
         NexusOperationCancellationType::Abandon => {
-            assert!(!cancelled);
+            assert!(!*cancellation_rx.borrow());
         }
         NexusOperationCancellationType::TryCancel
         | NexusOperationCancellationType::WaitCancellationRequested
         | NexusOperationCancellationType::WaitCancellationCompleted => {
-            assert!(cancelled)
+            assert!(*cancellation_rx.borrow())
         }
     }
 
