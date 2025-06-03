@@ -33,12 +33,12 @@ message MtlsAuthSpec {
     // This must only be one value, but the CA can have a chain.
     //
     // (-- api-linter: core::0140::base64=disabled --)
-    // Deprecated: Not supported after 2024-05-13-00 api version. Use accepted_client_ca instead.
-    // temporal:versioning:max_version=2024-05-13-00
+    // Deprecated: Not supported after v0.2.0 api version. Use accepted_client_ca instead.
+    // temporal:versioning:max_version=v0.2.0
     string accepted_client_ca_deprecated = 1;
     // The ca cert(s) in PEM format that the clients can use for authentication and authorization.
     // This must only be one value, but the CA can have a chain.
-    // temporal:versioning:min_version=2024-05-13-00
+    // temporal:versioning:min_version=v0.2.0
     bytes accepted_client_ca = 4;
     // Certificate filters which, if specified, only allow connections from client certificates whose distinguished name properties match at least one of the filters.
     // This allows limiting access to specific end-entity certificates.
@@ -46,7 +46,7 @@ message MtlsAuthSpec {
     repeated CertificateFilterSpec certificate_filters = 2;
     // Flag to enable mTLS auth (default: disabled).
     // Note: disabling mTLS auth will cause existing mTLS connections to fail.
-    // temporal:versioning:min_version=2024-05-13-00
+    // temporal:versioning:min_version=v0.2.0
     bool enabled = 3;
 }
 
@@ -63,6 +63,31 @@ message CodecServerSpec {
     bool pass_access_token = 2;
     // Whether to include cross-origin credentials.
     bool include_cross_origin_credentials = 3;
+    // A custom error message to display for remote codec server errors.
+    // temporal:versioning:min_version=v0.5.1
+    CustomErrorMessage custom_error_message = 4;
+
+    message CustomErrorMessage {
+        // The error message to display by default for any remote codec server errors.
+        ErrorMessage default = 1;
+
+        message ErrorMessage {
+            // A message to display.
+            string message = 1;
+            // A link that is displayed along side the configured message.
+            string link = 2;
+        }
+    }
+}
+
+message LifecycleSpec {
+    // Flag to enable delete protection for the namespace.
+    bool enable_delete_protection = 1;
+}
+
+message HighAvailabilitySpec {
+    // Flag to disable managed failover for the namespace.
+    bool disable_managed_failover = 1;
 }
 
 message NamespaceSpec {
@@ -88,26 +113,32 @@ message NamespaceSpec {
     MtlsAuthSpec mtls_auth = 4;
     // The API key auth configuration for the namespace.
     // If unspecified, API keys will be disabled.
-    // temporal:versioning:min_version=2024-05-13-00
+    // temporal:versioning:min_version=v0.2.0
     ApiKeyAuthSpec api_key_auth = 7;
     // The custom search attributes to use for the namespace.
     // The name of the attribute is the key and the type is the value.
     // Supported attribute types: text, keyword, int, double, bool, datetime, keyword_list.
     // NOTE: currently deleting a search attribute is not supported.
     // Optional, default is empty.
-    // Deprecated: Not supported after 2024-10-01-00 api version. Use search_attributes instead.
-    // temporal:versioning:max_version=2024-10-01-00
+    // Deprecated: Not supported after v0.3.0 api version. Use search_attributes instead.
+    // temporal:versioning:max_version=v0.3.0
     map<string, string> custom_search_attributes = 5 [deprecated = true];
     // The custom search attributes to use for the namespace.
     // The name of the attribute is the key and the type is the value.
     // Note: currently deleting a search attribute is not supported.
     // Optional, default is empty.
-    // temporal:versioning:min_version=2024-10-01-00
+    // temporal:versioning:min_version=v0.3.0
     // temporal:enums:replaces=custom_search_attributes
     map<string, SearchAttributeType> search_attributes = 8;
     // Codec server spec used by UI to decode payloads for all users interacting with this namespace.
     // Optional, default is unset.
     CodecServerSpec codec_server = 6;
+    // The lifecycle configuration for the namespace.
+    // temporal:versioning:min_version=v0.4.0
+    LifecycleSpec lifecycle = 9;
+    // The high availability configuration for the namespace.
+    // temporal:versioning:min_version=v0.4.0
+    HighAvailabilitySpec high_availability = 10;
 
     enum SearchAttributeType {
         SEARCH_ATTRIBUTE_TYPE_UNSPECIFIED = 0;
@@ -161,12 +192,12 @@ message Namespace {
     // The namespace specification.
     NamespaceSpec spec = 3;
     // The current state of the namespace.
-    // Deprecated: Not supported after 2024-10-01-00 api version. Use state instead.
-    // temporal:versioning:max_version=2024-10-01-00
+    // Deprecated: Not supported after v0.3.0 api version. Use state instead.
+    // temporal:versioning:max_version=v0.3.0
     string state_deprecated = 4 [deprecated = true];
     // The current state of the namespace.
     // For any failed state, reach out to Temporal Cloud support for remediation.
-    // temporal:versioning:min_version=2024-10-01-00
+    // temporal:versioning:min_version=v0.3.0
     // temporal:enums:replaces=state_deprecated
     temporal.api.cloud.resource.v1.ResourceState state = 13;
     // The id of the async operation that is creating/updating/deleting the namespace, if any.
@@ -193,11 +224,11 @@ message NamespaceRegionStatus {
     // The current state of the namespace region.
     // Possible values: adding, active, passive, removing, failed.
     // For any failed state, reach out to Temporal Cloud support for remediation.
-    // Deprecated: Not supported after 2024-10-01-00 api version. Use state instead.
-    // temporal:versioning:max_version=2024-10-01-00
+    // Deprecated: Not supported after v0.3.0 api version. Use state instead.
+    // temporal:versioning:max_version=v0.3.0
     string state_deprecated = 1 [deprecated = true];
     // The current state of the namespace region.
-    // temporal:versioning:min_version=2024-10-01-00
+    // temporal:versioning:min_version=v0.3.0
     // temporal:enums:replaces=state_deprecated
     State state = 3;
     // The id of the async operation that is making changes to where the namespace is available, if any.
@@ -223,7 +254,6 @@ message ExportSinkSpec {
     // The S3 configuration details when destination_type is S3.
     temporal.api.cloud.sink.v1.S3Spec s3 = 3;
 
-    // This is a feature under development. We will allow GCS sink support for GCP Namespaces.
     // The GCS configuration details when destination_type is GCS. 
     temporal.api.cloud.sink.v1.GCSSpec gcs = 4;
 }

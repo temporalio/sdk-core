@@ -256,6 +256,25 @@ message AddNamespaceRegionResponse {
     temporal.api.cloud.operation.v1.AsyncOperation async_operation = 1;
 }
 
+message DeleteNamespaceRegionRequest {
+    // The namespace to delete a region.
+    string namespace = 1;
+    // The id of the standby region to be deleted.
+    // The GetRegions API can be used to get the list of valid region ids.
+    // Example: "aws-us-west-2".
+    string region = 2;
+    // The version of the namespace for which this delete region operation is intended for.
+    // The latest version can be found in the GetNamespace operation response.
+    string resource_version = 3;
+    // The id to use for this async operation - optional.
+    string async_operation_id = 4;
+}
+
+message DeleteNamespaceRegionResponse {
+    // The async operation.
+    temporal.api.cloud.operation.v1.AsyncOperation async_operation = 1;
+}
+
 message GetRegionsRequest {
 }
 
@@ -463,10 +482,17 @@ message GetUserGroupsRequest {
     string display_name = 4;
     // Filter groups by the google group specification - optional.
     GoogleGroupFilter google_group = 5;
+    // Filter groups by the SCIM group specification - optional.
+    SCIMGroupFilter scim_group = 6;
+
 
     message GoogleGroupFilter {
         // Filter groups by the google group email - optional.
         string email_address = 1;
+    }
+    message SCIMGroupFilter {
+        // Filter groups by the SCIM IDP id - optional.
+        string idp_id = 1;
     }
 }
 
@@ -554,6 +580,58 @@ message SetUserGroupNamespaceAccessRequest {
 message SetUserGroupNamespaceAccessResponse {
     // The async operation.
     temporal.api.cloud.operation.v1.AsyncOperation async_operation = 1;
+}
+
+message AddUserGroupMemberRequest {
+    // The id of the group to add the member for.
+    string group_id = 1;
+
+    // The member id to add to the group.
+    temporal.api.cloud.identity.v1.UserGroupMemberId member_id = 2;
+
+    // The id to use for this async operation.
+    // Optional, if not provided a random id will be generated.
+    string async_operation_id = 3;
+}
+
+message AddUserGroupMemberResponse {
+    // The async operation.
+    temporal.api.cloud.operation.v1.AsyncOperation async_operation = 1;
+}
+
+message RemoveUserGroupMemberRequest {
+    // The id of the group to add the member for.
+    string group_id = 1;
+
+    // The member id to add to the group.
+    temporal.api.cloud.identity.v1.UserGroupMemberId member_id = 2;
+
+    // The id to use for this async operation.
+    // Optional, if not provided a random id will be generated.
+    string async_operation_id = 3;
+}
+
+message RemoveUserGroupMemberResponse {
+    // The async operation.
+    temporal.api.cloud.operation.v1.AsyncOperation async_operation = 1;
+}
+
+message GetUserGroupMembersRequest {
+    // The requested size of the page to retrieve - optional.
+    // Cannot exceed 1000. Defaults to 100.
+    int32 page_size = 1;
+    // The page token if this is continuing from another response - optional.
+    string page_token = 2;
+
+    // The group id to list members of.
+    string group_id = 3;
+}
+
+message GetUserGroupMembersResponse {
+    // The list of group members
+    repeated temporal.api.cloud.identity.v1.UserGroupMember members = 1;
+    // The next page's token.
+    string next_page_token = 2;
 }
 
 message CreateServiceAccountRequest {
