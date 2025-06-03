@@ -7,6 +7,7 @@ use super::{
         WORKFLOW_TASK_REPLAY_LATENCY_HISTOGRAM_NAME,
         WORKFLOW_TASK_SCHED_TO_START_LATENCY_HISTOGRAM_NAME,
     },
+    prometheus_meter::CorePrometheusMeter,
     prometheus_server::PromServer,
 };
 use crate::{abstractions::dbg_panic, telemetry::metrics::DEFAULT_S_BUCKETS};
@@ -37,21 +38,23 @@ use tonic::{metadata::MetadataMap, transport::ClientTlsConfig};
 fn histo_view(
     metric_name: &'static str,
     use_seconds: bool,
-) -> Result<Box<dyn Fn(&Instrument) -> Option<metrics::Stream>>, anyhow::Error> {
-    let buckets = default_buckets_for(metric_name, use_seconds);
-    let stream = metrics::Stream::builder()
-        .with_aggregation(Aggregation::ExplicitBucketHistogram {
-            boundaries: buckets.to_vec(),
-            record_min_max: true,
-        })
-        .build()?;
-    Ok(Box::new(move |ins: &Instrument| {
+) -> impl Fn(&Instrument) -> Option<metrics::Stream> + Send + Sync + 'static {
+    let buckets = default_buckets_for(metric_name, use_seconds).to_vec();
+    move |ins: &Instrument| {
         if ins.name().ends_with(metric_name) {
-            Some(stream)
+            Some(
+                metrics::Stream::builder()
+                    .with_aggregation(Aggregation::ExplicitBucketHistogram {
+                        boundaries: buckets.clone(),
+                        record_min_max: true,
+                    })
+                    .build()
+                    .expect("Failed to build stream"),
+            )
         } else {
             None
         }
-    }))
+    }
 }
 
 pub(super) fn augment_meter_provider_with_defaults(
@@ -61,66 +64,74 @@ pub(super) fn augment_meter_provider_with_defaults(
     bucket_overrides: HistogramBucketOverrides,
 ) -> Result<MeterProviderBuilder, anyhow::Error> {
     for (name, buckets) in bucket_overrides.overrides {
-        mpb = mpb.with_view(new_view(
-            Instrument::new().name(format!("*{name}")),
-            opentelemetry_sdk::metrics::Stream::new().aggregation(
-                Aggregation::ExplicitBucketHistogram {
-                    boundaries: buckets,
-                    record_min_max: true,
-                },
-            ),
-        )?)
+        let name_pattern = format!("*{name}");
+        mpb = mpb.with_view(move |ins: &Instrument| {
+            if ins.name().contains(&name_pattern[1..]) {
+                // Remove the '*' prefix for contains check
+                Some(
+                    metrics::Stream::builder()
+                        .with_aggregation(Aggregation::ExplicitBucketHistogram {
+                            boundaries: buckets.clone(),
+                            record_min_max: true,
+                        })
+                        .build()
+                        .expect("Failed to build stream"),
+                )
+            } else {
+                None
+            }
+        });
     }
     let mut mpb = mpb
-        .with_view(histo_view(
-            WORKFLOW_E2E_LATENCY_HISTOGRAM_NAME,
-            use_seconds,
-        )?)
+        .with_view(histo_view(WORKFLOW_E2E_LATENCY_HISTOGRAM_NAME, use_seconds))
         .with_view(histo_view(
             WORKFLOW_TASK_EXECUTION_LATENCY_HISTOGRAM_NAME,
             use_seconds,
-        )?)
+        ))
         .with_view(histo_view(
             WORKFLOW_TASK_REPLAY_LATENCY_HISTOGRAM_NAME,
             use_seconds,
-        )?)
+        ))
         .with_view(histo_view(
             WORKFLOW_TASK_SCHED_TO_START_LATENCY_HISTOGRAM_NAME,
             use_seconds,
-        )?)
+        ))
         .with_view(histo_view(
             ACTIVITY_SCHED_TO_START_LATENCY_HISTOGRAM_NAME,
             use_seconds,
-        )?)
+        ))
         .with_view(histo_view(
             ACTIVITY_EXEC_LATENCY_HISTOGRAM_NAME,
             use_seconds,
-        )?);
+        ));
     // Fallback default
-    mpb = mpb.with_view(new_view(
-        {
-            let mut i = Instrument::new();
-            i.kind = Some(InstrumentKind::Histogram);
-            i
-        },
-        opentelemetry_sdk::metrics::Stream::new().aggregation(
-            Aggregation::ExplicitBucketHistogram {
-                boundaries: if use_seconds {
-                    DEFAULT_S_BUCKETS.to_vec()
-                } else {
-                    DEFAULT_MS_BUCKETS.to_vec()
-                },
-                record_min_max: true,
-            },
-        ),
-    )?);
+    let default_buckets = if use_seconds {
+        DEFAULT_S_BUCKETS.to_vec()
+    } else {
+        DEFAULT_MS_BUCKETS.to_vec()
+    };
+    mpb = mpb.with_view(move |ins: &Instrument| {
+        if ins.kind() == InstrumentKind::Histogram {
+            Some(
+                metrics::Stream::builder()
+                    .with_aggregation(Aggregation::ExplicitBucketHistogram {
+                        boundaries: default_buckets.clone(),
+                        record_min_max: true,
+                    })
+                    .build()
+                    .expect("Failed to build stream"),
+            )
+        } else {
+            None
+        }
+    });
     Ok(mpb.with_resource(default_resource(global_tags)))
 }
 
 /// Create an OTel meter that can be used as a [CoreMeter] to export metrics over OTLP.
 pub fn build_otlp_metric_exporter(
     opts: OtelCollectorOptions,
-) -> std::result::Result<CoreOtelMeter, anyhow::Error> {
+) -> Result<CoreOtelMeter, anyhow::Error> {
     let exporter = match opts.protocol {
         OtlpProtocol::Grpc => {
             let mut exporter = opentelemetry_otlp::MetricExporter::builder()
@@ -159,7 +170,7 @@ pub fn build_otlp_metric_exporter(
 }
 
 pub struct StartedPromServer {
-    pub meter: Arc<CoreOtelMeter>,
+    pub meter: Arc<CorePrometheusMeter>,
     pub bound_addr: SocketAddr,
     pub abort_handle: AbortHandle,
 }
@@ -170,23 +181,16 @@ pub struct StartedPromServer {
 /// Requires a Tokio runtime to exist, and will block briefly while binding the server endpoint.
 pub fn start_prometheus_metric_exporter(
     opts: PrometheusExporterOptions,
-) -> std::result::Result<StartedPromServer, anyhow::Error> {
-    let (srv, exporter) = PromServer::new(&opts)?;
-    let meter_provider = augment_meter_provider_with_defaults(
-        MeterProviderBuilder::default().with_reader(exporter),
-        &opts.global_tags,
+) -> Result<StartedPromServer, anyhow::Error> {
+    let srv = PromServer::new(&opts)?;
+    let meter = Arc::new(CorePrometheusMeter::new(
+        srv.registry().clone(),
         opts.use_seconds_for_durations,
-        opts.histogram_bucket_overrides,
-    )?
-    .build();
+    ));
     let bound_addr = srv.bound_addr()?;
     let handle = tokio::spawn(async move { srv.run().await });
     Ok(StartedPromServer {
-        meter: Arc::new(CoreOtelMeter {
-            meter: meter_provider.meter(TELEM_SERVICE_NAME),
-            use_seconds_for_durations: opts.use_seconds_for_durations,
-            _mp: meter_provider,
-        }),
+        meter,
         bound_addr,
         abort_handle: handle.abort_handle(),
     })

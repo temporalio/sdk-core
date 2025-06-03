@@ -801,7 +801,7 @@ where
     fn send(&self, value: MetricUpdateVal, attributes: &MetricAttributes) {
         let attributes = match attributes {
             MetricAttributes::Buffer(l) => l.clone(),
-            _ => panic!("MetricsCallBuffer only works with MetricAttributes::Lang"),
+            _ => panic!("MetricsCallBuffer only works with MetricAttributes::Buffer"),
         };
         self.tx.send(MetricEvent::Update {
             instrument: self.instrument_ref.clone(),

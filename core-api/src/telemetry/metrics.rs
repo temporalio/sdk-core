@@ -117,6 +117,10 @@ pub enum MetricAttributes {
     OTel {
         kvs: Arc<Vec<opentelemetry::KeyValue>>,
     },
+    #[cfg(feature = "prom_impls")]
+    Prometheus {
+        labels: std::collections::HashMap<String, String>,
+    },
     Buffer(BufferAttributes),
     Dynamic(Arc<dyn CustomMetricAttributes>),
 }
@@ -432,6 +436,110 @@ mod otel_impls {
                 debug_assert!(
                     false,
                     "Must use OTel attributes with an OTel metric implementation"
+                );
+            }
+        }
+    }
+}
+
+#[cfg(feature = "prom_impls")]
+mod prom_impls {
+    use super::*;
+    use prometheus::{CounterVec, GaugeVec, HistogramVec};
+    use std::collections::HashMap;
+
+    impl From<&MetricAttributes> for HashMap<String, String> {
+        fn from(attributes: &MetricAttributes) -> Self {
+            match attributes {
+                MetricAttributes::Prometheus { labels } => labels.clone(),
+                _ => HashMap::new(),
+            }
+        }
+    }
+
+    // TODO: Should be GenericCounterVec<AtomicI64>
+    impl Counter for CounterVec {
+        fn add(&self, value: u64, attributes: &MetricAttributes) {
+            if let MetricAttributes::Prometheus { labels } = attributes {
+                let mut str_labels: HashMap<&str, &str> = HashMap::new();
+                for (k, v) in labels {
+                    str_labels.insert(k.as_str(), v.as_str());
+                }
+                self.with(&str_labels).inc_by(value as f64);
+            } else {
+                debug_assert!(
+                    false,
+                    "Must use Prometheus attributes with a Prometheus metric implementation"
+                );
+            }
+        }
+    }
+
+    // TODO: Should be GenericGaugeVec<AtomicI64>
+    impl Gauge for GaugeVec {
+        fn record(&self, value: u64, attributes: &MetricAttributes) {
+            if let MetricAttributes::Prometheus { labels } = attributes {
+                let mut str_labels: HashMap<&str, &str> = HashMap::new();
+                for (k, v) in labels {
+                    str_labels.insert(k.as_str(), v.as_str());
+                }
+                self.with(&str_labels).set(value as f64);
+            } else {
+                debug_assert!(
+                    false,
+                    "Must use Prometheus attributes with a Prometheus metric implementation"
+                );
+            }
+        }
+    }
+
+    impl GaugeF64 for GaugeVec {
+        fn record(&self, value: f64, attributes: &MetricAttributes) {
+            if let MetricAttributes::Prometheus { labels } = attributes {
+                let mut str_labels: HashMap<&str, &str> = HashMap::new();
+                for (k, v) in labels {
+                    str_labels.insert(k.as_str(), v.as_str());
+                }
+                self.with(&str_labels).set(value);
+            } else {
+                debug_assert!(
+                    false,
+                    "Must use Prometheus attributes with a Prometheus metric implementation"
+                );
+            }
+        }
+    }
+
+    // TODO: Should be GenericGaugeVec<AtomicI64>
+    impl Histogram for HistogramVec {
+        fn record(&self, value: u64, attributes: &MetricAttributes) {
+            if let MetricAttributes::Prometheus { labels } = attributes {
+                let mut str_labels: HashMap<&str, &str> = HashMap::new();
+                for (k, v) in labels {
+                    str_labels.insert(k.as_str(), v.as_str());
+                }
+                self.with(&str_labels).observe(value as f64);
+            } else {
+                debug_assert!(
+                    false,
+                    "Must use Prometheus attributes with a Prometheus metric implementation"
+                );
+            }
+        }
+    }
+
+    impl HistogramF64 for HistogramVec {
+        fn record(&self, value: f64, attributes: &MetricAttributes) {
+            if let MetricAttributes::Prometheus { labels } = attributes {
+                let mut str_labels: HashMap<&str, &str> = HashMap::new();
+                for (k, v) in labels {
+                    str_labels.insert(k.as_str(), v.as_str());
+                }
+                self.with(&str_labels).observe(value);
+            } else {
+                debug_assert!(
+                    false,
+                    "Must use Prometheus attributes with a Prometheus metric implementation"
                 );
             }
         }

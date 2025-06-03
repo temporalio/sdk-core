@@ -4,7 +4,6 @@ use hyper_util::{
     rt::{TokioExecutor, TokioIo},
     server::conn::auto,
 };
-use opentelemetry_prometheus::PrometheusExporter;
 use prometheus::{Encoder, Registry, TextEncoder};
 use std::net::{SocketAddr, TcpListener};
 use temporal_sdk_core_api::telemetry::PrometheusExporterOptions;
@@ -17,30 +16,16 @@ pub(super) struct PromServer {
 }
 
 impl PromServer {
-    pub(super) fn new(
-        opts: &PrometheusExporterOptions,
-    ) -> Result<(Self, PrometheusExporter), anyhow::Error> {
+    pub(super) fn new(opts: &PrometheusExporterOptions) -> Result<Self, anyhow::Error> {
         let registry = Registry::new();
-        let exporter = opentelemetry_prometheus::exporter()
-            .without_scope_info()
-            .with_registry(registry.clone());
-        let exporter = if !opts.counters_total_suffix {
-            exporter.without_counter_suffixes()
-        } else {
-            exporter
-        };
-        let exporter = if !opts.unit_suffix {
-            exporter.without_units()
-        } else {
-            exporter
-        };
-        Ok((
-            Self {
-                listener: TcpListener::bind(opts.socket_addr)?,
-                registry,
-            },
-            exporter.build()?,
-        ))
+        Ok(Self {
+            listener: TcpListener::bind(opts.socket_addr)?,
+            registry,
+        })
+    }
+
+    pub(super) fn registry(&self) -> &Registry {
+        &self.registry
     }
 
     pub(super) async fn run(self) -> Result<(), anyhow::Error> {

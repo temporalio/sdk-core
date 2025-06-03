@@ -6,6 +6,8 @@ pub(crate) mod metrics;
 #[cfg(feature = "otel")]
 mod otel;
 #[cfg(feature = "otel")]
+mod prometheus_meter;
+#[cfg(feature = "otel")]
 mod prometheus_server;
 
 #[cfg(feature = "otel")]

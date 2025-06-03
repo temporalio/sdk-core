@@ -11,7 +11,10 @@ use temporal_sdk::{
 };
 use temporal_sdk_core::{
     CoreRuntime, FixedSizeSlotSupplier, TokioRuntimeBuilder, TunerBuilder, init_worker,
-    telemetry::{WORKFLOW_TASK_EXECUTION_LATENCY_HISTOGRAM_NAME, build_otlp_metric_exporter},
+    telemetry::{
+        WORKFLOW_TASK_EXECUTION_LATENCY_HISTOGRAM_NAME, build_otlp_metric_exporter,
+        start_prometheus_metric_exporter,
+    },
 };
 use temporal_sdk_core_api::{
     Worker,
@@ -19,7 +22,7 @@ use temporal_sdk_core_api::{
     telemetry::{
         HistogramBucketOverrides, OtelCollectorOptionsBuilder, OtlpProtocol,
         PrometheusExporterOptionsBuilder, TelemetryOptionsBuilder,
-        metrics::{CoreMeter, MetricAttributes, MetricParameters},
+        metrics::{CoreMeter, MetricAttributes, MetricParameters, NewAttributes},
     },
     worker::{
         PollerBehavior, SlotKind, SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext,
@@ -844,6 +847,10 @@ async fn activity_metrics() {
     worker.run_until_done().await.unwrap();
 
     let body = get_text(format!("http://{addr}/metrics")).await;
+    println!("PROMETHEUS BODY:\n{}", body);
+    println!(
+        "EXPECTED: temporal_activity_execution_failed{{activity_type=\"pass_fail_act\",namespace=\"{NAMESPACE}\",service_name=\"temporal-core-sdk\",task_queue=\"{task_queue}\",workflow_type=\"{wf_name}\"}} 1"
+    );
     assert!(body.contains(&format!(
         "temporal_activity_execution_failed{{activity_type=\"pass_fail_act\",\
              namespace=\"{NAMESPACE}\",service_name=\"temporal-core-sdk\",\
@@ -1207,4 +1214,184 @@ async fn metrics_available_from_custom_slot_supplier() {
     assert!(body.contains("custom_reserve"));
     assert!(body.contains("custom_mark_used"));
     assert!(body.contains("custom_release"));
+}
+
+#[tokio::test]
+async fn test_prometheus_endpoint_integration() {
+    let opts = PrometheusExporterOptionsBuilder::default()
+        .socket_addr("127.0.0.1:0".parse().unwrap()) // Bind to any available port
+        .build()
+        .unwrap();
+
+    let started_server = start_prometheus_metric_exporter(opts).unwrap();
+    let bound_addr = started_server.bound_addr;
+    let meter = started_server.meter;
+
+    // Create some test metrics
+    let counter = meter.counter(MetricParameters {
+        name: "test_requests_total".into(),
+        description: "Total number of test requests".into(),
+        unit: "".into(),
+    });
+    let histogram = meter.histogram(MetricParameters {
+        name: "test_request_duration_ms".into(),
+        description: "Duration of test requests in milliseconds".into(),
+        unit: "ms".into(),
+    });
+    let gauge = meter.gauge(MetricParameters {
+        name: "test_active_connections".into(),
+        description: "Number of active test connections".into(),
+        unit: "".into(),
+    });
+
+    // Record some values
+    let attrs = meter.new_attributes(NewAttributes::new(vec![]));
+
+    counter.add(5, &attrs);
+    histogram.record(100, &attrs);
+    gauge.record(10, &attrs);
+
+    // Give the server a moment to start up
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Make a request to the metrics endpoint
+    let url = format!("http://{}/metrics", bound_addr);
+    let response = tokio::time::timeout(Duration::from_secs(10), reqwest::get(&url))
+        .await
+        .expect("Request timed out")
+        .expect("Request failed");
+
+    assert!(response.status().is_success());
+
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(content_type.contains("text/plain"));
+
+    let body = response.text().await.expect("Failed to read response body");
+
+    // Verify that our metrics appear in the output
+    assert!(
+        body.contains("test_requests_total"),
+        "Counter metric not found in output"
+    );
+    assert!(
+        body.contains("test_request_duration_ms"),
+        "Histogram metric not found in output"
+    );
+    assert!(
+        body.contains("test_active_connections"),
+        "Gauge metric not found in output"
+    );
+
+    // Verify metric values
+    assert!(
+        body.contains("test_requests_total 5"),
+        "Counter value not correct"
+    );
+    assert!(
+        body.contains("test_active_connections 10"),
+        "Gauge value not correct"
+    );
+
+    // Verify histogram buckets and count
+    assert!(
+        body.contains("test_request_duration_ms_count 1"),
+        "Histogram count not correct"
+    );
+    assert!(
+        body.contains("test_request_duration_ms_sum 100"),
+        "Histogram sum not correct"
+    );
+
+    println!(
+        "Prometheus endpoint test passed! Output preview:\n{}",
+        &body.lines().take(20).collect::<Vec<_>>().join("\n")
+    );
+
+    // Clean up
+    started_server.abort_handle.abort();
+}
+
+#[tokio::test]
+async fn test_prometheus_metric_format_consistency() {
+    let opts = PrometheusExporterOptionsBuilder::default()
+        .socket_addr("127.0.0.1:0".parse().unwrap())
+        .build()
+        .unwrap();
+
+    let started_server = start_prometheus_metric_exporter(opts).unwrap();
+    let bound_addr = started_server.bound_addr;
+    let meter = started_server.meter;
+
+    // Create metrics with consistent naming that matches Temporal conventions
+    let workflow_counter = meter.counter(MetricParameters {
+        name: "temporal_workflow_completed_total".into(),
+        description: "Total number of completed workflows".into(),
+        unit: "".into(),
+    });
+    let activity_histogram = meter.histogram_duration(MetricParameters {
+        name: "temporal_activity_execution_latency".into(),
+        description: "Duration of activity execution".into(),
+        unit: "ms".into(),
+    });
+
+    let attrs = meter.new_attributes(NewAttributes::new(vec![]));
+
+    workflow_counter.add(1, &attrs);
+    activity_histogram.record(Duration::from_millis(150), &attrs);
+
+    // Give the server a moment to start up
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let url = format!("http://{}/metrics", bound_addr);
+    let response = tokio::time::timeout(Duration::from_secs(10), reqwest::get(&url))
+        .await
+        .expect("Request timed out")
+        .expect("Request failed");
+
+    let body = response.text().await.expect("Failed to read response body");
+
+    // Verify expected Prometheus format conventions
+    assert!(
+        body.contains("# HELP temporal_workflow_completed_total"),
+        "Counter help text missing"
+    );
+    assert!(
+        body.contains("# TYPE temporal_workflow_completed_total counter"),
+        "Counter type declaration missing"
+    );
+    assert!(
+        body.contains("# HELP temporal_activity_execution_latency"),
+        "Histogram help text missing"
+    );
+    assert!(
+        body.contains("# TYPE temporal_activity_execution_latency histogram"),
+        "Histogram type declaration missing"
+    );
+
+    // Verify basic metric values without labels for now
+    assert!(
+        body.contains("temporal_workflow_completed_total 1"),
+        "Workflow counter value not correct"
+    );
+    assert!(
+        body.contains("temporal_activity_execution_latency_count 1"),
+        "Activity histogram count not correct"
+    );
+
+    // Verify histogram buckets are present
+    assert!(
+        body.contains("temporal_activity_execution_latency_bucket"),
+        "Histogram buckets missing"
+    );
+    assert!(body.contains("le=\""), "Histogram bucket labels missing");
+
+    println!("Metric format consistency test passed!");
+
+    // Clean up
+    started_server.abort_handle.abort();
 }
