@@ -14,12 +14,14 @@ categories = ["development-tools"]
 
 [features]
 otel_impls = ["dep:opentelemetry"]
+prom_impls = ["dep:prometheus"]
 
 [dependencies]
 async-trait = "0.1"
 derive_builder = { workspace = true }
 derive_more = { workspace = true }
 opentelemetry = { workspace = true, optional = true }
+prometheus = { version = "0.14", optional = true }
 prost = { workspace = true }
 serde_json = "1.0"
 thiserror = { workspace = true }
