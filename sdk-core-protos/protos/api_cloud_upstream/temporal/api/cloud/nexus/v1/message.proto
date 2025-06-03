@@ -9,6 +9,7 @@ option java_outer_classname = "MessageProto";
 option ruby_package = "Temporalio::Api::Cloud::Nexus::V1";
 option csharp_namespace = "Temporalio.Api.Cloud.Nexus.V1";
 
+import "temporal/api/common/v1/message.proto";
 import "temporal/api/cloud/resource/v1/message.proto";
 import "google/protobuf/timestamp.proto";
 
@@ -26,8 +27,13 @@ message EndpointSpec {
     // This field is mutable.
     repeated EndpointPolicySpec policy_specs = 3;
 
+    // Deprecated: Not supported after v0.4.0 api version. Use description instead.
+    // temporal:versioning:max_version=v0.4.0
+    string description_deprecated = 4 [deprecated = true];
+
     // The markdown description of the endpoint - optional.
-    string description = 4;
+    // temporal:versioning:min_version=v0.4.0
+    temporal.api.common.v1.Payload description = 5;
 }
 
 message EndpointTargetSpec {
