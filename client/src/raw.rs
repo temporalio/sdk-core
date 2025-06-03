@@ -1394,6 +1394,7 @@ proxier! {
     );
     (failover_namespace_region, cloudreq::FailoverNamespaceRegionRequest, cloudreq::FailoverNamespaceRegionResponse);
     (add_namespace_region, cloudreq::AddNamespaceRegionRequest, cloudreq::AddNamespaceRegionResponse);
+    (delete_namespace_region, cloudreq::DeleteNamespaceRegionRequest, cloudreq::DeleteNamespaceRegionResponse);
     (get_regions, cloudreq::GetRegionsRequest, cloudreq::GetRegionsResponse);
     (get_region, cloudreq::GetRegionRequest, cloudreq::GetRegionResponse);
     (get_api_keys, cloudreq::GetApiKeysRequest, cloudreq::GetApiKeysResponse);
@@ -1411,6 +1412,9 @@ proxier! {
     (create_user_group, cloudreq::CreateUserGroupRequest, cloudreq::CreateUserGroupResponse);
     (update_user_group, cloudreq::UpdateUserGroupRequest, cloudreq::UpdateUserGroupResponse);
     (delete_user_group, cloudreq::DeleteUserGroupRequest, cloudreq::DeleteUserGroupResponse);
+    (add_user_group_member, cloudreq::AddUserGroupMemberRequest, cloudreq::AddUserGroupMemberResponse);
+    (remove_user_group_member, cloudreq::RemoveUserGroupMemberRequest, cloudreq::RemoveUserGroupMemberResponse);
+    (get_user_group_members, cloudreq::GetUserGroupMembersRequest, cloudreq::GetUserGroupMembersResponse);
     (set_user_group_namespace_access, cloudreq::SetUserGroupNamespaceAccessRequest, cloudreq::SetUserGroupNamespaceAccessResponse);
     (create_service_account, cloudreq::CreateServiceAccountRequest, cloudreq::CreateServiceAccountResponse);
     (get_service_account, cloudreq::GetServiceAccountRequest, cloudreq::GetServiceAccountResponse);
