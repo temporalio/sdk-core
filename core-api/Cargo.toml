@@ -15,6 +15,7 @@ categories = ["development-tools"]
 [features]
 otel_impls = ["dep:opentelemetry"]
 envconfig = ["dep:toml", "dep:serde", "dep:dirs", "dep:anyhow"]
+prom_impls = ["dep:prometheus"]
 
 [dependencies]
 anyhow = { version = "1.0", optional = true }
@@ -23,6 +24,7 @@ dirs = { version = "5.0", optional = true }
 derive_builder = { workspace = true }
 derive_more = { workspace = true }
 opentelemetry = { workspace = true, optional = true }
+prometheus = { version = "0.14", optional = true }
 prost = { workspace = true }
 serde = { version = "1.0", features = ["derive"], optional = true }
 serde_json = "1.0"

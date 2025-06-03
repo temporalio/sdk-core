@@ -74,7 +74,7 @@ zip = { version = "2.0", optional = true }
 # 1st party local deps
 [dependencies.temporal-sdk-core-api]
 path = "../core-api"
-features = ["otel_impls"]
+features = ["otel_impls", "prom_impls"]
 
 [dependencies.temporal-sdk-core-protos]
 path = "../sdk-core-protos"
