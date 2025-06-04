@@ -119,7 +119,7 @@ pub enum MetricAttributes {
     },
     #[cfg(feature = "prom_impls")]
     Prometheus {
-        labels: std::collections::HashMap<String, String>,
+        labels: LabelSet,
     },
     Buffer(BufferAttributes),
     Dynamic(Arc<dyn CustomMetricAttributes>),
@@ -443,105 +443,61 @@ mod otel_impls {
 }
 
 #[cfg(feature = "prom_impls")]
+pub use prom_impls::LabelSet;
+
+#[cfg(feature = "prom_impls")]
 mod prom_impls {
     use super::*;
-    use prometheus::{CounterVec, GaugeVec, HistogramVec};
     use std::collections::HashMap;
 
-    impl From<&MetricAttributes> for HashMap<String, String> {
-        fn from(attributes: &MetricAttributes) -> Self {
-            match attributes {
-                MetricAttributes::Prometheus { labels } => labels.clone(),
-                _ => HashMap::new(),
-            }
+    /// Efficient representation of Prometheus labels using a sorted vector
+    /// of key-value pairs for better performance and deterministic ordering
+    #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+    pub struct LabelSet {
+        labels: Vec<(String, String)>,
+    }
+
+    impl LabelSet {
+        pub fn new(mut labels: Vec<(String, String)>) -> Self {
+            // Sort by key for deterministic ordering and efficient comparison
+            labels.sort_by(|a, b| a.0.cmp(&b.0));
+            Self { labels }
+        }
+
+        pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> {
+            self.labels.iter().map(|(k, v)| (k.as_str(), v.as_str()))
+        }
+
+        pub fn to_prometheus_labels(&self) -> HashMap<&str, &str> {
+            self.iter().collect()
+        }
+
+        /// Get Prometheus labels filtering out empty values to avoid inconsistent metric formats
+        pub fn to_prometheus_labels_filtered(&self) -> HashMap<&str, &str> {
+            self.iter().filter(|(_, v)| !v.is_empty()).collect()
+        }
+
+        pub fn is_empty(&self) -> bool {
+            self.labels.is_empty()
         }
     }
 
-    // TODO: Should be GenericCounterVec<AtomicI64>
-    impl Counter for CounterVec {
-        fn add(&self, value: u64, attributes: &MetricAttributes) {
-            if let MetricAttributes::Prometheus { labels } = attributes {
-                let mut str_labels: HashMap<&str, &str> = HashMap::new();
-                for (k, v) in labels {
-                    str_labels.insert(k.as_str(), v.as_str());
-                }
-                self.with(&str_labels).inc_by(value as f64);
-            } else {
-                debug_assert!(
-                    false,
-                    "Must use Prometheus attributes with a Prometheus metric implementation"
-                );
-            }
-        }
-    }
-
-    // TODO: Should be GenericGaugeVec<AtomicI64>
-    impl Gauge for GaugeVec {
-        fn record(&self, value: u64, attributes: &MetricAttributes) {
-            if let MetricAttributes::Prometheus { labels } = attributes {
-                let mut str_labels: HashMap<&str, &str> = HashMap::new();
-                for (k, v) in labels {
-                    str_labels.insert(k.as_str(), v.as_str());
-                }
-                self.with(&str_labels).set(value as f64);
-            } else {
-                debug_assert!(
-                    false,
-                    "Must use Prometheus attributes with a Prometheus metric implementation"
-                );
-            }
-        }
-    }
-
-    impl GaugeF64 for GaugeVec {
-        fn record(&self, value: f64, attributes: &MetricAttributes) {
-            if let MetricAttributes::Prometheus { labels } = attributes {
-                let mut str_labels: HashMap<&str, &str> = HashMap::new();
-                for (k, v) in labels {
-                    str_labels.insert(k.as_str(), v.as_str());
-                }
-                self.with(&str_labels).set(value);
-            } else {
-                debug_assert!(
-                    false,
-                    "Must use Prometheus attributes with a Prometheus metric implementation"
-                );
-            }
-        }
-    }
-
-    // TODO: Should be GenericGaugeVec<AtomicI64>
-    impl Histogram for HistogramVec {
-        fn record(&self, value: u64, attributes: &MetricAttributes) {
-            if let MetricAttributes::Prometheus { labels } = attributes {
-                let mut str_labels: HashMap<&str, &str> = HashMap::new();
-                for (k, v) in labels {
-                    str_labels.insert(k.as_str(), v.as_str());
-                }
-                self.with(&str_labels).observe(value as f64);
-            } else {
-                debug_assert!(
-                    false,
-                    "Must use Prometheus attributes with a Prometheus metric implementation"
-                );
-            }
-        }
-    }
-
-    impl HistogramF64 for HistogramVec {
-        fn record(&self, value: f64, attributes: &MetricAttributes) {
-            if let MetricAttributes::Prometheus { labels } = attributes {
-                let mut str_labels: HashMap<&str, &str> = HashMap::new();
-                for (k, v) in labels {
-                    str_labels.insert(k.as_str(), v.as_str());
-                }
-                self.with(&str_labels).observe(value);
-            } else {
-                debug_assert!(
-                    false,
-                    "Must use Prometheus attributes with a Prometheus metric implementation"
-                );
-            }
+    impl From<Vec<MetricKeyValue>> for LabelSet {
+        // TODO: This is probably weird. Just keep values.
+        fn from(kvs: Vec<MetricKeyValue>) -> Self {
+            let labels = kvs
+                .into_iter()
+                .map(|kv| {
+                    let value = match kv.value {
+                        MetricValue::String(s) => s,
+                        MetricValue::Int(i) => i.to_string(),
+                        MetricValue::Float(f) => f.to_string(),
+                        MetricValue::Bool(b) => b.to_string(),
+                    };
+                    (kv.key, value)
+                })
+                .collect();
+            LabelSet::new(labels)
         }
     }
 }

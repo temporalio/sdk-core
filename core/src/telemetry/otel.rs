@@ -186,6 +186,8 @@ pub fn start_prometheus_metric_exporter(
     let meter = Arc::new(CorePrometheusMeter::new(
         srv.registry().clone(),
         opts.use_seconds_for_durations,
+        opts.unit_suffix,
+        opts.histogram_bucket_overrides,
     ));
     let bound_addr = srv.bound_addr()?;
     let handle = tokio::spawn(async move { srv.run().await });

@@ -22,7 +22,7 @@ use temporal_sdk_core_api::{
     telemetry::{
         HistogramBucketOverrides, OtelCollectorOptionsBuilder, OtlpProtocol,
         PrometheusExporterOptionsBuilder, TelemetryOptionsBuilder,
-        metrics::{CoreMeter, MetricAttributes, MetricParameters, NewAttributes},
+        metrics::{CoreMeter, MetricParameters, NewAttributes},
     },
     worker::{
         PollerBehavior, SlotKind, SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext,
@@ -128,12 +128,8 @@ async fn prometheus_metrics_exported(
     // Verify non-temporal metrics meter does not prefix
     let mm = rt.telemetry().get_metric_meter().unwrap();
     let g = mm.inner.gauge(MetricParameters::from("mygauge"));
-    g.record(
-        42,
-        &MetricAttributes::OTel {
-            kvs: Arc::new(vec![]),
-        },
-    );
+    let attrs = mm.inner.new_attributes(NewAttributes::new(vec![]));
+    g.record(42, &attrs);
     let body = get_text(format!("http://{addr}/metrics")).await;
     println!("{}", &body);
     assert!(body.contains("\nmygauge 42"));
@@ -847,10 +843,6 @@ async fn activity_metrics() {
     worker.run_until_done().await.unwrap();
 
     let body = get_text(format!("http://{addr}/metrics")).await;
-    println!("PROMETHEUS BODY:\n{}", body);
-    println!(
-        "EXPECTED: temporal_activity_execution_failed{{activity_type=\"pass_fail_act\",namespace=\"{NAMESPACE}\",service_name=\"temporal-core-sdk\",task_queue=\"{task_queue}\",workflow_type=\"{wf_name}\"}} 1"
-    );
     assert!(body.contains(&format!(
         "temporal_activity_execution_failed{{activity_type=\"pass_fail_act\",\
              namespace=\"{NAMESPACE}\",service_name=\"temporal-core-sdk\",\
@@ -1128,16 +1120,10 @@ where
     type SlotKind = SK;
 
     async fn reserve_slot(&self, ctx: &dyn SlotReservationContext) -> SlotSupplierPermit {
-        let g = ctx
-            .get_metrics_meter()
-            .unwrap()
-            .gauge(MetricParameters::from("custom_reserve"));
-        g.record(
-            1,
-            &MetricAttributes::OTel {
-                kvs: Arc::new(vec![]),
-            },
-        );
+        let meter = ctx.get_metrics_meter().unwrap();
+        let g = meter.gauge(MetricParameters::from("custom_reserve"));
+        let attrs = meter.new_attributes(NewAttributes::new(vec![]));
+        g.record(1, &attrs);
         self.inner.reserve_slot(ctx).await
     }
 
@@ -1146,30 +1132,18 @@ where
     }
 
     fn mark_slot_used(&self, ctx: &dyn SlotMarkUsedContext<SlotKind = Self::SlotKind>) {
-        let g = ctx
-            .get_metrics_meter()
-            .unwrap()
-            .gauge(MetricParameters::from("custom_mark_used"));
-        g.record(
-            1,
-            &MetricAttributes::OTel {
-                kvs: Arc::new(vec![]),
-            },
-        );
+        let meter = ctx.get_metrics_meter().unwrap();
+        let g = meter.gauge(MetricParameters::from("custom_mark_used"));
+        let attrs = meter.new_attributes(NewAttributes::new(vec![]));
+        g.record(1, &attrs);
         self.inner.mark_slot_used(ctx);
     }
 
     fn release_slot(&self, ctx: &dyn SlotReleaseContext<SlotKind = Self::SlotKind>) {
-        let g = ctx
-            .get_metrics_meter()
-            .unwrap()
-            .gauge(MetricParameters::from("custom_release"));
-        g.record(
-            1,
-            &MetricAttributes::OTel {
-                kvs: Arc::new(vec![]),
-            },
-        );
+        let meter = ctx.get_metrics_meter().unwrap();
+        let g = meter.gauge(MetricParameters::from("custom_release"));
+        let attrs = meter.new_attributes(NewAttributes::new(vec![]));
+        g.record(1, &attrs);
         self.inner.release_slot(ctx);
     }
 
