@@ -1,9 +1,9 @@
 use std::time::Duration;
 
-use crate::runtime::Runtime;
 use crate::ByteArray;
 use crate::ByteArrayRef;
 use crate::UserDataHandle;
+use crate::runtime::Runtime;
 
 use temporal_sdk_core::ephemeral_server;
 
@@ -15,36 +15,36 @@ pub struct EphemeralServer {
 #[repr(C)]
 pub struct DevServerOptions {
     /// Must always be present
-    test_server: *const TestServerOptions,
-    namespace: ByteArrayRef,
-    ip: ByteArrayRef,
+    pub test_server: *const TestServerOptions,
+    pub namespace: ByteArrayRef,
+    pub ip: ByteArrayRef,
     /// Empty means default behavior
-    database_filename: ByteArrayRef,
-    ui: bool,
-    ui_port: u16,
-    log_format: ByteArrayRef,
-    log_level: ByteArrayRef,
+    pub database_filename: ByteArrayRef,
+    pub ui: bool,
+    pub ui_port: u16,
+    pub log_format: ByteArrayRef,
+    pub log_level: ByteArrayRef,
 }
 
 #[repr(C)]
 pub struct TestServerOptions {
     /// Empty means default behavior
-    existing_path: ByteArrayRef,
-    sdk_name: ByteArrayRef,
-    sdk_version: ByteArrayRef,
-    download_version: ByteArrayRef,
+    pub existing_path: ByteArrayRef,
+    pub sdk_name: ByteArrayRef,
+    pub sdk_version: ByteArrayRef,
+    pub download_version: ByteArrayRef,
     /// Empty means default behavior
-    download_dest_dir: ByteArrayRef,
+    pub download_dest_dir: ByteArrayRef,
     /// 0 means default behavior
-    port: u16,
+    pub port: u16,
     /// Newline delimited
-    extra_args: ByteArrayRef,
+    pub extra_args: ByteArrayRef,
     /// 0 means no TTL
-    download_ttl_ms: u64,
+    pub download_ttl_seconds: u64,
 }
 
 /// Anything besides user data must be freed if non-null.
-type EphemeralServerStartCallback = unsafe extern "C" fn(
+pub type EphemeralServerStartCallback = unsafe extern "C" fn(
     user_data: *mut libc::c_void,
     success: *mut EphemeralServer,
     success_target: *const ByteArray,
@@ -53,8 +53,8 @@ type EphemeralServerStartCallback = unsafe extern "C" fn(
 
 /// Runtime must live as long as server. Options and user data must live through
 /// callback.
-#[no_mangle]
-pub extern "C" fn ephemeral_server_start_dev_server(
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_core_ephemeral_server_start_dev_server(
     runtime: *mut Runtime,
     options: *const DevServerOptions,
     user_data: *mut libc::c_void,
@@ -72,7 +72,7 @@ pub extern "C" fn ephemeral_server_start_dev_server(
                     std::ptr::null_mut(),
                     std::ptr::null(),
                     runtime
-                        .alloc_utf8(&format!("Invalid options: {}", err))
+                        .alloc_utf8(&format!("Invalid options: {err}"))
                         .into_raw(),
                 );
             }
@@ -99,7 +99,7 @@ pub extern "C" fn ephemeral_server_start_dev_server(
                     std::ptr::null_mut(),
                     std::ptr::null(),
                     runtime
-                        .alloc_utf8(&format!("Connection failed: {}", err))
+                        .alloc_utf8(&format!("Connection failed: {err}"))
                         .into_raw(),
                 );
             },
@@ -109,8 +109,8 @@ pub extern "C" fn ephemeral_server_start_dev_server(
 
 /// Runtime must live as long as server. Options and user data must live through
 /// callback.
-#[no_mangle]
-pub extern "C" fn ephemeral_server_start_test_server<'a>(
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_core_ephemeral_server_start_test_server(
     runtime: *mut Runtime,
     options: *const TestServerOptions,
     user_data: *mut libc::c_void,
@@ -128,7 +128,7 @@ pub extern "C" fn ephemeral_server_start_test_server<'a>(
                     std::ptr::null_mut(),
                     std::ptr::null(),
                     runtime
-                        .alloc_utf8(&format!("Invalid options: {}", err))
+                        .alloc_utf8(&format!("Invalid options: {err}"))
                         .into_raw(),
                 );
             }
@@ -155,7 +155,7 @@ pub extern "C" fn ephemeral_server_start_test_server<'a>(
                     std::ptr::null_mut(),
                     std::ptr::null(),
                     runtime
-                        .alloc_utf8(&format!("Connection failed: {}", err))
+                        .alloc_utf8(&format!("Connection failed: {err}"))
                         .into_raw(),
                 );
             },
@@ -163,18 +163,18 @@ pub extern "C" fn ephemeral_server_start_test_server<'a>(
     });
 }
 
-#[no_mangle]
-pub extern "C" fn ephemeral_server_free(server: *mut EphemeralServer) {
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_core_ephemeral_server_free(server: *mut EphemeralServer) {
     unsafe {
         let _ = Box::from_raw(server);
     }
 }
 
-type EphemeralServerShutdownCallback =
+pub type EphemeralServerShutdownCallback =
     unsafe extern "C" fn(user_data: *mut libc::c_void, fail: *const ByteArray);
 
-#[no_mangle]
-pub extern "C" fn ephemeral_server_shutdown(
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_core_ephemeral_server_shutdown(
     server: *mut EphemeralServer,
     user_data: *mut libc::c_void,
     callback: EphemeralServerShutdownCallback,
@@ -187,7 +187,7 @@ pub extern "C" fn ephemeral_server_shutdown(
             if let Err(err) = eph_server.shutdown().await {
                 server
                     .runtime
-                    .alloc_utf8(&format!("Failed shutting down server: {}", err))
+                    .alloc_utf8(&format!("Failed shutting down server: {err}"))
                     .into_raw()
             } else {
                 std::ptr::null_mut()
@@ -255,10 +255,10 @@ impl TestServerOptions {
                     }
                 },
                 dest_dir: self.download_dest_dir.to_option_string(),
-                ttl: if self.download_ttl_ms == 0 {
+                ttl: if self.download_ttl_seconds == 0 {
                     None
                 } else {
-                    Some(Duration::from_secs(self.download_ttl_ms))
+                    Some(Duration::from_secs(self.download_ttl_seconds))
                 },
             }
         }

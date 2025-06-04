@@ -15,52 +15,48 @@ pub mod runtime;
 pub mod testing;
 pub mod worker;
 
+#[cfg(test)]
+mod tests;
+
 use std::collections::HashMap;
 
 #[repr(C)]
 pub struct ByteArrayRef {
-    data: *const u8,
-    size: libc::size_t,
+    pub data: *const u8,
+    pub size: libc::size_t,
 }
 
 impl ByteArrayRef {
-    fn from_str(s: &str) -> ByteArrayRef {
-        ByteArrayRef {
-            data: s.as_ptr(),
-            size: s.len(),
-        }
+    pub fn empty() -> ByteArrayRef {
+        static EMPTY: &str = "";
+        EMPTY.into()
     }
 
-    fn empty() -> ByteArrayRef {
-        static EMPTY: &'static str = "";
-        ByteArrayRef::from_str(&EMPTY)
-    }
-
-    fn to_slice(&self) -> &[u8] {
+    pub fn to_slice(&self) -> &[u8] {
         unsafe { std::slice::from_raw_parts(self.data, self.size) }
     }
 
-    fn to_slice_mut(&self) -> &mut [u8] {
+    pub fn to_slice_mut(&mut self) -> &mut [u8] {
         unsafe { std::slice::from_raw_parts_mut(self.data as *mut u8, self.size) }
     }
 
-    fn to_vec(&self) -> Vec<u8> {
+    pub fn to_vec(&self) -> Vec<u8> {
         self.to_slice().to_vec()
     }
 
-    fn to_str(&self) -> &str {
+    pub fn to_str(&self) -> &str {
         // Trust caller to send UTF8. Even if we did do a checked call here with
         // error, the caller can still have a bad pointer or something else
         // wrong. Therefore we trust the caller implicitly.
         unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(self.data, self.size)) }
     }
 
-    fn to_string(&self) -> String {
+    #[allow(clippy::inherent_to_string)]
+    pub fn to_string(&self) -> String {
         self.to_str().to_string()
     }
 
-    #[allow(dead_code)]
-    fn to_option_slice(&self) -> Option<&[u8]> {
+    pub fn to_option_slice(&self) -> Option<&[u8]> {
         if self.size == 0 {
             None
         } else {
@@ -68,7 +64,7 @@ impl ByteArrayRef {
         }
     }
 
-    fn to_option_vec(&self) -> Option<Vec<u8>> {
+    pub fn to_option_vec(&self) -> Option<Vec<u8>> {
         if self.size == 0 {
             None
         } else {
@@ -76,7 +72,7 @@ impl ByteArrayRef {
         }
     }
 
-    fn to_option_str(&self) -> Option<&str> {
+    pub fn to_option_str(&self) -> Option<&str> {
         if self.size == 0 {
             None
         } else {
@@ -84,18 +80,18 @@ impl ByteArrayRef {
         }
     }
 
-    fn to_option_string(&self) -> Option<String> {
+    pub fn to_option_string(&self) -> Option<String> {
         self.to_option_str().map(str::to_string)
     }
 
-    fn to_str_map_on_newlines(&self) -> HashMap<&str, &str> {
+    pub fn to_str_map_on_newlines(&self) -> HashMap<&str, &str> {
         let strs: Vec<&str> = self.to_str().split('\n').collect();
         strs.chunks_exact(2)
             .map(|pair| (pair[0], pair[1]))
             .collect()
     }
 
-    fn to_string_map_on_newlines(&self) -> HashMap<String, String> {
+    pub fn to_string_map_on_newlines(&self) -> HashMap<String, String> {
         self.to_str_map_on_newlines()
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -104,19 +100,40 @@ impl ByteArrayRef {
 }
 
 impl From<&str> for ByteArrayRef {
-    fn from(s: &str) -> ByteArrayRef {
-        ByteArrayRef::from_str(s)
+    fn from(value: &str) -> ByteArrayRef {
+        ByteArrayRef {
+            data: value.as_ptr(),
+            size: value.len(),
+        }
+    }
+}
+
+impl From<&[u8]> for ByteArrayRef {
+    fn from(value: &[u8]) -> ByteArrayRef {
+        ByteArrayRef {
+            data: value.as_ptr(),
+            size: value.len(),
+        }
+    }
+}
+
+impl<T> From<Option<T>> for ByteArrayRef
+where
+    T: Into<ByteArrayRef>,
+{
+    fn from(value: Option<T>) -> ByteArrayRef {
+        value.map(Into::into).unwrap_or(ByteArrayRef::empty())
     }
 }
 
 #[repr(C)]
 pub struct ByteArrayRefArray {
-    data: *const ByteArrayRef,
-    size: libc::size_t,
+    pub data: *const ByteArrayRef,
+    pub size: libc::size_t,
 }
 
 impl ByteArrayRefArray {
-    fn to_str_vec(&self) -> Vec<&str> {
+    pub fn to_str_vec(&self) -> Vec<&str> {
         if self.size == 0 {
             vec![]
         } else {
@@ -128,12 +145,12 @@ impl ByteArrayRefArray {
 
 /// Metadata is <key1>\n<value1>\n<key2>\n<value2>. Metadata keys or
 /// values cannot contain a newline within.
-type MetadataRef = ByteArrayRef;
+pub type MetadataRef = ByteArrayRef;
 
 #[repr(C)]
 pub struct ByteArray {
-    data: *const u8,
-    size: libc::size_t,
+    pub data: *const u8,
+    pub size: libc::size_t,
     /// For internal use only.
     cap: libc::size_t,
     /// For internal use only.
@@ -141,11 +158,11 @@ pub struct ByteArray {
 }
 
 impl ByteArray {
-    fn from_utf8(str: String) -> ByteArray {
+    pub fn from_utf8(str: String) -> ByteArray {
         ByteArray::from_vec(str.into_bytes())
     }
 
-    fn from_vec(vec: Vec<u8>) -> ByteArray {
+    pub fn from_vec(vec: Vec<u8>) -> ByteArray {
         // Mimics Vec::into_raw_parts that's only available in nightly
         let mut vec = std::mem::ManuallyDrop::new(vec);
         ByteArray {
@@ -156,15 +173,21 @@ impl ByteArray {
         }
     }
 
-    #[allow(dead_code)]
-    fn from_vec_disable_free(vec: Vec<u8>) -> ByteArray {
+    pub fn from_vec_disable_free(vec: Vec<u8>) -> ByteArray {
         let mut b = ByteArray::from_vec(vec);
         b.disable_free = true;
         b
     }
 
-    fn into_raw(self) -> *mut ByteArray {
+    pub fn into_raw(self) -> *mut ByteArray {
         Box::into_raw(Box::new(self))
+    }
+
+    pub fn as_ref(&self) -> ByteArrayRef {
+        ByteArrayRef {
+            data: self.data,
+            size: self.size,
+        }
     }
 }
 
@@ -201,21 +224,21 @@ pub struct CancellationToken {
     token: tokio_util::sync::CancellationToken,
 }
 
-#[no_mangle]
-pub extern "C" fn cancellation_token_new() -> *mut CancellationToken {
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_core_cancellation_token_new() -> *mut CancellationToken {
     Box::into_raw(Box::new(CancellationToken {
         token: tokio_util::sync::CancellationToken::new(),
     }))
 }
 
-#[no_mangle]
-pub extern "C" fn cancellation_token_cancel(token: *mut CancellationToken) {
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_core_cancellation_token_cancel(token: *mut CancellationToken) {
     let token = unsafe { &*token };
     token.token.cancel();
 }
 
-#[no_mangle]
-pub extern "C" fn cancellation_token_free(token: *mut CancellationToken) {
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_core_cancellation_token_free(token: *mut CancellationToken) {
     unsafe {
         let _ = Box::from_raw(token);
     }

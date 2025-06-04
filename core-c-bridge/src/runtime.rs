@@ -1,8 +1,8 @@
-use crate::metric::CustomMetricMeter;
-use crate::metric::CustomMetricMeterRef;
 use crate::ByteArray;
 use crate::ByteArrayRef;
 use crate::MetadataRef;
+use crate::metric::CustomMetricMeter;
+use crate::metric::CustomMetricMeterRef;
 
 use serde_json::json;
 use std::collections::HashMap;
@@ -14,12 +14,12 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::time::UNIX_EPOCH;
-use temporal_sdk_core::telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter};
 use temporal_sdk_core::CoreRuntime;
 use temporal_sdk_core::TokioRuntimeBuilder;
-use temporal_sdk_core_api::telemetry::metrics::CoreMeter;
+use temporal_sdk_core::telemetry::{build_otlp_metric_exporter, start_prometheus_metric_exporter};
 use temporal_sdk_core_api::telemetry::HistogramBucketOverrides;
 use temporal_sdk_core_api::telemetry::MetricTemporality;
+use temporal_sdk_core_api::telemetry::metrics::CoreMeter;
 use temporal_sdk_core_api::telemetry::{CoreLog, CoreLogConsumer};
 use temporal_sdk_core_api::telemetry::{
     Logger, OtelCollectorOptionsBuilder, PrometheusExporterOptionsBuilder,
@@ -30,26 +30,26 @@ use url::Url;
 
 #[repr(C)]
 pub struct RuntimeOptions {
-    telemetry: *const TelemetryOptions,
+    pub telemetry: *const TelemetryOptions,
 }
 
 #[repr(C)]
 pub struct TelemetryOptions {
-    logging: *const LoggingOptions,
-    metrics: *const MetricsOptions,
+    pub logging: *const LoggingOptions,
+    pub metrics: *const MetricsOptions,
 }
 
 #[repr(C)]
 pub struct LoggingOptions {
-    filter: ByteArrayRef,
+    pub filter: ByteArrayRef,
     /// This callback is expected to work for the life of the runtime.
-    forward_to: ForwardedLogCallback,
+    pub forward_to: ForwardedLogCallback,
 }
 
 // This has to be Option here because of https://github.com/mozilla/cbindgen/issues/326
 /// Operations on the log can only occur within the callback, it is freed
 /// immediately thereafter.
-type ForwardedLogCallback =
+pub type ForwardedLogCallback =
     Option<unsafe extern "C" fn(level: ForwardedLogLevel, log: *const ForwardedLog)>;
 
 pub struct ForwardedLog {
@@ -69,27 +69,27 @@ pub enum ForwardedLogLevel {
 /// Only one of opentelemetry, prometheus, or custom_meter can be present.
 #[repr(C)]
 pub struct MetricsOptions {
-    opentelemetry: *const OpenTelemetryOptions,
-    prometheus: *const PrometheusOptions,
+    pub opentelemetry: *const OpenTelemetryOptions,
+    pub prometheus: *const PrometheusOptions,
     /// If present, this is freed by a callback within itself
-    custom_meter: *const CustomMetricMeter,
+    pub custom_meter: *const CustomMetricMeter,
 
-    attach_service_name: bool,
-    global_tags: MetadataRef,
-    metric_prefix: ByteArrayRef,
+    pub attach_service_name: bool,
+    pub global_tags: MetadataRef,
+    pub metric_prefix: ByteArrayRef,
 }
 
 #[repr(C)]
 pub struct OpenTelemetryOptions {
-    url: ByteArrayRef,
-    headers: MetadataRef,
-    metric_periodicity_millis: u32,
-    metric_temporality: OpenTelemetryMetricTemporality,
-    durations_as_seconds: bool,
-    protocol: OpenTelemetryProtocol,
+    pub url: ByteArrayRef,
+    pub headers: MetadataRef,
+    pub metric_periodicity_millis: u32,
+    pub metric_temporality: OpenTelemetryMetricTemporality,
+    pub durations_as_seconds: bool,
+    pub protocol: OpenTelemetryProtocol,
     /// Histogram bucket overrides in form of
     /// <metric1>\n<float>,<float>,<float>\n<metric2>\n<float>,<float>,<float>
-    histogram_bucket_overrides: MetadataRef,
+    pub histogram_bucket_overrides: MetadataRef,
 }
 
 #[repr(C)]
@@ -106,13 +106,13 @@ pub enum OpenTelemetryProtocol {
 
 #[repr(C)]
 pub struct PrometheusOptions {
-    bind_address: ByteArrayRef,
-    counters_total_suffix: bool,
-    unit_suffix: bool,
-    durations_as_seconds: bool,
+    pub bind_address: ByteArrayRef,
+    pub counters_total_suffix: bool,
+    pub unit_suffix: bool,
+    pub durations_as_seconds: bool,
     /// Histogram bucket overrides in form of
     /// <metric1>\n<float>,<float>,<float>\n<metric2>\n<float>,<float>,<float>
-    histogram_bucket_overrides: MetadataRef,
+    pub histogram_bucket_overrides: MetadataRef,
 }
 
 #[derive(Clone)]
@@ -126,12 +126,12 @@ pub struct Runtime {
 /// fail is freed using it.
 #[repr(C)]
 pub struct RuntimeOrFail {
-    runtime: *mut Runtime,
-    fail: *const ByteArray,
+    pub runtime: *mut Runtime,
+    pub fail: *const ByteArray,
 }
 
-#[no_mangle]
-pub extern "C" fn runtime_new(options: *const RuntimeOptions) -> RuntimeOrFail {
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_core_runtime_new(options: *const RuntimeOptions) -> RuntimeOrFail {
     match Runtime::new(unsafe { &*options }) {
         Ok(runtime) => RuntimeOrFail {
             runtime: Box::into_raw(Box::new(runtime)),
@@ -150,7 +150,7 @@ pub extern "C" fn runtime_new(options: *const RuntimeOptions) -> RuntimeOrFail {
                 ),
                 log_forwarder: None,
             };
-            let fail = runtime.alloc_utf8(&format!("Invalid options: {}", err));
+            let fail = runtime.alloc_utf8(&format!("Invalid options: {err}"));
             RuntimeOrFail {
                 runtime: Box::into_raw(Box::new(runtime)),
                 fail: fail.into_raw(),
@@ -159,15 +159,15 @@ pub extern "C" fn runtime_new(options: *const RuntimeOptions) -> RuntimeOrFail {
     }
 }
 
-#[no_mangle]
-pub extern "C" fn runtime_free(runtime: *mut Runtime) {
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_core_runtime_free(runtime: *mut Runtime) {
     unsafe {
         let _ = Box::from_raw(runtime);
     }
 }
 
-#[no_mangle]
-pub extern "C" fn byte_array_free(runtime: *mut Runtime, bytes: *const ByteArray) {
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_core_byte_array_free(runtime: *mut Runtime, bytes: *const ByteArray) {
     // Bail if freeing is disabled
     unsafe {
         if bytes.is_null() || (*bytes).disable_free {
@@ -200,7 +200,7 @@ impl Runtime {
                 .and_then(|v| v.metrics.as_ref())
                 .map(|v| v.custom_meter)
                 .filter(|v| !v.is_null())
-                .map(|v| CustomMetricMeterRef::new(v))
+                .map(CustomMetricMeterRef::new)
         };
 
         // Build telemetry options
@@ -328,20 +328,20 @@ impl fmt::Debug for LogForwarder {
     }
 }
 
-#[no_mangle]
-pub extern "C" fn forwarded_log_target(log: *const ForwardedLog) -> ByteArrayRef {
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_core_forwarded_log_target(log: *const ForwardedLog) -> ByteArrayRef {
     let log = unsafe { &*log };
-    ByteArrayRef::from_str(&log.core.target)
+    log.core.target.as_str().into()
 }
 
-#[no_mangle]
-pub extern "C" fn forwarded_log_message(log: *const ForwardedLog) -> ByteArrayRef {
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_core_forwarded_log_message(log: *const ForwardedLog) -> ByteArrayRef {
     let log = unsafe { &*log };
-    ByteArrayRef::from_str(&log.core.message)
+    log.core.message.as_str().into()
 }
 
-#[no_mangle]
-pub extern "C" fn forwarded_log_timestamp_millis(log: *const ForwardedLog) -> u64 {
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_core_forwarded_log_timestamp_millis(log: *const ForwardedLog) -> u64 {
     let log = unsafe { &*log };
     log.core
         .timestamp
@@ -352,17 +352,18 @@ pub extern "C" fn forwarded_log_timestamp_millis(log: *const ForwardedLog) -> u6
         .unwrap()
 }
 
-#[no_mangle]
-pub extern "C" fn forwarded_log_fields_json(log: *const ForwardedLog) -> ByteArrayRef {
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_core_forwarded_log_fields_json(
+    log: *const ForwardedLog,
+) -> ByteArrayRef {
     let log = unsafe { &*log };
     // If not set, we convert to JSON under lock then set
     let fields_json = log.fields_json.clone();
     let mut fields_json = fields_json.lock().unwrap();
-    if fields_json.is_none() {
-        let json_val = json!(&log.core.fields);
-        *fields_json = Some(json_val.to_string());
-    }
-    ByteArrayRef::from_str(&*fields_json.as_ref().unwrap())
+    fields_json
+        .get_or_insert_with(|| json!(&log.core.fields).to_string())
+        .as_str()
+        .into()
 }
 
 fn create_meter(
@@ -379,7 +380,7 @@ fn create_meter(
         // Build OTel exporter
         let mut build = OtelCollectorOptionsBuilder::default();
         build
-            .url(Url::parse(&otel_options.url.to_str())?)
+            .url(Url::parse(otel_options.url.to_str())?)
             .headers(otel_options.headers.to_string_map_on_newlines())
             .metric_temporality(match otel_options.metric_temporality {
                 OpenTelemetryMetricTemporality::Cumulative => MetricTemporality::Cumulative,

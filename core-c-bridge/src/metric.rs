@@ -2,14 +2,14 @@ use std::{any::Any, sync::Arc, time::Duration};
 
 use temporal_sdk_core_api::telemetry::metrics;
 
-use crate::{runtime::Runtime, ByteArrayRef};
+use crate::{ByteArrayRef, runtime::Runtime};
 
 pub struct MetricMeter {
     core: metrics::TemporalMeter,
 }
 
-#[no_mangle]
-pub extern "C" fn metric_meter_new(runtime: *mut Runtime) -> *mut MetricMeter {
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_core_metric_meter_new(runtime: *mut Runtime) -> *mut MetricMeter {
     let runtime = unsafe { &mut *runtime };
     if let Some(core) = runtime.core.telemetry().get_metric_meter() {
         Box::into_raw(Box::new(MetricMeter { core }))
@@ -18,8 +18,8 @@ pub extern "C" fn metric_meter_new(runtime: *mut Runtime) -> *mut MetricMeter {
     }
 }
 
-#[no_mangle]
-pub extern "C" fn metric_meter_free(meter: *mut MetricMeter) {
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_core_metric_meter_free(meter: *mut MetricMeter) {
     unsafe {
         let _ = Box::from_raw(meter);
     }
@@ -31,9 +31,9 @@ pub struct MetricAttributes {
 
 #[repr(C)]
 pub struct MetricAttribute {
-    key: ByteArrayRef,
-    value: MetricAttributeValue,
-    value_type: MetricAttributeValueType,
+    pub key: ByteArrayRef,
+    pub value: MetricAttributeValue,
+    pub value_type: MetricAttributeValueType,
 }
 
 #[repr(C)]
@@ -46,14 +46,14 @@ pub enum MetricAttributeValueType {
 
 #[repr(C)]
 pub union MetricAttributeValue {
-    string_value: std::mem::ManuallyDrop<ByteArrayRef>,
-    int_value: i64,
-    float_value: f64,
-    bool_value: bool,
+    pub string_value: std::mem::ManuallyDrop<ByteArrayRef>,
+    pub int_value: i64,
+    pub float_value: f64,
+    pub bool_value: bool,
 }
 
-#[no_mangle]
-pub extern "C" fn metric_attributes_new(
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_core_metric_attributes_new(
     meter: *const MetricMeter,
     attrs: *const MetricAttribute,
     size: libc::size_t,
@@ -68,8 +68,8 @@ pub extern "C" fn metric_attributes_new(
     )))
 }
 
-#[no_mangle]
-pub extern "C" fn metric_attributes_new_append(
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_core_metric_attributes_new_append(
     meter: *const MetricMeter,
     orig: *const MetricAttributes,
     attrs: *const MetricAttribute,
@@ -82,8 +82,8 @@ pub extern "C" fn metric_attributes_new_append(
     )))
 }
 
-#[no_mangle]
-pub extern "C" fn metric_attributes_free(attrs: *mut MetricAttributes) {
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_core_metric_attributes_free(attrs: *mut MetricAttributes) {
     unsafe {
         let _ = Box::from_raw(attrs);
     }
@@ -127,10 +127,10 @@ fn metric_attribute_to_key_value(attr: &MetricAttribute) -> metrics::MetricKeyVa
 
 #[repr(C)]
 pub struct MetricOptions {
-    name: ByteArrayRef,
-    description: ByteArrayRef,
-    unit: ByteArrayRef,
-    kind: MetricKind,
+    pub name: ByteArrayRef,
+    pub description: ByteArrayRef,
+    pub unit: ByteArrayRef,
+    pub kind: MetricKind,
 }
 
 #[repr(C)]
@@ -152,8 +152,8 @@ pub enum Metric {
     GaugeFloat(Arc<dyn metrics::GaugeF64>),
 }
 
-#[no_mangle]
-pub extern "C" fn metric_new(
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_core_metric_new(
     meter: *const MetricMeter,
     options: *const MetricOptions,
 ) -> *mut Metric {
@@ -177,15 +177,15 @@ pub extern "C" fn metric_new(
     }))
 }
 
-#[no_mangle]
-pub extern "C" fn metric_free(metric: *mut Metric) {
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_core_metric_free(metric: *mut Metric) {
     unsafe {
         let _ = Box::from_raw(metric);
     }
 }
 
-#[no_mangle]
-pub extern "C" fn metric_record_integer(
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_core_metric_record_integer(
     metric: *const Metric,
     value: u64,
     attrs: *const MetricAttributes,
@@ -200,8 +200,8 @@ pub extern "C" fn metric_record_integer(
     }
 }
 
-#[no_mangle]
-pub extern "C" fn metric_record_float(
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_core_metric_record_float(
     metric: *const Metric,
     value: f64,
     attrs: *const MetricAttributes,
@@ -215,8 +215,8 @@ pub extern "C" fn metric_record_float(
     }
 }
 
-#[no_mangle]
-pub extern "C" fn metric_record_duration(
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_core_metric_record_duration(
     metric: *const Metric,
     value_ms: u64,
     attrs: *const MetricAttributes,
@@ -242,37 +242,37 @@ impl From<&MetricOptions> for metrics::MetricParameters {
     }
 }
 
-type CustomMetricMeterMetricNewCallback = unsafe extern "C" fn(
+pub type CustomMetricMeterMetricNewCallback = unsafe extern "C" fn(
     name: ByteArrayRef,
     description: ByteArrayRef,
     unit: ByteArrayRef,
     kind: MetricKind,
 ) -> *const libc::c_void;
 
-type CustomMetricMeterMetricFreeCallback = unsafe extern "C" fn(metric: *const libc::c_void);
+pub type CustomMetricMeterMetricFreeCallback = unsafe extern "C" fn(metric: *const libc::c_void);
 
-type CustomMetricMeterMetricRecordIntegerCallback =
+pub type CustomMetricMeterMetricRecordIntegerCallback =
     unsafe extern "C" fn(metric: *const libc::c_void, value: u64, attributes: *const libc::c_void);
 
-type CustomMetricMeterMetricRecordFloatCallback =
+pub type CustomMetricMeterMetricRecordFloatCallback =
     unsafe extern "C" fn(metric: *const libc::c_void, value: f64, attributes: *const libc::c_void);
 
-type CustomMetricMeterMetricRecordDurationCallback = unsafe extern "C" fn(
+pub type CustomMetricMeterMetricRecordDurationCallback = unsafe extern "C" fn(
     metric: *const libc::c_void,
     value_ms: u64,
     attributes: *const libc::c_void,
 );
 
-type CustomMetricMeterAttributesNewCallback = unsafe extern "C" fn(
+pub type CustomMetricMeterAttributesNewCallback = unsafe extern "C" fn(
     append_from: *const libc::c_void,
     attributes: *const CustomMetricAttribute,
     attributes_size: libc::size_t,
 ) -> *const libc::c_void;
 
-type CustomMetricMeterAttributesFreeCallback =
+pub type CustomMetricMeterAttributesFreeCallback =
     unsafe extern "C" fn(attributes: *const libc::c_void);
 
-type CustomMetricMeterMeterFreeCallback = unsafe extern "C" fn(meter: *const CustomMetricMeter);
+pub type CustomMetricMeterMeterFreeCallback = unsafe extern "C" fn(meter: *const CustomMetricMeter);
 
 /// No parameters in the callbacks below should be assumed to live beyond the
 /// callbacks unless they are pointers to things that were created lang-side
@@ -299,18 +299,18 @@ pub struct CustomMetricAttribute {
 
 #[repr(C)]
 pub union CustomMetricAttributeValue {
-    string_value: CustomMetricAttributeValueString,
-    int_value: i64,
-    float_value: f64,
-    bool_value: bool,
+    pub string_value: CustomMetricAttributeValueString,
+    pub int_value: i64,
+    pub float_value: f64,
+    pub bool_value: bool,
 }
 
 // We create this type because we want it to implement Copy
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct CustomMetricAttributeValueString {
-    data: *const u8,
-    size: libc::size_t,
+    pub data: *const u8,
+    pub size: libc::size_t,
 }
 
 #[derive(Debug)]
@@ -417,7 +417,7 @@ impl CustomMetricMeterRef {
                         ),
                     };
                     CustomMetricAttribute {
-                        key: ByteArrayRef::from_str(&kv.key),
+                        key: kv.key.as_str().into(),
                         value,
                         value_type,
                     }
@@ -438,9 +438,9 @@ impl CustomMetricMeterRef {
         unsafe {
             let meter = &*(self.meter_impl.0);
             let metric = (meter.metric_new)(
-                ByteArrayRef::from_str(&params.name),
-                ByteArrayRef::from_str(&params.description),
-                ByteArrayRef::from_str(&params.unit),
+                params.name.as_ref().into(),
+                params.description.as_ref().into(),
+                params.unit.as_ref().into(),
                 kind,
             );
             CustomMetric {
@@ -454,6 +454,9 @@ impl CustomMetricMeterRef {
 // Needed so we can have a drop impl
 #[derive(Debug)]
 struct CustomMetricMeterImpl(*const CustomMetricMeter);
+
+unsafe impl Send for CustomMetricMeterImpl {}
+unsafe impl Sync for CustomMetricMeterImpl {}
 
 impl Drop for CustomMetricMeterImpl {
     fn drop(&mut self) {

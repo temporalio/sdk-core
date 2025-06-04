@@ -1,9 +1,9 @@
-use crate::runtime::Runtime;
 use crate::ByteArray;
 use crate::ByteArrayRef;
 use crate::CancellationToken;
 use crate::MetadataRef;
 use crate::UserDataHandle;
+use crate::runtime::Runtime;
 
 use std::str::FromStr;
 use std::time::Duration;
@@ -18,24 +18,24 @@ use url::Url;
 
 #[repr(C)]
 pub struct ClientOptions {
-    target_url: ByteArrayRef,
-    client_name: ByteArrayRef,
-    client_version: ByteArrayRef,
-    metadata: MetadataRef,
-    api_key: ByteArrayRef,
-    identity: ByteArrayRef,
-    tls_options: *const ClientTlsOptions,
-    retry_options: *const ClientRetryOptions,
-    keep_alive_options: *const ClientKeepAliveOptions,
-    http_connect_proxy_options: *const ClientHttpConnectProxyOptions,
+    pub target_url: ByteArrayRef,
+    pub client_name: ByteArrayRef,
+    pub client_version: ByteArrayRef,
+    pub metadata: MetadataRef,
+    pub api_key: ByteArrayRef,
+    pub identity: ByteArrayRef,
+    pub tls_options: *const ClientTlsOptions,
+    pub retry_options: *const ClientRetryOptions,
+    pub keep_alive_options: *const ClientKeepAliveOptions,
+    pub http_connect_proxy_options: *const ClientHttpConnectProxyOptions,
 }
 
 #[repr(C)]
 pub struct ClientTlsOptions {
-    server_root_ca_cert: ByteArrayRef,
-    domain: ByteArrayRef,
-    client_cert: ByteArrayRef,
-    client_private_key: ByteArrayRef,
+    pub server_root_ca_cert: ByteArrayRef,
+    pub domain: ByteArrayRef,
+    pub client_cert: ByteArrayRef,
+    pub client_private_key: ByteArrayRef,
 }
 
 #[repr(C)]
@@ -73,7 +73,7 @@ unsafe impl Send for Client {}
 unsafe impl Sync for Client {}
 
 /// If success or fail are not null, they must be manually freed when done.
-type ClientConnectCallback = unsafe extern "C" fn(
+pub type ClientConnectCallback = unsafe extern "C" fn(
     user_data: *mut libc::c_void,
     success: *mut Client,
     fail: *const ByteArray,
@@ -81,8 +81,8 @@ type ClientConnectCallback = unsafe extern "C" fn(
 
 /// Runtime must live as long as client. Options and user data must live through
 /// callback.
-#[no_mangle]
-pub extern "C" fn client_connect(
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_core_client_connect(
     runtime: *mut Runtime,
     options: *const ClientOptions,
     user_data: *mut libc::c_void,
@@ -99,7 +99,7 @@ pub extern "C" fn client_connect(
                     user_data,
                     std::ptr::null_mut(),
                     runtime
-                        .alloc_utf8(&format!("Invalid options: {}", err))
+                        .alloc_utf8(&format!("Invalid options: {err}"))
                         .into_raw(),
                 );
             }
@@ -128,7 +128,7 @@ pub extern "C" fn client_connect(
                     user_data.into(),
                     std::ptr::null_mut(),
                     runtime
-                        .alloc_utf8(&format!("Connection failed: {}", err))
+                        .alloc_utf8(&format!("Connection failed: {err}"))
                         .into_raw(),
                 );
             },
@@ -136,15 +136,18 @@ pub extern "C" fn client_connect(
     });
 }
 
-#[no_mangle]
-pub extern "C" fn client_free(client: *mut Client) {
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_core_client_free(client: *mut Client) {
     unsafe {
         let _ = Box::from_raw(client);
     }
 }
 
-#[no_mangle]
-pub extern "C" fn client_update_metadata(client: *mut Client, metadata: ByteArrayRef) {
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_core_client_update_metadata(
+    client: *mut Client,
+    metadata: ByteArrayRef,
+) {
     let client = unsafe { &*client };
     client
         .core
@@ -152,8 +155,8 @@ pub extern "C" fn client_update_metadata(client: *mut Client, metadata: ByteArra
         .set_headers(metadata.to_string_map_on_newlines());
 }
 
-#[no_mangle]
-pub extern "C" fn client_update_api_key(client: *mut Client, api_key: ByteArrayRef) {
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_core_client_update_api_key(client: *mut Client, api_key: ByteArrayRef) {
     let client = unsafe { &*client };
     client
         .core
@@ -163,14 +166,14 @@ pub extern "C" fn client_update_api_key(client: *mut Client, api_key: ByteArrayR
 
 #[repr(C)]
 pub struct RpcCallOptions {
-    service: RpcService,
-    rpc: ByteArrayRef,
-    req: ByteArrayRef,
-    retry: bool,
-    metadata: MetadataRef,
+    pub service: RpcService,
+    pub rpc: ByteArrayRef,
+    pub req: ByteArrayRef,
+    pub retry: bool,
+    pub metadata: MetadataRef,
     /// 0 means no timeout
-    timeout_millis: u32,
-    cancellation_token: *const CancellationToken,
+    pub timeout_millis: u32,
+    pub cancellation_token: *const CancellationToken,
 }
 
 // Expected to outlive all async calls that use it
@@ -178,6 +181,7 @@ unsafe impl Send for RpcCallOptions {}
 unsafe impl Sync for RpcCallOptions {}
 
 #[repr(C)]
+#[derive(Copy, Clone, Debug)]
 pub enum RpcService {
     Workflow = 1,
     Operator,
@@ -190,7 +194,7 @@ pub enum RpcService {
 /// manually freed when done. Either success or failure_message are always
 /// present. Status code may still be 0 with a failure message. Failure details
 /// represent a protobuf gRPC status message.
-type ClientRpcCallCallback = unsafe extern "C" fn(
+pub type ClientRpcCallCallback = unsafe extern "C" fn(
     user_data: *mut libc::c_void,
     success: *const ByteArray,
     status_code: u32,
@@ -213,8 +217,8 @@ macro_rules! service_call {
 }
 
 /// Client, options, and user data must live through callback.
-#[no_mangle]
-pub extern "C" fn client_rpc_call(
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_core_client_rpc_call(
     client: *mut Client,
     options: *const RpcCallOptions,
     user_data: *mut libc::c_void,
@@ -255,7 +259,7 @@ pub extern "C" fn client_rpc_call(
                 Err(err) => (
                     std::ptr::null_mut(),
                     0,
-                    ByteArray::from_utf8(format!("{}", err)).into_raw(),
+                    ByteArray::from_utf8(format!("{err}")).into_raw(),
                     std::ptr::null_mut(),
                 ),
             },
@@ -458,14 +462,12 @@ async fn call_operator_service(
     }
 }
 
-async fn call_cloud_service<'p>(
-    client: &CoreClient,
-    call: &RpcCallOptions,
-) -> anyhow::Result<Vec<u8>> {
+async fn call_cloud_service(client: &CoreClient, call: &RpcCallOptions) -> anyhow::Result<Vec<u8>> {
     let rpc = call.rpc.to_str();
     let mut client = client.clone();
     match rpc {
         "AddNamespaceRegion" => rpc_call!(client, call, add_namespace_region),
+        "AddUserGroupMember" => rpc_call!(client, call, add_user_group_member),
         "CreateApiKey" => rpc_call!(client, call, create_api_key),
         "CreateNamespace" => rpc_call!(client, call, create_namespace),
         "CreateNamespaceExportSink" => rpc_call!(client, call, create_namespace_export_sink),
@@ -478,6 +480,7 @@ async fn call_cloud_service<'p>(
         "DeleteApiKey" => rpc_call!(client, call, delete_api_key),
         "DeleteNamespace" => rpc_call_on_trait!(client, call, CloudService, delete_namespace),
         "DeleteNamespaceExportSink" => rpc_call!(client, call, delete_namespace_export_sink),
+        "DeleteNamespaceRegion" => rpc_call!(client, call, delete_namespace_region),
         "DeleteNexusEndpoint" => {
             rpc_call_on_trait!(client, call, CloudService, delete_nexus_endpoint)
         }
@@ -501,9 +504,11 @@ async fn call_cloud_service<'p>(
         "GetServiceAccounts" => rpc_call!(client, call, get_service_accounts),
         "GetUsage" => rpc_call!(client, call, get_usage),
         "GetUserGroup" => rpc_call!(client, call, get_user_group),
+        "GetUserGroupMembers" => rpc_call!(client, call, get_user_group_members),
         "GetUserGroups" => rpc_call!(client, call, get_user_groups),
         "GetUser" => rpc_call!(client, call, get_user),
         "GetUsers" => rpc_call!(client, call, get_users),
+        "RemoveUserGroupMember" => rpc_call!(client, call, remove_user_group_member),
         "RenameCustomSearchAttribute" => rpc_call!(client, call, rename_custom_search_attribute),
         "SetUserGroupNamespaceAccess" => rpc_call!(client, call, set_user_group_namespace_access),
         "SetUserNamespaceAccess" => rpc_call!(client, call, set_user_namespace_access),
@@ -544,6 +549,9 @@ async fn call_health_service(
     let mut client = client.clone();
     match rpc {
         "Check" => rpc_call!(client, call, check),
+        "Watch" => Err(anyhow::anyhow!(
+            "Health service Watch method is not implemented in C bridge"
+        )),
         rpc => Err(anyhow::anyhow!("Unknown RPC call {}", rpc)),
     }
 }

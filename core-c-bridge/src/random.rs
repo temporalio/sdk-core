@@ -9,22 +9,22 @@ pub struct Random {
     rand: Pcg64Mcg,
 }
 
-#[no_mangle]
-pub extern "C" fn random_new(seed: u64) -> *mut Random {
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_core_random_new(seed: u64) -> *mut Random {
     Box::into_raw(Box::new(Random {
         rand: Pcg64Mcg::seed_from_u64(seed),
     }))
 }
 
-#[no_mangle]
-pub extern "C" fn random_free(random: *mut Random) {
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_core_random_free(random: *mut Random) {
     unsafe {
         let _ = Box::from_raw(random);
     }
 }
 
-#[no_mangle]
-pub extern "C" fn random_int32_range(
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_core_random_int32_range(
     random: *mut Random,
     min: i32,
     max: i32,
@@ -38,8 +38,8 @@ pub extern "C" fn random_int32_range(
     }
 }
 
-#[no_mangle]
-pub extern "C" fn random_double_range(
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_core_random_double_range(
     random: *mut Random,
     min: f64,
     max: f64,
@@ -53,8 +53,8 @@ pub extern "C" fn random_double_range(
     }
 }
 
-#[no_mangle]
-pub extern "C" fn random_fill_bytes(random: *mut Random, bytes: ByteArrayRef) {
+#[unsafe(no_mangle)]
+pub extern "C" fn temporal_core_random_fill_bytes(random: *mut Random, mut bytes: ByteArrayRef) {
     let random = unsafe { &mut *random };
     // Confirmed with the algorithm this won't fail, so try_fill not needed
     random.rand.fill(bytes.to_slice_mut());
