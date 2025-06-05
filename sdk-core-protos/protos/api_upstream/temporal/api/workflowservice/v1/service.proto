@@ -1173,4 +1173,25 @@ service WorkflowService {
         };
     }
 
+    // WorkerHeartbeat receive heartbeat request from the worker.
+    rpc RecordWorkerHeartbeat (RecordWorkerHeartbeatRequest) returns (RecordWorkerHeartbeatResponse) {
+        option (google.api.http) = {
+            post: "/namespaces/{namespace}/workers/heartbeat"
+            body: "*"
+            additional_bindings {
+                post: "/api/v1/namespaces/{namespace}/workers/heartbeat"
+                body: "*"
+            }
+        };
+    };
+
+    // ListWorkers is a visibility API to list worker status information in a specific namespace.
+    rpc ListWorkers (ListWorkersRequest) returns (ListWorkersResponse) {
+        option (google.api.http) = {
+            get: "/namespaces/{namespace}/workers"
+            additional_bindings {
+                get: "/api/v1/namespaces/{namespace}/workers"
+            }
+        };
+    }
 }

@@ -237,6 +237,7 @@ impl ScheduledEventRecorded {
         sa: NexusOperationStartedEventAttributes,
     ) -> NexusOperationMachineTransition<Started> {
         NexusOperationMachineTransition::commands([NexusOperationCommand::Start {
+            #[allow(deprecated)]
             operation_id: sa.operation_id,
         }])
     }
@@ -536,6 +537,7 @@ impl NexusOperationMachine {
                     endpoint: self.shared_state.endpoint.clone(),
                     service: self.shared_state.service.clone(),
                     operation: self.shared_state.operation.clone(),
+                    #[allow(deprecated)]
                     operation_id: "".to_string(),
                     operation_token: "".to_string(),
                 },

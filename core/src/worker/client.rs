@@ -267,6 +267,7 @@ impl WorkerClient for WorkerClientBag {
             binary_checksum: self.binary_checksum(),
             worker_version_capabilities: self.worker_version_capabilities(),
             deployment_options: self.deployment_options(),
+            worker_heartbeat: None,
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
@@ -303,6 +304,7 @@ impl WorkerClient for WorkerClientBag {
             }),
             worker_version_capabilities: self.worker_version_capabilities(),
             deployment_options: self.deployment_options(),
+            worker_heartbeat: None,
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
@@ -335,6 +337,7 @@ impl WorkerClient for WorkerClientBag {
             identity: self.identity.clone(),
             worker_version_capabilities: self.worker_version_capabilities(),
             deployment_options: self.deployment_options(),
+            worker_heartbeat: None,
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
@@ -612,6 +615,7 @@ impl WorkerClient for WorkerClientBag {
             identity: self.identity.clone(),
             sticky_task_queue,
             reason: "graceful shutdown".to_string(),
+            worker_heartbeat: None,
         };
 
         Ok(

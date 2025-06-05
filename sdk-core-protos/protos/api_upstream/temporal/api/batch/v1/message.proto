@@ -77,10 +77,10 @@ message BatchOperationReset {
   // Describes what to reset to and how. If set, `reset_type` and `reset_reapply_type` are ignored.
   temporal.api.common.v1.ResetOptions options = 4;
 
-  // Reset type (deprecated, use `options`).
-  temporal.api.enums.v1.ResetType reset_type = 1;
-  // History event reapply options (deprecated, use `options`).
-  temporal.api.enums.v1.ResetReapplyType reset_reapply_type = 2;
+  // Deprecated. Use `options`.
+  temporal.api.enums.v1.ResetType reset_type = 1 [deprecated = true];
+  // Deprecated. Use `options`.
+  temporal.api.enums.v1.ResetReapplyType reset_reapply_type = 2 [deprecated = true];
   // Operations to perform after the workflow has been reset. These operations will be applied
   // to the *new* run of the workflow execution in the order they are provided.
   // All operations are applied to the workflow before the first new workflow task is generated
