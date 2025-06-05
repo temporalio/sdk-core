@@ -1834,6 +1834,7 @@ pub mod temporal {
                             retry_policy: s.retry_policy.map(Into::into),
                             cron_schedule: s.cron_schedule.clone(),
                             parent_close_policy: s.parent_close_policy,
+                            #[allow(deprecated)]
                             inherit_build_id,
                             priority: s.priority,
                         },
@@ -1887,6 +1888,7 @@ pub mod temporal {
                             } else {
                                 Some(c.search_attributes.into())
                             },
+                            #[allow(deprecated)]
                             inherit_build_id,
                             ..Default::default()
                         },
@@ -2427,6 +2429,11 @@ pub mod temporal {
         pub mod version {
             pub mod v1 {
                 tonic::include_proto!("temporal.api.version.v1");
+            }
+        }
+        pub mod worker {
+            pub mod v1 {
+                tonic::include_proto!("temporal.api.worker.v1");
             }
         }
         pub mod workflow {

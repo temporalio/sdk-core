@@ -714,6 +714,7 @@ impl WFMachinesAdapter for ChildWorkflowMachine {
                             run_id: self.shared_state.run_id.clone(),
                             child_workflow_only: true,
                             reason,
+                            #[allow(deprecated)]
                             control: "".to_string(),
                         }
                         .into(),

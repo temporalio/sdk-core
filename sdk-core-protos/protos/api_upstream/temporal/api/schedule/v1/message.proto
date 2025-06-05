@@ -167,7 +167,8 @@ message ScheduleSpec {
     // Interval-based specifications of times.
     repeated IntervalSpec interval = 2;
     // Any timestamps matching any of exclude_* will be skipped.
-    repeated CalendarSpec exclude_calendar = 3 [deprecated = true]; // use exclude_structured_calendar
+    // Deprecated. Use exclude_structured_calendar.
+    repeated CalendarSpec exclude_calendar = 3 [deprecated = true];
     repeated StructuredCalendarSpec exclude_structured_calendar = 9;
     // If start_time is set, any timestamps before start_time will be skipped.
     // (Together, start_time and end_time make an inclusive interval.)
@@ -342,6 +343,7 @@ message ScheduleInfo {
     google.protobuf.Timestamp create_time = 6;
     google.protobuf.Timestamp update_time = 7;
 
+    // Deprecated.
     string invalid_schedule_error = 8 [deprecated = true];
 }
 

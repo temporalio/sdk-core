@@ -307,6 +307,7 @@ impl Worker {
         task_pollers: TaskPollers,
         telem_instance: Option<&TelemetryInstance>,
     ) -> Self {
+        // TODO: Use existing MetricsContext or a new meter to record and export these metrics, possibly through the same MetricsCallBuffer
         let (metrics, meter) = if let Some(ti) = telem_instance {
             (
                 MetricsContext::top_level(config.namespace.clone(), config.task_queue.clone(), ti),
