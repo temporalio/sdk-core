@@ -1,10 +1,11 @@
+use crate::telemetry::prometheus_meter::Registry;
 use http_body_util::Full;
 use hyper::{Method, Request, Response, body::Bytes, header::CONTENT_TYPE, service::service_fn};
 use hyper_util::{
     rt::{TokioExecutor, TokioIo},
     server::conn::auto,
 };
-use prometheus::{Encoder, Registry, TextEncoder};
+use prometheus::{Encoder, TextEncoder};
 use std::net::{SocketAddr, TcpListener};
 use temporal_sdk_core_api::telemetry::PrometheusExporterOptions;
 use tokio::io;
@@ -17,7 +18,7 @@ pub(super) struct PromServer {
 
 impl PromServer {
     pub(super) fn new(opts: &PrometheusExporterOptions) -> Result<Self, anyhow::Error> {
-        let registry = Registry::new();
+        let registry = Registry::new(opts.global_tags.clone());
         Ok(Self {
             listener: TcpListener::bind(opts.socket_addr)?,
             registry,
