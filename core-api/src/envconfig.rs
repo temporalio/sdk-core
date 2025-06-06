@@ -75,14 +75,14 @@ pub enum ConfigError {
 }
 
 /// ClientConfig represents a client config file.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct ClientConfig {
     /// Profiles, keyed by profile name
     pub profiles: HashMap<String, ClientConfigProfile>,
 }
 
 /// ClientConfigProfile is profile-level configuration for a client.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct ClientConfigProfile {
     /// Client address
     pub address: Option<String>,
@@ -106,14 +106,8 @@ pub struct ClientConfigProfile {
     pub grpc_meta: HashMap<String, String>,
 }
 
-impl Default for ClientConfigProfile {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// ClientConfigTLS is TLS configuration for a client.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct ClientConfigTLS {
     /// If true, TLS is explicitly disabled. If false/unset, whether TLS is enabled or not depends on other factors such
     /// as whether this struct is present or None, and whether API key exists (which enables TLS by default).
@@ -144,39 +138,14 @@ pub struct ClientConfigTLS {
     pub disable_host_verification: bool,
 }
 
-impl Default for ClientConfigTLS {
-    fn default() -> Self {
-        Self {
-            disabled: false,
-            client_cert_path: None,
-            client_cert_data: None,
-            client_key_path: None,
-            client_key_data: None,
-            server_ca_cert_path: None,
-            server_ca_cert_data: None,
-            server_name: None,
-            disable_host_verification: false,
-        }
-    }
-}
-
 /// Codec configuration for a client
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct ClientConfigCodec {
     /// Remote endpoint for the codec
     pub endpoint: Option<String>,
 
     /// Auth for the codec
     pub auth: Option<String>,
-}
-
-impl Default for ClientConfigCodec {
-    fn default() -> Self {
-        Self {
-            endpoint: None,
-            auth: None,
-        }
-    }
 }
 
 /// Options for loading client configuration
@@ -254,7 +223,7 @@ impl EnvLookup for OsEnvLookup {
 /// (but may use environment variables to get which config file to load). This will not fail
 /// if the file does not exist.
 pub fn load_client_config(options: LoadClientConfigOptions) -> Result<ClientConfig, ConfigError> {
-    let conf = ClientConfig::new();
+    let conf = ClientConfig::default();
 
     // Get which bytes to load from TOML
     let data = if let Some(ref data) = options.config_file_data {
@@ -308,7 +277,7 @@ pub fn load_client_config_profile(
     }
 
     let mut profile = if options.disable_file {
-        ClientConfigProfile::new()
+        ClientConfigProfile::default()
     } else {
         // Load the full config
         let config = load_client_config(LoadClientConfigOptions {
@@ -335,7 +304,7 @@ pub fn load_client_config_profile(
         } else if !profile_unset {
             return Err(ConfigError::ProfileNotFound(profile_name));
         } else {
-            ClientConfigProfile::new()
+            ClientConfigProfile::default()
         }
     };
 
@@ -355,13 +324,6 @@ pub fn load_client_config_profile(
 }
 
 impl ClientConfig {
-    /// Create a new empty client config
-    pub fn new() -> Self {
-        Self {
-            profiles: HashMap::new(),
-        }
-    }
-
     /// Load configuration from a TOML string with options. This will replace all profiles within,
     /// it does not do any form of merging.
     pub fn from_toml(
@@ -369,7 +331,7 @@ impl ClientConfig {
         options: ClientConfigFromTOMLOptions,
     ) -> Result<Self, ConfigError> {
         let toml_str = std::str::from_utf8(toml_bytes)?;
-        let mut conf = ClientConfig::new();
+        let mut conf = ClientConfig::default();
         if toml_str.trim().is_empty() {
             return Ok(conf);
         }
@@ -388,24 +350,12 @@ impl ClientConfig {
     /// Convert configuration to TOML string.
     pub fn to_toml(&self) -> Result<Vec<u8>, ConfigError> {
         let mut toml_conf = internal_toml::TomlClientConfig::new();
-        toml_conf.from_client_config(self);
+        toml_conf.populate_from_client_config(self);
         Ok(toml::to_string_pretty(&toml_conf)?.into_bytes())
     }
 }
 
 impl ClientConfigProfile {
-    /// Create a new empty profile
-    pub fn new() -> Self {
-        Self {
-            address: None,
-            namespace: None,
-            api_key: None,
-            tls: None,
-            codec: None,
-            grpc_meta: HashMap::new(),
-        }
-    }
-
     /// Apply environment variable overrides to this profile
     pub fn apply_env_vars_with_lookup(
         &mut self,
@@ -521,10 +471,9 @@ impl ClientConfigProfile {
         if CODEC_ENV_VARS
             .iter()
             .any(|k| env_lookup.lookup_env(k).is_ok())
+            && self.codec.is_none()
         {
-            if self.codec.is_none() {
-                self.codec = Some(ClientConfigCodec::default());
-            }
+            self.codec = Some(ClientConfigCodec::default());
         }
 
         if let Some(ref mut codec) = self.codec {
@@ -626,11 +575,11 @@ mod internal_toml {
             }
         }
 
-        pub(super) fn from_client_config(&mut self, conf: &ClientConfig) {
+        pub(super) fn populate_from_client_config(&mut self, conf: &ClientConfig) {
             self.profiles = HashMap::with_capacity(conf.profiles.len());
             for (k, v) in &conf.profiles {
                 let mut prof = TomlClientConfigProfile::new();
-                prof.from_client_config(v);
+                prof.populate_from_client_config(v);
                 self.profiles.insert(k.clone(), prof);
             }
         }
@@ -687,14 +636,14 @@ mod internal_toml {
             ret
         }
 
-        fn from_client_config(&mut self, conf: &ClientConfigProfile) {
+        fn populate_from_client_config(&mut self, conf: &ClientConfigProfile) {
             self.address = conf.address.clone();
             self.namespace = conf.namespace.clone();
             self.api_key = conf.api_key.clone();
 
             if let Some(ref tls_conf) = conf.tls {
                 let mut toml_tls = TomlClientConfigTLS::new();
-                toml_tls.from_client_config(tls_conf);
+                toml_tls.populate_from_client_config(tls_conf);
                 self.tls = Some(toml_tls);
             } else {
                 self.tls = None;
@@ -702,7 +651,7 @@ mod internal_toml {
 
             if let Some(ref codec_conf) = conf.codec {
                 let mut toml_codec = TomlClientConfigCodec::new();
-                toml_codec.from_client_config(codec_conf);
+                toml_codec.populate_from_client_config(codec_conf);
                 self.codec = Some(toml_codec);
             } else {
                 self.codec = None;
@@ -788,7 +737,7 @@ mod internal_toml {
             }
         }
 
-        fn from_client_config(&mut self, conf: &ClientConfigTLS) {
+        fn populate_from_client_config(&mut self, conf: &ClientConfigTLS) {
             self.disabled = conf.disabled;
             self.client_cert_path = conf.client_cert_path.clone();
             self.client_cert_data = conf
@@ -833,7 +782,7 @@ mod internal_toml {
             }
         }
 
-        fn from_client_config(&mut self, conf: &ClientConfigCodec) {
+        fn populate_from_client_config(&mut self, conf: &ClientConfigCodec) {
             self.endpoint = conf.endpoint.clone();
             self.auth = conf.auth.clone();
         }
@@ -858,7 +807,7 @@ mod internal_toml {
             pub(crate) fn apply_to_client_config(self, conf: &mut ClientConfig) {
                 conf.profiles = HashMap::with_capacity(self.profiles.len());
                 for (k, v) in self.profiles {
-                    conf.profiles.insert(k, v.to_client_config());
+                    conf.profiles.insert(k, v.into_client_config());
                 }
             }
         }
@@ -881,13 +830,13 @@ mod internal_toml {
         }
 
         impl StrictTomlClientConfigProfile {
-            fn to_client_config(self) -> ClientConfigProfile {
+            fn into_client_config(self) -> ClientConfigProfile {
                 let mut ret = ClientConfigProfile {
                     address: self.address,
                     namespace: self.namespace,
                     api_key: self.api_key,
-                    tls: self.tls.map(|tls| tls.to_client_config()),
-                    codec: self.codec.map(|codec| codec.to_client_config()),
+                    tls: self.tls.map(|tls| tls.into_client_config()),
+                    codec: self.codec.map(|codec| codec.into_client_config()),
                     grpc_meta: HashMap::new(),
                 };
 
@@ -925,7 +874,7 @@ mod internal_toml {
         }
 
         impl StrictTomlClientConfigTLS {
-            fn to_client_config(self) -> ClientConfigTLS {
+            fn into_client_config(self) -> ClientConfigTLS {
                 let string_to_bytes = |s: Option<String>| {
                     s.and_then(|val| {
                         if val.is_empty() {
@@ -960,7 +909,7 @@ mod internal_toml {
         }
 
         impl StrictTomlClientConfigCodec {
-            fn to_client_config(self) -> ClientConfigCodec {
+            fn into_client_config(self) -> ClientConfigCodec {
                 ClientConfigCodec {
                     endpoint: self.endpoint,
                     auth: self.auth,
@@ -982,9 +931,6 @@ mod tests {
     }
 
     impl MockEnvLookup {
-        fn new() -> Self {
-            Self::default()
-        }
         fn set(&mut self, key: &str, value: &str) -> &mut Self {
             self.vars.insert(key.to_string(), value.to_string());
             self
@@ -1044,20 +990,26 @@ namespace = "production"
 
     #[test]
     fn test_client_config_toml_roundtrip() {
-        let mut c = ClientConfig::new();
-        let mut prof = ClientConfigProfile::new();
-        prof.address = Some("addr".to_string());
-        prof.namespace = Some("ns".to_string());
-        prof.api_key = Some("key".to_string());
+        let mut prof = ClientConfigProfile {
+            address: Some("addr".to_string()),
+            namespace: Some("ns".to_string()),
+            api_key: Some("key".to_string()),
+            ..Default::default()
+        };
         prof.grpc_meta.insert("k".to_string(), "v".to_string());
-        let mut tls = ClientConfigTLS::default();
-        tls.client_cert_data = Some(b"cert".to_vec());
-        prof.tls = Some(tls);
-        c.profiles.insert("p".to_string(), prof);
 
-        let toml_bytes = c.to_toml().unwrap();
-        let c2 = ClientConfig::from_toml(&toml_bytes, Default::default()).unwrap();
-        assert_eq!(c, c2);
+        let tls = ClientConfigTLS {
+            client_cert_data: Some(b"cert".to_vec()),
+            ..Default::default()
+        };
+        prof.tls = Some(tls);
+
+        let mut conf = ClientConfig::default();
+        conf.profiles.insert("default".to_string(), prof);
+
+        let toml_bytes = conf.to_toml().unwrap();
+        let new_conf = ClientConfig::from_toml(&toml_bytes, Default::default()).unwrap();
+        assert_eq!(conf, new_conf);
     }
 
     #[test]
@@ -1235,7 +1187,7 @@ some_heaDer3 = "some-value3"
             profile.grpc_meta.get("some-header2").unwrap(),
             "some-value2-new"
         );
-        assert!(profile.grpc_meta.get("some-header3").is_none());
+        assert!(!profile.grpc_meta.contains_key("some-header3"));
         assert_eq!(
             profile.grpc_meta.get("some-header4").unwrap(),
             "some-value4-new"
@@ -1472,7 +1424,7 @@ address = "localhost:7233"
 
     #[test]
     fn test_load_client_config_profile_from_env_only() {
-        let env = MockEnvLookup::default();
+        let mut env = MockEnvLookup::default();
         env.set("TEMPORAL_ADDRESS", "env-address")
             .set("TEMPORAL_NAMESPACE", "env-namespace");
 
