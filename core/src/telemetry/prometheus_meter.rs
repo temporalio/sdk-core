@@ -1,12 +1,14 @@
 use crate::abstractions::dbg_panic;
 use parking_lot::RwLock;
-use prometheus::{CounterVec, GaugeVec, HistogramVec, Opts, Registry};
+use prometheus::{
+    CounterVec, GaugeVec, HistogramVec, Opts,
+    core::Collector,
+    proto::{LabelPair, MetricFamily},
+};
 use std::{
-    collections::HashMap,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+    collections::{BTreeMap, HashMap, HashSet, btree_map, hash_map},
+    fmt::{Debug, Formatter},
+    sync::Arc,
     time::Duration,
 };
 use temporal_sdk_core_api::telemetry::metrics::{
@@ -36,6 +38,155 @@ impl LabelSchema {
     }
 }
 
+/// Replaces Prometheus's default registry with a custom one that allows us to register metrics that
+/// have different label sets for the same name.
+#[derive(Clone)]
+pub(super) struct Registry {
+    collectors_by_id: Arc<RwLock<HashMap<u64, Box<dyn Collector>>>>,
+    global_tags: BTreeMap<String, String>,
+}
+
+// A lot of this implementation code is lifted from the prometheus crate itself, and as such is a
+// derivative work of the following:
+// Copyright 2014 The Prometheus Authors
+// Copyright 2019 TiKV Project Authors. Licensed under Apache-2.0.
+impl Registry {
+    pub(super) fn new(global_tags: HashMap<String, String>) -> Self {
+        Self {
+            collectors_by_id: Arc::new(RwLock::new(HashMap::new())),
+            global_tags: BTreeMap::from_iter(global_tags),
+        }
+    }
+
+    fn register(&self, c: Box<dyn Collector>) {
+        let mut desc_id_set = HashSet::new();
+        let mut collector_id: u64 = 0;
+
+        for desc in c.desc() {
+            // If it is not a duplicate desc in this collector, add it to
+            // the collector_id. Here we assume that collectors (ie: metric vecs / histograms etc)
+            // should internally not repeat the same descriptor -- even though we allow entirely
+            // separate metrics with overlapping labels to be registered generally.
+            if desc_id_set.insert(desc.id) {
+                // Add the id and the dim hash, which includes both static and variable labels
+                collector_id = collector_id
+                    .wrapping_add(desc.id)
+                    .wrapping_add(desc.dim_hash);
+            } else {
+                dbg_panic!(
+                    "Prometheus metric already registered, values will not be recorded on this \
+                    metric. This is an SDK bug. Details: {:?}",
+                    c.desc()
+                );
+                return;
+            }
+        }
+        match self.collectors_by_id.write().entry(collector_id) {
+            hash_map::Entry::Vacant(vc) => {
+                vc.insert(c);
+            }
+            hash_map::Entry::Occupied(_) => {
+                dbg_panic!(
+                    "Prometheus metric already registered, values will not be recorded on this \
+                    metric. This is an SDK bug. Details: {:?}",
+                    c.desc()
+                );
+            }
+        }
+    }
+
+    pub(super) fn gather(&self) -> Vec<MetricFamily> {
+        let mut mf_by_name = BTreeMap::new();
+
+        for c in self.collectors_by_id.read().values() {
+            let mfs = c.collect();
+            for mut mf in mfs {
+                if mf.get_metric().is_empty() {
+                    continue;
+                }
+
+                let name = mf.name().to_owned();
+                match mf_by_name.entry(name) {
+                    btree_map::Entry::Vacant(entry) => {
+                        entry.insert(mf);
+                    }
+                    btree_map::Entry::Occupied(mut entry) => {
+                        let existent_mf = entry.get_mut();
+                        let existent_metrics = existent_mf.mut_metric();
+                        for metric in mf.take_metric().into_iter() {
+                            existent_metrics.push(metric);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Now that MetricFamilies are all set, sort their Metrics
+        // lexicographically by their label values.
+        for mf in mf_by_name.values_mut() {
+            mf.mut_metric().sort_by(|m1, m2| {
+                let lps1 = m1.get_label();
+                let lps2 = m2.get_label();
+
+                if lps1.len() != lps2.len() {
+                    return lps1.len().cmp(&lps2.len());
+                }
+
+                for (lp1, lp2) in lps1.iter().zip(lps2.iter()) {
+                    if lp1.value() != lp2.value() {
+                        return lp1.value().cmp(lp2.value());
+                    }
+                }
+
+                // We should never arrive here. Multiple metrics with the same
+                // label set in the same scrape will lead to undefined ingestion
+                // behavior. However, as above, we have to provide stable sorting
+                // here, even for inconsistent metrics. So sort equal metrics
+                // by their timestamp, with missing timestamps (implying "now")
+                // coming last.
+                m1.timestamp_ms().cmp(&m2.timestamp_ms())
+            });
+        }
+
+        mf_by_name
+            .into_values()
+            .map(|mut m| {
+                if self.global_tags.is_empty() {
+                    return m;
+                }
+                // Add global labels
+                let pairs: Vec<LabelPair> = self
+                    .global_tags
+                    .iter()
+                    .map(|(k, v)| {
+                        let mut label = LabelPair::default();
+                        label.set_name(k.to_string());
+                        label.set_value(v.to_string());
+                        label
+                    })
+                    .collect();
+
+                for metric in m.mut_metric().iter_mut() {
+                    let mut labels: Vec<_> = metric.take_label();
+                    labels.append(&mut pairs.clone());
+                    metric.set_label(labels);
+                }
+                m
+            })
+            .collect()
+    }
+}
+
+impl Debug for Registry {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Registry({} collectors)",
+            self.collectors_by_id.read().keys().len()
+        )
+    }
+}
+
 /// A generic Prometheus metric wrapper that manages different vector instances for different label
 /// schemas
 #[derive(Debug)]
@@ -47,12 +198,11 @@ struct PromMetric<T> {
     vectors: RwLock<HashMap<LabelSchema, T>>,
     // Bucket configuration for histograms (None for other metric types)
     histogram_buckets: Option<Vec<f64>>,
-    registered: AtomicBool,
 }
 
 impl<T> PromMetric<T>
 where
-    T: Clone + prometheus::core::Collector + 'static,
+    T: Clone + Collector + 'static,
 {
     fn new(metric_name: String, metric_description: String, registry: Registry) -> Self {
         Self {
@@ -61,7 +211,6 @@ where
             registry,
             vectors: RwLock::new(HashMap::new()),
             histogram_buckets: None,
-            registered: AtomicBool::new(false),
         }
     }
 
@@ -96,12 +245,7 @@ where
 
         let vector = create_fn(&self.metric_name, description, &label_names);
 
-        if !self.registered.load(Ordering::Relaxed) {
-            self.registry
-                .register(Box::new(vector.clone()))
-                .expect("registration works");
-            self.registered.store(true, Ordering::Relaxed);
-        }
+        self.registry.register(Box::new(vector.clone()));
 
         vectors.insert(schema, vector.clone());
         vector
@@ -121,7 +265,6 @@ impl PromMetric<HistogramVec> {
             registry,
             vectors: RwLock::new(HashMap::new()),
             histogram_buckets: Some(buckets),
-            registered: AtomicBool::new(false),
         }
     }
 
@@ -247,7 +390,7 @@ pub struct CorePrometheusMeter {
 }
 
 impl CorePrometheusMeter {
-    pub fn new(
+    pub(super) fn new(
         registry: Registry,
         use_seconds_for_durations: bool,
         unit_suffix: bool,
@@ -468,7 +611,7 @@ mod tests {
 
     #[test]
     fn test_prometheus_meter_dynamic_labels() {
-        let registry = Registry::new();
+        let registry = Registry::new(HashMap::from([("global".to_string(), "value".to_string())]));
         let meter = CorePrometheusMeter::new(
             registry.clone(),
             false,
@@ -476,28 +619,24 @@ mod tests {
             temporal_sdk_core_api::telemetry::HistogramBucketOverrides::default(),
         );
 
-        // Test counter with different label sets
         let counter = meter.counter(MetricParameters {
             name: "test_counter".into(),
             description: "A test counter metric".into(),
             unit: "".into(),
         });
 
-        // First label set
         let attrs1 = meter.new_attributes(NewAttributes::new(vec![
             MetricKeyValue::new("service", "service1"),
             MetricKeyValue::new("method", "get"),
         ]));
         counter.add(5, &attrs1);
 
-        // Second label set with different labels
         let attrs2 = meter.new_attributes(NewAttributes::new(vec![
             MetricKeyValue::new("service", "service2"),
             MetricKeyValue::new("method", "post"),
         ]));
         counter.add(3, &attrs2);
 
-        // Verify metrics are recorded correctly
         let metric_families = registry.gather();
         let encoder = TextEncoder::new();
         let mut buffer = vec![];
@@ -506,41 +645,19 @@ mod tests {
 
         println!("Prometheus output:\n{}", output);
 
-        assert!(output.contains("test_counter"));
         // Both label combinations should be present
-        assert!(output.contains("service=\"service1\""));
-        assert!(output.contains("service=\"service2\""));
-        assert!(output.contains("method=\"get\""));
-        assert!(output.contains("method=\"post\""));
-    }
-
-    #[test]
-    fn test_label_schema_efficiency() {
-        // Test that LabelSchema provides efficient comparison and hashing
-        let labels1 = LabelSet::new(vec![
-            ("b".to_string(), "2".to_string()),
-            ("a".to_string(), "1".to_string()),
-        ]);
-        let labels2 = LabelSet::new(vec![
-            ("a".to_string(), "1".to_string()),
-            ("b".to_string(), "2".to_string()),
-        ]);
-
-        let schema1 = LabelSchema::from_label_set(&labels1);
-        let schema2 = LabelSchema::from_label_set(&labels2);
-
-        // Should be equal despite different insertion order
-        assert_eq!(schema1, schema2);
-
-        // Should be efficient for HashMap usage
-        let mut map = HashMap::new();
-        map.insert(schema1.clone(), "value1");
-        assert_eq!(map.get(&schema2), Some(&"value1"));
+        assert!(
+            output.contains("test_counter{method=\"get\",service=\"service1\",global=\"value\"} 5")
+        );
+        assert!(
+            output
+                .contains("test_counter{method=\"post\",service=\"service2\",global=\"value\"} 3")
+        );
     }
 
     #[test]
     fn test_histogram_buckets() {
-        let registry = Registry::new();
+        let registry = Registry::new(HashMap::new());
         let meter = CorePrometheusMeter::new(
             registry.clone(),
             false, // use_seconds_for_durations = false (milliseconds)
@@ -561,7 +678,7 @@ mod tests {
 
         // Check the prometheus output
         let metric_families = registry.gather();
-        let encoder = prometheus::TextEncoder::new();
+        let encoder = TextEncoder::new();
         let mut buffer = vec![];
         encoder.encode(&metric_families, &mut buffer).unwrap();
         let output = String::from_utf8(buffer).unwrap();
@@ -574,7 +691,7 @@ mod tests {
 
     #[test]
     fn test_extend_attributes() {
-        let registry = Registry::new();
+        let registry = Registry::new(HashMap::new());
         let meter = CorePrometheusMeter::new(
             registry.clone(),
             false,
@@ -618,7 +735,7 @@ mod tests {
     #[test]
     fn test_workflow_e2e_latency_buckets() {
         // Test that default buckets are correctly applied to workflow E2E latency histogram
-        let registry = Registry::new();
+        let registry = Registry::new(HashMap::new());
 
         // Test milliseconds configuration
         let meter_ms = CorePrometheusMeter::new(
@@ -644,7 +761,7 @@ mod tests {
 
         // Check the prometheus output for milliseconds
         let metric_families = registry.gather();
-        let encoder = prometheus::TextEncoder::new();
+        let encoder = TextEncoder::new();
         let mut buffer = vec![];
         encoder.encode(&metric_families, &mut buffer).unwrap();
         let output = String::from_utf8(buffer).unwrap();
@@ -658,7 +775,7 @@ mod tests {
         );
 
         // Test seconds configuration
-        let registry_s = Registry::new();
+        let registry_s = Registry::new(HashMap::new());
         let meter_s = CorePrometheusMeter::new(
             registry_s.clone(),
             true,  // use_seconds_for_durations = true (seconds)

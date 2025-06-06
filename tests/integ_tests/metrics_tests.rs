@@ -22,7 +22,9 @@ use temporal_sdk_core_api::{
     telemetry::{
         HistogramBucketOverrides, OtelCollectorOptionsBuilder, OtlpProtocol,
         PrometheusExporterOptionsBuilder, TelemetryOptionsBuilder,
-        metrics::{CoreMeter, MetricParameters, NewAttributes},
+        metrics::{
+            CoreMeter, MetricKeyValue, MetricParameters, MetricParametersBuilder, NewAttributes,
+        },
     },
     worker::{
         PollerBehavior, SlotKind, SlotMarkUsedContext, SlotReleaseContext, SlotReservationContext,
@@ -75,6 +77,7 @@ async fn prometheus_metrics_exported(
 ) {
     let mut opts_builder = PrometheusExporterOptionsBuilder::default();
     opts_builder
+        .global_tags(HashMap::from([("global".to_string(), "hi!".to_string())]))
         .socket_addr(ANY_PORT.parse().unwrap())
         .use_seconds_for_durations(use_seconds_latency);
     if custom_buckets {
@@ -102,25 +105,25 @@ async fn prometheus_metrics_exported(
 
     let body = get_text(format!("http://{addr}/metrics")).await;
     assert!(body.contains(
-        "temporal_request_latency_count{operation=\"ListNamespaces\",service_name=\"temporal-core-sdk\"} 1"
+        "temporal_request_latency_count{operation=\"ListNamespaces\",service_name=\"temporal-core-sdk\",global=\"hi!\"} 1"
     ));
     assert!(body.contains(
-        "temporal_request_latency_count{operation=\"GetSystemInfo\",service_name=\"temporal-core-sdk\"} 1"
+        "temporal_request_latency_count{operation=\"GetSystemInfo\",service_name=\"temporal-core-sdk\",global=\"hi!\"} 1"
     ));
     if custom_buckets {
         assert!(body.contains(
             "temporal_request_latency_bucket{\
-             operation=\"GetSystemInfo\",service_name=\"temporal-core-sdk\",le=\"1337\"}"
+             operation=\"GetSystemInfo\",service_name=\"temporal-core-sdk\",global=\"hi!\",le=\"1337\"}"
         ));
     } else if use_seconds_latency {
         assert!(body.contains(
             "temporal_request_latency_bucket{\
-             operation=\"GetSystemInfo\",service_name=\"temporal-core-sdk\",le=\"0.05\"}"
+             operation=\"GetSystemInfo\",service_name=\"temporal-core-sdk\",global=\"hi!\",le=\"0.05\"}"
         ));
     } else {
         assert!(body.contains(
             "temporal_request_latency_bucket{\
-             operation=\"GetSystemInfo\",service_name=\"temporal-core-sdk\",le=\"50\"}"
+             operation=\"GetSystemInfo\",service_name=\"temporal-core-sdk\",global=\"hi!\",le=\"50\"}"
         ));
     }
     // Verify counter names are appropriate (don't end w/ '_total')
@@ -131,8 +134,7 @@ async fn prometheus_metrics_exported(
     let attrs = mm.inner.new_attributes(NewAttributes::new(vec![]));
     g.record(42, &attrs);
     let body = get_text(format!("http://{addr}/metrics")).await;
-    println!("{}", &body);
-    assert!(body.contains("\nmygauge 42"));
+    assert!(body.contains("\nmygauge{global=\"hi!\"} 42"));
 }
 
 #[tokio::test]
@@ -687,7 +689,7 @@ async fn docker_metrics_with_prometheus(
     )]
     otel_collector: (&str, OtlpProtocol),
 ) {
-    if std::env::var("DOCKER_PROMETHEUS_RUNNING").is_err() {
+    if env::var("DOCKER_PROMETHEUS_RUNNING").is_err() {
         return;
     }
     let (otel_collector_addr, otel_protocol) = otel_collector;
@@ -729,7 +731,7 @@ async fn docker_metrics_with_prometheus(
     client.list_namespaces().await.unwrap();
 
     // Give Prometheus time to scrape metrics
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
 
     // Query Prometheus API for metrics
     let client = reqwest::Client::new();
@@ -1368,4 +1370,31 @@ async fn test_prometheus_metric_format_consistency() {
 
     // Clean up
     started_server.abort_handle.abort();
+}
+
+#[tokio::test]
+async fn prometheus_label_nonsense() {
+    let mut opts_builder = PrometheusExporterOptionsBuilder::default();
+    opts_builder.socket_addr(ANY_PORT.parse().unwrap());
+    let (telemopts, addr, _aborter) = prom_metrics(Some(opts_builder.build().unwrap()));
+    let meter = telemopts.metrics.clone().unwrap();
+
+    let ctr = meter.counter(
+        MetricParametersBuilder::default()
+            .name("some_counter")
+            .build()
+            .unwrap(),
+    );
+    let a1 = meter.new_attributes(NewAttributes::from([MetricKeyValue::new("thing", "foo")]));
+    let a2 = meter.new_attributes(NewAttributes::from([MetricKeyValue::new("blerp", "baz")]));
+    ctr.add(1, &a1);
+    ctr.add(1, &a2);
+    ctr.add(1, &a2);
+    ctr.add(1, &a1);
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let body = get_text(format!("http://{addr}/metrics")).await;
+    dbg!(&body);
+    assert!(body.contains("some_counter{thing=\"foo\"} 2"));
+    assert!(body.contains("some_counter{blerp=\"baz\"} 2"));
 }
