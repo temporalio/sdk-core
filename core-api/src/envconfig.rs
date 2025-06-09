@@ -49,11 +49,11 @@
 //! custom_header = "value"
 //! ```
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use thiserror::Error;
-use serde::{Deserialize, Serialize};
 
 /// Default profile name when none is specified
 pub const DEFAULT_PROFILE: &str = "default";
@@ -71,7 +71,7 @@ pub enum ConfigError {
     InvalidConfig(String),
 
     #[error("Configuration loading error: {0}")]
-    LoadError(anyhow::Error)
+    LoadError(anyhow::Error),
 }
 
 impl From<std::str::Utf8Error> for ConfigError {
@@ -229,7 +229,7 @@ pub fn load_client_config(
                 .filter(|p| !p.is_empty())
                 .cloned()
                 .map(Ok)
-                .unwrap_or_else(|| get_default_config_file_path())?;
+                .unwrap_or_else(get_default_config_file_path)?;
             read_path_bytes(&file_path)?
         }
     };
@@ -278,7 +278,7 @@ pub fn load_client_config_profile(
                 .map(|p| (p.clone(), false))
                 .unwrap_or((DEFAULT_PROFILE.to_string(), true)),
         };
-    
+
         if let Some(prof) = config.profiles.get(&profile_name) {
             Ok(prof.clone())
         } else if !profile_unset {
@@ -316,8 +316,7 @@ impl ClientConfig {
         }
 
         if options.strict {
-            let toml_conf: StrictTomlClientConfig =
-                toml::from_str(toml_str)?;
+            let toml_conf: StrictTomlClientConfig = toml::from_str(toml_str)?;
             toml_conf.apply_to_client_config(&mut conf)?;
         } else {
             let toml_conf: TomlClientConfig = toml::from_str(toml_str)?;
@@ -358,7 +357,10 @@ impl ClientConfigProfile {
         Ok(())
     }
 
-    fn apply_tls_env_vars(&mut self, env_vars: &HashMap<String, String>) -> Result<(), ConfigError> {
+    fn apply_tls_env_vars(
+        &mut self,
+        env_vars: &HashMap<String, String>,
+    ) -> Result<(), ConfigError> {
         const TLS_ENV_VARS: &[&str] = &[
             "TEMPORAL_TLS",
             "TEMPORAL_TLS_CLIENT_CERT_PATH",
@@ -371,11 +373,7 @@ impl ClientConfigProfile {
             "TEMPORAL_TLS_DISABLE_HOST_VERIFICATION",
         ];
 
-        if TLS_ENV_VARS
-            .iter()
-            .any(|&k| env_vars.contains_key(k))
-            && self.tls.is_none()
-        {
+        if TLS_ENV_VARS.iter().any(|&k| env_vars.contains_key(k)) && self.tls.is_none() {
             self.tls = Some(ClientConfigTLS::default());
         }
 
@@ -425,11 +423,7 @@ impl ClientConfigProfile {
         env_vars: &HashMap<String, String>,
     ) -> Result<(), ConfigError> {
         const CODEC_ENV_VARS: &[&str] = &["TEMPORAL_CODEC_ENDPOINT", "TEMPORAL_CODEC_AUTH"];
-        if CODEC_ENV_VARS
-            .iter()
-            .any(|&k| env_vars.contains_key(k))
-            && self.codec.is_none()
-        {
+        if CODEC_ENV_VARS.iter().any(|&k| env_vars.contains_key(k)) && self.codec.is_none() {
             self.codec = Some(ClientConfigCodec::default());
         }
 
@@ -454,8 +448,7 @@ impl ClientConfigProfile {
                 if value.is_empty() {
                     self.grpc_meta.remove(&normalized_name);
                 } else {
-                    self.grpc_meta
-                        .insert(normalized_name, value.clone());
+                    self.grpc_meta.insert(normalized_name, value.clone());
                 }
             }
         }
@@ -490,7 +483,10 @@ fn apply_data_source_env_var(
     }
 
     if has_data_env {
-        if dest.as_ref().is_some_and(|s| matches!(s, DataSource::Path(_))) {
+        if dest
+            .as_ref()
+            .is_some_and(|s| matches!(s, DataSource::Path(_)))
+        {
             return Err(ConfigError::InvalidConfig(format!(
                 "Cannot specify {0} data via {1} when {0} path is already specified",
                 name, data_var
@@ -500,7 +496,10 @@ fn apply_data_source_env_var(
             env_vars.get(data_var).unwrap().clone().into_bytes(),
         ));
     } else if has_path_env {
-        if dest.as_ref().is_some_and(|s| matches!(s, DataSource::Data(_))) {
+        if dest
+            .as_ref()
+            .is_some_and(|s| matches!(s, DataSource::Data(_)))
+        {
             return Err(ConfigError::InvalidConfig(format!(
                 "Cannot specify {0} path via {1} when {0} data is already specified",
                 name, path_var
@@ -603,7 +602,11 @@ impl TomlClientConfigProfile {
             address: self.address.clone(),
             namespace: self.namespace.clone(),
             api_key: self.api_key.clone(),
-            tls: self.tls.as_ref().map(|tls| tls.to_client_config()).transpose()?,
+            tls: self
+                .tls
+                .as_ref()
+                .map(|tls| tls.to_client_config())
+                .transpose()?,
             codec: self.codec.as_ref().map(|codec| codec.to_client_config()),
             grpc_meta: HashMap::new(),
         };
@@ -727,9 +730,7 @@ impl TomlClientConfigTLS {
                 .client_cert_path
                 .clone()
                 .map(DataSource::Path)
-                .or_else(|| {
-                    string_to_bytes(&self.client_cert_data).map(DataSource::Data)
-                }),
+                .or_else(|| string_to_bytes(&self.client_cert_data).map(DataSource::Data)),
             client_key: self
                 .client_key_path
                 .clone()
@@ -739,9 +740,7 @@ impl TomlClientConfigTLS {
                 .server_ca_cert_path
                 .clone()
                 .map(DataSource::Path)
-                .or_else(|| {
-                    string_to_bytes(&self.server_ca_cert_data).map(DataSource::Data)
-                }),
+                .or_else(|| string_to_bytes(&self.server_ca_cert_data).map(DataSource::Data)),
             server_name: self.server_name.clone(),
             disable_host_verification: self.disable_host_verification,
         })
@@ -823,7 +822,10 @@ mod strict {
     }
 
     impl StrictTomlClientConfig {
-        pub(crate) fn apply_to_client_config(self, conf: &mut ClientConfig) -> Result<(), ConfigError> {
+        pub(crate) fn apply_to_client_config(
+            self,
+            conf: &mut ClientConfig,
+        ) -> Result<(), ConfigError> {
             conf.profiles = HashMap::with_capacity(self.profiles.len());
             for (k, v) in self.profiles {
                 conf.profiles.insert(k, v.into_client_config()?);
@@ -907,8 +909,7 @@ mod strict {
             }
             if self.server_ca_cert_path.is_some() && self.server_ca_cert_data.is_some() {
                 return Err(ConfigError::InvalidConfig(
-                    "Cannot specify both server_ca_cert_path and server_ca_cert_data"
-                        .to_string(),
+                    "Cannot specify both server_ca_cert_path and server_ca_cert_data".to_string(),
                 ));
             }
 
@@ -935,9 +936,7 @@ mod strict {
                 server_ca_cert: self
                     .server_ca_cert_path
                     .map(DataSource::Path)
-                    .or_else(|| {
-                        string_to_bytes(self.server_ca_cert_data).map(DataSource::Data)
-                    }),
+                    .or_else(|| string_to_bytes(self.server_ca_cert_data).map(DataSource::Data)),
                 server_name: self.server_name,
                 disable_host_verification: self.disable_host_verification,
             })
@@ -1114,10 +1113,7 @@ some-header = "some-value"
 some-other-header = "some-value2"
 "#;
         let mut vars = HashMap::new();
-        vars.insert(
-            "TEMPORAL_ADDRESS".to_string(),
-            "my-address-new".to_string(),
-        );
+        vars.insert("TEMPORAL_ADDRESS".to_string(), "my-address-new".to_string());
         vars.insert(
             "TEMPORAL_NAMESPACE".to_string(),
             "my-namespace-new".to_string(),
@@ -1176,23 +1172,16 @@ some-other-header = "some-value2"
         assert!(!tls.disabled); // TLS enabled via env var
         assert_eq!(
             tls.client_cert,
-            Some(DataSource::Path(
-                "my-client-cert-path-new".to_string()
-            ))
+            Some(DataSource::Path("my-client-cert-path-new".to_string()))
         );
         assert_eq!(
             tls.client_key,
-            Some(DataSource::Path(
-                "my-client-key-path-new".to_string()
-            ))
+            Some(DataSource::Path("my-client-key-path-new".to_string()))
         );
         assert_eq!(tls.server_name.as_ref().unwrap(), "my-server-name-new");
         assert!(!tls.disable_host_verification);
         let codec = profile.codec.as_ref().unwrap();
-        assert_eq!(
-            codec.endpoint.as_ref().unwrap(),
-            "my-codec-endpoint-new"
-        );
+        assert_eq!(codec.endpoint.as_ref().unwrap(), "my-codec-endpoint-new");
         assert_eq!(codec.auth.as_ref().unwrap(), "my-codec-auth-new");
         assert_eq!(
             profile.grpc_meta.get("some-header").unwrap(),
@@ -1414,9 +1403,10 @@ client_cert_data = "some-data"
         };
         let err = load_client_config_profile(options, Some(&vars)).unwrap_err();
         assert!(matches!(err, ConfigError::InvalidConfig(_)));
-        assert!(err
-            .to_string()
-            .contains("when cert path is already specified"));
+        assert!(
+            err.to_string()
+                .contains("when cert path is already specified")
+        );
 
         // Data in TOML, path in env var should fail
         let toml_str = r#"
@@ -1435,9 +1425,10 @@ client_cert_data = "some-data"
         };
         let err = load_client_config_profile(options, Some(&vars)).unwrap_err();
         assert!(matches!(err, ConfigError::InvalidConfig(_)));
-        assert!(err
-            .to_string()
-            .contains("when cert data is already specified"));
+        assert!(
+            err.to_string()
+                .contains("when cert data is already specified")
+        );
     }
 
     #[test]
