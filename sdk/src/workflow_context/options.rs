@@ -1,6 +1,7 @@
 use std::{collections::HashMap, time::Duration};
 
 use temporal_client::{Priority, WorkflowOptions};
+use temporal_sdk_core_protos::coresdk::nexus::NexusOperationCancellationType;
 use temporal_sdk_core_protos::{
     coresdk::{
         child_workflow::ChildWorkflowCancellationType,
@@ -397,6 +398,8 @@ pub struct NexusOperationOptions {
     /// activities and child workflows, these are transmitted to Nexus operations that may be
     /// external and are not traditional payloads.
     pub nexus_header: HashMap<String, String>,
+    /// Cancellation type for the operation
+    pub cancellation_type: Option<NexusOperationCancellationType>,
 }
 
 impl IntoWorkflowCommand for NexusOperationOptions {
@@ -414,6 +417,10 @@ impl IntoWorkflowCommand for NexusOperationOptions {
                         .schedule_to_close_timeout
                         .and_then(|t| t.try_into().ok()),
                     nexus_header: self.nexus_header,
+                    cancellation_type: self
+                        .cancellation_type
+                        .unwrap_or(NexusOperationCancellationType::WaitCancellationCompleted)
+                        .into(),
                 }
                 .into(),
             ),
