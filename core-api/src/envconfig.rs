@@ -12,10 +12,21 @@
 //! - `TEMPORAL_ADDRESS`: Temporal server address
 //! - `TEMPORAL_NAMESPACE`: Temporal namespace
 //! - `TEMPORAL_API_KEY`: API key for authentication
-//! - `TEMPORAL_TLS`: Enable/disable TLS (true/false)
-//! - `TEMPORAL_TLS_*`: Various TLS configuration options
-//! - `TEMPORAL_CODEC_*`: Codec configuration options
-//! - `TEMPORAL_GRPC_META_*`: gRPC metadata headers
+//! - `TEMPORAL_TLS`: A boolean (`true`/`false`) string to enable/disable TLS.
+//! - `TEMPORAL_TLS_CLIENT_CERT_PATH`: Path to a client certificate file. Mutually exclusive with TEMPORAL_TLS_CLIENT_CERT_DATA, only supply one.
+//! - `TEMPORAL_TLS_CLIENT_CERT_DATA`: The raw client certificate data. Mutually exclusive with TEMPORAL_TLS_CLIENT_CERT_PATH, only supply one.
+//! - `TEMPORAL_TLS_CLIENT_KEY_PATH`: Path to a client key file. Mutually exclusive with TEMPORAL_TLS_CLIENT_KEY_DATA, only supply one.
+//! - `TEMPORAL_TLS_CLIENT_KEY_DATA`: The raw client key data. Mutually exclusive with TEMPORAL_TLS_CLIENT_KEY_PATH, only supply one.
+//! - `TEMPORAL_TLS_SERVER_CA_CERT_PATH`: Path to a server CA certificate file. Mutually exclusive with TEMPORAL_TLS_SERVER_CA_CERT_DATA, only supply one.
+//! - `TEMPORAL_TLS_SERVER_CA_CERT_DATA`: The raw server CA certificate data. Mutually exclusive with TEMPORAL_TLS_SERVER_CA_CERT_PATH, only supply one.
+//! - `TEMPORAL_TLS_SERVER_NAME`: The server name to use for SNI.
+//! - `TEMPORAL_TLS_DISABLE_HOST_VERIFICATION`: A boolean (`true`/`false`) string to disable host verification.
+//! - `TEMPORAL_CODEC_ENDPOINT`: The endpoint for a remote data converter.
+//! - `TEMPORAL_CODEC_AUTH`: The authorization header value for a remote data converter.
+//! - `TEMPORAL_GRPC_META_*`: gRPC metadata headers. Any variables with this prefix will be
+//!   converted to gRPC headers. The part of the name after the prefix is converted to the header
+//!   name by lowercasing it and replacing underscores with hyphens. For example
+//!   `TEMPORAL_GRPC_META_SOME_KEY` becomes `some-key`.
 //!
 //! ## TOML Configuration Format
 //!
@@ -42,6 +53,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use thiserror::Error;
+use serde::{Deserialize, Serialize};
 
 /// Default profile name when none is specified
 pub const DEFAULT_PROFILE: &str = "default";
@@ -52,26 +64,39 @@ pub const DEFAULT_CONFIG_FILE: &str = "temporal.toml";
 /// Errors that can occur during configuration loading
 #[derive(Debug, Error)]
 pub enum ConfigError {
-    #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
-
-    #[error("TOML parsing error: {0}")]
-    TomlParse(#[from] toml::de::Error),
-
-    #[error("TOML serialization error: {0}")]
-    TomlSerialize(#[from] toml::ser::Error),
-
-    #[error("Invalid UTF-8 data: {0}")]
-    InvalidUtf8(#[from] std::str::Utf8Error),
-
     #[error("Profile '{0}' not found")]
     ProfileNotFound(String),
 
     #[error("Invalid configuration: {0}")]
     InvalidConfig(String),
 
-    #[error("Environment variable error: {0}")]
-    EnvVar(String),
+    #[error("Configuration loading error: {0}")]
+    LoadError(anyhow::Error)
+}
+
+impl From<std::str::Utf8Error> for ConfigError {
+    fn from(e: std::str::Utf8Error) -> Self {
+        Self::LoadError(e.into())
+    }
+}
+
+impl From<toml::de::Error> for ConfigError {
+    fn from(e: toml::de::Error) -> Self {
+        Self::LoadError(e.into())
+    }
+}
+
+impl From<toml::ser::Error> for ConfigError {
+    fn from(e: toml::ser::Error) -> Self {
+        Self::LoadError(e.into())
+    }
+}
+
+/// A source for configuration or a TLS certificate/key, from a path or raw data.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DataSource {
+    Path(String),
+    Data(Vec<u8>),
 }
 
 /// ClientConfig represents a client config file.
@@ -113,23 +138,14 @@ pub struct ClientConfigTLS {
     /// as whether this struct is present or None, and whether API key exists (which enables TLS by default).
     pub disabled: bool,
 
-    /// Path to client mTLS certificate. Mutually exclusive with ClientCertData.
-    pub client_cert_path: Option<String>,
+    /// Client certificate source.
+    pub client_cert: Option<DataSource>,
 
-    /// PEM bytes for client mTLS certificate. Mutually exclusive with ClientCertPath.
-    pub client_cert_data: Option<Vec<u8>>,
+    /// Client key source.
+    pub client_key: Option<DataSource>,
 
-    /// Path to client mTLS key. Mutually exclusive with ClientKeyData.
-    pub client_key_path: Option<String>,
-
-    /// PEM bytes for client mTLS key. Mutually exclusive with ClientKeyPath.
-    pub client_key_data: Option<Vec<u8>>,
-
-    /// Path to server CA cert override
-    pub server_ca_cert_path: Option<String>,
-
-    /// PEM bytes for server CA cert override
-    pub server_ca_cert_data: Option<Vec<u8>>,
+    /// Server CA certificate source.
+    pub server_ca_cert: Option<DataSource>,
 
     /// SNI override
     pub server_name: Option<String>,
@@ -149,29 +165,20 @@ pub struct ClientConfigCodec {
 }
 
 /// Options for loading client configuration
-#[derive(Debug)]
-pub struct LoadClientConfigOptions<'a> {
-    /// Override config file path
-    pub config_file_path: Option<String>,
-
-    /// TOML data to load directly (overrides file loading)
-    pub config_file_data: Option<Vec<u8>>,
+#[derive(Debug, Default)]
+pub struct LoadClientConfigOptions {
+    /// Where to load config from. If unset, will try env vars then default path.
+    pub config_source: Option<DataSource>,
 
     /// If true, will error if there are unrecognized keys
     pub config_file_strict: bool,
-
-    /// Environment variable lookup implementation
-    pub env_lookup: Option<&'a dyn EnvLookup>,
 }
 
 /// Options for loading a client configuration profile
 #[derive(Debug, Default)]
-pub struct LoadClientConfigProfileOptions<'a> {
-    /// Override config file path
-    pub config_file_path: Option<String>,
-
-    /// TOML data to load directly (overrides file loading)
-    pub config_file_data: Option<Vec<u8>>,
+pub struct LoadClientConfigProfileOptions {
+    /// Where to load config from. If unset, will try env vars then default path.
+    pub config_source: Option<DataSource>,
 
     /// Specific profile to use
     pub config_file_profile: Option<String>,
@@ -184,9 +191,6 @@ pub struct LoadClientConfigProfileOptions<'a> {
 
     /// Disable loading from environment variables
     pub disable_env: bool,
-
-    /// Environment variable lookup implementation
-    pub env_lookup: Option<&'a dyn EnvLookup>,
 }
 
 /// Options for parsing TOML configuration
@@ -196,79 +200,56 @@ pub struct ClientConfigFromTOMLOptions {
     pub strict: bool,
 }
 
-/// Trait for environment variable lookup
-pub trait EnvLookup: std::fmt::Debug {
-    /// Get all environment variables (like `std::env::vars()`)
-    fn environ(&self) -> Vec<(String, String)>;
-
-    /// Look up a single environment variable (like `std::env::var()`)
-    fn lookup_env(&self, key: &str) -> Result<String, std::env::VarError>;
-}
-
-/// Default implementation using actual OS environment
-#[derive(Debug, Default)]
-pub struct OsEnvLookup;
-
-impl EnvLookup for OsEnvLookup {
-    fn environ(&self) -> Vec<(String, String)> {
-        std::env::vars().collect()
+/// Read bytes from a file path, returning Ok(None) if it doesn't exist
+fn read_path_bytes(path: &str) -> Result<Option<Vec<u8>>, ConfigError> {
+    if !Path::new(path).exists() {
+        return Ok(None);
     }
-
-    fn lookup_env(&self, key: &str) -> Result<String, std::env::VarError> {
-        std::env::var(key)
+    match fs::read(path) {
+        Ok(data) => Ok(Some(data)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(ConfigError::LoadError(e.into())),
     }
 }
 
 /// Load client configuration from TOML. Does not load values from environment variables
 /// (but may use environment variables to get which config file to load). This will not fail
 /// if the file does not exist.
-pub fn load_client_config(options: LoadClientConfigOptions) -> Result<ClientConfig, ConfigError> {
-    let conf = ClientConfig::default();
-
+pub fn load_client_config(
+    options: LoadClientConfigOptions,
+    env_vars: Option<&HashMap<String, String>>,
+) -> Result<ClientConfig, ConfigError> {
     // Get which bytes to load from TOML
-    let data = if let Some(ref data) = options.config_file_data {
-        if options.config_file_path.is_some() {
-            return Err(ConfigError::InvalidConfig(
-                "cannot have data and file path".to_string(),
-            ));
-        }
-        data.clone()
-    } else {
-        // Determine file path
-        let file_path = match options.config_file_path {
-            Some(path) => path,
-            None => {
-                let env_lookup = options.env_lookup.unwrap_or(&OsEnvLookup);
-                match env_lookup.lookup_env("TEMPORAL_CONFIG_FILE") {
-                    Ok(path) if !path.is_empty() => path,
-                    _ => get_default_config_file_path()?,
-                }
-            }
-        };
-
-        // If file doesn't exist, return empty config
-        if !Path::new(&file_path).exists() {
-            return Ok(conf);
-        }
-
-        match fs::read(&file_path) {
-            Ok(data) => data,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(conf),
-            Err(e) => return Err(ConfigError::Io(e)),
+    let toml_data = match options.config_source {
+        Some(DataSource::Data(d)) => Some(d),
+        Some(DataSource::Path(p)) => read_path_bytes(&p)?,
+        None => {
+            let file_path = env_vars
+                .and_then(|vars| vars.get("TEMPORAL_CONFIG_FILE"))
+                .filter(|p| !p.is_empty())
+                .cloned()
+                .map(Ok)
+                .unwrap_or_else(|| get_default_config_file_path())?;
+            read_path_bytes(&file_path)?
         }
     };
 
-    ClientConfig::from_toml(
-        &data,
-        ClientConfigFromTOMLOptions {
-            strict: options.config_file_strict,
-        },
-    )
+    if let Some(data) = toml_data {
+        ClientConfig::from_toml(
+            &data,
+            ClientConfigFromTOMLOptions {
+                strict: options.config_file_strict,
+            },
+        )
+    } else {
+        Ok(ClientConfig::default())
+    }
 }
 
 /// Load a specific client configuration profile
 pub fn load_client_config_profile(
     options: LoadClientConfigProfileOptions,
+    env_vars: Option<&HashMap<String, String>>,
 ) -> Result<ClientConfigProfile, ConfigError> {
     if options.disable_file && options.disable_env {
         return Err(ConfigError::InvalidConfig(
@@ -280,40 +261,37 @@ pub fn load_client_config_profile(
         ClientConfigProfile::default()
     } else {
         // Load the full config
-        let config = load_client_config(LoadClientConfigOptions {
-            config_file_path: options.config_file_path.clone(),
-            config_file_data: options.config_file_data.clone(),
-            config_file_strict: options.config_file_strict,
-            env_lookup: options.env_lookup,
-        })?;
+        let config = load_client_config(
+            LoadClientConfigOptions {
+                config_source: options.config_source,
+                config_file_strict: options.config_file_strict,
+            },
+            env_vars,
+        )?;
 
         // Determine profile name
         let (profile_name, profile_unset) = match &options.config_file_profile {
             Some(profile) => (profile.clone(), false),
-            None => {
-                let env_lookup = options.env_lookup.unwrap_or(&OsEnvLookup);
-                match env_lookup.lookup_env("TEMPORAL_PROFILE") {
-                    Ok(profile) if !profile.is_empty() => (profile, false),
-                    _ => (DEFAULT_PROFILE.to_string(), true),
-                }
-            }
+            None => env_vars
+                .and_then(|vars| vars.get("TEMPORAL_PROFILE"))
+                .filter(|p| !p.is_empty())
+                .map(|p| (p.clone(), false))
+                .unwrap_or((DEFAULT_PROFILE.to_string(), true)),
         };
-
+    
         if let Some(prof) = config.profiles.get(&profile_name) {
-            prof.clone()
+            Ok(prof.clone())
         } else if !profile_unset {
-            return Err(ConfigError::ProfileNotFound(profile_name));
+            Err(ConfigError::ProfileNotFound(profile_name))
         } else {
-            ClientConfigProfile::default()
-        }
+            Ok(ClientConfigProfile::default())
+        }?
     };
 
     // Apply environment variables if not disabled
     if !options.disable_env {
-        if let Some(env_lookup) = options.env_lookup {
-            profile.apply_env_vars_with_lookup(env_lookup)?;
-        } else {
-            profile.apply_env_vars()?;
+        if let Some(vars) = env_vars {
+            profile.apply_env_vars(vars)?;
         }
     }
 
@@ -330,6 +308,7 @@ impl ClientConfig {
         toml_bytes: &[u8],
         options: ClientConfigFromTOMLOptions,
     ) -> Result<Self, ConfigError> {
+        use strict::StrictTomlClientConfig;
         let toml_str = std::str::from_utf8(toml_bytes)?;
         let mut conf = ClientConfig::default();
         if toml_str.trim().is_empty() {
@@ -337,19 +316,19 @@ impl ClientConfig {
         }
 
         if options.strict {
-            let toml_conf: internal_toml::strict::StrictTomlClientConfig =
+            let toml_conf: StrictTomlClientConfig =
                 toml::from_str(toml_str)?;
-            toml_conf.apply_to_client_config(&mut conf);
+            toml_conf.apply_to_client_config(&mut conf)?;
         } else {
-            let toml_conf: internal_toml::TomlClientConfig = toml::from_str(toml_str)?;
-            toml_conf.apply_to_client_config(&mut conf);
+            let toml_conf: TomlClientConfig = toml::from_str(toml_str)?;
+            toml_conf.apply_to_client_config(&mut conf)?;
         }
         Ok(conf)
     }
 
     /// Convert configuration to TOML string.
     pub fn to_toml(&self) -> Result<Vec<u8>, ConfigError> {
-        let mut toml_conf = internal_toml::TomlClientConfig::new();
+        let mut toml_conf = TomlClientConfig::new();
         toml_conf.populate_from_client_config(self);
         Ok(toml::to_string_pretty(&toml_conf)?.into_bytes())
     }
@@ -357,45 +336,29 @@ impl ClientConfig {
 
 impl ClientConfigProfile {
     /// Apply environment variable overrides to this profile
-    pub fn apply_env_vars_with_lookup(
+    pub fn apply_env_vars(
         &mut self,
-        env_lookup: &dyn EnvLookup,
+        env_vars: &HashMap<String, String>,
     ) -> Result<(), ConfigError> {
         // Apply basic settings
-        if let Ok(address) = env_lookup.lookup_env("TEMPORAL_ADDRESS") {
-            self.address = Some(address);
+        if let Some(address) = env_vars.get("TEMPORAL_ADDRESS") {
+            self.address = Some(address.clone());
+        }
+        if let Some(namespace) = env_vars.get("TEMPORAL_NAMESPACE") {
+            self.namespace = Some(namespace.clone());
+        }
+        if let Some(api_key) = env_vars.get("TEMPORAL_API_KEY") {
+            self.api_key = Some(api_key.clone());
         }
 
-        if let Ok(namespace) = env_lookup.lookup_env("TEMPORAL_NAMESPACE") {
-            self.namespace = Some(namespace);
-        }
-
-        if let Ok(api_key) = env_lookup.lookup_env("TEMPORAL_API_KEY") {
-            self.api_key = Some(api_key);
-        }
-
-        // Apply TLS settings
-        self.apply_tls_env_vars_with_lookup(env_lookup)?;
-
-        // Apply codec settings
-        self.apply_codec_env_vars_with_lookup(env_lookup)?;
-
-        // Apply gRPC metadata
-        self.apply_grpc_meta_env_vars_with_lookup(env_lookup)?;
+        self.apply_tls_env_vars(env_vars)?;
+        self.apply_codec_env_vars(env_vars)?;
+        self.apply_grpc_meta_env_vars(env_vars)?;
 
         Ok(())
     }
 
-    /// Apply environment variable overrides using OS environment
-    pub fn apply_env_vars(&mut self) -> Result<(), ConfigError> {
-        let env_lookup = OsEnvLookup;
-        self.apply_env_vars_with_lookup(&env_lookup)
-    }
-
-    fn apply_tls_env_vars_with_lookup(
-        &mut self,
-        env_lookup: &dyn EnvLookup,
-    ) -> Result<(), ConfigError> {
+    fn apply_tls_env_vars(&mut self, env_vars: &HashMap<String, String>) -> Result<(), ConfigError> {
         const TLS_ENV_VARS: &[&str] = &[
             "TEMPORAL_TLS",
             "TEMPORAL_TLS_CLIENT_CERT_PATH",
@@ -410,102 +373,92 @@ impl ClientConfigProfile {
 
         if TLS_ENV_VARS
             .iter()
-            .any(|k| env_lookup.lookup_env(k).is_ok())
+            .any(|&k| env_vars.contains_key(k))
             && self.tls.is_none()
         {
             self.tls = Some(ClientConfigTLS::default());
         }
 
         if let Some(ref mut tls) = self.tls {
-            if let Ok(disabled_str) = env_lookup.lookup_env("TEMPORAL_TLS") {
-                if let Some(disabled) = env_var_to_bool(&disabled_str) {
+            if let Some(disabled_str) = env_vars.get("TEMPORAL_TLS") {
+                if let Some(disabled) = env_var_to_bool(disabled_str) {
                     tls.disabled = !disabled;
                 }
             }
 
-            if let Ok(cert_path) = env_lookup.lookup_env("TEMPORAL_TLS_CLIENT_CERT_PATH") {
-                tls.client_cert_path = Some(cert_path);
-            }
+            apply_data_source_env_var(
+                env_vars,
+                "cert",
+                "TEMPORAL_TLS_CLIENT_CERT_PATH",
+                "TEMPORAL_TLS_CLIENT_CERT_DATA",
+                &mut tls.client_cert,
+            )?;
+            apply_data_source_env_var(
+                env_vars,
+                "key",
+                "TEMPORAL_TLS_CLIENT_KEY_PATH",
+                "TEMPORAL_TLS_CLIENT_KEY_DATA",
+                &mut tls.client_key,
+            )?;
+            apply_data_source_env_var(
+                env_vars,
+                "server CA cert",
+                "TEMPORAL_TLS_SERVER_CA_CERT_PATH",
+                "TEMPORAL_TLS_SERVER_CA_CERT_DATA",
+                &mut tls.server_ca_cert,
+            )?;
 
-            if let Ok(cert_data) = env_lookup.lookup_env("TEMPORAL_TLS_CLIENT_CERT_DATA") {
-                tls.client_cert_data = Some(cert_data.into_bytes());
+            if let Some(v) = env_vars.get("TEMPORAL_TLS_SERVER_NAME") {
+                tls.server_name = Some(v.clone());
             }
-
-            if let Ok(key_path) = env_lookup.lookup_env("TEMPORAL_TLS_CLIENT_KEY_PATH") {
-                tls.client_key_path = Some(key_path);
-            }
-
-            if let Ok(key_data) = env_lookup.lookup_env("TEMPORAL_TLS_CLIENT_KEY_DATA") {
-                tls.client_key_data = Some(key_data.into_bytes());
-            }
-
-            if let Ok(ca_path) = env_lookup.lookup_env("TEMPORAL_TLS_SERVER_CA_CERT_PATH") {
-                tls.server_ca_cert_path = Some(ca_path);
-            }
-
-            if let Ok(ca_data) = env_lookup.lookup_env("TEMPORAL_TLS_SERVER_CA_CERT_DATA") {
-                tls.server_ca_cert_data = Some(ca_data.into_bytes());
-            }
-
-            if let Ok(server_name) = env_lookup.lookup_env("TEMPORAL_TLS_SERVER_NAME") {
-                tls.server_name = Some(server_name);
-            }
-
-            if let Ok(disable_verification_str) =
-                env_lookup.lookup_env("TEMPORAL_TLS_DISABLE_HOST_VERIFICATION")
-            {
-                if let Some(disable_verification) = env_var_to_bool(&disable_verification_str) {
-                    tls.disable_host_verification = disable_verification;
+            if let Some(v) = env_vars.get("TEMPORAL_TLS_DISABLE_HOST_VERIFICATION") {
+                if let Some(b) = env_var_to_bool(v) {
+                    tls.disable_host_verification = b;
                 }
             }
         }
-
         Ok(())
     }
 
-    fn apply_codec_env_vars_with_lookup(
+    fn apply_codec_env_vars(
         &mut self,
-        env_lookup: &dyn EnvLookup,
+        env_vars: &HashMap<String, String>,
     ) -> Result<(), ConfigError> {
         const CODEC_ENV_VARS: &[&str] = &["TEMPORAL_CODEC_ENDPOINT", "TEMPORAL_CODEC_AUTH"];
         if CODEC_ENV_VARS
             .iter()
-            .any(|k| env_lookup.lookup_env(k).is_ok())
+            .any(|&k| env_vars.contains_key(k))
             && self.codec.is_none()
         {
             self.codec = Some(ClientConfigCodec::default());
         }
 
         if let Some(ref mut codec) = self.codec {
-            if let Ok(endpoint) = env_lookup.lookup_env("TEMPORAL_CODEC_ENDPOINT") {
-                codec.endpoint = Some(endpoint);
+            if let Some(endpoint) = env_vars.get("TEMPORAL_CODEC_ENDPOINT") {
+                codec.endpoint = Some(endpoint.clone());
             }
-
-            if let Ok(auth) = env_lookup.lookup_env("TEMPORAL_CODEC_AUTH") {
-                codec.auth = Some(auth);
+            if let Some(auth) = env_vars.get("TEMPORAL_CODEC_AUTH") {
+                codec.auth = Some(auth.clone());
             }
         }
-
         Ok(())
     }
 
-    fn apply_grpc_meta_env_vars_with_lookup(
+    fn apply_grpc_meta_env_vars(
         &mut self,
-        env_lookup: &dyn EnvLookup,
+        env_vars: &HashMap<String, String>,
     ) -> Result<(), ConfigError> {
-        // Look for TEMPORAL_GRPC_META_* environment variables
-        for (key, value) in env_lookup.environ() {
+        for (key, value) in env_vars {
             if let Some(header_name) = key.strip_prefix("TEMPORAL_GRPC_META_") {
                 let normalized_name = normalize_grpc_meta_key(header_name);
                 if value.is_empty() {
-                    // Empty value removes the header
                     self.grpc_meta.remove(&normalized_name);
                 } else {
-                    self.grpc_meta.insert(normalized_name, value);
+                    self.grpc_meta
+                        .insert(normalized_name, value.clone());
                 }
             }
         }
-
         Ok(())
     }
 
@@ -516,6 +469,46 @@ impl ClientConfigProfile {
             self.tls = Some(ClientConfigTLS::default());
         }
     }
+}
+
+/// Helper for applying env vars to a data source.
+fn apply_data_source_env_var(
+    env_vars: &HashMap<String, String>,
+    name: &str,
+    path_var: &str,
+    data_var: &str,
+    dest: &mut Option<DataSource>,
+) -> Result<(), ConfigError> {
+    let has_path_env = env_vars.contains_key(path_var);
+    let has_data_env = env_vars.contains_key(data_var);
+
+    if has_path_env && has_data_env {
+        return Err(ConfigError::InvalidConfig(format!(
+            "Cannot specify both {} and {}",
+            path_var, data_var
+        )));
+    }
+
+    if has_data_env {
+        if dest.as_ref().is_some_and(|s| matches!(s, DataSource::Path(_))) {
+            return Err(ConfigError::InvalidConfig(format!(
+                "Cannot specify {0} data via {1} when {0} path is already specified",
+                name, data_var
+            )));
+        }
+        *dest = Some(DataSource::Data(
+            env_vars.get(data_var).unwrap().clone().into_bytes(),
+        ));
+    } else if has_path_env {
+        if dest.as_ref().is_some_and(|s| matches!(s, DataSource::Data(_))) {
+            return Err(ConfigError::InvalidConfig(format!(
+                "Cannot specify {0} path via {1} when {0} data is already specified",
+                name, path_var
+            )));
+        }
+        *dest = Some(DataSource::Path(env_vars.get(path_var).unwrap().clone()));
+    }
+    Ok(())
 }
 
 /// Parse a boolean value from string (supports "true", "false", "1", "0")
@@ -542,180 +535,385 @@ fn get_default_config_file_path() -> Result<String, ConfigError> {
     Ok(path.to_string_lossy().to_string())
 }
 
-mod internal_toml {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct TomlClientConfig {
+    #[serde(default, rename = "profile")]
+    profiles: HashMap<String, TomlClientConfigProfile>,
+}
+
+impl TomlClientConfig {
+    fn new() -> Self {
+        Self {
+            profiles: HashMap::new(),
+        }
+    }
+
+    fn apply_to_client_config(&self, conf: &mut ClientConfig) -> Result<(), ConfigError> {
+        conf.profiles = HashMap::with_capacity(self.profiles.len());
+        for (k, v) in &self.profiles {
+            conf.profiles.insert(k.clone(), v.to_client_config()?);
+        }
+        Ok(())
+    }
+
+    fn populate_from_client_config(&mut self, conf: &ClientConfig) {
+        self.profiles = HashMap::with_capacity(conf.profiles.len());
+        for (k, v) in &conf.profiles {
+            let mut prof = TomlClientConfigProfile::new();
+            prof.populate_from_client_config(v);
+            self.profiles.insert(k.clone(), prof);
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct TomlClientConfigProfile {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    address: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    namespace: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    api_key: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tls: Option<TomlClientConfigTLS>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    codec: Option<TomlClientConfigCodec>,
+
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    grpc_meta: HashMap<String, String>,
+}
+
+impl TomlClientConfigProfile {
+    fn new() -> Self {
+        Self {
+            address: None,
+            namespace: None,
+            api_key: None,
+            tls: None,
+            codec: None,
+            grpc_meta: HashMap::new(),
+        }
+    }
+    fn to_client_config(&self) -> Result<ClientConfigProfile, ConfigError> {
+        let mut ret = ClientConfigProfile {
+            address: self.address.clone(),
+            namespace: self.namespace.clone(),
+            api_key: self.api_key.clone(),
+            tls: self.tls.as_ref().map(|tls| tls.to_client_config()).transpose()?,
+            codec: self.codec.as_ref().map(|codec| codec.to_client_config()),
+            grpc_meta: HashMap::new(),
+        };
+
+        if !self.grpc_meta.is_empty() {
+            ret.grpc_meta = HashMap::with_capacity(self.grpc_meta.len());
+            for (k, v) in &self.grpc_meta {
+                ret.grpc_meta.insert(normalize_grpc_meta_key(k), v.clone());
+            }
+        }
+        Ok(ret)
+    }
+
+    fn populate_from_client_config(&mut self, conf: &ClientConfigProfile) {
+        self.address = conf.address.clone();
+        self.namespace = conf.namespace.clone();
+        self.api_key = conf.api_key.clone();
+
+        if let Some(ref tls_conf) = conf.tls {
+            let mut toml_tls = TomlClientConfigTLS::new();
+            toml_tls.populate_from_client_config(tls_conf);
+            self.tls = Some(toml_tls);
+        } else {
+            self.tls = None;
+        }
+
+        if let Some(ref codec_conf) = conf.codec {
+            let mut toml_codec = TomlClientConfigCodec::new();
+            toml_codec.populate_from_client_config(codec_conf);
+            self.codec = Some(toml_codec);
+        } else {
+            self.codec = None;
+        }
+
+        if !conf.grpc_meta.is_empty() {
+            self.grpc_meta = HashMap::with_capacity(conf.grpc_meta.len());
+            for (k, v) in &conf.grpc_meta {
+                self.grpc_meta.insert(normalize_grpc_meta_key(k), v.clone());
+            }
+        } else {
+            self.grpc_meta.clear();
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct TomlClientConfigTLS {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    disabled: bool,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    client_cert_path: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    client_cert_data: Option<String>, // String in TOML, not Vec<u8>
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    client_key_path: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    client_key_data: Option<String>, // String in TOML, not Vec<u8>
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    server_ca_cert_path: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    server_ca_cert_data: Option<String>, // String in TOML, not Vec<u8>
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    server_name: Option<String>,
+
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    disable_host_verification: bool,
+}
+
+impl TomlClientConfigTLS {
+    fn new() -> Self {
+        Self {
+            disabled: false,
+            client_cert_path: None,
+            client_cert_data: None,
+            client_key_path: None,
+            client_key_data: None,
+            server_ca_cert_path: None,
+            server_ca_cert_data: None,
+            server_name: None,
+            disable_host_verification: false,
+        }
+    }
+
+    fn to_client_config(&self) -> Result<ClientConfigTLS, ConfigError> {
+        if self.client_cert_path.is_some() && self.client_cert_data.is_some() {
+            return Err(ConfigError::InvalidConfig(
+                "Cannot specify both client_cert_path and client_cert_data".to_string(),
+            ));
+        }
+        if self.client_key_path.is_some() && self.client_key_data.is_some() {
+            return Err(ConfigError::InvalidConfig(
+                "Cannot specify both client_key_path and client_key_data".to_string(),
+            ));
+        }
+        if self.server_ca_cert_path.is_some() && self.server_ca_cert_data.is_some() {
+            return Err(ConfigError::InvalidConfig(
+                "Cannot specify both server_ca_cert_path and server_ca_cert_data".to_string(),
+            ));
+        }
+
+        let string_to_bytes = |s: &Option<String>| {
+            s.as_ref().and_then(|val| {
+                if val.is_empty() {
+                    None
+                } else {
+                    Some(val.as_bytes().to_vec())
+                }
+            })
+        };
+
+        Ok(ClientConfigTLS {
+            disabled: self.disabled,
+            client_cert: self
+                .client_cert_path
+                .clone()
+                .map(DataSource::Path)
+                .or_else(|| {
+                    string_to_bytes(&self.client_cert_data).map(DataSource::Data)
+                }),
+            client_key: self
+                .client_key_path
+                .clone()
+                .map(DataSource::Path)
+                .or_else(|| string_to_bytes(&self.client_key_data).map(DataSource::Data)),
+            server_ca_cert: self
+                .server_ca_cert_path
+                .clone()
+                .map(DataSource::Path)
+                .or_else(|| {
+                    string_to_bytes(&self.server_ca_cert_data).map(DataSource::Data)
+                }),
+            server_name: self.server_name.clone(),
+            disable_host_verification: self.disable_host_verification,
+        })
+    }
+
+    fn populate_from_client_config(&mut self, conf: &ClientConfigTLS) {
+        self.disabled = conf.disabled;
+        if let Some(ref cert_source) = conf.client_cert {
+            match cert_source {
+                DataSource::Path(p) => self.client_cert_path = Some(p.clone()),
+                DataSource::Data(d) => {
+                    self.client_cert_data = Some(String::from_utf8_lossy(d).into_owned())
+                }
+            }
+        }
+        if let Some(ref key_source) = conf.client_key {
+            match key_source {
+                DataSource::Path(p) => self.client_key_path = Some(p.clone()),
+                DataSource::Data(d) => {
+                    self.client_key_data = Some(String::from_utf8_lossy(d).into_owned())
+                }
+            }
+        }
+        if let Some(ref ca_source) = conf.server_ca_cert {
+            match ca_source {
+                DataSource::Path(p) => self.server_ca_cert_path = Some(p.clone()),
+                DataSource::Data(d) => {
+                    self.server_ca_cert_data = Some(String::from_utf8_lossy(d).into_owned())
+                }
+            }
+        }
+        self.server_name = conf.server_name.clone();
+        self.disable_host_verification = conf.disable_host_verification;
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct TomlClientConfigCodec {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    endpoint: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    auth: Option<String>,
+}
+
+impl TomlClientConfigCodec {
+    fn new() -> Self {
+        Self {
+            endpoint: None,
+            auth: None,
+        }
+    }
+    fn to_client_config(&self) -> ClientConfigCodec {
+        ClientConfigCodec {
+            endpoint: self.endpoint.clone(),
+            auth: self.auth.clone(),
+        }
+    }
+
+    fn populate_from_client_config(&mut self, conf: &ClientConfigCodec) {
+        self.endpoint = conf.endpoint.clone();
+        self.auth = conf.auth.clone();
+    }
+}
+
+mod strict {
     use super::{
-        ClientConfig, ClientConfigCodec, ClientConfigProfile, ClientConfigTLS,
-        normalize_grpc_meta_key,
+        ClientConfig, ClientConfigCodec, ClientConfigProfile, ClientConfigTLS, ConfigError,
+        DataSource, normalize_grpc_meta_key,
     };
-    use serde::{Deserialize, Serialize};
+    use serde::Deserialize;
     use std::collections::HashMap;
 
-    /// Helper function for serde to skip serializing false booleans
-    fn is_false(b: &bool) -> bool {
-        !b
-    }
-
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub(super) struct TomlClientConfig {
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub(crate) struct StrictTomlClientConfig {
         #[serde(default, rename = "profile")]
-        profiles: HashMap<String, TomlClientConfigProfile>,
+        profiles: HashMap<String, StrictTomlClientConfigProfile>,
     }
 
-    impl TomlClientConfig {
-        pub(super) fn new() -> Self {
-            Self {
-                profiles: HashMap::new(),
-            }
-        }
-
-        pub(super) fn apply_to_client_config(&self, conf: &mut ClientConfig) {
+    impl StrictTomlClientConfig {
+        pub(crate) fn apply_to_client_config(self, conf: &mut ClientConfig) -> Result<(), ConfigError> {
             conf.profiles = HashMap::with_capacity(self.profiles.len());
-            for (k, v) in &self.profiles {
-                conf.profiles.insert(k.clone(), v.to_client_config());
+            for (k, v) in self.profiles {
+                conf.profiles.insert(k, v.into_client_config()?);
             }
-        }
-
-        pub(super) fn populate_from_client_config(&mut self, conf: &ClientConfig) {
-            self.profiles = HashMap::with_capacity(conf.profiles.len());
-            for (k, v) in &conf.profiles {
-                let mut prof = TomlClientConfigProfile::new();
-                prof.populate_from_client_config(v);
-                self.profiles.insert(k.clone(), prof);
-            }
+            Ok(())
         }
     }
 
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub(super) struct TomlClientConfigProfile {
-        #[serde(skip_serializing_if = "Option::is_none")]
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct StrictTomlClientConfigProfile {
+        #[serde(default)]
         address: Option<String>,
-
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
         namespace: Option<String>,
-
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
         api_key: Option<String>,
-
-        #[serde(skip_serializing_if = "Option::is_none")]
-        tls: Option<TomlClientConfigTLS>,
-
-        #[serde(skip_serializing_if = "Option::is_none")]
-        codec: Option<TomlClientConfigCodec>,
-
-        #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+        #[serde(default)]
+        tls: Option<StrictTomlClientConfigTLS>,
+        #[serde(default)]
+        codec: Option<StrictTomlClientConfigCodec>,
+        #[serde(default)]
         grpc_meta: HashMap<String, String>,
     }
 
-    impl TomlClientConfigProfile {
-        fn new() -> Self {
-            Self {
-                address: None,
-                namespace: None,
-                api_key: None,
-                tls: None,
-                codec: None,
-                grpc_meta: HashMap::new(),
-            }
-        }
-        fn to_client_config(&self) -> ClientConfigProfile {
+    impl StrictTomlClientConfigProfile {
+        fn into_client_config(self) -> Result<ClientConfigProfile, ConfigError> {
             let mut ret = ClientConfigProfile {
-                address: self.address.clone(),
-                namespace: self.namespace.clone(),
-                api_key: self.api_key.clone(),
-                tls: self.tls.as_ref().map(|tls| tls.to_client_config()),
-                codec: self.codec.as_ref().map(|codec| codec.to_client_config()),
+                address: self.address,
+                namespace: self.namespace,
+                api_key: self.api_key,
+                tls: self.tls.map(|tls| tls.into_client_config()).transpose()?,
+                codec: self.codec.map(|codec| codec.into_client_config()),
                 grpc_meta: HashMap::new(),
             };
 
             if !self.grpc_meta.is_empty() {
                 ret.grpc_meta = HashMap::with_capacity(self.grpc_meta.len());
-                for (k, v) in &self.grpc_meta {
-                    ret.grpc_meta.insert(normalize_grpc_meta_key(k), v.clone());
+                for (k, v) in self.grpc_meta {
+                    ret.grpc_meta.insert(normalize_grpc_meta_key(&k), v);
                 }
             }
-            ret
-        }
-
-        fn populate_from_client_config(&mut self, conf: &ClientConfigProfile) {
-            self.address = conf.address.clone();
-            self.namespace = conf.namespace.clone();
-            self.api_key = conf.api_key.clone();
-
-            if let Some(ref tls_conf) = conf.tls {
-                let mut toml_tls = TomlClientConfigTLS::new();
-                toml_tls.populate_from_client_config(tls_conf);
-                self.tls = Some(toml_tls);
-            } else {
-                self.tls = None;
-            }
-
-            if let Some(ref codec_conf) = conf.codec {
-                let mut toml_codec = TomlClientConfigCodec::new();
-                toml_codec.populate_from_client_config(codec_conf);
-                self.codec = Some(toml_codec);
-            } else {
-                self.codec = None;
-            }
-
-            if !conf.grpc_meta.is_empty() {
-                self.grpc_meta = HashMap::with_capacity(conf.grpc_meta.len());
-                for (k, v) in &conf.grpc_meta {
-                    self.grpc_meta.insert(normalize_grpc_meta_key(k), v.clone());
-                }
-            } else {
-                self.grpc_meta.clear();
-            }
+            Ok(ret)
         }
     }
 
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub(super) struct TomlClientConfigTLS {
-        #[serde(default, skip_serializing_if = "is_false")]
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct StrictTomlClientConfigTLS {
+        #[serde(default)]
         disabled: bool,
-
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
         client_cert_path: Option<String>,
-
-        #[serde(skip_serializing_if = "Option::is_none")]
-        client_cert_data: Option<String>, // String in TOML, not Vec<u8>
-
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        client_cert_data: Option<String>,
+        #[serde(default)]
         client_key_path: Option<String>,
-
-        #[serde(skip_serializing_if = "Option::is_none")]
-        client_key_data: Option<String>, // String in TOML, not Vec<u8>
-
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        client_key_data: Option<String>,
+        #[serde(default)]
         server_ca_cert_path: Option<String>,
-
-        #[serde(skip_serializing_if = "Option::is_none")]
-        server_ca_cert_data: Option<String>, // String in TOML, not Vec<u8>
-
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
+        server_ca_cert_data: Option<String>,
+        #[serde(default)]
         server_name: Option<String>,
-
-        #[serde(default, skip_serializing_if = "is_false")]
+        #[serde(default)]
         disable_host_verification: bool,
     }
 
-    impl TomlClientConfigTLS {
-        fn new() -> Self {
-            Self {
-                disabled: false,
-                client_cert_path: None,
-                client_cert_data: None,
-                client_key_path: None,
-                client_key_data: None,
-                server_ca_cert_path: None,
-                server_ca_cert_data: None,
-                server_name: None,
-                disable_host_verification: false,
+    impl StrictTomlClientConfigTLS {
+        fn into_client_config(self) -> Result<ClientConfigTLS, ConfigError> {
+            if self.client_cert_path.is_some() && self.client_cert_data.is_some() {
+                return Err(ConfigError::InvalidConfig(
+                    "Cannot specify both client_cert_path and client_cert_data".to_string(),
+                ));
             }
-        }
+            if self.client_key_path.is_some() && self.client_key_data.is_some() {
+                return Err(ConfigError::InvalidConfig(
+                    "Cannot specify both client_key_path and client_key_data".to_string(),
+                ));
+            }
+            if self.server_ca_cert_path.is_some() && self.server_ca_cert_data.is_some() {
+                return Err(ConfigError::InvalidConfig(
+                    "Cannot specify both server_ca_cert_path and server_ca_cert_data"
+                        .to_string(),
+                ));
+            }
 
-        fn to_client_config(&self) -> ClientConfigTLS {
-            let string_to_bytes = |s: &Option<String>| {
-                s.as_ref().and_then(|val| {
+            let string_to_bytes = |s: Option<String>| {
+                s.and_then(|val| {
                     if val.is_empty() {
                         None
                     } else {
@@ -724,196 +922,42 @@ mod internal_toml {
                 })
             };
 
-            ClientConfigTLS {
+            Ok(ClientConfigTLS {
                 disabled: self.disabled,
-                client_cert_path: self.client_cert_path.clone(),
-                client_cert_data: string_to_bytes(&self.client_cert_data),
-                client_key_path: self.client_key_path.clone(),
-                client_key_data: string_to_bytes(&self.client_key_data),
-                server_ca_cert_path: self.server_ca_cert_path.clone(),
-                server_ca_cert_data: string_to_bytes(&self.server_ca_cert_data),
-                server_name: self.server_name.clone(),
+                client_cert: self
+                    .client_cert_path
+                    .map(DataSource::Path)
+                    .or_else(|| string_to_bytes(self.client_cert_data).map(DataSource::Data)),
+                client_key: self
+                    .client_key_path
+                    .map(DataSource::Path)
+                    .or_else(|| string_to_bytes(self.client_key_data).map(DataSource::Data)),
+                server_ca_cert: self
+                    .server_ca_cert_path
+                    .map(DataSource::Path)
+                    .or_else(|| {
+                        string_to_bytes(self.server_ca_cert_data).map(DataSource::Data)
+                    }),
+                server_name: self.server_name,
                 disable_host_verification: self.disable_host_verification,
-            }
-        }
-
-        fn populate_from_client_config(&mut self, conf: &ClientConfigTLS) {
-            self.disabled = conf.disabled;
-            self.client_cert_path = conf.client_cert_path.clone();
-            self.client_cert_data = conf
-                .client_cert_data
-                .as_ref()
-                .map(|d| String::from_utf8_lossy(d).into_owned());
-            self.client_key_path = conf.client_key_path.clone();
-            self.client_key_data = conf
-                .client_key_data
-                .as_ref()
-                .map(|d| String::from_utf8_lossy(d).into_owned());
-            self.server_ca_cert_path = conf.server_ca_cert_path.clone();
-            self.server_ca_cert_data = conf
-                .server_ca_cert_data
-                .as_ref()
-                .map(|d| String::from_utf8_lossy(d).into_owned());
-            self.server_name = conf.server_name.clone();
-            self.disable_host_verification = conf.disable_host_verification;
+            })
         }
     }
 
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    pub(super) struct TomlClientConfigCodec {
-        #[serde(skip_serializing_if = "Option::is_none")]
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct StrictTomlClientConfigCodec {
+        #[serde(default)]
         endpoint: Option<String>,
-
-        #[serde(skip_serializing_if = "Option::is_none")]
+        #[serde(default)]
         auth: Option<String>,
     }
 
-    impl TomlClientConfigCodec {
-        fn new() -> Self {
-            Self {
-                endpoint: None,
-                auth: None,
-            }
-        }
-        fn to_client_config(&self) -> ClientConfigCodec {
+    impl StrictTomlClientConfigCodec {
+        fn into_client_config(self) -> ClientConfigCodec {
             ClientConfigCodec {
-                endpoint: self.endpoint.clone(),
-                auth: self.auth.clone(),
-            }
-        }
-
-        fn populate_from_client_config(&mut self, conf: &ClientConfigCodec) {
-            self.endpoint = conf.endpoint.clone();
-            self.auth = conf.auth.clone();
-        }
-    }
-
-    pub(super) mod strict {
-        use super::{
-            ClientConfig, ClientConfigCodec, ClientConfigProfile, ClientConfigTLS,
-            normalize_grpc_meta_key,
-        };
-        use serde::Deserialize;
-        use std::collections::HashMap;
-
-        #[derive(Debug, Deserialize)]
-        #[serde(deny_unknown_fields)]
-        pub(crate) struct StrictTomlClientConfig {
-            #[serde(default, rename = "profile")]
-            profiles: HashMap<String, StrictTomlClientConfigProfile>,
-        }
-
-        impl StrictTomlClientConfig {
-            pub(crate) fn apply_to_client_config(self, conf: &mut ClientConfig) {
-                conf.profiles = HashMap::with_capacity(self.profiles.len());
-                for (k, v) in self.profiles {
-                    conf.profiles.insert(k, v.into_client_config());
-                }
-            }
-        }
-
-        #[derive(Debug, Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct StrictTomlClientConfigProfile {
-            #[serde(default)]
-            address: Option<String>,
-            #[serde(default)]
-            namespace: Option<String>,
-            #[serde(default)]
-            api_key: Option<String>,
-            #[serde(default)]
-            tls: Option<StrictTomlClientConfigTLS>,
-            #[serde(default)]
-            codec: Option<StrictTomlClientConfigCodec>,
-            #[serde(default)]
-            grpc_meta: HashMap<String, String>,
-        }
-
-        impl StrictTomlClientConfigProfile {
-            fn into_client_config(self) -> ClientConfigProfile {
-                let mut ret = ClientConfigProfile {
-                    address: self.address,
-                    namespace: self.namespace,
-                    api_key: self.api_key,
-                    tls: self.tls.map(|tls| tls.into_client_config()),
-                    codec: self.codec.map(|codec| codec.into_client_config()),
-                    grpc_meta: HashMap::new(),
-                };
-
-                if !self.grpc_meta.is_empty() {
-                    ret.grpc_meta = HashMap::with_capacity(self.grpc_meta.len());
-                    for (k, v) in self.grpc_meta {
-                        ret.grpc_meta.insert(normalize_grpc_meta_key(&k), v);
-                    }
-                }
-                ret
-            }
-        }
-
-        #[derive(Debug, Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct StrictTomlClientConfigTLS {
-            #[serde(default)]
-            disabled: bool,
-            #[serde(default)]
-            client_cert_path: Option<String>,
-            #[serde(default)]
-            client_cert_data: Option<String>,
-            #[serde(default)]
-            client_key_path: Option<String>,
-            #[serde(default)]
-            client_key_data: Option<String>,
-            #[serde(default)]
-            server_ca_cert_path: Option<String>,
-            #[serde(default)]
-            server_ca_cert_data: Option<String>,
-            #[serde(default)]
-            server_name: Option<String>,
-            #[serde(default)]
-            disable_host_verification: bool,
-        }
-
-        impl StrictTomlClientConfigTLS {
-            fn into_client_config(self) -> ClientConfigTLS {
-                let string_to_bytes = |s: Option<String>| {
-                    s.and_then(|val| {
-                        if val.is_empty() {
-                            None
-                        } else {
-                            Some(val.as_bytes().to_vec())
-                        }
-                    })
-                };
-
-                ClientConfigTLS {
-                    disabled: self.disabled,
-                    client_cert_path: self.client_cert_path,
-                    client_cert_data: string_to_bytes(self.client_cert_data),
-                    client_key_path: self.client_key_path,
-                    client_key_data: string_to_bytes(self.client_key_data),
-                    server_ca_cert_path: self.server_ca_cert_path,
-                    server_ca_cert_data: string_to_bytes(self.server_ca_cert_data),
-                    server_name: self.server_name,
-                    disable_host_verification: self.disable_host_verification,
-                }
-            }
-        }
-
-        #[derive(Debug, Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct StrictTomlClientConfigCodec {
-            #[serde(default)]
-            endpoint: Option<String>,
-            #[serde(default)]
-            auth: Option<String>,
-        }
-
-        impl StrictTomlClientConfigCodec {
-            fn into_client_config(self) -> ClientConfigCodec {
-                ClientConfigCodec {
-                    endpoint: self.endpoint,
-                    auth: self.auth,
-                }
+                endpoint: self.endpoint,
+                auth: self.auth,
             }
         }
     }
@@ -924,33 +968,6 @@ mod tests {
     use super::*;
     use std::io::Write;
     use tempfile::NamedTempFile;
-
-    #[derive(Debug, Default)]
-    struct MockEnvLookup {
-        vars: std::collections::HashMap<String, String>,
-    }
-
-    impl MockEnvLookup {
-        fn set(&mut self, key: &str, value: &str) -> &mut Self {
-            self.vars.insert(key.to_string(), value.to_string());
-            self
-        }
-    }
-
-    impl EnvLookup for MockEnvLookup {
-        fn environ(&self) -> Vec<(String, String)> {
-            self.vars
-                .iter()
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect()
-        }
-        fn lookup_env(&self, key: &str) -> Result<String, std::env::VarError> {
-            self.vars
-                .get(key)
-                .cloned()
-                .ok_or(std::env::VarError::NotPresent)
-        }
-    }
 
     #[test]
     fn test_client_config_toml_multiple_profiles() {
@@ -978,7 +995,10 @@ namespace = "production"
 
         let tls = default_profile.tls.as_ref().unwrap();
         assert!(!tls.disabled);
-        assert_eq!(tls.client_cert_path.as_ref().unwrap(), "/path/to/cert");
+        assert_eq!(
+            tls.client_cert,
+            Some(DataSource::Path("/path/to/cert".to_string()))
+        );
 
         let prod_profile = config.profiles.get("prod").unwrap();
         assert_eq!(
@@ -999,7 +1019,8 @@ namespace = "production"
         prof.grpc_meta.insert("k".to_string(), "v".to_string());
 
         let tls = ClientConfigTLS {
-            client_cert_data: Some(b"cert".to_vec()),
+            client_cert: Some(DataSource::Data(b"cert".to_vec())),
+            server_ca_cert: Some(DataSource::Data(b"ca".to_vec())),
             ..Default::default()
         };
         prof.tls = Some(tls);
@@ -1027,14 +1048,14 @@ namespace = "my-namespace"
         .unwrap();
 
         // Test explicit file path
-        let env = MockEnvLookup::default();
         let options = LoadClientConfigProfileOptions {
-            config_file_path: Some(temp_file.path().to_string_lossy().to_string()),
-            env_lookup: Some(&env),
+            config_source: Some(DataSource::Path(
+                temp_file.path().to_string_lossy().to_string(),
+            )),
             ..Default::default()
         };
 
-        let profile = load_client_config_profile(options).unwrap();
+        let profile = load_client_config_profile(options, None).unwrap();
         assert_eq!(profile.address.as_ref().unwrap(), "my-address");
         assert_eq!(profile.namespace.as_ref().unwrap(), "my-namespace");
     }
@@ -1054,15 +1075,17 @@ namespace = "my-namespace"
         .unwrap();
 
         // Test loading via TEMPORAL_CONFIG_FILE env var
-        let mut env = MockEnvLookup::default();
-        env.set("TEMPORAL_CONFIG_FILE", &temp_file.path().to_string_lossy());
+        let mut vars = HashMap::new();
+        vars.insert(
+            "TEMPORAL_CONFIG_FILE".to_string(),
+            temp_file.path().to_string_lossy().to_string(),
+        );
 
         let options = LoadClientConfigProfileOptions {
-            env_lookup: Some(&env),
             ..Default::default()
         };
 
-        let profile = load_client_config_profile(options).unwrap();
+        let profile = load_client_config_profile(options, Some(&vars)).unwrap();
         assert_eq!(profile.address.as_ref().unwrap(), "my-address");
         assert_eq!(profile.namespace.as_ref().unwrap(), "my-namespace");
     }
@@ -1070,100 +1093,81 @@ namespace = "my-namespace"
     #[test]
     fn test_load_client_config_profile_with_env_overrides() {
         let toml_str = r#"
-[profile.foo]
+[profile.default]
 address = "my-address"
 namespace = "my-namespace"
 api_key = "my-api-key"
-some_future_key = "some future value not handled"
 
-[profile.foo.tls]
+[profile.default.tls]
 disabled = true
 client_cert_path = "my-client-cert-path"
-client_cert_data = "my-client-cert-data"
 client_key_path = "my-client-key-path"
-client_key_data = "my-client-key-data"
-server_ca_cert_path = "my-server-ca-cert-path"
-server_ca_cert_data = "my-server-ca-cert-data"
 server_name = "my-server-name"
 disable_host_verification = true
 
-[profile.foo.codec]
-endpoint = "my-endpoint"
-auth = "my-auth"
+[profile.default.codec]
+endpoint = "my-codec-endpoint"
+auth = "my-codec-auth"
 
-[profile.foo.grpc_meta]
-some-heAder1 = "some-value1"
-some-header2 = "some-value2"
-some_heaDer3 = "some-value3"
+[profile.default.grpc_meta]
+some-header = "some-value"
+some-other-header = "some-value2"
 "#;
+        let mut vars = HashMap::new();
+        vars.insert(
+            "TEMPORAL_ADDRESS".to_string(),
+            "my-address-new".to_string(),
+        );
+        vars.insert(
+            "TEMPORAL_NAMESPACE".to_string(),
+            "my-namespace-new".to_string(),
+        );
+        vars.insert("TEMPORAL_API_KEY".to_string(), "my-api-key-new".to_string());
+        vars.insert("TEMPORAL_TLS".to_string(), "true".to_string());
+        vars.insert(
+            "TEMPORAL_TLS_CLIENT_CERT_PATH".to_string(),
+            "my-client-cert-path-new".to_string(),
+        );
+        vars.insert(
+            "TEMPORAL_TLS_CLIENT_KEY_PATH".to_string(),
+            "my-client-key-path-new".to_string(),
+        );
+        vars.insert(
+            "TEMPORAL_TLS_SERVER_NAME".to_string(),
+            "my-server-name-new".to_string(),
+        );
+        vars.insert(
+            "TEMPORAL_TLS_DISABLE_HOST_VERIFICATION".to_string(),
+            "false".to_string(),
+        );
+        vars.insert(
+            "TEMPORAL_CODEC_ENDPOINT".to_string(),
+            "my-codec-endpoint-new".to_string(),
+        );
+        vars.insert(
+            "TEMPORAL_CODEC_AUTH".to_string(),
+            "my-codec-auth-new".to_string(),
+        );
+        vars.insert(
+            "TEMPORAL_GRPC_META_SOME_HEADER".to_string(),
+            "some-value-new".to_string(),
+        );
+        vars.insert(
+            "TEMPORAL_GRPC_META_SOME_THIRD_HEADER".to_string(),
+            "some-value3-new".to_string(),
+        );
+        vars.insert(
+            "TEMPORAL_GRPC_META_some_value4".to_string(),
+            "some-value4-new".to_string(),
+        );
 
-        // Test without env vars
-        let env = MockEnvLookup::default();
         let options = LoadClientConfigProfileOptions {
-            config_file_data: Some(toml_str.as_bytes().to_vec()),
-            config_file_profile: Some("foo".to_string()),
-            env_lookup: Some(&env),
+            config_source: Some(DataSource::Data(toml_str.as_bytes().to_vec())),
+            config_file_profile: Some("default".to_string()),
             ..Default::default()
         };
 
-        let profile = load_client_config_profile(options).unwrap();
-        assert_eq!(profile.address.as_ref().unwrap(), "my-address");
-        assert_eq!(profile.namespace.as_ref().unwrap(), "my-namespace");
-        assert_eq!(profile.api_key.as_ref().unwrap(), "my-api-key");
-
-        let tls = profile.tls.as_ref().unwrap();
-        assert!(tls.disabled);
-        assert_eq!(
-            tls.client_cert_path.as_ref().unwrap(),
-            "my-client-cert-path"
-        );
-        assert_eq!(
-            tls.client_cert_data.as_ref().unwrap(),
-            "my-client-cert-data".as_bytes()
-        );
-        let codec = profile.codec.as_ref().unwrap();
-        assert_eq!(codec.endpoint.as_ref().unwrap(), "my-endpoint");
-        assert_eq!(codec.auth.as_ref().unwrap(), "my-auth");
-        assert_eq!(profile.grpc_meta.len(), 3);
-        assert_eq!(
-            profile.grpc_meta.get("some-header1").unwrap(),
-            "some-value1"
-        );
-
-        // Test with env var overrides
-        let mut env = MockEnvLookup::default();
-        env.set("TEMPORAL_PROFILE", "foo")
-            .set("TEMPORAL_ADDRESS", "my-address-new")
-            .set("TEMPORAL_NAMESPACE", "my-namespace-new")
-            .set("TEMPORAL_API_KEY", "my-api-key-new")
-            .set("TEMPORAL_TLS", "true")
-            .set("TEMPORAL_TLS_CLIENT_CERT_PATH", "my-client-cert-path-new")
-            .set("TEMPORAL_TLS_CLIENT_CERT_DATA", "my-client-cert-data-new")
-            .set("TEMPORAL_TLS_CLIENT_KEY_PATH", "my-client-key-path-new")
-            .set("TEMPORAL_TLS_CLIENT_KEY_DATA", "my-client-key-data-new")
-            .set(
-                "TEMPORAL_TLS_SERVER_CA_CERT_PATH",
-                "my-server-ca-cert-path-new",
-            )
-            .set(
-                "TEMPORAL_TLS_SERVER_CA_CERT_DATA",
-                "my-server-ca-cert-data-new",
-            )
-            .set("TEMPORAL_TLS_SERVER_NAME", "my-server-name-new")
-            .set("TEMPORAL_TLS_DISABLE_HOST_VERIFICATION", "false")
-            .set("TEMPORAL_CODEC_ENDPOINT", "my-endpoint-new")
-            .set("TEMPORAL_CODEC_AUTH", "my-auth-new")
-            .set("TEMPORAL_GRPC_META_SOME_HEADER2", "some-value2-new")
-            .set("TEMPORAL_GRPC_META_SOME_HEADER3", "")
-            .set("TEMPORAL_GRPC_META_SOME_HEADER4", "some-value4-new");
-
-        let options = LoadClientConfigProfileOptions {
-            config_file_data: Some(toml_str.as_bytes().to_vec()),
-            env_lookup: Some(&env),
-            ..Default::default()
-        };
-
-        let profile = load_client_config_profile(options).unwrap();
+        let profile = load_client_config_profile(options, Some(&vars)).unwrap();
         assert_eq!(profile.address.as_ref().unwrap(), "my-address-new");
         assert_eq!(profile.namespace.as_ref().unwrap(), "my-namespace-new");
         assert_eq!(profile.api_key.as_ref().unwrap(), "my-api-key-new");
@@ -1171,25 +1175,39 @@ some_heaDer3 = "some-value3"
         let tls = profile.tls.as_ref().unwrap();
         assert!(!tls.disabled); // TLS enabled via env var
         assert_eq!(
-            tls.client_cert_path.as_ref().unwrap(),
-            "my-client-cert-path-new"
+            tls.client_cert,
+            Some(DataSource::Path(
+                "my-client-cert-path-new".to_string()
+            ))
+        );
+        assert_eq!(
+            tls.client_key,
+            Some(DataSource::Path(
+                "my-client-key-path-new".to_string()
+            ))
         );
         assert_eq!(tls.server_name.as_ref().unwrap(), "my-server-name-new");
         assert!(!tls.disable_host_verification);
         let codec = profile.codec.as_ref().unwrap();
-        assert_eq!(codec.endpoint.as_ref().unwrap(), "my-endpoint-new");
-        assert_eq!(codec.auth.as_ref().unwrap(), "my-auth-new");
         assert_eq!(
-            profile.grpc_meta.get("some-header1").unwrap(),
-            "some-value1"
+            codec.endpoint.as_ref().unwrap(),
+            "my-codec-endpoint-new"
+        );
+        assert_eq!(codec.auth.as_ref().unwrap(), "my-codec-auth-new");
+        assert_eq!(
+            profile.grpc_meta.get("some-header").unwrap(),
+            "some-value-new"
         );
         assert_eq!(
-            profile.grpc_meta.get("some-header2").unwrap(),
-            "some-value2-new"
+            profile.grpc_meta.get("some-other-header").unwrap(),
+            "some-value2"
         );
-        assert!(!profile.grpc_meta.contains_key("some-header3"));
         assert_eq!(
-            profile.grpc_meta.get("some-header4").unwrap(),
+            profile.grpc_meta.get("some-third-header").unwrap(),
+            "some-value3-new"
+        );
+        assert_eq!(
+            profile.grpc_meta.get("some-value4").unwrap(),
             "some-value4-new"
         );
     }
@@ -1206,11 +1224,8 @@ some_future_key = "some future value not handled"
 [profile.foo.tls]
 disabled = true
 client_cert_path = "my-client-cert-path"
-client_cert_data = "my-client-cert-data"
 client_key_path = "my-client-key-path"
-client_key_data = "my-client-key-data"
 server_ca_cert_path = "my-server-ca-cert-path"
-server_ca_cert_data = "my-server-ca-cert-data"
 server_name = "my-server-name"
 disable_host_verification = true
 
@@ -1236,25 +1251,16 @@ sOme-hEader_key = "some-value"
         let tls = profile.tls.as_ref().unwrap();
         assert!(tls.disabled);
         assert_eq!(
-            tls.client_cert_path.as_ref().unwrap(),
-            "my-client-cert-path"
+            tls.client_cert,
+            Some(DataSource::Path("my-client-cert-path".to_string()))
         );
         assert_eq!(
-            tls.client_cert_data.as_ref().unwrap(),
-            "my-client-cert-data".as_bytes()
-        );
-        assert_eq!(tls.client_key_path.as_ref().unwrap(), "my-client-key-path");
-        assert_eq!(
-            tls.client_key_data.as_ref().unwrap(),
-            "my-client-key-data".as_bytes()
+            tls.client_key,
+            Some(DataSource::Path("my-client-key-path".to_string()))
         );
         assert_eq!(
-            tls.server_ca_cert_path.as_ref().unwrap(),
-            "my-server-ca-cert-path"
-        );
-        assert_eq!(
-            tls.server_ca_cert_data.as_ref().unwrap(),
-            "my-server-ca-cert-data".as_bytes()
+            tls.server_ca_cert,
+            Some(DataSource::Path("my-server-ca-cert-path".to_string()))
         );
         assert_eq!(tls.server_name.as_ref().unwrap(), "my-server-name");
         assert!(tls.disable_host_verification);
@@ -1292,7 +1298,7 @@ api_key = "my-api-key"
 
         let tls = profile.tls.as_ref().unwrap();
         assert!(!tls.disabled); // default value
-        assert!(tls.client_cert_path.is_none());
+        assert!(tls.client_cert.is_none());
     }
 
     #[test]
@@ -1313,18 +1319,14 @@ api_key = "my-api-key"
 address = "localhost:7233"
 "#;
 
-        let mut env = MockEnvLookup::default();
-        env.set("TEMPORAL_PROFILE", "nonexistent");
-
         let options = LoadClientConfigProfileOptions {
-            config_file_data: Some(toml_str.as_bytes().to_vec()),
+            config_source: Some(DataSource::Data(toml_str.as_bytes().to_vec())),
             config_file_profile: Some("nonexistent".to_string()),
-            env_lookup: Some(&env),
             ..Default::default()
         };
 
         // Should error because we explicitly asked for a profile that doesn't exist
-        let result = load_client_config_profile(options);
+        let result = load_client_config_profile(options, None);
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
@@ -1363,22 +1365,95 @@ foo = "bar"
     }
 
     #[test]
+    fn test_client_config_both_path_and_data_fails() {
+        // Env vars
+        let mut vars = HashMap::new();
+        vars.insert(
+            "TEMPORAL_TLS_CLIENT_CERT_PATH".to_string(),
+            "some-path".to_string(),
+        );
+        vars.insert(
+            "TEMPORAL_TLS_CLIENT_CERT_DATA".to_string(),
+            "some-data".to_string(),
+        );
+        let options = LoadClientConfigProfileOptions {
+            ..Default::default()
+        };
+        let err = load_client_config_profile(options, Some(&vars)).unwrap_err();
+        assert!(matches!(err, ConfigError::InvalidConfig(_)));
+        assert!(err.to_string().contains("Cannot specify both"));
+
+        // TOML
+        let toml_str = r#"
+[profile.default]
+[profile.default.tls]
+client_cert_path = "some-path"
+client_cert_data = "some-data"
+"#;
+        let err = ClientConfig::from_toml(toml_str.as_bytes(), Default::default()).unwrap_err();
+        assert!(matches!(err, ConfigError::InvalidConfig(_)));
+        assert!(err.to_string().contains("Cannot specify both"));
+    }
+
+    #[test]
+    fn test_client_config_path_data_conflict_across_sources() {
+        // Path in TOML, data in env var should fail
+        let toml_str = r#"
+    [profile.default]
+    [profile.default.tls]
+    client_cert_path = "some-path"
+    "#;
+        let mut vars = HashMap::new();
+        vars.insert(
+            "TEMPORAL_TLS_CLIENT_CERT_DATA".to_string(),
+            "some-data".to_string(),
+        );
+        let options = LoadClientConfigProfileOptions {
+            config_source: Some(DataSource::Data(toml_str.as_bytes().to_vec())),
+            ..Default::default()
+        };
+        let err = load_client_config_profile(options, Some(&vars)).unwrap_err();
+        assert!(matches!(err, ConfigError::InvalidConfig(_)));
+        assert!(err
+            .to_string()
+            .contains("when cert path is already specified"));
+
+        // Data in TOML, path in env var should fail
+        let toml_str = r#"
+    [profile.default]
+    [profile.default.tls]
+    client_cert_data = "some-data"
+    "#;
+        let mut vars = HashMap::new();
+        vars.insert(
+            "TEMPORAL_TLS_CLIENT_CERT_PATH".to_string(),
+            "some-path".to_string(),
+        );
+        let options = LoadClientConfigProfileOptions {
+            config_source: Some(DataSource::Data(toml_str.as_bytes().to_vec())),
+            ..Default::default()
+        };
+        let err = load_client_config_profile(options, Some(&vars)).unwrap_err();
+        assert!(matches!(err, ConfigError::InvalidConfig(_)));
+        assert!(err
+            .to_string()
+            .contains("when cert data is already specified"));
+    }
+
+    #[test]
     fn test_default_profile_not_found_is_ok() {
         let toml_str = r#"
 [profile.existing]
 address = "localhost:7233"
 "#;
 
-        let env = MockEnvLookup::default();
-
         let options = LoadClientConfigProfileOptions {
-            config_file_data: Some(toml_str.as_bytes().to_vec()),
-            env_lookup: Some(&env),
+            config_source: Some(DataSource::Data(toml_str.as_bytes().to_vec())),
             ..Default::default()
         };
 
         // Should not error, just returns an empty profile
-        let profile = load_client_config_profile(options).unwrap();
+        let profile = load_client_config_profile(options, None).unwrap();
         assert_eq!(profile, ClientConfigProfile::default());
     }
 
@@ -1412,7 +1487,7 @@ address = "localhost:7233"
             ..Default::default()
         };
 
-        let result = load_client_config_profile(options);
+        let result = load_client_config_profile(options, None);
         assert!(result.is_err());
         assert!(
             result
@@ -1424,17 +1499,19 @@ address = "localhost:7233"
 
     #[test]
     fn test_load_client_config_profile_from_env_only() {
-        let mut env = MockEnvLookup::default();
-        env.set("TEMPORAL_ADDRESS", "env-address")
-            .set("TEMPORAL_NAMESPACE", "env-namespace");
+        let mut vars = HashMap::new();
+        vars.insert("TEMPORAL_ADDRESS".to_string(), "env-address".to_string());
+        vars.insert(
+            "TEMPORAL_NAMESPACE".to_string(),
+            "env-namespace".to_string(),
+        );
 
         let options = LoadClientConfigProfileOptions {
             disable_file: true,
-            env_lookup: Some(&env),
             ..Default::default()
         };
 
-        let profile = load_client_config_profile(options).unwrap();
+        let profile = load_client_config_profile(options, Some(&vars)).unwrap();
         assert_eq!(profile.address.as_ref().unwrap(), "env-address");
         assert_eq!(profile.namespace.as_ref().unwrap(), "env-namespace");
     }
@@ -1447,14 +1524,12 @@ address = "localhost:7233"
 api_key = "my-api-key"
 "#;
 
-        let env = MockEnvLookup::default();
         let options = LoadClientConfigProfileOptions {
-            config_file_data: Some(toml_str.as_bytes().to_vec()),
-            env_lookup: Some(&env),
+            config_source: Some(DataSource::Data(toml_str.as_bytes().to_vec())),
             ..Default::default()
         };
 
-        let profile = load_client_config_profile(options).unwrap();
+        let profile = load_client_config_profile(options, None).unwrap();
 
         // TLS should be enabled due to API key presence
         assert!(profile.tls.is_some());
@@ -1470,14 +1545,12 @@ api_key = "my-api-key"
 address = "some-address"
 "#;
 
-        let env = MockEnvLookup::default();
         let options = LoadClientConfigProfileOptions {
-            config_file_data: Some(toml_str.as_bytes().to_vec()),
-            env_lookup: Some(&env),
+            config_source: Some(DataSource::Data(toml_str.as_bytes().to_vec())),
             ..Default::default()
         };
 
-        let profile = load_client_config_profile(options).unwrap();
+        let profile = load_client_config_profile(options, None).unwrap();
 
         // TLS should not be enabled
         assert!(profile.tls.is_none());
