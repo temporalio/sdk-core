@@ -230,13 +230,20 @@ impl EphemeralServer {
             .client_name("online-checker".to_owned())
             .client_version("0.1.0".to_owned())
             .build()?;
+        let mut last_error = None;
         for _ in 0..50 {
             sleep(Duration::from_millis(100)).await;
-            if client_options.connect_no_namespace(None).await.is_ok() {
+            let connect_res = client_options.connect_no_namespace(None).await;
+            if let Err(err) = connect_res {
+                last_error = Some(err);
+            } else {
                 return success;
             }
         }
-        Err(anyhow!("Failed connecting to test server after 5 seconds"))
+        Err(anyhow!(
+            "Failed connecting to test server after 5 seconds, last error: {:?}",
+            last_error
+        ))
     }
 
     /// Shutdown the server (i.e. kill the child process). This does not attempt
