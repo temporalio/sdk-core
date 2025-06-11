@@ -183,6 +183,9 @@ impl From<&'static str> for MetricValue {
     }
 }
 
+// TODO: Easiest thing to do is add a `with_attributes` here that returns versions that
+//  have the record methods but don't accept attributes.
+
 pub trait Counter: Send + Sync {
     fn add(&self, value: u64, attributes: &MetricAttributes);
 }
@@ -450,8 +453,6 @@ mod prom_impls {
     use super::*;
     use std::collections::HashMap;
 
-    /// Efficient representation of Prometheus labels using a sorted vector
-    /// of key-value pairs for better performance and deterministic ordering
     #[derive(Clone, Debug, PartialEq, Eq, Hash)]
     pub struct LabelSet {
         labels: Vec<(String, String)>,
@@ -468,11 +469,6 @@ mod prom_impls {
             self.labels.iter().map(|(k, v)| (k.as_str(), v.as_str()))
         }
 
-        pub fn to_prometheus_labels(&self) -> HashMap<&str, &str> {
-            self.iter().collect()
-        }
-
-        /// Get Prometheus labels filtering out empty values to avoid inconsistent metric formats
         pub fn to_prometheus_labels_filtered(&self) -> HashMap<&str, &str> {
             self.iter().filter(|(_, v)| !v.is_empty()).collect()
         }
@@ -483,7 +479,6 @@ mod prom_impls {
     }
 
     impl From<Vec<MetricKeyValue>> for LabelSet {
-        // TODO: This is probably weird. Just keep values.
         fn from(kvs: Vec<MetricKeyValue>) -> Self {
             let labels = kvs
                 .into_iter()

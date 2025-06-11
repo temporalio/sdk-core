@@ -1398,3 +1398,5 @@ async fn prometheus_label_nonsense() {
     assert!(body.contains("some_counter{thing=\"foo\"} 2"));
     assert!(body.contains("some_counter{blerp=\"baz\"} 2"));
 }
+
+// TODO: Test what otel does when creating different instruments with the same name
