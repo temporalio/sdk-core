@@ -1,7 +1,7 @@
 use crate::abstractions::dbg_panic;
 use parking_lot::RwLock;
 use prometheus::{
-    CounterVec, GaugeVec, HistogramVec, Opts,
+    GaugeVec, HistogramVec, IntCounterVec, IntGaugeVec, Opts,
     core::Collector,
     proto::{LabelPair, MetricFamily},
 };
@@ -26,10 +26,10 @@ impl LabelSchema {
     fn from_label_set(labels: &LabelSet) -> Self {
         let mut label_names: Vec<String> = labels
             .iter()
-            .filter(|(_, v)| !v.is_empty()) // Only include non-empty labels
+            .filter(|(_, v)| !v.is_empty()) // TODO: Shouldn't be necessary (is right now for some)
             .map(|(k, _)| k.to_string())
             .collect();
-        label_names.sort(); // Ensure consistent ordering
+        label_names.sort();
         Self { label_names }
     }
 
@@ -187,17 +187,82 @@ impl Debug for Registry {
     }
 }
 
-/// A generic Prometheus metric wrapper that manages different vector instances for different label
-/// schemas
 #[derive(Debug)]
 struct PromMetric<T> {
     metric_name: String,
     metric_description: String,
     registry: Registry,
-    // Map from label schema to the corresponding Prometheus vector metric
+    /// Map from label schema to the corresponding Prometheus vector metric
     vectors: RwLock<HashMap<LabelSchema, T>>,
-    // Bucket configuration for histograms (None for other metric types)
+    /// Bucket configuration for histograms (None for other metric types)
     histogram_buckets: Option<Vec<f64>>,
+}
+
+#[derive(Debug)]
+enum PromMetricKind {
+    IntCounter(Arc<PromMetric<IntCounterVec>>),
+    IntGauge(Arc<PromMetric<IntGaugeVec>>),
+    Gauge(Arc<PromMetric<GaugeVec>>),
+    Histogram(Arc<PromMetric<HistogramVec>>),
+}
+trait AsPromMetric<T> {
+    fn as_prom_metric(&self) -> Option<Arc<PromMetric<T>>>;
+}
+impl AsPromMetric<IntCounterVec> for PromMetricKind {
+    fn as_prom_metric(&self) -> Option<Arc<PromMetric<IntCounterVec>>> {
+        if let PromMetricKind::IntCounter(m) = self {
+            Some(m.clone())
+        } else {
+            None
+        }
+    }
+}
+impl AsPromMetric<IntGaugeVec> for PromMetricKind {
+    fn as_prom_metric(&self) -> Option<Arc<PromMetric<IntGaugeVec>>> {
+        if let PromMetricKind::IntGauge(m) = self {
+            Some(m.clone())
+        } else {
+            None
+        }
+    }
+}
+impl AsPromMetric<GaugeVec> for PromMetricKind {
+    fn as_prom_metric(&self) -> Option<Arc<PromMetric<GaugeVec>>> {
+        if let PromMetricKind::Gauge(m) = self {
+            Some(m.clone())
+        } else {
+            None
+        }
+    }
+}
+impl AsPromMetric<HistogramVec> for PromMetricKind {
+    fn as_prom_metric(&self) -> Option<Arc<PromMetric<HistogramVec>>> {
+        if let PromMetricKind::Histogram(m) = self {
+            Some(m.clone())
+        } else {
+            None
+        }
+    }
+}
+impl From<Arc<PromMetric<IntCounterVec>>> for PromMetricKind {
+    fn from(m: Arc<PromMetric<IntCounterVec>>) -> Self {
+        PromMetricKind::IntCounter(m)
+    }
+}
+impl From<Arc<PromMetric<IntGaugeVec>>> for PromMetricKind {
+    fn from(m: Arc<PromMetric<IntGaugeVec>>) -> Self {
+        PromMetricKind::IntGauge(m)
+    }
+}
+impl From<Arc<PromMetric<GaugeVec>>> for PromMetricKind {
+    fn from(m: Arc<PromMetric<GaugeVec>>) -> Self {
+        PromMetricKind::Gauge(m)
+    }
+}
+impl From<Arc<PromMetric<HistogramVec>>> for PromMetricKind {
+    fn from(m: Arc<PromMetric<HistogramVec>>) -> Self {
+        PromMetricKind::Histogram(m)
+    }
 }
 
 impl<T> PromMetric<T>
@@ -281,19 +346,26 @@ impl PromMetric<HistogramVec> {
 }
 
 // Trait implementations for specific metric types
-impl Counter for PromMetric<CounterVec> {
+impl Counter for PromMetric<IntCounterVec> {
     fn add(&self, value: u64, attributes: &MetricAttributes) {
         if let MetricAttributes::Prometheus { labels } = attributes {
             let vector = self.get_or_create_vector(labels, |name, desc, label_names| {
                 let opts = Opts::new(name, desc);
-                CounterVec::new(opts, label_names).unwrap()
+                IntCounterVec::new(opts, label_names).unwrap()
             });
             let prom_labels = labels.to_prometheus_labels_filtered();
-            let counter = vector.with(&prom_labels);
-            counter.inc_by(value as f64);
+            if let Ok(c) = vector.get_metric_with(&prom_labels) {
+                c.inc_by(value);
+            } else {
+                dbg_panic!(
+                    "Mismatch between expected # of prometheus labels and provided. \
+                    This is an SDK bug. Attributes: {:?} / Labels: {:?}",
+                    attributes,
+                    prom_labels
+                );
+            }
         } else {
-            debug_assert!(
-                false,
+            dbg_panic!(
                 "Must use Prometheus attributes with a Prometheus metric implementation. Got: {:?}",
                 attributes
             );
@@ -301,19 +373,26 @@ impl Counter for PromMetric<CounterVec> {
     }
 }
 
-impl Gauge for PromMetric<GaugeVec> {
+impl Gauge for PromMetric<IntGaugeVec> {
     fn record(&self, value: u64, attributes: &MetricAttributes) {
         if let MetricAttributes::Prometheus { labels } = attributes {
             let vector = self.get_or_create_vector(labels, |name, desc, label_names| {
                 let opts = Opts::new(name, desc);
-                GaugeVec::new(opts, label_names).unwrap()
+                IntGaugeVec::new(opts, label_names).unwrap()
             });
             let prom_labels = labels.to_prometheus_labels_filtered();
-            let gauge = vector.with(&prom_labels);
-            gauge.set(value as f64);
+            if let Ok(g) = vector.get_metric_with(&prom_labels) {
+                g.set(value as i64);
+            } else {
+                dbg_panic!(
+                    "Mismatch between expected # of prometheus labels and provided. \
+                    This is an SDK bug. Attributes: {:?} / Labels: {:?}",
+                    attributes,
+                    prom_labels
+                );
+            }
         } else {
-            debug_assert!(
-                false,
+            dbg_panic!(
                 "Must use Prometheus attributes with a Prometheus metric implementation. Got: {:?}",
                 attributes
             );
@@ -329,11 +408,18 @@ impl GaugeF64 for PromMetric<GaugeVec> {
                 GaugeVec::new(opts, label_names).unwrap()
             });
             let prom_labels = labels.to_prometheus_labels_filtered();
-            let gauge = vector.with(&prom_labels);
-            gauge.set(value);
+            if let Ok(g) = vector.get_metric_with(&prom_labels) {
+                g.set(value);
+            } else {
+                dbg_panic!(
+                    "Mismatch between expected # of prometheus labels and provided. \
+                    This is an SDK bug. Attributes: {:?} / Labels: {:?}",
+                    attributes,
+                    prom_labels
+                );
+            }
         } else {
-            debug_assert!(
-                false,
+            dbg_panic!(
                 "Must use Prometheus attributes with a Prometheus metric implementation. Got: {:?}",
                 attributes
             );
@@ -347,11 +433,18 @@ impl Histogram for PromMetric<HistogramVec> {
         if let MetricAttributes::Prometheus { labels } = attributes {
             let vector = self.get_or_create_vector_with_buckets(labels);
             let prom_labels = labels.to_prometheus_labels_filtered();
-            let histogram = vector.with(&prom_labels);
-            histogram.observe(value as f64);
+            if let Ok(h) = vector.get_metric_with(&prom_labels) {
+                h.observe(value as f64);
+            } else {
+                dbg_panic!(
+                    "Mismatch between expected # of prometheus labels and provided. \
+                    This is an SDK bug. Attributes: {:?} / Labels: {:?}",
+                    attributes,
+                    prom_labels
+                );
+            }
         } else {
-            debug_assert!(
-                false,
+            dbg_panic!(
                 "Must use Prometheus attributes with a Prometheus metric implementation. Got: {:?}",
                 attributes
             );
@@ -364,11 +457,18 @@ impl HistogramF64 for PromMetric<HistogramVec> {
         if let MetricAttributes::Prometheus { labels } = attributes {
             let vector = self.get_or_create_vector_with_buckets(labels);
             let prom_labels = labels.to_prometheus_labels_filtered();
-            let histogram = vector.with(&prom_labels);
-            histogram.observe(value);
+            if let Ok(h) = vector.get_metric_with(&prom_labels) {
+                h.observe(value);
+            } else {
+                dbg_panic!(
+                    "Mismatch between expected # of prometheus labels and provided. \
+                    This is an SDK bug. Attributes: {:?} / Labels: {:?}",
+                    attributes,
+                    prom_labels
+                );
+            }
         } else {
-            debug_assert!(
-                false,
+            dbg_panic!(
                 "Must use Prometheus attributes with a Prometheus metric implementation. Got: {:?}",
                 attributes
             );
@@ -383,10 +483,7 @@ pub struct CorePrometheusMeter {
     use_seconds_for_durations: bool,
     unit_suffix: bool,
     bucket_overrides: temporal_sdk_core_api::telemetry::HistogramBucketOverrides,
-    // Cache to avoid registering the same metric multiple times
-    counters: RwLock<HashMap<String, Arc<PromMetric<CounterVec>>>>,
-    histograms: RwLock<HashMap<String, Arc<PromMetric<HistogramVec>>>>,
-    gauges: RwLock<HashMap<String, Arc<PromMetric<GaugeVec>>>>,
+    metrics: RwLock<HashMap<String, PromMetricKind>>,
 }
 
 impl CorePrometheusMeter {
@@ -401,39 +498,44 @@ impl CorePrometheusMeter {
             use_seconds_for_durations,
             unit_suffix,
             bucket_overrides,
-            counters: RwLock::new(HashMap::new()),
-            histograms: RwLock::new(HashMap::new()),
-            gauges: RwLock::new(HashMap::new()),
+            metrics: RwLock::new(HashMap::new()),
         }
     }
 
     /// Generic helper to get or create any metric with double-checked locking pattern
-    fn get_or_create_metric<T, F>(
-        &self,
-        cache: &RwLock<HashMap<String, Arc<PromMetric<T>>>>,
-        metric_name: String,
-        create_fn: F,
-    ) -> Arc<PromMetric<T>>
+    fn get_or_create_metric<T, F>(&self, metric_name: String, create_fn: F) -> Arc<PromMetric<T>>
     where
         F: FnOnce() -> PromMetric<T>,
+        PromMetricKind: AsPromMetric<T>,
+        PromMetricKind: From<Arc<PromMetric<T>>>,
     {
         // Fast path: try to get existing metric
         {
-            let cache_read = cache.read();
+            let cache_read = self.metrics.read();
             if let Some(metric) = cache_read.get(&metric_name) {
-                return metric.clone();
+                if let Some(m) = metric.as_prom_metric() {
+                    return m;
+                } else {
+                    // TODO: Better
+                    dbg_panic!("Unexpected metric type in cache");
+                }
             }
         }
 
         // Slow path: create new metric
-        let mut cache_write = cache.write();
+        let mut cache_write = self.metrics.write();
         // Double-check pattern in case another thread created it
         if let Some(metric) = cache_write.get(&metric_name) {
-            return metric.clone();
+            if let Some(m) = metric.as_prom_metric() {
+                return m;
+            } else {
+                // TODO: Better
+                dbg_panic!("Unexpected metric type in cache");
+            }
         }
 
         let metric = Arc::new(create_fn());
-        cache_write.insert(metric_name, metric.clone());
+        cache_write.insert(metric_name, PromMetricKind::from(metric.clone()));
         metric
     }
 }
@@ -480,7 +582,14 @@ impl CoreMeter for CorePrometheusMeter {
     }
 
     fn counter(&self, params: MetricParameters) -> Arc<dyn Counter> {
-        self.get_or_create_counter(params)
+        let metric_name = params.name.to_string();
+        self.get_or_create_metric(metric_name.clone(), || {
+            PromMetric::new(
+                metric_name,
+                params.description.to_string(),
+                self.registry.clone(),
+            )
+        })
     }
 
     fn histogram(&self, params: MetricParameters) -> Arc<dyn Histogram> {
@@ -510,11 +619,25 @@ impl CoreMeter for CorePrometheusMeter {
     }
 
     fn gauge(&self, params: MetricParameters) -> Arc<dyn Gauge> {
-        self.get_or_create_gauge(params)
+        let metric_name = params.name.to_string();
+        self.get_or_create_metric(metric_name.clone(), || {
+            PromMetric::new(
+                metric_name,
+                params.description.to_string(),
+                self.registry.clone(),
+            )
+        })
     }
 
     fn gauge_f64(&self, params: MetricParameters) -> Arc<dyn GaugeF64> {
-        self.get_or_create_gauge(params)
+        let metric_name = params.name.to_string();
+        self.get_or_create_metric(metric_name.clone(), || {
+            PromMetric::new(
+                metric_name,
+                params.description.to_string(),
+                self.registry.clone(),
+            )
+        })
     }
 }
 
@@ -545,30 +668,6 @@ impl CorePrometheusMeter {
         }
     }
 
-    /// Get or create a counter metric
-    fn get_or_create_counter(&self, params: MetricParameters) -> Arc<PromMetric<CounterVec>> {
-        let metric_name = params.name.to_string();
-        self.get_or_create_metric(&self.counters, metric_name.clone(), || {
-            PromMetric::new(
-                metric_name,
-                params.description.to_string(),
-                self.registry.clone(),
-            )
-        })
-    }
-
-    /// Get or create a gauge metric
-    fn get_or_create_gauge(&self, params: MetricParameters) -> Arc<PromMetric<GaugeVec>> {
-        let metric_name = params.name.to_string();
-        self.get_or_create_metric(&self.gauges, metric_name.clone(), || {
-            PromMetric::new(
-                metric_name,
-                params.description.to_string(),
-                self.registry.clone(),
-            )
-        })
-    }
-
     /// Get or create a histogram metric
     fn get_or_create_histogram(
         &self,
@@ -576,7 +675,7 @@ impl CorePrometheusMeter {
         actual_metric_name: String,
         buckets: Vec<f64>,
     ) -> Arc<PromMetric<HistogramVec>> {
-        self.get_or_create_metric(&self.histograms, actual_metric_name.clone(), || {
+        self.get_or_create_metric(actual_metric_name.clone(), || {
             PromMetric::new_with_buckets(
                 actual_metric_name,
                 params.description.to_string(),
