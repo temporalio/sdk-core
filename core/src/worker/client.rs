@@ -1,7 +1,7 @@
 //! Worker-specific client needs
 
 pub(crate) mod mocks;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use std::{sync::Arc, time::Duration};
 use temporal_client::{
     Client, IsWorkerTaskLongPoll, Namespace, NamespacedClient, NoRetryOnMatching, RetryClient,
@@ -31,6 +31,8 @@ use temporal_sdk_core_protos::{
     },
 };
 use tonic::IntoRequest;
+use temporal_sdk_core_protos::temporal::api::worker::v1::WorkerHeartbeat;
+use crate::worker::WorkerHeartbeatInfo;
 
 type Result<T, E = tonic::Status> = std::result::Result<T, E>;
 
@@ -40,6 +42,7 @@ pub(crate) struct WorkerClientBag {
     namespace: String,
     identity: String,
     worker_versioning_strategy: WorkerVersioningStrategy,
+    heartbeat_info: Arc<Mutex<WorkerHeartbeatInfo>>,
 }
 
 impl WorkerClientBag {
@@ -48,12 +51,14 @@ impl WorkerClientBag {
         namespace: String,
         identity: String,
         worker_versioning_strategy: WorkerVersioningStrategy,
+        heartbeat_info: Arc<Mutex<WorkerHeartbeatInfo>>,
     ) -> Self {
         Self {
             replaceable_client: RwLock::new(client),
             namespace,
             identity,
             worker_versioning_strategy,
+            heartbeat_info,
         }
     }
 
@@ -203,6 +208,10 @@ pub trait WorkerClient: Sync + Send {
     async fn describe_namespace(&self) -> Result<DescribeNamespaceResponse>;
     /// Shutdown the worker
     async fn shutdown_worker(&self, sticky_task_queue: String) -> Result<ShutdownWorkerResponse>;
+    // TODO: params and return type?
+    //  Probably whatever metrics itself can't update?
+    /// Record a worker heartbeat
+    async fn record_worker_heartbeat(&self) -> Result<()>;
 
     /// Replace the underlying client
     fn replace_client(&self, new_client: RetryClient<Client>);
@@ -623,6 +632,43 @@ impl WorkerClient for WorkerClientBag {
                 .await?
                 .into_inner(),
         )
+    }
+    
+    async fn record_worker_heartbeat(&self) -> Result<()> {
+        let metrics_for_heartbeat = self.heartbeat_info.lock().capture_heartbeat_data();
+        Ok(self
+            .cloned_client()
+            .record_worker_heartbeat(RecordWorkerHeartbeatRequest {
+                namespace: self.namespace.clone(),
+                identity: self.identity.clone(),
+                worker_heartbeat: Some(WorkerHeartbeat {
+                    worker_instance_key: "".to_string(),
+                    worker_identity: "".to_string(),
+                    host_info: None,
+                    task_queue: metrics_for_heartbeat.task_queue,
+                    deployment_version: None,
+                    sdk_name: metrics_for_heartbeat.sdk_name,
+                    sdk_version: metrics_for_heartbeat.sdk_version,
+                    status: 0,
+                    start_time: None,
+                    heartbeat_time: None,
+                    elapsed_since_last_heartbeat: None,
+                    workflow_task_slots_info: None,
+                    activity_task_slots_info: None,
+                    nexus_task_slots_info: None,
+                    local_activity_slots_info: None,
+                    workflow_poller_info: None,
+                    workflow_sticky_poller_info: None,
+                    activity_poller_info: None,
+                    nexus_poller_info: None,
+                    total_sticky_cache_hit: 0,
+                    total_sticky_cache_miss: 0,
+                    current_sticky_cache_size: 0,
+                }), // TODO
+            })
+            .await?
+            .map(|_| ())
+            .into_inner())
     }
 
     fn replace_client(&self, new_client: RetryClient<Client>) {

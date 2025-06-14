@@ -151,5 +151,6 @@ mockall::mock! {
         fn workers(&self) -> Arc<SlotManager>;
         fn is_mock(&self) -> bool;
         fn sdk_name_and_version(&self) -> (String, String);
+        fn record_worker_heartbeat<'a, 'b>(&self) -> impl Future<Output = Result<()>> + Send + 'b where 'a: 'b, Self: 'b;
     }
 }

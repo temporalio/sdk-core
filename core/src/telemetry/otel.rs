@@ -23,6 +23,7 @@ use opentelemetry_sdk::{
     },
 };
 use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
+use opentelemetry_sdk::metrics::InMemoryMetricExporterBuilder;
 use temporal_sdk_core_api::telemetry::{
     HistogramBucketOverrides, MetricTemporality, OtelCollectorOptions, OtlpProtocol,
     PrometheusExporterOptions,
@@ -33,6 +34,7 @@ use temporal_sdk_core_api::telemetry::{
 };
 use tokio::task::AbortHandle;
 use tonic::{metadata::MetadataMap, transport::ClientTlsConfig};
+use crate::telemetry::in_memory::{CompositeMeter, Exporter};
 
 /// A specialized `Result` type for metric operations.
 type Result<T> = std::result::Result<T, MetricError>;
@@ -116,7 +118,7 @@ pub(super) fn augment_meter_provider_with_defaults(
 /// Create an OTel meter that can be used as a [CoreMeter] to export metrics over OTLP.
 pub fn build_otlp_metric_exporter(
     opts: OtelCollectorOptions,
-) -> std::result::Result<CoreOtelMeter, anyhow::Error> {
+) -> std::result::Result<CompositeMeter, anyhow::Error> {
     let exporter = match opts.protocol {
         OtlpProtocol::Grpc => {
             let mut exporter = opentelemetry_otlp::MetricExporter::builder()
@@ -137,21 +139,34 @@ pub fn build_otlp_metric_exporter(
             .with_temporality(metric_temporality_to_temporality(opts.metric_temporality))
             .build()?,
     };
+    let in_mem_exporter = InMemoryMetricExporterBuilder::new()
+        .with_temporality(metric_temporality_to_temporality(opts.metric_temporality))
+        .build();
     let reader = PeriodicReader::builder(exporter)
         .with_interval(opts.metric_periodicity)
         .build();
+    let in_mem_reader = PeriodicReader::builder(in_mem_exporter.clone())
+        .with_interval(opts.metric_periodicity)
+        .build();
     let mp = augment_meter_provider_with_defaults(
-        MeterProviderBuilder::default().with_reader(reader),
+        MeterProviderBuilder::default()
+            .with_reader(reader)
+            .with_reader(in_mem_reader),
         &opts.global_tags,
         opts.use_seconds_for_durations,
         opts.histogram_bucket_overrides,
     )?
     .build();
-    Ok::<_, anyhow::Error>(CoreOtelMeter {
+    let otel_meter = CoreOtelMeter {
         meter: mp.meter(TELEM_SERVICE_NAME),
         use_seconds_for_durations: opts.use_seconds_for_durations,
-        _mp: mp,
-    })
+        _mp: mp.clone(),
+    };
+    Ok::<_, anyhow::Error>(CompositeMeter::new(
+        Exporter::Otel(Arc::new(otel_meter)),
+        in_mem_exporter,
+        mp,
+    ))
 }
 
 pub struct StartedPromServer {

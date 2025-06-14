@@ -591,7 +591,7 @@ pub const ACTIVITY_EXEC_LATENCY_HISTOGRAM_NAME: &str = "activity_execution_laten
 pub(super) const NUM_POLLERS_NAME: &str = "num_pollers";
 pub(super) const TASK_SLOTS_AVAILABLE_NAME: &str = "worker_task_slots_available";
 pub(super) const TASK_SLOTS_USED_NAME: &str = "worker_task_slots_used";
-pub(super) const STICKY_CACHE_SIZE_NAME: &str = "sticky_cache_size";
+pub const STICKY_CACHE_SIZE_NAME: &str = "sticky_cache_size";
 
 /// Track a failure metric if the failure is not a benign application failure.
 pub(crate) fn should_record_failure_metric(failure: &Option<Failure>) -> bool {

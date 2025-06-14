@@ -521,7 +521,7 @@ fn runtime_new() {
     let _rt = handle.enter();
     let (telemopts, addr, _aborter) = prom_metrics(None);
     rt.telemetry_mut()
-        .attach_late_init_metrics(telemopts.metrics.unwrap());
+        .attach_late_init_metrics(telemopts.metrics.unwrap(), None);
     let opts = get_integ_server_options();
     handle.block_on(async {
         let mut raw_client = opts
@@ -536,6 +536,70 @@ fn runtime_new() {
         let body = get_text(format!("http://{addr}/metrics")).await;
         assert!(body.contains("temporal_request"));
     });
+    panic!("need prints to show");
+}
+
+#[tokio::test]
+async fn runtime_new_otel() {
+    let mut rt =
+        CoreRuntime::new(get_integ_telem_options(), TokioRuntimeBuilder::default()).unwrap();
+    let handle = rt.tokio_handle();
+    let _rt = handle.enter();
+    let (telemopts, addr, _aborter) = prom_metrics(None);
+    // Otel exporter
+    let url = Some("grpc://localhost:4317")
+        .map(|x| x.parse::<Url>().unwrap())
+        .unwrap();
+    let mut opts_build = OtelCollectorOptionsBuilder::default();
+    let opts = opts_build.url(url).build().unwrap();
+    // If wanna add more options: https://github.com/temporalio/sdk-ruby/blob/143e421d82d16e58bd45226998363d55e4bc3bbb/temporalio/ext/src/runtime.rs#L113C21-L135C22
+
+    let composite_meter = build_otlp_metric_exporter(opts).unwrap();
+
+    let in_memory_thing = composite_meter.in_mem_exporter().clone();
+
+    rt.telemetry_mut()
+        .attach_late_init_metrics(Arc::new(composite_meter), Some(in_memory_thing.clone()));
+
+    let mut starter = CoreWfStarter::new_with_runtime("runtime_new_otel", rt);
+    // Disable cache to ensure replay happens completely
+    starter.worker_config.max_cached_workflows(0_usize);
+    let worker = starter.get_worker().await;
+    let run_id = starter.start_wf().await;
+    let task = worker.poll_workflow_activation().await.unwrap();
+
+    // let opts = get_integ_server_options();
+    // handle.block_on(async {
+    //     let mut raw_client = opts
+    //         .connect_no_namespace(rt.telemetry().get_temporal_metric_meter())
+    //         .await
+    //         .unwrap();
+    //     assert!(raw_client.get_client().capabilities().is_some());
+    //     let _ = raw_client
+    //         .list_namespaces(ListNamespacesRequest::default())
+    //         .await
+    //         .unwrap();
+    //     let body = get_text(format!("http://{addr}/metrics")).await;
+    //     println!("body {:?}", body);
+    //     // assert!(body.contains("temporal_request"));
+    // });
+
+    // // Validate metrics
+    // if let Some(meter) = rt.telemetry().get_temporal_metric_meter() {
+    //     let asdf = meter.inner.gauge()
+    //     if let Some(in_memory) = meter.inner {
+    //
+    //     }
+    // }
+
+    let finished_metrics = in_memory_thing.get_metrics().unwrap();
+    println!("Printing finished metrics {:?}", finished_metrics.len());
+    // for resource_metrics in finished_metrics {
+    //     println!("[] {:#?}", resource_metrics)
+    // }
+
+    // TODO: add some asserts to ensure data shows up
+    panic!("need prints to show");
 }
 
 #[rstest::rstest]
@@ -759,6 +823,7 @@ async fn docker_metrics_with_prometheus(
     } else {
         panic!("Invalid Prometheus response: {:?}", response);
     }
+    panic!("hi, want logs to print so failing test :)")
 }
 
 #[tokio::test]

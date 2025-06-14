@@ -1,6 +1,8 @@
 //! This module helps with the initialization and management of telemetry. IE: Metrics and tracing.
 //! Logs from core are all traces, which may be exported to the console, in memory, or externally.
 
+#[cfg(feature = "otel")]
+mod in_memory;
 mod log_export;
 pub(crate) mod metrics;
 #[cfg(feature = "otel")]
@@ -17,6 +19,10 @@ pub use metrics::{
 };
 #[cfg(feature = "otel")]
 pub use otel::{build_otlp_metric_exporter, start_prometheus_metric_exporter};
+
+// TODO: Clean up?
+#[cfg(feature = "otel")]
+pub use in_memory::InMemoryThing;
 
 pub use log_export::{CoreLogBuffer, CoreLogBufferedConsumer, CoreLogStreamConsumer};
 
@@ -60,6 +66,7 @@ pub struct TelemetryInstance {
     /// the user has not opted into any tracing configuration.
     trace_subscriber: Option<Arc<dyn Subscriber + Send + Sync>>,
     attach_service_name: bool,
+    in_mem_thing: Option<InMemoryThing>,
 }
 
 impl TelemetryInstance {
@@ -76,6 +83,7 @@ impl TelemetryInstance {
             metrics,
             trace_subscriber,
             attach_service_name,
+            in_mem_thing: None,
         }
     }
 
@@ -88,8 +96,13 @@ impl TelemetryInstance {
 
     /// Some metric meters cannot be initialized until after a tokio runtime has started and after
     /// other telemetry has initted (ex: prometheus). They can be attached here.
-    pub fn attach_late_init_metrics(&mut self, meter: Arc<dyn CoreMeter + 'static>) {
+    pub fn attach_late_init_metrics(
+        &mut self,
+        meter: Arc<dyn CoreMeter + 'static>,
+        in_mem_thing: Option<InMemoryThing>,
+    ) {
         self.metrics = Some(meter);
+        self.in_mem_thing = in_mem_thing;
     }
 
     /// Returns our wrapper for metric meters, including the `metric_prefix` from
@@ -122,6 +135,10 @@ impl TelemetryInstance {
         } else {
             vec![]
         }
+    }
+
+    pub fn in_mem_thing(&self) -> Option<InMemoryThing> {
+        self.in_mem_thing.clone()
     }
 }
 
