@@ -54,6 +54,7 @@ use std::{
     },
     time::Duration,
 };
+use opentelemetry::Key;
 use temporal_client::{ConfiguredClient, TemporalServiceClientWithMetrics, WorkerKey};
 use temporal_sdk_core_api::{
     errors::{CompleteNexusError, WorkerValidationError},
@@ -75,6 +76,7 @@ use temporal_sdk_core_protos::{
     },
 };
 use tokio::sync::{mpsc::unbounded_channel, watch};
+use tokio::time::Instant;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
 
@@ -93,6 +95,11 @@ use {
         PollActivityTaskQueueResponse, PollNexusTaskQueueResponse,
     },
 };
+use temporal_sdk_core_api::telemetry::METRIC_PREFIX;
+use temporal_sdk_core_api::worker::SlotKind;
+use crate::telemetry::InMemoryThing;
+use crate::telemetry::metrics::STICKY_CACHE_SIZE_NAME;
+pub(crate) use crate::worker::client::WorkerHeartbeatInfo;
 
 /// A worker polls on a certain task queue
 pub struct Worker {
@@ -271,6 +278,7 @@ impl Worker {
         sticky_queue_name: Option<String>,
         client: Arc<dyn WorkerClient>,
         telem_instance: Option<&TelemetryInstance>,
+        heartbeat_info: Option<Arc<Mutex<WorkerHeartbeatInfo>>>,
     ) -> Self {
         info!(task_queue=%config.task_queue, namespace=%config.namespace, "Initializing worker");
 
@@ -280,6 +288,7 @@ impl Worker {
             client,
             TaskPollers::Real,
             telem_instance,
+            heartbeat_info,
         )
     }
 
@@ -297,7 +306,7 @@ impl Worker {
 
     #[cfg(test)]
     pub(crate) fn new_test(config: WorkerConfig, client: impl WorkerClient + 'static) -> Self {
-        Self::new(config, None, Arc::new(client), None)
+        Self::new(config, None, Arc::new(client), None, None)
     }
 
     pub(crate) fn new_with_pollers(
@@ -306,15 +315,18 @@ impl Worker {
         client: Arc<dyn WorkerClient>,
         task_pollers: TaskPollers,
         telem_instance: Option<&TelemetryInstance>,
+        heartbeat_info: Option<Arc<Mutex<WorkerHeartbeatInfo>>>,
     ) -> Self {
         // TODO: Use existing MetricsContext or a new meter to record and export these metrics, possibly through the same MetricsCallBuffer
-        let (metrics, meter) = if let Some(ti) = telem_instance {
+        // ANDREW: metrics is temporal metrics, meter is user metrics
+        let (metrics, meter, in_mem_thing) = if let Some(ti) = telem_instance {
             (
                 MetricsContext::top_level(config.namespace.clone(), config.task_queue.clone(), ti),
                 ti.get_metric_meter(),
+                ti.in_mem_thing(),
             )
         } else {
-            (MetricsContext::no_op(), None)
+            (MetricsContext::no_op(), None, None)
         };
         let tuner = config
             .tuner
@@ -442,7 +454,7 @@ impl Worker {
             tuner.local_activity_slot_supplier(),
             metrics.with_new_attrs([local_activity_worker_type()]),
             None,
-            slot_context_data,
+            slot_context_data.clone(),
             meter.clone(),
         );
         let la_permits = la_pemit_dealer.get_extant_count_rcv();
@@ -484,7 +496,22 @@ impl Worker {
             external_wft_tx,
         );
         let worker_key = Mutex::new(client.workers().register(Box::new(provider)));
+        println!("try to get export data");
+        let asdf = in_mem_thing.clone().unwrap().get_metrics().unwrap();
+        // println!("printing metrics: {:?}", asdf.len());
+        // for a in asdf {
+        //     println!("[a]{:#?}", a);
+        // }
         let sdk_name_and_ver = client.sdk_name_and_version();
+        if let Some(heartbeat_info) = heartbeat_info {
+            let mut heartbeat_info = heartbeat_info.lock();
+            heartbeat_info.data.sdk_name = sdk_name_and_ver.0.clone();
+            heartbeat_info.data.sdk_version = sdk_name_and_ver.1.clone();
+            heartbeat_info.data.task_queue = config.task_queue.clone();
+            heartbeat_info.data.start_time = Instant::now().into();
+            println!("heartbeat_info: {:?}", heartbeat_info.data);
+        }
+
         Self {
             worker_key,
             client: client.clone(),

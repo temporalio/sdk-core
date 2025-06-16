@@ -3,11 +3,13 @@
 pub(crate) mod mocks;
 use parking_lot::{Mutex, RwLock};
 use std::{sync::Arc, time::Duration};
+use opentelemetry::Key;
+use tokio::time::Instant;
 use temporal_client::{
     Client, IsWorkerTaskLongPoll, Namespace, NamespacedClient, NoRetryOnMatching, RetryClient,
     SlotManager, WorkflowService,
 };
-use temporal_sdk_core_api::worker::WorkerVersioningStrategy;
+use temporal_sdk_core_api::worker::{SlotKind, WorkerVersioningStrategy};
 use temporal_sdk_core_protos::{
     TaskToken,
     coresdk::workflow_commands::QueryResult,
@@ -31,8 +33,11 @@ use temporal_sdk_core_protos::{
     },
 };
 use tonic::IntoRequest;
+use temporal_sdk_core_api::telemetry::METRIC_PREFIX;
 use temporal_sdk_core_protos::temporal::api::worker::v1::WorkerHeartbeat;
-use crate::worker::WorkerHeartbeatInfo;
+use crate::SlotSupplierOptions;
+use crate::telemetry::InMemoryThing;
+use crate::telemetry::metrics::STICKY_CACHE_SIZE_NAME;
 
 type Result<T, E = tonic::Status> = std::result::Result<T, E>;
 
@@ -731,4 +736,144 @@ pub struct WorkflowTaskCompletion {
     pub metering_metadata: MeteringMetadata,
     /// Versioning behavior of the workflow, if any.
     pub versioning_behavior: VersioningBehavior,
+}
+
+struct WorkerPollerInfo {
+    /// Number of polling RPCs that are currently in flight.
+    current_pollers: u32,
+    last_successful_poll_time: tokio::time::Instant,
+    is_autoscaling: bool,
+}
+
+struct HostInfo {
+    host_name: String,
+    process_id: u32,
+    /// System used CPU as a float in the range [0.0, 1.0] where 1.0 is
+    /// defined as all cores on the host pegged.
+    current_host_cpu_usage: f32,
+    /// System used memory as a float in the range [0.0, 1.0] where 1.0
+    /// is defined as all available memory on the host is used.
+    current_host_mem_usage: f32,
+}
+
+struct WorkerSlotsInfo<SK: SlotKind> {
+    /// Number of slots available to the worker.
+    available_slots: u32,
+    /// Number of slots currently in use.
+    used_slots: u32,
+    /// Kind of the slot supplier, which is used to determine how the slots are allocated.
+    /// Possible values: "Fixed | ResourceBased | Custom String"
+    /// TODO: Use SlotSupplierOptions and figure out the whole generic thing
+    slot_supplier_kind: SlotSupplierOptions<SK>,
+    total_processed_tasks: u32,
+    total_failed_tasks: u32,
+
+    /// Number of tasks processed in since the last heartbeat from the worker.
+    /// This is a cumulative counter, and it is reset to 0 each time the worker sends a heartbeat.
+    /// Contains both successful and failed tasks.
+    last_interval_processed_tasks: u32,
+    /// Number of failed tasks processed since the last heartbeat from the worker.
+    last_interval_failure_tasks: u32,
+}
+/// Heartbeat information
+///
+/// Note: Experimental
+#[derive(Debug)]
+pub(crate) struct WorkerHeartbeatInfo {
+    in_mem_thing: Option<InMemoryThing>,
+    pub(crate) data: WorkerHeartbeatData,
+}
+
+impl WorkerHeartbeatInfo {
+    pub(crate) fn new(in_memory_thing: Option<InMemoryThing>) -> Self {
+        Self {
+            in_mem_thing: in_memory_thing,
+            data: WorkerHeartbeatData::new(),
+        }
+    }
+
+    fn capture_heartbeat_data(&self) -> WorkerHeartbeatData {
+        println!("capture_heartbeat_data");
+        println!("\tsdk_name {:?}", self.data.sdk_name);
+        println!("\tsdk_version {:?}", self.data.sdk_version);
+        if let Some(in_mem_thing) = &self.in_mem_thing {
+            // TODO: propagate error
+            let metrics = in_mem_thing.get_metrics().unwrap();
+            for metric in metrics {
+                // TODO update self.data with updated metrics?
+                // if metric.resource.get(Key::new("telemetry.sdk.name"))
+                // println!("sdk_name {:?}", metric.resource.get(&"telemetry.sdk.name".into()))
+                let sticky_cache_hit = metric.resource.get(&Key::new(format!("{}{}", METRIC_PREFIX, STICKY_CACHE_SIZE_NAME)));
+                // println!("sticky_cache_hit: {:?}", sticky_cache_hit);
+                for sm in metric.scope_metrics {
+                    for m in sm.metrics {
+                        println!("m.name {:?}", m.name);
+                        if m.name == format!("{}{}", METRIC_PREFIX, STICKY_CACHE_SIZE_NAME) {
+                            println!("sticky_cache_hit: {:?}", m);
+                        }
+                    }
+                }
+            }
+        }
+        self.data.clone()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct WorkerHeartbeatData {
+    // worker_instance_key: String,
+    // worker_identity: String,
+    // TODO: Customer metrics
+    // host_info: HostInfo,
+    pub(crate) task_queue: String,
+    // worker_deployment_version: Option<temporal_sdk_core_api::worker::WorkerDeploymentVersion>,
+    /// SDK name
+    pub(crate) sdk_name: String,
+    /// SDK version
+    pub(crate) sdk_version: String,
+    // status: WorkerStatus,
+    /// Worker start time
+    pub(crate) start_time: tokio::time::Instant,
+    // // TODO: Not state that needs to be tracked, worker will just call "now" when it sends heartbeat
+    // /// Timestamp of this heartbeat, coming from the worker. Worker should set it to "now".
+    // // heartbeat_time: tokio::time::Instant,
+    //
+    // /// Last heartbeat time, coming from the worker. Worker should set it to "now".
+    // last_heartbeat_time: tokio::time::Instant,
+    //
+    // ///
+    // // workflow_task_slots_info: WorkerSlotsInfo<WorkflowSlotKind>,
+    // // ///
+    // // activity_task_slots_info: WorkerSlotsInfo<ActivitySlotKind>,
+    // // ///
+    // // nexus_task_slots_info: WorkerSlotsInfo<NexusSlotKind>,
+    // // local_activity_slots_info: WorkerSlotsInfo<LocalActivitySlotKind>,
+    //
+    // ///
+    // workflow_poller_info: WorkerPollerInfo,
+    // ///
+    // activity_poller_info: WorkerPollerInfo,
+    // ///
+    // nexus_poller_info: WorkerPollerInfo,
+    // ///
+    // workflow_sticky_poller_info: WorkerPollerInfo,
+    //
+    // // TODO: Need to plumb this from metrics to here
+    // /// A Workflow Task found a cached Workflow Execution to run against.
+    // total_sticky_cache_hit: u32,
+    // /// A Workflow Task did not find a cached Workflow execution to run against.
+    // total_sticky_cache_miss: u32,
+    // /// Current cache size, expressed in number of Workflow Executions.
+    // current_sticky_cache_size: u32,
+}
+
+impl WorkerHeartbeatData {
+    fn new() -> Self {
+        Self {
+            sdk_name: String::new(),
+            sdk_version: String::new(),
+            task_queue: String::new(),
+            start_time: Instant::now(),
+        }
+    }
 }

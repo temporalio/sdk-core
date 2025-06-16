@@ -62,6 +62,7 @@ use crate::{
 use anyhow::bail;
 use futures_util::Stream;
 use std::sync::Arc;
+use parking_lot::Mutex;
 use temporal_client::{ConfiguredClient, NamespacedClient, TemporalServiceClientWithMetrics};
 use temporal_sdk_core_api::{
     Worker as WorkerTrait,
@@ -89,6 +90,7 @@ pub fn init_worker<CT>(
 where
     CT: Into<sealed::AnyClient>,
 {
+    println!("init_worker");
     let client = init_worker_client(&worker_config, *client.into().into_inner());
     if client.namespace() != worker_config.namespace {
         bail!("Passed in client is not bound to the same namespace as the worker");
@@ -98,11 +100,14 @@ where
     }
     let client_ident = client.get_identity().to_owned();
     let sticky_q = sticky_q_name_for_worker(&client_ident, &worker_config);
+    let in_mem_thing = runtime.telemetry.in_mem_thing();
+    let heartbeat_info = Arc::new(Mutex::new(crate::worker::WorkerHeartbeatInfo::new(in_mem_thing)));
     let client_bag = Arc::new(WorkerClientBag::new(
         client,
         worker_config.namespace.clone(),
         client_ident,
         worker_config.versioning_strategy.clone(),
+        heartbeat_info.clone(),
     ));
 
     Ok(Worker::new(
@@ -110,6 +115,7 @@ where
         sticky_q,
         client_bag,
         Some(&runtime.telemetry),
+        Some(heartbeat_info),
     ))
 }
 
