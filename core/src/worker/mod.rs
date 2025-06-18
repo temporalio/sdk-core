@@ -54,6 +54,7 @@ use std::{
     },
     time::Duration,
 };
+use std::time::SystemTime;
 use opentelemetry::Key;
 use temporal_client::{ConfiguredClient, TemporalServiceClientWithMetrics, WorkerKey};
 use temporal_sdk_core_api::{
@@ -321,6 +322,7 @@ impl Worker {
         // ANDREW: metrics is temporal metrics, meter is user metrics
         let (metrics, meter, in_mem_thing) = if let Some(ti) = telem_instance {
             (
+                // ANDREW: this is the top-level metrics context for the worker, which is used to record and export metrics.
                 MetricsContext::top_level(config.namespace.clone(), config.task_queue.clone(), ti),
                 ti.get_metric_meter(),
                 ti.in_mem_thing(),
@@ -508,8 +510,8 @@ impl Worker {
             heartbeat_info.data.sdk_name = sdk_name_and_ver.0.clone();
             heartbeat_info.data.sdk_version = sdk_name_and_ver.1.clone();
             heartbeat_info.data.task_queue = config.task_queue.clone();
-            heartbeat_info.data.start_time = Instant::now().into();
-            println!("heartbeat_info: {:?}", heartbeat_info.data);
+            heartbeat_info.data.start_time = SystemTime::now();
+            println!("heartbeat_info: {:#?}", heartbeat_info.data);
         }
 
         Self {
@@ -922,7 +924,7 @@ mod tests {
         let mut mock_client = mock_workflow_client();
         mock_client
             .expect_poll_activity_task()
-            .returning(|_, _| Ok(PollActivityTaskQueueResponse::default()));
+            .returning(|a, b| Ok(PollActivityTaskQueueResponse::default()));
 
         let cfg = test_worker_cfg()
             .max_outstanding_activities(5_usize)

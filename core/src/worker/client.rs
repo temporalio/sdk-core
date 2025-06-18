@@ -3,13 +3,15 @@
 pub(crate) mod mocks;
 use parking_lot::{Mutex, RwLock};
 use std::{sync::Arc, time::Duration};
-use opentelemetry::Key;
-use tokio::time::Instant;
+use std::time::SystemTime;
+use opentelemetry_sdk::metrics::data::{Aggregation, Gauge, Sum};
+use prost_types::Timestamp;
+use prost_types::Duration as PbDuration;
 use temporal_client::{
     Client, IsWorkerTaskLongPoll, Namespace, NamespacedClient, NoRetryOnMatching, RetryClient,
     SlotManager, WorkflowService,
 };
-use temporal_sdk_core_api::worker::{SlotKind, WorkerVersioningStrategy};
+use temporal_sdk_core_api::worker::{SlotKind, WorkerConfig, WorkerVersioningStrategy};
 use temporal_sdk_core_protos::{
     TaskToken,
     coresdk::workflow_commands::QueryResult,
@@ -33,7 +35,9 @@ use temporal_sdk_core_protos::{
     },
 };
 use tonic::IntoRequest;
+use uuid::Uuid;
 use temporal_sdk_core_api::telemetry::METRIC_PREFIX;
+use temporal_sdk_core_protos::temporal::api::nexus::v1::endpoint_target::Variant::Worker;
 use temporal_sdk_core_protos::temporal::api::worker::v1::WorkerHeartbeat;
 use crate::SlotSupplierOptions;
 use crate::telemetry::InMemoryThing;
@@ -281,7 +285,7 @@ impl WorkerClient for WorkerClientBag {
             binary_checksum: self.binary_checksum(),
             worker_version_capabilities: self.worker_version_capabilities(),
             deployment_options: self.deployment_options(),
-            worker_heartbeat: None,
+            worker_heartbeat: None, // TODO
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
@@ -304,6 +308,7 @@ impl WorkerClient for WorkerClientBag {
         poll_options: PollOptions,
         act_options: PollActivityOptions,
     ) -> Result<PollActivityTaskQueueResponse> {
+        let mut heartbeat_info = self.heartbeat_info.lock();
         #[allow(deprecated)] // want to list all fields explicitly
         let mut request = PollActivityTaskQueueRequest {
             namespace: self.namespace.clone(),
@@ -318,7 +323,7 @@ impl WorkerClient for WorkerClientBag {
             }),
             worker_version_capabilities: self.worker_version_capabilities(),
             deployment_options: self.deployment_options(),
-            worker_heartbeat: None,
+            worker_heartbeat: Some(heartbeat_info.capture_heartbeat()), // TODO:
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
@@ -351,7 +356,7 @@ impl WorkerClient for WorkerClientBag {
             identity: self.identity.clone(),
             worker_version_capabilities: self.worker_version_capabilities(),
             deployment_options: self.deployment_options(),
-            worker_heartbeat: None,
+            worker_heartbeat: None, // TODO:
         }
         .into_request();
         request.extensions_mut().insert(IsWorkerTaskLongPoll);
@@ -629,7 +634,7 @@ impl WorkerClient for WorkerClientBag {
             identity: self.identity.clone(),
             sticky_task_queue,
             reason: "graceful shutdown".to_string(),
-            worker_heartbeat: None,
+            worker_heartbeat: None, // TODO:
         };
 
         Ok(
@@ -640,40 +645,18 @@ impl WorkerClient for WorkerClientBag {
     }
     
     async fn record_worker_heartbeat(&self) -> Result<()> {
-        let metrics_for_heartbeat = self.heartbeat_info.lock().capture_heartbeat_data();
-        Ok(self
-            .cloned_client()
-            .record_worker_heartbeat(RecordWorkerHeartbeatRequest {
-                namespace: self.namespace.clone(),
-                identity: self.identity.clone(),
-                worker_heartbeat: Some(WorkerHeartbeat {
-                    worker_instance_key: "".to_string(),
-                    worker_identity: "".to_string(),
-                    host_info: None,
-                    task_queue: metrics_for_heartbeat.task_queue,
-                    deployment_version: None,
-                    sdk_name: metrics_for_heartbeat.sdk_name,
-                    sdk_version: metrics_for_heartbeat.sdk_version,
-                    status: 0,
-                    start_time: None,
-                    heartbeat_time: None,
-                    elapsed_since_last_heartbeat: None,
-                    workflow_task_slots_info: None,
-                    activity_task_slots_info: None,
-                    nexus_task_slots_info: None,
-                    local_activity_slots_info: None,
-                    workflow_poller_info: None,
-                    workflow_sticky_poller_info: None,
-                    activity_poller_info: None,
-                    nexus_poller_info: None,
-                    total_sticky_cache_hit: 0,
-                    total_sticky_cache_miss: 0,
-                    current_sticky_cache_size: 0,
-                }), // TODO
-            })
-            .await?
-            .map(|_| ())
-            .into_inner())
+        let worker_heartbeat = self.heartbeat_info.lock().capture_heartbeat();
+        self
+        .cloned_client()
+        .record_worker_heartbeat(RecordWorkerHeartbeatRequest {
+            namespace: self.namespace.clone(),
+            identity: self.identity.clone(),
+            worker_heartbeat: Some(worker_heartbeat),
+        })
+        .await?
+        .map(|_| ()) // TODO: Do we want response?
+        .into_inner();
+        Ok(())
     }
 
     fn replace_client(&self, new_client: RetryClient<Client>) {
@@ -738,10 +721,11 @@ pub struct WorkflowTaskCompletion {
     pub versioning_behavior: VersioningBehavior,
 }
 
+#[derive(Debug, Clone)]
 struct WorkerPollerInfo {
     /// Number of polling RPCs that are currently in flight.
     current_pollers: u32,
-    last_successful_poll_time: tokio::time::Instant,
+    last_successful_poll_time: Timestamp,
     is_autoscaling: bool,
 }
 
@@ -785,17 +769,20 @@ pub(crate) struct WorkerHeartbeatInfo {
 }
 
 impl WorkerHeartbeatInfo {
-    pub(crate) fn new(in_memory_thing: Option<InMemoryThing>) -> Self {
+    pub(crate) fn new(in_memory_thing: Option<InMemoryThing>, worker_config: WorkerConfig) -> Self {
         Self {
             in_mem_thing: in_memory_thing,
-            data: WorkerHeartbeatData::new(),
+            data: WorkerHeartbeatData::new(worker_config),
         }
     }
 
-    fn capture_heartbeat_data(&self) -> WorkerHeartbeatData {
+    /// Transform heartbeat data into `WorkerHeartbeat` we can send in gRPC request. Some
+    /// metrics are also cached into `self` for future calls of this function
+    fn capture_heartbeat(&mut self) -> WorkerHeartbeat {
         println!("capture_heartbeat_data");
         println!("\tsdk_name {:?}", self.data.sdk_name);
         println!("\tsdk_version {:?}", self.data.sdk_version);
+        let mut sticky_cache_hit = 0;
         if let Some(in_mem_thing) = &self.in_mem_thing {
             // TODO: propagate error
             let metrics = in_mem_thing.get_metrics().unwrap();
@@ -803,28 +790,111 @@ impl WorkerHeartbeatInfo {
                 // TODO update self.data with updated metrics?
                 // if metric.resource.get(Key::new("telemetry.sdk.name"))
                 // println!("sdk_name {:?}", metric.resource.get(&"telemetry.sdk.name".into()))
-                let sticky_cache_hit = metric.resource.get(&Key::new(format!("{}{}", METRIC_PREFIX, STICKY_CACHE_SIZE_NAME)));
-                // println!("sticky_cache_hit: {:?}", sticky_cache_hit);
                 for sm in metric.scope_metrics {
                     for m in sm.metrics {
-                        println!("m.name {:?}", m.name);
+                        // println!("m.name {:?}", m.name);
+
+                        // sticky cache name
                         if m.name == format!("{}{}", METRIC_PREFIX, STICKY_CACHE_SIZE_NAME) {
-                            println!("sticky_cache_hit: {:?}", m);
+                            // println!("sticky_cache_size: {:#?}", m);
+                            let agg: &dyn Aggregation = &*m.data;
+                            let any = agg.as_any();
+
+                            if let Some(gauge) = any.downcast_ref::<Gauge<u64>>() {
+                                // println!("Gauge<u64> {:#?}", gauge);
+                                // TODO: Defensive program against if size > 1?
+                                for data_point in &gauge.data_points {
+                                    // println!("data_point: {:#?}", data_point.value);
+                                    sticky_cache_hit = data_point.value;
+                                }
+                                let g = gauge.as_any().downcast_ref::<u64>();
+                                println!("g: {:?}", g);
+                            }
+                            // sticky_cache_hit = m.
+                        } else if m.name == format!("{}{}", METRIC_PREFIX, "sticky_cache_hit") {
+                            println!("sticky_cache_hit: {:#?}", m);
+                            let agg: &dyn Aggregation = &*m.data;
+                            let any = agg.as_any();
+                            if let Some(counter) = any.downcast_ref::<Sum<u64>>() {
+                                println!("counter: {:#?}", counter);
+                                // TODO: Defensive program against if size > 1?
+                                for data_point in &counter.data_points {
+                                    self.data.total_sticky_cache_hit = data_point.value as i32;
+                                }
+                            }
+
+                        }else if m.name == format!("{}{}", METRIC_PREFIX, "sticky_cache_miss") {
+                            println!("sticky_cache_miss: {:#?}", m);
+                            let agg: &dyn Aggregation = &*m.data;
+                            let any = agg.as_any();
+                            if let Some(counter) = any.downcast_ref::<Sum<u64>>() {
+                                println!("counter: {:#?}", counter);
+                                // TODO: Defensive program against if size > 1?
+                                for data_point in &counter.data_points {
+                                    self.data.total_sticky_cache_hit = data_point.value as i32;
+                                }
+                            }
+
                         }
                     }
                 }
             }
         }
-        self.data.clone()
+
+        let now = SystemTime::now();
+        let elapsed_since_last_heartbeat = if let Some(heartbeat_time) = self.data.heartbeat_time {
+            let dur = now.duration_since(heartbeat_time).unwrap(); // TODO: map_err
+            Some(PbDuration {
+                seconds: dur.as_secs() as i64,
+                nanos: dur.subsec_nanos() as i32,
+            })
+        } else {
+            None
+        };
+
+        self.data.heartbeat_time = Some(now.into());
+
+        // self.data.clone()
+        // TODO: impl From or Into to auto-convert?
+        //  need to see if there's anything needed outside of self.data
+        let heartbeat = WorkerHeartbeat {
+            worker_instance_key: self.data.worker_instance_key.clone(),
+            // TODO: get host name and process ID
+            worker_identity: "".to_string(),
+            host_info: None,
+            task_queue: self.data.task_queue.clone(),
+            deployment_version: None,
+            sdk_name: self.data.sdk_name.clone(),
+            sdk_version: self.data.sdk_version.clone(),
+            status: 0,
+            start_time: Some(self.data.start_time.into()),
+            heartbeat_time: Some(SystemTime::now().into()),
+            elapsed_since_last_heartbeat,
+            workflow_task_slots_info: None,
+            activity_task_slots_info: None,
+            nexus_task_slots_info: None,
+            local_activity_slots_info: None,
+            workflow_poller_info: None,
+            workflow_sticky_poller_info: None,
+            activity_poller_info: None,
+            nexus_poller_info: None,
+            total_sticky_cache_hit: self.data.total_sticky_cache_hit,
+            total_sticky_cache_miss: self.data.total_sticky_cache_miss,
+            current_sticky_cache_size: sticky_cache_hit as i32,
+        };
+        println!("[hb]: {:#?}", heartbeat);
+        heartbeat
     }
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct WorkerHeartbeatData {
-    // worker_instance_key: String,
+    worker_instance_key: String,
     // worker_identity: String,
     // TODO: Customer metrics
     // host_info: HostInfo,
+    // Time of the last heartbeat. This is used to both for heartbeat_time and last_heartbeat_time
+    pub(crate) heartbeat_time: Option<SystemTime>, // TODO: Why is this option? Because the first heartbeat will be blank?
     pub(crate) task_queue: String,
     // worker_deployment_version: Option<temporal_sdk_core_api::worker::WorkerDeploymentVersion>,
     /// SDK name
@@ -833,7 +903,7 @@ pub(crate) struct WorkerHeartbeatData {
     pub(crate) sdk_version: String,
     // status: WorkerStatus,
     /// Worker start time
-    pub(crate) start_time: tokio::time::Instant,
+    pub(crate) start_time: SystemTime,
     // // TODO: Not state that needs to be tracked, worker will just call "now" when it sends heartbeat
     // /// Timestamp of this heartbeat, coming from the worker. Worker should set it to "now".
     // // heartbeat_time: tokio::time::Instant,
@@ -850,30 +920,63 @@ pub(crate) struct WorkerHeartbeatData {
     // // local_activity_slots_info: WorkerSlotsInfo<LocalActivitySlotKind>,
     //
     // ///
-    // workflow_poller_info: WorkerPollerInfo,
+    workflow_poller_info: WorkerPollerInfo,
     // ///
-    // activity_poller_info: WorkerPollerInfo,
+    activity_poller_info: WorkerPollerInfo,
     // ///
-    // nexus_poller_info: WorkerPollerInfo,
+    nexus_poller_info: WorkerPollerInfo,
     // ///
-    // workflow_sticky_poller_info: WorkerPollerInfo,
+    workflow_sticky_poller_info: WorkerPollerInfo,
     //
     // // TODO: Need to plumb this from metrics to here
-    // /// A Workflow Task found a cached Workflow Execution to run against.
-    // total_sticky_cache_hit: u32,
-    // /// A Workflow Task did not find a cached Workflow execution to run against.
-    // total_sticky_cache_miss: u32,
+    /// A Workflow Task found a cached Workflow Execution to run against.
+    total_sticky_cache_hit: i32,
+    /// A Workflow Task did not find a cached Workflow execution to run against.
+    total_sticky_cache_miss: i32,
     // /// Current cache size, expressed in number of Workflow Executions.
     // current_sticky_cache_size: u32,
 }
 
 impl WorkerHeartbeatData {
-    fn new() -> Self {
+    fn new(worker_config: WorkerConfig) -> Self {
+        let workflow_poller_info = WorkerPollerInfo {
+            current_pollers: 0, // TODO
+            last_successful_poll_time: Timestamp::default(), // TODO
+            is_autoscaling: worker_config.workflow_task_poller_behavior.is_autoscaling(),
+        };
+        let activity_poller_info = WorkerPollerInfo {
+            current_pollers: 0,
+            last_successful_poll_time: Timestamp::default(),
+            is_autoscaling: worker_config.activity_task_poller_behavior.is_autoscaling(),
+        };
+        // TODO: make_wft_poller seems important for this?
+        // TODO: I think WFTPollerShared will give the list
+        //  new_workflow_task
+        //  make_wft_poller
+        let nexus_poller_info = WorkerPollerInfo {
+            current_pollers: 0,
+            last_successful_poll_time: Timestamp::default(),
+            is_autoscaling: worker_config.nexus_task_poller_behavior.is_autoscaling(),
+        };
+        // TODO: none of these values are right
+        let workflow_sticky_poller_info = WorkerPollerInfo {
+            current_pollers: 0,
+            last_successful_poll_time: Timestamp::default(),
+            is_autoscaling: worker_config.activity_task_poller_behavior.is_autoscaling(),
+        };
         Self {
             sdk_name: String::new(),
             sdk_version: String::new(),
             task_queue: String::new(),
-            start_time: Instant::now(),
+            start_time: SystemTime::now(),
+            heartbeat_time: None,
+            worker_instance_key: Uuid::new_v4().to_string(),
+            total_sticky_cache_hit: 0,
+            total_sticky_cache_miss: 0,
+            workflow_poller_info,
+            activity_poller_info,
+            nexus_poller_info,
+            workflow_sticky_poller_info
         }
     }
 }

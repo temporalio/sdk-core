@@ -561,36 +561,88 @@ async fn runtime_new_otel() {
     rt.telemetry_mut()
         .attach_late_init_metrics(Arc::new(composite_meter), Some(in_memory_thing.clone()));
 
-    let mut starter = CoreWfStarter::new_with_runtime("runtime_new_otel", rt);
+    let wf_name = "runtime_new_otel";
+    let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
     // Disable cache to ensure replay happens completely
     starter.worker_config.max_cached_workflows(0_usize);
-    let worker = starter.get_worker().await;
-    let run_id = starter.start_wf().await;
-    let task = worker.poll_workflow_activation().await.unwrap();
+    // let worker = starter.get_worker().await;
+    let mut worker = starter.worker().await;
+    // let run_id = starter.start_wf().await;
 
-    // let opts = get_integ_server_options();
-    // handle.block_on(async {
-    //     let mut raw_client = opts
-    //         .connect_no_namespace(rt.telemetry().get_temporal_metric_meter())
-    //         .await
-    //         .unwrap();
-    //     assert!(raw_client.get_client().capabilities().is_some());
-    //     let _ = raw_client
-    //         .list_namespaces(ListNamespacesRequest::default())
-    //         .await
-    //         .unwrap();
-    //     let body = get_text(format!("http://{addr}/metrics")).await;
-    //     println!("body {:?}", body);
-    //     // assert!(body.contains("temporal_request"));
-    // });
+    // Run a workflow
+    worker.register_wf(wf_name.to_string(), |ctx: WfContext| async move {
+        // let normal_act_pass = ctx.activity(ActivityOptions {
+        //     activity_type: "pass_fail_act".to_string(),
+        //     input: "pass".as_json_payload().expect("serializes fine"),
+        //     start_to_close_timeout: Some(Duration::from_secs(1)),
+        //     ..Default::default()
+        // });
+        // let local_act_pass = ctx.local_activity(LocalActivityOptions {
+        //     activity_type: "pass_fail_act".to_string(),
+        //     input: "pass".as_json_payload().expect("serializes fine"),
+        //     ..Default::default()
+        // });
+        // let normal_act_fail = ctx.activity(ActivityOptions {
+        //     activity_type: "pass_fail_act".to_string(),
+        //     input: "fail".as_json_payload().expect("serializes fine"),
+        //     start_to_close_timeout: Some(Duration::from_secs(1)),
+        //     retry_policy: Some(RetryPolicy {
+        //         maximum_attempts: 1,
+        //         ..Default::default()
+        //     }),
+        //     ..Default::default()
+        // });
+        // let local_act_fail = ctx.local_activity(LocalActivityOptions {
+        //     activity_type: "pass_fail_act".to_string(),
+        //     input: "fail".as_json_payload().expect("serializes fine"),
+        //     retry_policy: RetryPolicy {
+        //         maximum_attempts: 1,
+        //         ..Default::default()
+        //     },
+        //     ..Default::default()
+        // });
+        // let local_act_cancel = ctx.local_activity(LocalActivityOptions {
+        //     activity_type: "pass_fail_act".to_string(),
+        //     input: "cancel".as_json_payload().expect("serializes fine"),
+        //     retry_policy: RetryPolicy {
+        //         maximum_attempts: 1,
+        //         ..Default::default()
+        //     },
+        //     ..Default::default()
+        // });
+        // join!(
+        //     normal_act_pass,
+        //     local_act_pass,
+        //     normal_act_fail,
+        //     local_act_fail
+        // );
+        // local_act_cancel.cancel(&ctx);
+        // local_act_cancel.await;
+        Ok(().into())
+    });
+    worker.register_activity("pass_fail_act", |ctx: ActContext, i: String| async move {
+        match i.as_str() {
+            "pass" => Ok("pass"),
+            "cancel" => {
+                // TODO: Cancel is taking until shutdown to come through :|
+                ctx.cancelled().await;
+                Err(ActivityError::cancelled())
+            }
+            _ => Err(anyhow!("fail").into()),
+        }
+    });
 
-    // // Validate metrics
-    // if let Some(meter) = rt.telemetry().get_temporal_metric_meter() {
-    //     let asdf = meter.inner.gauge()
-    //     if let Some(in_memory) = meter.inner {
-    //
-    //     }
-    // }
+    worker
+        .submit_wf(
+            wf_name.to_owned(),
+            wf_name.to_owned(),
+            vec![],
+            WorkflowOptions::default(),
+        )
+        .await
+        .unwrap();
+    worker.run_until_done().await.unwrap();
+
 
     let finished_metrics = in_memory_thing.get_metrics().unwrap();
     println!("Printing finished metrics {:?}", finished_metrics.len());
@@ -598,8 +650,15 @@ async fn runtime_new_otel() {
     //     println!("[] {:#?}", resource_metrics)
     // }
 
+    // TODO: Use in_memory_thing.meter_provider() to verify in-memory values
+    let asdf = in_memory_thing.meter_provider();
+    println!("asdf {:#?}", asdf);
+
     // TODO: add some asserts to ensure data shows up
+    // assert_eq!(in_memory_thing.meter_provider().);
     panic!("need prints to show");
+    // TODO: This test doesn't show results of metrics. This test needs to be changed to actually
+    //  test something useful.
 }
 
 #[rstest::rstest]
@@ -826,6 +885,7 @@ async fn docker_metrics_with_prometheus(
     panic!("hi, want logs to print so failing test :)")
 }
 
+// TODO: make a metrics version?
 #[tokio::test]
 async fn activity_metrics() {
     let (telemopts, addr, _aborter) = prom_metrics(None);

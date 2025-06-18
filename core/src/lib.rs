@@ -101,7 +101,7 @@ where
     let client_ident = client.get_identity().to_owned();
     let sticky_q = sticky_q_name_for_worker(&client_ident, &worker_config);
     let in_mem_thing = runtime.telemetry.in_mem_thing();
-    let heartbeat_info = Arc::new(Mutex::new(crate::worker::WorkerHeartbeatInfo::new(in_mem_thing)));
+    let heartbeat_info = Arc::new(Mutex::new(crate::worker::WorkerHeartbeatInfo::new(in_mem_thing, worker_config.clone())));
     let client_bag = Arc::new(WorkerClientBag::new(
         client,
         worker_config.namespace.clone(),
