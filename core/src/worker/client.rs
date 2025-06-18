@@ -36,11 +36,9 @@ use temporal_sdk_core_protos::{
 };
 use tonic::IntoRequest;
 use uuid::Uuid;
-use temporal_sdk_core_api::telemetry::METRIC_PREFIX;
-use temporal_sdk_core_protos::temporal::api::nexus::v1::endpoint_target::Variant::Worker;
 use temporal_sdk_core_protos::temporal::api::worker::v1::WorkerHeartbeat;
 use crate::SlotSupplierOptions;
-use crate::telemetry::InMemoryThing;
+use crate::telemetry::InMemoryMeter;
 use crate::telemetry::metrics::STICKY_CACHE_SIZE_NAME;
 
 type Result<T, E = tonic::Status> = std::result::Result<T, E>;
@@ -764,14 +762,14 @@ struct WorkerSlotsInfo<SK: SlotKind> {
 /// Note: Experimental
 #[derive(Debug)]
 pub(crate) struct WorkerHeartbeatInfo {
-    in_mem_thing: Option<InMemoryThing>,
+    in_memory_meter: Option<Arc<InMemoryMeter>>,
     pub(crate) data: WorkerHeartbeatData,
 }
 
 impl WorkerHeartbeatInfo {
-    pub(crate) fn new(in_memory_thing: Option<InMemoryThing>, worker_config: WorkerConfig) -> Self {
+    pub(crate) fn new(in_memory_meter: Option<Arc<InMemoryMeter>>, worker_config: WorkerConfig) -> Self {
         Self {
-            in_mem_thing: in_memory_thing,
+            in_memory_meter,
             data: WorkerHeartbeatData::new(worker_config),
         }
     }
@@ -783,52 +781,41 @@ impl WorkerHeartbeatInfo {
         println!("\tsdk_name {:?}", self.data.sdk_name);
         println!("\tsdk_version {:?}", self.data.sdk_version);
         let mut sticky_cache_hit = 0;
-        if let Some(in_mem_thing) = &self.in_mem_thing {
+        if let Some(in_memory_meter) = &self.in_memory_meter {
             // TODO: propagate error
-            let metrics = in_mem_thing.get_metrics().unwrap();
+            let metrics = in_memory_meter.get_metrics().unwrap();
             for metric in metrics {
-                // TODO update self.data with updated metrics?
-                // if metric.resource.get(Key::new("telemetry.sdk.name"))
-                // println!("sdk_name {:?}", metric.resource.get(&"telemetry.sdk.name".into()))
                 for sm in metric.scope_metrics {
                     for m in sm.metrics {
-                        // println!("m.name {:?}", m.name);
+                        println!("m.name {:?}", m.name);
 
                         // sticky cache name
-                        if m.name == format!("{}{}", METRIC_PREFIX, STICKY_CACHE_SIZE_NAME) {
+                        if m.name == STICKY_CACHE_SIZE_NAME {
                             // println!("sticky_cache_size: {:#?}", m);
                             let agg: &dyn Aggregation = &*m.data;
                             let any = agg.as_any();
-
                             if let Some(gauge) = any.downcast_ref::<Gauge<u64>>() {
-                                // println!("Gauge<u64> {:#?}", gauge);
                                 // TODO: Defensive program against if size > 1?
                                 for data_point in &gauge.data_points {
-                                    // println!("data_point: {:#?}", data_point.value);
                                     sticky_cache_hit = data_point.value;
                                 }
-                                let g = gauge.as_any().downcast_ref::<u64>();
-                                println!("g: {:?}", g);
                             }
-                            // sticky_cache_hit = m.
-                        } else if m.name == format!("{}{}", METRIC_PREFIX, "sticky_cache_hit") {
+                        } else if m.name == "sticky_cache_hit" {
                             println!("sticky_cache_hit: {:#?}", m);
                             let agg: &dyn Aggregation = &*m.data;
                             let any = agg.as_any();
                             if let Some(counter) = any.downcast_ref::<Sum<u64>>() {
-                                println!("counter: {:#?}", counter);
                                 // TODO: Defensive program against if size > 1?
                                 for data_point in &counter.data_points {
                                     self.data.total_sticky_cache_hit = data_point.value as i32;
                                 }
                             }
 
-                        }else if m.name == format!("{}{}", METRIC_PREFIX, "sticky_cache_miss") {
+                        } else if m.name == "sticky_cache_miss" {
                             println!("sticky_cache_miss: {:#?}", m);
                             let agg: &dyn Aggregation = &*m.data;
                             let any = agg.as_any();
                             if let Some(counter) = any.downcast_ref::<Sum<u64>>() {
-                                println!("counter: {:#?}", counter);
                                 // TODO: Defensive program against if size > 1?
                                 for data_point in &counter.data_points {
                                     self.data.total_sticky_cache_hit = data_point.value as i32;
@@ -854,9 +841,6 @@ impl WorkerHeartbeatInfo {
 
         self.data.heartbeat_time = Some(now.into());
 
-        // self.data.clone()
-        // TODO: impl From or Into to auto-convert?
-        //  need to see if there's anything needed outside of self.data
         let heartbeat = WorkerHeartbeat {
             worker_instance_key: self.data.worker_instance_key.clone(),
             // TODO: get host name and process ID
@@ -904,14 +888,6 @@ pub(crate) struct WorkerHeartbeatData {
     // status: WorkerStatus,
     /// Worker start time
     pub(crate) start_time: SystemTime,
-    // // TODO: Not state that needs to be tracked, worker will just call "now" when it sends heartbeat
-    // /// Timestamp of this heartbeat, coming from the worker. Worker should set it to "now".
-    // // heartbeat_time: tokio::time::Instant,
-    //
-    // /// Last heartbeat time, coming from the worker. Worker should set it to "now".
-    // last_heartbeat_time: tokio::time::Instant,
-    //
-    // ///
     // // workflow_task_slots_info: WorkerSlotsInfo<WorkflowSlotKind>,
     // // ///
     // // activity_task_slots_info: WorkerSlotsInfo<ActivitySlotKind>,
@@ -920,13 +896,13 @@ pub(crate) struct WorkerHeartbeatData {
     // // local_activity_slots_info: WorkerSlotsInfo<LocalActivitySlotKind>,
     //
     // ///
-    workflow_poller_info: WorkerPollerInfo,
+    // workflow_poller_info: WorkerPollerInfo,
     // ///
-    activity_poller_info: WorkerPollerInfo,
+    // activity_poller_info: WorkerPollerInfo,
     // ///
-    nexus_poller_info: WorkerPollerInfo,
+    // nexus_poller_info: WorkerPollerInfo,
     // ///
-    workflow_sticky_poller_info: WorkerPollerInfo,
+    // workflow_sticky_poller_info: WorkerPollerInfo,
     //
     // // TODO: Need to plumb this from metrics to here
     /// A Workflow Task found a cached Workflow Execution to run against.
@@ -939,31 +915,31 @@ pub(crate) struct WorkerHeartbeatData {
 
 impl WorkerHeartbeatData {
     fn new(worker_config: WorkerConfig) -> Self {
-        let workflow_poller_info = WorkerPollerInfo {
-            current_pollers: 0, // TODO
-            last_successful_poll_time: Timestamp::default(), // TODO
-            is_autoscaling: worker_config.workflow_task_poller_behavior.is_autoscaling(),
-        };
-        let activity_poller_info = WorkerPollerInfo {
-            current_pollers: 0,
-            last_successful_poll_time: Timestamp::default(),
-            is_autoscaling: worker_config.activity_task_poller_behavior.is_autoscaling(),
-        };
-        // TODO: make_wft_poller seems important for this?
-        // TODO: I think WFTPollerShared will give the list
-        //  new_workflow_task
-        //  make_wft_poller
-        let nexus_poller_info = WorkerPollerInfo {
-            current_pollers: 0,
-            last_successful_poll_time: Timestamp::default(),
-            is_autoscaling: worker_config.nexus_task_poller_behavior.is_autoscaling(),
-        };
-        // TODO: none of these values are right
-        let workflow_sticky_poller_info = WorkerPollerInfo {
-            current_pollers: 0,
-            last_successful_poll_time: Timestamp::default(),
-            is_autoscaling: worker_config.activity_task_poller_behavior.is_autoscaling(),
-        };
+        // let workflow_poller_info = WorkerPollerInfo {
+        //     current_pollers: 0, // TODO
+        //     last_successful_poll_time: Timestamp::default(), // TODO
+        //     is_autoscaling: worker_config.workflow_task_poller_behavior.is_autoscaling(),
+        // };
+        // let activity_poller_info = WorkerPollerInfo {
+        //     current_pollers: 0,
+        //     last_successful_poll_time: Timestamp::default(),
+        //     is_autoscaling: worker_config.activity_task_poller_behavior.is_autoscaling(),
+        // };
+        // // TODO: make_wft_poller seems important for this?
+        // // TODO: I think WFTPollerShared will give the list
+        // //  new_workflow_task
+        // //  make_wft_poller
+        // let nexus_poller_info = WorkerPollerInfo {
+        //     current_pollers: 0,
+        //     last_successful_poll_time: Timestamp::default(),
+        //     is_autoscaling: worker_config.nexus_task_poller_behavior.is_autoscaling(),
+        // };
+        // // TODO: none of these values are right
+        // let workflow_sticky_poller_info = WorkerPollerInfo {
+        //     current_pollers: 0,
+        //     last_successful_poll_time: Timestamp::default(),
+        //     is_autoscaling: worker_config.activity_task_poller_behavior.is_autoscaling(),
+        // };
         Self {
             sdk_name: String::new(),
             sdk_version: String::new(),
@@ -973,10 +949,10 @@ impl WorkerHeartbeatData {
             worker_instance_key: Uuid::new_v4().to_string(),
             total_sticky_cache_hit: 0,
             total_sticky_cache_miss: 0,
-            workflow_poller_info,
-            activity_poller_info,
-            nexus_poller_info,
-            workflow_sticky_poller_info
+            // workflow_poller_info,
+            // activity_poller_info,
+            // nexus_poller_info,
+            // workflow_sticky_poller_info
         }
     }
 }

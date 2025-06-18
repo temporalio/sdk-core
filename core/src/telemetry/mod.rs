@@ -22,7 +22,7 @@ pub use otel::{build_otlp_metric_exporter, start_prometheus_metric_exporter};
 
 // TODO: Clean up?
 #[cfg(feature = "otel")]
-pub use in_memory::InMemoryThing;
+pub use in_memory::InMemoryMeter;
 
 pub use log_export::{CoreLogBuffer, CoreLogBufferedConsumer, CoreLogStreamConsumer};
 
@@ -38,6 +38,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
 };
+use std::fmt::Debug;
 use temporal_sdk_core_api::telemetry::{
     CoreLog, CoreTelemetry, Logger, TelemetryOptions, TelemetryOptionsBuilder,
     metrics::{CoreMeter, MetricKeyValue, NewAttributes, TemporalMeter},
@@ -66,7 +67,7 @@ pub struct TelemetryInstance {
     /// the user has not opted into any tracing configuration.
     trace_subscriber: Option<Arc<dyn Subscriber + Send + Sync>>,
     attach_service_name: bool,
-    in_mem_thing: Option<InMemoryThing>,
+    in_memory_meter: Option<Arc<InMemoryMeter>>,
 }
 
 impl TelemetryInstance {
@@ -83,7 +84,7 @@ impl TelemetryInstance {
             metrics,
             trace_subscriber,
             attach_service_name,
-            in_mem_thing: None,
+            in_memory_meter: None,
         }
     }
 
@@ -98,11 +99,10 @@ impl TelemetryInstance {
     /// other telemetry has initted (ex: prometheus). They can be attached here.
     pub fn attach_late_init_metrics(
         &mut self,
-        meter: Arc<dyn CoreMeter + 'static>,
-        in_mem_thing: Option<InMemoryThing>,
+        meter: Arc<dyn CoreMeterWithMem>,
     ) {
+        self.in_memory_meter = Some(meter.in_memory_meter().clone());
         self.metrics = Some(meter);
-        self.in_mem_thing = in_mem_thing;
     }
 
     /// Returns our wrapper for metric meters, including the `metric_prefix` from
@@ -137,8 +137,8 @@ impl TelemetryInstance {
         }
     }
 
-    pub fn in_mem_thing(&self) -> Option<InMemoryThing> {
-        self.in_mem_thing.clone()
+    pub fn in_memory_meter(&self) -> Option<Arc<InMemoryMeter>> {
+        self.in_memory_meter.clone()
     }
 }
 
@@ -314,4 +314,8 @@ where
     fn display(&self) -> String {
         format!("[{}]", self.iter().format(","))
     }
+}
+
+pub trait CoreMeterWithMem: CoreMeter + Send + Sync + Debug {
+    fn in_memory_meter(&self) -> Arc<InMemoryMeter>;
 }

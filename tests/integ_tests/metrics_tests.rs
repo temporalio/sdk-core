@@ -521,7 +521,7 @@ fn runtime_new() {
     let _rt = handle.enter();
     let (telemopts, addr, _aborter) = prom_metrics(None);
     rt.telemetry_mut()
-        .attach_late_init_metrics(telemopts.metrics.unwrap(), None);
+        .attach_late_init_metrics(telemopts.metrics.unwrap());
     let opts = get_integ_server_options();
     handle.block_on(async {
         let mut raw_client = opts
@@ -554,12 +554,9 @@ async fn runtime_new_otel() {
     let opts = opts_build.url(url).build().unwrap();
     // If wanna add more options: https://github.com/temporalio/sdk-ruby/blob/143e421d82d16e58bd45226998363d55e4bc3bbb/temporalio/ext/src/runtime.rs#L113C21-L135C22
 
-    let composite_meter = build_otlp_metric_exporter(opts).unwrap();
-
-    let in_memory_thing = composite_meter.in_mem_exporter().clone();
 
     rt.telemetry_mut()
-        .attach_late_init_metrics(Arc::new(composite_meter), Some(in_memory_thing.clone()));
+        .attach_late_init_metrics(Arc::new(build_otlp_metric_exporter(opts).unwrap()));
 
     let wf_name = "runtime_new_otel";
     let mut starter = CoreWfStarter::new_with_runtime(wf_name, rt);
@@ -643,22 +640,8 @@ async fn runtime_new_otel() {
         .unwrap();
     worker.run_until_done().await.unwrap();
 
-
-    let finished_metrics = in_memory_thing.get_metrics().unwrap();
-    println!("Printing finished metrics {:?}", finished_metrics.len());
-    // for resource_metrics in finished_metrics {
-    //     println!("[] {:#?}", resource_metrics)
-    // }
-
-    // TODO: Use in_memory_thing.meter_provider() to verify in-memory values
-    let asdf = in_memory_thing.meter_provider();
-    println!("asdf {:#?}", asdf);
-
     // TODO: add some asserts to ensure data shows up
-    // assert_eq!(in_memory_thing.meter_provider().);
     panic!("need prints to show");
-    // TODO: This test doesn't show results of metrics. This test needs to be changed to actually
-    //  test something useful.
 }
 
 #[rstest::rstest]

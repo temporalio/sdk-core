@@ -98,7 +98,7 @@ use {
 };
 use temporal_sdk_core_api::telemetry::METRIC_PREFIX;
 use temporal_sdk_core_api::worker::SlotKind;
-use crate::telemetry::InMemoryThing;
+use crate::telemetry::InMemoryMeter;
 use crate::telemetry::metrics::STICKY_CACHE_SIZE_NAME;
 pub(crate) use crate::worker::client::WorkerHeartbeatInfo;
 
@@ -318,17 +318,16 @@ impl Worker {
         telem_instance: Option<&TelemetryInstance>,
         heartbeat_info: Option<Arc<Mutex<WorkerHeartbeatInfo>>>,
     ) -> Self {
-        // TODO: Use existing MetricsContext or a new meter to record and export these metrics, possibly through the same MetricsCallBuffer
         // ANDREW: metrics is temporal metrics, meter is user metrics
-        let (metrics, meter, in_mem_thing) = if let Some(ti) = telem_instance {
+        // stuff everything into MetricsContext
+        let (metrics, meter) = if let Some(ti) = telem_instance {
             (
                 // ANDREW: this is the top-level metrics context for the worker, which is used to record and export metrics.
                 MetricsContext::top_level(config.namespace.clone(), config.task_queue.clone(), ti),
                 ti.get_metric_meter(),
-                ti.in_mem_thing(),
             )
         } else {
-            (MetricsContext::no_op(), None, None)
+            (MetricsContext::no_op(), None)
         };
         let tuner = config
             .tuner
@@ -498,12 +497,6 @@ impl Worker {
             external_wft_tx,
         );
         let worker_key = Mutex::new(client.workers().register(Box::new(provider)));
-        println!("try to get export data");
-        let asdf = in_mem_thing.clone().unwrap().get_metrics().unwrap();
-        // println!("printing metrics: {:?}", asdf.len());
-        // for a in asdf {
-        //     println!("[a]{:#?}", a);
-        // }
         let sdk_name_and_ver = client.sdk_name_and_version();
         if let Some(heartbeat_info) = heartbeat_info {
             let mut heartbeat_info = heartbeat_info.lock();
@@ -511,7 +504,6 @@ impl Worker {
             heartbeat_info.data.sdk_version = sdk_name_and_ver.1.clone();
             heartbeat_info.data.task_queue = config.task_queue.clone();
             heartbeat_info.data.start_time = SystemTime::now();
-            println!("heartbeat_info: {:#?}", heartbeat_info.data);
         }
 
         Self {

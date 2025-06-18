@@ -14,6 +14,7 @@ use temporal_sdk_core_api::telemetry::metrics::{
 };
 use temporal_sdk_core_protos::temporal::api::enums::v1::WorkflowTaskFailedCause;
 use temporal_sdk_core_protos::temporal::api::failure::v1::Failure;
+use crate::telemetry::InMemoryMeter;
 
 /// Used to track context associated with metrics, and record/update them
 ///
@@ -58,10 +59,24 @@ struct Instruments {
     num_pollers: Arc<dyn Gauge>,
     task_slots_available: Arc<dyn Gauge>,
     task_slots_used: Arc<dyn Gauge>,
-    sticky_cache_hit: Arc<dyn Counter>,
-    sticky_cache_miss: Arc<dyn Counter>,
+    sticky_cache_hit: MetricAndHeartbeatCounter,
+    sticky_cache_miss: MetricAndHeartbeatCounter,
     sticky_cache_size: Arc<dyn Gauge>,
     sticky_cache_forced_evictions: Arc<dyn Counter>,
+}
+
+struct MetricAndHeartbeatCounter {
+    metric: Arc<dyn Counter>,
+    for_heartbeat: HeartbeatCounter,
+}
+
+struct HeartbeatCounter (Arc<dyn Counter>);
+
+impl Counter for MetricAndHeartbeatCounter {
+    fn add(&self, value: u64, attributes: &MetricAttributes) {
+        self.metric.add(value, attributes);
+        self.for_heartbeat.0.add(value, attributes);
+    }
 }
 
 impl MetricsContext {
@@ -69,7 +84,7 @@ impl MetricsContext {
         let meter = Arc::new(NoOpCoreMeter);
         Self {
             kvs: meter.new_attributes(Default::default()),
-            instruments: Arc::new(Instruments::new(meter.as_ref())),
+            instruments: Arc::new(Instruments::new(meter.as_ref(), None)),
             meter,
         }
     }
@@ -84,7 +99,7 @@ impl MetricsContext {
             let kvs = meter.inner.new_attributes(meter.default_attribs);
             Self {
                 kvs,
-                instruments: Arc::new(Instruments::new(meter.inner.as_ref())),
+                instruments: Arc::new(Instruments::new(meter.inner.as_ref(), telemetry.in_memory_meter.clone())),
                 meter: meter.inner,
             }
         } else {
@@ -310,7 +325,34 @@ impl MetricsContext {
 }
 
 impl Instruments {
-    fn new(meter: &dyn CoreMeter) -> Self {
+    fn new(meter: &dyn CoreMeter, in_mem_thing: Option<Arc<InMemoryMeter>>) -> Self {
+        // TODO: handle when in_mem_thing is None
+        let in_mem_thing = in_mem_thing.unwrap();
+        let params = MetricParameters {
+            name: "sticky_cache_hit".into(),
+            description: "Count of times the workflow cache was used for a new workflow task"
+                .into(),
+            unit: "".into(),
+        };
+        let sticky_cache_hit = MetricAndHeartbeatCounter {
+                metric: meter.counter(params.clone()),
+                for_heartbeat: HeartbeatCounter(in_mem_thing.counter(params)),
+            }
+       ;
+
+        let params = MetricParameters {
+            name: "sticky_cache_miss".into(),
+            description:
+            "Count of times the workflow cache was missing a workflow for a sticky task"
+                .into(),
+            unit: "".into(),
+        };
+        let sticky_cache_miss = MetricAndHeartbeatCounter {
+            metric: meter.counter(params.clone()),
+            for_heartbeat: HeartbeatCounter(in_mem_thing.counter(params)),
+        };
+
+        
         Self {
             wf_completed_counter: meter.counter(MetricParameters {
                 name: "workflow_completed".into(),
@@ -471,19 +513,9 @@ impl Instruments {
                 description: "Current number of used slots per task type".into(),
                 unit: "".into(),
             }),
-            sticky_cache_hit: meter.counter(MetricParameters {
-                name: "sticky_cache_hit".into(),
-                description: "Count of times the workflow cache was used for a new workflow task"
-                    .into(),
-                unit: "".into(),
-            }),
-            sticky_cache_miss: meter.counter(MetricParameters {
-                name: "sticky_cache_miss".into(),
-                description:
-                    "Count of times the workflow cache was missing a workflow for a sticky task"
-                        .into(),
-                unit: "".into(),
-            }),
+            sticky_cache_hit,
+            sticky_cache_miss,
+
             sticky_cache_size: meter.gauge(MetricParameters {
                 name: STICKY_CACHE_SIZE_NAME.into(),
                 description: "Current number of cached workflows".into(),

@@ -1,42 +1,46 @@
 use crate::api::telemetry::metrics::MetricAttributes;
 use fmt::Debug;
-use opentelemetry_sdk::error::OTelSdkResult;
 use opentelemetry_sdk::metrics::{InMemoryMetricExporter, SdkMeterProvider};
 use std::{fmt, sync::Arc};
+use opentelemetry::KeyValue;
+use opentelemetry::metrics::Meter;
 use opentelemetry_sdk::InMemoryExporterError;
 use opentelemetry_sdk::metrics::data::ResourceMetrics;
 use temporal_sdk_core_api::telemetry::metrics::{
     CoreMeter, Counter, Gauge, GaugeF64, Histogram, HistogramDuration, HistogramF64,
     MetricParameters, NewAttributes,
 };
-
-#[derive(Debug)]
-pub enum Exporter {
-    Otel(Arc<dyn CoreMeter>),
-    Prometheus(Arc<dyn CoreMeter>),
-}
+use crate::abstractions::dbg_panic;
 
 #[derive(Debug, Clone)]
-pub struct InMemoryThing {
+pub struct InMemoryMeter {
+    pub(crate) meter: Meter,
     pub(crate) in_memory_exporter: InMemoryMetricExporter,
     pub(crate) mp: SdkMeterProvider,
+
 }
 
-impl InMemoryThing {
-    pub fn new(in_memory_exporter: InMemoryMetricExporter, mp: SdkMeterProvider) -> InMemoryThing {
+impl InMemoryMeter {
+    /// TODO:
+    pub fn new(in_memory_exporter: InMemoryMetricExporter, meter: Meter, mp: SdkMeterProvider) -> InMemoryMeter {
         Self {
+            meter,
             in_memory_exporter,
             mp,
         }
     }
+    
+    /// TODO
     pub fn meter_provider(&self) -> SdkMeterProvider {
         self.mp.clone()
     }
 
+    /// TODO
     pub fn in_mem_exporter(&self) -> InMemoryMetricExporter {
         self.in_memory_exporter.clone()
     }
 
+    /// TODO
     pub fn get_metrics(&self) ->  Result<Vec<ResourceMetrics>, InMemoryExporterError> {
         // TODO: propogate error
         self.mp.force_flush().unwrap();
@@ -44,48 +48,10 @@ impl InMemoryThing {
     }
 }
 
-/// A composite meter that combines a otel/prom exporter with an in-memory store
-#[derive(Debug)]
-pub struct CompositeMeter {
-    pub(crate) exporter: Exporter,
-    pub(crate) in_memory_thing: InMemoryThing,
-}
-
-impl CompositeMeter {
-    pub fn new(
-        exporter: Exporter,
-        in_memory_exporter: InMemoryMetricExporter,
-        mp: SdkMeterProvider,
-    ) -> Self {
-        CompositeMeter {
-            exporter,
-            in_memory_thing: InMemoryThing {
-                in_memory_exporter,
-                mp,
-            },
-        }
-    }
-
-    pub fn force_flush(&self) -> OTelSdkResult {
-        self.in_memory_thing.mp.force_flush()
-    }
-
-    pub fn meter_provider(&self) -> SdkMeterProvider {
-        self.in_memory_thing.mp.clone()
-    }
-
-    pub fn in_mem_exporter(&self) -> InMemoryThing {
-        self.in_memory_thing.clone()
-    }
-
-    // pub fn get_counter(&self)
-}
-
-impl CoreMeter for CompositeMeter {
+impl CoreMeter for InMemoryMeter {
     fn new_attributes(&self, attribs: NewAttributes) -> MetricAttributes {
-        match &self.exporter {
-            Exporter::Otel(meter) => meter.new_attributes(attribs),
-            Exporter::Prometheus(meter) => meter.new_attributes(attribs),
+        MetricAttributes::OTel {
+            kvs: Arc::new(attribs.attributes.into_iter().map(KeyValue::from).collect()),
         }
     }
 
@@ -94,45 +60,70 @@ impl CoreMeter for CompositeMeter {
         existing: MetricAttributes,
         attribs: NewAttributes,
     ) -> MetricAttributes {
-        match &self.exporter {
-            Exporter::Otel(meter) => meter.extend_attributes(existing, attribs),
-            Exporter::Prometheus(meter) => meter.extend_attributes(existing, attribs),
+        if let MetricAttributes::OTel { mut kvs } = existing {
+            Arc::make_mut(&mut kvs).extend(attribs.attributes.into_iter().map(Into::into));
+            MetricAttributes::OTel { kvs }
+        } else {
+            dbg_panic!("Must use OTel attributes with an OTel metric implementation");
+            existing
         }
     }
+
     fn counter(&self, params: MetricParameters) -> Arc<dyn Counter> {
-        match &self.exporter {
-            Exporter::Otel(meter) => meter.counter(params),
-            Exporter::Prometheus(meter) => meter.counter(params),
-        }
+        Arc::new(
+            self.meter
+                .u64_counter(params.name)
+                .with_unit(params.unit)
+                .with_description(params.description)
+                .build(),
+        )
     }
+
     fn histogram(&self, params: MetricParameters) -> Arc<dyn Histogram> {
-        match &self.exporter {
-            Exporter::Otel(meter) => meter.histogram(params),
-            Exporter::Prometheus(meter) => meter.histogram(params),
-        }
+        Arc::new(
+            self.meter
+                .u64_histogram(params.name)
+                .with_unit(params.unit)
+                .with_description(params.description)
+                .build(),
+        )
     }
+
     fn histogram_f64(&self, params: MetricParameters) -> Arc<dyn HistogramF64> {
-        match &self.exporter {
-            Exporter::Otel(meter) => meter.histogram_f64(params),
-            Exporter::Prometheus(meter) => meter.histogram_f64(params),
-        }
+        Arc::new(
+            self.meter
+                .f64_histogram(params.name)
+                .with_unit(params.unit)
+                .with_description(params.description)
+                .build(),
+        )
     }
-    fn histogram_duration(&self, params: MetricParameters) -> Arc<dyn HistogramDuration> {
-        match &self.exporter {
-            Exporter::Otel(meter) => meter.histogram_duration(params),
-            Exporter::Prometheus(meter) => meter.histogram_duration(params),
-        }
+
+    // TODO: fix
+    fn histogram_duration(&self, mut params: MetricParameters) -> Arc<dyn HistogramDuration> {
+        params.unit = "s".into();
+        Arc::new(
+            crate::telemetry::otel::DurationHistogram::Seconds(self.histogram_f64(params))
+        )
     }
+
     fn gauge(&self, params: MetricParameters) -> Arc<dyn Gauge> {
-        match &self.exporter {
-            Exporter::Otel(meter) => meter.gauge(params),
-            Exporter::Prometheus(meter) => meter.gauge(params),
-        }
+        Arc::new(
+            self.meter
+                .u64_gauge(params.name)
+                .with_unit(params.unit)
+                .with_description(params.description)
+                .build(),
+        )
     }
+
     fn gauge_f64(&self, params: MetricParameters) -> Arc<dyn GaugeF64> {
-        match &self.exporter {
-            Exporter::Otel(meter) => meter.gauge_f64(params),
-            Exporter::Prometheus(meter) => meter.gauge_f64(params),
-        }
+        Arc::new(
+            self.meter
+                .f64_gauge(params.name)
+                .with_unit(params.unit)
+                .with_description(params.description)
+                .build(),
+        )
     }
 }

@@ -1,14 +1,10 @@
-use super::{
-    TELEM_SERVICE_NAME, default_buckets_for,
-    metrics::{
-        ACTIVITY_EXEC_LATENCY_HISTOGRAM_NAME, ACTIVITY_SCHED_TO_START_LATENCY_HISTOGRAM_NAME,
-        DEFAULT_MS_BUCKETS, WORKFLOW_E2E_LATENCY_HISTOGRAM_NAME,
-        WORKFLOW_TASK_EXECUTION_LATENCY_HISTOGRAM_NAME,
-        WORKFLOW_TASK_REPLAY_LATENCY_HISTOGRAM_NAME,
-        WORKFLOW_TASK_SCHED_TO_START_LATENCY_HISTOGRAM_NAME,
-    },
-    prometheus_server::PromServer,
-};
+use super::{TELEM_SERVICE_NAME, default_buckets_for, metrics::{
+    ACTIVITY_EXEC_LATENCY_HISTOGRAM_NAME, ACTIVITY_SCHED_TO_START_LATENCY_HISTOGRAM_NAME,
+    DEFAULT_MS_BUCKETS, WORKFLOW_E2E_LATENCY_HISTOGRAM_NAME,
+    WORKFLOW_TASK_EXECUTION_LATENCY_HISTOGRAM_NAME,
+    WORKFLOW_TASK_REPLAY_LATENCY_HISTOGRAM_NAME,
+    WORKFLOW_TASK_SCHED_TO_START_LATENCY_HISTOGRAM_NAME,
+}, prometheus_server::PromServer, InMemoryMeter, CoreMeterWithMem};
 use crate::{abstractions::dbg_panic, telemetry::metrics::DEFAULT_S_BUCKETS};
 use opentelemetry::{
     self, Key, KeyValue, Value,
@@ -23,7 +19,7 @@ use opentelemetry_sdk::{
     },
 };
 use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
-use opentelemetry_sdk::metrics::InMemoryMetricExporterBuilder;
+use opentelemetry_sdk::metrics::{InMemoryMetricExporterBuilder};
 use temporal_sdk_core_api::telemetry::{
     HistogramBucketOverrides, MetricTemporality, OtelCollectorOptions, OtlpProtocol,
     PrometheusExporterOptions,
@@ -34,7 +30,6 @@ use temporal_sdk_core_api::telemetry::{
 };
 use tokio::task::AbortHandle;
 use tonic::{metadata::MetadataMap, transport::ClientTlsConfig};
-use crate::telemetry::in_memory::{CompositeMeter, Exporter};
 
 /// A specialized `Result` type for metric operations.
 type Result<T> = std::result::Result<T, MetricError>;
@@ -118,7 +113,7 @@ pub(super) fn augment_meter_provider_with_defaults(
 /// Create an OTel meter that can be used as a [CoreMeter] to export metrics over OTLP.
 pub fn build_otlp_metric_exporter(
     opts: OtelCollectorOptions,
-) -> std::result::Result<CompositeMeter, anyhow::Error> {
+) -> std::result::Result<CoreOtelMeter, anyhow::Error> {
     let exporter = match opts.protocol {
         OtlpProtocol::Grpc => {
             let mut exporter = opentelemetry_otlp::MetricExporter::builder()
@@ -150,23 +145,27 @@ pub fn build_otlp_metric_exporter(
         .build();
     let mp = augment_meter_provider_with_defaults(
         MeterProviderBuilder::default()
-            .with_reader(reader)
-            .with_reader(in_mem_reader),
+            .with_reader(reader),
+        &opts.global_tags,
+        opts.use_seconds_for_durations,
+        opts.histogram_bucket_overrides.clone(),
+    )?
+    .build();
+    
+    let in_mem_mp = augment_meter_provider_with_defaults(
+        MeterProviderBuilder::default().with_reader(in_mem_reader),
         &opts.global_tags,
         opts.use_seconds_for_durations,
         opts.histogram_bucket_overrides,
-    )?
-    .build();
-    let otel_meter = CoreOtelMeter {
+    )?.build();
+    let in_mem_meter = Arc::new(InMemoryMeter::new(in_mem_exporter, in_mem_mp.meter(TELEM_SERVICE_NAME), in_mem_mp));
+
+    Ok::<_, anyhow::Error>(CoreOtelMeter {
         meter: mp.meter(TELEM_SERVICE_NAME),
         use_seconds_for_durations: opts.use_seconds_for_durations,
         _mp: mp.clone(),
-    };
-    Ok::<_, anyhow::Error>(CompositeMeter::new(
-        Exporter::Otel(Arc::new(otel_meter)),
-        in_mem_exporter,
-        mp,
-    ))
+        in_mem_meter,
+    })
 }
 
 pub struct StartedPromServer {
@@ -187,16 +186,31 @@ pub fn start_prometheus_metric_exporter(
         MeterProviderBuilder::default().with_reader(exporter),
         &opts.global_tags,
         opts.use_seconds_for_durations,
-        opts.histogram_bucket_overrides,
+        opts.histogram_bucket_overrides.clone(),
     )?
     .build();
     let bound_addr = srv.bound_addr()?;
     let handle = tokio::spawn(async move { srv.run().await });
+    // TODO:
+    let in_mem_exporter = InMemoryMetricExporterBuilder::new()
+        // .with_temporality(metric_temporality_to_temporality(opts.metric_temporality))
+        .build();
+    let in_mem_reader = PeriodicReader::builder(in_mem_exporter.clone())
+        // .with_interval(opts.metric_periodicity)
+        .build();
+    let in_mem_mp = augment_meter_provider_with_defaults(
+        MeterProviderBuilder::default().with_reader(in_mem_reader),
+        &opts.global_tags,
+        opts.use_seconds_for_durations,
+        opts.histogram_bucket_overrides,
+    )?.build();
+    let in_mem_thing = Arc::new(InMemoryMeter::new(in_mem_exporter, in_mem_mp.meter(TELEM_SERVICE_NAME), in_mem_mp));
     Ok(StartedPromServer {
         meter: Arc::new(CoreOtelMeter {
             meter: meter_provider.meter(TELEM_SERVICE_NAME),
             use_seconds_for_durations: opts.use_seconds_for_durations,
             _mp: meter_provider,
+            in_mem_meter: in_mem_thing,
         }),
         bound_addr,
         abort_handle: handle.abort_handle(),
@@ -210,6 +224,7 @@ pub struct CoreOtelMeter {
     // we have to hold on to the provider otherwise otel automatically shuts it down on drop
     // for whatever crazy reason
     _mp: SdkMeterProvider,
+    pub in_mem_meter: Arc<InMemoryMeter>,
 }
 
 impl CoreMeter for CoreOtelMeter {
@@ -294,9 +309,14 @@ impl CoreMeter for CoreOtelMeter {
     }
 }
 
+impl CoreMeterWithMem for CoreOtelMeter {
+    fn in_memory_meter(&self) -> Arc<InMemoryMeter> {
+        self.in_mem_meter.clone()
+    }
+}
 /// A histogram being used to record durations.
 #[derive(Clone)]
-enum DurationHistogram {
+pub(crate) enum DurationHistogram {
     Milliseconds(Arc<dyn Histogram>),
     Seconds(Arc<dyn HistogramF64>),
 }
