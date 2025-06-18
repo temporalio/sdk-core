@@ -7,10 +7,10 @@ use std::{
     time::Duration,
 };
 use temporal_sdk_core_api::telemetry::metrics::{
-    BufferAttributes, BufferInstrumentRef, CoreMeter, Counter, Gauge, GaugeF64, Histogram,
-    HistogramDuration, HistogramF64, LazyBufferInstrument, MetricAttributes, MetricCallBufferer,
-    MetricEvent, MetricKeyValue, MetricKind, MetricParameters, MetricUpdateVal, NewAttributes,
-    NoOpCoreMeter,
+    BufferAttributes, BufferInstrumentRef, CoreMeter, Counter, CounterBase, Gauge, GaugeF64,
+    Histogram, HistogramDuration, HistogramF64, LazyBufferInstrument, MetricAttributable,
+    MetricAttributes, MetricCallBufferer, MetricEvent, MetricKeyValue, MetricKind,
+    MetricParameters, MetricUpdateVal, NewAttributes, NoOpCoreMeter,
 };
 use temporal_sdk_core_protos::temporal::api::{
     enums::v1::WorkflowTaskFailedCause, failure::v1::Failure,
@@ -790,6 +790,7 @@ where
     }
 }
 
+#[derive(Clone)]
 struct BufferInstrument<I: BufferInstrumentRef> {
     instrument_ref: LazyBufferInstrument<I>,
     tx: LogErrOnFullSender<MetricEvent<I>>,
@@ -810,12 +811,33 @@ where
         });
     }
 }
-impl<I> Counter for BufferInstrument<I>
+
+#[derive(Clone)]
+struct InstrumentWithAttributes<I> {
+    inner: I,
+    attributes: MetricAttributes,
+}
+
+impl<I> MetricAttributable for BufferInstrument<I>
 where
-    I: BufferInstrumentRef + Send + Sync + Clone,
+    I: BufferInstrumentRef + Send + Sync + Clone + 'static,
 {
-    fn add(&self, value: u64, attributes: &MetricAttributes) {
-        self.send(MetricUpdateVal::Delta(value), attributes)
+    type Base = InstrumentWithAttributes<BufferInstrument<I>>;
+
+    fn with_attributes(&self, attributes: &MetricAttributes) -> Self::Base {
+        InstrumentWithAttributes {
+            inner: self.clone(),
+            attributes: attributes.clone(),
+        }
+    }
+}
+impl<I> CounterBase for InstrumentWithAttributes<BufferInstrument<I>>
+where
+    I: BufferInstrumentRef + Send + Sync + Clone + 'static,
+{
+    fn add(&self, value: u64) {
+        self.inner
+            .send(MetricUpdateVal::Delta(value), &self.attributes)
     }
 }
 impl<I> Gauge for BufferInstrument<I>

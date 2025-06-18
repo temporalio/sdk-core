@@ -119,7 +119,7 @@ pub enum MetricAttributes {
     },
     #[cfg(feature = "prom_impls")]
     Prometheus {
-        labels: LabelSet,
+        labels: Arc<LabelSet>,
     },
     Buffer(BufferAttributes),
     Dynamic(Arc<dyn CustomMetricAttributes>),
@@ -183,32 +183,143 @@ impl From<&'static str> for MetricValue {
     }
 }
 
-// TODO: Easiest thing to do is add a `with_attributes` here that returns versions that
-//  have the record methods but don't accept attributes.
+pub trait MetricAttributable {
+    type Base;
+
+    fn with_attributes(&self, attributes: &MetricAttributes) -> Self::Base;
+}
 
 pub trait Counter: Send + Sync {
     fn add(&self, value: u64, attributes: &MetricAttributes);
+}
+impl<T, CB> Counter for T
+where
+    T: MetricAttributable<Base = CB> + Send + Sync,
+    CB: CounterBase + Send + Sync + Sized,
+{
+    fn add(&self, value: u64, attributes: &MetricAttributes) {
+        let base = self.with_attributes(attributes);
+        base.add(value);
+    }
+}
+pub trait CounterBase: Send + Sync {
+    fn add(&self, value: u64);
+}
+impl CounterBase for Arc<dyn CounterBase> {
+    fn add(&self, value: u64) {
+        self.as_ref().add(value)
+    }
 }
 
 pub trait Histogram: Send + Sync {
     // When referring to durations, this value is in millis
     fn record(&self, value: u64, attributes: &MetricAttributes);
 }
+impl<T, HB> Histogram for T
+where
+    T: MetricAttributable<Base = HB> + Send + Sync,
+    HB: HistogramBase + Send + Sync + Sized,
+{
+    fn record(&self, value: u64, attributes: &MetricAttributes) {
+        let base = self.with_attributes(attributes);
+        base.record(value);
+    }
+}
+pub trait HistogramBase: Send + Sync {
+    fn record(&self, value: u64);
+}
+impl HistogramBase for Arc<dyn HistogramBase> {
+    fn record(&self, value: u64) {
+        self.as_ref().record(value)
+    }
+}
 pub trait HistogramF64: Send + Sync {
     // When referring to durations, this value is in seconds
     fn record(&self, value: f64, attributes: &MetricAttributes);
 }
+impl<T, HB> HistogramF64 for T
+where
+    T: MetricAttributable<Base = HB> + Send + Sync,
+    HB: HistogramF64Base + Send + Sync + Sized,
+{
+    fn record(&self, value: f64, attributes: &MetricAttributes) {
+        let base = self.with_attributes(attributes);
+        base.record(value);
+    }
+}
+pub trait HistogramF64Base: Send + Sync {
+    fn record(&self, value: f64);
+}
+impl HistogramF64Base for Arc<dyn HistogramF64Base> {
+    fn record(&self, value: f64) {
+        self.as_ref().record(value)
+    }
+}
 pub trait HistogramDuration: Send + Sync {
     fn record(&self, value: Duration, attributes: &MetricAttributes);
+}
+impl<T, HB> HistogramDuration for T
+where
+    T: MetricAttributable<Base = HB> + Send + Sync,
+    HB: HistogramDurationBase + Send + Sync + Sized,
+{
+    fn record(&self, value: Duration, attributes: &MetricAttributes) {
+        let base = self.with_attributes(attributes);
+        base.record(value);
+    }
+}
+pub trait HistogramDurationBase: Send + Sync {
+    fn record(&self, value: Duration);
+}
+impl HistogramDurationBase for Arc<dyn HistogramDurationBase> {
+    fn record(&self, value: Duration) {
+        self.as_ref().record(value)
+    }
 }
 
 pub trait Gauge: Send + Sync {
     // When referring to durations, this value is in millis
     fn record(&self, value: u64, attributes: &MetricAttributes);
 }
+impl<T, GB> Gauge for T
+where
+    T: MetricAttributable<Base = GB> + Send + Sync,
+    GB: GaugeBase + Send + Sync + Sized,
+{
+    fn record(&self, value: u64, attributes: &MetricAttributes) {
+        let base = self.with_attributes(attributes);
+        base.record(value);
+    }
+}
+pub trait GaugeBase: Send + Sync {
+    fn record(&self, value: u64);
+}
+impl GaugeBase for Arc<dyn GaugeBase> {
+    fn record(&self, value: u64) {
+        self.as_ref().record(value)
+    }
+}
 pub trait GaugeF64: Send + Sync {
     // When referring to durations, this value is in seconds
     fn record(&self, value: f64, attributes: &MetricAttributes);
+}
+impl<T, GB> GaugeF64 for T
+where
+    T: MetricAttributable<Base = GB> + Send + Sync,
+    GB: GaugeF64Base + Send + Sync + Sized,
+{
+    fn record(&self, value: f64, attributes: &MetricAttributes) {
+        let base = self.with_attributes(attributes);
+        base.record(value);
+    }
+}
+pub trait GaugeF64Base: Send + Sync {
+    fn record(&self, value: f64);
+}
+impl GaugeF64Base for Arc<dyn GaugeF64Base> {
+    fn record(&self, value: f64) {
+        self.as_ref().record(value)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -330,23 +441,29 @@ impl CoreMeter for NoOpCoreMeter {
 }
 
 pub struct NoOpInstrument;
-impl Counter for NoOpInstrument {
-    fn add(&self, _: u64, _: &MetricAttributes) {}
+impl MetricAttributable for NoOpInstrument {
+    type Base = NoOpInstrument;
+    fn with_attributes(&self, _: &MetricAttributes) -> Self::Base {
+        NoOpInstrument
+    }
 }
-impl Histogram for NoOpInstrument {
-    fn record(&self, _: u64, _: &MetricAttributes) {}
+impl CounterBase for NoOpInstrument {
+    fn add(&self, _: u64) {}
 }
-impl HistogramF64 for NoOpInstrument {
-    fn record(&self, _: f64, _: &MetricAttributes) {}
+impl HistogramBase for NoOpInstrument {
+    fn record(&self, _: u64) {}
 }
-impl HistogramDuration for NoOpInstrument {
-    fn record(&self, _: Duration, _: &MetricAttributes) {}
+impl HistogramF64Base for NoOpInstrument {
+    fn record(&self, _: f64) {}
 }
-impl Gauge for NoOpInstrument {
-    fn record(&self, _: u64, _: &MetricAttributes) {}
+impl HistogramDurationBase for NoOpInstrument {
+    fn record(&self, _: Duration) {}
 }
-impl GaugeF64 for NoOpInstrument {
-    fn record(&self, _: f64, _: &MetricAttributes) {}
+impl GaugeBase for NoOpInstrument {
+    fn record(&self, _: u64) {}
+}
+impl GaugeF64Base for NoOpInstrument {
+    fn record(&self, _: f64) {}
 }
 
 #[derive(Debug, Clone)]
@@ -361,6 +478,12 @@ impl CustomMetricAttributes for NoOpAttributes {
 mod otel_impls {
     use super::*;
     use opentelemetry::{KeyValue, metrics};
+
+    #[derive(Clone)]
+    pub struct InstrumentWithAttributes<I> {
+        inner: I,
+        attributes: MetricAttributes,
+    }
 
     impl From<MetricKeyValue> for KeyValue {
         fn from(kv: MetricKeyValue) -> Self {
@@ -379,10 +502,21 @@ mod otel_impls {
         }
     }
 
-    impl Counter for metrics::Counter<u64> {
-        fn add(&self, value: u64, attributes: &MetricAttributes) {
-            if let MetricAttributes::OTel { kvs } = attributes {
-                self.add(value, kvs);
+    impl MetricAttributable for metrics::Counter<u64> {
+        type Base = InstrumentWithAttributes<metrics::Counter<u64>>;
+
+        fn with_attributes(&self, a: &MetricAttributes) -> Self::Base {
+            InstrumentWithAttributes {
+                inner: self.clone(),
+                attributes: a.clone(),
+            }
+        }
+    }
+
+    impl CounterBase for InstrumentWithAttributes<metrics::Counter<u64>> {
+        fn add(&self, value: u64) {
+            if let MetricAttributes::OTel { kvs } = &self.attributes {
+                self.inner.add(value, kvs);
             } else {
                 debug_assert!(
                     false,
@@ -392,10 +526,21 @@ mod otel_impls {
         }
     }
 
-    impl Gauge for metrics::Gauge<u64> {
-        fn record(&self, value: u64, attributes: &MetricAttributes) {
-            if let MetricAttributes::OTel { kvs } = attributes {
-                self.record(value, kvs);
+    impl MetricAttributable for metrics::Gauge<u64> {
+        type Base = InstrumentWithAttributes<metrics::Gauge<u64>>;
+
+        fn with_attributes(&self, a: &MetricAttributes) -> Self::Base {
+            InstrumentWithAttributes {
+                inner: self.clone(),
+                attributes: a.clone(),
+            }
+        }
+    }
+
+    impl GaugeBase for InstrumentWithAttributes<metrics::Gauge<u64>> {
+        fn record(&self, value: u64) {
+            if let MetricAttributes::OTel { kvs } = &self.attributes {
+                self.inner.record(value, kvs);
             } else {
                 debug_assert!(
                     false,
@@ -405,10 +550,21 @@ mod otel_impls {
         }
     }
 
-    impl GaugeF64 for metrics::Gauge<f64> {
-        fn record(&self, value: f64, attributes: &MetricAttributes) {
-            if let MetricAttributes::OTel { kvs } = attributes {
-                self.record(value, kvs);
+    impl MetricAttributable for metrics::Gauge<f64> {
+        type Base = InstrumentWithAttributes<metrics::Gauge<f64>>;
+
+        fn with_attributes(&self, a: &MetricAttributes) -> Self::Base {
+            InstrumentWithAttributes {
+                inner: self.clone(),
+                attributes: a.clone(),
+            }
+        }
+    }
+
+    impl GaugeF64Base for InstrumentWithAttributes<metrics::Gauge<f64>> {
+        fn record(&self, value: f64) {
+            if let MetricAttributes::OTel { kvs } = &self.attributes {
+                self.inner.record(value, kvs);
             } else {
                 debug_assert!(
                     false,
@@ -418,10 +574,21 @@ mod otel_impls {
         }
     }
 
-    impl Histogram for metrics::Histogram<u64> {
-        fn record(&self, value: u64, attributes: &MetricAttributes) {
-            if let MetricAttributes::OTel { kvs } = attributes {
-                self.record(value, kvs);
+    impl MetricAttributable for metrics::Histogram<u64> {
+        type Base = InstrumentWithAttributes<metrics::Histogram<u64>>;
+
+        fn with_attributes(&self, a: &MetricAttributes) -> Self::Base {
+            InstrumentWithAttributes {
+                inner: self.clone(),
+                attributes: a.clone(),
+            }
+        }
+    }
+
+    impl HistogramBase for InstrumentWithAttributes<metrics::Histogram<u64>> {
+        fn record(&self, value: u64) {
+            if let MetricAttributes::OTel { kvs } = &self.attributes {
+                self.inner.record(value, kvs);
             } else {
                 debug_assert!(
                     false,
@@ -431,10 +598,21 @@ mod otel_impls {
         }
     }
 
-    impl HistogramF64 for metrics::Histogram<f64> {
-        fn record(&self, value: f64, attributes: &MetricAttributes) {
-            if let MetricAttributes::OTel { kvs } = attributes {
-                self.record(value, kvs);
+    impl MetricAttributable for metrics::Histogram<f64> {
+        type Base = InstrumentWithAttributes<metrics::Histogram<f64>>;
+
+        fn with_attributes(&self, a: &MetricAttributes) -> Self::Base {
+            InstrumentWithAttributes {
+                inner: self.clone(),
+                attributes: a.clone(),
+            }
+        }
+    }
+
+    impl HistogramF64Base for InstrumentWithAttributes<metrics::Histogram<f64>> {
+        fn record(&self, value: f64) {
+            if let MetricAttributes::OTel { kvs } = &self.attributes {
+                self.inner.record(value, kvs);
             } else {
                 debug_assert!(
                     false,
