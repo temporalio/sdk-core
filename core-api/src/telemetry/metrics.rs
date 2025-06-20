@@ -276,7 +276,6 @@ impl HistogramDurationBase for Arc<dyn HistogramDurationBase> {
         self.as_ref().record(value)
     }
 }
-
 pub trait Gauge: Send + Sync {
     // When referring to durations, this value is in millis
     fn record(&self, value: u64, attributes: &MetricAttributes);

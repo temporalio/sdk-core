@@ -1,7 +1,13 @@
 use crate::integ_tests::mk_nexus_endpoint;
 use anyhow::anyhow;
 use assert_matches::assert_matches;
-use std::{collections::HashMap, env, string::ToString, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    env,
+    string::ToString,
+    sync::{Arc, OnceLock},
+    time::Duration,
+};
 use temporal_client::{
     REQUEST_LATENCY_HISTOGRAM_NAME, WorkflowClientTrait, WorkflowOptions, WorkflowService,
 };
@@ -23,7 +29,8 @@ use temporal_sdk_core_api::{
         HistogramBucketOverrides, OtelCollectorOptionsBuilder, OtlpProtocol,
         PrometheusExporterOptionsBuilder, TelemetryOptionsBuilder,
         metrics::{
-            CoreMeter, MetricKeyValue, MetricParameters, MetricParametersBuilder, NewAttributes,
+            CoreMeter, Gauge, MetricKeyValue, MetricParameters, MetricParametersBuilder,
+            NewAttributes,
         },
     },
     worker::{
@@ -1112,6 +1119,7 @@ async fn evict_on_complete_does_not_count_as_forced_eviction() {
 
 struct MetricRecordingSlotSupplier<SK> {
     inner: FixedSizeSlotSupplier<SK>,
+    metrics: OnceLock<(Box<dyn Gauge>, Box<dyn Gauge>, Box<dyn Gauge>)>,
 }
 
 #[async_trait::async_trait]
@@ -1122,9 +1130,17 @@ where
     type SlotKind = SK;
 
     async fn reserve_slot(&self, ctx: &dyn SlotReservationContext) -> SlotSupplierPermit {
-        let meter = ctx.get_metrics_meter().unwrap();
-        let g = meter.gauge(MetricParameters::from("custom_reserve"));
-        let attrs = meter.new_attributes(NewAttributes::new(vec![]));
+        let (g, _, _) = self.metrics.get_or_init(|| {
+            let meter = ctx.get_metrics_meter().unwrap();
+            let g1 = meter.gauge(MetricParameters::from("custom_reserve"));
+            let g2 = meter.gauge(MetricParameters::from("custom_mark_used"));
+            let g3 = meter.gauge(MetricParameters::from("custom_release"));
+            (g1, g2, g3)
+        });
+        let attrs = ctx
+            .get_metrics_meter()
+            .unwrap()
+            .new_attributes(NewAttributes::new(vec![]));
         g.record(1, &attrs);
         self.inner.reserve_slot(ctx).await
     }
@@ -1135,16 +1151,16 @@ where
 
     fn mark_slot_used(&self, ctx: &dyn SlotMarkUsedContext<SlotKind = Self::SlotKind>) {
         let meter = ctx.get_metrics_meter().unwrap();
-        let g = meter.gauge(MetricParameters::from("custom_mark_used"));
         let attrs = meter.new_attributes(NewAttributes::new(vec![]));
+        let (_, g, _) = self.metrics.get().unwrap();
         g.record(1, &attrs);
         self.inner.mark_slot_used(ctx);
     }
 
     fn release_slot(&self, ctx: &dyn SlotReleaseContext<SlotKind = Self::SlotKind>) {
         let meter = ctx.get_metrics_meter().unwrap();
-        let g = meter.gauge(MetricParameters::from("custom_release"));
         let attrs = meter.new_attributes(NewAttributes::new(vec![]));
+        let (_, _, g) = self.metrics.get().unwrap();
         g.record(1, &attrs);
         self.inner.release_slot(ctx);
     }
@@ -1165,6 +1181,7 @@ async fn metrics_available_from_custom_slot_supplier() {
     let mut tb = TunerBuilder::default();
     tb.workflow_slot_supplier(Arc::new(MetricRecordingSlotSupplier::<WorkflowSlotKind> {
         inner: FixedSizeSlotSupplier::new(5),
+        metrics: OnceLock::new(),
     }));
     starter.worker_config.tuner(Arc::new(tb.build()));
     let mut worker = starter.worker().await;
