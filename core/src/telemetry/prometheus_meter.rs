@@ -75,9 +75,9 @@ impl Registry {
                     .wrapping_add(desc.dim_hash);
             } else {
                 dbg_panic!(
-                    "Prometheus metric already registered, values will not be recorded on this \
-                    metric. This is an SDK bug. Details: {:?}",
-                    c.desc()
+                    "Prometheus metric has duplicate descriptors, values will not be recorded on \
+                    this metric. This is an SDK bug. Details: {:?}",
+                    c.desc(),
                 );
                 return;
             }
@@ -86,11 +86,12 @@ impl Registry {
             hash_map::Entry::Vacant(vc) => {
                 vc.insert(c);
             }
-            hash_map::Entry::Occupied(_) => {
+            hash_map::Entry::Occupied(o) => {
                 dbg_panic!(
                     "Prometheus metric already registered, values will not be recorded on this \
-                    metric. This is an SDK bug. Details: {:?}",
-                    c.desc()
+                    metric. Details: {:?} / Existing: {:?}",
+                    c.desc(),
+                    o.get().desc(),
                 );
             }
         }
