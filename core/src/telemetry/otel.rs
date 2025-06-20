@@ -228,8 +228,8 @@ impl CoreMeter for CoreOtelMeter {
         }
     }
 
-    fn counter(&self, params: MetricParameters) -> Arc<dyn Counter> {
-        Arc::new(
+    fn counter(&self, params: MetricParameters) -> Box<dyn Counter> {
+        Box::new(
             self.meter
                 .u64_counter(params.name)
                 .with_unit(params.unit)
@@ -238,8 +238,8 @@ impl CoreMeter for CoreOtelMeter {
         )
     }
 
-    fn histogram(&self, params: MetricParameters) -> Arc<dyn Histogram> {
-        Arc::new(
+    fn histogram(&self, params: MetricParameters) -> Box<dyn Histogram> {
+        Box::new(
             self.meter
                 .u64_histogram(params.name)
                 .with_unit(params.unit)
@@ -248,8 +248,8 @@ impl CoreMeter for CoreOtelMeter {
         )
     }
 
-    fn histogram_f64(&self, params: MetricParameters) -> Arc<dyn HistogramF64> {
-        Arc::new(
+    fn histogram_f64(&self, params: MetricParameters) -> Box<dyn HistogramF64> {
+        Box::new(
             self.meter
                 .f64_histogram(params.name)
                 .with_unit(params.unit)
@@ -258,8 +258,8 @@ impl CoreMeter for CoreOtelMeter {
         )
     }
 
-    fn histogram_duration(&self, mut params: MetricParameters) -> Arc<dyn HistogramDuration> {
-        Arc::new(if self.use_seconds_for_durations {
+    fn histogram_duration(&self, mut params: MetricParameters) -> Box<dyn HistogramDuration> {
+        Box::new(if self.use_seconds_for_durations {
             params.unit = "s".into();
             DurationHistogram::Seconds(self.histogram_f64(params))
         } else {
@@ -268,8 +268,8 @@ impl CoreMeter for CoreOtelMeter {
         })
     }
 
-    fn gauge(&self, params: MetricParameters) -> Arc<dyn Gauge> {
-        Arc::new(
+    fn gauge(&self, params: MetricParameters) -> Box<dyn Gauge> {
+        Box::new(
             self.meter
                 .u64_gauge(params.name)
                 .with_unit(params.unit)
@@ -278,8 +278,8 @@ impl CoreMeter for CoreOtelMeter {
         )
     }
 
-    fn gauge_f64(&self, params: MetricParameters) -> Arc<dyn GaugeF64> {
-        Arc::new(
+    fn gauge_f64(&self, params: MetricParameters) -> Box<dyn GaugeF64> {
+        Box::new(
             self.meter
                 .f64_gauge(params.name)
                 .with_unit(params.unit)
@@ -289,11 +289,9 @@ impl CoreMeter for CoreOtelMeter {
     }
 }
 
-/// A histogram being used to record durations.
-#[derive(Clone)]
 enum DurationHistogram {
-    Milliseconds(Arc<dyn Histogram>),
-    Seconds(Arc<dyn HistogramF64>),
+    Milliseconds(Box<dyn Histogram>),
+    Seconds(Box<dyn HistogramF64>),
 }
 impl HistogramDuration for DurationHistogram {
     fn record(&self, value: Duration, attributes: &MetricAttributes) {

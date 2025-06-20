@@ -28,41 +28,41 @@ pub(crate) struct MetricsContext {
 }
 
 struct Instruments {
-    wf_completed_counter: Arc<dyn Counter>,
-    wf_canceled_counter: Arc<dyn Counter>,
-    wf_failed_counter: Arc<dyn Counter>,
-    wf_cont_counter: Arc<dyn Counter>,
-    wf_e2e_latency: Arc<dyn HistogramDuration>,
-    wf_task_queue_poll_empty_counter: Arc<dyn Counter>,
-    wf_task_queue_poll_succeed_counter: Arc<dyn Counter>,
-    wf_task_execution_failure_counter: Arc<dyn Counter>,
-    wf_task_sched_to_start_latency: Arc<dyn HistogramDuration>,
-    wf_task_replay_latency: Arc<dyn HistogramDuration>,
-    wf_task_execution_latency: Arc<dyn HistogramDuration>,
-    act_poll_no_task: Arc<dyn Counter>,
-    act_task_received_counter: Arc<dyn Counter>,
-    act_execution_failed: Arc<dyn Counter>,
-    act_sched_to_start_latency: Arc<dyn HistogramDuration>,
-    act_exec_latency: Arc<dyn HistogramDuration>,
-    act_exec_succeeded_latency: Arc<dyn HistogramDuration>,
-    la_execution_cancelled: Arc<dyn Counter>,
-    la_execution_failed: Arc<dyn Counter>,
-    la_exec_latency: Arc<dyn HistogramDuration>,
-    la_exec_succeeded_latency: Arc<dyn HistogramDuration>,
-    la_total: Arc<dyn Counter>,
-    nexus_poll_no_task: Arc<dyn Counter>,
-    nexus_task_schedule_to_start_latency: Arc<dyn HistogramDuration>,
-    nexus_task_e2e_latency: Arc<dyn HistogramDuration>,
-    nexus_task_execution_latency: Arc<dyn HistogramDuration>,
-    nexus_task_execution_failed: Arc<dyn Counter>,
-    worker_registered: Arc<dyn Counter>,
-    num_pollers: Arc<dyn Gauge>,
-    task_slots_available: Arc<dyn Gauge>,
-    task_slots_used: Arc<dyn Gauge>,
-    sticky_cache_hit: Arc<dyn Counter>,
-    sticky_cache_miss: Arc<dyn Counter>,
-    sticky_cache_size: Arc<dyn Gauge>,
-    sticky_cache_forced_evictions: Arc<dyn Counter>,
+    wf_completed_counter: Box<dyn Counter>,
+    wf_canceled_counter: Box<dyn Counter>,
+    wf_failed_counter: Box<dyn Counter>,
+    wf_cont_counter: Box<dyn Counter>,
+    wf_e2e_latency: Box<dyn HistogramDuration>,
+    wf_task_queue_poll_empty_counter: Box<dyn Counter>,
+    wf_task_queue_poll_succeed_counter: Box<dyn Counter>,
+    wf_task_execution_failure_counter: Box<dyn Counter>,
+    wf_task_sched_to_start_latency: Box<dyn HistogramDuration>,
+    wf_task_replay_latency: Box<dyn HistogramDuration>,
+    wf_task_execution_latency: Box<dyn HistogramDuration>,
+    act_poll_no_task: Box<dyn Counter>,
+    act_task_received_counter: Box<dyn Counter>,
+    act_execution_failed: Box<dyn Counter>,
+    act_sched_to_start_latency: Box<dyn HistogramDuration>,
+    act_exec_latency: Box<dyn HistogramDuration>,
+    act_exec_succeeded_latency: Box<dyn HistogramDuration>,
+    la_execution_cancelled: Box<dyn Counter>,
+    la_execution_failed: Box<dyn Counter>,
+    la_exec_latency: Box<dyn HistogramDuration>,
+    la_exec_succeeded_latency: Box<dyn HistogramDuration>,
+    la_total: Box<dyn Counter>,
+    nexus_poll_no_task: Box<dyn Counter>,
+    nexus_task_schedule_to_start_latency: Box<dyn HistogramDuration>,
+    nexus_task_e2e_latency: Box<dyn HistogramDuration>,
+    nexus_task_execution_latency: Box<dyn HistogramDuration>,
+    nexus_task_execution_failed: Box<dyn Counter>,
+    worker_registered: Box<dyn Counter>,
+    num_pollers: Box<dyn Gauge>,
+    task_slots_available: Box<dyn Gauge>,
+    task_slots_used: Box<dyn Gauge>,
+    sticky_cache_hit: Box<dyn Counter>,
+    sticky_cache_miss: Box<dyn Counter>,
+    sticky_cache_size: Box<dyn Gauge>,
+    sticky_cache_forced_evictions: Box<dyn Counter>,
 }
 
 impl MetricsContext {
@@ -757,28 +757,28 @@ where
         }
     }
 
-    fn counter(&self, params: MetricParameters) -> Arc<dyn Counter> {
-        Arc::new(self.new_instrument(params, MetricKind::Counter))
+    fn counter(&self, params: MetricParameters) -> Box<dyn Counter> {
+        Box::new(self.new_instrument(params, MetricKind::Counter))
     }
 
-    fn histogram(&self, params: MetricParameters) -> Arc<dyn Histogram> {
-        Arc::new(self.new_instrument(params, MetricKind::Histogram))
+    fn histogram(&self, params: MetricParameters) -> Box<dyn Histogram> {
+        Box::new(self.new_instrument(params, MetricKind::Histogram))
     }
 
-    fn histogram_f64(&self, params: MetricParameters) -> Arc<dyn HistogramF64> {
-        Arc::new(self.new_instrument(params, MetricKind::HistogramF64))
+    fn histogram_f64(&self, params: MetricParameters) -> Box<dyn HistogramF64> {
+        Box::new(self.new_instrument(params, MetricKind::HistogramF64))
     }
 
-    fn histogram_duration(&self, params: MetricParameters) -> Arc<dyn HistogramDuration> {
-        Arc::new(self.new_instrument(params, MetricKind::HistogramDuration))
+    fn histogram_duration(&self, params: MetricParameters) -> Box<dyn HistogramDuration> {
+        Box::new(self.new_instrument(params, MetricKind::HistogramDuration))
     }
 
-    fn gauge(&self, params: MetricParameters) -> Arc<dyn Gauge> {
-        Arc::new(self.new_instrument(params, MetricKind::Gauge))
+    fn gauge(&self, params: MetricParameters) -> Box<dyn Gauge> {
+        Box::new(self.new_instrument(params, MetricKind::Gauge))
     }
 
-    fn gauge_f64(&self, params: MetricParameters) -> Arc<dyn GaugeF64> {
-        Arc::new(self.new_instrument(params, MetricKind::GaugeF64))
+    fn gauge_f64(&self, params: MetricParameters) -> Box<dyn GaugeF64> {
+        Box::new(self.new_instrument(params, MetricKind::GaugeF64))
     }
 }
 impl<I> MetricCallBufferer<I> for MetricsCallBuffer<I>
@@ -899,32 +899,32 @@ impl<CM: CoreMeter> CoreMeter for PrefixedMetricsMeter<CM> {
         self.meter.extend_attributes(existing, attribs)
     }
 
-    fn counter(&self, mut params: MetricParameters) -> Arc<dyn Counter> {
+    fn counter(&self, mut params: MetricParameters) -> Box<dyn Counter> {
         params.name = (self.prefix.clone() + &*params.name).into();
         self.meter.counter(params)
     }
 
-    fn histogram(&self, mut params: MetricParameters) -> Arc<dyn Histogram> {
+    fn histogram(&self, mut params: MetricParameters) -> Box<dyn Histogram> {
         params.name = (self.prefix.clone() + &*params.name).into();
         self.meter.histogram(params)
     }
 
-    fn histogram_f64(&self, mut params: MetricParameters) -> Arc<dyn HistogramF64> {
+    fn histogram_f64(&self, mut params: MetricParameters) -> Box<dyn HistogramF64> {
         params.name = (self.prefix.clone() + &*params.name).into();
         self.meter.histogram_f64(params)
     }
 
-    fn histogram_duration(&self, mut params: MetricParameters) -> Arc<dyn HistogramDuration> {
+    fn histogram_duration(&self, mut params: MetricParameters) -> Box<dyn HistogramDuration> {
         params.name = (self.prefix.clone() + &*params.name).into();
         self.meter.histogram_duration(params)
     }
 
-    fn gauge(&self, mut params: MetricParameters) -> Arc<dyn Gauge> {
+    fn gauge(&self, mut params: MetricParameters) -> Box<dyn Gauge> {
         params.name = (self.prefix.clone() + &*params.name).into();
         self.meter.gauge(params)
     }
 
-    fn gauge_f64(&self, mut params: MetricParameters) -> Arc<dyn GaugeF64> {
+    fn gauge_f64(&self, mut params: MetricParameters) -> Box<dyn GaugeF64> {
         params.name = (self.prefix.clone() + &*params.name).into();
         self.meter.gauge_f64(params)
     }

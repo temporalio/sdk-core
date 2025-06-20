@@ -199,73 +199,6 @@ struct PromMetric<T> {
     histogram_buckets: Option<Vec<f64>>,
 }
 
-#[derive(Debug)]
-enum PromMetricKind {
-    IntCounter(Arc<PromMetric<IntCounterVec>>),
-    IntGauge(Arc<PromMetric<IntGaugeVec>>),
-    Gauge(Arc<PromMetric<GaugeVec>>),
-    Histogram(Arc<PromMetric<HistogramVec>>),
-}
-trait AsPromMetric<T> {
-    fn as_prom_metric(&self) -> Option<Arc<PromMetric<T>>>;
-}
-impl AsPromMetric<IntCounterVec> for PromMetricKind {
-    fn as_prom_metric(&self) -> Option<Arc<PromMetric<IntCounterVec>>> {
-        if let PromMetricKind::IntCounter(m) = self {
-            Some(m.clone())
-        } else {
-            None
-        }
-    }
-}
-impl AsPromMetric<IntGaugeVec> for PromMetricKind {
-    fn as_prom_metric(&self) -> Option<Arc<PromMetric<IntGaugeVec>>> {
-        if let PromMetricKind::IntGauge(m) = self {
-            Some(m.clone())
-        } else {
-            None
-        }
-    }
-}
-impl AsPromMetric<GaugeVec> for PromMetricKind {
-    fn as_prom_metric(&self) -> Option<Arc<PromMetric<GaugeVec>>> {
-        if let PromMetricKind::Gauge(m) = self {
-            Some(m.clone())
-        } else {
-            None
-        }
-    }
-}
-impl AsPromMetric<HistogramVec> for PromMetricKind {
-    fn as_prom_metric(&self) -> Option<Arc<PromMetric<HistogramVec>>> {
-        if let PromMetricKind::Histogram(m) = self {
-            Some(m.clone())
-        } else {
-            None
-        }
-    }
-}
-impl From<Arc<PromMetric<IntCounterVec>>> for PromMetricKind {
-    fn from(m: Arc<PromMetric<IntCounterVec>>) -> Self {
-        PromMetricKind::IntCounter(m)
-    }
-}
-impl From<Arc<PromMetric<IntGaugeVec>>> for PromMetricKind {
-    fn from(m: Arc<PromMetric<IntGaugeVec>>) -> Self {
-        PromMetricKind::IntGauge(m)
-    }
-}
-impl From<Arc<PromMetric<GaugeVec>>> for PromMetricKind {
-    fn from(m: Arc<PromMetric<GaugeVec>>) -> Self {
-        PromMetricKind::Gauge(m)
-    }
-}
-impl From<Arc<PromMetric<HistogramVec>>> for PromMetricKind {
-    fn from(m: Arc<PromMetric<HistogramVec>>) -> Self {
-        PromMetricKind::Histogram(m)
-    }
-}
-
 impl<T> PromMetric<T>
 where
     T: Clone + Collector + 'static,
@@ -486,7 +419,7 @@ impl HistogramDurationBase for CorePromHistogram {
 }
 
 #[derive(Debug)]
-struct PromHistogramU64(Arc<PromMetric<HistogramVec>>);
+struct PromHistogramU64(PromMetric<HistogramVec>);
 impl MetricAttributable for PromHistogramU64 {
     type Base = CorePromHistogram;
 
@@ -507,7 +440,7 @@ impl MetricAttributable for PromHistogramU64 {
 }
 
 #[derive(Debug)]
-struct PromHistogramF64(Arc<PromMetric<HistogramVec>>);
+struct PromHistogramF64(PromMetric<HistogramVec>);
 impl MetricAttributable for PromHistogramF64 {
     type Base = CorePromHistogram;
 
@@ -534,7 +467,6 @@ pub struct CorePrometheusMeter {
     use_seconds_for_durations: bool,
     unit_suffix: bool,
     bucket_overrides: temporal_sdk_core_api::telemetry::HistogramBucketOverrides,
-    metrics: RwLock<HashMap<String, PromMetricKind>>,
 }
 
 impl CorePrometheusMeter {
@@ -549,45 +481,7 @@ impl CorePrometheusMeter {
             use_seconds_for_durations,
             unit_suffix,
             bucket_overrides,
-            metrics: RwLock::new(HashMap::new()),
         }
-    }
-
-    /// Generic helper to get or create any metric with double-checked locking pattern
-    fn get_or_create_metric<T, F>(&self, metric_name: String, create_fn: F) -> Arc<PromMetric<T>>
-    where
-        F: FnOnce() -> PromMetric<T>,
-        PromMetricKind: AsPromMetric<T>,
-        PromMetricKind: From<Arc<PromMetric<T>>>,
-    {
-        // Fast path: try to get existing metric
-        {
-            let cache_read = self.metrics.read();
-            if let Some(metric) = cache_read.get(&metric_name) {
-                if let Some(m) = metric.as_prom_metric() {
-                    return m;
-                } else {
-                    // TODO: Better
-                    dbg_panic!("Unexpected metric type in cache");
-                }
-            }
-        }
-
-        // Slow path: create new metric
-        let mut cache_write = self.metrics.write();
-        // Double-check pattern in case another thread created it
-        if let Some(metric) = cache_write.get(&metric_name) {
-            if let Some(m) = metric.as_prom_metric() {
-                return m;
-            } else {
-                // TODO: Better
-                dbg_panic!("Unexpected metric type in cache");
-            }
-        }
-
-        let metric = Arc::new(create_fn());
-        cache_write.insert(metric_name, PromMetricKind::from(metric.clone()));
-        metric
     }
 }
 
@@ -632,37 +526,42 @@ impl CoreMeter for CorePrometheusMeter {
         }
     }
 
-    fn counter(&self, params: MetricParameters) -> Arc<dyn Counter> {
+    fn counter(&self, params: MetricParameters) -> Box<dyn Counter> {
         let metric_name = params.name.to_string();
-        self.get_or_create_metric::<IntCounterVec, _>(metric_name.clone(), || {
-            PromMetric::new(
-                metric_name,
-                params.description.to_string(),
-                self.registry.clone(),
-            )
-        })
+        Box::new(PromMetric::<IntCounterVec>::new(
+            metric_name,
+            params.description.to_string(),
+            self.registry.clone(),
+        ))
     }
 
-    fn histogram(&self, params: MetricParameters) -> Arc<dyn Histogram> {
+    fn histogram(&self, params: MetricParameters) -> Box<dyn Histogram> {
+        let base_name = params.name.to_string();
+        let actual_metric_name = self.get_histogram_metric_name(&base_name, &params.unit);
+        let buckets = self.get_buckets_for_metric(&base_name);
+        Box::new(PromHistogramU64(PromMetric::new_with_buckets(
+            actual_metric_name,
+            params.description.to_string(),
+            self.registry.clone(),
+            buckets,
+        )))
+    }
+
+    fn histogram_f64(&self, params: MetricParameters) -> Box<dyn HistogramF64> {
         let base_name = params.name.to_string();
         let actual_metric_name = self.get_histogram_metric_name(&base_name, &params.unit);
         let buckets = self.get_buckets_for_metric(&base_name);
 
-        let prom_metric = self.get_or_create_histogram(params, actual_metric_name, buckets);
-        Arc::new(PromHistogramU64(prom_metric))
+        Box::new(PromHistogramF64(PromMetric::new_with_buckets(
+            actual_metric_name,
+            params.description.to_string(),
+            self.registry.clone(),
+            buckets,
+        )))
     }
 
-    fn histogram_f64(&self, params: MetricParameters) -> Arc<dyn HistogramF64> {
-        let base_name = params.name.to_string();
-        let actual_metric_name = self.get_histogram_metric_name(&base_name, &params.unit);
-        let buckets = self.get_buckets_for_metric(&base_name);
-
-        let prom_metric = self.get_or_create_histogram(params, actual_metric_name, buckets);
-        Arc::new(PromHistogramF64(prom_metric))
-    }
-
-    fn histogram_duration(&self, mut params: MetricParameters) -> Arc<dyn HistogramDuration> {
-        Arc::new(if self.use_seconds_for_durations {
+    fn histogram_duration(&self, mut params: MetricParameters) -> Box<dyn HistogramDuration> {
+        Box::new(if self.use_seconds_for_durations {
             params.unit = "seconds".into();
             DurationHistogram::Seconds(self.histogram_f64(params))
         } else {
@@ -671,26 +570,22 @@ impl CoreMeter for CorePrometheusMeter {
         })
     }
 
-    fn gauge(&self, params: MetricParameters) -> Arc<dyn Gauge> {
+    fn gauge(&self, params: MetricParameters) -> Box<dyn Gauge> {
         let metric_name = params.name.to_string();
-        self.get_or_create_metric::<IntGaugeVec, _>(metric_name.clone(), || {
-            PromMetric::new(
-                metric_name,
-                params.description.to_string(),
-                self.registry.clone(),
-            )
-        })
+        Box::new(PromMetric::<IntGaugeVec>::new(
+            metric_name,
+            params.description.to_string(),
+            self.registry.clone(),
+        ))
     }
 
-    fn gauge_f64(&self, params: MetricParameters) -> Arc<dyn GaugeF64> {
+    fn gauge_f64(&self, params: MetricParameters) -> Box<dyn GaugeF64> {
         let metric_name = params.name.to_string();
-        self.get_or_create_metric::<GaugeVec, _>(metric_name.clone(), || {
-            PromMetric::new(
-                metric_name,
-                params.description.to_string(),
-                self.registry.clone(),
-            )
-        })
+        Box::new(PromMetric::<GaugeVec>::new(
+            metric_name,
+            params.description.to_string(),
+            self.registry.clone(),
+        ))
     }
 }
 
@@ -720,30 +615,11 @@ impl CorePrometheusMeter {
             base_name.to_string()
         }
     }
-
-    /// Get or create a histogram metric
-    fn get_or_create_histogram(
-        &self,
-        params: MetricParameters,
-        actual_metric_name: String,
-        buckets: Vec<f64>,
-    ) -> Arc<PromMetric<HistogramVec>> {
-        self.get_or_create_metric::<HistogramVec, _>(actual_metric_name.clone(), || {
-            PromMetric::new_with_buckets(
-                actual_metric_name,
-                params.description.to_string(),
-                self.registry.clone(),
-                buckets,
-            )
-        })
-    }
 }
 
-/// A histogram being used to record durations.
-#[derive(Clone)]
 enum DurationHistogram {
-    Milliseconds(Arc<dyn Histogram>),
-    Seconds(Arc<dyn HistogramF64>),
+    Milliseconds(Box<dyn Histogram>),
+    Seconds(Box<dyn HistogramF64>),
 }
 
 impl HistogramDuration for DurationHistogram {

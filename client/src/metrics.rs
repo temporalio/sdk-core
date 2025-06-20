@@ -26,14 +26,16 @@ pub(crate) struct MetricsContext {
     meter: Arc<dyn CoreMeter>,
     kvs: MetricAttributes,
     poll_is_long: bool,
+    instruments: Arc<Instruments>,
+}
+struct Instruments {
+    svc_request: Box<dyn Counter>,
+    svc_request_failed: Box<dyn Counter>,
+    long_svc_request: Box<dyn Counter>,
+    long_svc_request_failed: Box<dyn Counter>,
 
-    svc_request: Arc<dyn Counter>,
-    svc_request_failed: Arc<dyn Counter>,
-    long_svc_request: Arc<dyn Counter>,
-    long_svc_request_failed: Arc<dyn Counter>,
-
-    svc_request_latency: Arc<dyn HistogramDuration>,
-    long_svc_request_latency: Arc<dyn HistogramDuration>,
+    svc_request_latency: Box<dyn HistogramDuration>,
+    long_svc_request_latency: Box<dyn HistogramDuration>,
 }
 
 impl MetricsContext {
@@ -42,35 +44,37 @@ impl MetricsContext {
         Self {
             kvs: meter.new_attributes(tm.default_attribs),
             poll_is_long: false,
-            svc_request: meter.counter(MetricParameters {
-                name: "request".into(),
-                description: "Count of client request successes by rpc name".into(),
-                unit: "".into(),
-            }),
-            svc_request_failed: meter.counter(MetricParameters {
-                name: "request_failure".into(),
-                description: "Count of client request failures by rpc name".into(),
-                unit: "".into(),
-            }),
-            long_svc_request: meter.counter(MetricParameters {
-                name: "long_request".into(),
-                description: "Count of long-poll request successes by rpc name".into(),
-                unit: "".into(),
-            }),
-            long_svc_request_failed: meter.counter(MetricParameters {
-                name: "long_request_failure".into(),
-                description: "Count of long-poll request failures by rpc name".into(),
-                unit: "".into(),
-            }),
-            svc_request_latency: meter.histogram_duration(MetricParameters {
-                name: REQUEST_LATENCY_HISTOGRAM_NAME.into(),
-                unit: "duration".into(),
-                description: "Histogram of client request latencies".into(),
-            }),
-            long_svc_request_latency: meter.histogram_duration(MetricParameters {
-                name: LONG_REQUEST_LATENCY_HISTOGRAM_NAME.into(),
-                unit: "duration".into(),
-                description: "Histogram of client long-poll request latencies".into(),
+            instruments: Arc::new(Instruments {
+                svc_request: meter.counter(MetricParameters {
+                    name: "request".into(),
+                    description: "Count of client request successes by rpc name".into(),
+                    unit: "".into(),
+                }),
+                svc_request_failed: meter.counter(MetricParameters {
+                    name: "request_failure".into(),
+                    description: "Count of client request failures by rpc name".into(),
+                    unit: "".into(),
+                }),
+                long_svc_request: meter.counter(MetricParameters {
+                    name: "long_request".into(),
+                    description: "Count of long-poll request successes by rpc name".into(),
+                    unit: "".into(),
+                }),
+                long_svc_request_failed: meter.counter(MetricParameters {
+                    name: "long_request_failure".into(),
+                    description: "Count of long-poll request failures by rpc name".into(),
+                    unit: "".into(),
+                }),
+                svc_request_latency: meter.histogram_duration(MetricParameters {
+                    name: REQUEST_LATENCY_HISTOGRAM_NAME.into(),
+                    unit: "duration".into(),
+                    description: "Histogram of client request latencies".into(),
+                }),
+                long_svc_request_latency: meter.histogram_duration(MetricParameters {
+                    name: LONG_REQUEST_LATENCY_HISTOGRAM_NAME.into(),
+                    unit: "duration".into(),
+                    description: "Histogram of client long-poll request latencies".into(),
+                }),
             }),
             meter,
         }
@@ -90,9 +94,9 @@ impl MetricsContext {
     /// A request to the temporal service was made
     pub(crate) fn svc_request(&self) {
         if self.poll_is_long {
-            self.long_svc_request.add(1, &self.kvs);
+            self.instruments.long_svc_request.add(1, &self.kvs);
         } else {
-            self.svc_request.add(1, &self.kvs);
+            self.instruments.svc_request.add(1, &self.kvs);
         }
     }
 
@@ -108,18 +112,20 @@ impl MetricsContext {
             &self.kvs
         };
         if self.poll_is_long {
-            self.long_svc_request_failed.add(1, kvs);
+            self.instruments.long_svc_request_failed.add(1, kvs);
         } else {
-            self.svc_request_failed.add(1, kvs);
+            self.instruments.svc_request_failed.add(1, kvs);
         }
     }
 
     /// Record service request latency
     pub(crate) fn record_svc_req_latency(&self, dur: Duration) {
         if self.poll_is_long {
-            self.long_svc_request_latency.record(dur, &self.kvs);
+            self.instruments
+                .long_svc_request_latency
+                .record(dur, &self.kvs);
         } else {
-            self.svc_request_latency.record(dur, &self.kvs);
+            self.instruments.svc_request_latency.record(dur, &self.kvs);
         }
     }
 }
