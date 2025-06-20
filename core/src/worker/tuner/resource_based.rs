@@ -190,10 +190,10 @@ struct PidControllers {
 }
 struct MetricInstruments {
     attribs: MetricAttributes,
-    mem_usage: Arc<dyn GaugeF64>,
-    cpu_usage: Arc<dyn GaugeF64>,
-    mem_pid_output: Arc<dyn GaugeF64>,
-    cpu_pid_output: Arc<dyn GaugeF64>,
+    mem_usage: Box<dyn GaugeF64>,
+    cpu_usage: Box<dyn GaugeF64>,
+    mem_pid_output: Box<dyn GaugeF64>,
+    cpu_pid_output: Box<dyn GaugeF64>,
 }
 #[derive(Clone, Copy, Default)]
 struct LastMetricVals {

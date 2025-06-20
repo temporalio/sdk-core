@@ -23,16 +23,16 @@ pub trait CoreMeter: Send + Sync + Debug {
         existing: MetricAttributes,
         attribs: NewAttributes,
     ) -> MetricAttributes;
-    fn counter(&self, params: MetricParameters) -> Arc<dyn Counter>;
-    fn histogram(&self, params: MetricParameters) -> Arc<dyn Histogram>;
-    fn histogram_f64(&self, params: MetricParameters) -> Arc<dyn HistogramF64>;
+    fn counter(&self, params: MetricParameters) -> Box<dyn Counter>;
+    fn histogram(&self, params: MetricParameters) -> Box<dyn Histogram>;
+    fn histogram_f64(&self, params: MetricParameters) -> Box<dyn HistogramF64>;
     /// Create a histogram which records Durations. Implementations should choose to emit in
     /// either milliseconds or seconds depending on how they have been configured.
     /// [MetricParameters::unit] should be overwritten by implementations to be `ms` or `s`
     /// accordingly.
-    fn histogram_duration(&self, params: MetricParameters) -> Arc<dyn HistogramDuration>;
-    fn gauge(&self, params: MetricParameters) -> Arc<dyn Gauge>;
-    fn gauge_f64(&self, params: MetricParameters) -> Arc<dyn GaugeF64>;
+    fn histogram_duration(&self, params: MetricParameters) -> Box<dyn HistogramDuration>;
+    fn gauge(&self, params: MetricParameters) -> Box<dyn Gauge>;
+    fn gauge_f64(&self, params: MetricParameters) -> Box<dyn GaugeF64>;
 }
 
 #[derive(Debug, Clone, derive_builder::Builder)]
@@ -84,26 +84,26 @@ impl CoreMeter for Arc<dyn CoreMeter> {
         self.as_ref().extend_attributes(existing, attribs)
     }
 
-    fn counter(&self, params: MetricParameters) -> Arc<dyn Counter> {
+    fn counter(&self, params: MetricParameters) -> Box<dyn Counter> {
         self.as_ref().counter(params)
     }
-    fn histogram(&self, params: MetricParameters) -> Arc<dyn Histogram> {
+    fn histogram(&self, params: MetricParameters) -> Box<dyn Histogram> {
         self.as_ref().histogram(params)
     }
 
-    fn histogram_f64(&self, params: MetricParameters) -> Arc<dyn HistogramF64> {
+    fn histogram_f64(&self, params: MetricParameters) -> Box<dyn HistogramF64> {
         self.as_ref().histogram_f64(params)
     }
 
-    fn histogram_duration(&self, params: MetricParameters) -> Arc<dyn HistogramDuration> {
+    fn histogram_duration(&self, params: MetricParameters) -> Box<dyn HistogramDuration> {
         self.as_ref().histogram_duration(params)
     }
 
-    fn gauge(&self, params: MetricParameters) -> Arc<dyn Gauge> {
+    fn gauge(&self, params: MetricParameters) -> Box<dyn Gauge> {
         self.as_ref().gauge(params)
     }
 
-    fn gauge_f64(&self, params: MetricParameters) -> Arc<dyn GaugeF64> {
+    fn gauge_f64(&self, params: MetricParameters) -> Box<dyn GaugeF64> {
         self.as_ref().gauge_f64(params)
     }
 }
@@ -415,28 +415,28 @@ impl CoreMeter for NoOpCoreMeter {
         existing
     }
 
-    fn counter(&self, _: MetricParameters) -> Arc<dyn Counter> {
-        Arc::new(NoOpInstrument)
+    fn counter(&self, _: MetricParameters) -> Box<dyn Counter> {
+        Box::new(NoOpInstrument)
     }
 
-    fn histogram(&self, _: MetricParameters) -> Arc<dyn Histogram> {
-        Arc::new(NoOpInstrument)
+    fn histogram(&self, _: MetricParameters) -> Box<dyn Histogram> {
+        Box::new(NoOpInstrument)
     }
 
-    fn histogram_f64(&self, _: MetricParameters) -> Arc<dyn HistogramF64> {
-        Arc::new(NoOpInstrument)
+    fn histogram_f64(&self, _: MetricParameters) -> Box<dyn HistogramF64> {
+        Box::new(NoOpInstrument)
     }
 
-    fn histogram_duration(&self, _: MetricParameters) -> Arc<dyn HistogramDuration> {
-        Arc::new(NoOpInstrument)
+    fn histogram_duration(&self, _: MetricParameters) -> Box<dyn HistogramDuration> {
+        Box::new(NoOpInstrument)
     }
 
-    fn gauge(&self, _: MetricParameters) -> Arc<dyn Gauge> {
-        Arc::new(NoOpInstrument)
+    fn gauge(&self, _: MetricParameters) -> Box<dyn Gauge> {
+        Box::new(NoOpInstrument)
     }
 
-    fn gauge_f64(&self, _: MetricParameters) -> Arc<dyn GaugeF64> {
-        Arc::new(NoOpInstrument)
+    fn gauge_f64(&self, _: MetricParameters) -> Box<dyn GaugeF64> {
+        Box::new(NoOpInstrument)
     }
 }
 
