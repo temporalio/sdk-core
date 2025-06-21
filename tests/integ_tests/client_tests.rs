@@ -132,7 +132,7 @@ where
                 .to_string(),
             )
             .unwrap();
-        let r = (&mut self.response_maker)();
+        let r = (self.response_maker)();
         async move { Ok(r) }.boxed()
     }
 }

@@ -28,7 +28,8 @@ use temporal_sdk_core_api::telemetry::{
     HistogramBucketOverrides, MetricTemporality, OtelCollectorOptions, OtlpProtocol,
     PrometheusExporterOptions,
     metrics::{
-        CoreMeter, Counter, Gauge, GaugeF64, Histogram, HistogramDuration, HistogramF64,
+        CoreMeter, Counter, Gauge, GaugeF64, Histogram, HistogramBase, HistogramDuration,
+        HistogramDurationBase, HistogramF64, HistogramF64Base, MetricAttributable,
         MetricAttributes, MetricParameters, NewAttributes,
     },
 };
@@ -228,76 +229,103 @@ impl CoreMeter for CoreOtelMeter {
         }
     }
 
-    fn counter(&self, params: MetricParameters) -> Box<dyn Counter> {
-        Box::new(
+    fn counter(&self, params: MetricParameters) -> Counter {
+        Counter::new(Arc::new(
             self.meter
                 .u64_counter(params.name)
                 .with_unit(params.unit)
                 .with_description(params.description)
                 .build(),
-        )
+        ))
     }
 
-    fn histogram(&self, params: MetricParameters) -> Box<dyn Histogram> {
-        Box::new(
-            self.meter
-                .u64_histogram(params.name)
-                .with_unit(params.unit)
-                .with_description(params.description)
-                .build(),
-        )
+    fn histogram(&self, params: MetricParameters) -> Histogram {
+        Histogram::new(Arc::new(self.create_histogram(params)))
     }
 
-    fn histogram_f64(&self, params: MetricParameters) -> Box<dyn HistogramF64> {
-        Box::new(
-            self.meter
-                .f64_histogram(params.name)
-                .with_unit(params.unit)
-                .with_description(params.description)
-                .build(),
-        )
+    fn histogram_f64(&self, params: MetricParameters) -> HistogramF64 {
+        HistogramF64::new(Arc::new(self.create_histogram_f64(params)))
     }
 
-    fn histogram_duration(&self, mut params: MetricParameters) -> Box<dyn HistogramDuration> {
-        Box::new(if self.use_seconds_for_durations {
+    fn histogram_duration(&self, mut params: MetricParameters) -> HistogramDuration {
+        HistogramDuration::new(Arc::new(if self.use_seconds_for_durations {
             params.unit = "s".into();
-            DurationHistogram::Seconds(self.histogram_f64(params))
+            DurationHistogram::Seconds(self.create_histogram_f64(params))
         } else {
             params.unit = "ms".into();
-            DurationHistogram::Milliseconds(self.histogram(params))
-        })
+            DurationHistogram::Milliseconds(self.create_histogram(params))
+        }))
     }
 
-    fn gauge(&self, params: MetricParameters) -> Box<dyn Gauge> {
-        Box::new(
+    fn gauge(&self, params: MetricParameters) -> Gauge {
+        Gauge::new(Arc::new(
             self.meter
                 .u64_gauge(params.name)
                 .with_unit(params.unit)
                 .with_description(params.description)
                 .build(),
-        )
+        ))
     }
 
-    fn gauge_f64(&self, params: MetricParameters) -> Box<dyn GaugeF64> {
-        Box::new(
+    fn gauge_f64(&self, params: MetricParameters) -> GaugeF64 {
+        GaugeF64::new(Arc::new(
             self.meter
                 .f64_gauge(params.name)
                 .with_unit(params.unit)
                 .with_description(params.description)
                 .build(),
-        )
+        ))
+    }
+}
+
+impl CoreOtelMeter {
+    fn create_histogram(&self, params: MetricParameters) -> opentelemetry::metrics::Histogram<u64> {
+        self.meter
+            .u64_histogram(params.name)
+            .with_unit(params.unit)
+            .with_description(params.description)
+            .build()
+    }
+
+    fn create_histogram_f64(
+        &self,
+        params: MetricParameters,
+    ) -> opentelemetry::metrics::Histogram<f64> {
+        self.meter
+            .f64_histogram(params.name)
+            .with_unit(params.unit)
+            .with_description(params.description)
+            .build()
     }
 }
 
 enum DurationHistogram {
-    Milliseconds(Box<dyn Histogram>),
-    Seconds(Box<dyn HistogramF64>),
+    Milliseconds(opentelemetry::metrics::Histogram<u64>),
+    Seconds(opentelemetry::metrics::Histogram<f64>),
 }
-impl HistogramDuration for DurationHistogram {
-    fn record(&self, value: Duration, attributes: &MetricAttributes) {
+
+enum DurationHistogramBase {
+    Millis(Box<dyn HistogramBase>),
+    Secs(Box<dyn HistogramF64Base>),
+}
+
+impl HistogramDurationBase for DurationHistogramBase {
+    fn records(&self, value: Duration) {
         match self {
-            DurationHistogram::Milliseconds(h) => h.record(value.as_millis() as u64, attributes),
-            DurationHistogram::Seconds(h) => h.record(value.as_secs_f64(), attributes),
+            DurationHistogramBase::Millis(h) => h.records(value.as_millis() as u64),
+            DurationHistogramBase::Secs(h) => h.records(value.as_secs_f64()),
+        }
+    }
+}
+impl MetricAttributable<Box<dyn HistogramDurationBase>> for DurationHistogram {
+    fn with_attributes(&self, attributes: &MetricAttributes) -> Box<dyn HistogramDurationBase> {
+        match self {
+            DurationHistogram::Milliseconds(h) => {
+                Box::new(DurationHistogramBase::Millis(h.with_attributes(attributes)))
+            }
+            DurationHistogram::Seconds(h) => {
+                Box::new(DurationHistogramBase::Secs(h.with_attributes(attributes)))
+            }
         }
     }
 }

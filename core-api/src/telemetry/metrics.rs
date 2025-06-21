@@ -23,16 +23,16 @@ pub trait CoreMeter: Send + Sync + Debug {
         existing: MetricAttributes,
         attribs: NewAttributes,
     ) -> MetricAttributes;
-    fn counter(&self, params: MetricParameters) -> Box<dyn Counter>;
-    fn histogram(&self, params: MetricParameters) -> Box<dyn Histogram>;
-    fn histogram_f64(&self, params: MetricParameters) -> Box<dyn HistogramF64>;
+    fn counter(&self, params: MetricParameters) -> Counter;
+    fn histogram(&self, params: MetricParameters) -> Histogram;
+    fn histogram_f64(&self, params: MetricParameters) -> HistogramF64;
     /// Create a histogram which records Durations. Implementations should choose to emit in
     /// either milliseconds or seconds depending on how they have been configured.
     /// [MetricParameters::unit] should be overwritten by implementations to be `ms` or `s`
     /// accordingly.
-    fn histogram_duration(&self, params: MetricParameters) -> Box<dyn HistogramDuration>;
-    fn gauge(&self, params: MetricParameters) -> Box<dyn Gauge>;
-    fn gauge_f64(&self, params: MetricParameters) -> Box<dyn GaugeF64>;
+    fn histogram_duration(&self, params: MetricParameters) -> HistogramDuration;
+    fn gauge(&self, params: MetricParameters) -> Gauge;
+    fn gauge_f64(&self, params: MetricParameters) -> GaugeF64;
 }
 
 #[derive(Debug, Clone, derive_builder::Builder)]
@@ -84,26 +84,26 @@ impl CoreMeter for Arc<dyn CoreMeter> {
         self.as_ref().extend_attributes(existing, attribs)
     }
 
-    fn counter(&self, params: MetricParameters) -> Box<dyn Counter> {
+    fn counter(&self, params: MetricParameters) -> Counter {
         self.as_ref().counter(params)
     }
-    fn histogram(&self, params: MetricParameters) -> Box<dyn Histogram> {
+    fn histogram(&self, params: MetricParameters) -> Histogram {
         self.as_ref().histogram(params)
     }
 
-    fn histogram_f64(&self, params: MetricParameters) -> Box<dyn HistogramF64> {
+    fn histogram_f64(&self, params: MetricParameters) -> HistogramF64 {
         self.as_ref().histogram_f64(params)
     }
 
-    fn histogram_duration(&self, params: MetricParameters) -> Box<dyn HistogramDuration> {
+    fn histogram_duration(&self, params: MetricParameters) -> HistogramDuration {
         self.as_ref().histogram_duration(params)
     }
 
-    fn gauge(&self, params: MetricParameters) -> Box<dyn Gauge> {
+    fn gauge(&self, params: MetricParameters) -> Gauge {
         self.as_ref().gauge(params)
     }
 
-    fn gauge_f64(&self, params: MetricParameters) -> Box<dyn GaugeF64> {
+    fn gauge_f64(&self, params: MetricParameters) -> GaugeF64 {
         self.as_ref().gauge_f64(params)
     }
 }
@@ -123,6 +123,7 @@ pub enum MetricAttributes {
     },
     Buffer(BufferAttributes),
     Dynamic(Arc<dyn CustomMetricAttributes>),
+    Empty,
 }
 
 /// A reference to some attributes created lang side.
@@ -183,141 +184,252 @@ impl From<&'static str> for MetricValue {
     }
 }
 
-pub trait MetricAttributable {
-    type Base;
-
-    fn with_attributes(&self, attributes: &MetricAttributes) -> Self::Base;
+pub trait MetricAttributable<Base> {
+    fn with_attributes(&self, attributes: &MetricAttributes) -> Base;
 }
 
-pub trait Counter: Send + Sync {
-    fn add(&self, value: u64, attributes: &MetricAttributes);
+#[derive(Clone)]
+pub struct LazyBoundMetric<T, B> {
+    metric: T,
+    attributes: MetricAttributes,
+    bound_cache: OnceLock<B>,
 }
-impl<T, CB> Counter for T
-where
-    T: MetricAttributable<Base = CB> + Send + Sync,
-    CB: CounterBase + Send + Sync + Sized,
-{
-    fn add(&self, value: u64, attributes: &MetricAttributes) {
-        let base = self.with_attributes(attributes);
-        base.add(value);
+impl<T, B> LazyBoundMetric<T, B> {
+    pub fn update_attributes(&mut self, new_attributes: MetricAttributes) {
+        self.attributes = new_attributes;
+        self.bound_cache = OnceLock::new();
     }
 }
+
 pub trait CounterBase: Send + Sync {
-    fn add(&self, value: u64);
+    fn adds(&self, value: u64);
 }
-impl CounterBase for Arc<dyn CounterBase> {
-    fn add(&self, value: u64) {
-        self.as_ref().add(value)
+pub type Counter = LazyBoundMetric<
+    Arc<dyn MetricAttributable<Box<dyn CounterBase>> + Send + Sync>,
+    Arc<dyn CounterBase>,
+>;
+impl Counter {
+    pub fn new(inner: Arc<dyn MetricAttributable<Box<dyn CounterBase>> + Send + Sync>) -> Self {
+        Self {
+            metric: inner,
+            attributes: MetricAttributes::Empty,
+            bound_cache: OnceLock::new(),
+        }
+    }
+    pub fn add(&self, value: u64, attributes: &MetricAttributes) {
+        let base = self.metric.with_attributes(attributes);
+        base.adds(value);
+    }
+}
+impl CounterBase for Counter {
+    fn adds(&self, value: u64) {
+        let bound = self
+            .bound_cache
+            .get_or_init(|| self.metric.with_attributes(&self.attributes).into());
+        bound.adds(value);
+    }
+}
+impl MetricAttributable<Counter> for Counter {
+    fn with_attributes(&self, attributes: &MetricAttributes) -> Counter {
+        Self {
+            metric: self.metric.clone(),
+            attributes: attributes.clone(),
+            bound_cache: OnceLock::new(),
+        }
     }
 }
 
-pub trait Histogram: Send + Sync {
-    // When referring to durations, this value is in millis
-    fn record(&self, value: u64, attributes: &MetricAttributes);
-}
-impl<T, HB> Histogram for T
-where
-    T: MetricAttributable<Base = HB> + Send + Sync,
-    HB: HistogramBase + Send + Sync + Sized,
-{
-    fn record(&self, value: u64, attributes: &MetricAttributes) {
-        let base = self.with_attributes(attributes);
-        base.record(value);
-    }
-}
 pub trait HistogramBase: Send + Sync {
-    fn record(&self, value: u64);
+    fn records(&self, value: u64);
 }
-impl HistogramBase for Arc<dyn HistogramBase> {
-    fn record(&self, value: u64) {
-        self.as_ref().record(value)
+pub type Histogram = LazyBoundMetric<
+    Arc<dyn MetricAttributable<Box<dyn HistogramBase>> + Send + Sync>,
+    Arc<dyn HistogramBase>,
+>;
+impl Histogram {
+    pub fn new(inner: Arc<dyn MetricAttributable<Box<dyn HistogramBase>> + Send + Sync>) -> Self {
+        Self {
+            metric: inner,
+            attributes: MetricAttributes::Empty,
+            bound_cache: OnceLock::new(),
+        }
+    }
+    pub fn record(&self, value: u64, attributes: &MetricAttributes) {
+        let base = self.metric.with_attributes(attributes);
+        base.records(value);
     }
 }
-pub trait HistogramF64: Send + Sync {
-    // When referring to durations, this value is in seconds
-    fn record(&self, value: f64, attributes: &MetricAttributes);
-}
-impl<T, HB> HistogramF64 for T
-where
-    T: MetricAttributable<Base = HB> + Send + Sync,
-    HB: HistogramF64Base + Send + Sync + Sized,
-{
-    fn record(&self, value: f64, attributes: &MetricAttributes) {
-        let base = self.with_attributes(attributes);
-        base.record(value);
+impl HistogramBase for Histogram {
+    fn records(&self, value: u64) {
+        let bound = self
+            .bound_cache
+            .get_or_init(|| self.metric.with_attributes(&self.attributes).into());
+        bound.records(value);
     }
 }
+impl MetricAttributable<Histogram> for Histogram {
+    fn with_attributes(&self, attributes: &MetricAttributes) -> Histogram {
+        Self {
+            metric: self.metric.clone(),
+            attributes: attributes.clone(),
+            bound_cache: OnceLock::new(),
+        }
+    }
+}
+
 pub trait HistogramF64Base: Send + Sync {
-    fn record(&self, value: f64);
+    fn records(&self, value: f64);
 }
-impl HistogramF64Base for Arc<dyn HistogramF64Base> {
-    fn record(&self, value: f64) {
-        self.as_ref().record(value)
+pub type HistogramF64 = LazyBoundMetric<
+    Arc<dyn MetricAttributable<Box<dyn HistogramF64Base>> + Send + Sync>,
+    Arc<dyn HistogramF64Base>,
+>;
+impl HistogramF64 {
+    pub fn new(
+        inner: Arc<dyn MetricAttributable<Box<dyn HistogramF64Base>> + Send + Sync>,
+    ) -> Self {
+        Self {
+            metric: inner,
+            attributes: MetricAttributes::Empty,
+            bound_cache: OnceLock::new(),
+        }
+    }
+    pub fn record(&self, value: f64, attributes: &MetricAttributes) {
+        let base = self.metric.with_attributes(attributes);
+        base.records(value);
     }
 }
-pub trait HistogramDuration: Send + Sync {
-    fn record(&self, value: Duration, attributes: &MetricAttributes);
-}
-impl<T, HB> HistogramDuration for T
-where
-    T: MetricAttributable<Base = HB> + Send + Sync,
-    HB: HistogramDurationBase + Send + Sync + Sized,
-{
-    fn record(&self, value: Duration, attributes: &MetricAttributes) {
-        let base = self.with_attributes(attributes);
-        base.record(value);
+impl HistogramF64Base for HistogramF64 {
+    fn records(&self, value: f64) {
+        let bound = self
+            .bound_cache
+            .get_or_init(|| self.metric.with_attributes(&self.attributes).into());
+        bound.records(value);
     }
 }
+impl MetricAttributable<HistogramF64> for HistogramF64 {
+    fn with_attributes(&self, attributes: &MetricAttributes) -> HistogramF64 {
+        Self {
+            metric: self.metric.clone(),
+            attributes: attributes.clone(),
+            bound_cache: OnceLock::new(),
+        }
+    }
+}
+
 pub trait HistogramDurationBase: Send + Sync {
-    fn record(&self, value: Duration);
+    fn records(&self, value: Duration);
 }
-impl HistogramDurationBase for Arc<dyn HistogramDurationBase> {
-    fn record(&self, value: Duration) {
-        self.as_ref().record(value)
+pub type HistogramDuration = LazyBoundMetric<
+    Arc<dyn MetricAttributable<Box<dyn HistogramDurationBase>> + Send + Sync>,
+    Arc<dyn HistogramDurationBase>,
+>;
+impl HistogramDuration {
+    pub fn new(
+        inner: Arc<dyn MetricAttributable<Box<dyn HistogramDurationBase>> + Send + Sync>,
+    ) -> Self {
+        Self {
+            metric: inner,
+            attributes: MetricAttributes::Empty,
+            bound_cache: OnceLock::new(),
+        }
+    }
+    pub fn record(&self, value: Duration, attributes: &MetricAttributes) {
+        let base = self.metric.with_attributes(attributes);
+        base.records(value);
     }
 }
-pub trait Gauge: Send + Sync {
-    // When referring to durations, this value is in millis
-    fn record(&self, value: u64, attributes: &MetricAttributes);
-}
-impl<T, GB> Gauge for T
-where
-    T: MetricAttributable<Base = GB> + Send + Sync,
-    GB: GaugeBase + Send + Sync + Sized,
-{
-    fn record(&self, value: u64, attributes: &MetricAttributes) {
-        let base = self.with_attributes(attributes);
-        base.record(value);
+impl HistogramDurationBase for HistogramDuration {
+    fn records(&self, value: Duration) {
+        let bound = self
+            .bound_cache
+            .get_or_init(|| self.metric.with_attributes(&self.attributes).into());
+        bound.records(value);
     }
 }
+impl MetricAttributable<HistogramDuration> for HistogramDuration {
+    fn with_attributes(&self, attributes: &MetricAttributes) -> HistogramDuration {
+        Self {
+            metric: self.metric.clone(),
+            attributes: attributes.clone(),
+            bound_cache: OnceLock::new(),
+        }
+    }
+}
+
 pub trait GaugeBase: Send + Sync {
-    fn record(&self, value: u64);
+    fn records(&self, value: u64);
 }
-impl GaugeBase for Arc<dyn GaugeBase> {
-    fn record(&self, value: u64) {
-        self.as_ref().record(value)
+pub type Gauge = LazyBoundMetric<
+    Arc<dyn MetricAttributable<Box<dyn GaugeBase>> + Send + Sync>,
+    Arc<dyn GaugeBase>,
+>;
+impl Gauge {
+    pub fn new(inner: Arc<dyn MetricAttributable<Box<dyn GaugeBase>> + Send + Sync>) -> Self {
+        Self {
+            metric: inner,
+            attributes: MetricAttributes::Empty,
+            bound_cache: OnceLock::new(),
+        }
+    }
+    pub fn record(&self, value: u64, attributes: &MetricAttributes) {
+        let base = self.metric.with_attributes(attributes);
+        base.records(value);
     }
 }
-pub trait GaugeF64: Send + Sync {
-    // When referring to durations, this value is in seconds
-    fn record(&self, value: f64, attributes: &MetricAttributes);
-}
-impl<T, GB> GaugeF64 for T
-where
-    T: MetricAttributable<Base = GB> + Send + Sync,
-    GB: GaugeF64Base + Send + Sync + Sized,
-{
-    fn record(&self, value: f64, attributes: &MetricAttributes) {
-        let base = self.with_attributes(attributes);
-        base.record(value);
+impl GaugeBase for Gauge {
+    fn records(&self, value: u64) {
+        let bound = self
+            .bound_cache
+            .get_or_init(|| self.metric.with_attributes(&self.attributes).into());
+        bound.records(value);
     }
 }
+impl MetricAttributable<Gauge> for Gauge {
+    fn with_attributes(&self, attributes: &MetricAttributes) -> Gauge {
+        Self {
+            metric: self.metric.clone(),
+            attributes: attributes.clone(),
+            bound_cache: OnceLock::new(),
+        }
+    }
+}
+
 pub trait GaugeF64Base: Send + Sync {
     fn record(&self, value: f64);
 }
-impl GaugeF64Base for Arc<dyn GaugeF64Base> {
+pub type GaugeF64 = LazyBoundMetric<
+    Arc<dyn MetricAttributable<Box<dyn GaugeF64Base>> + Send + Sync>,
+    Arc<dyn GaugeF64Base>,
+>;
+impl GaugeF64 {
+    pub fn new(inner: Arc<dyn MetricAttributable<Box<dyn GaugeF64Base>> + Send + Sync>) -> Self {
+        Self {
+            metric: inner,
+            attributes: MetricAttributes::Empty,
+            bound_cache: OnceLock::new(),
+        }
+    }
+    pub fn record(&self, value: f64, attributes: &MetricAttributes) {
+        let base = self.metric.with_attributes(attributes);
+        base.record(value);
+    }
+}
+impl GaugeF64Base for GaugeF64 {
     fn record(&self, value: f64) {
-        self.as_ref().record(value)
+        let bound = self
+            .bound_cache
+            .get_or_init(|| self.metric.with_attributes(&self.attributes).into());
+        bound.record(value);
+    }
+}
+impl MetricAttributable<GaugeF64> for GaugeF64 {
+    fn with_attributes(&self, attributes: &MetricAttributes) -> GaugeF64 {
+        Self {
+            metric: self.metric.clone(),
+            attributes: attributes.clone(),
+            bound_cache: OnceLock::new(),
+        }
     }
 }
 
@@ -414,52 +526,76 @@ impl CoreMeter for NoOpCoreMeter {
         existing
     }
 
-    fn counter(&self, _: MetricParameters) -> Box<dyn Counter> {
-        Box::new(NoOpInstrument)
+    fn counter(&self, _: MetricParameters) -> Counter {
+        Counter::new(Arc::new(NoOpInstrument))
     }
 
-    fn histogram(&self, _: MetricParameters) -> Box<dyn Histogram> {
-        Box::new(NoOpInstrument)
+    fn histogram(&self, _: MetricParameters) -> Histogram {
+        Histogram::new(Arc::new(NoOpInstrument))
     }
 
-    fn histogram_f64(&self, _: MetricParameters) -> Box<dyn HistogramF64> {
-        Box::new(NoOpInstrument)
+    fn histogram_f64(&self, _: MetricParameters) -> HistogramF64 {
+        HistogramF64::new(Arc::new(NoOpInstrument))
     }
 
-    fn histogram_duration(&self, _: MetricParameters) -> Box<dyn HistogramDuration> {
-        Box::new(NoOpInstrument)
+    fn histogram_duration(&self, _: MetricParameters) -> HistogramDuration {
+        HistogramDuration::new(Arc::new(NoOpInstrument))
     }
 
-    fn gauge(&self, _: MetricParameters) -> Box<dyn Gauge> {
-        Box::new(NoOpInstrument)
+    fn gauge(&self, _: MetricParameters) -> Gauge {
+        Gauge::new(Arc::new(NoOpInstrument))
     }
 
-    fn gauge_f64(&self, _: MetricParameters) -> Box<dyn GaugeF64> {
-        Box::new(NoOpInstrument)
+    fn gauge_f64(&self, _: MetricParameters) -> GaugeF64 {
+        GaugeF64::new(Arc::new(NoOpInstrument))
     }
 }
 
 pub struct NoOpInstrument;
-impl MetricAttributable for NoOpInstrument {
-    type Base = NoOpInstrument;
-    fn with_attributes(&self, _: &MetricAttributes) -> Self::Base {
-        NoOpInstrument
+impl MetricAttributable<Box<dyn CounterBase>> for NoOpInstrument {
+    fn with_attributes(&self, _: &MetricAttributes) -> Box<dyn CounterBase> {
+        Box::new(NoOpInstrument)
     }
 }
 impl CounterBase for NoOpInstrument {
-    fn add(&self, _: u64) {}
+    fn adds(&self, _: u64) {}
+}
+impl MetricAttributable<Box<dyn HistogramBase>> for NoOpInstrument {
+    fn with_attributes(&self, _: &MetricAttributes) -> Box<dyn HistogramBase> {
+        Box::new(NoOpInstrument)
+    }
 }
 impl HistogramBase for NoOpInstrument {
-    fn record(&self, _: u64) {}
+    fn records(&self, _: u64) {}
+}
+impl MetricAttributable<Box<dyn HistogramF64Base>> for NoOpInstrument {
+    fn with_attributes(&self, _: &MetricAttributes) -> Box<dyn HistogramF64Base> {
+        Box::new(NoOpInstrument)
+    }
 }
 impl HistogramF64Base for NoOpInstrument {
-    fn record(&self, _: f64) {}
+    fn records(&self, _: f64) {}
+}
+impl MetricAttributable<Box<dyn HistogramDurationBase>> for NoOpInstrument {
+    fn with_attributes(&self, _: &MetricAttributes) -> Box<dyn HistogramDurationBase> {
+        Box::new(NoOpInstrument)
+    }
 }
 impl HistogramDurationBase for NoOpInstrument {
-    fn record(&self, _: Duration) {}
+    fn records(&self, _: Duration) {}
+}
+impl MetricAttributable<Box<dyn GaugeBase>> for NoOpInstrument {
+    fn with_attributes(&self, _: &MetricAttributes) -> Box<dyn GaugeBase> {
+        Box::new(NoOpInstrument)
+    }
 }
 impl GaugeBase for NoOpInstrument {
-    fn record(&self, _: u64) {}
+    fn records(&self, _: u64) {}
+}
+impl MetricAttributable<Box<dyn GaugeF64Base>> for NoOpInstrument {
+    fn with_attributes(&self, _: &MetricAttributes) -> Box<dyn GaugeF64Base> {
+        Box::new(NoOpInstrument)
+    }
 }
 impl GaugeF64Base for NoOpInstrument {
     fn record(&self, _: f64) {}
@@ -479,7 +615,7 @@ mod otel_impls {
     use opentelemetry::{KeyValue, metrics};
 
     #[derive(Clone)]
-    pub struct InstrumentWithAttributes<I> {
+    struct InstrumentWithAttributes<I> {
         inner: I,
         attributes: MetricAttributes,
     }
@@ -501,19 +637,17 @@ mod otel_impls {
         }
     }
 
-    impl MetricAttributable for metrics::Counter<u64> {
-        type Base = InstrumentWithAttributes<metrics::Counter<u64>>;
-
-        fn with_attributes(&self, a: &MetricAttributes) -> Self::Base {
-            InstrumentWithAttributes {
+    impl MetricAttributable<Box<dyn CounterBase>> for metrics::Counter<u64> {
+        fn with_attributes(&self, a: &MetricAttributes) -> Box<dyn CounterBase> {
+            Box::new(InstrumentWithAttributes {
                 inner: self.clone(),
                 attributes: a.clone(),
-            }
+            })
         }
     }
 
     impl CounterBase for InstrumentWithAttributes<metrics::Counter<u64>> {
-        fn add(&self, value: u64) {
+        fn adds(&self, value: u64) {
             if let MetricAttributes::OTel { kvs } = &self.attributes {
                 self.inner.add(value, kvs);
             } else {
@@ -525,19 +659,17 @@ mod otel_impls {
         }
     }
 
-    impl MetricAttributable for metrics::Gauge<u64> {
-        type Base = InstrumentWithAttributes<metrics::Gauge<u64>>;
-
-        fn with_attributes(&self, a: &MetricAttributes) -> Self::Base {
-            InstrumentWithAttributes {
+    impl MetricAttributable<Box<dyn GaugeBase>> for metrics::Gauge<u64> {
+        fn with_attributes(&self, a: &MetricAttributes) -> Box<dyn GaugeBase> {
+            Box::new(InstrumentWithAttributes {
                 inner: self.clone(),
                 attributes: a.clone(),
-            }
+            })
         }
     }
 
     impl GaugeBase for InstrumentWithAttributes<metrics::Gauge<u64>> {
-        fn record(&self, value: u64) {
+        fn records(&self, value: u64) {
             if let MetricAttributes::OTel { kvs } = &self.attributes {
                 self.inner.record(value, kvs);
             } else {
@@ -549,14 +681,12 @@ mod otel_impls {
         }
     }
 
-    impl MetricAttributable for metrics::Gauge<f64> {
-        type Base = InstrumentWithAttributes<metrics::Gauge<f64>>;
-
-        fn with_attributes(&self, a: &MetricAttributes) -> Self::Base {
-            InstrumentWithAttributes {
+    impl MetricAttributable<Box<dyn GaugeF64Base>> for metrics::Gauge<f64> {
+        fn with_attributes(&self, a: &MetricAttributes) -> Box<dyn GaugeF64Base> {
+            Box::new(InstrumentWithAttributes {
                 inner: self.clone(),
                 attributes: a.clone(),
-            }
+            })
         }
     }
 
@@ -573,19 +703,17 @@ mod otel_impls {
         }
     }
 
-    impl MetricAttributable for metrics::Histogram<u64> {
-        type Base = InstrumentWithAttributes<metrics::Histogram<u64>>;
-
-        fn with_attributes(&self, a: &MetricAttributes) -> Self::Base {
-            InstrumentWithAttributes {
+    impl MetricAttributable<Box<dyn HistogramBase>> for metrics::Histogram<u64> {
+        fn with_attributes(&self, a: &MetricAttributes) -> Box<dyn HistogramBase> {
+            Box::new(InstrumentWithAttributes {
                 inner: self.clone(),
                 attributes: a.clone(),
-            }
+            })
         }
     }
 
     impl HistogramBase for InstrumentWithAttributes<metrics::Histogram<u64>> {
-        fn record(&self, value: u64) {
+        fn records(&self, value: u64) {
             if let MetricAttributes::OTel { kvs } = &self.attributes {
                 self.inner.record(value, kvs);
             } else {
@@ -597,19 +725,17 @@ mod otel_impls {
         }
     }
 
-    impl MetricAttributable for metrics::Histogram<f64> {
-        type Base = InstrumentWithAttributes<metrics::Histogram<f64>>;
-
-        fn with_attributes(&self, a: &MetricAttributes) -> Self::Base {
-            InstrumentWithAttributes {
+    impl MetricAttributable<Box<dyn HistogramF64Base>> for metrics::Histogram<f64> {
+        fn with_attributes(&self, a: &MetricAttributes) -> Box<dyn HistogramF64Base> {
+            Box::new(InstrumentWithAttributes {
                 inner: self.clone(),
                 attributes: a.clone(),
-            }
+            })
         }
     }
 
     impl HistogramF64Base for InstrumentWithAttributes<metrics::Histogram<f64>> {
-        fn record(&self, value: f64) {
+        fn records(&self, value: f64) {
             if let MetricAttributes::OTel { kvs } = &self.attributes {
                 self.inner.record(value, kvs);
             } else {
@@ -635,11 +761,17 @@ mod prom_impls {
         labels: Vec<(String, String)>,
     }
 
+    static EMPTY_LABELS: LabelSet = LabelSet { labels: Vec::new() };
+
     impl LabelSet {
         pub fn new(mut labels: Vec<(String, String)>) -> Self {
             // Sort by key for deterministic ordering and efficient comparison
             labels.sort_by(|a, b| a.0.cmp(&b.0));
             Self { labels }
+        }
+
+        pub fn empty() -> &'static LabelSet {
+            &EMPTY_LABELS
         }
 
         pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> {

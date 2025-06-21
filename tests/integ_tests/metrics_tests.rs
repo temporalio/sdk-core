@@ -637,10 +637,12 @@ async fn request_fail_codes() {
         .unwrap_err();
 
     let body = get_text(format!("http://{addr}/metrics")).await;
+    dbg!(&body);
     let matching_line = body
         .lines()
         .find(|l| l.starts_with("temporal_request_failure"))
         .unwrap();
+    dbg!(&matching_line);
     assert!(matching_line.contains("operation=\"DescribeNamespace\""));
     assert!(matching_line.contains("status_code=\"INVALID_ARGUMENT\""));
     assert!(matching_line.contains("} 1"));
@@ -1113,13 +1115,14 @@ async fn evict_on_complete_does_not_count_as_forced_eviction() {
     worker.run_until_done().await.unwrap();
 
     let body = get_text(format!("http://{addr}/metrics")).await;
+    // TODO: Fails because 0 is reported now
     // Metric shouldn't show up at all, since it's zero the whole time.
     assert!(!body.contains("temporal_sticky_cache_total_forced_eviction"));
 }
 
 struct MetricRecordingSlotSupplier<SK> {
     inner: FixedSizeSlotSupplier<SK>,
-    metrics: OnceLock<(Box<dyn Gauge>, Box<dyn Gauge>, Box<dyn Gauge>)>,
+    metrics: OnceLock<(Gauge, Gauge, Gauge)>,
 }
 
 #[async_trait::async_trait]
