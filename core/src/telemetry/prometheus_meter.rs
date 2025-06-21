@@ -290,6 +290,10 @@ where
         &self,
         attributes: &'a MetricAttributes,
     ) -> Result<(&'a LabelSet, HashMap<&'a str, &'a str>), ()> {
+        if matches!(attributes, MetricAttributes::Empty) {
+            // TODO: Shouldn't _really_ be necessary
+            return Ok((LabelSet::empty(), HashMap::new()));
+        }
         if let MetricAttributes::Prometheus { labels } = attributes {
             let prom_labels = labels.to_prometheus_labels_filtered();
             Ok((labels, prom_labels))
@@ -321,14 +325,12 @@ where
 
 struct CorePromCounter(GenericCounter<prometheus::core::AtomicU64>);
 impl CounterBase for CorePromCounter {
-    fn add(&self, value: u64) {
+    fn adds(&self, value: u64) {
         self.0.inc_by(value);
     }
 }
-impl MetricAttributable for PromMetric<IntCounterVec> {
-    type Base = CorePromCounter;
-
-    fn with_attributes(&self, attributes: &MetricAttributes) -> Self::Base {
+impl MetricAttributable<Box<dyn CounterBase>> for PromMetric<IntCounterVec> {
+    fn with_attributes(&self, attributes: &MetricAttributes) -> Box<dyn CounterBase> {
         let (labels, prom_labels) = self
             .extract_prometheus_labels(attributes)
             .unwrap_or_else(|_| panic!("TODO: Needs to be fallible?"));
@@ -337,25 +339,22 @@ impl MetricAttributable for PromMetric<IntCounterVec> {
             let opts = Opts::new(name, desc);
             IntCounterVec::new(opts, label_names).unwrap()
         });
-
-        if let Ok(c) = vector.get_metric_with(&prom_labels) {
+        Box::new(if let Ok(c) = vector.get_metric_with(&prom_labels) {
             CorePromCounter(c)
         } else {
             self.handle_metric_error(attributes, &prom_labels)
-        }
+        })
     }
 }
 
 struct CorePromIntGauge(prometheus::IntGauge);
 impl GaugeBase for CorePromIntGauge {
-    fn record(&self, value: u64) {
+    fn records(&self, value: u64) {
         self.0.set(value as i64);
     }
 }
-impl MetricAttributable for PromMetric<IntGaugeVec> {
-    type Base = CorePromIntGauge;
-
-    fn with_attributes(&self, attributes: &MetricAttributes) -> Self::Base {
+impl MetricAttributable<Box<dyn GaugeBase>> for PromMetric<IntGaugeVec> {
+    fn with_attributes(&self, attributes: &MetricAttributes) -> Box<dyn GaugeBase> {
         let (labels, prom_labels) = self
             .extract_prometheus_labels(attributes)
             .unwrap_or_else(|_| panic!("TODO: Needs to be fallible?"));
@@ -364,12 +363,11 @@ impl MetricAttributable for PromMetric<IntGaugeVec> {
             let opts = Opts::new(name, desc);
             IntGaugeVec::new(opts, label_names).unwrap()
         });
-
-        if let Ok(g) = vector.get_metric_with(&prom_labels) {
+        Box::new(if let Ok(g) = vector.get_metric_with(&prom_labels) {
             CorePromIntGauge(g)
         } else {
             self.handle_metric_error(attributes, &prom_labels)
-        }
+        })
     }
 }
 
@@ -379,10 +377,8 @@ impl GaugeF64Base for CorePromGauge {
         self.0.set(value);
     }
 }
-impl MetricAttributable for PromMetric<GaugeVec> {
-    type Base = CorePromGauge;
-
-    fn with_attributes(&self, attributes: &MetricAttributes) -> Self::Base {
+impl MetricAttributable<Box<dyn GaugeF64Base>> for PromMetric<GaugeVec> {
+    fn with_attributes(&self, attributes: &MetricAttributes) -> Box<dyn GaugeF64Base> {
         let (labels, prom_labels) = self
             .extract_prometheus_labels(attributes)
             .unwrap_or_else(|_| panic!("TODO: Needs to be fallible?"));
@@ -391,73 +387,60 @@ impl MetricAttributable for PromMetric<GaugeVec> {
             let opts = Opts::new(name, desc);
             GaugeVec::new(opts, label_names).unwrap()
         });
-
-        if let Ok(g) = vector.get_metric_with(&prom_labels) {
+        Box::new(if let Ok(g) = vector.get_metric_with(&prom_labels) {
             CorePromGauge(g)
         } else {
             self.handle_metric_error(attributes, &prom_labels)
-        }
+        })
     }
 }
 
 #[derive(Clone)]
 struct CorePromHistogram(prometheus::Histogram);
 impl HistogramBase for CorePromHistogram {
-    fn record(&self, value: u64) {
+    fn records(&self, value: u64) {
         self.0.observe(value as f64);
     }
 }
 impl HistogramF64Base for CorePromHistogram {
-    fn record(&self, value: f64) {
+    fn records(&self, value: f64) {
         self.0.observe(value);
-    }
-}
-impl HistogramDurationBase for CorePromHistogram {
-    fn record(&self, value: Duration) {
-        // This implementation matches the DurationHistogram enum below
-        self.0.observe(value.as_millis() as f64);
     }
 }
 
 #[derive(Debug)]
 struct PromHistogramU64(PromMetric<HistogramVec>);
-impl MetricAttributable for PromHistogramU64 {
-    type Base = CorePromHistogram;
-
-    fn with_attributes(&self, attributes: &MetricAttributes) -> Self::Base {
+impl MetricAttributable<Box<dyn HistogramBase>> for PromHistogramU64 {
+    fn with_attributes(&self, attributes: &MetricAttributes) -> Box<dyn HistogramBase> {
         let (labels, prom_labels) = self
             .0
             .extract_prometheus_labels(attributes)
             .unwrap_or_else(|_| panic!("TODO: Needs to be fallible?"));
 
         let vector = self.0.get_or_create_vector_with_buckets(labels);
-
-        if let Ok(h) = vector.get_metric_with(&prom_labels) {
+        Box::new(if let Ok(h) = vector.get_metric_with(&prom_labels) {
             CorePromHistogram(h)
         } else {
             self.0.handle_metric_error(attributes, &prom_labels)
-        }
+        })
     }
 }
 
 #[derive(Debug)]
 struct PromHistogramF64(PromMetric<HistogramVec>);
-impl MetricAttributable for PromHistogramF64 {
-    type Base = CorePromHistogram;
-
-    fn with_attributes(&self, attributes: &MetricAttributes) -> Self::Base {
+impl MetricAttributable<Box<dyn HistogramF64Base>> for PromHistogramF64 {
+    fn with_attributes(&self, attributes: &MetricAttributes) -> Box<dyn HistogramF64Base> {
         let (labels, prom_labels) = self
             .0
             .extract_prometheus_labels(attributes)
             .unwrap_or_else(|_| panic!("TODO: Needs to be fallible?"));
 
         let vector = self.0.get_or_create_vector_with_buckets(labels);
-
-        if let Ok(h) = vector.get_metric_with(&prom_labels) {
+        Box::new(if let Ok(h) = vector.get_metric_with(&prom_labels) {
             CorePromHistogram(h)
         } else {
             self.0.handle_metric_error(attributes, &prom_labels)
-        }
+        })
     }
 }
 
@@ -483,6 +466,30 @@ impl CorePrometheusMeter {
             unit_suffix,
             bucket_overrides,
         }
+    }
+
+    fn create_u64_hist(&self, params: &MetricParameters) -> PromHistogramU64 {
+        let base_name = params.name.to_string();
+        let actual_metric_name = self.get_histogram_metric_name(&base_name, &params.unit);
+        let buckets = self.get_buckets_for_metric(&base_name);
+        PromHistogramU64(PromMetric::new_with_buckets(
+            actual_metric_name,
+            params.description.to_string(),
+            self.registry.clone(),
+            buckets,
+        ))
+    }
+
+    fn create_f64_hist(&self, params: &MetricParameters) -> PromHistogramF64 {
+        let base_name = params.name.to_string();
+        let actual_metric_name = self.get_histogram_metric_name(&base_name, &params.unit);
+        let buckets = self.get_buckets_for_metric(&base_name);
+        PromHistogramF64(PromMetric::new_with_buckets(
+            actual_metric_name,
+            params.description.to_string(),
+            self.registry.clone(),
+            buckets,
+        ))
     }
 }
 
@@ -527,66 +534,51 @@ impl CoreMeter for CorePrometheusMeter {
         }
     }
 
-    fn counter(&self, params: MetricParameters) -> Box<dyn Counter> {
+    fn counter(&self, params: MetricParameters) -> Counter {
         let metric_name = params.name.to_string();
-        Box::new(PromMetric::<IntCounterVec>::new(
+        Counter::new(Arc::new(PromMetric::<IntCounterVec>::new(
             metric_name,
             params.description.to_string(),
             self.registry.clone(),
-        ))
-    }
-
-    fn histogram(&self, params: MetricParameters) -> Box<dyn Histogram> {
-        let base_name = params.name.to_string();
-        let actual_metric_name = self.get_histogram_metric_name(&base_name, &params.unit);
-        let buckets = self.get_buckets_for_metric(&base_name);
-        Box::new(PromHistogramU64(PromMetric::new_with_buckets(
-            actual_metric_name,
-            params.description.to_string(),
-            self.registry.clone(),
-            buckets,
         )))
     }
 
-    fn histogram_f64(&self, params: MetricParameters) -> Box<dyn HistogramF64> {
-        let base_name = params.name.to_string();
-        let actual_metric_name = self.get_histogram_metric_name(&base_name, &params.unit);
-        let buckets = self.get_buckets_for_metric(&base_name);
-
-        Box::new(PromHistogramF64(PromMetric::new_with_buckets(
-            actual_metric_name,
-            params.description.to_string(),
-            self.registry.clone(),
-            buckets,
-        )))
+    fn histogram(&self, params: MetricParameters) -> Histogram {
+        let hist = self.create_u64_hist(&params);
+        Histogram::new(Arc::new(hist))
     }
 
-    fn histogram_duration(&self, mut params: MetricParameters) -> Box<dyn HistogramDuration> {
-        Box::new(if self.use_seconds_for_durations {
+    fn histogram_f64(&self, params: MetricParameters) -> HistogramF64 {
+        let hist = self.create_f64_hist(&params);
+        HistogramF64::new(Arc::new(hist))
+    }
+
+    fn histogram_duration(&self, mut params: MetricParameters) -> HistogramDuration {
+        HistogramDuration::new(Arc::new(if self.use_seconds_for_durations {
             params.unit = "seconds".into();
-            DurationHistogram::Seconds(self.histogram_f64(params))
+            DurationHistogram::Seconds(self.create_f64_hist(&params))
         } else {
             params.unit = "milliseconds".into();
-            DurationHistogram::Milliseconds(self.histogram(params))
-        })
+            DurationHistogram::Milliseconds(self.create_u64_hist(&params))
+        }))
     }
 
-    fn gauge(&self, params: MetricParameters) -> Box<dyn Gauge> {
+    fn gauge(&self, params: MetricParameters) -> Gauge {
         let metric_name = params.name.to_string();
-        Box::new(PromMetric::<IntGaugeVec>::new(
+        Gauge::new(Arc::new(PromMetric::<IntGaugeVec>::new(
             metric_name,
             params.description.to_string(),
             self.registry.clone(),
-        ))
+        )))
     }
 
-    fn gauge_f64(&self, params: MetricParameters) -> Box<dyn GaugeF64> {
+    fn gauge_f64(&self, params: MetricParameters) -> GaugeF64 {
         let metric_name = params.name.to_string();
-        Box::new(PromMetric::<GaugeVec>::new(
+        GaugeF64::new(Arc::new(PromMetric::<GaugeVec>::new(
             metric_name,
             params.description.to_string(),
             self.registry.clone(),
-        ))
+        )))
     }
 }
 
@@ -619,15 +611,32 @@ impl CorePrometheusMeter {
 }
 
 enum DurationHistogram {
-    Milliseconds(Box<dyn Histogram>),
-    Seconds(Box<dyn HistogramF64>),
+    Milliseconds(PromHistogramU64),
+    Seconds(PromHistogramF64),
 }
 
-impl HistogramDuration for DurationHistogram {
-    fn record(&self, value: Duration, attributes: &MetricAttributes) {
+enum DurationHistogramBase {
+    Millis(Box<dyn HistogramBase>),
+    Secs(Box<dyn HistogramF64Base>),
+}
+
+impl HistogramDurationBase for DurationHistogramBase {
+    fn records(&self, value: Duration) {
         match self {
-            DurationHistogram::Milliseconds(h) => h.record(value.as_millis() as u64, attributes),
-            DurationHistogram::Seconds(h) => h.record(value.as_secs_f64(), attributes),
+            DurationHistogramBase::Millis(h) => h.records(value.as_millis() as u64),
+            DurationHistogramBase::Secs(h) => h.records(value.as_secs_f64()),
+        }
+    }
+}
+impl MetricAttributable<Box<dyn HistogramDurationBase>> for DurationHistogram {
+    fn with_attributes(&self, attributes: &MetricAttributes) -> Box<dyn HistogramDurationBase> {
+        match self {
+            DurationHistogram::Milliseconds(h) => {
+                Box::new(DurationHistogramBase::Millis(h.with_attributes(attributes)))
+            }
+            DurationHistogram::Seconds(h) => {
+                Box::new(DurationHistogramBase::Secs(h.with_attributes(attributes)))
+            }
         }
     }
 }
