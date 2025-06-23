@@ -291,7 +291,6 @@ where
         attributes: &'a MetricAttributes,
     ) -> Result<(&'a LabelSet, HashMap<&'a str, &'a str>), ()> {
         if matches!(attributes, MetricAttributes::Empty) {
-            // TODO: Shouldn't _really_ be necessary
             return Ok((LabelSet::empty(), HashMap::new()));
         }
         if let MetricAttributes::Prometheus { labels } = attributes {
@@ -675,13 +674,7 @@ mod tests {
         ]));
         counter.add(3, &attrs2);
 
-        let metric_families = registry.gather();
-        let encoder = TextEncoder::new();
-        let mut buffer = vec![];
-        encoder.encode(&metric_families, &mut buffer).unwrap();
-        let output = String::from_utf8(buffer).unwrap();
-
-        println!("Prometheus output:\n{}", output);
+        let output = output_string(&registry);
 
         // Both label combinations should be present
         assert!(
@@ -691,40 +684,6 @@ mod tests {
             output
                 .contains("test_counter{method=\"post\",service=\"service2\",global=\"value\"} 3")
         );
-    }
-
-    #[test]
-    fn test_histogram_buckets() {
-        let registry = Registry::new(HashMap::new());
-        let meter = CorePrometheusMeter::new(
-            registry.clone(),
-            false, // use_seconds_for_durations = false (milliseconds)
-            true,  // unit_suffix = true
-            temporal_sdk_core_api::telemetry::HistogramBucketOverrides::default(),
-        );
-
-        // Test workflow e2e latency histogram - should get default buckets
-        let histogram = meter.histogram_duration(MetricParameters {
-            name: crate::telemetry::WORKFLOW_E2E_LATENCY_HISTOGRAM_NAME.into(),
-            description: "Test workflow e2e latency".into(),
-            unit: "duration".into(),
-        });
-
-        // Record a value to ensure the histogram is created
-        let attrs = meter.new_attributes(NewAttributes::new(vec![]));
-        histogram.record(Duration::from_millis(100), &attrs);
-
-        // Check the prometheus output
-        let metric_families = registry.gather();
-        let encoder = TextEncoder::new();
-        let mut buffer = vec![];
-        encoder.encode(&metric_families, &mut buffer).unwrap();
-        let output = String::from_utf8(buffer).unwrap();
-
-        println!("Histogram output:\n{}", output);
-
-        // Should contain the bucket le="100" for milliseconds
-        assert!(output.contains("le=\"100\""));
     }
 
     #[test]
@@ -750,7 +709,6 @@ mod tests {
             ]),
         );
 
-        // Test that the extended attributes work correctly
         let counter = meter.counter(MetricParameters {
             name: "test_extended".into(),
             description: "Test extended attributes".into(),
@@ -758,28 +716,22 @@ mod tests {
         });
         counter.add(1, &extended_attrs);
 
-        let metric_families = registry.gather();
-        let encoder = TextEncoder::new();
-        let mut buffer = vec![];
-        encoder.encode(&metric_families, &mut buffer).unwrap();
-        let output = String::from_utf8(buffer).unwrap();
+        let output = output_string(&registry);
 
         assert!(output.contains("service=\"my_service\""));
         assert!(output.contains("method=\"GET\""));
-        assert!(output.contains("version=\"2.0\"")); // Should have new value
-        assert!(!output.contains("version=\"1.0\"")); // Should not have old value
+        assert!(output.contains("version=\"2.0\""));
+        assert!(!output.contains("version=\"1.0\""));
     }
 
     #[test]
     fn test_workflow_e2e_latency_buckets() {
-        // Test that default buckets are correctly applied to workflow E2E latency histogram
         let registry = Registry::new(HashMap::new());
 
-        // Test milliseconds configuration
         let meter_ms = CorePrometheusMeter::new(
             registry.clone(),
-            false, // use_seconds_for_durations = false (milliseconds)
-            false, // unit_suffix = false
+            false,
+            false,
             temporal_sdk_core_api::telemetry::HistogramBucketOverrides::default(),
         );
 
@@ -792,21 +744,13 @@ mod tests {
             description: "Test workflow e2e latency".into(),
             unit: "duration".into(),
         });
-
-        // Record a value to ensure the histogram is created
         let attrs = meter_ms.new_attributes(NewAttributes::new(vec![]));
         histogram_ms.record(Duration::from_millis(100), &attrs);
 
-        // Check the prometheus output for milliseconds
-        let metric_families = registry.gather();
-        let encoder = TextEncoder::new();
-        let mut buffer = vec![];
-        encoder.encode(&metric_families, &mut buffer).unwrap();
-        let output = String::from_utf8(buffer).unwrap();
+        let output = output_string(&registry);
 
         println!("Milliseconds histogram output:\n{}", output);
 
-        // Should contain the bucket le="100" for milliseconds
         assert!(
             output.contains("le=\"100\""),
             "Missing le=\"100\" bucket in milliseconds output"
@@ -816,8 +760,8 @@ mod tests {
         let registry_s = Registry::new(HashMap::new());
         let meter_s = CorePrometheusMeter::new(
             registry_s.clone(),
-            true,  // use_seconds_for_durations = true (seconds)
-            false, // unit_suffix = false
+            true,
+            false,
             temporal_sdk_core_api::telemetry::HistogramBucketOverrides::default(),
         );
 
@@ -830,23 +774,45 @@ mod tests {
             description: "Test workflow e2e latency".into(),
             unit: "duration".into(),
         });
-
-        // Record a value to ensure the histogram is created
         let attrs_s = meter_s.new_attributes(NewAttributes::new(vec![]));
         histogram_s.record(Duration::from_millis(100), &attrs_s);
 
-        // Check the prometheus output for seconds
-        let metric_families_s = registry_s.gather();
-        let mut buffer_s = vec![];
-        encoder.encode(&metric_families_s, &mut buffer_s).unwrap();
-        let output_s = String::from_utf8(buffer_s).unwrap();
+        let output_s = output_string(&registry_s);
 
         println!("Seconds histogram output:\n{}", output_s);
 
-        // Should contain the bucket le="0.1" for seconds (100ms = 0.1s)
         assert!(
             output_s.contains("le=\"0.1\""),
             "Missing le=\"0.1\" bucket in seconds output"
         );
+    }
+
+    #[test]
+    fn can_record_with_no_labels() {
+        let registry = Registry::new(HashMap::new());
+        let meter = CorePrometheusMeter::new(
+            registry.clone(),
+            false,
+            false,
+            temporal_sdk_core_api::telemetry::HistogramBucketOverrides::default(),
+        );
+        let counter = meter.counter(MetricParameters {
+            name: "no_labels".into(),
+            description: "No labels".into(),
+            unit: "".into(),
+        });
+        counter.adds(1);
+
+        let output = output_string(&registry);
+
+        assert!(output.contains("no_labels 1"),);
+    }
+
+    fn output_string(registry: &Registry) -> String {
+        let metric_families = registry.gather();
+        let encoder = TextEncoder::new();
+        let mut buffer = vec![];
+        encoder.encode(&metric_families, &mut buffer).unwrap();
+        String::from_utf8(buffer).unwrap()
     }
 }
