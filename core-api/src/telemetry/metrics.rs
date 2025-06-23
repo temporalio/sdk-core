@@ -6,6 +6,7 @@ use std::{
     sync::{Arc, OnceLock},
     time::Duration,
 };
+use tracing::error;
 
 /// Implementors of this trait are expected to be defined in each language's bridge.
 /// The implementor is responsible for the allocation/instantiation of new metric meters which
@@ -185,7 +186,19 @@ impl From<&'static str> for MetricValue {
 }
 
 pub trait MetricAttributable<Base> {
-    fn with_attributes(&self, attributes: &MetricAttributes) -> Base;
+    /// Replace any existing attributes on this metric with new ones, and return a new copy
+    /// of the metric, or a base version, which can be used to record values.
+    ///
+    /// Note that this operation is relatively expensive compared to simply recording a value
+    /// without any additional attributes, so users should prefer to save the metric instance
+    /// after calling this, and use the value-only methods afterward.
+    ///
+    /// This operation may fail if the underlying metrics implementation disallows the registration
+    /// of a new metric, or encounters any other issue.
+    fn with_attributes(
+        &self,
+        attributes: &MetricAttributes,
+    ) -> Result<Base, Box<dyn std::error::Error>>;
 }
 
 #[derive(Clone)]
@@ -217,25 +230,35 @@ impl Counter {
         }
     }
     pub fn add(&self, value: u64, attributes: &MetricAttributes) {
-        let base = self.metric.with_attributes(attributes);
-        base.adds(value);
+        if let Ok(base) = self.metric.with_attributes(attributes) {
+            base.adds(value);
+        }
     }
 }
 impl CounterBase for Counter {
     fn adds(&self, value: u64) {
-        let bound = self
-            .bound_cache
-            .get_or_init(|| self.metric.with_attributes(&self.attributes).into());
+        let bound = self.bound_cache.get_or_init(|| {
+            self.metric
+                .with_attributes(&self.attributes)
+                .map(Into::into)
+                .unwrap_or_else(|e| {
+                    dbg_panic!("Failed to initialize metric, will drop values: {:?}", e);
+                    Arc::new(NoOpInstrument) as Arc<dyn CounterBase>
+                })
+        });
         bound.adds(value);
     }
 }
 impl MetricAttributable<Counter> for Counter {
-    fn with_attributes(&self, attributes: &MetricAttributes) -> Counter {
-        Self {
+    fn with_attributes(
+        &self,
+        attributes: &MetricAttributes,
+    ) -> Result<Counter, Box<dyn std::error::Error>> {
+        Ok(Self {
             metric: self.metric.clone(),
             attributes: attributes.clone(),
             bound_cache: OnceLock::new(),
-        }
+        })
     }
 }
 
@@ -255,25 +278,35 @@ impl Histogram {
         }
     }
     pub fn record(&self, value: u64, attributes: &MetricAttributes) {
-        let base = self.metric.with_attributes(attributes);
-        base.records(value);
+        if let Ok(base) = self.metric.with_attributes(attributes) {
+            base.records(value);
+        }
     }
 }
 impl HistogramBase for Histogram {
     fn records(&self, value: u64) {
-        let bound = self
-            .bound_cache
-            .get_or_init(|| self.metric.with_attributes(&self.attributes).into());
+        let bound = self.bound_cache.get_or_init(|| {
+            self.metric
+                .with_attributes(&self.attributes)
+                .map(Into::into)
+                .unwrap_or_else(|e| {
+                    dbg_panic!("Failed to initialize metric, will drop values: {:?}", e);
+                    Arc::new(NoOpInstrument) as Arc<dyn HistogramBase>
+                })
+        });
         bound.records(value);
     }
 }
 impl MetricAttributable<Histogram> for Histogram {
-    fn with_attributes(&self, attributes: &MetricAttributes) -> Histogram {
-        Self {
+    fn with_attributes(
+        &self,
+        attributes: &MetricAttributes,
+    ) -> Result<Histogram, Box<dyn std::error::Error>> {
+        Ok(Self {
             metric: self.metric.clone(),
             attributes: attributes.clone(),
             bound_cache: OnceLock::new(),
-        }
+        })
     }
 }
 
@@ -295,25 +328,35 @@ impl HistogramF64 {
         }
     }
     pub fn record(&self, value: f64, attributes: &MetricAttributes) {
-        let base = self.metric.with_attributes(attributes);
-        base.records(value);
+        if let Ok(base) = self.metric.with_attributes(attributes) {
+            base.records(value);
+        }
     }
 }
 impl HistogramF64Base for HistogramF64 {
     fn records(&self, value: f64) {
-        let bound = self
-            .bound_cache
-            .get_or_init(|| self.metric.with_attributes(&self.attributes).into());
+        let bound = self.bound_cache.get_or_init(|| {
+            self.metric
+                .with_attributes(&self.attributes)
+                .map(Into::into)
+                .unwrap_or_else(|e| {
+                    dbg_panic!("Failed to initialize metric, will drop values: {:?}", e);
+                    Arc::new(NoOpInstrument) as Arc<dyn HistogramF64Base>
+                })
+        });
         bound.records(value);
     }
 }
 impl MetricAttributable<HistogramF64> for HistogramF64 {
-    fn with_attributes(&self, attributes: &MetricAttributes) -> HistogramF64 {
-        Self {
+    fn with_attributes(
+        &self,
+        attributes: &MetricAttributes,
+    ) -> Result<HistogramF64, Box<dyn std::error::Error>> {
+        Ok(Self {
             metric: self.metric.clone(),
             attributes: attributes.clone(),
             bound_cache: OnceLock::new(),
-        }
+        })
     }
 }
 
@@ -335,25 +378,35 @@ impl HistogramDuration {
         }
     }
     pub fn record(&self, value: Duration, attributes: &MetricAttributes) {
-        let base = self.metric.with_attributes(attributes);
-        base.records(value);
+        if let Ok(base) = self.metric.with_attributes(attributes) {
+            base.records(value);
+        }
     }
 }
 impl HistogramDurationBase for HistogramDuration {
     fn records(&self, value: Duration) {
-        let bound = self
-            .bound_cache
-            .get_or_init(|| self.metric.with_attributes(&self.attributes).into());
+        let bound = self.bound_cache.get_or_init(|| {
+            self.metric
+                .with_attributes(&self.attributes)
+                .map(Into::into)
+                .unwrap_or_else(|e| {
+                    dbg_panic!("Failed to initialize metric, will drop values: {:?}", e);
+                    Arc::new(NoOpInstrument) as Arc<dyn HistogramDurationBase>
+                })
+        });
         bound.records(value);
     }
 }
 impl MetricAttributable<HistogramDuration> for HistogramDuration {
-    fn with_attributes(&self, attributes: &MetricAttributes) -> HistogramDuration {
-        Self {
+    fn with_attributes(
+        &self,
+        attributes: &MetricAttributes,
+    ) -> Result<HistogramDuration, Box<dyn std::error::Error>> {
+        Ok(Self {
             metric: self.metric.clone(),
             attributes: attributes.clone(),
             bound_cache: OnceLock::new(),
-        }
+        })
     }
 }
 
@@ -373,30 +426,40 @@ impl Gauge {
         }
     }
     pub fn record(&self, value: u64, attributes: &MetricAttributes) {
-        let base = self.metric.with_attributes(attributes);
-        base.records(value);
+        if let Ok(base) = self.metric.with_attributes(attributes) {
+            base.records(value);
+        }
     }
 }
 impl GaugeBase for Gauge {
     fn records(&self, value: u64) {
-        let bound = self
-            .bound_cache
-            .get_or_init(|| self.metric.with_attributes(&self.attributes).into());
+        let bound = self.bound_cache.get_or_init(|| {
+            self.metric
+                .with_attributes(&self.attributes)
+                .map(Into::into)
+                .unwrap_or_else(|e| {
+                    dbg_panic!("Failed to initialize metric, will drop values: {:?}", e);
+                    Arc::new(NoOpInstrument) as Arc<dyn GaugeBase>
+                })
+        });
         bound.records(value);
     }
 }
 impl MetricAttributable<Gauge> for Gauge {
-    fn with_attributes(&self, attributes: &MetricAttributes) -> Gauge {
-        Self {
+    fn with_attributes(
+        &self,
+        attributes: &MetricAttributes,
+    ) -> Result<Gauge, Box<dyn std::error::Error>> {
+        Ok(Self {
             metric: self.metric.clone(),
             attributes: attributes.clone(),
             bound_cache: OnceLock::new(),
-        }
+        })
     }
 }
 
 pub trait GaugeF64Base: Send + Sync {
-    fn record(&self, value: f64);
+    fn records(&self, value: f64);
 }
 pub type GaugeF64 = LazyBoundMetric<
     Arc<dyn MetricAttributable<Box<dyn GaugeF64Base>> + Send + Sync>,
@@ -411,25 +474,35 @@ impl GaugeF64 {
         }
     }
     pub fn record(&self, value: f64, attributes: &MetricAttributes) {
-        let base = self.metric.with_attributes(attributes);
-        base.record(value);
+        if let Ok(base) = self.metric.with_attributes(attributes) {
+            base.records(value);
+        }
     }
 }
 impl GaugeF64Base for GaugeF64 {
-    fn record(&self, value: f64) {
-        let bound = self
-            .bound_cache
-            .get_or_init(|| self.metric.with_attributes(&self.attributes).into());
-        bound.record(value);
+    fn records(&self, value: f64) {
+        let bound = self.bound_cache.get_or_init(|| {
+            self.metric
+                .with_attributes(&self.attributes)
+                .map(Into::into)
+                .unwrap_or_else(|e| {
+                    dbg_panic!("Failed to initialize metric, will drop values: {:?}", e);
+                    Arc::new(NoOpInstrument) as Arc<dyn GaugeF64Base>
+                })
+        });
+        bound.records(value);
     }
 }
 impl MetricAttributable<GaugeF64> for GaugeF64 {
-    fn with_attributes(&self, attributes: &MetricAttributes) -> GaugeF64 {
-        Self {
+    fn with_attributes(
+        &self,
+        attributes: &MetricAttributes,
+    ) -> Result<GaugeF64, Box<dyn std::error::Error>> {
+        Ok(Self {
             metric: self.metric.clone(),
             attributes: attributes.clone(),
             bound_cache: OnceLock::new(),
-        }
+        })
     }
 }
 
@@ -553,52 +626,70 @@ impl CoreMeter for NoOpCoreMeter {
 
 pub struct NoOpInstrument;
 impl MetricAttributable<Box<dyn CounterBase>> for NoOpInstrument {
-    fn with_attributes(&self, _: &MetricAttributes) -> Box<dyn CounterBase> {
-        Box::new(NoOpInstrument)
+    fn with_attributes(
+        &self,
+        _: &MetricAttributes,
+    ) -> Result<Box<dyn CounterBase>, Box<dyn std::error::Error>> {
+        Ok(Box::new(NoOpInstrument))
     }
 }
 impl CounterBase for NoOpInstrument {
     fn adds(&self, _: u64) {}
 }
 impl MetricAttributable<Box<dyn HistogramBase>> for NoOpInstrument {
-    fn with_attributes(&self, _: &MetricAttributes) -> Box<dyn HistogramBase> {
-        Box::new(NoOpInstrument)
+    fn with_attributes(
+        &self,
+        _: &MetricAttributes,
+    ) -> Result<Box<dyn HistogramBase>, Box<dyn std::error::Error>> {
+        Ok(Box::new(NoOpInstrument))
     }
 }
 impl HistogramBase for NoOpInstrument {
     fn records(&self, _: u64) {}
 }
 impl MetricAttributable<Box<dyn HistogramF64Base>> for NoOpInstrument {
-    fn with_attributes(&self, _: &MetricAttributes) -> Box<dyn HistogramF64Base> {
-        Box::new(NoOpInstrument)
+    fn with_attributes(
+        &self,
+        _: &MetricAttributes,
+    ) -> Result<Box<dyn HistogramF64Base>, Box<dyn std::error::Error>> {
+        Ok(Box::new(NoOpInstrument))
     }
 }
 impl HistogramF64Base for NoOpInstrument {
     fn records(&self, _: f64) {}
 }
 impl MetricAttributable<Box<dyn HistogramDurationBase>> for NoOpInstrument {
-    fn with_attributes(&self, _: &MetricAttributes) -> Box<dyn HistogramDurationBase> {
-        Box::new(NoOpInstrument)
+    fn with_attributes(
+        &self,
+        _: &MetricAttributes,
+    ) -> Result<Box<dyn HistogramDurationBase>, Box<dyn std::error::Error>> {
+        Ok(Box::new(NoOpInstrument))
     }
 }
 impl HistogramDurationBase for NoOpInstrument {
     fn records(&self, _: Duration) {}
 }
 impl MetricAttributable<Box<dyn GaugeBase>> for NoOpInstrument {
-    fn with_attributes(&self, _: &MetricAttributes) -> Box<dyn GaugeBase> {
-        Box::new(NoOpInstrument)
+    fn with_attributes(
+        &self,
+        _: &MetricAttributes,
+    ) -> Result<Box<dyn GaugeBase>, Box<dyn std::error::Error>> {
+        Ok(Box::new(NoOpInstrument))
     }
 }
 impl GaugeBase for NoOpInstrument {
     fn records(&self, _: u64) {}
 }
 impl MetricAttributable<Box<dyn GaugeF64Base>> for NoOpInstrument {
-    fn with_attributes(&self, _: &MetricAttributes) -> Box<dyn GaugeF64Base> {
-        Box::new(NoOpInstrument)
+    fn with_attributes(
+        &self,
+        _: &MetricAttributes,
+    ) -> Result<Box<dyn GaugeF64Base>, Box<dyn std::error::Error>> {
+        Ok(Box::new(NoOpInstrument))
     }
 }
 impl GaugeF64Base for NoOpInstrument {
-    fn record(&self, _: f64) {}
+    fn records(&self, _: f64) {}
 }
 
 #[derive(Debug, Clone)]
@@ -638,11 +729,14 @@ mod otel_impls {
     }
 
     impl MetricAttributable<Box<dyn CounterBase>> for metrics::Counter<u64> {
-        fn with_attributes(&self, a: &MetricAttributes) -> Box<dyn CounterBase> {
-            Box::new(InstrumentWithAttributes {
+        fn with_attributes(
+            &self,
+            attributes: &MetricAttributes,
+        ) -> Result<Box<dyn CounterBase>, Box<dyn std::error::Error>> {
+            Ok(Box::new(InstrumentWithAttributes {
                 inner: self.clone(),
-                attributes: a.clone(),
-            })
+                attributes: attributes.clone(),
+            }))
         }
     }
 
@@ -660,11 +754,14 @@ mod otel_impls {
     }
 
     impl MetricAttributable<Box<dyn GaugeBase>> for metrics::Gauge<u64> {
-        fn with_attributes(&self, a: &MetricAttributes) -> Box<dyn GaugeBase> {
-            Box::new(InstrumentWithAttributes {
+        fn with_attributes(
+            &self,
+            attributes: &MetricAttributes,
+        ) -> Result<Box<dyn GaugeBase>, Box<dyn std::error::Error>> {
+            Ok(Box::new(InstrumentWithAttributes {
                 inner: self.clone(),
-                attributes: a.clone(),
-            })
+                attributes: attributes.clone(),
+            }))
         }
     }
 
@@ -682,16 +779,19 @@ mod otel_impls {
     }
 
     impl MetricAttributable<Box<dyn GaugeF64Base>> for metrics::Gauge<f64> {
-        fn with_attributes(&self, a: &MetricAttributes) -> Box<dyn GaugeF64Base> {
-            Box::new(InstrumentWithAttributes {
+        fn with_attributes(
+            &self,
+            attributes: &MetricAttributes,
+        ) -> Result<Box<dyn GaugeF64Base>, Box<dyn std::error::Error>> {
+            Ok(Box::new(InstrumentWithAttributes {
                 inner: self.clone(),
-                attributes: a.clone(),
-            })
+                attributes: attributes.clone(),
+            }))
         }
     }
 
     impl GaugeF64Base for InstrumentWithAttributes<metrics::Gauge<f64>> {
-        fn record(&self, value: f64) {
+        fn records(&self, value: f64) {
             if let MetricAttributes::OTel { kvs } = &self.attributes {
                 self.inner.record(value, kvs);
             } else {
@@ -704,11 +804,14 @@ mod otel_impls {
     }
 
     impl MetricAttributable<Box<dyn HistogramBase>> for metrics::Histogram<u64> {
-        fn with_attributes(&self, a: &MetricAttributes) -> Box<dyn HistogramBase> {
-            Box::new(InstrumentWithAttributes {
+        fn with_attributes(
+            &self,
+            attributes: &MetricAttributes,
+        ) -> Result<Box<dyn HistogramBase>, Box<dyn std::error::Error>> {
+            Ok(Box::new(InstrumentWithAttributes {
                 inner: self.clone(),
-                attributes: a.clone(),
-            })
+                attributes: attributes.clone(),
+            }))
         }
     }
 
@@ -726,11 +829,14 @@ mod otel_impls {
     }
 
     impl MetricAttributable<Box<dyn HistogramF64Base>> for metrics::Histogram<f64> {
-        fn with_attributes(&self, a: &MetricAttributes) -> Box<dyn HistogramF64Base> {
-            Box::new(InstrumentWithAttributes {
+        fn with_attributes(
+            &self,
+            attributes: &MetricAttributes,
+        ) -> Result<Box<dyn HistogramF64Base>, Box<dyn std::error::Error>> {
+            Ok(Box::new(InstrumentWithAttributes {
                 inner: self.clone(),
-                attributes: a.clone(),
-            })
+                attributes: attributes.clone(),
+            }))
         }
     }
 
@@ -748,6 +854,7 @@ mod otel_impls {
     }
 }
 
+use crate::dbg_panic;
 #[cfg(feature = "prom_impls")]
 pub use prom_impls::LabelSet;
 

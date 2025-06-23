@@ -138,3 +138,11 @@ pub trait Worker: Send + Sync {
     /// functions have returned `ShutDown` errors.
     async fn finalize_shutdown(self);
 }
+
+macro_rules! dbg_panic {
+  ($($arg:tt)*) => {
+      error!($($arg)*);
+      debug_assert!(false, $($arg)*);
+  };
+}
+pub(crate) use dbg_panic;

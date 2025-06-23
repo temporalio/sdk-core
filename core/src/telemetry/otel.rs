@@ -318,15 +318,18 @@ impl HistogramDurationBase for DurationHistogramBase {
     }
 }
 impl MetricAttributable<Box<dyn HistogramDurationBase>> for DurationHistogram {
-    fn with_attributes(&self, attributes: &MetricAttributes) -> Box<dyn HistogramDurationBase> {
-        match self {
-            DurationHistogram::Milliseconds(h) => {
-                Box::new(DurationHistogramBase::Millis(h.with_attributes(attributes)))
-            }
+    fn with_attributes(
+        &self,
+        attributes: &MetricAttributes,
+    ) -> Result<Box<dyn HistogramDurationBase>, Box<dyn std::error::Error>> {
+        Ok(match self {
+            DurationHistogram::Milliseconds(h) => Box::new(DurationHistogramBase::Millis(
+                h.with_attributes(attributes)?,
+            )),
             DurationHistogram::Seconds(h) => {
-                Box::new(DurationHistogramBase::Secs(h.with_attributes(attributes)))
+                Box::new(DurationHistogramBase::Secs(h.with_attributes(attributes)?))
             }
-        }
+        })
     }
 }
 
